@@ -260,7 +260,7 @@ impl Presenter {
             buffer,
             value_style,
         );
-        if !choice.disabled && !choice.options.is_empty() && !area.is_empty() {
+        if !choice.disabled && !choice.options.is_empty() && target.keyboard_reachable() {
             scene.targets.push(target);
         }
         let state = self.resources.owners[&mount.id()]

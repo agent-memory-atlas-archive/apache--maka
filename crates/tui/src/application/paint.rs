@@ -223,6 +223,26 @@ impl std::ops::Deref for Target {
     }
 }
 impl Target {
+    pub(super) fn keyboard_reachable(&self) -> bool {
+        if !self.area.is_empty() {
+            return true;
+        }
+        let mut bounds = self.area.bounds;
+        let mut revealed = None;
+        for viewport in self
+            .ancestors
+            .iter()
+            .rev()
+            .filter_map(|ancestor| ancestor.scroll.as_ref())
+        {
+            if viewport.area.width == 0 || viewport.area.height == 0 {
+                return false;
+            }
+            viewport.reveal_offset(&mut bounds);
+            revealed = Some(Placement::new(bounds, viewport.area.visible()));
+        }
+        revealed.is_some_and(|area| !area.is_empty())
+    }
     pub fn role(&self) -> (std::mem::Discriminant<TargetKind>, bool) {
         (
             std::mem::discriminant(&self.kind),
@@ -459,9 +479,7 @@ impl Slots<'_> {
                 })?
                 .visible(),
         );
-        if area.is_empty() {
-            return Ok(());
-        }
+        // Keep logical bounds for keyboard reveal; hit testing uses the clip.
         let target = Target {
             identity: TargetIdentity {
                 mount: self.parent.clone(),
@@ -476,11 +494,9 @@ impl Slots<'_> {
             kind: TargetKind::Native,
             ancestors: self.scene.as_ref().unwrap().ancestry.clone(),
         };
-        self.scene
-            .as_deref_mut()
-            .ok_or_else(|| maka_ui::Error::Invalid("cannot publish hits while measuring".into()))?
-            .targets
-            .push(target);
+        if target.keyboard_reachable() {
+            self.scene.as_deref_mut().unwrap().targets.push(target);
+        }
         Ok(())
     }
     pub(super) fn participant(
@@ -818,6 +834,13 @@ impl Presenter {
         let reading_focus = frames_current
             .then(|| self.reading_selection_focus(&scene.targets))
             .flatten();
+        // A Tab reveal may name a native child that had no presented geometry.
+        // Enter that child only after this successful flush publishes it.
+        let reveal = self
+            .focus
+            .as_ref()
+            .filter(|target| target.area.is_empty())
+            .cloned();
         self.focus = autofocus
             .or(restored)
             .or(reading_focus)
@@ -832,11 +855,32 @@ impl Presenter {
                     .iter()
                     .filter(|target| {
                         target.tab_index >= 0
+                            && (!target.area.is_empty()
+                                || matches!(target.kind, TargetKind::Item { .. }))
                             && !matches!(self.native_return, Some(super::focus::Return::Exited))
                     })
                     .min_by_key(|target| (target.tab_index == 0, target.tab_index))
                     .cloned()
             });
+        if let Some(target) = self
+            .focus
+            .as_ref()
+            .filter(|target| {
+                !target.area.is_empty()
+                    && !matches!(target.kind, TargetKind::Item { .. })
+                    && reveal.as_ref().is_some_and(|old| old.same(target))
+            })
+            .cloned()
+        {
+            match self.resources.enter_focus(&target) {
+                Ok(true) => {}
+                Ok(false) => self.focus = None,
+                Err(error) => {
+                    self.focus = None;
+                    self.report(&error);
+                }
+            }
+        }
         self.keyboard = scene.keyboard;
         self.scene = scene.targets;
         if frames_current {
@@ -1376,9 +1420,6 @@ impl Presenter {
                 let label = truncated_line(label, area.width);
                 let button_area =
                     Placement::new(CellRect::new(area.x, area.y, area.width, 1), area.clip);
-                if button_area.is_empty() {
-                    return Ok(());
-                }
                 let mut style = Style::default().fg(Color::Reset);
                 if let Some(foreground) = foreground {
                     style = style.fg(color(*foreground));
@@ -1421,6 +1462,9 @@ impl Presenter {
                         scope: scene.input_scope.clone(),
                     },
                 };
+                if !target.keyboard_reachable() {
+                    return Ok(());
+                }
                 if self.focus.as_ref().is_some_and(|old| old.same(&target)) {
                     style = style.add_modifier(Modifier::UNDERLINED);
                     if scene

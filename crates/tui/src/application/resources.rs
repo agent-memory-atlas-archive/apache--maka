@@ -270,7 +270,7 @@ impl Resources {
         }
     }
     /// Identity for an original published logical keyboard target. Pixel/native
-    /// resource admission remains `admits`; offscreen Item navigation only
+    /// resource admission remains `admits`; offscreen keyboard navigation only
     /// needs the live owner frozen in the successfully flushed target list.
     pub(super) fn owns(&self, target: &paint::TargetIdentity) -> bool {
         self.owners

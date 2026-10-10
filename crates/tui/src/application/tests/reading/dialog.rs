@@ -42,6 +42,96 @@ pub(super) fn root_count(presenter: &Presenter) -> u64 {
 }
 
 #[test]
+fn dialog_tab_reveals_controls_beyond_its_scroll_viewport() {
+    let mut body = column(
+        "body",
+        (0..12)
+            .map(|i| match i {
+                5 => json!({"kind":"choice","key":"field-5","label":"Palette",
+                    "options":[{"key":"maka","label":"Maka"}],"current":"maka",
+                    "foreground":0xffffff,"background":0,"border":0x888888,"selected":0x224466,"accent":0x4488ff}),
+                8 => json!({"kind":"component","key":"field-8","binding":"editor","member":0,"on":{},"props":{
+                    "initialText":"","placeholder":"Name","autoFocus":false,
+                    "appearance":support::brand_appearance()["textarea"],"accessibilityLabel":"Name",
+                    "readOnly":false,"disabled":false,"softWrap":true,"tabIndex":0,"terminalRows":{"min":1,"max":1}}}),
+                _ => json!({"kind":"button","key":format!("field-{i}"),"label":format!("Field {i}")}),
+            })
+            .collect(),
+    );
+    body["scroll"] = json!("manual");
+    body["layout"] = json!({"grow":1});
+    let scene = Rc::new(RefCell::new(dialog(
+        "modal",
+        true,
+        json!({"kind":"text","key":"bg","text":"preserved background","color":0xffffff}),
+        column(
+            "form",
+            vec![body, json!({"kind":"button","key":"done","label":"Done"})],
+        ),
+    )));
+    let (_runtime, mut presenter) = layout::native(
+        layout::View::InteractiveScene(scene.clone()),
+        Rc::new(Cell::new(true)),
+    );
+    draw(&mut presenter, 30, 10);
+    let editor = presenter
+        .application
+        .child_mount(&presenter.root, "field-8")
+        .unwrap()
+        .clone();
+    for i in 0..12 {
+        let expected = if i == 8 {
+            "observe".to_owned()
+        } else {
+            format!("field-{i}")
+        };
+        assert_eq!(presenter.focus.as_ref().unwrap().key, expected);
+        assert!(!presenter.focus.as_ref().unwrap().area.is_empty());
+        presenter.input(key(KeyCode::Tab)).unwrap();
+        if presenter.focus.as_ref().unwrap().area.is_empty() {
+            presenter.input(key(KeyCode::Enter)).unwrap();
+            presenter.input(Event::Paste("unpresented".into())).unwrap();
+            assert_eq!(
+                super::super::super::textarea::editor_owner(
+                    presenter.resources.owners[&editor.id()].state.as_ref()
+                )
+                .editor
+                .text(),
+                ""
+            );
+            assert_eq!(root_count(&presenter), 0);
+        }
+        draw(&mut presenter, 30, 10);
+    }
+    assert_eq!(presenter.focus.as_ref().unwrap().key, "done");
+    assert_eq!(root_count(&presenter), 0);
+    presenter.input(key(KeyCode::BackTab)).unwrap();
+    draw(&mut presenter, 30, 10);
+    assert_eq!(presenter.focus.as_ref().unwrap().key, "field-11");
+    // Removing the scroll ancestor makes clipped controls unreachable again.
+    scene.borrow_mut()["content"]["children"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("scroll");
+    let revision = presenter
+        .application
+        .frame(&presenter.root)
+        .unwrap()
+        .revision;
+    presenter
+        .application
+        .dispatch(&presenter.root, revision, "done", json!({"kind":"click"}))
+        .unwrap();
+    presenter.sync_native().unwrap();
+    draw(&mut presenter, 30, 10);
+    for key in ["field-5", "observe", "field-11"] {
+        assert!(!presenter.scene.iter().any(|target| target.key == key));
+    }
+    assert!(!presenter.focus.as_ref().unwrap().area.is_empty());
+    close(&mut presenter);
+}
+
+#[test]
 fn dialog_erases_crossing_wide_background_glyph_before_terminal_diff() {
     let background = (0..12)
         .map(|_| "aaaaa好中bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")

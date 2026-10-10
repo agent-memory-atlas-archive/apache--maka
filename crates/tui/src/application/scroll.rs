@@ -63,6 +63,15 @@ impl Viewport {
     pub fn end(&self) -> u32 {
         self.content.saturating_sub(self.area.height)
     }
+    pub fn reveal_offset(&self, row: &mut super::CellRect) -> u32 {
+        row.height = row.height.min(self.area.height);
+        let above = self.area.y - row.y;
+        let below = row.bottom() - self.area.bottom();
+        let delta = if above > 0 { -above } else { below.max(0) };
+        let next = (i64::from(self.offset) + delta).clamp(0, i64::from(self.end())) as u32;
+        row.y += i64::from(self.offset) - i64::from(next);
+        next
+    }
     pub fn at_end(&self) -> bool {
         let visible_rows = (i64::from(self.area.visible().bottom()) - self.area.y).max(0) as u32;
         self.offset.saturating_add(visible_rows) >= self.content
@@ -380,12 +389,7 @@ impl SceneState {
         };
         // The allocated viewport, not its physical clip: an outer scroller can
         // hide this entire group. Carry the adjusted logical row outward.
-        row.height = row.height.min(viewport.area.height);
-        let above = viewport.area.y - row.y;
-        let below = row.bottom() - viewport.area.bottom();
-        let delta = if above > 0 { -above } else { below.max(0) };
-        let next = (i64::from(viewport.offset) + delta).clamp(0, i64::from(viewport.end())) as u32;
-        row.y += i64::from(viewport.offset) - i64::from(next);
+        let next = viewport.reveal_offset(row);
         let changed = next != viewport.offset;
         if physical || changed {
             state.intent += 1;

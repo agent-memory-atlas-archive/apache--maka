@@ -668,7 +668,14 @@ impl Presenter {
                 }
                 return Ok(());
             }
-            let Some(native) = self.resources.input(&target, &event)? else {
+            // Logical offscreen controls remain in Tab order, but cannot edit
+            // or activate until their revealed geometry has actually flushed.
+            let native = if target.area.is_empty() {
+                Some(WidgetInput::Unhandled)
+            } else {
+                self.resources.input(&target, &event)?
+            };
+            let Some(native) = native else {
                 return Ok(());
             };
             let (native, submit_copy) = match native {
@@ -774,6 +781,9 @@ impl Presenter {
                 return Ok(());
             }
             if self.dismiss_escape(&event)? {
+                return Ok(());
+            }
+            if target.area.is_empty() {
                 return Ok(());
             }
             if !matches!(

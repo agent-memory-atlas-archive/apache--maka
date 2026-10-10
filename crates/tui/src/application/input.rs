@@ -186,6 +186,9 @@ impl Widget for Recipe {
         buffer: &mut Buffer,
     ) -> maka_ui::Result<()> {
         if area.is_empty() {
+            if !self.props.disabled {
+                slots.native_target("observe", area, self.props.tab_index, false)?;
+            }
             return Ok(());
         }
         let owner = slots.native_state::<Owner>()?;

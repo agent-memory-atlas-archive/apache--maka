@@ -240,9 +240,9 @@ impl Presenter {
         if self.application.is_retiring(&target.mount)
             || !self.application.mount_visible(&target.mount)
             || !self.target_admitted(&target)
-            || (matches!(target.kind, TargetKind::Item { .. })
+            || ((target.area.is_empty() || matches!(target.kind, TargetKind::Item { .. }))
                 && self.application.frame(&target.mount)?.revision != target.revision)
-            || !(if matches!(target.kind, TargetKind::Item { .. }) {
+            || !(if target.area.is_empty() || matches!(target.kind, TargetKind::Item { .. }) {
                 self.resources.owns(&target)
             } else {
                 self.resources.enter_focus(&target)?
