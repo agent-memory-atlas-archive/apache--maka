@@ -197,6 +197,12 @@ impl Fixture {
         #[cfg(windows)]
         let address = PathBuf::from(format!(r"\\.\pipe\maka-application-test-{nonce}"));
         let bootstrap = Bootstrap {
+            state_domain: Some(
+                maka_event_log::root::resolve(&self.host_path())
+                    .unwrap()
+                    .root_id()
+                    .into(),
+            ),
             native: Vec::new(),
             root: self.host_path(),
             deployment: self.host,

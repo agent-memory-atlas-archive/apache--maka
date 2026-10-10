@@ -100,7 +100,12 @@ impl HostEndpoint {
 #[derive(Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HostLocation {
-    Process { root: PathBuf },
+    Process {
+        root: PathBuf,
+        /// Optional launcher pin, checked by the child after acquiring the Root.
+        #[serde(default, rename = "stateDomain")]
+        state_domain: Option<String>,
+    },
     Cohost {},
 }
 
@@ -109,6 +114,12 @@ pub enum HostLocation {
 pub struct Grant {
     pub methods: BTreeSet<String>,
     pub recovery: bool,
+}
+pub(crate) fn valid_domain(domain: &str) -> bool {
+    domain.len() == 64
+        && domain
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 impl Configuration {
     pub fn read(path: &Path) -> Result<Self> {
@@ -140,6 +151,14 @@ impl Configuration {
                 || host.endpoints.len() > 128
             {
                 return Err("invalid or duplicate local Host declaration".into());
+            }
+            if let HostLocation::Process {
+                state_domain: Some(domain),
+                ..
+            } = &host.location
+                && !valid_domain(domain)
+            {
+                return Err("invalid Host State Root identity".into());
             }
             if host.native.len() > 128 {
                 return Err("maximum 128 native service grants".into());
@@ -273,7 +292,7 @@ impl Connections {
         for mut host in configuration.hosts {
             let consumers = consumers(&plan, &host.name);
             match &mut host.location {
-                HostLocation::Process { root } => {
+                HostLocation::Process { root, .. } => {
                     *root = std::path::absolute(&*root).map_err(|e| e.to_string())?
                 }
                 HostLocation::Cohost {} => {
@@ -381,7 +400,7 @@ impl Connections {
         source: DeploymentRef,
     ) -> Result<crate::transport::Catalogue> {
         match host.location.clone() {
-            HostLocation::Process { root } => {
+            HostLocation::Process { root, .. } => {
                 self.start_process(host, consumers, root, source).await
             }
             HostLocation::Cohost {} => self.start_cohost(host, consumers, source).await,
@@ -397,8 +416,13 @@ impl Connections {
         let configuration = host.clone();
         let nonce = Uuid::new_v4();
         let address = Address::create(nonce)?;
+        let state_domain = match &host.location {
+            HostLocation::Process { state_domain, .. } => state_domain.clone(),
+            HostLocation::Cohost {} => unreachable!("process location required"),
+        };
         let bootstrap = Bootstrap {
             root,
+            state_domain,
             deployment: host.deployment,
             namespaces: self.namespaces.clone(),
             source,

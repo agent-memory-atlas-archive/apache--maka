@@ -20,9 +20,12 @@
 use super::{HostError, Input, Package, RemoteObservation, read_json};
 use clap::{Args, ValueEnum};
 use maka_js_runtime::plugin::Vm;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeMap, io::Write, path::PathBuf};
+
+mod launch;
+pub(crate) use launch::Launch;
 
 struct Bundled {
     name: &'static str,
@@ -48,7 +51,7 @@ pub(crate) struct Compose {
     product: Product,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Sources {
     host: Input,

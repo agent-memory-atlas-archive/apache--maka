@@ -38,12 +38,38 @@ default still uses the original confirmed Settings operation.
 Select it at authoring time with `--product studio` (the default is `agent`). The
 Studio installation configuration uses the same fields and keys below, except
 `agent` is unnecessary. Both products use the same generic launch commands and
-checked source replacement; neither requires a launcher product-name branch.
+checked source replacement; neither requires a runtime product-name branch.
 Installing a root package does not switch products. Changing a running product
 requires a separately confirmed source update and original surface cleanup. A new
 root does not inherit the previous product’s native drafts. Changing Host location
 also requires explicit trusted connection configuration; source declarations do
 not grant access to a different Host.
+
+## Initialize and reopen a terminal product
+
+```sh
+maka application launch --root UI_ROOT --configuration installation.json
+# Subsequent launches, including recovery after an interrupted initialization:
+maka application launch --root UI_ROOT
+```
+
+First launch accepts the installation fields described below; `presentation` may
+be omitted and must be `tui` when supplied. `--product studio` selects Studio on
+first launch. Use distinct Host and UI Roots; missing or empty directories are
+initialized with the native Root format. Existing deployment identities are not
+adopted. Workspace paths, tools and permissions remain explicit.
+
+The launcher saves the exact checked preparation before committing Host,
+management and UI sources. A failed initialization can leave some commits in
+place; reopening resumes the original preparation and preserves any newer
+user-authored revision. Once complete, it discards preparation bytes and starts
+only from committed sources, independent of the original configuration file or
+newly bundled package versions. Do not repeat `--configuration` on reopen; edit
+installed sources through the existing management UI or application commands.
+The original Host Root identity is checked under the child’s actual lease.
+
+The bare CLI default remains unchanged pending full TUI experience acceptance.
+Desktop installation currently uses the explicit compose/commit/run path below.
 
 ## Build and author
 

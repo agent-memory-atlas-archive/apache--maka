@@ -31,12 +31,22 @@
 共享设置组件仍可替换。模型选择属于工作台本地状态，保存默认项仍通过原确认操作。
 
 编写来源时选择 `--product studio`，默认是 `agent`。工作台使用下述安装字段与 keys，
-不需要 `agent` 配置；两个产品使用相同的通用启动命令与组合替换机制，启动器不判断
-产品名称。安装根插件不会自动切换产品，运行中的替换需要单独确认来源变更，并完成
+不需要 `agent` 配置；两个产品使用相同的通用启动命令与组合替换机制，执行器不按
+产品名称来改变运行机制。安装根插件不会自动切换产品，运行中的替换需要单独确认来源变更，并完成
 旧界面实际清理；新根不继承旧产品的原生草稿。切换 Host 位置还需明确修改可信连接
 配置，来源中的声明本身不授权访问另一 Host。
 
-原生 CLI 已携带普通产品包与原组合代码，生成时无需 Node、源码目录或网络：
+原生 CLI 已携带普通产品包与原组合代码，无需 Node、源码目录或网络。首次启动 TUI 可以直接初始化并保存产品选择：
+
+```sh
+maka application launch --root UI_ROOT --configuration installation.json
+# 再次打开或恢复中断的初始化
+maka application launch --root UI_ROOT
+```
+
+首次配置仍明确工作目录、独立 Host Root、工具和权限；presentation 可省略，给出时必须为 tui。首次加 `--product studio` 选择 Studio。Host/UI Root 必须不同；不存在或空目录可初始化，不接管已有部署身份。提交任何应用前先持久保存原始源码、精确包字节和连接输入；失败可能留下部分提交，重开沿原输入恢复并保留用户已更新的版本。完成后清除初始化数据，以已提交源码启动，不再读取原配置文件或随新二进制同步包。重开只传 Root，不重复传 configuration。子进程取得原租约后核对 Host Root 身份。
+
+裸 CLI 默认入口仍等待完整 TUI 体验验收；Desktop 继续使用下述显式编写和提交路径。
 
 ```sh
 maka application compose --configuration installation.json --output product-source

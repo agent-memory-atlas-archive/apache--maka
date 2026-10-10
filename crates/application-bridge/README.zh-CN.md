@@ -181,3 +181,5 @@ Application 清理，再关闭唯一共享 SQL Store。失败保留原 owners，
 同时最多一个 load/approval/retention。退出停止新 adoption，等待原在途 worker，再关闭
 Connections 与 SQL；不 abort 交换，也不把 observer 失败当作清理回执。产品插件管理界面和
 完整视觉验收仍属后续产品工作。
+
+process location 可通过 `stateDomain` 固定原 Root 身份；子进程取得真实 Root 租约后、打开 Store 和执行恢复/应用前核对。该值只选择原 Root，不授予能力或代替原租约、peer 和逐方法授权。产品启动器将其与可信连接输入一同保存。

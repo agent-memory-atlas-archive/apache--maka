@@ -42,6 +42,8 @@ use serde::Serialize;
 pub(super) enum Command {
     /// Author an ordinary bundled product without Node or a source checkout.
     Compose(product::Compose),
+    /// Initialize or reopen an ordinary bundled terminal product.
+    Launch(product::Launch),
     /// Check exact package revisions, template overrides, variants and capability bindings.
     Check(Check),
     /// Emit authoring schemas from the actual runtime wire types.
@@ -139,6 +141,7 @@ impl Command {
     async fn run_inner(self) -> Result<(), HostError> {
         match self {
             Self::Compose(args) => args.run().await?,
+            Self::Launch(args) => args.run().await?,
             Self::Serve(args) => serve::run(args).await?,
             Self::Schema => println!("{}", serde_json::to_string_pretty(&schema::catalog())?),
             Self::InspectPackage(args) => {
@@ -189,75 +192,14 @@ impl Command {
                 println!("{}", serde_json::to_string_pretty(&loaded.source)?);
             }
             Self::Run(args) => {
-                // Keep the foreground VM on one dedicated blocking owner, with
-                // no deeply nested CLI async stack under V8 initialization.
-                let scheduler = tokio::runtime::Handle::current();
                 let configuration = args
                     .connections
                     .as_deref()
                     .map(maka_application_bridge::Configuration::read)
                     .transpose()?
                     .unwrap_or_default();
-                let namespaces = maka_event_log::root::RootNamespaces::for_current_account()?;
-                let executable = maka_application_bridge::HostExecutable::new(
-                    std::env::current_exe()?,
-                    vec!["application".into(), "serve".into()],
-                )?;
-                let cohost_native = serve::native()?;
-                let store = std::sync::Arc::new(open_store(args.root).await?);
-                let mut connections = match maka_application_bridge::Connections::prepare(
-                    store.clone(),
-                    args.deployment,
-                    PresentationTarget::Tui,
-                    configuration,
-                    namespaces,
-                    executable,
-                    cohost_native,
-                )
-                .await
-                {
-                    Ok(connections) => connections,
-                    Err(error) => {
-                        store.drain().await;
-                        return Err(error.into());
-                    }
-                };
-                if let Err(error) = connections.start().await {
-                    connections.drain().await;
-                    store.drain().await;
-                    return Err(error.into());
-                }
-                let source = connections.source().clone();
-                let registrations = connections.registrations();
-                let foreground_store = store.clone();
-                let connections = Arc::new(tokio::sync::Mutex::new(connections));
-                let updates = maka_application_bridge::Updates::new(
-                    store.clone(),
-                    source.clone(),
-                    connections.clone(),
-                    scheduler.clone(),
-                )
-                .map_err(HostError::from)?;
-                let result = tokio::task::spawn_blocking(move || -> Result<(), HostError> {
-                    maka_tui::application::run(
-                        foreground_store,
-                        source,
-                        registrations,
-                        scheduler,
-                        updates,
-                    )
-                    .map_err(Into::into)
-                })
-                .await;
-                // A panic is not a terminal/module cleanup receipt. Preserve
-                // both actual owners if the foreground execution was lost.
-                if let Err(error) = &result {
-                    eprintln!("terminal execution cleanup unconfirmed: {error}");
-                    std::future::pending::<()>().await;
-                }
-                connections.lock().await.drain().await;
-                store.drain().await;
-                result??;
+                let store = Arc::new(open_store(args.root).await?);
+                run_tui(store, args.deployment, configuration).await?;
             }
         }
         Ok(())
@@ -336,4 +278,84 @@ async fn open_store(root: PathBuf) -> Result<maka_event_log::EventLog, HostError
     })
     .await??;
     Ok(maka_application_bridge::open_store(std::sync::Arc::new(owner)).await?)
+}
+
+async fn run_tui(
+    store: Arc<maka_event_log::EventLog>,
+    deployment: uuid::Uuid,
+    configuration: maka_application_bridge::Configuration,
+) -> Result<(), HostError> {
+    // Keep the foreground VM on one dedicated blocking owner, with
+    // no deeply nested CLI async stack under V8 initialization.
+    let scheduler = tokio::runtime::Handle::current();
+    let setup = (|| -> Result<_, HostError> {
+        let namespaces = maka_event_log::root::RootNamespaces::for_current_account()?;
+        let executable = maka_application_bridge::HostExecutable::new(
+            std::env::current_exe()?,
+            vec!["application".into(), "serve".into()],
+        )?;
+        let cohost_native = serve::native()?;
+        Ok((namespaces, executable, cohost_native))
+    })();
+    let (namespaces, executable, cohost_native) = match setup {
+        Ok(value) => value,
+        Err(error) => {
+            store.drain().await;
+            return Err(error);
+        }
+    };
+    let mut connections = match maka_application_bridge::Connections::prepare(
+        store.clone(),
+        deployment,
+        PresentationTarget::Tui,
+        configuration,
+        namespaces,
+        executable,
+        cohost_native,
+    )
+    .await
+    {
+        Ok(connections) => connections,
+        Err(error) => {
+            store.drain().await;
+            return Err(error.into());
+        }
+    };
+    if let Err(error) = connections.start().await {
+        connections.drain().await;
+        store.drain().await;
+        return Err(error.into());
+    }
+    let source = connections.source().clone();
+    let registrations = connections.registrations();
+    let foreground_store = store.clone();
+    let connections = Arc::new(tokio::sync::Mutex::new(connections));
+    let updates = match maka_application_bridge::Updates::new(
+        store.clone(),
+        source.clone(),
+        connections.clone(),
+        scheduler.clone(),
+    ) {
+        Ok(updates) => updates,
+        Err(error) => {
+            connections.lock().await.drain().await;
+            store.drain().await;
+            return Err(error.into());
+        }
+    };
+    let result = tokio::task::spawn_blocking(move || -> Result<(), HostError> {
+        maka_tui::application::run(foreground_store, source, registrations, scheduler, updates)
+            .map_err(Into::into)
+    })
+    .await;
+    // A panic is not a terminal/module cleanup receipt. Preserve
+    // both actual owners if the foreground execution was lost.
+    if let Err(error) = &result {
+        eprintln!("terminal execution cleanup unconfirmed: {error}");
+        std::future::pending::<()>().await;
+    }
+    connections.lock().await.drain().await;
+    store.drain().await;
+    result??;
+    Ok(())
 }

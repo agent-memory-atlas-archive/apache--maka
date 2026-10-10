@@ -39,6 +39,9 @@ npm install --global @maka-agent/cli@rust-preview
 
 原生 CLI 同时携带普通 Agent/Studio 产品包。`maka application compose --configuration installation.json --output product-source` 可生成已校验的 Host/UI 输入及可安装包，无需源码目录或运行时 Node。配置与安装步骤见[产品说明](../agent-product/README.zh-CN.md)。
 
+`maka application launch --root UI_ROOT --configuration installation.json` 初始化并打开 TUI 产品；以后仅用 `maka application launch --root UI_ROOT` 重开，也可恢复部分完成的初始化。工作目录及权限仍须显式配置，见[产品指南](../agent-product/README.zh-CN.md)。
+
+
 ## 构建与发布
 
 通过 `just source <version>` 从已提交代码生成源码候选包。各平台分别运行：

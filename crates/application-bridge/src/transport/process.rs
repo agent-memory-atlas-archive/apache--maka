@@ -45,6 +45,8 @@ const BOOTSTRAP_LIMIT: usize = 512 * 1024;
 #[serde(deny_unknown_fields)]
 pub struct Bootstrap {
     pub root: PathBuf,
+    #[serde(default)]
+    pub state_domain: Option<String>,
     pub deployment: Uuid,
     pub namespaces: RootNamespaces,
     pub source: DeploymentRef,
@@ -57,6 +59,13 @@ pub struct Bootstrap {
 impl Bootstrap {
     pub fn validate(&self) -> Result<()> {
         Peer::new(self.source.clone(), self.consumers.clone())?;
+        if self
+            .state_domain
+            .as_deref()
+            .is_some_and(|domain| !crate::connections::valid_domain(domain))
+        {
+            return Err("invalid Host State Root identity".into());
+        }
         if self.deployment.is_nil()
             || self.nonce.is_nil()
             || self.endpoints.is_empty()
@@ -329,6 +338,13 @@ pub async fn serve(native: NativeRegistry) -> Result<()> {
         let owner = Arc::new(
             RootOwner::open(&bootstrap.root, &bootstrap.namespaces).map_err(|e| e.to_string())?,
         );
+        if bootstrap
+            .state_domain
+            .as_deref()
+            .is_some_and(|domain| owner.root_id() != domain)
+        {
+            return Err("original Host State Root identity changed".into());
+        }
         let store = match EventLog::for_root(owner).await {
             Ok(store) => Arc::new(store),
             Err(error @ maka_event_log::StoreError::StartupCleanupFailed { .. }) => {

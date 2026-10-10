@@ -23,6 +23,7 @@ mod source;
 pub use source::SourceSnapshot;
 pub mod checkpoints;
 pub mod intents;
+pub mod launch;
 pub mod operations;
 use crate::{EventLog, StoreError};
 pub use changes::DeploymentChanges;

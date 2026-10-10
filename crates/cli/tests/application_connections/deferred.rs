@@ -34,6 +34,7 @@ fn secondary(f: &Fixture, configuration: &mut Configuration) {
     let mut host = configuration.hosts[0].clone();
     host.name = "secondary".into();
     host.location = HostLocation::Process {
+        state_domain: None,
         root: f.directory.path().join("secondary"),
     };
     configuration.hosts.push(host);

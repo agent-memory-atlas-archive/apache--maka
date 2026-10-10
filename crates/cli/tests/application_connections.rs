@@ -116,6 +116,12 @@ impl Fixture {
                 native: Vec::new(),
                 name: "local".into(),
                 location: HostLocation::Process {
+                    state_domain: Some(
+                        maka_event_log::root::resolve(&self.directory.path().join("host"))
+                            .unwrap()
+                            .root_id()
+                            .into(),
+                    ),
                     root: self.directory.path().join("host"),
                 },
                 deployment: self.host,
@@ -476,6 +482,7 @@ fn failed_second_child_initialization_drains_the_first_actual_host() {
     let mut second = f.configuration(true, true).hosts.pop().unwrap();
     second.name = "secondary".into();
     second.location = HostLocation::Process {
+        state_domain: None,
         root: f.directory.path().join("absent"),
     };
     configuration.hosts.push(second);
@@ -661,5 +668,20 @@ fn invalid_actual_endpoint_candidate_does_not_revoke_original_child_approval() {
     assert_eq!(action(&f, &mut app, &mount, "write")["status"], "operation");
     f.blocked("host");
     stop(&f, app, &mount, &mut connections);
+    f.timer.block_on(f.caller.shutdown()).unwrap();
+}
+
+#[test]
+fn pinned_host_domain_is_checked_by_the_owned_child_before_application_start() {
+    let f = Fixture::new();
+    let mut configuration = f.configuration(true, true);
+    if let HostLocation::Process { state_domain, .. } = &mut configuration.hosts[0].location {
+        *state_domain = Some("f".repeat(64));
+    }
+    let mut connections = f.prepare(configuration).unwrap();
+    assert!(f.timer.block_on(connections.start()).is_err());
+    assert!(connections.registrations().is_empty());
+    f.timer.block_on(connections.close()).unwrap();
+    f.reopened("host");
     f.timer.block_on(f.caller.shutdown()).unwrap();
 }

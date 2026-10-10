@@ -267,3 +267,9 @@ leave the current frontend usable. Exit stops new adoption and waits for the ori
 in-flight worker before Connections and SQL drain; it never aborts an exchange or
 turns an observer failure into a cleanup receipt. Product plugin-management screens
 and end-to-end visual acceptance remain separate product work.
+
+A process location may pin `stateDomain` to the selected Root identity. The child
+checks this value after acquiring its actual Root lease and before opening the
+store or running recovery/application code. The value selects an original Root;
+it grants no capabilities and cannot replace the lease, peer or method checks.
+The product launcher persists this pin with its trusted connection input.
