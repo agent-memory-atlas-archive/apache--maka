@@ -1398,6 +1398,11 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
       state.notice = 'unknown';
       return;
     }
+    if (started.kind === 'rejected') {
+      state.notice =
+        started.reason === 'input_too_large' ? 'skillInputTooLarge' : 'skillInputUnavailable';
+      return;
+    }
     state.attachments.files = state.attachments.files.filter(
       (file) =>
         file.sessionId !== request.sessionId ||

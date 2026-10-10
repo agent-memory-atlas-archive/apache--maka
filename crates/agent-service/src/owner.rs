@@ -26,6 +26,7 @@ use maka_agent::{Engine, RunError, RunInput, RunWork};
 mod attachments;
 mod interactions;
 mod queue;
+mod skills;
 use maka_config::ConfigurationStore;
 use maka_event_log::{EventLog, sessions::SessionRecord};
 use maka_model::ModelExecutor;
@@ -95,6 +96,7 @@ pub(crate) struct Owner {
     engine: Engine,
     tools: maka_tools::ToolCatalog,
     tool_basis: Vec<crate::tools::SelectedTool>,
+    skills: Option<skills::Library>,
     runs: Mutex<Runs>,
     permits: Arc<Semaphore>,
     upload_capacity: Arc<Semaphore>,
@@ -153,6 +155,7 @@ impl Owner {
             activation: context.activation().epoch().to_string(),
             revision: context.package().revision.clone(),
         };
+        let skills = skills::Library::select(&context, &settings, revision.clone())?;
         // Acquire the only asynchronous persistent child last. No fallible
         // export preparation remains after the actual native owner is created.
         let configuration = Arc::new(
@@ -175,6 +178,7 @@ impl Owner {
             engine,
             tools,
             tool_basis,
+            skills,
             runs: Mutex::default(),
             workers,
             stop,
@@ -404,6 +408,7 @@ impl Owner {
         self: &Arc<Self>,
         input: Send,
         operation: &maka_plugin_core::operation::RecoveryRef,
+        parent: &maka_plugins::call::Scope,
     ) -> Result<crate::contract::SendResult, String> {
         let Send {
             session_id: id,
@@ -472,15 +477,30 @@ impl Owner {
         });
         let mut message: MessageInput = text.into();
         message.attachments = self.attachment_refs(&id, attachments).await?;
+        let unprepared = message;
+        let (message, required_tools) =
+            match self.prepare_skills(unprepared.clone(), parent).await? {
+                skills::Input::Ready {
+                    message,
+                    required_tools,
+                } => (message, required_tools),
+                skills::Input::Rejected { reason, skills } => {
+                    return Ok(SendResult::Rejected {
+                        session_id: id,
+                        reason,
+                        skills,
+                    });
+                }
+            };
         let delivered = RootSourceMessage {
             message: DeliveredMessage {
                 message_id: format!("m_{identity}"),
-                submitted_content_digest: message
+                submitted_content_digest: unprepared
                     .content_digest()
                     .map_err(|_| "agent_message_invalid")?,
                 content: message.clone(),
             },
-            unprepared_content: message.clone(),
+            unprepared_content: unprepared,
             submitted_placement: if queued.is_some() {
                 Placement::NextTurn
             } else {
@@ -501,7 +521,7 @@ impl Owner {
             invocation: invocation.clone(),
             steering_invocation: None,
             source: delivered.clone(),
-            required_tools: Default::default(),
+            required_tools,
             admitted_at: now(),
         };
         if queued.is_some() {
@@ -529,18 +549,18 @@ impl Owner {
             }
         }
         let permit = permit.expect("new worker owns capacity");
-        self.store
-            .admit_message(admission)
-            .await
-            .map_err(|_| "agent_admission_failed")?;
-        let cancellation = self.stop.child_token();
         let input = self.input(
             invocation.clone(),
             source,
             prepared,
             basis.clone(),
             delivered,
-        );
+        )?;
+        self.store
+            .admit_message(admission)
+            .await
+            .map_err(|_| "agent_admission_failed")?;
+        let cancellation = self.stop.child_token();
         let running = match self.engine.start(input, cancellation.clone()).await {
             Ok(running) => running,
             Err(error) => {

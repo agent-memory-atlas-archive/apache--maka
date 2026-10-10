@@ -110,6 +110,7 @@ impl Owner {
         &self,
         input: QueueMutation,
         operation: &maka_plugin_core::operation::RecoveryRef,
+        parent: &maka_plugins::call::Scope,
     ) -> Result<QueueMutationResult, String> {
         let runs = self.runs.lock().await;
         let rejected = |reason| Ok(QueueMutationResult::Rejected { reason });
@@ -171,12 +172,22 @@ impl Owner {
                     return rejected(QueueRejection::InvalidEdit);
                 }
                 content.text = message;
-                let message = content;
+                let unprepared = content;
+                let (message, required_tools) = match self
+                    .prepare_skills(unprepared.clone(), parent)
+                    .await?
+                {
+                    skills::Input::Ready {
+                        message,
+                        required_tools,
+                    } => (message, required_tools),
+                    skills::Input::Rejected { .. } => return rejected(QueueRejection::InvalidEdit),
+                };
                 QueueEdit::Update {
                     message_id,
-                    content: Box::new(message.clone()),
-                    unprepared_content: Box::new(message),
-                    required_tools: Default::default(),
+                    content: Box::new(message),
+                    unprepared_content: Box::new(unprepared),
+                    required_tools,
                 }
             }
             QueueAction::Reorder { message_ids } => QueueEdit::Reorder { message_ids },

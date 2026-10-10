@@ -398,7 +398,7 @@ impl Handler for Agent {
                 "send" => {
                     let input: Send = decode(input)?;
                     let operation = context.operation().ok_or("agent_mutation_required")?;
-                    encode(owner.send(input, operation).await?)
+                    encode(owner.send(input, operation, context.scope()).await?)
                 }
                 "stop" => {
                     let input: Stop = decode(input)?;
@@ -416,7 +416,11 @@ impl Handler for Agent {
                 "queueMessage" => encode(owner.queue_message(decode(input)?).await?),
                 "editQueue" => {
                     let operation = context.operation().ok_or("agent_mutation_required")?;
-                    encode(owner.edit_queue(decode(input)?, operation).await?)
+                    encode(
+                        owner
+                            .edit_queue(decode(input)?, operation, context.scope())
+                            .await?,
+                    )
                 }
                 "pendingInteractions" => {
                     let input: SessionRead = decode(input)?;

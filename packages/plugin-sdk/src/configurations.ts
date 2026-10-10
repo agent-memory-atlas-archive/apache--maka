@@ -147,6 +147,14 @@ export const configurations = {
     title: 'AgentConfiguration',
     type: 'object',
     properties: {
+      skillLibrary: {
+        description:
+          'Explicit Library import for immutable skill input preparation and metadata.\nThis does not select model tools or confer a service grant.',
+        type: ['string', 'null'],
+        minLength: 1,
+        maxLength: 256,
+        default: null,
+      },
       permissions: {
         description: 'Initial policy within the selected workspace capability.',
         $ref: '#/$defs/AgentWorkspacePermissions',

@@ -121,6 +121,9 @@ export type RuntimeProtocol =
   | SkillModelLoad
   | SkillModelSearchResult
   | SkillModelLoadResult
+  | SkillPrepare
+  | SkillPreparation
+  | SkillPreparationRecord
   | AgentList
   | AgentCreate
   | AgentCreated
@@ -1824,6 +1827,24 @@ export type SkillFailureReason =
   | 'host_incompatible'
   | 'resolution_failed';
 export type TooManyRequests = 'too_many_requests';
+export type SkillPreparation =
+  | {
+      /**
+       * None preserves the original message exactly.
+       */
+      text?: string | null;
+      record: SkillPreparationRecord;
+      requiredTools: string[];
+      kind: 'ready';
+    }
+  | {
+      invocation: SkillInvocationResult;
+      kind: 'blocked';
+    }
+  | {
+      kind: 'input_too_large';
+    };
+export type SkillInvocationFailure = SkillRequestFailure | SkillOverflowFailure;
 export type AgentSessionFilter = 'all' | 'needs_you';
 export type AgentSessionPosition =
   | {
@@ -2314,6 +2335,12 @@ export type QuestionResult =
 export type AgentSendResult =
   | {
       sessionId: string;
+      reason: AgentSkillInputRejection;
+      skills?: SkillInvocationResult | null;
+      kind: 'rejected';
+    }
+  | {
+      sessionId: string;
       invocationId: string;
       kind: 'started';
     }
@@ -2323,6 +2350,7 @@ export type AgentSendResult =
       revision: number;
       kind: 'queued';
     };
+export type AgentSkillInputRejection = 'skills_unavailable' | 'input_too_large';
 export type AgentDeliveryFact =
   | {
       kind: 'opened';
@@ -4101,6 +4129,11 @@ export interface TextChunk {
 }
 export interface AgentConfiguration {
   /**
+   * Explicit Library import for immutable skill input preparation and metadata.
+   * This does not select model tools or confer a service grant.
+   */
+  skillLibrary?: string | null;
+  /**
    * Initial policy within the selected workspace capability.
    */
   permissions: AgentWorkspacePermissions;
@@ -4669,6 +4702,36 @@ export interface SkillMetadata {
   source: SkillSource;
   metadataTruncated: boolean;
   [k: string]: unknown | undefined;
+}
+export interface SkillPrepare {
+  message: string;
+  /**
+   * Actual selected tools bound to this Library; these names grant no access.
+   */
+  loadTool?: string | null;
+  searchTool?: string | null;
+}
+export interface SkillPreparationRecord {
+  revision: string;
+  metadataPrompt: string;
+  invocation: SkillInvocationResult;
+}
+export interface SkillInvocationResult {
+  loaded: LoadedSkill[];
+  failed: SkillInvocationFailure[];
+  receipts: SkillInvocationReceipt[];
+}
+export interface LoadedSkill {
+  id: string;
+  name: string;
+}
+export interface SkillRequestFailure {
+  request: string;
+  reason: SkillFailureReason;
+}
+export interface SkillOverflowFailure {
+  reason: TooManyRequests;
+  requestLimit: number;
 }
 export interface AgentList {
   filter: AgentSessionFilter;

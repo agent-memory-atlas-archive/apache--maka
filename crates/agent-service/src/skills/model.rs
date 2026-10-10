@@ -77,6 +77,11 @@ impl Library {
             .map_err(|_| "skills_encoding_failed")?,
         );
         match method {
+            "prepare" => {
+                let input: Prepare =
+                    serde_json::from_value(request.input).map_err(|_| "skills_query_invalid")?;
+                super::preparation::prepare(&catalog, revision, input)
+            }
             "search" => {
                 let input: ModelSearch =
                     serde_json::from_value(request.input).map_err(|_| "skills_query_invalid")?;

@@ -138,6 +138,9 @@ pub(super) struct Setup {
     files: Option<&'static str>,
     processes: bool,
     skills: Option<std::path::PathBuf>,
+    prepare_skills: bool,
+    skill_tools: bool,
+    preparation: Option<Arc<PreparationProbe>>,
     images: Option<images::Source>,
     confirmation: contract::ToolConfirmation,
 }
@@ -157,6 +160,9 @@ impl Setup {
             files: None,
             processes: false,
             skills: None,
+            prepare_skills: false,
+            skill_tools: true,
+            preparation: None,
             images: None,
             confirmation: contract::ToolConfirmation::Preapproved,
         }
@@ -172,6 +178,9 @@ impl Setup {
             files: None,
             processes: false,
             skills: None,
+            prepare_skills: false,
+            skill_tools: true,
+            preparation: None,
             images: None,
             confirmation: contract::ToolConfirmation::Preapproved,
         }
@@ -193,6 +202,9 @@ impl Setup {
             files: None,
             processes: false,
             skills: None,
+            prepare_skills: false,
+            skill_tools: true,
+            preparation: None,
             images: None,
             confirmation: contract::ToolConfirmation::Preapproved,
         }
@@ -208,6 +220,17 @@ impl Setup {
             skills: Some(path),
             ..Self::javascript()
         }
+    }
+    pub(super) fn skill_preparation(path: std::path::PathBuf, tools: bool) -> Self {
+        Self {
+            skills: Some(path),
+            prepare_skills: true,
+            skill_tools: tools,
+            ..Self::javascript()
+        }
+    }
+    pub(super) fn skill_import(&self) -> Option<String> {
+        self.prepare_skills.then(|| "service".into())
     }
     pub(super) fn processes() -> Self {
         Self {
@@ -226,16 +249,23 @@ impl Setup {
         self
     }
     pub(super) fn selections(&self) -> Vec<contract::ServiceTool> {
+        if self.skills.is_some() && !self.skill_tools {
+            return vec![];
+        }
         if self.skills.is_some() {
-            [("search", "SkillSearch"), ("load", "Skill")]
-                .into_iter()
-                .map(|(method, name)| contract::ServiceTool {
-                    input: contract::ToolInput::Skill,
-                    name: name.into(),
-                    method: method.into(),
-                    ..self.selection()
-                })
-                .collect()
+            if self.prepare_skills {
+                [("search", "FindGuide"), ("load", "LoadGuide")]
+            } else {
+                [("search", "SkillSearch"), ("load", "Skill")]
+            }
+            .into_iter()
+            .map(|(method, name)| contract::ServiceTool {
+                input: contract::ToolInput::Skill,
+                name: name.into(),
+                method: method.into(),
+                ..self.selection()
+            })
+            .collect()
         } else if self.processes {
             [
                 ("execute", "Execute"),
@@ -483,7 +513,29 @@ impl Setup {
         }
     }
     pub(super) fn provide(&self, registry: &mut NativeRegistry) {
-        if self.skills.is_some() {
+        if let Some(probe) = &self.preparation {
+            let probe = probe.clone();
+            registry
+                .insert(
+                    crate::skills::IMPLEMENTATION.into(),
+                    Arc::new(move |_, _| {
+                        let probe = probe.clone();
+                        Box::pin(async move {
+                            NativeActivation {
+                                exports: Ok(BTreeMap::from([(
+                                    crate::skills::EXPORT.into(),
+                                    Published {
+                                        contract: crate::skills::contract(),
+                                        value: probe.clone() as Arc<dyn Handler>,
+                                    },
+                                )])),
+                                owner: probe,
+                            }
+                        })
+                    }),
+                )
+                .unwrap();
+        } else if self.skills.is_some() {
             crate::skills::provide(registry).unwrap();
         }
         if let Some(source) = &self.images {
@@ -538,6 +590,7 @@ impl Setup {
                         .selections()
                         .into_iter()
                         .map(|tool| tool.method)
+                        .chain(self.prepare_skills.then(|| "prepare".into()))
                         .collect(),
                     recovery: true,
                 }]
@@ -1427,4 +1480,85 @@ async fn queue_promotion_steers_original_run_at_the_next_step_without_a_successo
         fixture.app.shutdown().await.unwrap();
         fixture.config.shutdown().await.unwrap();
     }).await.unwrap();
+}
+
+// The provider finishes its physical work after cancellation, independently of the observer.
+struct PreparationProbe {
+    entered: Arc<Semaphore>,
+    cancelled: Arc<Semaphore>,
+    release: Arc<Semaphore>,
+    cleanup_failed: bool,
+}
+impl Handler for PreparationProbe {
+    fn call(
+        &self,
+        method: String,
+        _: Value,
+        context: Context,
+    ) -> BoxFuture<'static, Result<Value, String>> {
+        assert_eq!(method, "prepare");
+        let mut ticket = context.scope().resources.reserve().unwrap();
+        ticket.start();
+        self.entered.add_permits(1);
+        let failed = self.cleanup_failed;
+        let cancelled = self.cancelled.clone();
+        let release = self.release.clone();
+        Box::pin(async move {
+            context.scope().cancellation.cancelled().await;
+            cancelled.add_permits(1);
+            release.acquire().await.unwrap().forget();
+            if failed {
+                ticket.complete(Err("preparation cleanup failed".into()));
+            } else {
+                ticket.complete(Ok(()));
+            }
+            Err("preparation cancelled".into())
+        })
+    }
+}
+impl NativeOwner for PreparationProbe {
+    fn close(&self) -> BoxFuture<'static, Result<(), String>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+#[tokio::test]
+async fn skill_preparation_parent_scope_owns_work_after_observer_loss_and_cleanup_failure() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        for failed in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let probe = Arc::new(PreparationProbe {
+                entered: Arc::new(Semaphore::new(0)),
+                cancelled: Arc::new(Semaphore::new(0)),
+                release: Arc::new(Semaphore::new(0)),
+                cleanup_failed: failed,
+            });
+            let mut setup = Setup::skill_preparation(dir.path().into(), false);
+            setup.preparation = Some(probe.clone());
+            let f =
+                Fixture::with_services("http://127.0.0.1:9/v1", 1, None, None, Some(setup)).await;
+            let parent = scope(&f.issuer, true);
+            let owner = f.owner.clone();
+            let request = parent.clone();
+            let observer =
+                tokio::spawn(async move { owner.prepare_skills("hello".into(), &request).await });
+            probe.entered.acquire().await.unwrap().forget();
+            observer.abort();
+            assert!(matches!(observer.await, Err(error) if error.is_cancelled()));
+            let cleanup = tokio::spawn(async move { parent.finish().await });
+            probe.cancelled.acquire().await.unwrap().forget();
+            assert!(
+                !cleanup.is_finished(),
+                "original parent cannot settle while provider work remains"
+            );
+            probe.release.add_permits(1);
+            assert_eq!(cleanup.await.unwrap().is_err(), failed);
+            assert_eq!(f.owner.permits.available_permits(), 1);
+            // The same physical cleanup failure also remains visible to the Host owner.
+            assert_eq!(f.app.shutdown().await.is_err(), failed);
+            f.config.shutdown().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
 }

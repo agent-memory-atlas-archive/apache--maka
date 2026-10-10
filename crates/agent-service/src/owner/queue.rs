@@ -251,7 +251,7 @@ impl Owner {
                 prepared,
                 basis.clone(),
                 entry.source.clone(),
-            ),
+            )?,
             basis,
         ))
     }
@@ -262,10 +262,11 @@ impl Owner {
         prepared: maka_agent::PreparedModel,
         basis: MessageBasis,
         delivered: RootSourceMessage,
-    ) -> RunInput {
+    ) -> Result<RunInput, String> {
         let binding = source.accepted.binding.clone();
         let thinking_level = source.accepted.thinking_level;
-        RunInput {
+        let system_prompt = skills::prompt(&delivered.message.content)?;
+        Ok(RunInput {
             model_source: Some(Arc::new(source)),
             model_revision: Some(prepared.revision),
             provider_id: prepared.provider_id,
@@ -288,7 +289,7 @@ impl Owner {
                 tool_mode: ToolMode::Direct,
                 model: Some(binding),
                 thinking_level,
-                system_prompt: None,
+                system_prompt,
                 tool_composition: None,
             },
             work: RunWork::Message {
@@ -298,7 +299,7 @@ impl Owner {
                 max_steps: basis.max_steps,
                 allow_prior_unknown: false,
             },
-        }
+        })
     }
     async fn fail_pending(
         &self,

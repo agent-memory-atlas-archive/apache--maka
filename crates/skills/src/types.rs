@@ -24,32 +24,32 @@ mod validation;
 pub use receipt::{SkillFailedReceipt, SkillInvocationReceipt, SkillLoadedReceipt};
 pub use validation::SkillValidationCode;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SkillInvocationResult {
     pub loaded: Vec<LoadedSkill>,
     pub failed: Vec<SkillInvocationFailure>,
     pub receipts: Vec<SkillInvocationReceipt>,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LoadedSkill {
     pub id: String,
     pub name: String,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum SkillInvocationFailure {
     Request(SkillRequestFailure),
     Overflow(SkillOverflowFailure),
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SkillRequestFailure {
     pub request: String,
     pub reason: SkillFailureReason,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SkillOverflowFailure {
     pub reason: TooManyRequests,

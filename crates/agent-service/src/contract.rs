@@ -36,6 +36,11 @@ pub use permissions::*;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentConfiguration")]
 pub struct Configuration {
+    /// Explicit Library import for immutable skill input preparation and metadata.
+    /// This does not select model tools or confer a service grant.
+    #[serde(default)]
+    #[schemars(length(min = 1, max = 256))]
+    pub skill_library: Option<String>,
     /// Initial policy within the selected workspace capability.
     pub permissions: WorkspacePermissions,
     /// Installation-published directories, captured without creating workspace markers.
@@ -433,6 +438,11 @@ pub struct SessionPage {
 )]
 #[schemars(rename = "AgentSendResult")]
 pub enum SendResult {
+    Rejected {
+        session_id: String,
+        reason: SkillInputRejection,
+        skills: Option<maka_skills::SkillInvocationResult>,
+    },
     Started {
         session_id: String,
         invocation_id: String,
@@ -442,6 +452,13 @@ pub enum SendResult {
         message_id: String,
         revision: u64,
     },
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename = "AgentSkillInputRejection")]
+pub enum SkillInputRejection {
+    SkillsUnavailable,
+    InputTooLarge,
 }
 #[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

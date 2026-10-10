@@ -55,7 +55,8 @@ async fn queued_followup_uses_original_worker_capacity_and_a_new_invocation() {
         drop(prepared);
         let gate = fixture.owner.runs.lock().await;
         let completed = gate.controls[&session].cancellation.clone();
-        let mut tail = Box::pin(fixture.owner.send(Send { session_id: session.clone(), message: "tail followup".into(), model: selection, thinking_level: None, attachments: vec![] }, &reference));
+        let parent = scope(&fixture.issuer, true);
+        let mut tail = Box::pin(fixture.owner.send(Send { session_id: session.clone(), message: "tail followup".into(), model: selection, thinking_level: None, attachments: vec![] }, &reference, &parent));
         assert!(futures_util::poll!(tail.as_mut()).is_pending());
         response(&mut second_socket).await;
         completed.cancelled().await;
@@ -131,6 +132,7 @@ async fn stopping_original_run_retracts_queue_and_fences_tail_admission() {
             gate.controls[&session].invocation.invocation_id,
             first["invocationId"]
         );
+        let parent = scope(&fixture.issuer, true);
         let mut tail = Box::pin(fixture.owner.send(
             Send {
                 session_id: session.clone(),
@@ -140,6 +142,7 @@ async fn stopping_original_run_retracts_queue_and_fences_tail_admission() {
                 attachments: vec![],
             },
             &tail_reference,
+            &parent,
         ));
         assert!(futures_util::poll!(tail.as_mut()).is_pending());
         drop(gate);

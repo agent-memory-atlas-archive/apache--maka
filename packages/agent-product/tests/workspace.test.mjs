@@ -691,6 +691,7 @@ test('both product compositions use actual immutable package refs and check in t
             preferences: presentation === 'tui',
             sources: [{ id: 'local', label: 'Local', path: '/private/product-skills' }],
           };
+        if (questionsEnabled) configuration.agent.skillLibrary = 'skills';
         if (questionsEnabled)
           configuration.agent.tools.push(
             ...['search', 'load'].map((method) => ({
@@ -859,7 +860,7 @@ test('both product compositions use actual immutable package refs and check in t
               consumer: [keys.agent],
               provider: [keys.skills],
               export: 'skills',
-              methods: ['search', 'load'],
+              methods: ['search', 'load', 'prepare'],
               recovery: false,
             },
             {
@@ -11211,6 +11212,25 @@ for (const target of ['desktop', 'tui']) {
     assert.deepEqual(client.state.attachments.files, [other]);
     assert.equal(client.state.command.basedOn, empty.revision);
   });
+  test(`${target} known skill input rejection retains the native draft and exact attachment IDs`, () => {
+    for (const reason of ['skills_unavailable', 'input_too_large']) {
+      const client = new Client(component).start();
+      const local = { ...attachment, dataSource };
+      client.state.attachments.files = [local];
+      client.component('send', draft);
+      client.query('read', { text: '/skill:missing', metadata: draft.snapshot.text });
+      const send = client.find('send');
+      client.complete(send, returned({ kind: 'rejected', sessionId: session.id, reason }));
+      assert.equal(client.state.command, null);
+      assert.equal(client.state.uncertain, null);
+      assert.equal(
+        client.state.notice,
+        reason === 'input_too_large' ? 'skillInputTooLarge' : 'skillInputUnavailable',
+      );
+      assert.deepEqual(client.state.attachments.files, [local]);
+      assert.ok(client.output.actions.every((action) => action.method !== 'send'));
+    }
+  });
   test(`${target} attachment capacity and late results remain bound to their original session`, () => {
     const client = new Client(component).start();
     client.raw('attachments-open');
@@ -11855,6 +11875,57 @@ for (const target of ['desktop', 'tui']) {
         [...client.actions.values()].some((action) => action.method === 'send'),
         false,
         'recovery never replays send',
+      );
+    }
+  });
+  test(`${target} restart resolves known skill rejection without clearing or resending its draft`, async () => {
+    const { component } = await import(
+      pathToFileURL(resolve(root, `dist/packages/workspace/${target}.js`))
+    );
+    for (const reason of ['skills_unavailable', 'input_too_large']) {
+      const client = new Client(component, false).start();
+      const files = [
+        { id: 'kept', sessionId: session.id, name: 'kept.txt', bytes: 1, mimeType: 'text/plain' },
+      ];
+      client.checkpoint(
+        session,
+        {
+          kind: 'restore',
+          version: 12,
+          snapshot: draft.snapshot,
+          metadata: { attachments: files },
+        },
+        'new-editor',
+      );
+      client.query('page', [
+        {
+          cursor: 1,
+          caller: reference.source,
+          consumer: [uuid(80)],
+          reference,
+          recovery: {
+            format: 'maka.agent.draft-send@1',
+            sessionId: session.id,
+            editor: { owner: draft.snapshot.text.owner, revision: 4 },
+            attachments: ['kept'],
+          },
+        },
+      ]);
+      client.query('read', returned({ kind: 'rejected', sessionId: session.id, reason }).reply);
+      assert.deepEqual(client.find('page').input, { after: 1, limit: 1 });
+      client.query('page', []);
+      const composer = modelSlots(client.output.frame.view).find(
+        (node) => node.key === 'composer',
+      ).props;
+      assert.deepEqual(composer.drafts[0].restore, {
+        owner: 'new-editor',
+        version: 12,
+        clearText: false,
+      });
+      assert.deepEqual(client.state.attachments.files, [{ ...files[0], dataSource }]);
+      assert.equal(
+        [...client.actions.values()].some((action) => action.method === 'send'),
+        false,
       );
     }
   });

@@ -146,6 +146,85 @@ async fn model_resolution_uses_original_eligibility_preferences_and_identity_bef
     assert_eq!(result["totalEligible"], 3);
     assert_eq!(result["matches"][0]["ref"], "source:a:pinned");
     let revision = &result["revision"];
+    let prepared = library
+        .model(
+            "prepare",
+            json!({"tools":["Read"], "input": {
+                "message":"/skill:review /skill:disabled /skill:network", "loadTool":"Read"
+            }}),
+            &call,
+        )
+        .await
+        .unwrap();
+    schema("prepare", &prepared);
+    assert_eq!(prepared["kind"], "ready");
+    assert_eq!(prepared["record"]["revision"], *revision);
+    assert!(
+        prepared["text"]
+            .as_str()
+            .unwrap()
+            .contains("original review")
+    );
+    assert_eq!(prepared["requiredTools"], json!(["Read"]));
+    assert_eq!(
+        prepared["record"]["invocation"]["loaded"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        prepared["record"]["invocation"]["failed"][0]["reason"],
+        "disabled"
+    );
+    assert_eq!(
+        prepared["record"]["invocation"]["failed"][1]["reason"],
+        "host_incompatible"
+    );
+    let prompt = prepared["record"]["metadataPrompt"].as_str().unwrap();
+    assert!(prompt.contains("source:a:pinned"));
+    assert!(!prompt.contains("source:a:disabled"));
+    assert!(!prompt.contains("source:a:network"));
+    assert!(!prompt.contains("fresh search"));
+    let ordinary = library
+        .model(
+            "prepare",
+            json!({"tools":["Read"], "input":{
+                "message":"review this change", "loadTool":"Read"
+            }}),
+            &call,
+        )
+        .await
+        .unwrap();
+    assert!(
+        ordinary["text"].is_null(),
+        "ordinary input is preserved exactly"
+    );
+    assert_eq!(ordinary["record"]["metadataPrompt"], prompt);
+    assert_eq!(ordinary["record"]["invocation"]["receipts"], json!([]));
+    assert!(
+        library
+            .model(
+                "prepare",
+                json!({"tools":[], "input": {"message":"hello", "loadTool":"Read"}}),
+                &call
+            )
+            .await
+            .is_err()
+    );
+    let blocked = library
+        .model(
+            "prepare",
+            json!({"tools":[], "input":{"message":"/skill:review"}}),
+            &call,
+        )
+        .await
+        .unwrap();
+    assert_eq!(blocked["kind"], "blocked");
+    assert_eq!(
+        blocked["invocation"]["failed"][0]["reason"],
+        "host_incompatible"
+    );
     for (name, reason) in [
         ("disabled", "disabled"),
         ("source:b:review", "not_found"),

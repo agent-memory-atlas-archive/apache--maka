@@ -408,7 +408,10 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         .map((tool) => tool.method),
     ),
   ];
-  if (skillMethods.length && !configuration.skills)
+  if (configuration.agent.skillLibrary != null && configuration.agent.skillLibrary !== 'skills')
+    throw new Error('Skill input preparation selects the skills Library import');
+  const skillCalls = [...skillMethods, ...(configuration.agent.skillLibrary ? ['prepare'] : [])];
+  if (skillCalls.length && !configuration.skills)
     throw new Error('Skill tools require explicitly selected skill collections');
   if (skillMethods.some((method) => method !== 'search' && method !== 'load'))
     throw new Error('Model skill tools select only search and load');
@@ -437,7 +440,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
       }),
     },
     {
-      ...(skillMethods.length ? { skills: [local('skills', 'skills')] } : {}),
+      ...(skillCalls.length ? { skills: [local('skills', 'skills')] } : {}),
       ...(asksForms ? { forms: [local('forms', 'forms')] } : {}),
       ...(asksQuestions ? { questions: [local('questions', 'questions')] } : {}),
       ...(fileMethods.length ? { files: [local('workspace-files', 'files')] } : {}),
@@ -697,18 +700,18 @@ export function composition(configuration: CompositionConfiguration): Applicatio
     asksQuestions ||
     fileMethods.length ||
     processMethods.length ||
-    skillMethods.length
+    skillCalls.length
   )
     Object.assign(connections.hosts.find((host) => host.name === 'local')!, {
       native: [
-        ...(skillMethods.length
+        ...(skillCalls.length
           ? [
               {
                 origin: [keys.agent],
                 consumer: [keys.agent],
                 provider: [keys.skills],
                 export: 'skills',
-                methods: skillMethods,
+                methods: skillCalls,
                 recovery: false,
               },
             ]

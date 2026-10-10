@@ -25,6 +25,8 @@ use std::collections::BTreeMap;
 
 mod model;
 pub use model::*;
+mod preparation;
+pub use preparation::*;
 
 /// Installation-selected skill collections. No ambient home or workspace scan.
 #[derive(Clone, Deserialize, Serialize, JsonSchema)]
@@ -235,6 +237,15 @@ pub fn contract() -> Contract {
         transport: Transport::Remote,
         interface: Interface::Service {
             methods: BTreeMap::from([
+                (
+                    "prepare".into(),
+                    Method {
+                        mode: MethodMode::Query,
+                        input: schemars::schema_for!(SkillToolRequest<Prepare>).into(),
+                        output: schemars::schema_for!(Preparation).into(),
+                        resources: BTreeMap::new(),
+                    },
+                ),
                 (
                     "search".into(),
                     Method {

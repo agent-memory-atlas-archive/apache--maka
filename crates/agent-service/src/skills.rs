@@ -25,6 +25,7 @@ mod model;
 pub(crate) use model::input_schema as model_input_schema;
 pub mod outcomes;
 mod preferences;
+mod preparation;
 use contract::*;
 pub use contract::{configuration_schema, contract};
 use futures_util::future::BoxFuture;
@@ -454,7 +455,9 @@ impl Handler for Library {
         let library = self.clone();
         Box::pin(async move {
             match method.as_str() {
-                "search" | "load" => library.model(&method, input, context.scope()).await,
+                "prepare" | "search" | "load" => {
+                    library.model(&method, input, context.scope()).await
+                }
                 "list" => {
                     let input =
                         serde_json::from_value(input).map_err(|_| "skills_query_invalid")?;

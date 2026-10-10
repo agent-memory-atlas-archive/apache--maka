@@ -303,6 +303,16 @@ export function draftReceipt(
   }
   const result = reply.receipt.outcome.value;
   if (
+    object(result) &&
+    result.kind === 'rejected' &&
+    result.sessionId === record.context &&
+    (result.reason === 'skills_unavailable' || result.reason === 'input_too_large')
+  ) {
+    // A known rejection consumed neither the submitted text nor its attachments.
+    work.queue.shift();
+    return;
+  }
+  if (
     !object(result) ||
     !(
       (result.kind === 'started' && text(result.invocationId, 128)) ||

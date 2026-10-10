@@ -19,6 +19,8 @@
 
 #[path = "tests/service_tools.rs"]
 mod service_tools;
+#[path = "tests/skill_preparation.rs"]
+mod skill_preparation;
 #[path = "tests/skills.rs"]
 mod skills;
 
@@ -463,6 +465,9 @@ impl Fixture {
             maka_config::oauth::enrollment::LoginCompletion::Committed(_)
         ));
         let mut settings = Configuration {
+            skill_library: tooling
+                .as_ref()
+                .and_then(service_tools::Setup::skill_import),
             permissions: WorkspacePermissions {
                 access: WorkspaceAccess::WorkspaceWrite,
                 request_permissions: true,
@@ -1171,7 +1176,8 @@ async fn cleanup_case(panic: bool) {
                         thinking_level: None,
                         attachments: vec![]
                     },
-                    &reference
+                    &reference,
+                    &scope(&fixture.issuer, true)
                 )
                 .await
                 .err()

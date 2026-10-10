@@ -11761,6 +11761,33 @@ export const contracts = {
                   sessionId: {
                     type: 'string',
                   },
+                  reason: {
+                    $ref: '#/$defs/AgentSkillInputRejection',
+                  },
+                  skills: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/SkillInvocationResult',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'sessionId', 'reason'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
                   invocationId: {
                     type: 'string',
                   },
@@ -11795,6 +11822,204 @@ export const contracts = {
                 required: ['kind', 'sessionId', 'messageId', 'revision'],
               },
             ],
+            $defs: {
+              AgentSkillInputRejection: {
+                type: 'string',
+                enum: ['skills_unavailable', 'input_too_large'],
+              },
+              SkillInvocationResult: {
+                type: 'object',
+                properties: {
+                  loaded: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/LoadedSkill',
+                    },
+                  },
+                  failed: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/SkillInvocationFailure',
+                    },
+                  },
+                  receipts: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/SkillInvocationReceipt',
+                    },
+                  },
+                },
+                additionalProperties: false,
+                required: ['loaded', 'failed', 'receipts'],
+              },
+              LoadedSkill: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['id', 'name'],
+              },
+              SkillInvocationFailure: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/SkillRequestFailure',
+                  },
+                  {
+                    $ref: '#/$defs/SkillOverflowFailure',
+                  },
+                ],
+              },
+              SkillRequestFailure: {
+                type: 'object',
+                properties: {
+                  request: {
+                    type: 'string',
+                  },
+                  reason: {
+                    $ref: '#/$defs/SkillFailureReason',
+                  },
+                },
+                additionalProperties: false,
+                required: ['request', 'reason'],
+              },
+              SkillFailureReason: {
+                type: 'string',
+                enum: [
+                  'invalid_name',
+                  'not_found',
+                  'disabled',
+                  'host_incompatible',
+                  'resolution_failed',
+                ],
+              },
+              SkillOverflowFailure: {
+                type: 'object',
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/TooManyRequests',
+                  },
+                  requestLimit: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['reason', 'requestLimit'],
+              },
+              TooManyRequests: {
+                type: 'string',
+                enum: ['too_many_requests'],
+              },
+              SkillInvocationReceipt: {
+                description:
+                  'Boolean wire discriminants are validated here, not retained as mutable\nbusiness fields beside a contradictory enum variant.',
+                anyOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      invocation: {
+                        $ref: '#/$defs/SkillInvocationMode',
+                      },
+                      request: {
+                        type: 'string',
+                      },
+                      success: {
+                        const: true,
+                      },
+                      ref: {
+                        type: 'string',
+                      },
+                      id: {
+                        type: 'string',
+                      },
+                      name: {
+                        type: 'string',
+                      },
+                      scope: {
+                        $ref: '#/$defs/SkillScope',
+                      },
+                      source: {
+                        $ref: '#/$defs/SkillSource',
+                      },
+                      truncated: {
+                        type: 'boolean',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: [
+                      'invocation',
+                      'request',
+                      'success',
+                      'ref',
+                      'id',
+                      'name',
+                      'scope',
+                      'source',
+                      'truncated',
+                    ],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      invocation: {
+                        $ref: '#/$defs/SkillInvocationMode',
+                      },
+                      request: {
+                        type: 'string',
+                      },
+                      success: {
+                        const: false,
+                      },
+                      reason: {
+                        $ref: '#/$defs/SkillFailureReason',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['invocation', 'request', 'success', 'reason'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      invocation: {
+                        const: 'explicit',
+                      },
+                      success: {
+                        const: false,
+                      },
+                      reason: {
+                        $ref: '#/$defs/TooManyRequests',
+                      },
+                      requestLimit: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['invocation', 'success', 'reason', 'requestLimit'],
+                  },
+                ],
+              },
+              SkillInvocationMode: {
+                type: 'string',
+                enum: ['explicit', 'model_tool'],
+              },
+              SkillScope: {
+                type: 'string',
+                enum: ['project', 'workspace', 'user', 'custom'],
+              },
+              SkillSource: {
+                type: 'string',
+                enum: ['maka', 'agents', 'legacy', 'custom'],
+              },
+            },
           },
           resources: {},
         },
@@ -14132,6 +14357,322 @@ export const contracts = {
               TooManyRequests: {
                 type: 'string',
                 enum: ['too_many_requests'],
+              },
+            },
+          },
+          resources: {},
+        },
+        prepare: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              tools: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                },
+                maxItems: 128,
+              },
+              input: {
+                $ref: '#/$defs/SkillPrepare',
+              },
+            },
+            required: ['tools', 'input'],
+            description:
+              'Actual Agent registrations are supplied outside model-controlled arguments.\nThese names describe compatibility and confer no execution authority.',
+            title: 'SkillToolRequest',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              SkillPrepare: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                    maxLength: 65536,
+                  },
+                  loadTool: {
+                    type: ['string', 'null'],
+                    description:
+                      'Actual selected tools bound to this Library; these names grant no access.',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  searchTool: {
+                    type: ['string', 'null'],
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                },
+                required: ['message'],
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  text: {
+                    type: ['string', 'null'],
+                    description: 'None preserves the original message exactly.',
+                  },
+                  record: {
+                    $ref: '#/$defs/SkillPreparationRecord',
+                  },
+                  requiredTools: {
+                    type: 'array',
+                    uniqueItems: true,
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'ready',
+                  },
+                },
+                required: ['kind', 'record', 'requiredTools'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  invocation: {
+                    $ref: '#/$defs/SkillInvocationResult',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'blocked',
+                  },
+                },
+                required: ['kind', 'invocation'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'input_too_large',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
+            title: 'SkillPreparation',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              SkillPreparationRecord: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  revision: {
+                    type: 'string',
+                  },
+                  metadataPrompt: {
+                    type: 'string',
+                  },
+                  invocation: {
+                    $ref: '#/$defs/SkillInvocationResult',
+                  },
+                },
+                required: ['revision', 'metadataPrompt', 'invocation'],
+              },
+              SkillInvocationResult: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  loaded: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/LoadedSkill',
+                    },
+                  },
+                  failed: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/SkillInvocationFailure',
+                    },
+                  },
+                  receipts: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/SkillInvocationReceipt',
+                    },
+                  },
+                },
+                required: ['loaded', 'failed', 'receipts'],
+              },
+              LoadedSkill: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                },
+                required: ['id', 'name'],
+              },
+              SkillInvocationFailure: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/SkillRequestFailure',
+                  },
+                  {
+                    $ref: '#/$defs/SkillOverflowFailure',
+                  },
+                ],
+              },
+              SkillRequestFailure: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  request: {
+                    type: 'string',
+                  },
+                  reason: {
+                    $ref: '#/$defs/SkillFailureReason',
+                  },
+                },
+                required: ['request', 'reason'],
+              },
+              SkillFailureReason: {
+                type: 'string',
+                enum: [
+                  'invalid_name',
+                  'not_found',
+                  'disabled',
+                  'host_incompatible',
+                  'resolution_failed',
+                ],
+              },
+              SkillOverflowFailure: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/TooManyRequests',
+                  },
+                  requestLimit: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                required: ['reason', 'requestLimit'],
+              },
+              TooManyRequests: {
+                type: 'string',
+                enum: ['too_many_requests'],
+              },
+              SkillInvocationReceipt: {
+                anyOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      invocation: {
+                        $ref: '#/$defs/SkillInvocationMode',
+                      },
+                      request: {
+                        type: 'string',
+                      },
+                      success: {
+                        const: true,
+                      },
+                      ref: {
+                        type: 'string',
+                      },
+                      id: {
+                        type: 'string',
+                      },
+                      name: {
+                        type: 'string',
+                      },
+                      scope: {
+                        $ref: '#/$defs/SkillScope',
+                      },
+                      source: {
+                        $ref: '#/$defs/SkillSource',
+                      },
+                      truncated: {
+                        type: 'boolean',
+                      },
+                    },
+                    required: [
+                      'invocation',
+                      'request',
+                      'success',
+                      'ref',
+                      'id',
+                      'name',
+                      'scope',
+                      'source',
+                      'truncated',
+                    ],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      invocation: {
+                        $ref: '#/$defs/SkillInvocationMode',
+                      },
+                      request: {
+                        type: 'string',
+                      },
+                      success: {
+                        const: false,
+                      },
+                      reason: {
+                        $ref: '#/$defs/SkillFailureReason',
+                      },
+                    },
+                    required: ['invocation', 'request', 'success', 'reason'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      invocation: {
+                        const: 'explicit',
+                      },
+                      success: {
+                        const: false,
+                      },
+                      reason: {
+                        $ref: '#/$defs/TooManyRequests',
+                      },
+                      requestLimit: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                    },
+                    required: ['invocation', 'success', 'reason', 'requestLimit'],
+                  },
+                ],
+                description:
+                  'Boolean wire discriminants are validated here, not retained as mutable\nbusiness fields beside a contradictory enum variant.',
+              },
+              SkillInvocationMode: {
+                type: 'string',
+                enum: ['explicit', 'model_tool'],
+              },
+              SkillScope: {
+                type: 'string',
+                enum: ['project', 'workspace', 'user', 'custom'],
+              },
+              SkillSource: {
+                type: 'string',
+                enum: ['maka', 'agents', 'legacy', 'custom'],
               },
             },
           },
