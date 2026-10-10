@@ -361,7 +361,7 @@ export function recovery<N extends Node>(
             state.reply = reply;
             if (
               reply.reference.contract.name === 'maka.skills.Library' &&
-              reply.reference.method === 'apply'
+              ['apply', 'importSource', 'deleteSource'].includes(reply.reference.method)
             )
               query(state, actions, { kind: 'skill-outcome', reference: request.reference });
           } else if (!request.manager) query(state, actions, { ...request, manager: true });

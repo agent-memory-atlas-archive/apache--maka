@@ -207,7 +207,8 @@ impl Handler for Pause {
         context: Context,
     ) -> BoxFuture<'static, Result<Value, String>> {
         let original = context.operation().cloned();
-        let wait = method == "apply";
+        let wait =
+            method == std::env::var("MAKA_SKILL_CRASH_METHOD").unwrap_or_else(|_| "apply".into());
         let after = self.after;
         let ready = self.ready.clone();
         let inner = self.inner.clone();
@@ -356,28 +357,28 @@ async fn crash_worker() {
     let dir = PathBuf::from(std::env::var_os("MAKA_SKILL_CRASH_ROOT").expect("subprocess root"));
     let after = std::env::var("MAKA_SKILL_CRASH_CUT").unwrap() == "after";
     let fixture = Fixture::open(&dir, Some(after)).await;
-    let page = fixture
-        .query("list", json!({"query":"","cursor":null}), false)
-        .await
-        .unwrap();
-    let preview = fixture
-        .query(
-            "preview",
-            json!({"kind":"install","reference":"source:local:review","revision":page["revision"]}),
-            false,
-        )
-        .await
-        .unwrap();
+    let method = std::env::var("MAKA_SKILL_CRASH_METHOD").unwrap();
+    let (input, resources) = if method == "importSource" {
+        let (input, resources, _) = super::imported("review", super::document("original"));
+        (json!(input), resources)
+    } else {
+        let page = fixture
+            .query("list", json!({"query":"","cursor":null}), false)
+            .await
+            .unwrap();
+        let preview = fixture.query("preview", json!({"kind":"install","reference":"source:local:review","revision":page["revision"]}), false).await.unwrap();
+        (preview["review"].clone(), Attachments::new())
+    };
     let prepared = fixture
         .app
         .client()
         .prepare_mutation(
             fixture.binding().await,
-            "apply".into(),
-            preview["review"].clone(),
+            method,
+            input,
             fixture.scope(false),
             Uuid::new_v4(),
-            Attachments::new().into(),
+            resources.into(),
         )
         .await
         .unwrap();
@@ -411,7 +412,12 @@ impl Drop for Child {
 }
 #[tokio::test]
 async fn publication_results_survive_host_process_loss_without_replaying_or_weakening_authority() {
-    for cut in ["before", "after"] {
+    for (method, cut) in [
+        ("apply", "before"),
+        ("apply", "after"),
+        ("importSource", "before"),
+        ("importSource", "after"),
+    ] {
         let directory = tempfile::tempdir().unwrap();
         let dir = directory.path();
         std::fs::create_dir_all(dir.join("source/review")).unwrap();
@@ -431,6 +437,7 @@ async fn publication_results_survive_host_process_loss_without_replaying_or_weak
                 ])
                 .env("MAKA_SKILL_CRASH_ROOT", dir)
                 .env("MAKA_SKILL_CRASH_CUT", cut)
+                .env("MAKA_SKILL_CRASH_METHOD", method)
                 .stdout(log.try_clone().unwrap())
                 .stderr(log)
                 .spawn()
@@ -467,6 +474,11 @@ async fn publication_results_survive_host_process_loss_without_replaying_or_weak
             &reference.namespace,
         );
         let data = dir.join("host/skill-libraries").join(namespace);
+        let data = if method == "importSource" {
+            data.join("imported")
+        } else {
+            data
+        };
         let installed = data.join("skills/review");
         assert_eq!(installed.exists(), cut == "after");
         if installed.exists() {
@@ -522,7 +534,7 @@ async fn publication_results_survive_host_process_loss_without_replaying_or_weak
         assert_eq!(value.published.is_some(), cut == "after");
         if let Some(result) = value.published {
             assert!(
-                matches!(result,ChangeResult::Applied {reference} if reference=="installed:review")
+                matches!(result,ChangeResult::Applied {reference} if reference == if method == "importSource" { "imported:review" } else { "installed:review" })
             );
         }
         assert!(
@@ -737,5 +749,145 @@ async fn preference_mutations_require_independent_authority_and_keep_instance_st
         page["entries"][0]["preference"],
         json!({"enabled":false,"pinned":true})
     );
+    reopened.close().await;
+}
+
+#[tokio::test]
+async fn imported_source_operations_recover_through_the_original_host_after_library_removal() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("source")).unwrap();
+    let fixture = Fixture::open(dir.path(), Some(false)).await;
+    async fn mutate(
+        fixture: &Fixture,
+        method: &str,
+        input: Value,
+        resources: Attachments,
+    ) -> maka_plugin_core::operation::OperationReply {
+        let client = fixture.app.client();
+        let prepared = client
+            .prepare_mutation(
+                fixture.binding().await,
+                method.into(),
+                input,
+                fixture.scope(false),
+                Uuid::new_v4(),
+                resources.into(),
+            )
+            .await
+            .unwrap();
+        let intent = fixture
+            .store
+            .record_application_intent(
+                prepared.reference().source.clone(),
+                prepared.consumer().instance().clone(),
+                prepared.reference().clone(),
+                Value::Null,
+            )
+            .await
+            .unwrap();
+        client
+            .mutate(prepared, intent)
+            .await
+            .unwrap()
+            .result()
+            .await
+    }
+    let bytes = super::document("IMPORTED THROUGH ACTUAL HOST");
+    let file = dir.path().join("chosen.md");
+    std::fs::write(&file, &bytes).unwrap();
+    let (input, mut resources, _) = super::imported("review", bytes);
+    resources.insert(
+        "file".into(),
+        maka_ui::file::read_selected(&file, &maka_ui::budget::NativeBudget::default()).unwrap(),
+    );
+    let imported = mutate(&fixture, "importSource", json!(input), resources).await;
+    assert!(
+        matches!(&imported.receipt, Receipt::Recorded { outcome: OperationOutcome::Returned { value }, cleanup: OperationCleanup::Confirmed } if value["reference"]=="imported:review")
+    );
+    let page = fixture
+        .query("list", json!({"query":"","cursor":null}), false)
+        .await
+        .unwrap();
+    assert_eq!(page["entries"][0]["imported"], true);
+    let preview = fixture
+        .query(
+            "preview",
+            json!({"kind":"delete","reference":"imported:review","revision":page["revision"]}),
+            false,
+        )
+        .await
+        .unwrap();
+    let deleted = mutate(
+        &fixture,
+        "deleteSource",
+        preview["review"].clone(),
+        Attachments::new(),
+    )
+    .await;
+    assert!(
+        matches!(&deleted.receipt, Receipt::Recorded { outcome: OperationOutcome::Returned { value }, cleanup: OperationCleanup::Confirmed } if value["reference"]=="imported:review")
+    );
+    let root = fixture
+        .store
+        .owned_root()
+        .unwrap()
+        .canonical_path()
+        .to_owned();
+    let namespace = crate::owner::namespace(
+        &imported.reference.source.state_domain,
+        imported.reference.source.deployment,
+        &imported.reference.namespace,
+    );
+    let collection = root
+        .join("skill-libraries")
+        .join(namespace)
+        .join("imported");
+    let loaded = fixture
+        .store
+        .load_application(DEPLOYMENT)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut input = loaded.source.input;
+    input.instances.remove("skills");
+    input.instances.remove("caller");
+    fixture
+        .store
+        .commit_application(
+            DEPLOYMENT,
+            loaded.source.reference.revision,
+            input,
+            vec![],
+            loaded.packages,
+        )
+        .await
+        .unwrap();
+    fixture.close().await;
+    std::fs::remove_dir_all(dir.path().join("source")).unwrap();
+    std::fs::remove_dir_all(collection.join("skills")).unwrap();
+    let reopened = Fixture::open(dir.path(), None).await;
+    for original in [imported, deleted] {
+        assert!(
+            reopened
+                .query("outcome", json!(original.reference), false)
+                .await
+                .is_err()
+        );
+        let recovered = reopened
+            .query("outcome", json!(original.reference), true)
+            .await
+            .unwrap();
+        assert_eq!(recovered["original"], json!(original));
+        assert_eq!(
+            recovered["published"],
+            json!({"kind":"applied","reference":"imported:review"})
+        );
+        let mut wrong = original.reference;
+        wrong.method = "apply".into();
+        if let Ok(value) = reopened.query("outcome", json!(wrong), true).await {
+            assert!(value["published"].is_null());
+        }
+    }
+    assert!(!collection.join("skills").exists());
     reopened.close().await;
 }

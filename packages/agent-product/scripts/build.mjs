@@ -173,6 +173,7 @@ const specifications = {
       skills: one(sdk.contracts.skillLibrary),
       outcomes: one(sdk.contracts.skillOutcomes),
       receipts: one(sdk.contracts.receiptReader),
+      file: one(sdk.contracts.filePicker),
       input: one(sdk.contracts.textInput),
       reader: one(sdk.contracts.textReader),
       source: one(sdk.contracts.sourceText),

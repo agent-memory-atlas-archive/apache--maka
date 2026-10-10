@@ -315,6 +315,7 @@ fn deletion_review_keeps_exact_paths_and_marks_bounded_path_excerpts() {
             .unwrap();
     }
     let plan = Plan {
+        collection: Collection::Installed,
         review: Review {
             change: Change {
                 workspace: None,
@@ -544,4 +545,301 @@ async fn project_installation_keeps_its_reviewed_workspace_and_relative_resource
             .all(|(e, _, _)| e.installed && e.shadowed_by.is_none())
     );
     call.finish().await.unwrap();
+}
+
+#[derive(Clone)]
+struct ImportResource {
+    bytes: Vec<u8>,
+    text: bool,
+}
+impl maka_plugins::call::ReadResource for ImportResource {
+    fn encoding(&self) -> maka_plugins::call::ResourceEncoding {
+        if self.text {
+            maka_plugins::call::ResourceEncoding::Utf8
+        } else {
+            maka_plugins::call::ResourceEncoding::Bytes
+        }
+    }
+    fn resource_type(&self) -> maka_plugin_core::contract::ResourceType {
+        if self.text {
+            maka_plugin_core::contract::text_resource_type()
+        } else {
+            maka_plugin_core::contract::binary_resource_type()
+        }
+    }
+    fn bytes(&self) -> usize {
+        self.bytes.len()
+    }
+    fn metadata(&self) -> Value {
+        serde_json::json!({"path":"/not/a/grant","id":"untrusted"})
+    }
+    fn read(&self, range: std::ops::Range<usize>) -> Result<Vec<u8>, String> {
+        self.bytes
+            .get(range)
+            .map(|v| v.to_vec())
+            .ok_or("bad range".into())
+    }
+}
+fn imported(
+    id: &str,
+    bytes: Vec<u8>,
+) -> (ImportSource, maka_plugins::call::Attachments, Operation) {
+    let input = ImportSource {
+        bytes: bytes.len(),
+        digest: maka_runtime::artifact::content_digest(&bytes),
+    };
+    let fingerprint = maka_runtime::artifact::content_digest(&serde_json::to_vec(&input).unwrap());
+    (
+        input,
+        BTreeMap::from([
+            (
+                "file".into(),
+                Arc::new(ImportResource { bytes, text: false })
+                    as Arc<dyn maka_plugins::call::ReadResource>,
+            ),
+            (
+                "id".into(),
+                Arc::new(ImportResource {
+                    bytes: id.as_bytes().to_vec(),
+                    text: true,
+                }) as Arc<dyn maka_plugins::call::ReadResource>,
+            ),
+        ]),
+        Operation {
+            id: uuid::Uuid::new_v4(),
+            fingerprint,
+            binding: maka_runtime::artifact::content_digest(b"original resource-bound call"),
+        },
+    )
+}
+#[tokio::test]
+async fn source_import_retains_its_worker_after_cancellation_and_observer_loss() {
+    struct Held {
+        bytes: Vec<u8>,
+        entered: Arc<tokio::sync::Semaphore>,
+        release: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+    }
+    impl maka_plugins::call::ReadResource for Held {
+        fn resource_type(&self) -> maka_plugin_core::contract::ResourceType {
+            maka_plugin_core::contract::binary_resource_type()
+        }
+        fn bytes(&self) -> usize {
+            self.bytes.len()
+        }
+        fn metadata(&self) -> Value {
+            Value::Null
+        }
+        fn read(&self, range: std::ops::Range<usize>) -> Result<Vec<u8>, String> {
+            self.entered.add_permits(1);
+            let (lock, changed) = &*self.release;
+            let _released = changed
+                .wait_while(lock.lock().unwrap(), |released| !*released)
+                .unwrap();
+            Ok(self.bytes[range].to_vec())
+        }
+    }
+    struct Release(Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            *self.0.0.lock().unwrap() = true;
+            self.0.1.notify_all();
+        }
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        std::fs::create_dir(&source).unwrap();
+        let root = Arc::new(
+            RootOwner::create(
+                &dir.path().join("host"),
+                &RootNamespaces {
+                    ownership: dir.path().join("owners"),
+                    control: dir.path().join("control"),
+                },
+            )
+            .unwrap(),
+        );
+        let library = library(root, &source, "held-import").await;
+        let call = scope();
+        let release = Release(Arc::new((
+            std::sync::Mutex::new(false),
+            std::sync::Condvar::new(),
+        )));
+        let entered = Arc::new(tokio::sync::Semaphore::new(0));
+        let bytes = document("held");
+        let (input, mut resources, original) = imported("review", bytes.clone());
+        resources.insert(
+            "file".into(),
+            Arc::new(Held {
+                bytes,
+                entered: entered.clone(),
+                release: release.0.clone(),
+            }),
+        );
+        let mut import = Box::pin(library.import_operation(input, &original, &call, resources));
+        tokio::select! {
+            _ = &mut import => panic!("read must remain held"),
+            permit = entered.acquire() => permit.unwrap().forget(),
+        }
+        call.cancellation.cancel();
+        drop(import);
+        assert!(!call.resources.seal().unwrap());
+        drop(release);
+        call.finish().await.unwrap();
+        let next = scope();
+        assert!(library.snapshot(&next).await.unwrap().entries.is_empty());
+        next.finish().await.unwrap();
+    })
+    .await
+    .unwrap();
+}
+#[tokio::test]
+async fn imported_sources_require_explicit_install_and_keep_original_publication_receipts() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("sources");
+    std::fs::create_dir(&source).unwrap();
+    let root = Arc::new(
+        RootOwner::create(
+            &dir.path().join("host"),
+            &RootNamespaces {
+                ownership: dir.path().join("owners"),
+                control: dir.path().join("control"),
+            },
+        )
+        .unwrap(),
+    );
+    let library = library(root.clone(), &source, "import-test").await;
+    let call = scope();
+    let (input, resources, original) = imported("review", document("Imported original"));
+    let result = library
+        .import_operation(input, &original, &call, resources)
+        .await
+        .unwrap();
+    assert!(
+        matches!(result,ChangeResult::Applied { ref reference } if reference=="imported:review")
+    );
+    let listed = library.snapshot(&call).await.unwrap();
+    assert_eq!(listed.entries.len(), 1);
+    assert!(listed.entries[0].0.imported);
+    assert!(!listed.entries[0].0.preference.enabled);
+    assert!(library.discover(&call).await.unwrap().inventory.is_empty());
+    let (input, resources, other) = imported("REVIEW", document("must not replace"));
+    assert!(
+        matches!(library.import_operation(input,&other,&call,resources).await.unwrap(), ChangeResult::Rejected {reason} if reason=="source_exists")
+    );
+    let install = review(&library, ChangeKind::Install, "imported:review", &call).await;
+    assert!(
+        matches!(library.apply_operation(install.clone(),&operation(&install),&call).await.unwrap(),ChangeResult::Applied {reference} if reference=="installed:review")
+    );
+    let active = library.discover(&call).await.unwrap();
+    assert_eq!(active.inventory.len(), 1);
+    assert_eq!(active.inventory[0].location.reference, "installed:review");
+    assert!(
+        active.inventory[0]
+            .document
+            .body
+            .contains("Imported original")
+    );
+    let removal = review(&library, ChangeKind::Delete, "imported:review", &call).await;
+    assert!(
+        matches!(library.apply_operation(removal.clone(),&operation(&removal),&call).await.unwrap(),ChangeResult::Rejected {reason} if reason=="read_only_source")
+    );
+    let deletion = operation(&removal);
+    assert!(
+        matches!(library.delete_source(removal,&deletion,&call).await.unwrap(),ChangeResult::Applied {reference} if reference=="imported:review")
+    );
+    assert_eq!(library.snapshot(&call).await.unwrap().entries.len(), 1);
+    assert_eq!(library.discover(&call).await.unwrap().inventory.len(), 1);
+    // Replaying the original domain operation after deletion does not recreate it,
+    // and uses its original result without asking for new resource bytes.
+    let (input, _, _) = imported("wrong", document("new"));
+    assert!(
+        matches!(library.import_operation(input,&original,&call,BTreeMap::new()).await.unwrap(),ChangeResult::Applied {reference} if reference=="imported:review")
+    );
+    assert!(
+        !root
+            .canonical_path()
+            .join("skill-libraries/import-test/imported/skills/review")
+            .exists()
+    );
+    call.resources.finish().await.unwrap();
+}
+#[tokio::test]
+async fn source_import_checks_actual_resources_and_never_accepts_path_or_metadata_authority() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("sources");
+    std::fs::create_dir(&source).unwrap();
+    let root = Arc::new(
+        RootOwner::create(
+            &dir.path().join("host"),
+            &RootNamespaces {
+                ownership: dir.path().join("owners"),
+                control: dir.path().join("control"),
+            },
+        )
+        .unwrap(),
+    );
+    let library = library(root, &source, "import-test").await;
+    let call = scope();
+    for case in 0..7 {
+        let (mut input, mut resources, operation) = imported("review", document("valid"));
+        match case {
+            0 => {
+                input.digest = maka_runtime::artifact::content_digest(b"different");
+            }
+            1 => {
+                input.bytes += 1;
+            }
+            2 => {
+                resources.insert(
+                    "id".into(),
+                    Arc::new(ImportResource {
+                        bytes: b"../escape".to_vec(),
+                        text: true,
+                    }),
+                );
+            }
+            3 => {
+                resources.insert(
+                    "file".into(),
+                    Arc::new(ImportResource {
+                        bytes: document("valid"),
+                        text: true,
+                    }),
+                );
+            }
+            4 => {
+                let bytes = b"not a skill".to_vec();
+                input.bytes = bytes.len();
+                input.digest = maka_runtime::artifact::content_digest(&bytes);
+                resources.insert(
+                    "file".into(),
+                    Arc::new(ImportResource { bytes, text: false }),
+                );
+            }
+            5 => {
+                let bytes = vec![b'x'; 1024 * 1024 + 1];
+                input.bytes = bytes.len();
+                resources.insert(
+                    "file".into(),
+                    Arc::new(ImportResource { bytes, text: false }),
+                );
+            }
+            _ => {
+                resources.remove("file");
+            }
+        }
+        assert!(
+            matches!(
+                library
+                    .import_operation(input, &operation, &call, resources)
+                    .await
+                    .unwrap(),
+                ChangeResult::Rejected { .. }
+            ),
+            "case {case}"
+        );
+        assert!(library.snapshot(&call).await.unwrap().entries.is_empty());
+    }
+    call.resources.finish().await.unwrap();
 }

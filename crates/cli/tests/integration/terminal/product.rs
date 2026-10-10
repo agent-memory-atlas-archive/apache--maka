@@ -572,6 +572,58 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
     paste(&mut tui, "Skills");
     click(&mut tui, "[ Skills ]", accent);
     tui.wait_for("Library entry 00");
+    // The selected file is outside configured skill roots. Only its captured
+    // native resource enters the Host; import stages a source before installation.
+    let selected = directory.path().join("selected-skill.md");
+    std::fs::write(
+        &selected,
+        "---\nname: imported-demo\ndescription: Imported demo\n---\nIMPORTED NATIVE FILE",
+    )
+    .unwrap();
+    click(&mut tui, "[ Import source ]", accent);
+    click(&mut tui, "my-skill", accent);
+    paste(&mut tui, "imported-demo");
+    // FilePicker's native path editor is the row after its visible label.
+    let (_, y) = position(&cells(&tui), "Skill file path", false).unwrap();
+    let (x, _) = position(&cells(&tui), "Source ID", false).unwrap();
+    tui.send(format!("\x1b[<0;{};{}M\x1b[<0;{};{}m", x + 2, y + 2, x + 2, y + 2).as_bytes());
+    paste(&mut tui, selected.to_str().unwrap());
+    tui.send(b"\r");
+    tui.wait_for("selected-skill.md");
+    click(&mut tui, "[ Import source ]", accent);
+    tui.wait_for("Import this file under the source ID shown above?");
+    click(&mut tui, "[ Confirm change ]", accent);
+    tui.wait_until(|screen| {
+        screen.contains("Imported source · install to enable") && !screen.contains("Loading skills")
+    });
+    click(&mut tui, "imported-demo", accent);
+    tui.wait_for("IMPORTED NATIVE FILE");
+    click(&mut tui, "[ Install ]", accent);
+    tui.wait_for("Review skill change");
+    click(&mut tui, "[ Confirm change ]", accent);
+    tui.wait_until(|screen| {
+        screen.contains("Installed · Imported demo") && !screen.contains("Loading skills")
+    });
+    click(&mut tui, "Imported source · install to enable", accent);
+    tui.wait_for("IMPORTED NATIVE FILE");
+    click(&mut tui, "[ Delete source ]", accent);
+    tui.wait_for("Delete this imported source? Installed copies remain available.");
+    click(&mut tui, "[ Confirm change ]", accent);
+    tui.wait_until(|screen| {
+        screen.contains("Installed · Imported demo")
+            && !screen.contains("Imported source ·")
+            && !screen.contains("Loading skills")
+    });
+    click(&mut tui, "Installed · Imported demo", accent);
+    tui.wait_for("IMPORTED NATIVE FILE");
+    click(&mut tui, "[ Delete installed copy ]", accent);
+    tui.wait_for("Delete this installed skill and all its resource files.");
+    click(&mut tui, "[ Confirm change ]", accent);
+    tui.wait_until(|screen| {
+        screen.contains("Library entry 00")
+            && !screen.contains("Imported demo")
+            && !screen.contains("Loading skills")
+    });
     // First page and next page are real bounded Host queries.
     click(&mut tui, "[ Next page ]", accent);
     tui.wait_for("Library entry 32");
@@ -855,7 +907,7 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
         assert!(loaded.source.input.instances.contains_key("skill-library"));
         let cursor = intents
             .iter()
-            .find(|intent| intent.reference.method == "apply")
+            .find(|intent| intent.reference.method == "importSource")
             .unwrap()
             .cursor;
         ui.shutdown().await.unwrap();
@@ -873,12 +925,12 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
         connections.to_str().unwrap(),
     ]);
     recovered.wait_until_with_timeout(
-        |screen| screen.contains("maka.skills.Library / apply"),
+        |screen| screen.contains("maka.skills.Library / importSource"),
         Duration::from_secs(30),
     );
-    // Select the original install by its actual history cursor. Additional
-    // preference operations must not retarget a generic last-visible Check.
-    let label = format!("#{first_publication} · maka.skills.Library / apply");
+    // Select the original import by its actual history cursor. Subsequent
+    // installation and preference operations must not retarget a generic last-visible Check.
+    let label = format!("#{first_publication} · maka.skills.Library / importSource");
     recovered.wait_for(&label);
     let term = cells(&recovered);
     let (_, y) = position(&term, &label, false).unwrap();
@@ -889,7 +941,7 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
     assert!(accent.contains(&term.grid()[Line((y + 1) as i32)][Column(x)].fg));
     recovered.send(format!("\x1b[<0;{};{}M\x1b[<0;{};{}m", x + 2, y + 2, x + 2, y + 2).as_bytes());
     recovered.wait_for("Original skill result confirmed.");
-    recovered.wait_for("installed:skill-39");
+    recovered.wait_for("imported:imported-demo");
     assert!(!installed.exists());
     assert!(!source.exists());
     recovered.send(b"\x11");

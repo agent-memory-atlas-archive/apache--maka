@@ -26,15 +26,38 @@ use maka_skills::publication::{
 };
 use tokio_util::sync::CancellationToken;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Collection {
+    Installed,
+    Imported,
+}
+impl Collection {
+    fn prefix(self) -> &'static str {
+        match self {
+            Self::Installed => "installed:",
+            Self::Imported => "imported:",
+        }
+    }
+    fn destination(self, id: &str) -> Destination {
+        match self {
+            Self::Installed => Destination::Skill {
+                reference: format!("installed:{id}"),
+            },
+            Self::Imported => Destination::Source { id: id.into() },
+        }
+    }
+}
 pub(super) struct Managed {
     root: Arc<RootOwner>,
     data: cap_std::fs::Dir,
     pub read: ReadRoot,
-    serial: tokio::sync::Mutex<()>,
+    imported: cap_std::fs::Dir,
+    pub imported_read: ReadRoot,
+    pub serial: tokio::sync::Mutex<()>,
 }
 impl Managed {
     pub async fn open(root: Arc<RootOwner>, namespace: String) -> Result<Arc<Self>, String> {
-        let (managed, publisher) = tokio::task::spawn_blocking(move || {
+        let (managed, publisher, imported_publisher) = tokio::task::spawn_blocking(move || {
             root.validate_current().map_err(store_error)?;
             let directory = cap_std::fs::Dir::open_ambient_dir(
                 root.canonical_path(),
@@ -57,22 +80,42 @@ impl Managed {
             )
             .select(BTreeSet::from(["skills/".into()]))
             .map_err(store_error)?;
+            let imported = child(&data, "imported").map_err(store_error)?;
+            let imported_publisher =
+                Publisher::open(&imported, &CancellationToken::new()).map_err(store_error)?;
+            let imported_read = ReadRoot::from_handle(
+                imported.try_clone().map_err(store_error)?,
+                root.canonical_path()
+                    .join("skill-libraries")
+                    .join(&namespace)
+                    .join("imported"),
+            )
+            .select(BTreeSet::from(["skills/".into()]))
+            .map_err(store_error)?;
             Ok::<_, String>((
                 Arc::new(Self {
                     root,
                     data,
                     read,
+                    imported,
+                    imported_read,
                     serial: Default::default(),
                 }),
                 publisher,
+                imported_publisher,
             ))
         })
         .await
         .map_err(store_error)??;
         publisher.recover().await.map_err(store_error)?;
+        imported_publisher.recover().await.map_err(store_error)?;
         Ok(managed)
     }
-    async fn publisher(self: &Arc<Self>, scope: &Scope) -> Result<Publisher, String> {
+    pub async fn publisher(
+        self: &Arc<Self>,
+        scope: &Scope,
+        collection: Collection,
+    ) -> Result<Publisher, String> {
         let managed = self.clone();
         let scope = scope.clone();
         let mut ticket = scope.resources.reserve().map_err(store_error)?;
@@ -82,7 +125,16 @@ impl Managed {
                 .root
                 .validate_current()
                 .map_err(store_error)
-                .and_then(|()| Publisher::open_scoped(&managed.data, &scope).map_err(store_error));
+                .and_then(|()| {
+                    Publisher::open_scoped(
+                        match collection {
+                            Collection::Installed => &managed.data,
+                            Collection::Imported => &managed.imported,
+                        },
+                        &scope,
+                    )
+                    .map_err(store_error)
+                });
             drop(managed);
             ticket.complete(Ok(()));
             result
@@ -102,7 +154,7 @@ fn child(parent: &cap_std::fs::Dir, name: &str) -> std::io::Result<cap_std::fs::
     }
     parent.open_dir_nofollow(name)
 }
-fn store_error(_: impl std::fmt::Display) -> String {
+pub(super) fn store_error(_: impl std::fmt::Display) -> String {
     "skills_store_unavailable".into()
 }
 
@@ -112,6 +164,7 @@ struct Plan {
     expected: Option<Tree>,
     next: Option<Tree>,
     locally_modified: bool,
+    collection: Collection,
 }
 impl Plan {
     fn preview(self) -> Preview {
@@ -134,7 +187,7 @@ impl Plan {
             }
         }
         Preview::Ready {
-            target: format!("installed:{}", self.id),
+            target: format!("{}{}", self.collection.prefix(), self.id),
             entries,
             paths_truncated: paths.len() != entries,
             paths,
@@ -153,9 +206,13 @@ impl Library {
         &self,
         change: Change,
         publisher: &Publisher,
+        collection: Collection,
         scope: &Scope,
     ) -> Result<Prepared, String> {
         let rejected = |reason| Ok(Prepared::Rejected(reason));
+        if collection == Collection::Imported && !matches!(change.kind, ChangeKind::Delete) {
+            return rejected("read_only_source");
+        }
         let snapshot = self.snapshot(scope).await?;
         if snapshot.revision != change.revision {
             return Ok(Prepared::Changed);
@@ -171,7 +228,7 @@ impl Library {
             ChangeKind::Delete => {
                 let Some(id) = change
                     .reference
-                    .strip_prefix("installed:")
+                    .strip_prefix(collection.prefix())
                     .filter(|id| maka_skills::safe_source_id(id))
                 else {
                     return rejected("read_only_source");
@@ -182,21 +239,41 @@ impl Library {
                 if !entry.valid {
                     return rejected("invalid_skill");
                 }
-                let Some((id, root)) = self.sources.iter().find_map(|source| {
-                    change
-                        .reference
-                        .strip_prefix(&format!("{}:", source.prefix))
-                        .filter(|id| maka_skills::safe_source_id(id))
-                        .map(|id| (id, source))
-                }) else {
-                    return rejected("read_only_source");
+                let (id, tree) = if let Some(id) = change
+                    .reference
+                    .strip_prefix("imported:")
+                    .filter(|id| maka_skills::safe_source_id(id))
+                {
+                    let managed = self.managed.as_ref().ok_or("skills_store_unavailable")?;
+                    (
+                        id.to_owned(),
+                        Tree::read_view(
+                            &managed.imported_read.bind_scope(scope),
+                            &format!("skills/{id}"),
+                        )
+                        .await
+                        .map_err(store_error)?,
+                    )
+                } else {
+                    let Some((id, root)) = self.sources.iter().find_map(|source| {
+                        change
+                            .reference
+                            .strip_prefix(&format!("{}:", source.prefix))
+                            .filter(|id| maka_skills::safe_source_id(id))
+                            .map(|id| (id, source))
+                    }) else {
+                        return rejected("read_only_source");
+                    };
+                    (
+                        id.to_owned(),
+                        Tree::read_view(
+                            &root.root.bind_scope(scope),
+                            &root.directory.join(id).to_string_lossy(),
+                        )
+                        .await
+                        .map_err(store_error)?,
+                    )
                 };
-                let tree = Tree::read_view(
-                    &root.root.bind_scope(scope),
-                    &root.directory.join(id).to_string_lossy(),
-                )
-                .await
-                .map_err(store_error)?;
                 if tree
                     .get("SKILL.md")
                     .map(maka_runtime::artifact::content_digest)
@@ -228,7 +305,7 @@ impl Library {
             let current = snapshot
                 .entries
                 .iter()
-                .find(|(entry, _, _)| entry.reference == format!("installed:{id}"));
+                .find(|(entry, _, _)| entry.reference == format!("{}{id}", collection.prefix()));
             if current.is_none_or(|(_, digest, _)| {
                 tree.get("SKILL.md")
                     .map(maka_runtime::artifact::content_digest)
@@ -245,9 +322,10 @@ impl Library {
             }
             _ => {}
         }
-        let locally_modified = expected
-            .as_ref()
-            .is_some_and(|tree| tree.get("SKILL.md") != tree.get(".maka/baseline/SKILL.md"));
+        let locally_modified = collection == Collection::Installed
+            && expected
+                .as_ref()
+                .is_some_and(|tree| tree.get("SKILL.md") != tree.get(".maka/baseline/SKILL.md"));
         let digest = maka_runtime::artifact::content_digest(
             &serde_json::to_vec(&(
                 &change,
@@ -294,6 +372,7 @@ impl Library {
             expected,
             next,
             locally_modified,
+            collection,
         })))
     }
     pub(super) async fn preview(&self, input: Change, scope: &Scope) -> Result<Preview, String> {
@@ -307,14 +386,23 @@ impl Library {
             _ = scope.cancellation.cancelled() => return Err("skills_cancelled".into()),
             guard = managed.serial.lock() => guard,
         };
-        let publisher = managed.publisher(scope).await?;
-        Ok(match self.prepare(input, &publisher, scope).await? {
-            Prepared::Ready(plan) => plan.preview(),
-            Prepared::Changed => Preview::Changed,
-            Prepared::Rejected(reason) => Preview::Rejected {
-                reason: reason.into(),
+        let collection = if matches!(input.kind, ChangeKind::Delete)
+            && input.reference.starts_with("imported:")
+        {
+            Collection::Imported
+        } else {
+            Collection::Installed
+        };
+        let publisher = managed.publisher(scope, collection).await?;
+        Ok(
+            match self.prepare(input, &publisher, collection, scope).await? {
+                Prepared::Ready(plan) => plan.preview(),
+                Prepared::Changed => Preview::Changed,
+                Prepared::Rejected(reason) => Preview::Rejected {
+                    reason: reason.into(),
+                },
             },
-        })
+        )
     }
     pub(super) async fn apply(
         &self,
@@ -331,6 +419,25 @@ impl Library {
         operation: &Operation,
         scope: &Scope,
     ) -> Result<ChangeResult, String> {
+        self.apply_in(input, operation, scope, Collection::Installed)
+            .await
+    }
+    pub(super) async fn delete_source(
+        &self,
+        input: Review,
+        operation: &Operation,
+        scope: &Scope,
+    ) -> Result<ChangeResult, String> {
+        self.apply_in(input, operation, scope, Collection::Imported)
+            .await
+    }
+    async fn apply_in(
+        &self,
+        input: Review,
+        operation: &Operation,
+        scope: &Scope,
+        collection: Collection,
+    ) -> Result<ChangeResult, String> {
         let Some(managed) = &self.managed else {
             return Ok(ChangeResult::Rejected {
                 reason: "management_disabled".into(),
@@ -341,7 +448,7 @@ impl Library {
             _ = scope.cancellation.cancelled() => return Err("skills_cancelled".into()),
             guard = managed.serial.lock() => guard,
         };
-        let publisher = managed.publisher(scope).await?;
+        let publisher = managed.publisher(scope, collection).await?;
         if let Some(outcome) = publisher.reserve(operation).await.map_err(store_error)? {
             return recorded(outcome);
         }
@@ -349,12 +456,12 @@ impl Library {
         if let Some(outcome) = publisher.reserve(operation).await.map_err(store_error)? {
             return recorded(outcome);
         }
-        let prepared = self.prepare(input.change, &publisher, scope).await?;
+        let prepared = self
+            .prepare(input.change, &publisher, collection, scope)
+            .await?;
         let outcome = match prepared {
             Prepared::Ready(plan) if plan.review.digest == input.digest => {
-                let destination = Destination::Skill {
-                    reference: format!("installed:{}", plan.id),
-                };
+                let destination = collection.destination(&plan.id);
                 match publisher
                     .publish_operation(
                         &plan.id,
@@ -399,6 +506,11 @@ pub(super) fn recorded(outcome: Outcome) -> Result<ChangeResult, String> {
         Outcome::Applied {
             destination: Destination::Skill { reference },
         } => Ok(ChangeResult::Applied { reference }),
+        Outcome::Applied {
+            destination: Destination::Source { id },
+        } => Ok(ChangeResult::Applied {
+            reference: format!("imported:{id}"),
+        }),
         Outcome::Conflict => Ok(ChangeResult::Changed),
         Outcome::Rejected { reason } => Ok(ChangeResult::Rejected { reason }),
         _ => Err("skills_receipt_invalid".into()),

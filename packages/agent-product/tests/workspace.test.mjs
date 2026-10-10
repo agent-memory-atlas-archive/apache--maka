@@ -715,6 +715,7 @@ test('both product compositions use actual immutable package refs and check in t
             home: '/private/product-home',
             projectRoots: [{ label: 'Projects', path: '/private/product-projects' }],
             preferences: presentation === 'tui',
+            manage: presentation === 'desktop',
             sources: [{ id: 'local', label: 'Local', path: '/private/product-skills' }],
           };
         if (questionsEnabled) configuration.agent.skillLibrary = 'skills';
@@ -797,9 +798,11 @@ test('both product compositions use actual immutable package refs and check in t
           assert.deepEqual(host.instances.skills.configuration.values, configuration.skills);
           assert.deepEqual(
             business.endpoints.skills.grant.methods,
-            presentation === 'tui' ? ['list', 'read', 'setPreference'] : ['list', 'read'],
+            presentation === 'tui'
+              ? ['list', 'read', 'setPreference']
+              : ['list', 'read', 'preview', 'apply', 'importSource', 'deleteSource'],
           );
-          assert.equal(business.endpoints.skills.grant.recovery, presentation === 'tui');
+          assert.equal(business.endpoints.skills.grant.recovery, true);
         }
         assert.equal(host.instances['skill-outcomes'].key, keys['skill-outcomes']);
         assert.deepEqual(host.instances['recovery-gateway'].bindings.skillOutcomes, [

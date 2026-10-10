@@ -24,6 +24,7 @@ import type {
   Component,
   ComponentInput,
   EditorObservation,
+  FileObservation,
   EditorTextRef,
   Emission,
   ReadingCommand,
@@ -41,6 +42,13 @@ import type {
   TextChunk,
 } from '../../plugin-sdk/src/index.js';
 import { skillLibraryContract, type SkillLibraryProps } from './contracts.js';
+import {
+  sourceImport,
+  importReady,
+  importConfirmed,
+  importView,
+  type SourceImport,
+} from './skill-import.js';
 import { sameValue } from './value.js';
 import { copy, type Copy } from './locale.js';
 import { compactLabel, fill, output, pixels, type Presentation, type Node } from './view.js';
@@ -58,6 +66,7 @@ type Request =
   | { kind: 'read'; key: string }
   | { kind: 'preview' | 'mutate' | 'receipt' | 'outcome'; key: string };
 interface State {
+  importer: SourceImport;
   workspace: AgentWorkspace | null;
   revision: number;
   serial: number;
@@ -74,7 +83,10 @@ interface State {
   notice: keyof Copy | null;
   cleanupUnconfirmed: boolean;
   preview: Extract<SkillLibraryPreview, { kind: 'ready' }> | null;
-  current: { method: 'apply' | 'setPreference'; reference: RecoveryRef | null } | null;
+  current: {
+    method: 'apply' | 'setPreference' | 'importSource' | 'deleteSource';
+    reference: RecoveryRef | null;
+  } | null;
   active: number;
   reveal: ReadingCommand | null;
 }
@@ -200,6 +212,9 @@ function recover(state: State): Action[] {
   ];
 }
 function rejection(reason: string): keyof Copy {
+  if (reason === 'source_exists') return 'skillsSourceExists';
+  if (reason === 'invalid_source_id') return 'skillsSourceIdInvalid';
+  if (reason === 'invalid_source' || reason === 'invalid_skill') return 'skillsImportInvalid';
   return reason === 'already_installed'
     ? 'skillsAlreadyInstalled'
     : reason === 'not_installed'
@@ -222,7 +237,11 @@ function settle(
   state.current.reference = reply.reference;
   if (reply.receipt.kind !== 'recorded' || reply.receipt.outcome.kind !== 'returned') {
     state.notice = 'skillsUnknown';
-    if (readPublished && state.current.method === 'apply' && reply.receipt.kind === 'recorded') {
+    if (
+      readPublished &&
+      state.current.method !== 'setPreference' &&
+      reply.receipt.kind === 'recorded'
+    ) {
       const key = `skills-${++state.serial}`;
       state.pending = { kind: 'outcome', key };
       return [
@@ -268,6 +287,8 @@ function settledResult(
   const changed = selectWorkspace(state, props);
   state.cleanupUnconfirmed = cleanup.kind !== 'confirmed';
   if (result.kind === 'applied') {
+    state.importer.open = false;
+    state.importer.confirmation = null;
     state.document = null;
     const actions = state.open && props.open ? list(state) : [];
     state.notice = null;
@@ -311,7 +332,9 @@ function frame<N extends Node>(
       ui.text(
         'skills-preview-summary',
         kind === 'delete'
-          ? text.skillsDeleteDetail
+          ? preview.target.startsWith('imported:')
+            ? text.skillsDeleteSourceHelp
+            : text.skillsDeleteDetail
           : kind === 'update'
             ? text.skillsUpdateDetail
             : text.skillsInstallDetail,
@@ -343,14 +366,22 @@ function frame<N extends Node>(
       ui.text('skill-name', entry.name, 17, props.theme.text, 550),
       ui.text(
         'skill-source',
-        entry.bundled ? text.skillsBundled : entry.installed ? text.skillsInstalled : entry.source,
+        entry.imported
+          ? text.skillsImported
+          : entry.bundled
+            ? text.skillsBundled
+            : entry.installed
+              ? text.skillsInstalled
+              : entry.source,
         13,
         props.theme.muted,
       ),
       ui.text('skill-description', entry.description),
       ui.text(
         'skill-preference',
-        `${entry.preference.enabled ? text.skillsEnabled : text.skillsDisabled}${entry.preference.pinned ? ` · ${text.skillsPinned}` : ''}`,
+        entry.imported
+          ? text.skillsImported
+          : `${entry.preference.enabled ? text.skillsEnabled : text.skillsDisabled}${entry.preference.pinned ? ` · ${text.skillsPinned}` : ''}`,
       ),
       ui.text(
         'skill-range',
@@ -384,7 +415,7 @@ function frame<N extends Node>(
       const key = rowKey(state, at);
       const label = compactLabel(entry.name, tui ? 100 : 200);
       const summary = compactLabel(
-        `${entry.bundled ? text.skillsBundled : entry.installed ? text.skillsInstalled : entry.source} · ${entry.description}`,
+        `${entry.imported ? text.skillsImported : entry.bundled ? text.skillsBundled : entry.installed ? text.skillsInstalled : entry.source} · ${entry.description}`,
         tui ? 160 : 240,
       );
       content.push(
@@ -468,7 +499,7 @@ function frame<N extends Node>(
         },
         { input: 'reading-input' },
       ),
-      ...(document?.preferencesWritable && !state.preview
+      ...(document?.preferencesWritable && !document.entry.imported && !state.preview
         ? [
             ui.box(
               'skills-preferences',
@@ -505,6 +536,15 @@ function frame<N extends Node>(
                       text.skillsUpdate,
                       !available || !!state.current || !document.entry.valid,
                     ),
+                    ...(document.entry.imported
+                      ? [
+                          ui.button(
+                            'delete-skill',
+                            text.skillsDeleteSource,
+                            !available || !!state.current,
+                          ),
+                        ]
+                      : []),
                   ],
               { row: true, gap: tui ? 1 : 8, terminal: { wrap: true }, style: { wrap: true } },
             ),
@@ -532,6 +572,9 @@ function frame<N extends Node>(
                     ui.button('previous', text.skillsPrevious, !available || !state.history.length),
                     ui.button('next', text.skillsNext, !available || !state.page?.after),
                   ]),
+              ...((document?.writable ?? state.page?.writable)
+                ? [ui.button('open-import', text.skillsImport, busy || !!state.current)]
+                : []),
               ui.button('refresh', text.refreshSessions, busy || !!state.preview),
               ui.button('close', text.closeModels),
             ],
@@ -543,10 +586,38 @@ function frame<N extends Node>(
       gap: tui ? 0 : 8,
       style: { width: fill, minWidth: 0 },
       terminal: { grow: 1 },
-      shortcuts: [{ key: 'escape', modifiers: [], input: 'close', enabled: true }],
     },
   );
-  const out = output(state, view, events);
+  const out = output(
+    state,
+    ui.box(
+      'skills-root',
+      [
+        ui.box('skills-browser', [view], {
+          visible: !state.importer.open,
+          style: { width: fill, minHeight: 0 },
+          terminal: { grow: 1 },
+        }),
+        importView(
+          presentation,
+          props,
+          state.importer,
+          busy,
+          !!state.current,
+          !!state.current?.reference,
+          state.notice,
+          state.cleanupUnconfirmed,
+        ),
+      ],
+      {
+        visible: state.open && props.open,
+        style: { width: fill, minHeight: 0 },
+        terminal: { grow: 1 },
+        shortcuts: [{ key: 'escape', modifiers: [], input: 'close', enabled: true }],
+      },
+    ),
+    events,
+  );
   out.actions = actions;
   return out;
 }
@@ -556,6 +627,7 @@ export function skillLibrary<N extends Node>(
   return {
     mount(props) {
       const state: State = {
+        importer: sourceImport(),
         workspace: props.workspace ?? null,
         revision: 0,
         serial: 0,
@@ -607,6 +679,10 @@ export function skillLibrary<N extends Node>(
       if (
         (!state.open || !props.open) &&
         !(
+          input.kind === 'component' &&
+          ['skills-import-file', 'skills-import-id'].includes(input.child)
+        ) &&
+        !(
           input.kind === 'action' &&
           input.key === state.pending?.key &&
           (state.pending.kind === 'mutate' ||
@@ -615,7 +691,21 @@ export function skillLibrary<N extends Node>(
         )
       )
         return frame(presentation, state, props);
-      if (input.kind === 'component' && input.child === 'skills-query') {
+      if (
+        input.kind === 'component' &&
+        input.child === 'skills-import-file' &&
+        input.name === 'changed'
+      ) {
+        state.importer.file = input.event as FileObservation;
+        if (!importConfirmed(state.importer)) state.importer.confirmation = null;
+      } else if (
+        input.kind === 'component' &&
+        input.child === 'skills-import-id' &&
+        input.name === 'changed'
+      ) {
+        state.importer.id = input.event as EditorObservation;
+        if (!importConfirmed(state.importer)) state.importer.confirmation = null;
+      } else if (input.kind === 'component' && input.child === 'skills-query') {
         if (input.name === 'changed') {
           state.observation = input.event as EditorObservation;
           // The native editor's initial empty observation already matches the initial query.
@@ -697,7 +787,7 @@ export function skillLibrary<N extends Node>(
           }
         }
       } else if (input.kind === 'raw') {
-        if (input.key === 'close') {
+        if (input.key === 'close' || input.key === 'close-import') {
           if (state.preview) state.preview = null;
           else {
             state.open = false;
@@ -710,19 +800,77 @@ export function skillLibrary<N extends Node>(
             events.push({ name: 'closed', value: {} });
           }
         } else if (!state.pending) {
-          if (input.key === 'check-change') actions = recover(state);
+          if (state.importer.open) {
+            const importer = state.importer;
+            if (input.key === 'check-import') actions = recover(state);
+            else if (!state.current) {
+              if (input.key === 'back-import') {
+                importer.open = false;
+                importer.confirmation = null;
+              } else if (input.key === 'cancel-import-confirmation') importer.confirmation = null;
+              else if (input.key === 'review-import' && importReady(importer)) {
+                importer.confirmation = { file: importer.file!, id: importer.id!.snapshot.text };
+                state.notice = null;
+              } else if (input.key === 'confirm-import' && importConfirmed(importer)) {
+                const intent = importer.confirmation!;
+                const key = `skills-${++state.serial}`;
+                state.pending = { kind: 'mutate', key };
+                state.current = { method: 'importSource', reference: null };
+                state.cleanupUnconfirmed = false;
+                state.notice = null;
+                actions = [
+                  {
+                    key,
+                    binding: 'skills',
+                    member: 0,
+                    method: 'importSource',
+                    input: { bytes: intent.file.file!.bytes, digest: intent.file.file!.digest },
+                    resources: {
+                      file: {
+                        child: 'skills-import-file',
+                        method: 'snapshot',
+                        input: { owner: intent.file.owner, revision: intent.file.revision },
+                      },
+                      id: {
+                        child: 'skills-import-id',
+                        method: 'snapshot',
+                        input: {
+                          kind: 'at_revision',
+                          owner: intent.id.owner,
+                          revision: intent.id.revision,
+                        },
+                      },
+                    },
+                  },
+                ];
+                importer.confirmation = null;
+              }
+            }
+          } else if (
+            input.key === 'open-import' &&
+            !state.current &&
+            (state.document?.writable ?? state.page?.writable)
+          ) {
+            state.importer.open = true;
+            state.notice = null;
+          } else if (input.key === 'check-change') actions = recover(state);
           else if (input.key === 'cancel-change') state.preview = null;
           else if (input.key === 'confirm-change' && state.preview && !state.current) {
             const key = `skills-${++state.serial}`;
             state.pending = { kind: 'mutate', key };
-            state.current = { method: 'apply', reference: null };
+            const method =
+              state.preview.review.change.kind === 'delete' &&
+              state.preview.target.startsWith('imported:')
+                ? 'deleteSource'
+                : 'apply';
+            state.current = { method, reference: null };
             state.cleanupUnconfirmed = false;
             actions = [
               {
                 key,
                 binding: 'skills',
                 member: 0,
-                method: 'apply',
+                method,
                 input: state.preview.review,
                 resources: {},
               },
@@ -743,6 +891,7 @@ export function skillLibrary<N extends Node>(
               if (
                 (input.key === 'toggle-enabled' || input.key === 'toggle-pinned') &&
                 document.preferencesWritable &&
+                !document.entry.imported &&
                 !state.current
               ) {
                 const key = `skills-${++state.serial}`;

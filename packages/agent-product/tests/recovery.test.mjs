@@ -196,41 +196,46 @@ for (const target of ['desktop', 'tui']) {
     assert.deepEqual(c.out.actions, []);
   });
   test(`${target} a fresh recovery root reads persisted skill publication evidence independently of the library`, async () => {
-    const entry = intent(1);
-    entry.reference = {
-      ...entry.reference,
-      export: 'skills',
-      method: 'apply',
-      contract: contracts.skillLibrary,
-    };
-    const c = await client(target);
-    c.reply([entry]).raw('check-0');
-    const original = {
-      reference: entry.reference,
-      receipt: {
-        kind: 'recorded',
-        outcome: { kind: 'unresolved' },
-        cleanup: { kind: 'unconfirmed' },
-      },
-    };
-    c.reply(original);
-    assert.equal(c.out.actions[0].binding, 'skillOutcomes');
-    assert.equal(c.out.actions[0].method, 'read');
-    assert.deepEqual(c.out.actions[0].input, entry.reference);
-    const published = { kind: 'applied', reference: 'installed:review' };
-    c.reply({ original, published });
-    assert.deepEqual(c.state.reply, original);
-    assert.deepEqual(c.state.published, published);
-    assert.deepEqual(JSON.parse(c.source()), { host: original.receipt, publication: published });
-    assert.match(JSON.stringify(c.out.frame.view), /Original skill result confirmed/);
-    assert.equal(c.out.actions.length, 0);
-    c.raw('check-again').reply(original);
-    c.reply({ original, published: null });
-    assert.deepEqual(
-      c.state.published,
-      published,
-      'a later missing observation cannot discard an immutable known result',
-    );
+    for (const method of ['apply', 'importSource', 'deleteSource']) {
+      const entry = intent(1);
+      entry.reference = {
+        ...entry.reference,
+        export: 'skills',
+        method,
+        contract: contracts.skillLibrary,
+      };
+      const c = await client(target);
+      c.reply([entry]).raw('check-0');
+      const original = {
+        reference: entry.reference,
+        receipt: {
+          kind: 'recorded',
+          outcome: { kind: 'unresolved' },
+          cleanup: { kind: 'unconfirmed' },
+        },
+      };
+      c.reply(original);
+      assert.equal(c.out.actions[0].binding, 'skillOutcomes');
+      assert.equal(c.out.actions[0].method, 'read');
+      assert.deepEqual(c.out.actions[0].input, entry.reference);
+      const published = {
+        kind: 'applied',
+        reference: method === 'apply' ? 'installed:review' : 'imported:review',
+      };
+      c.reply({ original, published });
+      assert.deepEqual(c.state.reply, original);
+      assert.deepEqual(c.state.published, published);
+      assert.deepEqual(JSON.parse(c.source()), { host: original.receipt, publication: published });
+      assert.match(JSON.stringify(c.out.frame.view), /Original skill result confirmed/);
+      assert.equal(c.out.actions.length, 0);
+      c.raw('check-again').reply(original);
+      c.reply({ original, published: null });
+      assert.deepEqual(
+        c.state.published,
+        published,
+        'a later missing observation cannot discard an immutable known result',
+      );
+    }
   });
   test(`${target} recovery does not replace original Host facts with a foreign or denied skill result`, async () => {
     const entry = intent(1);

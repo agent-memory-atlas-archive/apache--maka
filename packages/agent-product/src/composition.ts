@@ -470,6 +470,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         receipts: [remote('receipts', 'Receipts')],
         reading: [local('reading-area', 'ReadingArea')],
         source: [local('source-text', 'SourceText')],
+        file: [local('file', 'FilePicker')],
         input: [local('input', 'TextInput')],
         reader: [local('reader', 'Reader')],
       },
@@ -485,7 +486,9 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         [
           'list',
           'read',
-          ...(configuration.skills.manage ? ['preview', 'apply'] : []),
+          ...(configuration.skills.manage
+            ? ['preview', 'apply', 'importSource', 'deleteSource']
+            : []),
           ...(configuration.skills.preferences ? ['setPreference'] : []),
         ],
         !!(configuration.skills.manage || configuration.skills.preferences),

@@ -135,6 +135,137 @@ async function client(target, writable = true, preferencesWritable = false) {
   return c;
 }
 for (const target of ['tui', 'desktop']) {
+  test(`${target} retained import and browser buttons have distinct native keys`, async () => {
+    const c = await client(target);
+    const unique = () => {
+      const keys = new Set();
+      const visit = (value) => {
+        if (!value || typeof value !== 'object') return;
+        if (typeof value.key === 'string' && value.kind === 'button') {
+          assert.ok(!keys.has(value.key), `duplicate native key ${value.key}`);
+          keys.add(value.key);
+        }
+        Object.values(value).forEach(visit);
+      };
+      visit(c.out.frame.view);
+    };
+    unique();
+    c.open().raw('open-import');
+    unique();
+    c.raw('close-import');
+    assert.equal(c.state.open, false);
+  });
+  test(`${target} imports freeze native file and ID snapshots and retain unknown operations across close`, async () => {
+    const c = await client(target);
+    c.open().raw('open-import');
+    const id = {
+      revision: 1,
+      snapshot: {
+        text: { owner: 'source-id-owner', revision: 1, bytes: 6 },
+        selection: { start: 6, end: 6 },
+        reversed: false,
+        marked: null,
+      },
+      receipt: null,
+    };
+    const file = {
+      owner: 'source-file-owner',
+      revision: 2,
+      phase: 'ready',
+      file: { name: 'SKILL.md', bytes: 80, digest },
+      error: null,
+    };
+    c.event({ kind: 'component', child: 'skills-import-id', name: 'changed', event: id });
+    c.event({ kind: 'component', child: 'skills-import-file', name: 'changed', event: file });
+    c.raw('review-import');
+    assert.ok(c.state.importer.confirmation);
+    // Changed native material invalidates the review; it cannot silently retarget.
+    c.event({
+      kind: 'component',
+      child: 'skills-import-file',
+      name: 'changed',
+      event: { ...file, revision: 3 },
+    });
+    c.raw('confirm-import');
+    assert.equal(c.action('importSource'), undefined);
+    c.raw('review-import').raw('confirm-import');
+    const action = c.action('importSource');
+    assert.deepEqual(action.input, { bytes: 80, digest });
+    assert.deepEqual(action.resources, {
+      file: {
+        child: 'skills-import-file',
+        method: 'snapshot',
+        input: { owner: file.owner, revision: 3 },
+      },
+      id: {
+        child: 'skills-import-id',
+        method: 'snapshot',
+        input: { kind: 'at_revision', owner: id.snapshot.text.owner, revision: 1 },
+      },
+    });
+    const original = { ...reference, method: 'importSource' };
+    c.operation(
+      action,
+      { kind: 'recorded', outcome: { kind: 'unresolved' }, cleanup: { kind: 'unconfirmed' } },
+      original,
+    );
+    c.raw('close');
+    c.update({ open: false });
+    c.update({ open: true });
+    const receipt = c.action('read');
+    assert.deepEqual(receipt.input, original);
+    c.reply(receipt, {
+      reference: original,
+      receipt: {
+        kind: 'recorded',
+        outcome: { kind: 'unresolved' },
+        cleanup: { kind: 'unconfirmed' },
+      },
+    });
+    assert.equal(c.action('outcome').binding, 'outcomes');
+    c.reply(c.action('outcome'), {
+      original: {
+        reference: original,
+        receipt: {
+          kind: 'recorded',
+          outcome: { kind: 'unresolved' },
+          cleanup: { kind: 'unconfirmed' },
+        },
+      },
+      published: { kind: 'applied', reference: 'imported:review' },
+    });
+    assert.equal(c.state.current, null);
+    assert.equal(c.state.importer.open, false);
+    assert.equal(c.state.cleanupUnconfirmed, true);
+    assert.ok(c.action('list'));
+  });
+  test(`${target} imported sources cannot enable themselves and deletion uses its original store method`, async () => {
+    const c = await client(target, true, true);
+    const source = {
+      ...entry,
+      imported: true,
+      reference: 'imported:review',
+      preference: { enabled: false, pinned: false },
+    };
+    c.open(source).raw('toggle-enabled');
+    assert.equal(c.action('setPreference'), undefined);
+    c.raw('delete-skill');
+    const preview = c.action('preview');
+    assert.equal(preview.input.reference, source.reference);
+    c.reply(preview, {
+      kind: 'ready',
+      review: { change: preview.input, digest },
+      target: source.reference,
+      entries: 1,
+      paths: ['SKILL.md'],
+      pathsTruncated: false,
+      locallyModified: false,
+    });
+    c.raw('confirm-change');
+    assert.ok(c.action('deleteSource'));
+    assert.equal(c.action('apply'), undefined);
+    assert.equal(c.state.current.method, 'deleteSource');
+  });
   test(`${target} long project references fit native document keys and refreshed pages replace them`, async () => {
     const c = await client(target);
     const project = { ...entry, reference: `project:${'a'.repeat(64)}:agents:${'b'.repeat(255)}` };

@@ -90,6 +90,8 @@ pub struct List {
 pub struct Entry {
     pub bundled: bool,
     pub installed: bool,
+    /// Imported authoring source; unavailable to the model until explicitly installed.
+    pub imported: bool,
     pub preference: maka_skills::Preference,
     pub reference: String,
     pub source: String,
@@ -156,6 +158,16 @@ pub enum Document {
     },
     Changed,
     Unavailable,
+}
+
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "SkillLibraryImportSource")]
+pub struct ImportSource {
+    #[schemars(range(min = 1, max = 1048576))]
+    pub bytes: usize,
+    #[schemars(length(min = 71, max = 71))]
+    pub digest: String,
 }
 
 #[derive(Clone, Deserialize, Serialize, JsonSchema)]
@@ -298,6 +310,33 @@ pub fn contract() -> Contract {
                 ),
                 (
                     "apply".into(),
+                    Method {
+                        mode: MethodMode::Mutation,
+                        input: schemars::schema_for!(Review).into(),
+                        output: schemars::schema_for!(ChangeResult).into(),
+                        resources: BTreeMap::new(),
+                    },
+                ),
+                (
+                    "importSource".into(),
+                    Method {
+                        mode: MethodMode::Mutation,
+                        input: schemars::schema_for!(ImportSource).into(),
+                        output: schemars::schema_for!(ChangeResult).into(),
+                        resources: BTreeMap::from([
+                            (
+                                "file".into(),
+                                maka_plugin_core::contract::binary_resource_type(),
+                            ),
+                            (
+                                "id".into(),
+                                maka_plugin_core::contract::text_resource_type(),
+                            ),
+                        ]),
+                    },
+                ),
+                (
+                    "deleteSource".into(),
                     Method {
                         mode: MethodMode::Mutation,
                         input: schemars::schema_for!(Review).into(),

@@ -119,11 +119,17 @@ impl Handler for Reader {
                 (
                     Interface::Service { methods: original },
                     Interface::Service { methods: current },
-                ) => original.get("apply") == current.get("apply"),
+                ) => {
+                    original.get(&reference.method).is_some()
+                        && original.get(&reference.method) == current.get(&reference.method)
+                }
                 _ => false,
             };
             if reference.export != super::EXPORT
-                || reference.method != "apply"
+                || !matches!(
+                    reference.method.as_str(),
+                    "apply" | "importSource" | "deleteSource"
+                )
                 || reference.contract.name != current.name
                 || reference.contract.version != current.version
                 || reference.contract.transport != current.transport
@@ -143,7 +149,12 @@ impl Handler for Reader {
                         &reference.namespace,
                     );
                     let published = match reader
-                        .capture(namespace, reference.operation, context.scope())
+                        .capture(
+                            namespace,
+                            reference.method != "apply",
+                            reference.operation,
+                            context.scope(),
+                        )
                         .await?
                     {
                         None => None,
@@ -179,6 +190,7 @@ impl Reader {
     async fn capture(
         &self,
         namespace: String,
+        imported: bool,
         operation: uuid::Uuid,
         scope: &Scope,
     ) -> Result<Option<ReadRoot>, String> {
@@ -201,17 +213,27 @@ impl Reader {
                     .map_err(std::io::Error::other)?;
                 let directory = directory
                     .open_dir_nofollow("skill-libraries")?
-                    .open_dir_nofollow(&namespace)?
-                    .open_dir_nofollow("receipts")?;
-                let view = ReadRoot::from_handle(
-                    directory,
-                    root.canonical_path()
-                        .join("skill-libraries")
-                        .join(namespace)
-                        .join("receipts"),
-                )
-                .select(BTreeSet::from([format!("{operation}.json")]))
-                .map_err(std::io::Error::other)?;
+                    .open_dir_nofollow(&namespace)?;
+                let (directory, path) = if imported {
+                    (
+                        directory.open_dir_nofollow("imported")?,
+                        root.canonical_path()
+                            .join("skill-libraries")
+                            .join(&namespace)
+                            .join("imported"),
+                    )
+                } else {
+                    (
+                        directory,
+                        root.canonical_path()
+                            .join("skill-libraries")
+                            .join(&namespace),
+                    )
+                };
+                let directory = directory.open_dir_nofollow("receipts")?;
+                let view = ReadRoot::from_handle(directory, path.join("receipts"))
+                    .select(BTreeSet::from([format!("{operation}.json")]))
+                    .map_err(std::io::Error::other)?;
                 Ok(view)
             })();
             drop(root);

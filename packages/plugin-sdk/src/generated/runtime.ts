@@ -4662,6 +4662,10 @@ export interface SkillLibraryCursor {
 export interface SkillLibraryEntry {
   bundled: boolean;
   installed: boolean;
+  /**
+   * Imported authoring source; unavailable to the model until explicitly installed.
+   */
+  imported: boolean;
   preference: SkillPreference;
   reference: string;
   source: string;

@@ -13700,6 +13700,206 @@ export const contracts = {
           },
           resources: {},
         },
+        deleteSource: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              change: {
+                $ref: '#/$defs/SkillLibraryChange',
+              },
+              digest: {
+                type: 'string',
+                minLength: 71,
+                maxLength: 71,
+              },
+            },
+            required: ['change', 'digest'],
+            title: 'SkillLibraryReview',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              SkillLibraryChange: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  workspace: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentWorkspace',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    $ref: '#/$defs/SkillLibraryChangeKind',
+                  },
+                  reference: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 512,
+                  },
+                  revision: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                },
+                required: ['kind', 'reference', 'revision'],
+              },
+              AgentWorkspace: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                required: ['path', 'directoryIdentity', 'identity'],
+              },
+              SkillLibraryChangeKind: {
+                type: 'string',
+                enum: ['install', 'update', 'delete'],
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  reference: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'applied',
+                  },
+                },
+                required: ['kind', 'reference'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  reason: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                required: ['kind', 'reason'],
+              },
+            ],
+            title: 'SkillLibraryChangeResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          resources: {},
+        },
+        importSource: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              bytes: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 1,
+                maximum: 1048576,
+              },
+              digest: {
+                type: 'string',
+                minLength: 71,
+                maxLength: 71,
+              },
+            },
+            required: ['bytes', 'digest'],
+            title: 'SkillLibraryImportSource',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  reference: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'applied',
+                  },
+                },
+                required: ['kind', 'reference'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  reason: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                required: ['kind', 'reason'],
+              },
+            ],
+            title: 'SkillLibraryChangeResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          resources: {
+            file: {
+              name: 'maka.bytes',
+              version: 1,
+            },
+            id: {
+              name: 'maka.text.utf8',
+              version: 1,
+            },
+          },
+        },
         list: {
           mode: 'query',
           input: {
@@ -13861,6 +14061,11 @@ export const contracts = {
                   installed: {
                     type: 'boolean',
                   },
+                  imported: {
+                    type: 'boolean',
+                    description:
+                      'Imported authoring source; unavailable to the model until explicitly installed.',
+                  },
                   preference: {
                     $ref: '#/$defs/SkillPreference',
                   },
@@ -13895,6 +14100,7 @@ export const contracts = {
                 required: [
                   'bundled',
                   'installed',
+                  'imported',
                   'preference',
                   'reference',
                   'source',
@@ -15167,6 +15373,11 @@ export const contracts = {
                   installed: {
                     type: 'boolean',
                   },
+                  imported: {
+                    type: 'boolean',
+                    description:
+                      'Imported authoring source; unavailable to the model until explicitly installed.',
+                  },
                   preference: {
                     $ref: '#/$defs/SkillPreference',
                   },
@@ -15201,6 +15412,7 @@ export const contracts = {
                 required: [
                   'bundled',
                   'installed',
+                  'imported',
                   'preference',
                   'reference',
                   'source',
