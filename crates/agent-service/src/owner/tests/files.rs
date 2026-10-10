@@ -155,7 +155,7 @@ async fn native_files_reuse_actual_read_search_write_edit_and_patch_executors() 
         ] {
             let (listener, f, session) = fixture(method).await;
             std::fs::write(f.workspace.join("original.txt"), "alpha needle\n").unwrap();
-            call(&listener, &f, &session, input).await;
+            call(&listener, &f, &session, input.clone()).await;
             let result = finish(&listener, &f).await;
             assert_eq!(result["kind"], "completed", "{method}: {result}");
             match method {
@@ -164,7 +164,7 @@ async fn native_files_reuse_actual_read_search_write_edit_and_patch_executors() 
                 _ => assert!(result.to_string().contains(expected.trim()), "{method}: {result}"),
             }
             assert!(f.store.pending_interactions(&session).await.unwrap().is_empty());
-            if matches!(method, "readText" | "write" | "edit" | "applyPatch") {
+            {
                 let facts = service_tools::facts(&f, &session).await;
                 assert!(facts.iter().any(|fact| matches!(fact, maka_runtime::event::Fact::ToolDispatched {presentation: Some(key), name, ..} if key == &format!("maka.workspace.Files@1/{method}") && name == "WorkspaceFile")));
                 let through = *f.store.subscribe_commits().borrow();
@@ -172,6 +172,27 @@ async fn native_files_reuse_actual_read_search_write_edit_and_patch_executors() 
                 let page = f.query("history", json!({"sessionId":session,"through":through,"position":{"kind":"start"}})).await.unwrap();
                 assert!(page["chunks"].as_array().unwrap().iter().any(|chunk| chunk["tool"]["call"]["presentation"] == format!("maka.workspace.Files@1/{method}")), "{page}");
                 let call = page["chunks"].as_array().unwrap().iter().find(|chunk| chunk["role"] == "tool_call").unwrap();
+                if matches!(method, "glob" | "grep") {
+                    let pattern = f.query("source", json!({"sessionId":session,"through":through,
+                        "source":{"kind":"sequence","sequence":call["sequence"]},"field":"arguments",
+                        "path":["pattern"],"position":{"kind":"start"}})).await.unwrap();
+                    assert_eq!(pattern["source"]["text"], if method == "glob" { "*.txt" } else { "needle" });
+                    assert!(pattern["filePath"].is_null());
+                    let arguments = f.query("source", json!({"sessionId":session,"through":through,
+                        "source":{"kind":"sequence","sequence":call["sequence"]},"field":"arguments",
+                        "path":[],"position":{"kind":"start"}})).await.unwrap();
+                    assert_eq!(serde_json::from_str::<Value>(arguments["source"]["text"].as_str().unwrap()).unwrap(), input);
+                    // Historical display must remain the recorded search, even after the workspace changes.
+                    std::fs::write(f.workspace.join("original.txt"), "replacement without a match\n").unwrap();
+                    std::fs::write(f.workspace.join("later.txt"), "later needle\n").unwrap();
+                    for field in ["complete", if method == "glob" { "files" } else { "matches" }] {
+                        let source = f.query("source", json!({"sessionId":session,"through":through,
+                            "source":{"kind":"sequence","sequence":call["tool"]["result"]["sequence"]},
+                            "field":"result","path":["value",field],"position":{"kind":"start"}})).await.unwrap();
+                        assert_eq!(serde_json::from_str::<Value>(source["source"]["text"].as_str().unwrap()).unwrap(), result["value"][field]);
+                        assert!(source["filePath"].is_null());
+                    }
+                } else {
                 let path = if method == "applyPatch" { json!(["operation", "path"]) } else { json!(["path"]) };
                 let source = f.query("source", json!({"sessionId":session,"through":through,
                     "source":{"kind":"sequence","sequence":call["sequence"]},"field":"arguments",
@@ -183,7 +204,7 @@ async fn native_files_reuse_actual_read_search_write_edit_and_patch_executors() 
                         "field":"result","path":["value", "path"],"position":{"kind":"start"}})).await.unwrap();
                     assert_eq!(source["filePath"], result["value"]["path"]);
                 }
-
+                }
             }
             close(&f).await;
         }

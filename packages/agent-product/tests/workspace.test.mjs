@@ -671,6 +671,14 @@ test('both product compositions use actual immutable package refs and check in t
                       import: 'files',
                       method: 'readImage',
                     },
+                    ...['glob', 'grep'].map((method) => ({
+                      name: 'Search_' + method,
+                      result: 'json',
+                      confirmation: 'preapproved',
+                      description: 'Search the selected workspace.',
+                      import: 'files',
+                      method,
+                    })),
                   ]
                 : [],
           },
@@ -788,6 +796,12 @@ test('both product compositions use actual immutable package refs and check in t
             'maka.workspace.Files@1/write',
           );
           assert.equal(host.instances.agent.configuration.values.tools[1].presentation, undefined);
+          assert.deepEqual(
+            host.instances.agent.configuration.values.tools
+              .slice(2, 4)
+              .map((tool) => tool.presentation),
+            ['maka.workspace.Files@1/glob', 'maka.workspace.Files@1/grep'],
+          );
           assert.deepEqual(host.instances.agent.bindings.files, [
             { kind: 'instance', path: ['workspace-files'], export: 'files' },
           ]);
@@ -797,7 +811,7 @@ test('both product compositions use actual immutable package refs and check in t
               consumer: [keys.agent],
               provider: [keys['workspace-files']],
               export: 'files',
-              methods: ['write', 'readImage'],
+              methods: ['write', 'readImage', 'glob', 'grep'],
               recovery: true,
             },
             {
@@ -10029,6 +10043,40 @@ async function detailClient(
   return client;
 }
 for (const target of ['tui', 'desktop']) {
+  test(`${target} search cards read only frozen search evidence and page results on demand`, async () => {
+    for (const [method, field] of [
+      ['glob', 'files'],
+      ['grep', 'matches'],
+    ]) {
+      const client = await detailClient(target, method, false);
+      assert.deepEqual(
+        [...client.requests.values()].map((action) => action.input.path),
+        [['pattern'], ['kind']],
+      );
+      client.answer(['pattern'], '中.*');
+      client.answer(['kind'], 'completed');
+      client.answer(['value', 'complete'], 'false', { format: 'json' });
+      assert.equal(client.requests.size, 0, 'collapsed search does not read the result list');
+      client.update({ expanded: true });
+      client.answer([], '{"pattern":"中.*","path":"original"}', { format: 'json' });
+      const first = client.find(['value', field]);
+      assert.equal(first.input.source.sequence, 50);
+      assert.equal(first.input.field, 'result');
+      client.answer(['value', field], '["original', { format: 'json', totalBytes: 100 });
+      client.update({ context: { sessionId: uuid(1), through: 150 } });
+      client.raw('matches-next');
+      const next = client.find(['value', field]);
+      assert.equal(next.input.through, 100);
+      assert.deepEqual(next.input.position, { kind: 'after', offset: 10 });
+      assert.equal(client.out.frame.state.published.path, null, 'search text grants no file link');
+      client.update({ expanded: false });
+      client.complete(next, {
+        status: 'succeeded',
+        value: client.page(next, 'tail', { format: 'json', offset: 10, totalBytes: 100 }),
+      });
+      assert.equal(client.requests.size, 0, 'a late page does not fetch another page');
+    }
+  });
   test(`${target} explicit read presentation pages immutable literal content and keeps its original fence`, async () => {
     const client = await detailClient(target, 'readText', false);
     assert.deepEqual(

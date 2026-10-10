@@ -376,7 +376,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         if (tool.presentation !== undefined) return tool;
         const contract =
           tool.import === 'files' &&
-          ['readText', 'write', 'edit', 'applyPatch'].includes(tool.method)
+          ['readText', 'glob', 'grep', 'write', 'edit', 'applyPatch'].includes(tool.method)
             ? 'maka.workspace.Files'
             : tool.import === 'processes' &&
                 ['execute', 'read', 'writeStdin', 'stop'].includes(tool.method)

@@ -70,6 +70,8 @@ export function toolLabel(
           write: text.toolWriteAction,
           edit: text.toolEditAction,
           patch: text.toolPatchAction,
+          glob: text.toolSearchAction,
+          grep: text.toolSearchAction,
           execute: text.terminalCommand,
           processRead: text.toolProcessRead,
           stdin: text.toolProcessInput,

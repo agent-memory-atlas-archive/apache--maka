@@ -48,6 +48,10 @@ export function filePresentation(key: string | null | undefined) {
 }
 export function toolPresentation(key: string | null | undefined) {
   switch (key) {
+    case 'maka.workspace.Files@1/glob':
+      return 'glob';
+    case 'maka.workspace.Files@1/grep':
+      return 'grep';
     case 'maka.workspace.Processes@1/execute':
       return 'execute';
     case 'maka.workspace.Processes@1/read':
@@ -70,6 +74,8 @@ function compactPart(id: string) {
     'resultKind',
     'processStatus',
     'exitCode',
+    'pattern',
+    'searchComplete',
   ].includes(id);
 }
 type Part = {
@@ -161,12 +167,13 @@ function complete(part: Part) {
   const page = part.page;
   return !!page && page.offset === 0 && bytes(page.text) === page.totalBytes && !part.failed;
 }
-function scalar(state: State, id: string): string | number | null {
+function scalar(state: State, id: string): string | number | boolean | null {
   const part = state.parts[id];
   if (!part || !complete(part)) return null;
   if (part.format === 'text') return part.page!.text;
   try {
     const value: unknown = JSON.parse(part.page!.text);
+    if (typeof value === 'boolean') return value;
     return typeof value === 'number' &&
       Number.isSafeInteger(value) &&
       (id === 'exitCode' || value >= 0)
@@ -228,7 +235,19 @@ export function toolDetails<N extends Node>(
     }
     const kind = toolPresentation(state.tool.call?.presentation);
     const file = filePresentation(state.tool.call?.presentation);
-    const process = !!kind && !file;
+    const search = kind === 'glob' || kind === 'grep';
+    const process = !!kind && !file && !search;
+    if (search && state.tool.call) {
+      add(state, 'pattern', 'arguments', ['pattern']);
+      if (props.expanded) add(state, 'searchArguments', 'arguments', [], 'json');
+      if (state.tool.result) add(state, 'status', 'result', ['kind']);
+      if (scalar(state, 'status') === 'completed') {
+        add(state, 'searchComplete', 'result', ['value', 'complete'], 'json');
+        if (props.expanded)
+          add(state, 'matches', 'result', ['value', kind === 'glob' ? 'files' : 'matches'], 'json');
+      } else if (props.expanded && scalar(state, 'status') === 'failed')
+        add(state, 'failure', 'result', ['message']);
+    }
     if (process && state.tool.call) {
       if (kind === 'execute') add(state, 'command', 'arguments', ['command']);
       else add(state, 'reference', 'arguments', ['ref']);
@@ -340,6 +359,8 @@ export function toolDetails<N extends Node>(
       patch: text.toolPatch,
       operation: text.toolPatchOperation,
       failure: text.toolBusinessFailure,
+      searchArguments: text.toolArguments,
+      matches: kind === 'glob' ? text.toolMatchingFiles : text.toolMatchingLines,
     };
     const before = scalar(state, 'before'),
       after = scalar(state, 'after');
@@ -516,6 +537,32 @@ export function toolDetails<N extends Node>(
     if (file && state.parts.status?.failed)
       sections.push(ui.button('status-retry', text.sourceRetry, !!state.parts.status.pending));
     const summary: N[] = [];
+    if (search) {
+      const pattern = state.parts.pattern;
+      if (pattern?.page?.offset === 0 && !pattern.failed)
+        summary.push(
+          ui.text(
+            'search-summary',
+            `${text.toolSearchPattern} · ${pattern.page.text}${complete(pattern) ? '' : '…'}`,
+            14,
+            props.theme.muted,
+            400,
+            { truncate: true },
+          ),
+        );
+      else if (pattern?.pending)
+        summary.push(ui.text('search-summary-loading', text.loading, 13, props.theme.muted));
+      const notice =
+        scalar(state, 'status') === 'failed'
+          ? text.toolBusinessFailure
+          : scalar(state, 'searchComplete') === false
+            ? text.toolSearchIncomplete
+            : null;
+      if (notice) {
+        summary.push(ui.text('search-summary-status', notice, 13, props.theme.muted));
+        sections.unshift(ui.text('search-status', notice, 13, props.theme.muted));
+      }
+    }
     if (file) {
       const label =
         typeof path === 'string' && path.trim()
@@ -605,6 +652,8 @@ export function toolDetails<N extends Node>(
             ),
           );
       }
+    }
+    if (process || search) {
       for (const [id, part] of Object.entries(state.parts)) {
         if (!part.failed) continue;
         const notice = (prefix: string) =>
