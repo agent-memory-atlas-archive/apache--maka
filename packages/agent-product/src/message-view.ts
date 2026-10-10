@@ -53,6 +53,52 @@ function timeLabel(millis: number | null): string | null {
       : time;
 }
 
+export function toolLabel(
+  message: { tool: HistorySource['tool']; live?: boolean; waiting?: boolean },
+  locale: string,
+) {
+  const text = copy(locale);
+  const title = message.tool?.call?.title;
+  const kind = toolPresentation(message.tool?.call?.presentation);
+  const name = title
+    ? (title.translations?.[locale] ??
+      title.translations?.[locale.split('-')[0]!] ??
+      title.fallback)
+    : kind
+      ? {
+          read: text.toolReadAction,
+          write: text.toolWriteAction,
+          edit: text.toolEditAction,
+          patch: text.toolPatchAction,
+          execute: text.terminalCommand,
+          processRead: text.toolProcessRead,
+          stdin: text.toolProcessInput,
+          stop: text.stop,
+        }[kind]
+      : message.tool?.call?.name;
+  const result = message.tool?.result;
+  const settlement = result?.settlement;
+  const status = settlement
+    ? {
+        returned: text.toolReturned,
+        failed: text.toolFailed,
+        unknown: text.toolUnknown,
+        rejected: text.toolRejected,
+      }[settlement]
+    : result
+      ? null
+      : message.live && message.tool?.call?.pending
+        ? message.waiting
+          ? text.waiting
+          : message.tool.call.dispatched
+            ? text.toolDispatched
+            : text.toolPending
+        : message.tool?.call?.dispatched
+          ? text.toolDispatchedMissing
+          : text.toolMissing;
+  return { name, status };
+}
+
 export function messageView<N extends Node>(
   presentation: Presentation<N>,
   target: 'tui' | 'desktop',
@@ -93,46 +139,9 @@ export function messageView<N extends Node>(
             : message.role === 'failure'
               ? text.findFieldFailure
               : text.toolOutput;
-  const title = tool && message.tool?.call?.title;
-  const kind = toolPresentation(message.tool?.call?.presentation);
-  const name = title
-    ? (title.translations?.[locale] ??
-      title.translations?.[locale.split('-')[0]!] ??
-      title.fallback)
-    : kind
-      ? {
-          read: text.toolReadAction,
-          write: text.toolWriteAction,
-          edit: text.toolEditAction,
-          patch: text.toolPatchAction,
-          execute: text.terminalCommand,
-          processRead: text.toolProcessRead,
-          stdin: text.toolProcessInput,
-          stop: text.stop,
-        }[kind]
-      : tool && message.tool?.call?.name;
-  const result = message.tool?.result;
-  const settlement = result?.settlement;
-  const status = !tool
-    ? null
-    : settlement
-      ? {
-          returned: text.toolReturned,
-          failed: text.toolFailed,
-          unknown: text.toolUnknown,
-          rejected: text.toolRejected,
-        }[settlement]
-      : result
-        ? null
-        : message.live && message.tool?.call?.pending
-          ? message.waiting
-            ? text.waiting
-            : message.tool.call.dispatched
-              ? text.toolDispatched
-              : text.toolPending
-          : message.tool?.call?.dispatched
-            ? text.toolDispatchedMissing
-            : text.toolMissing;
+  const { name, status } = tool ? toolLabel(message, locale) : { name: null, status: null };
+  const result = message.tool?.result,
+    settlement = result?.settlement;
   const time =
     message.role === 'user' || message.role === 'assistant' ? timeLabel(message.timestamp) : null;
   const label = name

@@ -13578,80 +13578,178 @@ test('TUI full copy rejects inconsistent source pages, preserves raw on format f
   assert.deepEqual(out.actions, []);
 });
 
-test('TUI copy names and reads the canonical tool result or arguments', async () => {
+async function toolCopyClient(result = true) {
   const mod = await import(pathToFileURL(resolve(root, 'dist/packages/workspace/tui.js')));
+  mod.activate({ locale: 'en' });
   const { component: timeline } = await import(
     pathToFileURL(resolve(root, 'dist/packages/timeline/tui.js'))
   );
-  const detail = await detailClient('tui', 'readText', false, session.id);
-  for (const kind of ['result', 'arguments']) {
-    const tool = { ...detail.props.tool, ...(kind === 'arguments' ? { result: null } : {}) };
-    const id = tool.toolUseId;
-    const client = new Client(mod.component).start({
-      through: 100,
-      chunks: [
-        historyChunk('preview', {
-          sequence: 40,
-          messageId: uuid(973),
-          role: 'tool_call',
-          tool,
-        }),
-      ],
-    });
-    client.raw('palette-open');
-    const props = client.timeline;
-    let out = timeline.event(
-      timeline.mount(props, {}).frame.state,
-      {
-        kind: 'component',
-        child: 'reading',
-        name: 'observed',
-        event: { selectedChildKey: 'message-' + id },
-      },
-      props,
-      {},
-    );
-    const action = out.actions[0];
-    assert.equal(action.input.field, kind);
-    assert.equal(action.input.source.sequence, kind === 'result' ? tool.result.sequence : 40);
-    const text = '{"完整":true}';
-    out = timeline.event(
-      structuredClone(out.frame.state),
-      {
-        kind: 'action',
-        key: action.key,
-        event: {
-          status: 'succeeded',
-          value: {
-            kind: 'ready',
-            through: 100,
-            source: {
-              sequence: action.input.source.sequence,
-              field: kind,
-              fields: [kind],
-              path: null,
-              format: 'json',
-              offset: 0,
-              totalBytes: Buffer.byteLength(text),
-              text,
+  const detail = await detailClient(
+    'tui',
+    'execute',
+    false,
+    session.id,
+    'maka.workspace.Processes',
+  );
+  const tool = {
+    ...detail.props.tool,
+    result: result ? { ...detail.props.tool.result, settlement: 'returned' } : null,
+  };
+  const client = new Client(mod.component).start({
+    through: 100,
+    chunks: [
+      historyChunk('preview', {
+        sequence: 40,
+        messageId: uuid(973),
+        role: 'tool_call',
+        tool,
+      }),
+    ],
+  });
+  client.raw('palette-open');
+  let props = client.timeline;
+  let out = timeline.event(
+    timeline.mount(props, {}).frame.state,
+    {
+      kind: 'component',
+      child: 'reading',
+      name: 'observed',
+      event: { selectedChildKey: 'message-' + tool.toolUseId },
+    },
+    props,
+    {},
+  );
+  function emit() {
+    for (const e of out.events.filter((e) => e.name === 'messageCopy'))
+      client.input({ kind: 'component', child: 'timeline', name: e.name, event: e.value });
+  }
+  return {
+    tool,
+    get out() {
+      return out;
+    },
+    get props() {
+      return props;
+    },
+    get commands() {
+      return modelSlots(client.output.frame.view).find((n) => n.key === 'command-palette').props
+        .commands;
+    },
+    answer(text, patch = {}, pagePatch = {}) {
+      const action = out.actions[0];
+      assert.equal(action.binding, 'agent');
+      assert.equal(action.method, 'source');
+      const offset = action.input.position.offset ?? 0;
+      out = timeline.event(
+        structuredClone(out.frame.state),
+        {
+          kind: 'action',
+          key: action.key,
+          event: {
+            status: 'succeeded',
+            value: {
+              kind: 'ready',
+              through: 100,
+              source: {
+                sequence: action.input.source.sequence,
+                field: action.input.field,
+                fields: [action.input.field],
+                path: null,
+                format: 'json',
+                offset,
+                totalBytes: offset + Buffer.byteLength(text),
+                text,
+                tool,
+                ...patch,
+              },
+              ...pagePatch,
             },
           },
         },
-      },
-      props,
-      {},
-    );
-    for (const e of out.events.filter((e) => e.name === 'messageCopy'))
-      client.input({ kind: 'component', child: 'timeline', name: e.name, event: e.value });
-    const commands = modelSlots(client.output.frame.view).find((n) => n.key === 'command-palette')
-      .props.commands;
-    assert.equal(commands.find((c) => c.id === 'copy-message').copyText, text);
-    assert.equal(commands.find((c) => c.id === 'copy-source').copyText, text);
-    assert.equal(
-      commands.find((c) => c.id === 'copy-message').label,
-      kind === 'result' ? 'Copy tool result' : 'Copy tool arguments',
-    );
-    assert.deepEqual(out.actions, []);
+        props,
+        {},
+      );
+      emit();
+    },
+    update(patch) {
+      props = { ...props, ...patch };
+      out = timeline.update(structuredClone(out.frame.state), props, {});
+      emit();
+    },
+  };
+}
+
+test('TUI tool message copy includes the full paired arguments and result while source stays exact', async () => {
+  const c = await toolCopyClient();
+  const result = JSON.stringify({
+    kind: 'completed',
+    value: { status: 'failed', exitCode: 7, stdout: '第一行\nsecond 😀' },
+  });
+  c.answer(result);
+  assert.equal(c.commands.find((x) => x.id === 'copy-source').copyText, result);
+  assert.equal(c.commands.find((x) => x.id === 'copy-message').disabled, true);
+  assert.equal(c.out.actions[0].input.source.sequence, 40);
+  assert.equal(c.out.actions[0].input.field, 'arguments');
+  const args = JSON.stringify({ command: 'printf original; exit 7' });
+  c.answer(args.slice(0, 12), { totalBytes: Buffer.byteLength(args) });
+  c.answer(args.slice(12), { totalBytes: Buffer.byteLength(args) });
+  const rendered = c.commands.find((x) => x.id === 'copy-message');
+  assert.equal(rendered.label, 'Copy message');
+  assert.equal(
+    rendered.copyText,
+    'Tool activity · Run command\nReturned\n\nTool arguments\n{\n  "command": printf original; exit 7\n}\n\nTool result\n{\n  "kind": completed,\n  "value": {\n    "status": failed,\n    "exitCode": 7,\n    "stdout": 第一行\nsecond 😀\n  }\n}',
+  );
+  assert.equal(c.commands.find((x) => x.id === 'copy-source').copyText, result);
+  assert.deepEqual(c.out.actions, []);
+  const pending = await toolCopyClient(false);
+  pending.answer(args);
+  assert.match(
+    pending.commands.find((x) => x.id === 'copy-message').copyText,
+    /Tool arguments\n\{\n  "command": printf original; exit 7/,
+  );
+  assert.equal(pending.commands.find((x) => x.id === 'copy-source').copyText, args);
+  assert.equal(
+    pending.commands.find((x) => x.id === 'copy-source').label,
+    'Copy raw tool arguments',
+  );
+});
+
+test('TUI tool copy rejects mismatched metadata on either paired source and resets on presentation changes', async () => {
+  for (const second of [false, true]) {
+    const c = await toolCopyClient();
+    if (second) c.answer('{"ok":true}');
+    c.answer('{}', { tool: { ...c.tool, toolUseId: uuid(999) } });
+    assert.equal(c.out.frame.state.copy.status, 'unavailable');
+    assert.equal(c.out.frame.state.copy.rendered, null);
+    assert.equal(c.out.frame.state.copy.raw, second ? '{"ok":true}' : null);
+  }
+  const c = await toolCopyClient();
+  c.answer('{"ok":true}');
+  c.update({
+    messages: c.props.messages.map((m) => ({
+      ...m,
+      tool: { ...m.tool, call: { ...m.tool.call, presentation: null } },
+    })),
+  });
+  assert.equal(c.out.frame.state.copy.raw, null);
+  assert.equal(c.out.frame.state.copy.rendered, null);
+  assert.equal(c.out.actions[0].input.field, 'result');
+});
+
+test('TUI tool copy keeps raw result available when complete-card expansion exceeds its budget', async () => {
+  for (const args of [
+    JSON.stringify({ command: 'x'.repeat(65530) }),
+    JSON.stringify({ command: 'x'.repeat(40000) }),
+    '['.repeat(300) + '0' + ']'.repeat(300),
+  ]) {
+    const c = await toolCopyClient();
+    const result = JSON.stringify({ stdout: '中'.repeat(10000) });
+    c.answer(result);
+    c.answer(args);
+    assert.equal(c.out.frame.state.copy.status, 'too_large');
+    assert.equal(c.commands.find((x) => x.id === 'copy-message').disabled, true);
+    assert.equal(c.commands.find((x) => x.id === 'copy-source').copyText, result);
+    assert.deepEqual(c.out.actions, []);
   }
 });
 
@@ -13780,3 +13878,38 @@ for (const target of ['tui', 'desktop']) {
     assert.equal(client.out.actions.length, 0);
   });
 }
+
+test('TUI tool copy preserves numeric tokens and only decodes JSON string values', async () => {
+  const c = await toolCopyClient();
+  const result =
+    '{"large":9007199254740993,"decimal":1.2300,"negative":-0,"values":[true,null,{},[]],"escaped":"line\\nnext\\t\\\\end"}';
+  c.answer(result);
+  c.answer('"literal text"', { format: 'text' });
+  const message = c.commands.find((x) => x.id === 'copy-message').copyText;
+  for (const literal of [
+    '9007199254740993',
+    '1.2300',
+    '-0',
+    'true',
+    'null',
+    '{}',
+    '[]',
+    'line\nnext\t\\end',
+    'Tool arguments\n"literal text"',
+  ])
+    assert.ok(message.includes(literal), literal);
+  assert.equal(c.commands.find((x) => x.id === 'copy-source').copyText, result);
+});
+
+test('TUI tool copy retains the complete card when a canonical text result is empty', async () => {
+  const c = await toolCopyClient();
+  c.answer('', { format: 'text' });
+  assert.equal(c.out.actions[0].input.field, 'arguments');
+  c.answer('{"command":"true"}');
+  assert.equal(
+    c.commands.find((x) => x.id === 'copy-message').copyText,
+    'Tool activity · Run command\nReturned\n\nTool arguments\n{\n  "command": true\n}\n\nTool result\n',
+  );
+  assert.equal(c.commands.find((x) => x.id === 'copy-source').disabled, true);
+  assert.equal(c.out.frame.state.copy.status, 'ready');
+});

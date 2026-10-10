@@ -28,6 +28,8 @@ import type {
 } from '../../plugin-sdk/src/index.js';
 import type { Message, TimelineProps, MessageCopyObservation } from './contracts.js';
 import { sameValue } from './value.js';
+import { copy as localized } from './locale.js';
+import { toolLabel } from './message-view.js';
 function utf8Bytes(text: string) {
   let bytes = 0;
   for (const character of text) {
@@ -51,15 +53,20 @@ export interface MessageCopy {
     sequence: number | null;
     field: SourceField;
     markdown: boolean;
+    tool: Message['tool'];
+    locale: string;
+    heading: string | null;
   };
   key: string;
   serial: number;
   pending: { key: string; kind: 'source' | 'format' } | null;
   preparing: number;
+  arguments: boolean;
   total: number | null;
   format: SourceFormat | null;
   text: string;
   raw: string | null;
+  rawFormat: SourceFormat | null;
   rendered: string | null;
   status: MessageCopyObservation['status'];
 }
@@ -71,6 +78,8 @@ function action(copy: MessageCopy, actions: Action[], kind: 'source' | 'format')
   const key = copy.key + '-' + ++copy.serial;
   copy.pending = { key, kind };
   const { basis } = copy;
+  const sequence = copy.arguments ? basis.tool!.call!.sequence : basis.sequence!;
+  const field = copy.arguments ? 'arguments' : basis.field;
   actions.push({
     key,
     binding: kind === 'source' ? 'agent' : 'formatter',
@@ -82,8 +91,8 @@ function action(copy: MessageCopy, actions: Action[], kind: 'source' | 'format')
         ? {
             sessionId: basis.sessionId,
             through: basis.through,
-            source: { kind: 'sequence', sequence: basis.sequence! },
-            field: basis.field,
+            source: { kind: 'sequence', sequence },
+            field,
             position: copy.text
               ? { kind: 'after', offset: utf8Bytes(copy.text) }
               : { kind: 'start' },
@@ -123,6 +132,24 @@ export function syncMessageCopy(
         ? message.source
         : (message.tool?.call?.sequence ?? message.source)))
     : message.source;
+  const text = localized(props.locale);
+  const label = toolLabel(
+    {
+      ...message,
+      waiting: !!message.tool && props.waitingTools.includes(message.tool.toolUseId),
+      live: !!message.tool && props.liveTools.includes(message.tool.toolUseId),
+    },
+    props.locale,
+  );
+  const heading = tool
+    ? [
+        (message.role === 'tool_call' ? text.toolActivity : text.toolOutput) +
+          (label.name ? ' · ' + label.name : ''),
+        label.status ?? (message.tool?.result?.isError ? text.toolReportedError : null),
+      ]
+        .filter(Boolean)
+        .join('\n')
+    : null;
   const basis = {
     request: props.copyRequest,
     ...props.toolContext,
@@ -130,6 +157,9 @@ export function syncMessageCopy(
     sequence,
     field,
     markdown: message.role === 'assistant' || message.role === 'thinking',
+    tool: tool ? message.tool : null,
+    locale: props.locale,
+    heading,
   };
   if (state.copy && sameValue(state.copy.basis, basis)) return;
   state.copy = {
@@ -138,10 +168,12 @@ export function syncMessageCopy(
     serial: 0,
     pending: null,
     preparing: 0,
+    arguments: false,
     total: null,
     format: null,
     text: '',
     raw: null,
+    rawFormat: null,
     rendered: null,
     status: sequence === null ? 'streaming' : 'loading',
   };
@@ -182,8 +214,9 @@ export function messageCopyEvent(state: State, input: ComponentInput, actions: A
     offset = utf8Bytes(copy.text),
     end = source.offset + utf8Bytes(source.text);
   if (
-    source.sequence !== copy.basis.sequence ||
-    source.field !== copy.basis.field ||
+    source.sequence !== (copy.arguments ? copy.basis.tool!.call!.sequence : copy.basis.sequence) ||
+    source.field !== (copy.arguments ? 'arguments' : copy.basis.field) ||
+    (copy.basis.tool && !sameValue(source.tool, copy.basis.tool)) ||
     source.path != null ||
     !source.fields.includes(source.field) ||
     source.offset !== offset ||
@@ -211,15 +244,84 @@ export function messageCopyEvent(state: State, input: ComponentInput, actions: A
     copy.text = '';
     return true;
   }
-  copy.raw = copy.text || null;
+  const body = copy.text;
   copy.text = '';
-  if (copy.raw === null) copy.status = 'empty';
+  if (!copy.arguments) {
+    copy.raw = body || null;
+    copy.rawFormat = source.format;
+  }
+  if (copy.arguments) finishTool(copy, body);
+  else if (copy.basis.heading !== null) {
+    if (copy.basis.field === 'result' && copy.basis.tool?.call) {
+      copy.arguments = true;
+      copy.total = null;
+      copy.format = null;
+      copy.preparing = 0;
+      action(copy, actions, 'source');
+    } else finishTool(copy, copy.basis.field === 'arguments' ? body : null);
+  } else if (copy.raw === null) copy.status = 'empty';
   else if (copy.basis.markdown && source.format === 'text') action(copy, actions, 'format');
   else {
     copy.rendered = copy.raw;
     copy.status = 'ready';
   }
   return true;
+}
+// Preserve JSON tokens (including integers beyond JS precision) while decoding
+// string values for reading. Raw source remains a separate exact-byte choice.
+function readable(source: string, format: SourceFormat | null): string {
+  if (format !== 'json') return source;
+  try {
+    JSON.parse(source);
+  } catch {
+    return source;
+  }
+  const tokens = source.match(
+    /"(?:\\.|[^"\\])*"|true|false|null|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?|[{}\[\],:]/g,
+  )!;
+  let result = '',
+    depth = 0,
+    budget = 0;
+  function append(text: string) {
+    budget += utf8Bytes(text);
+    if (budget > 65536) throw new Error('copy budget');
+    result += text;
+  }
+  const newline = () => append('\n' + '  '.repeat(depth));
+  for (const [index, token] of tokens.entries()) {
+    if (token === '{' || token === '[') {
+      append(token);
+      depth++;
+      if (tokens[index + 1] !== (token === '{' ? '}' : ']')) newline();
+    } else if (token === '}' || token === ']') {
+      depth--;
+      if (tokens[index - 1] !== (token === '}' ? '{' : '[')) newline();
+      append(token);
+    } else if (token === ',') {
+      append(token);
+      newline();
+    } else if (token === ':') append(': ');
+    else
+      append(
+        token.startsWith('"') && tokens[index + 1] !== ':' ? (JSON.parse(token) as string) : token,
+      );
+  }
+  return result;
+}
+function finishTool(copy: MessageCopy, args: string | null) {
+  const text = localized(copy.basis.locale);
+  try {
+    const sections = [copy.basis.heading!];
+    if (args !== null) sections.push(text.toolArguments + '\n' + readable(args, copy.format));
+    if (copy.basis.field === 'result')
+      sections.push(text.toolResult + '\n' + readable(copy.raw ?? '', copy.rawFormat));
+    const rendered = sections.join('\n\n');
+    if (!fits(rendered)) throw new Error('copy budget');
+    copy.rendered = rendered;
+    copy.status = 'ready';
+  } catch {
+    copy.status = 'too_large';
+  }
 }
 export function messageCopyObservation(state: State): MessageCopyObservation | null {
   const copy = state.copy;

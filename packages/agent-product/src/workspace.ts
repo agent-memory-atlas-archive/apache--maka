@@ -799,11 +799,7 @@ function rootCommands(
               id: kind,
               label:
                 kind === 'copy-message'
-                  ? result
-                    ? text.copyToolResult
-                    : args
-                      ? text.copyToolArguments
-                      : text.copyMessage
+                  ? text.copyMessage
                   : result
                     ? text.copyToolResultSource
                     : args

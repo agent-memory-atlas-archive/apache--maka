@@ -211,7 +211,7 @@ pub(super) fn run(
     await_screen(presenter, "File background draft browse returned");
 }
 
-fn command(presenter: &mut maka_tui::application::Presenter, label: &str) {
+pub(super) fn command(presenter: &mut maka_tui::application::Presenter, label: &str) {
     presenter
         .input(Event::Key(KeyEvent::new(
             KeyCode::Char('k'),

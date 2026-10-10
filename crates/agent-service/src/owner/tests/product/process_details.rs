@@ -60,6 +60,56 @@ pub(super) fn run(
         b"process stdout"
     );
     capture(presenter, "native-process-output.txt");
+    for label in ["Copy message", "Copy raw tool result"] {
+        super::message_copy::command(presenter, label);
+        capture(
+            presenter,
+            if label == "Copy message" {
+                "native-process-copy-message.txt"
+            } else {
+                "native-process-copy-source.txt"
+            },
+        );
+        presenter
+            .input(Event::Key(KeyEvent::new(
+                KeyCode::Enter,
+                KeyModifiers::NONE,
+            )))
+            .unwrap();
+        let mut copied = Vec::new();
+        assert!(presenter.flush_clipboard(&mut copied).unwrap());
+        let value = String::from_utf8(
+            base64::engine::general_purpose::STANDARD
+                .decode(&copied[7..copied.len() - 1])
+                .unwrap(),
+        )
+        .unwrap();
+        if label == "Copy message" {
+            assert!(
+                value.starts_with("Tool output · Run command\nReturned\n\nTool arguments\n"),
+                "{value}"
+            );
+            for original in [
+                "\"command\": printf 'native file contents'",
+                "\"stdout\": process stdout",
+                "\"stderr\": process stderr",
+                "\"exitCode\": 7",
+                "\"status\": failed",
+                "Tool result\n",
+            ] {
+                assert!(value.contains(original), "missing {original}: {value}");
+            }
+        } else {
+            let result: serde_json::Value = serde_json::from_str(&value).unwrap();
+            assert_eq!(result["kind"], "completed");
+            assert_eq!(result["value"]["exitCode"], 7);
+            assert_eq!(result["value"]["output"]["stdout"], "process stdout");
+            assert_eq!(result["value"]["output"]["stderr"], "process stderr");
+        }
+        assert!(!presenter.flush_clipboard(&mut Vec::new()).unwrap());
+        // A new physical shortcut waits for the closed modal's successful draw.
+        assert!(!screen(&draw(presenter)).contains("[ Close commands ]"));
+    }
     presenter
         .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
         .unwrap();
