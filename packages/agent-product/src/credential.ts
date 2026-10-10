@@ -324,6 +324,7 @@ function frame<N extends Node>(
               readOnly: false,
               disabled: false,
               tabIndex: 0,
+              autoFocus: target === 'tui',
               placeholder: text.keyPlaceholder,
               command: state.command,
             },
@@ -408,6 +409,8 @@ function frame<N extends Node>(
     ],
     {
       visible: !state.historyOpen && state.confirmation !== 'rebase',
+      scroll: target === 'tui' ? 'anchor' : 'none',
+      terminal: { grow: 1 },
       gap: target === 'desktop' ? 14 : 1,
       style: { width: fill, minWidth: 0 },
     },
@@ -516,12 +519,40 @@ function frame<N extends Node>(
     ],
     { visible: state.confirmation === 'rebase', gap: target === 'desktop' ? 12 : 1 },
   );
-  const view = ui.box('credential', [form, earlier, reviewPane], {
-    gap: 0,
-    padding: target === 'desktop' ? 24 : 1,
-    scroll: 'anchor',
-    style: { width: fill, height: fill, maxWidth: 680, minWidth: 0, minHeight: 0 },
-  });
+  const view = ui.box(
+    'credential',
+    target !== 'tui'
+      ? [form, earlier, reviewPane]
+      : [
+          ui.dialog(
+            'credential-auxiliary',
+            state.historyOpen ? text.earlierOperations : text.reviewConnection,
+            form,
+            ui.box('credential-auxiliary-content', [earlier, reviewPane], { gap: 0 }),
+            state.historyOpen || state.confirmation === 'rebase',
+            undefined,
+            { width: 72, height: 24 },
+          ),
+        ],
+    {
+      shortcuts:
+        target === 'tui'
+          ? [
+              {
+                key: 'escape',
+                modifiers: [],
+                input: state.confirmation ? 'cancel' : state.historyOpen ? 'history-back' : 'back',
+                enabled: true,
+              },
+            ]
+          : [],
+      gap: 0,
+      padding: target === 'desktop' ? 24 : 1,
+      scroll: target === 'tui' ? 'none' : 'anchor',
+      terminal: { grow: 1 },
+      style: { width: fill, height: fill, maxWidth: 680, minWidth: 0, minHeight: 0 },
+    },
+  );
   const out = output(state, view, events);
   out.actions = actions;
   return out;
@@ -565,6 +596,8 @@ export function credential<N extends Node>(
       return frame(presentation, state, props);
     },
     event(state, input, props) {
+      if (input.kind === 'raw' && input.key === 'credential-auxiliary')
+        input = { ...input, key: state.historyOpen ? 'history-back' : 'review-cancel' };
       state.revision++;
       const actions: Action[] = [],
         events: Emission[] = [];

@@ -227,6 +227,7 @@ function settingsComposition(
           settings: [remote('settings', 'Settings')],
           credential: [local('credential', 'Credential')],
           form: [local('connection-form', 'ConnectionForm')],
+          reading: [local('reading-area', 'ReadingArea')],
         },
       ),
       credential: node(
@@ -244,6 +245,7 @@ function settingsComposition(
         'connection-form',
         {},
         {
+          reading: [local('reading-area', 'ReadingArea')],
           settings: [remote('settings', 'Settings')],
           input: [local('input', 'TextInput')],
           editor: [local('editor', 'Textarea')],

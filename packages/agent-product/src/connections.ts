@@ -21,6 +21,9 @@ import type {
   Action,
   ActionOutcome,
   Component,
+  ComponentInput,
+  ConnectionTarget,
+  ReadingCommand,
   Emission,
   SettingsConnectionsPage,
   SettingsConnectionSummary,
@@ -30,6 +33,7 @@ import type {
 import { connectionsContract, type ConnectionsProps } from './contracts.js';
 import { compactLabel } from './view.js';
 import { copy } from './locale.js';
+import { tuiText } from './tui-locale.js';
 import { fill, output, type Presentation, type Node } from './view.js';
 interface State {
   revision: number;
@@ -41,7 +45,9 @@ interface State {
   connections: SettingsConnectionSummary[];
   catalogRevision: number | null;
   next: number | null;
-  offset: number;
+  selected: string | null;
+  focus: ReadingCommand | null;
+  defaultTarget: ConnectionTarget | null;
   failed: boolean;
   mount: number;
 }
@@ -85,140 +91,172 @@ function frame<N extends Node>(
   const target = presentation.target;
   const ui = presentation.paint(props.theme),
     text = copy(props.locale);
-  const view =
-    state.route === 'form'
-      ? presentation.slot(
-          'form-' + state.mount,
-          'form',
-          {
-            ...props,
-            catalogRevision: state.catalogRevision!,
-            connection: state.detail,
-          },
-          { closed: 'closed', changed: 'changed' },
-        )
-      : state.route === 'credential' && state.detail
-        ? presentation.slot(
-            'credential-' + state.mount,
-            'credential',
-            { ...props, target: state.detail.target },
-            { closed: 'closed', changed: 'changed' },
+  const rows = state.connections.map((connection, at) => {
+    const id = connection.basis.connectionId;
+    const selected = state.selected === id;
+    const actions = [
+      ui.button('open-' + at, text.credentials, !!state.pending),
+      ui.button('edit-' + at, text.editConnection, !!state.pending),
+    ];
+    if (ui.item) {
+      const identity =
+        connection.slug === connection.provider.name
+          ? connection.slug
+          : `${connection.slug} · ${connection.provider.name}`;
+      const detail =
+        state.defaultTarget?.connectionId === id
+          ? `${tuiText(props.locale, 'connection-default')}: ${state.defaultTarget.modelId} · ${identity}`
+          : `${tuiText(props.locale, 'connection-models', { count: String(connection.enabledModelCount) })} · ${identity}`;
+      const item = ui.item(
+        'select-' + id,
+        ui.box(
+          'summary-' + id,
+          [
+            ui.text(
+              'name-' + id,
+              `${selected ? (props.theme.ascii ? '>' : '›') : ' '} ${connection.name}${connection.enabled ? '' : ' · ' + text.connectionDisabled}`,
+              14,
+              props.theme.text,
+              400,
+              { truncate: true },
+            ),
+            ui.text('detail-' + id, '  ' + detail, 13, props.theme.muted, 400, { truncate: true }),
+          ],
+          { gap: 0 },
+        ),
+        selected,
+        !!state.pending,
+        { followFocus: true, submit: true },
+      );
+      return connection.editable
+        ? ui.contextMenu!(
+            'connection-' + id,
+            tuiText(props.locale, 'connection-actions'),
+            item,
+            actions,
           )
-        : ui.box(
-            'connections',
-            [
-              ui.box(
-                'header',
-                [
-                  ui.button(
-                    'back',
-                    text.back,
-                    false,
-                    false,
-                    target === 'tui' ? { background: 0, align: 'start' } : {},
-                  ),
-                  ui.text('heading', text.settings, 22, props.theme.text, 600),
-                ],
-                { row: true, gap: target === 'desktop' ? 8 : 1 },
+        : item;
+    }
+    return ui.box(
+      'connection-' + id,
+      [
+        ui.text('name-' + id, compactLabel(connection.name, 100), 16, props.theme.text, 550),
+        ui.text(
+          'provider-' + id,
+          connection.provider.name + ' · ' + connection.slug,
+          13,
+          props.theme.muted,
+        ),
+        ui.box('connection-actions-' + id, actions, {
+          visible: connection.editable,
+          row: true,
+          gap: 8,
+        }),
+      ],
+      { gap: 6, padding: 16, surface: true, style: { width: fill } },
+    );
+  });
+  const catalog = ui.box(
+    'connections',
+    [
+      ui.box(
+        'header',
+        [
+          ui.button(
+            'back',
+            text.back,
+            false,
+            false,
+            target === 'tui' ? { background: 0, align: 'start' } : {},
+          ),
+          ui.text('heading', text.settings, 22, props.theme.text, 600),
+        ],
+        { row: true, gap: target === 'desktop' ? 8 : 1 },
+      ),
+      ...(state.pending ? [ui.text('loading', text.connecting, 13, props.theme.muted)] : []),
+      ...(state.failed
+        ? [ui.text('failed', text.connectionsUnavailable, 13, props.theme.muted)]
+        : []),
+      ...(!state.pending && !state.failed && !state.connections.length
+        ? [ui.text('empty', text.noConnections, 15, props.theme.muted)]
+        : []),
+      presentation.reading(
+        'connection-list',
+        {
+          command: state.focus,
+          content: ui.box('connection-rows', rows, {
+            focusGroup: target === 'tui',
+            scroll: 'manual',
+            gap: target === 'tui' ? 1 : 16,
+            terminal: { grow: 1, basis: 0 },
+            style: { width: fill, height: fill, minHeight: 0 },
+          }),
+        },
+        { input: 'connection-input' },
+      ),
+      ui.box(
+        'page-actions',
+        [
+          ui.button(
+            'create',
+            text.createConnection,
+            !!state.pending || state.catalogRevision === null,
+            true,
+          ),
+          ...(state.next !== null
+            ? [ui.button('more', text.moreConnections, !!state.pending)]
+            : []),
+          ui.button(
+            'refresh',
+            target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.refreshConnections,
+            !!state.pending,
+            false,
+            target === 'tui' ? { background: 0 } : {},
+            undefined,
+            text.refreshConnections,
+          ),
+        ],
+        { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
+      ),
+    ],
+    {
+      visible: state.route === 'catalog',
+      gap: target === 'desktop' ? 16 : 1,
+      padding: target === 'desktop' ? 24 : 1,
+      terminal: { grow: 1 },
+      style: { width: fill, height: fill, maxWidth: 760, minWidth: 0, minHeight: 0 },
+      shortcuts:
+        target === 'tui'
+          ? [{ key: 'escape', modifiers: [], input: 'back', enabled: state.route === 'catalog' }]
+          : [],
+    },
+  );
+  const view = ui.box(
+    'connections-page',
+    [
+      catalog,
+      ...(state.route === 'form'
+        ? [
+            presentation.slot(
+              'form-' + state.mount,
+              'form',
+              { ...props, catalogRevision: state.catalogRevision!, connection: state.detail },
+              { closed: 'closed', changed: 'changed' },
+            ),
+          ]
+        : state.route === 'credential' && state.detail
+          ? [
+              presentation.slot(
+                'credential-' + state.mount,
+                'credential',
+                { ...props, target: state.detail.target },
+                { closed: 'closed', changed: 'changed' },
               ),
-              ui.box(
-                'page-actions',
-                [
-                  ui.button(
-                    'refresh',
-                    target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.refreshConnections,
-                    !!state.pending,
-                    false,
-                    target === 'tui' ? { background: 0 } : {},
-                    undefined,
-                    text.refreshConnections,
-                  ),
-                  ui.button(
-                    'create',
-                    text.createConnection,
-                    !!state.pending || state.catalogRevision === null,
-                  ),
-                  ...(target === 'tui' && state.offset > 0
-                    ? [ui.button('previous', text.previousConnections, !!state.pending)]
-                    : []),
-                  ...((target === 'tui' && state.offset + 3 < state.connections.length) ||
-                  state.next !== null
-                    ? [ui.button('more', text.moreConnections, !!state.pending)]
-                    : []),
-                ],
-                { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
-              ),
-              ...(state.pending
-                ? [ui.text('loading', text.connecting, 13, props.theme.muted)]
-                : []),
-              ...(state.failed
-                ? [ui.text('failed', text.connectionsUnavailable, 13, props.theme.muted)]
-                : []),
-              ...(!state.pending && !state.failed && !state.connections.length
-                ? [ui.text('empty', text.noConnections, 15, props.theme.muted)]
-                : []),
-              ...(target === 'desktop'
-                ? state.connections
-                : state.connections.slice(state.offset, state.offset + 3)
-              ).map((connection, at) =>
-                ui.box(
-                  'connection-' + at,
-                  [
-                    ui.text(
-                      'name-' + at,
-                      compactLabel(connection.name, target === 'tui' ? 36 : 100),
-                      16,
-                      props.theme.text,
-                      550,
-                    ),
-                    ...(target === 'desktop'
-                      ? [
-                          ui.text(
-                            'provider-' + at,
-                            connection.provider.name + ' · ' + connection.slug,
-                            13,
-                            props.theme.muted,
-                          ),
-                        ]
-                      : []),
-                    ui.box(
-                      'connection-actions-' + at,
-                      [
-                        ui.button(
-                          'open-' + (at + (target === 'tui' ? state.offset : 0)),
-                          text.credentials,
-                          !!state.pending,
-                        ),
-                        ui.button(
-                          'edit-' + (at + (target === 'tui' ? state.offset : 0)),
-                          text.editConnection,
-                          !!state.pending,
-                        ),
-                      ],
-                      {
-                        visible: connection.editable,
-                        row: true,
-                        gap: target === 'desktop' ? 8 : 1,
-                        terminal: { wrap: true },
-                      },
-                    ),
-                  ],
-                  {
-                    gap: target === 'desktop' ? 6 : 1,
-                    padding: target === 'desktop' ? 16 : 1,
-                    surface: target === 'desktop',
-                    style: { width: fill },
-                  },
-                ),
-              ),
-            ],
-            {
-              gap: target === 'desktop' ? 16 : 1,
-              padding: target === 'desktop' ? 24 : 1,
-              scroll: 'anchor',
-              style: { width: fill, height: fill, maxWidth: 760, minWidth: 0, minHeight: 0 },
-            },
-          );
+            ]
+          : []),
+    ],
+    { gap: 0, terminal: { grow: 1 }, style: { width: fill, height: fill } },
+  );
   const out = output(state, view, events);
   out.actions = actions;
   return out;
@@ -226,7 +264,6 @@ function frame<N extends Node>(
 export function connections<N extends Node>(
   presentation: Presentation<N>,
 ): Component<State, ConnectionsProps, N> {
-  const target = presentation.target;
   return {
     mount(props) {
       const state: State = {
@@ -239,7 +276,9 @@ export function connections<N extends Node>(
         connections: [],
         catalogRevision: null,
         next: null,
-        offset: 0,
+        selected: null,
+        focus: null,
+        defaultTarget: null,
         failed: false,
         mount: 0,
       };
@@ -251,6 +290,8 @@ export function connections<N extends Node>(
     },
     event(state, input, props) {
       state.revision++;
+      if (input.kind === 'component' && input.child === 'connection-list' && input.name === 'input')
+        input = input.event as ComponentInput;
       const actions: Action[] = [],
         events: Emission[] = [];
       if (input.kind === 'action' && input.key === state.pending?.key) {
@@ -269,7 +310,18 @@ export function connections<N extends Node>(
             state.connections = resultPage.connections;
             state.catalogRevision = resultPage.revision;
             state.next = resultPage.next;
-            state.offset = 0;
+            state.defaultTarget = resultPage.defaultTarget;
+            if (
+              !state.connections.some(
+                (connection) => connection.basis.connectionId === state.selected,
+              )
+            )
+              state.selected = state.connections[0]?.basis.connectionId ?? null;
+            if (presentation.target === 'tui' && state.selected)
+              state.focus = {
+                sequence: (state.focus?.sequence ?? 0) + 1,
+                target: { kind: 'focus_item', key: 'select-' + state.selected },
+              };
           }
         } else {
           const detail = result.value as SettingsConnectionDetail;
@@ -304,11 +356,19 @@ export function connections<N extends Node>(
           state.detail = null;
           state.route = 'form';
           state.mount++;
-        } else if (input.key === 'previous' && !state.pending && target === 'tui')
-          state.offset = Math.max(0, state.offset - 3);
-        else if (input.key === 'more' && !state.pending) {
-          if (target === 'tui' && state.offset + 3 < state.connections.length) state.offset += 3;
-          else if (state.next !== null) actions.push(...page(state, true));
+        } else if (input.key === 'more' && !state.pending && state.next !== null) {
+          actions.push(...page(state, true));
+        } else if (!state.pending && input.key.startsWith('select-')) {
+          const connection = state.connections.find(
+            (connection) => connection.basis.connectionId === input.key.slice(7),
+          );
+          if (connection) {
+            state.selected = connection.basis.connectionId;
+            if ((input.event as { kind?: string }).kind === 'submit' && connection.editable) {
+              state.detailRoute = 'form';
+              actions.push(...request(state, 'detail', connection.basis, connection.basis));
+            }
+          }
         } else if (!state.pending && /^(open|edit)-(0|[1-9][0-9]*)$/.test(input.key)) {
           const connection = state.connections[Number(input.key.slice(5))];
           if (connection?.editable) {

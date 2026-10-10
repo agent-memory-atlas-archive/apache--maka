@@ -35,12 +35,21 @@ export function help<N extends Node>(
       [terminal ? 'Enter' : 'Ctrl/⌘ Enter', text.helpSend],
       [terminal ? 'Shift Enter / Ctrl J' : 'Enter / Shift Enter', text.helpNewline],
       ['Tab / Shift Tab', text.helpFocus],
+      ['↑ / ↓', text.helpListNavigation],
       ['Enter / Space', text.helpActivate],
       ['Ctrl/⌘ K', text.helpCommands],
       ['Ctrl/⌘ G', text.reviewRequest],
       ...(terminal
         ? [
             ['Ctrl V', text.helpClipboard],
+            ['Ctrl A / Ctrl Z', text.helpEditorSelection],
+            ['PageUp / PageDown', text.helpTranscriptScroll],
+            ['Shift + arrows', text.helpTextSelection],
+            ['Shift Home / End', text.helpLineSelection],
+            ['Shift PageUp / Down', text.helpPageSelection],
+            ['Alt + click', text.helpMouseSelection],
+            ['Shift + click', text.helpShiftSelection],
+            ['Ctrl Shift C', text.helpCopySelection],
             ['Ctrl F', text.findConversation],
             ['Alt F', text.findHistory],
             ['Enter / F3 · Shift', text.findNavigate],
@@ -62,7 +71,22 @@ export function help<N extends Node>(
               content: ui.box(
                 'help-rows',
                 rows.map(([key, label], index) =>
-                  ui.text(`shortcut-${index}`, `${key}  ·  ${label}`, 14),
+                  ui.box(
+                    `shortcut-${index}`,
+                    [
+                      ui.text(`shortcut-key-${index}`, key!, 14, props.theme.muted),
+                      ui.text(`shortcut-description-${index}`, label!, 14),
+                    ],
+                    {
+                      row: !terminal,
+                      gap: terminal ? 0 : 12,
+                      wide: {
+                        min_width: 54,
+                        direction: 'row',
+                        children: { [`shortcut-key-${index}`]: { basis: 24 } },
+                      },
+                    },
+                  ),
                 ),
                 {
                   scroll: 'manual',

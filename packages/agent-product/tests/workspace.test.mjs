@@ -1948,21 +1948,20 @@ for (const [target, module] of credentialModules) {
         enabledModelCount: 1,
       });
       form.query('credentialStatus', { kind: 'status', status: credentialStatus });
-      const originalEditor = form.output.frame.view.children[0].children.find(
-        (n) => n.key === 'key-input',
-      ).children[0];
+      const originalEditor = modelSlots(form.output.frame.view).find((n) => n.key === 'secret');
       let complete = '';
       let pages = 0;
       do {
-        const review = form.output.frame.view.children.find((n) => n.key === 'review-target');
+        const body =
+          target === 'tui' ? form.output.frame.view.children[0].content : form.output.frame.view;
+        const review = body.children.find((n) => n.key === 'review-target');
         assert.equal(review.visible, true);
         const lines = review.children.filter((n) => n.key.startsWith('target-line-'));
         assert.ok(lines.length <= (target === 'tui' ? 8 : 24));
         assert.ok(lines.every((n) => [...n.text].length <= 36));
         complete += lines.map((n) => n.text).join('');
         assert.deepEqual(
-          form.output.frame.view.children[0].children.find((n) => n.key === 'key-input')
-            .children[0],
+          modelSlots(form.output.frame.view).find((n) => n.key === 'secret'),
           originalEditor,
         );
         pages++;
@@ -2101,7 +2100,7 @@ class PublicFormClient extends FormClient {
         },
       ],
     });
-    this.raw('provider-0');
+    this.input({ kind: 'raw', key: 'provider-0', event: { kind: 'submit' } });
     this.commands();
     this.observe('slug', 'my-provider');
     this.observe('name', 'My provider');
@@ -2120,12 +2119,14 @@ for (const [target, module] of connectionFormModules) {
       form.raw('form-remove');
       assert.equal(form.state.confirmation, 'remove');
       assert.equal(form.output.actions.length, 0);
-      const confirmation = form.output.frame.view.children.find(
-        (n) => n.key === 'form-confirmation',
-      );
+      const body =
+        target === 'tui' ? form.output.frame.view.children[0].content : form.output.frame.view;
+      const confirmation = body.children.find((n) => n.key === 'form-confirmation');
       let identity = '';
       do {
-        const panel = form.output.frame.view.children.find((n) => n.key === 'form-confirmation');
+        const body =
+          target === 'tui' ? form.output.frame.view.children[0].content : form.output.frame.view;
+        const panel = body.children.find((n) => n.key === 'form-confirmation');
         identity += panel.children
           .filter((n) => n.key.startsWith('review-line-'))
           .map((n) => n.text)
@@ -6923,7 +6924,7 @@ for (const target of ['tui', 'desktop']) {
     const rows = modelSlots(result.frame.view).find((node) => node.key === 'help-reading').props
       .content;
     assert.equal(rows.scroll, 'manual');
-    assert.match(rows.children[0].text, target === 'tui' ? /^Enter/ : /^Ctrl\/⌘ Enter/);
+    assert.match(rows.children[0].children[0].text, target === 'tui' ? /^Enter/ : /^Ctrl\/⌘ Enter/);
     result = component.event(
       result.frame.state,
       { kind: 'raw', key: 'close', event: {} },

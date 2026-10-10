@@ -21,6 +21,8 @@ import type {
   Action,
   ActionOutcome,
   Component,
+  ComponentInput,
+  ReadingCommand,
   Emission,
   EditorObservation,
   EditorCommand,
@@ -83,7 +85,8 @@ interface State {
   provider: SettingsProvider | null;
   providers: SettingsProvider[];
   providerNext: number | null;
-  providerOffset: number;
+  providerActive: number;
+  providerFocus: ReadingCommand | null;
   providersFailed: boolean;
   fields: Record<FieldName, Field>;
   enabled: boolean;
@@ -499,10 +502,7 @@ function frame<N extends Node>(
                   undefined,
                   text.refreshConnections,
                 ),
-                ...(state.providerOffset > 0
-                  ? [ui.button('provider-previous', text.previousModels, locked)]
-                  : []),
-                ...(state.providerOffset + 3 < state.providers.length || state.providerNext !== null
+                ...(state.providerNext !== null
                   ? [ui.button('provider-more', text.moreProviders, locked)]
                   : []),
               ],
@@ -517,15 +517,41 @@ function frame<N extends Node>(
             ...(state.providers.length === 0 && !locked && !state.providersFailed
               ? [ui.text('providers-empty', text.noProviders)]
               : []),
-            ...state.providers
-              .slice(state.providerOffset, state.providerOffset + 3)
-              .map((p, at) =>
-                ui.button(
-                  'provider-' + (at + state.providerOffset),
-                  compactLabel(p.descriptor.label, 36),
-                  locked,
+            presentation.reading(
+              'provider-list',
+              {
+                command: state.providerFocus,
+                content: ui.box(
+                  'provider-rows',
+                  state.providers.map((provider, at) =>
+                    ui.item
+                      ? ui.item(
+                          'provider-' + at,
+                          ui.text(
+                            'provider-label-' + at,
+                            provider.descriptor.label,
+                            14,
+                            props.theme.text,
+                            400,
+                            { truncate: true },
+                          ),
+                          state.providerActive === at,
+                          locked,
+                          { followFocus: true, submit: true },
+                        )
+                      : ui.button('provider-' + at, provider.descriptor.label, locked),
+                  ),
+                  {
+                    focusGroup: target === 'tui',
+                    scroll: 'manual',
+                    gap: target === 'tui' ? 0 : 8,
+                    terminal: { grow: 1, basis: 8, shrink: true },
+                    style: { width: fill, height: pixels(240), minHeight: 0 },
+                  },
                 ),
-              ),
+              },
+              { input: 'provider-input' },
+            ),
           ]
         : [
             ui.box(
@@ -631,6 +657,7 @@ function frame<N extends Node>(
                     readOnly: locked || !f.enabled,
                     disabled: false,
                     tabIndex: f.enabled ? 0 : -1,
+                    autoFocus: target === 'tui' && name === currentPane,
                     command: f.command,
                     ...(name === 'slug' ? {} : { softWrap: true }),
                   },
@@ -675,7 +702,12 @@ function frame<N extends Node>(
         );
       }),
     ],
-    { visible: !state.historyOpen && !state.confirmation, gap: target === 'desktop' ? 16 : 1 },
+    {
+      visible: !state.historyOpen && !state.confirmation,
+      scroll: target === 'tui' ? 'anchor' : 'none',
+      gap: target === 'desktop' ? 16 : 1,
+      terminal: { grow: 1 },
+    },
   );
   const reviewValue =
     state.confirmation === 'remove'
@@ -722,6 +754,7 @@ function frame<N extends Node>(
       ui.box(
         'confirm-actions',
         [
+          ui.button('form-cancel', text.keepEditing),
           ...(state.confirmation === 'leave'
             ? [ui.button('form-discard', text.discard)]
             : [
@@ -743,7 +776,6 @@ function frame<N extends Node>(
                 ...(page > 0 ? [ui.button('review-prev', text.previousModels)] : []),
                 ...(page + 1 < pages ? [ui.button('review-next', text.moreTarget)] : []),
               ]),
-          ui.button('form-cancel', text.keepEditing),
         ],
         { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
       ),
@@ -827,12 +859,44 @@ function frame<N extends Node>(
   );
   const out = output(
     state,
-    ui.box('connection-form', [form, confirmation, earlier], {
-      gap: 0,
-      padding: target === 'desktop' ? 24 : 1,
-      scroll: 'anchor',
-      style: { width: fill, height: fill, maxWidth: 760, minWidth: 0, minHeight: 0 },
-    }),
+    ui.box(
+      'connection-form',
+      target !== 'tui'
+        ? [form, confirmation, earlier]
+        : [
+            ui.dialog(
+              'form-auxiliary',
+              state.historyOpen ? text.earlierConnectionOperations : text.editConnection,
+              form,
+              ui.box('form-auxiliary-content', [confirmation, earlier], { gap: 0 }),
+              !!state.confirmation || state.historyOpen,
+              undefined,
+              { width: 72, height: state.confirmation === 'leave' ? 8 : 24 },
+            ),
+          ],
+      {
+        shortcuts:
+          target === 'tui'
+            ? [
+                {
+                  key: 'escape',
+                  modifiers: [],
+                  input: state.confirmation
+                    ? 'form-cancel'
+                    : state.historyOpen
+                      ? 'form-history-back'
+                      : 'form-back',
+                  enabled: true,
+                },
+              ]
+            : [],
+        gap: 0,
+        padding: target === 'desktop' ? 24 : 1,
+        scroll: target === 'tui' ? 'none' : 'anchor',
+        terminal: { grow: 1 },
+        style: { width: fill, height: fill, maxWidth: 760, minWidth: 0, minHeight: 0 },
+      },
+    ),
     events,
   );
   out.actions = actions;
@@ -854,7 +918,8 @@ export function connectionForm<N extends Node>(
         provider: null,
         providers: [],
         providerNext: null,
-        providerOffset: 0,
+        providerActive: 0,
+        providerFocus: null,
         providersFailed: false,
         fields: Object.fromEntries(
           names.map((name) => [
@@ -895,6 +960,8 @@ export function connectionForm<N extends Node>(
       return frame(presentation, state, props);
     },
     event(state, input, props) {
+      if (input.kind === 'component' && input.child === 'provider-list' && input.name === 'input')
+        input = input.event as ComponentInput;
       state.revision++;
       const actions: Action[] = [],
         events: Emission[] = [];
@@ -927,7 +994,12 @@ export function connectionForm<N extends Node>(
             const page = outcome.value as SettingsProvidersPage;
             state.providers = page.providers;
             state.providerNext = page.next;
-            state.providerOffset = 0;
+            state.providerActive = 0;
+            if (target === 'tui' && state.providers.length)
+              state.providerFocus = {
+                sequence: (state.providerFocus?.sequence ?? 0) + 1,
+                target: { kind: 'focus_item', key: 'provider-0' },
+              };
           }
         } else if (r.kind === 'read') {
           const current = state.current;
@@ -1017,7 +1089,12 @@ export function connectionForm<N extends Node>(
           if (entry) entry.result = outcome.value as OperationReply;
         }
       } else if (input.kind === 'raw') {
-        const key = input.key;
+        const key =
+          input.key === 'form-auxiliary'
+            ? state.historyOpen
+              ? 'form-history-back'
+              : 'form-cancel'
+            : input.key;
         if (key === 'form-save') save(state, props, actions, validation);
         else if (
           key === 'form-remove' &&
@@ -1028,8 +1105,11 @@ export function connectionForm<N extends Node>(
           state.confirmation = 'remove';
           state.reviewPage = 0;
         } else if (key === 'form-confirm-remove') remove(state, props, actions);
-        else if (key === 'form-back') state.confirmation = 'leave';
-        else if (key === 'form-cancel') {
+        else if (key === 'form-back') {
+          if (!state.provider && !state.baseline && !state.current)
+            events.push({ name: 'closed', value: {} });
+          else state.confirmation = 'leave';
+        } else if (key === 'form-cancel') {
           state.confirmation = null;
           state.reviewed = null;
           state.reviewedCatalog = null;
@@ -1091,8 +1171,14 @@ export function connectionForm<N extends Node>(
         } else if (key === 'form-history') {
           state.historyOpen = true;
           history(state, actions, 0);
-        } else if (key === 'form-history-back') state.historyOpen = false;
-        else if (key === 'form-history-refresh') history(state, actions, 0);
+        } else if (key === 'form-history-back') {
+          state.historyOpen = false;
+          if (state.providerFocus)
+            state.providerFocus = {
+              sequence: state.providerFocus.sequence + 1,
+              target: { kind: 'focus_item', key: 'provider-' + state.providerActive },
+            };
+        } else if (key === 'form-history-refresh') history(state, actions, 0);
         else if (key === 'form-history-more' && state.historyNext !== null)
           history(state, actions, state.historyNext);
         else if (/^form-earlier-(0|[1-9][0-9]*)$/.test(key) && state.historyOpen) {
@@ -1124,17 +1210,17 @@ export function connectionForm<N extends Node>(
           else if (key === 'field-previous') state.pane = Math.max(0, state.pane - 1);
           else if (key === 'provider-refresh' && !state.provider && !state.baseline)
             request(state, actions, { kind: 'providers' }, 'settings', 'providers', { offset: 0 });
-          else if (key === 'provider-previous')
-            state.providerOffset = Math.max(0, state.providerOffset - 3);
           else if (key === 'provider-more' && !state.provider && !state.baseline) {
-            if (state.providerOffset + 3 < state.providers.length) state.providerOffset += 3;
-            else if (state.providerNext !== null)
+            if (state.providerNext !== null)
               request(state, actions, { kind: 'providers' }, 'settings', 'providers', {
                 offset: state.providerNext,
               });
           } else if (/^provider-(0|[1-9][0-9]*)$/.test(key) && !state.provider && !state.baseline) {
             const provider = state.providers[Number(key.slice(9))];
             if (provider) {
+              state.providerActive = Number(key.slice(9));
+              if (target === 'tui' && (input.event as { kind?: string }).kind !== 'submit')
+                return frame(presentation, state, props, actions, events);
               state.provider = provider;
               for (const name of ['name', 'slug', 'endpoint', 'models'] as FieldName[]) {
                 state.fields[name].enabled = true;

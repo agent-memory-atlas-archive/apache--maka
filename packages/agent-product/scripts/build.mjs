@@ -306,6 +306,7 @@ specifications.connections = {
   export: 'Connections',
   module: 'connections',
   imports: {
+    reading: one(sdk.contracts.readingArea),
     settings: one(sdk.contracts.settings),
     credential: one(own.credentialContract),
     form: one(own.connectionFormContract),
@@ -316,6 +317,7 @@ specifications['connection-form'] = {
   export: 'ConnectionForm',
   module: 'connection-form',
   imports: {
+    reading: one(sdk.contracts.readingArea),
     settings: one(sdk.contracts.settings),
     input: one(sdk.contracts.textInput),
     editor: one(sdk.contracts.textarea),
