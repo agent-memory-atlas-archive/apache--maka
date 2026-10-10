@@ -46,10 +46,15 @@ struct Pty {
     output: Vec<u8>,
     frames: frames::Frames,
     read_size: usize,
+    enhanced_keyboard: bool,
+    keyboard_queries: usize,
 }
 
 impl Pty {
     fn spawn(args: &[&str]) -> Self {
+        Self::spawn_with_keyboard(args, false)
+    }
+    fn spawn_with_keyboard(args: &[&str], enhanced_keyboard: bool) -> Self {
         let mut master = -1;
         let mut slave = -1;
         let mut size = libc::winsize {
@@ -106,6 +111,8 @@ impl Pty {
             output: Vec::new(),
             frames: frames::Frames::default(),
             read_size: 8192,
+            enhanced_keyboard,
+            keyboard_queries: 0,
         }
     }
     fn send(&mut self, bytes: &[u8]) {
@@ -131,6 +138,19 @@ impl Pty {
             .unwrap();
         self.frames.feed(&buffer[..length]);
         self.output.extend_from_slice(&buffer[..length]);
+        if self.enhanced_keyboard {
+            // The Host screen intentionally does not advertise CSI-u input.
+            // This outer terminal fixture also exercises the enhanced protocol.
+            let queries = self
+                .output
+                .windows(4)
+                .filter(|bytes| *bytes == b"\x1b[?u")
+                .count();
+            for _ in self.keyboard_queries..queries {
+                self.send(b"\x1b[?3u");
+            }
+            self.keyboard_queries = queries;
+        }
         if self.output.len() > 1024 * 1024 {
             self.output.drain(..self.output.len() - 1024 * 1024);
         }
@@ -153,7 +173,11 @@ impl Pty {
     }
     #[track_caller]
     fn wait_until(&mut self, predicate: impl Fn(&str) -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        self.wait_until_with_timeout(predicate, Duration::from_secs(10));
+    }
+    #[track_caller]
+    fn wait_until_with_timeout(&mut self, predicate: impl Fn(&str) -> bool, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
         loop {
             self.read();
             let snapshot = self.screen.snapshot().unwrap();

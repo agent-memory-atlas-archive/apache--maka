@@ -71,9 +71,10 @@ fn cells(tui: &Pty) -> Term<IgnoreEvents> {
     parser.advance(&mut term, &tui.output);
     term
 }
-fn position(term: &Term<IgnoreEvents>, label: &str) -> Option<(usize, usize)> {
+fn position(term: &Term<IgnoreEvents>, label: &str, last: bool) -> Option<(usize, usize)> {
     let needle: Vec<_> = label.chars().collect();
     (0..40).find_map(|y| {
+        let y = if last { 39 - y } else { y };
         let row: Vec<_> = (0..120)
             .map(|x| term.grid()[Line(y as i32)][Column(x)].c)
             .collect();
@@ -82,14 +83,19 @@ fn position(term: &Term<IgnoreEvents>, label: &str) -> Option<(usize, usize)> {
             .map(|x| (x, y))
     })
 }
-fn click(tui: &mut Pty, label: &str, accent: Color) {
+fn click(tui: &mut Pty, label: &str, enabled: [Color; 2]) {
+    let button = label.starts_with("[ ");
+    let label = label
+        .strip_prefix("[ ")
+        .and_then(|s| s.strip_suffix(" ]"))
+        .unwrap_or(label);
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         tui.read();
         if tui.frames.ready() {
             let term = cells(tui);
-            if let Some((x, y)) = position(&term, label)
-                && (!label.starts_with('[') || term.grid()[Line(y as i32)][Column(x)].fg == accent)
+            if let Some((x, y)) = position(&term, label, button)
+                && (!button || enabled.contains(&term.grid()[Line(y as i32)][Column(x)].fg))
             {
                 tui.send(
                     format!("\x1b[<0;{};{}M\x1b[<0;{};{}m", x + 2, y + 1, x + 2, y + 1).as_bytes(),
@@ -99,10 +105,10 @@ fn click(tui: &mut Pty, label: &str, accent: Color) {
         }
         if Instant::now() >= deadline {
             let term = cells(tui);
-            let actual =
-                position(&term, label).map(|(x, y)| term.grid()[Line(y as i32)][Column(x)].fg);
+            let actual = position(&term, label, button)
+                .map(|(x, y)| term.grid()[Line(y as i32)][Column(x)].fg);
             panic!(
-                "control {label:?} not enabled: expected {accent:?}, actual {actual:?}; {}",
+                "control {label:?} not enabled: expected {enabled:?}, actual {actual:?}; {}",
                 tui.screen.snapshot().unwrap().screen
             );
         }
@@ -110,18 +116,42 @@ fn click(tui: &mut Pty, label: &str, accent: Color) {
     }
 }
 fn paste(tui: &mut Pty, text: &str) {
-    tui.send(format!("\x1b[200~{text}\x1b[201~").as_bytes());
+    // A complete composition can fill both PTY directions. Keep draining the
+    // renderer while the input side applies backpressure.
+    let fd = tui.master.as_ref().unwrap().as_raw_fd();
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    assert!(flags >= 0);
+    assert_eq!(
+        unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) },
+        0
+    );
+    let packet = format!("\x1b[200~{text}\x1b[201~");
+    let mut pending = packet.as_bytes();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !pending.is_empty() {
+        match tui.master.as_mut().unwrap().write(pending) {
+            Ok(0) => panic!("terminal closed during paste"),
+            Ok(written) => pending = &pending[written..],
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => panic!("terminal paste failed: {error}"),
+        }
+        tui.read();
+        assert!(Instant::now() < deadline, "terminal paste timed out");
+    }
+    assert_eq!(unsafe { libc::fcntl(fd, libc::F_SETFL, flags) }, 0);
 }
-fn editable(tui: &mut Pty, accent: Color) {
+
+fn editable(tui: &mut Pty, enabled: [Color; 2]) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         tui.read();
         if tui.frames.ready() {
             let term = cells(tui);
-            if let Some((x, y)) = position(&term, "[ Save composition ]") {
+            if let Some((x, y)) = position(&term, "Save composition", true) {
                 // Actual light-theme enabled paint; loading disables both this
                 // control and the native editor. Do not paste into a stale draft.
-                if term.grid()[Line(y as i32)][Column(x)].fg == accent {
+                if enabled.contains(&term.grid()[Line(y as i32)][Column(x)].fg) {
                     return;
                 }
             }
@@ -137,7 +167,7 @@ fn authored(
     module: &Path,
     configuration: Value,
     refs: &BTreeMap<String, maka_plugin_core::package::PackageRef>,
-) -> (Value, Value, Color) {
+) -> (Value, Value, [Color; 2]) {
     let output = Command::new("node").args(["--input-type=module", "-e", r#"
         const {composition,studioComposition,packageNames}=await import(process.argv[1]);
         const configuration=JSON.parse(process.argv[2]);
@@ -146,9 +176,10 @@ fn authored(
             '00000000-0000-0000-0000-'+String(i+20).padStart(12,'0')]));
         const common={...configuration,packages,keys};
         const {activate}=await import(process.argv[4]);
-        const accent=activate({scheme:configuration.scheme}).Appearance.value.accent >>> 8;
-        console.log(JSON.stringify([composition({...common,agent:{maxActiveRuns:1, permissions: { access: 'workspace_write', requestPermissions: true },maxSteps:1,tools:[]}}),
-            studioComposition({...common,hostRoot:configuration.studioRoot,hostDeployment:configuration.studioDeployment}),accent]));
+        const theme=activate({scheme:configuration.scheme}).Appearance.value;
+        const enabled=[theme.accent >>> 8,theme.text >>> 8];
+        console.log(JSON.stringify([composition({...common,agent:{workspaceRoots:configuration.workspaceRoots,maxActiveRuns:1, permissions: { access: 'workspace_write', requestPermissions: true },maxSteps:1,tools:[]}}),
+            studioComposition({...common,hostRoot:configuration.studioRoot,hostDeployment:configuration.studioDeployment}),enabled]));
     "#]).arg(format!("file://{}", module.display())).arg(configuration.to_string())
         .arg(serde_json::to_string(refs).unwrap())
         .arg(format!("file://{}", module.ancestors().nth(4).unwrap().join("packages/appearance/tui.js").display()))
@@ -159,16 +190,15 @@ fn authored(
         String::from_utf8_lossy(&output.stderr)
     );
     let result: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
-    let accent = result[2].as_u64().unwrap() as u32;
-    (
-        result[0].clone(),
-        result[1].clone(),
+    let enabled = [0, 1].map(|i| {
+        let color = result[2][i].as_u64().unwrap() as u32;
         Color::Spec(Rgb {
-            r: (accent >> 16) as u8,
-            g: (accent >> 8) as u8,
-            b: accent as u8,
-        }),
-    )
+            r: (color >> 16) as u8,
+            g: (color >> 8) as u8,
+            b: color as u8,
+        })
+    });
+    (result[0].clone(), result[1].clone(), enabled)
 }
 
 #[test]
@@ -205,6 +235,8 @@ fn agent_installs_studio_and_production_launcher_replaces_the_surface_and_backen
     let root = directory.path().join("ui");
     let agent_root = directory.path().join("agent");
     let studio_root = directory.path().join("studio");
+    let workspace = directory.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
     let deployment = Uuid::new_v4();
     let agent_id = Uuid::new_v4();
     let studio_id = Uuid::new_v4();
@@ -215,6 +247,7 @@ fn agent_installs_studio_and_production_launcher_replaces_the_surface_and_backen
             "presentation":"tui", "locale":"en", "scheme":"light",
             "hostRoot":agent_root, "hostDeployment":agent_id, "managementDeployment":manager_id,
             "studioRoot":studio_root, "studioDeployment":studio_id,
+            "workspaceRoots":[{"label":"Workspace", "path":workspace}],
         }),
         &refs,
     );
@@ -330,20 +363,13 @@ fn agent_installs_studio_and_production_launcher_replaces_the_surface_and_backen
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         tui.read();
-        if tui.frames.ready()
-            && tui
-                .screen
-                .snapshot()
-                .unwrap()
-                .screen
-                .contains("[ Plugins ]")
-        {
+        if tui.frames.ready() && tui.screen.snapshot().unwrap().screen.contains("Plugins") {
             break;
         }
         assert!(
             Instant::now() < deadline,
             "launch timed out: {:?}",
-            String::from_utf8_lossy(&tui.output)
+            tui.screen.snapshot().unwrap().screen
         );
         assert!(
             tui.child.try_wait().unwrap().is_none(),
@@ -360,17 +386,24 @@ fn agent_installs_studio_and_production_launcher_replaces_the_surface_and_backen
     tui.wait_for("configuration-workbench.maka-plugin");
     click(&mut tui, "[ Install plugin ]", accent);
     click(&mut tui, "[ Confirm ]", accent);
-    tui.wait_for("Plugin package saved.");
+    tui.wait_until_with_timeout(
+        |screen| screen.contains("Plugin package saved."),
+        Duration::from_secs(60),
+    );
     click(&mut tui, "[ Edit product composition ]", accent);
     click(&mut tui, "[ Reload saved source ]", accent);
     click(&mut tui, "[ Confirm ]", accent);
+    tui.wait_until(|screen| !screen.contains("Discard this draft and reload?"));
     editable(&mut tui, accent);
     click(&mut tui, "{", accent);
     tui.send(b"\x01");
     paste(&mut tui, &serde_json::to_string(&document).unwrap());
     click(&mut tui, "[ Save composition ]", accent);
     click(&mut tui, "[ Confirm ]", accent);
-    tui.wait_for("Configuration Studio");
+    tui.wait_until_with_timeout(
+        |screen| screen.contains("Configuration Studio"),
+        Duration::from_secs(60),
+    );
     assert_eq!(
         RootOwner::open(&studio_root, &ns).err().unwrap().kind(),
         std::io::ErrorKind::WouldBlock

@@ -58,6 +58,10 @@ before layout. This is a TUI capability; it has no filesystem access.
 
 Ctrl+Q or an unhandled Ctrl+C retires the surface. An active component shortcut
 can handle either chord first; a captured interactive terminal receives it instead.
+On a terminal with negotiated key-event reporting, an unhandled quit consumes
+its matching release before restoring the terminal.
+Another key press or pointer press cancels the pending quit; a lost release falls
+back after two seconds. Legacy terminals still quit on the initial press.
 The original guard checks every restoration operation
 even after an earlier failure. Native workers, resource snapshots and accepted
 service calls retain their original owners until actual cleanup completes. Failed

@@ -67,10 +67,17 @@ pub fn draw(screen: &mut Screen, render: impl FnOnce(&mut ratatui::Frame<'_>)) -
 /// Installed before the first terminal mutation, including partial setup errors.
 pub struct Guard {
     active: bool,
+    key_releases: bool,
 }
 impl Guard {
     pub fn new() -> Self {
-        Self { active: false }
+        Self {
+            active: false,
+            key_releases: false,
+        }
+    }
+    pub fn reports_key_releases(&self) -> bool {
+        self.key_releases
     }
     /// The caller owns the guard even if setup fails after a partial mutation.
     pub fn setup(&mut self, required: &str) -> io::Result<Screen> {
@@ -87,14 +94,23 @@ impl Guard {
             EnableBracketedPaste
         )?;
         #[cfg(unix)]
-        execute!(
-            io::stdout(),
-            crossterm::style::Print("\x1b[>1s"),
-            PushKeyboardEnhancementFlags(
-                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                    | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
-            )
-        )?;
+        {
+            self.key_releases =
+                crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
+            let mut flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES;
+            if self.key_releases {
+                flags |= KeyboardEnhancementFlags::REPORT_EVENT_TYPES;
+            }
+            execute!(
+                io::stdout(),
+                crossterm::style::Print("\x1b[>1s"),
+                PushKeyboardEnhancementFlags(flags)
+            )?;
+        }
+        #[cfg(windows)]
+        {
+            self.key_releases = true;
+        }
         Terminal::new(CrosstermBackend::new(io::stdout()))
     }
     /// Restore every independent native effect, even if a prior write failed.

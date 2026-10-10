@@ -127,6 +127,37 @@ fn plugin_application_uses_actual_foreground_transactions_and_restores_the_real_
     assert!(snapshot.cursor.visible);
 }
 #[test]
+fn enhanced_quit_keeps_the_terminal_until_its_fragmented_release_is_consumed() {
+    let directory = tempfile::tempdir().unwrap();
+    let args = packages(directory.path(), false);
+    let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+    let mut tui = Pty::spawn_with_keyboard(&args, true);
+    tui.wait_for("Increment");
+    // A single key gesture can span transport reads. Do not hand its remaining
+    // CSI-u bytes to the invoking shell when the press requests a clean exit.
+    tui.send(b"\x1b[113;5u\x1b[113");
+    let until = std::time::Instant::now() + std::time::Duration::from_millis(150);
+    while std::time::Instant::now() < until {
+        tui.read();
+        assert!(tui.child.try_wait().unwrap().is_none());
+        assert!(tui.screen.snapshot().unwrap().alternate_screen);
+    }
+    tui.send(b";5:3u");
+    tui.finish();
+    let master = tui.master.as_ref().unwrap().as_raw_fd();
+    let mut termios = unsafe { std::mem::zeroed::<libc::termios>() };
+    assert_eq!(unsafe { libc::tcgetattr(master, &mut termios) }, 0);
+    assert_ne!(termios.c_lflag & libc::ICANON, 0);
+    assert_ne!(termios.c_lflag & libc::ECHO, 0);
+    assert!(
+        !tui.output.windows(5).any(|bytes| bytes == b";5:3u"),
+        "quit release was echoed after terminal restoration"
+    );
+    let snapshot = tui.screen.snapshot().unwrap();
+    assert!(!snapshot.alternate_screen);
+    assert!(snapshot.cursor.visible);
+}
+#[test]
 fn plugin_application_setup_rejection_is_clean_and_diagnostics_cannot_emit_escape_sequences() {
     let directory = tempfile::tempdir().unwrap();
     let args = packages(directory.path(), false);
