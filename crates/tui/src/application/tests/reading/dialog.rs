@@ -42,6 +42,49 @@ pub(super) fn root_count(presenter: &Presenter) -> u64 {
 }
 
 #[test]
+fn dialog_erases_crossing_wide_background_glyph_before_terminal_diff() {
+    let background = (0..12)
+        .map(|_| "aaaaa好中bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (_runtime, mut presenter, props) = native(vec![dialog(
+        "modal",
+        false,
+        source("bg", &background),
+        json!({"kind":"button","key":"cancel","label":"Cancel"}),
+    )]);
+    let before = draw(&mut presenter, 40, 12);
+    open(&props, &mut presenter, true);
+    let after = draw(&mut presenter, 40, 12);
+    let body = presenter
+        .scene
+        .iter()
+        .find_map(|target| match target.kind {
+            crate::application::paint::TargetKind::Backdrop { body } => Some(body.visible()),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(body.x, 8);
+    let row = body.y + 1;
+    assert_eq!(before[(body.x - 1, row)].symbol(), "中");
+    // A correct cell alone is insufficient: a retained wide lead makes the
+    // actual terminal diff skip this border cell.
+    assert_eq!(after[(body.x, row)].symbol(), "│");
+    assert!(
+        before
+            .diff(&after)
+            .iter()
+            .any(|(x, y, cell)| *x == body.x && *y == row && cell.symbol() == "│")
+    );
+    assert_eq!(after[(body.x - 1, row)].symbol(), " ");
+    assert_eq!(after[(body.x - 3, row)].symbol(), "好");
+    assert_eq!(after[(body.x - 2, row)], before[(body.x - 2, row)]);
+    open(&props, &mut presenter, false);
+    assert_eq!(draw(&mut presenter, 40, 12), before);
+    close(&mut presenter);
+}
+
+#[test]
 fn dialog_original_foreground_selection_and_flush_gate_preserve_background_bytes() {
     let bg = "background 中\r\n  ";
     let fg = "foreground 界  ";

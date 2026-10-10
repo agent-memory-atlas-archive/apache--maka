@@ -25,6 +25,7 @@ use super::{
     scene::Node,
 };
 use std::rc::{Rc, Weak};
+use unicode_width::UnicodeWidthStr;
 
 pub(super) struct Opening {
     pub pending_flush: std::cell::Cell<bool>,
@@ -597,6 +598,21 @@ impl Presenter {
                 ancestors: Vec::new(),
             });
             for y in body.y..body.bottom() {
+                // A background glyph may start outside the overlay but occupy
+                // its first column. Retaining that lead makes terminal diffing
+                // skip the new border, so erase the exposed fragment as well.
+                let mut x = buffer.area.x;
+                while x < body.x {
+                    let width = buffer[(x, y)].symbol().width().max(1);
+                    let end = usize::from(x) + width;
+                    if end > usize::from(body.x) {
+                        for column in x..body.x {
+                            buffer[(column, y)].set_symbol(" ");
+                        }
+                        break;
+                    }
+                    x = end as u16;
+                }
                 for x in body.x..body.right() {
                     buffer[(x, y)].reset();
                 }
