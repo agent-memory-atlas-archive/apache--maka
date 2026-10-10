@@ -84,7 +84,7 @@ impl Serialize for SkillInvocationReceipt {
 
 /// Boolean wire discriminants are validated here, not retained as mutable
 /// business fields beside a contradictory enum variant.
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(untagged, deny_unknown_fields)]
 enum WireReceipt {
     Loaded {
@@ -112,6 +112,24 @@ enum WireReceipt {
         #[serde(rename = "requestLimit")]
         request_limit: u64,
     },
+}
+
+impl schemars::JsonSchema for SkillInvocationReceipt {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "SkillInvocationReceipt".into()
+    }
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let mut schema = <WireReceipt as schemars::JsonSchema>::json_schema(generator);
+        let variants = schema
+            .get_mut("anyOf")
+            .and_then(serde_json::Value::as_array_mut)
+            .expect("untagged skill receipt variants");
+        for (index, variant) in variants.iter_mut().enumerate() {
+            variant["properties"]["success"] = serde_json::json!({"const": index == 0});
+        }
+        variants[2]["properties"]["invocation"] = serde_json::json!({"const":"explicit"});
+        schema
+    }
 }
 
 impl<'de> Deserialize<'de> for SkillInvocationReceipt {

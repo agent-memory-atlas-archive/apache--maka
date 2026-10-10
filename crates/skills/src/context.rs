@@ -21,7 +21,7 @@ use crate::{Catalog, DiscoveredSkill, Preferences, fields};
 use crate::{SkillScope, SkillSource};
 use serde::Serialize;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct SkillMetadata<'a> {
     #[serde(rename = "ref")]
     pub reference: &'a str,
@@ -63,14 +63,14 @@ fn metadata_text(text: &str, maximum: usize) -> &str {
     &text[..end]
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct SearchMatch<'a> {
     #[serde(flatten)]
     pub skill: SkillMetadata<'a>,
     pub score: u32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchResult<'a> {
     pub query: String,

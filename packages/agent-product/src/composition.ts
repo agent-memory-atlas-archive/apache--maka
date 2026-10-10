@@ -401,6 +401,17 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         .map((tool) => tool.method),
     ),
   ];
+  const skillMethods = [
+    ...new Set(
+      configuration.agent.tools
+        .filter((tool) => tool.import === 'skills')
+        .map((tool) => tool.method),
+    ),
+  ];
+  if (skillMethods.length && !configuration.skills)
+    throw new Error('Skill tools require explicitly selected skill collections');
+  if (skillMethods.some((method) => method !== 'search' && method !== 'load'))
+    throw new Error('Model skill tools select only search and load');
   if (processMethods.length && !configuration.processes)
     throw new Error(
       'Process tools require an explicit installation filesystem and network ceiling',
@@ -412,6 +423,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
       // These imports bind known native v1 contracts. Freeze presentation in
       // the configuration; tool names and response shapes cannot opt into it.
       tools: configuration.agent.tools.map((tool) => {
+        if (tool.import === 'skills') return { ...tool, input: 'skill' as const };
         if (tool.presentation !== undefined) return tool;
         const contract =
           tool.import === 'files' &&
@@ -425,6 +437,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
       }),
     },
     {
+      ...(skillMethods.length ? { skills: [local('skills', 'skills')] } : {}),
       ...(asksForms ? { forms: [local('forms', 'forms')] } : {}),
       ...(asksQuestions ? { questions: [local('questions', 'questions')] } : {}),
       ...(fileMethods.length ? { files: [local('workspace-files', 'files')] } : {}),
@@ -679,9 +692,27 @@ export function composition(configuration: CompositionConfiguration): Applicatio
       ),
     });
   }
-  if (asksForms || asksQuestions || fileMethods.length || processMethods.length)
+  if (
+    asksForms ||
+    asksQuestions ||
+    fileMethods.length ||
+    processMethods.length ||
+    skillMethods.length
+  )
     Object.assign(connections.hosts.find((host) => host.name === 'local')!, {
       native: [
+        ...(skillMethods.length
+          ? [
+              {
+                origin: [keys.agent],
+                consumer: [keys.agent],
+                provider: [keys.skills],
+                export: 'skills',
+                methods: skillMethods,
+                recovery: false,
+              },
+            ]
+          : []),
         ...(asksForms
           ? [
               {

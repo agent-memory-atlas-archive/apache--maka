@@ -20,7 +20,7 @@
 //! Explicit service-to-tool projection. Imports describe bindings, not grants.
 mod approval;
 pub(crate) mod image;
-use crate::contract::{ServiceTool, ToolConfirmation, ToolResult};
+use crate::contract::{ServiceTool, ToolConfirmation, ToolInput, ToolResult};
 use futures_util::FutureExt;
 use maka_event_log::EventLog;
 use maka_plugin_core::{
@@ -58,6 +58,9 @@ pub(crate) fn catalog(
     selected: &[ServiceTool],
 ) -> Result<(ToolCatalog, Vec<SelectedTool>), String> {
     let mut basis = Vec::new();
+    let skill_contract = crate::skills::contract();
+    let tool_names: Arc<Vec<String>> =
+        Arc::new(selected.iter().map(|tool| tool.name.clone()).collect());
     let registrations = selected
         .iter()
         .map(|selection| {
@@ -95,6 +98,24 @@ pub(crate) fn catalog(
                     .validate()
                     .map_err(|_| "agent_tool_title_invalid".to_owned())?;
             }
+            let input_schema = match selection.input {
+                ToolInput::Json => {
+                    if binding.contract() == &skill_contract
+                        && crate::skills::model_input_schema(&selection.method).is_some()
+                    {
+                        return Err("agent_skill_tool_projection_required".into());
+                    }
+                    method.input.clone()
+                }
+                ToolInput::Skill => {
+                    if binding.contract() != &skill_contract || selection.result != ToolResult::Json
+                    {
+                        return Err("agent_skill_tool_contract_invalid".into());
+                    }
+                    crate::skills::model_input_schema(&selection.method)
+                        .ok_or("agent_skill_tool_method_invalid")?
+                }
+            };
             basis.push(SelectedTool {
                 selection: selection.clone(),
                 binding: binding.execution_basis().into(),
@@ -104,7 +125,7 @@ pub(crate) fn catalog(
                     provider: None,
                     name: selection.name.clone(),
                     description: selection.description.clone(),
-                    input_schema: method.input.clone(),
+                    input_schema,
                     output_schema: match selection.result {
                         ToolResult::Json => Some(method.output.clone()),
                         ToolResult::Image => None,
@@ -134,6 +155,7 @@ pub(crate) fn catalog(
                             .remote_target()
                             .map_or("local", |target| target.deployment.as_str())
                     ),
+                    tool_names: tool_names.clone(),
                     selection: selection.clone(),
                     mode: method.mode,
                 })),
@@ -144,6 +166,7 @@ pub(crate) fn catalog(
     Ok((catalog, basis))
 }
 struct Service {
+    tool_names: Arc<Vec<String>>,
     services: NativeServices,
     store: Arc<EventLog>,
     binding: String,
@@ -162,6 +185,7 @@ impl ToolPreparer for Service {
         context: ToolCallContext,
         cancellation: CancellationToken,
     ) -> PreparationFuture {
+        let tool_names = self.tool_names.clone();
         let services = self.services.clone();
         let store = self.store.clone();
         let binding = self.binding.clone();
@@ -197,6 +221,12 @@ impl ToolPreparer for Service {
                             "service call cancelled before admission".into(),
                         ));
                     }
+                    let input = match selection.input {
+                        ToolInput::Json => input,
+                        ToolInput::Skill => {
+                            serde_json::json!({"input": input, "tools": tool_names.as_ref()})
+                        }
+                    };
                     let operation = operation_id(&context);
                     let request = services
                         .request(

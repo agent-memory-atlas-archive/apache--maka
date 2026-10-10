@@ -644,6 +644,7 @@ const mechanical = {
           sdk.configurations.agent,
         ),
         imports: {
+          skills: { contract: sdk.contracts.skillLibrary, cardinality: { kind: 'optional' } },
           forms: { contract: sdk.contracts.forms, cardinality: { kind: 'optional' } },
           questions: { contract: sdk.contracts.questions, cardinality: { kind: 'optional' } },
           files: { contract: sdk.contracts.workspaceFiles, cardinality: { kind: 'optional' } },

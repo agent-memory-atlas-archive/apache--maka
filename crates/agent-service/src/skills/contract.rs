@@ -23,6 +23,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+mod model;
+pub use model::*;
+
 /// Installation-selected skill collections. No ambient home or workspace scan.
 #[derive(Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -232,6 +235,24 @@ pub fn contract() -> Contract {
         transport: Transport::Remote,
         interface: Interface::Service {
             methods: BTreeMap::from([
+                (
+                    "search".into(),
+                    Method {
+                        mode: MethodMode::Query,
+                        input: schemars::schema_for!(SkillToolRequest<ModelSearch>).into(),
+                        output: schemars::schema_for!(ModelSearchResult<'static>).into(),
+                        resources: BTreeMap::new(),
+                    },
+                ),
+                (
+                    "load".into(),
+                    Method {
+                        mode: MethodMode::Query,
+                        input: schemars::schema_for!(SkillToolRequest<ModelLoad>).into(),
+                        output: schemars::schema_for!(ModelLoadResult<'static>).into(),
+                        resources: BTreeMap::new(),
+                    },
+                ),
                 (
                     "setPreference".into(),
                     Method {

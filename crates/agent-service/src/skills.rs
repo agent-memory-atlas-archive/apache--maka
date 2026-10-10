@@ -21,6 +21,8 @@
 //! Files are data; neither references nor declared tools authorize execution.
 pub mod contract;
 mod management;
+mod model;
+pub(crate) use model::input_schema as model_input_schema;
 pub mod outcomes;
 mod preferences;
 use contract::*;
@@ -154,7 +156,7 @@ impl Library {
             managed: None,
         })
     }
-    async fn snapshot(&self, scope: &Scope) -> Result<Snapshot, String> {
+    async fn discover(&self, scope: &Scope) -> Result<maka_skills::DiscoverySnapshot, String> {
         let mut sources: Vec<_> = self
             .sources
             .iter()
@@ -184,9 +186,12 @@ impl Library {
                 },
             );
         }
-        let discovery = maka_skills::scan(&sources, &scope.cancellation)
+        maka_skills::scan(&sources, &scope.cancellation)
             .await
-            .map_err(|_| "skills_discovery_unavailable")?;
+            .map_err(|_| "skills_discovery_unavailable".into())
+    }
+    async fn snapshot(&self, scope: &Scope) -> Result<Snapshot, String> {
+        let discovery = self.discover(scope).await?;
         let preferences = self.preferences.read(scope).await?;
         let label = |reference: &str| {
             if reference.starts_with("installed:") {
@@ -449,6 +454,7 @@ impl Handler for Library {
         let library = self.clone();
         Box::pin(async move {
             match method.as_str() {
+                "search" | "load" => library.model(&method, input, context.scope()).await,
                 "list" => {
                     let input =
                         serde_json::from_value(input).map_err(|_| "skills_query_invalid")?;

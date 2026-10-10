@@ -53,6 +53,10 @@ pub struct Configuration {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentServiceTool")]
 pub struct ServiceTool {
+    /// Explicit input projection. Skill tools receive the actual Agent tool names,
+    /// outside model-controlled arguments; this is compatibility data, not authority.
+    #[serde(default)]
+    pub input: ToolInput,
     /// Explicit versioned renderer key, frozen with the call; never inferred from its name.
     #[serde(default)]
     #[schemars(length(min = 1, max = 128))]
@@ -73,6 +77,15 @@ pub struct ServiceTool {
     #[schemars(length(min = 1, max = 256))]
     pub method: String,
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename = "AgentToolInput")]
+pub enum ToolInput {
+    #[default]
+    Json,
+    Skill,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[schemars(rename = "AgentToolResult")]

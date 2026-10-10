@@ -13655,6 +13655,488 @@ export const contracts = {
           },
           resources: {},
         },
+        load: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              tools: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                },
+                maxItems: 128,
+              },
+              input: {
+                $ref: '#/$defs/SkillModelLoad',
+              },
+            },
+            required: ['tools', 'input'],
+            description:
+              'Actual Agent registrations are supplied outside model-controlled arguments.\nThese names describe compatibility and confer no execution authority.',
+            title: 'SkillToolRequest',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              SkillModelLoad: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  name: {
+                    type: 'string',
+                    description:
+                      'Exact ref from search, or a skill id/name resolved before eligibility checks.',
+                    minLength: 1,
+                    maxLength: 512,
+                  },
+                  revision: {
+                    type: 'string',
+                    description:
+                      'Catalog revision from search or a previous load/resource response.',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  resource: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ReadInput',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                    description:
+                      'UTF-8 resource path relative to this skill, or its exact continuation.',
+                  },
+                  instructionOffset: {
+                    type: ['integer', 'null'],
+                    format: 'uint',
+                    minimum: 0,
+                    description:
+                      'UTF-8 byte offset from a returned instruction continuation; omit initially.',
+                    maximum: 96000,
+                  },
+                },
+                required: ['name', 'revision'],
+              },
+              ReadInput: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                  },
+                  offset: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  limit: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                },
+                required: ['path'],
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'string',
+                  },
+                  metadata: {
+                    $ref: '#/$defs/SkillMetadata',
+                  },
+                  instructions: {
+                    type: 'string',
+                  },
+                  instructionOffset: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 0,
+                  },
+                  next: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/SkillModelLoad',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  relativePath: {
+                    type: 'string',
+                  },
+                  declaredTools: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  declaredToolsTruncated: {
+                    type: 'boolean',
+                  },
+                  truncated: {
+                    type: 'boolean',
+                  },
+                  receipt: {
+                    $ref: '#/$defs/SkillInvocationReceipt',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'loaded',
+                  },
+                },
+                required: [
+                  'kind',
+                  'revision',
+                  'metadata',
+                  'instructions',
+                  'instructionOffset',
+                  'relativePath',
+                  'declaredTools',
+                  'declaredToolsTruncated',
+                  'truncated',
+                  'receipt',
+                ],
+                description:
+                  'User-provided, lower-priority instructions. Declared tools are hints, not grants.',
+              },
+              {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'string',
+                  },
+                  reference: {
+                    type: 'string',
+                  },
+                  path: {
+                    type: 'string',
+                  },
+                  content: {
+                    type: 'string',
+                  },
+                  offset: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 0,
+                  },
+                  returnedLines: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 0,
+                  },
+                  totalLines: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 0,
+                  },
+                  partialLine: {
+                    type: 'boolean',
+                  },
+                  next: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/SkillModelLoad',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  receipt: {
+                    $ref: '#/$defs/SkillInvocationReceipt',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'resource',
+                  },
+                },
+                required: [
+                  'kind',
+                  'revision',
+                  'reference',
+                  'path',
+                  'content',
+                  'offset',
+                  'returnedLines',
+                  'totalLines',
+                  'partialLine',
+                  'receipt',
+                ],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                required: ['kind'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/SkillFailureReason',
+                  },
+                  receipt: {
+                    $ref: '#/$defs/SkillInvocationReceipt',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'unavailable',
+                  },
+                },
+                required: ['kind', 'reason', 'receipt'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  reason: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'resource_unavailable',
+                  },
+                },
+                required: ['kind', 'reason'],
+              },
+            ],
+            title: 'SkillModelLoadResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              SkillMetadata: {
+                type: 'object',
+                properties: {
+                  ref: {
+                    type: 'string',
+                  },
+                  id: {
+                    type: 'string',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                  description: {
+                    type: 'string',
+                  },
+                  scope: {
+                    $ref: '#/$defs/SkillScope',
+                  },
+                  source: {
+                    $ref: '#/$defs/SkillSource',
+                  },
+                  metadataTruncated: {
+                    type: 'boolean',
+                  },
+                },
+                required: [
+                  'ref',
+                  'id',
+                  'name',
+                  'description',
+                  'scope',
+                  'source',
+                  'metadataTruncated',
+                ],
+              },
+              SkillScope: {
+                type: 'string',
+                enum: ['project', 'workspace', 'user', 'custom'],
+              },
+              SkillSource: {
+                type: 'string',
+                enum: ['maka', 'agents', 'legacy', 'custom'],
+              },
+              SkillModelLoad: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  name: {
+                    type: 'string',
+                    description:
+                      'Exact ref from search, or a skill id/name resolved before eligibility checks.',
+                    minLength: 1,
+                    maxLength: 512,
+                  },
+                  revision: {
+                    type: 'string',
+                    description:
+                      'Catalog revision from search or a previous load/resource response.',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  resource: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ReadInput',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                    description:
+                      'UTF-8 resource path relative to this skill, or its exact continuation.',
+                  },
+                  instructionOffset: {
+                    type: ['integer', 'null'],
+                    format: 'uint',
+                    minimum: 0,
+                    description:
+                      'UTF-8 byte offset from a returned instruction continuation; omit initially.',
+                    maximum: 96000,
+                  },
+                },
+                required: ['name', 'revision'],
+              },
+              ReadInput: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                  },
+                  offset: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  limit: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                },
+                required: ['path'],
+              },
+              SkillInvocationReceipt: {
+                anyOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      invocation: {
+                        $ref: '#/$defs/SkillInvocationMode',
+                      },
+                      request: {
+                        type: 'string',
+                      },
+                      success: {
+                        const: true,
+                      },
+                      ref: {
+                        type: 'string',
+                      },
+                      id: {
+                        type: 'string',
+                      },
+                      name: {
+                        type: 'string',
+                      },
+                      scope: {
+                        $ref: '#/$defs/SkillScope',
+                      },
+                      source: {
+                        $ref: '#/$defs/SkillSource',
+                      },
+                      truncated: {
+                        type: 'boolean',
+                      },
+                    },
+                    required: [
+                      'invocation',
+                      'request',
+                      'success',
+                      'ref',
+                      'id',
+                      'name',
+                      'scope',
+                      'source',
+                      'truncated',
+                    ],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      invocation: {
+                        $ref: '#/$defs/SkillInvocationMode',
+                      },
+                      request: {
+                        type: 'string',
+                      },
+                      success: {
+                        const: false,
+                      },
+                      reason: {
+                        $ref: '#/$defs/SkillFailureReason',
+                      },
+                    },
+                    required: ['invocation', 'request', 'success', 'reason'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      invocation: {
+                        const: 'explicit',
+                      },
+                      success: {
+                        const: false,
+                      },
+                      reason: {
+                        $ref: '#/$defs/TooManyRequests',
+                      },
+                      requestLimit: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                    },
+                    required: ['invocation', 'success', 'reason', 'requestLimit'],
+                  },
+                ],
+                description:
+                  'Boolean wire discriminants are validated here, not retained as mutable\nbusiness fields beside a contradictory enum variant.',
+              },
+              SkillInvocationMode: {
+                type: 'string',
+                enum: ['explicit', 'model_tool'],
+              },
+              SkillFailureReason: {
+                type: 'string',
+                enum: [
+                  'invalid_name',
+                  'not_found',
+                  'disabled',
+                  'host_incompatible',
+                  'resolution_failed',
+                ],
+              },
+              TooManyRequests: {
+                type: 'string',
+                enum: ['too_many_requests'],
+              },
+            },
+          },
+          resources: {},
+        },
         preview: {
           mode: 'query',
           input: {
@@ -13980,6 +14462,145 @@ export const contracts = {
                   },
                 },
                 required: ['enabled', 'pinned'],
+              },
+            },
+          },
+          resources: {},
+        },
+        search: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              tools: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                },
+                maxItems: 128,
+              },
+              input: {
+                $ref: '#/$defs/SkillModelSearch',
+              },
+            },
+            required: ['tools', 'input'],
+            description:
+              'Actual Agent registrations are supplied outside model-controlled arguments.\nThese names describe compatibility and confer no execution authority.',
+            title: 'SkillToolRequest',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              SkillModelSearch: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  query: {
+                    type: 'string',
+                    maxLength: 4096,
+                  },
+                  limit: {
+                    type: ['integer', 'null'],
+                    format: 'uint',
+                    minimum: 1,
+                    maximum: 8,
+                  },
+                },
+                required: ['query'],
+              },
+            },
+          },
+          output: {
+            type: 'object',
+            properties: {
+              revision: {
+                type: 'string',
+              },
+              query: {
+                type: 'string',
+              },
+              queryTruncated: {
+                type: 'boolean',
+              },
+              matches: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/SearchMatch',
+                },
+              },
+              totalEligible: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+              },
+              matchedCount: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+              },
+              truncated: {
+                type: 'boolean',
+              },
+            },
+            required: [
+              'revision',
+              'query',
+              'queryTruncated',
+              'matches',
+              'totalEligible',
+              'matchedCount',
+              'truncated',
+            ],
+            title: 'SkillModelSearchResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              SearchMatch: {
+                type: 'object',
+                properties: {
+                  ref: {
+                    type: 'string',
+                  },
+                  id: {
+                    type: 'string',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                  description: {
+                    type: 'string',
+                  },
+                  scope: {
+                    $ref: '#/$defs/SkillScope',
+                  },
+                  source: {
+                    $ref: '#/$defs/SkillSource',
+                  },
+                  metadataTruncated: {
+                    type: 'boolean',
+                  },
+                  score: {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                },
+                required: [
+                  'ref',
+                  'id',
+                  'name',
+                  'description',
+                  'scope',
+                  'source',
+                  'metadataTruncated',
+                  'score',
+                ],
+              },
+              SkillScope: {
+                type: 'string',
+                enum: ['project', 'workspace', 'user', 'custom'],
+              },
+              SkillSource: {
+                type: 'string',
+                enum: ['maka', 'agents', 'legacy', 'custom'],
               },
             },
           },

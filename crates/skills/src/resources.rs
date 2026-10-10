@@ -216,7 +216,8 @@ impl Resources {
         self.page_with_budget(reference, input, maka_runtime::read::MAX_PAGE_CHARS)
     }
 
-    pub(crate) fn page_with_budget(
+    /// Reserve space for the calling service's result envelope in the model page budget.
+    pub fn page_with_budget(
         &self,
         reference: &str,
         input: &ReadInput,

@@ -19,6 +19,8 @@
 
 #[path = "tests/service_tools.rs"]
 mod service_tools;
+#[path = "tests/skills.rs"]
+mod skills;
 
 #[path = "tests/attachments.rs"]
 mod attachments;
@@ -370,6 +372,7 @@ fn input(settings: &Configuration) -> (Input, Vec<Package>) {
     (input, vec![provider, consumer, receipts, settings])
 }
 struct Fixture {
+    services: maka_runtime_host::application::NativeServices,
     _dir: tempfile::TempDir,
     namespaces: RootNamespaces,
     root: std::path::PathBuf,
@@ -479,8 +482,16 @@ impl Fixture {
             tools: vec![],
         };
         if let Some(tooling) = &tooling {
-            settings.max_steps = 2;
             settings.tools = tooling.selections();
+            settings.max_steps = if settings
+                .tools
+                .iter()
+                .any(|tool| tool.input == contract::ToolInput::Skill)
+            {
+                8
+            } else {
+                2
+            };
         }
         let (mut input, mut packages) = input(&settings);
         if let Some(tooling) = &tooling {
@@ -508,6 +519,7 @@ impl Fixture {
                     let capture = capture.clone();
                     let replacement = replacement.lock().unwrap().take();
                     Box::pin(async move {
+                        let services = context.services();
                         let mut owner = Owner::open(context, configuration).await.unwrap();
                         if let Some(model) = replacement {
                             let store = owner.store.clone();
@@ -517,7 +529,7 @@ impl Fixture {
                                 maka_js_runtime::CodeExecutor::new(1, Default::default()).unwrap(),
                             );
                         }
-                        *capture.lock().unwrap() = Some(owner.clone());
+                        *capture.lock().unwrap() = Some((owner.clone(), services));
                         let service = Arc::new(Agent(owner));
                         NativeActivation {
                             owner: service.clone(),
@@ -556,9 +568,10 @@ impl Fixture {
         .await
         .unwrap();
         app.ready().await.unwrap();
-        let owner = captured.lock().unwrap().take().unwrap();
+        let (owner, services) = captured.lock().unwrap().take().unwrap();
         Self {
             _dir: dir,
+            services,
             namespaces,
             root,
             workspace: workspace.canonicalize().unwrap(),
@@ -1192,6 +1205,7 @@ async fn cleanup_case(panic: bool) {
     fixture.config.shutdown().await.unwrap();
     fault.store.lock().unwrap().take();
     let Fixture {
+        services,
         _dir,
         namespaces,
         root,
@@ -1202,6 +1216,7 @@ async fn cleanup_case(panic: bool) {
         issuer,
         owner,
     } = fixture;
+    drop(services);
     drop(owner);
     drop(issuer);
     drop(app);

@@ -42,7 +42,7 @@ pub(super) fn scope() -> Scope {
         )
         .unwrap()
 }
-fn write(root: &Path, id: &str, body: &str) {
+pub(super) fn write(root: &Path, id: &str, body: &str) {
     std::fs::create_dir_all(root.join(id)).unwrap();
     std::fs::write(
         root.join(id).join("SKILL.md"),
@@ -50,7 +50,7 @@ fn write(root: &Path, id: &str, body: &str) {
     )
     .unwrap();
 }
-fn source(id: &str, path: &Path) -> Source {
+pub(super) fn source(id: &str, path: &Path) -> Source {
     Source {
         id: id.into(),
         label: id.into(),

@@ -117,6 +117,10 @@ export type RuntimeProtocol =
   | SkillLibraryOutcome
   | SkillLibrarySetPreference
   | SkillLibraryPreferenceResult
+  | SkillModelSearch
+  | SkillModelLoad
+  | SkillModelSearchResult
+  | SkillModelLoadResult
   | AgentList
   | AgentCreate
   | AgentCreated
@@ -1157,6 +1161,7 @@ export type EditorCapture =
  * Access inside the original selected directory; never an ambient filesystem grant.
  */
 export type AgentWorkspaceAccess = 'read_only' | 'workspace_write';
+export type AgentToolInput = 'json' | 'skill';
 export type AgentToolResult = 'json' | 'image';
 export type AgentToolConfirmation = 'required' | 'preapproved';
 export type SettingsModelsRead =
@@ -1737,6 +1742,88 @@ export type SkillLibraryPreferenceResult =
       reason: string;
       kind: 'rejected';
     };
+export type SkillScope = 'project' | 'workspace' | 'user' | 'custom';
+export type SkillSource = 'maka' | 'agents' | 'legacy' | 'custom';
+export type SkillModelLoadResult =
+  | {
+      revision: string;
+      metadata: SkillMetadata;
+      instructions: string;
+      instructionOffset: number;
+      next?: SkillModelLoad | null;
+      relativePath: string;
+      declaredTools: string[];
+      declaredToolsTruncated: boolean;
+      truncated: boolean;
+      receipt: SkillInvocationReceipt;
+      kind: 'loaded';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      revision: string;
+      reference: string;
+      path: string;
+      content: string;
+      offset: number;
+      returnedLines: number;
+      totalLines: number;
+      partialLine: boolean;
+      next?: SkillModelLoad | null;
+      receipt: SkillInvocationReceipt;
+      kind: 'resource';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      kind: 'changed';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      reason: SkillFailureReason;
+      receipt: SkillInvocationReceipt;
+      kind: 'unavailable';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      reason: string;
+      kind: 'resource_unavailable';
+      [k: string]: unknown | undefined;
+    };
+/**
+ * Boolean wire discriminants are validated here, not retained as mutable
+ * business fields beside a contradictory enum variant.
+ */
+export type SkillInvocationReceipt =
+  | {
+      invocation: SkillInvocationMode;
+      request: string;
+      success: true;
+      ref: string;
+      id: string;
+      name: string;
+      scope: SkillScope;
+      source: SkillSource;
+      truncated: boolean;
+    }
+  | {
+      invocation: SkillInvocationMode;
+      request: string;
+      success: false;
+      reason: SkillFailureReason;
+    }
+  | {
+      invocation: 'explicit';
+      success: false;
+      reason: TooManyRequests;
+      requestLimit: number;
+    };
+export type SkillInvocationMode = 'explicit' | 'model_tool';
+export type SkillFailureReason =
+  | 'invalid_name'
+  | 'not_found'
+  | 'disabled'
+  | 'host_incompatible'
+  | 'resolution_failed';
+export type TooManyRequests = 'too_many_requests';
 export type AgentSessionFilter = 'all' | 'needs_you';
 export type AgentSessionPosition =
   | {
@@ -4081,6 +4168,11 @@ export interface DirectoryRootSpec {
 }
 export interface AgentServiceTool {
   /**
+   * Explicit input projection. Skill tools receive the actual Agent tool names,
+   * outside model-controlled arguments; this is compatibility data, not authority.
+   */
+  input?: AgentToolInput & string;
+  /**
    * Explicit versioned renderer key, frozen with the call; never inferred from its name.
    */
   presentation?: string | null;
@@ -4519,6 +4611,64 @@ export interface SkillLibrarySetPreference {
   reference: string;
   revision: number;
   preference: SkillPreference;
+}
+export interface SkillModelSearch {
+  query: string;
+  limit?: number | null;
+}
+export interface SkillModelLoad {
+  /**
+   * Exact ref from search, or a skill id/name resolved before eligibility checks.
+   */
+  name: string;
+  /**
+   * Catalog revision from search or a previous load/resource response.
+   */
+  revision: string;
+  /**
+   * UTF-8 resource path relative to this skill, or its exact continuation.
+   */
+  resource?: ReadInput | null;
+  /**
+   * UTF-8 byte offset from a returned instruction continuation; omit initially.
+   */
+  instructionOffset?: number | null;
+}
+export interface ReadInput {
+  path: string;
+  offset?: number;
+  limit?: number;
+}
+export interface SkillModelSearchResult {
+  revision: string;
+  query: string;
+  queryTruncated: boolean;
+  matches: SearchMatch[];
+  totalEligible: number;
+  matchedCount: number;
+  truncated: boolean;
+  [k: string]: unknown | undefined;
+}
+export interface SearchMatch {
+  ref: string;
+  id: string;
+  name: string;
+  description: string;
+  scope: SkillScope;
+  source: SkillSource;
+  metadataTruncated: boolean;
+  score: number;
+  [k: string]: unknown | undefined;
+}
+export interface SkillMetadata {
+  ref: string;
+  id: string;
+  name: string;
+  description: string;
+  scope: SkillScope;
+  source: SkillSource;
+  metadataTruncated: boolean;
+  [k: string]: unknown | undefined;
 }
 export interface AgentList {
   filter: AgentSessionFilter;

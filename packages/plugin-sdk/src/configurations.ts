@@ -220,6 +220,12 @@ export const configurations = {
       AgentServiceTool: {
         type: 'object',
         properties: {
+          input: {
+            description:
+              'Explicit input projection. Skill tools receive the actual Agent tool names,\noutside model-controlled arguments; this is compatibility data, not authority.',
+            $ref: '#/$defs/AgentToolInput',
+            default: 'json',
+          },
           presentation: {
             description:
               'Explicit versioned renderer key, frozen with the call; never inferred from its name.',
@@ -274,6 +280,10 @@ export const configurations = {
         },
         additionalProperties: false,
         required: ['result', 'confirmation', 'name', 'description', 'import', 'method'],
+      },
+      AgentToolInput: {
+        type: 'string',
+        enum: ['json', 'skill'],
       },
       DisplayText: {
         description: 'Presentation text is distinct from the stable identity used for navigation.',

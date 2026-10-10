@@ -692,6 +692,17 @@ test('both product compositions use actual immutable package refs and check in t
             sources: [{ id: 'local', label: 'Local', path: '/private/product-skills' }],
           };
         if (questionsEnabled)
+          configuration.agent.tools.push(
+            ...['search', 'load'].map((method) => ({
+              name: method === 'search' ? 'SkillSearch' : 'Skill',
+              description: 'Use enabled skills and their relative resources.',
+              import: 'skills',
+              method,
+              result: 'json',
+              confirmation: 'preapproved',
+            })),
+          );
+        if (questionsEnabled)
           configuration.agent.tools.push({
             name: 'AskUserForm',
             result: 'json',
@@ -822,6 +833,8 @@ test('both product compositions use actual immutable package refs and check in t
           assert.equal(business.endpoints[name].import, name);
         }
 
+        if (productName === 'agent' && !questionsEnabled)
+          assert.equal(host.instances.agent.bindings.skills, undefined);
         assert.equal('questions' in host.instances, questionsEnabled);
         assert.equal('forms' in host.instances, questionsEnabled);
         if (questionsEnabled) {
@@ -832,7 +845,23 @@ test('both product compositions use actual immutable package refs and check in t
           assert.deepEqual(host.instances.agent.bindings.questions, [
             { kind: 'instance', path: ['questions'], export: 'questions' },
           ]);
+          assert.deepEqual(host.instances.agent.bindings.skills, [
+            { kind: 'instance', path: ['skills'], export: 'skills' },
+          ]);
+          assert.ok(
+            host.instances.agent.configuration.values.tools
+              .filter((tool) => tool.import === 'skills')
+              .every((tool) => tool.input === 'skill'),
+          );
           assert.deepEqual(business.native, [
+            {
+              origin: [keys.agent],
+              consumer: [keys.agent],
+              provider: [keys.skills],
+              export: 'skills',
+              methods: ['search', 'load'],
+              recovery: false,
+            },
             {
               origin: [keys.agent],
               consumer: [keys.agent],
