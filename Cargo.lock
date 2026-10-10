@@ -8188,6 +8188,7 @@ name = "maka-agent-service"
 version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
+ "cap-fs-ext",
  "cap-std",
  "crossterm",
  "futures-util",

@@ -293,6 +293,34 @@ impl RootOwner {
         self.validate_leases()
     }
 
+    /// Verify a captured directory before using it for domain data. Checking
+    /// the pathname alone cannot detect a different handle captured during an
+    /// intervening rename, even after the original pathname has been restored.
+    pub fn validate_directory_handle(&self, directory: &File) -> io::Result<()> {
+        self.validate_current()?;
+        let metadata = directory.metadata()?;
+        if !metadata.is_dir() {
+            return Err(io::Error::other("State Root handle must be a directory"));
+        }
+        #[cfg(not(windows))]
+        let (dev, ino) = lock::identity(&metadata)?;
+        #[cfg(windows)]
+        let (dev, ino) = {
+            let identity = windows::file_identity(directory)?;
+            (identity.volume, identity.index)
+        };
+        let identity = Identity {
+            dev: dev.to_string(),
+            ino: ino.to_string(),
+        };
+        if identity != self.marker.root_identity {
+            return Err(io::Error::other(
+                "State Root directory handle identity changed",
+            ));
+        }
+        Ok(())
+    }
+
     fn validate_leases(&self) -> io::Result<()> {
         lock::stable(&self.durable_lease, &self.lock_path)?;
         // Discovery is disposable, but its loss must fence this live owner:

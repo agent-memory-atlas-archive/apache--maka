@@ -110,6 +110,10 @@ export type RuntimeProtocol =
   | SkillLibraryPage
   | SkillLibraryRead
   | SkillLibraryDocument
+  | SkillLibraryChange
+  | SkillLibraryReview
+  | SkillLibraryPreview
+  | SkillLibraryChangeResult
   | AgentList
   | AgentCreate
   | AgentCreated
@@ -1656,6 +1660,7 @@ export type CatalogMutationResult =
     };
 export type SkillLibraryPage =
   | {
+      writable: boolean;
       revision: string;
       entries: SkillLibraryEntry[];
       after?: SkillLibraryCursor | null;
@@ -1667,6 +1672,7 @@ export type SkillLibraryPage =
     };
 export type SkillLibraryDocument =
   | {
+      writable: boolean;
       entry: SkillLibraryEntry;
       revision: string;
       text: string;
@@ -1681,6 +1687,36 @@ export type SkillLibraryDocument =
     }
   | {
       kind: 'unavailable';
+    };
+export type SkillLibraryChangeKind = 'install' | 'update' | 'delete';
+export type SkillLibraryPreview =
+  | {
+      review: SkillLibraryReview;
+      target: string;
+      entries: number;
+      paths: string[];
+      pathsTruncated: boolean;
+      locallyModified: boolean;
+      kind: 'ready';
+    }
+  | {
+      kind: 'changed';
+    }
+  | {
+      reason: string;
+      kind: 'rejected';
+    };
+export type SkillLibraryChangeResult =
+  | {
+      reference: string;
+      kind: 'applied';
+    }
+  | {
+      kind: 'changed';
+    }
+  | {
+      reason: string;
+      kind: 'rejected';
     };
 export type AgentSessionFilter = 'all' | 'needs_you';
 export type AgentSessionPosition =
@@ -4352,6 +4388,10 @@ export interface SetDefaultConnectionTargetInput {
  */
 export interface SkillLibraryConfiguration {
   /**
+   * Enable installation into this instance's own private collection.
+   */
+  manage?: boolean;
+  /**
    * @maxItems 8
    */
   sources:
@@ -4413,6 +4453,7 @@ export interface SkillLibraryCursor {
   offset: number;
 }
 export interface SkillLibraryEntry {
+  installed: boolean;
   reference: string;
   source: string;
   name: string;
@@ -4429,6 +4470,15 @@ export interface SkillLibraryRead {
    */
   revision: string;
   offset: number;
+}
+export interface SkillLibraryChange {
+  kind: SkillLibraryChangeKind;
+  reference: string;
+  revision: string;
+}
+export interface SkillLibraryReview {
+  change: SkillLibraryChange;
+  digest: string;
 }
 export interface AgentList {
   filter: AgentSessionFilter;

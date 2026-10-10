@@ -146,7 +146,9 @@ impl ReadRoot {
         view.authorization = Some(authorization);
         view
     }
-    pub(crate) fn from_handle(directory: cap_std::fs::Dir, path: std::path::PathBuf) -> Self {
+    /// Capture an embedding-owned handle. The path is display metadata; reads
+    /// continue through the handle even if that pathname is replaced.
+    pub fn from_handle(directory: cap_std::fs::Dir, path: std::path::PathBuf) -> Self {
         Self {
             directory: Directory::from_handle(directory, path),
             files: None,

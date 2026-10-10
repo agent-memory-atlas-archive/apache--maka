@@ -415,6 +415,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
       {},
       {
         skills: [remote('skills', 'skills')],
+        receipts: [remote('receipts', 'Receipts')],
         reading: [local('reading-area', 'ReadingArea')],
         source: [local('source-text', 'SourceText')],
         input: [local('input', 'TextInput')],
@@ -426,7 +427,12 @@ export function composition(configuration: CompositionConfiguration): Applicatio
       declaration: { contract: contracts.skillLibrary, availability: 'required' },
     });
     Object.assign(connections.hosts.find((host) => host.name === 'local')!.imports, {
-      skills: { methods: ['list', 'read'], recovery: false },
+      skills: {
+        methods: configuration.skills.manage
+          ? ['list', 'read', 'preview', 'apply']
+          : ['list', 'read'],
+        recovery: !!configuration.skills.manage,
+      },
     });
   }
   Object.assign(ui.instances, {

@@ -28,6 +28,9 @@ use std::collections::BTreeMap;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "SkillLibraryConfiguration")]
 pub struct Configuration {
+    /// Enable installation into this instance's own private collection.
+    #[serde(default)]
+    pub manage: bool,
     #[schemars(length(max = 8))]
     pub sources: Vec<Source>,
 }
@@ -66,6 +69,7 @@ pub struct List {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "SkillLibraryEntry")]
 pub struct Entry {
+    pub installed: bool,
     pub reference: String,
     pub source: String,
     pub name: String,
@@ -85,6 +89,7 @@ pub struct Entry {
 #[schemars(rename = "SkillLibraryPage")]
 pub enum Page {
     Page {
+        writable: bool,
         revision: String,
         entries: Vec<Entry>,
         after: Option<Cursor>,
@@ -114,6 +119,7 @@ pub struct Read {
 #[schemars(rename = "SkillLibraryDocument")]
 pub enum Document {
     Page {
+        writable: bool,
         entry: Box<Entry>,
         revision: String,
         text: String,
@@ -125,6 +131,63 @@ pub enum Document {
     Changed,
     Unavailable,
 }
+
+#[derive(Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename = "SkillLibraryChangeKind")]
+pub enum ChangeKind {
+    Install,
+    Update,
+    Delete,
+}
+#[derive(Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "SkillLibraryChange")]
+pub struct Change {
+    pub kind: ChangeKind,
+    #[schemars(length(min = 1, max = 512))]
+    pub reference: String,
+    #[schemars(length(min = 1, max = 128))]
+    pub revision: String,
+}
+#[derive(Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "SkillLibraryReview")]
+pub struct Review {
+    pub change: Change,
+    #[schemars(length(min = 71, max = 71))]
+    pub digest: String,
+}
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[schemars(rename = "SkillLibraryPreview")]
+pub enum Preview {
+    Ready {
+        review: Review,
+        target: String,
+        entries: usize,
+        paths: Vec<String>,
+        paths_truncated: bool,
+        locally_modified: bool,
+    },
+    Changed,
+    Rejected {
+        reason: String,
+    },
+}
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "SkillLibraryChangeResult")]
+pub enum ChangeResult {
+    Applied { reference: String },
+    Changed,
+    Rejected { reason: String },
+}
 pub fn configuration_schema() -> Value {
     schemars::schema_for!(Configuration).into()
 }
@@ -135,6 +198,24 @@ pub fn contract() -> Contract {
         transport: Transport::Remote,
         interface: Interface::Service {
             methods: BTreeMap::from([
+                (
+                    "preview".into(),
+                    Method {
+                        mode: MethodMode::Query,
+                        input: schemars::schema_for!(Change).into(),
+                        output: schemars::schema_for!(Preview).into(),
+                        resources: BTreeMap::new(),
+                    },
+                ),
+                (
+                    "apply".into(),
+                    Method {
+                        mode: MethodMode::Mutation,
+                        input: schemars::schema_for!(Review).into(),
+                        output: schemars::schema_for!(ChangeResult).into(),
+                        resources: BTreeMap::new(),
+                    },
+                ),
                 (
                     "list".into(),
                     Method {

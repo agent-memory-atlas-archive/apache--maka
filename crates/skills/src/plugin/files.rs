@@ -18,6 +18,7 @@
  */
 
 use super::Error;
+use crate::publication::set_installation as artifacts;
 use crate::{
     SourceCatalog,
     api::*,
@@ -26,7 +27,6 @@ use crate::{
         receipt::{Destination, Operation},
     },
 };
-use maka_runtime::artifact::content_digest;
 use tokio_util::sync::CancellationToken;
 
 mod bundled;
@@ -343,46 +343,4 @@ fn source_content(
         return Err(Failure::Rejected(MutationRejection::SourceInvalid));
     }
     Ok(bytes)
-}
-fn artifacts(
-    tree: &mut Tree,
-    id: &str,
-    source_id: &str,
-    kind: InstallSource,
-    content: Vec<u8>,
-) -> Result<(), Failure> {
-    #[derive(serde::Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Lock<'a> {
-        schema_version: u32,
-        id: &'a str,
-        source_type: InstallSource,
-        source_name: &'static str,
-        source_version: &'static str,
-        content_sha256: &'a str,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        source_id: Option<&'a str>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        source_content_sha256: Option<&'a str>,
-    }
-    let hash = content_digest(&content);
-    let managed = matches!(kind, InstallSource::Managed);
-    let lock = serde_json::to_vec(&Lock {
-        schema_version: 1,
-        id,
-        source_type: kind,
-        source_name: if managed {
-            "local-library"
-        } else {
-            "maka-bundled"
-        },
-        source_version: "1",
-        content_sha256: &hash,
-        source_id: managed.then_some(source_id),
-        source_content_sha256: managed.then_some(hash.as_str()),
-    })?;
-    tree.insert("SKILL.md", content.clone())?;
-    tree.insert(".maka/baseline/SKILL.md", content)?;
-    tree.insert("skill.lock.json", lock)?;
-    Ok(())
 }

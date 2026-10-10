@@ -13353,6 +13353,98 @@ export const contracts = {
     interface: {
       kind: 'service',
       methods: {
+        apply: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              change: {
+                $ref: '#/$defs/SkillLibraryChange',
+              },
+              digest: {
+                type: 'string',
+                minLength: 71,
+                maxLength: 71,
+              },
+            },
+            required: ['change', 'digest'],
+            title: 'SkillLibraryReview',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              SkillLibraryChange: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  kind: {
+                    $ref: '#/$defs/SkillLibraryChangeKind',
+                  },
+                  reference: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 512,
+                  },
+                  revision: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                },
+                required: ['kind', 'reference', 'revision'],
+              },
+              SkillLibraryChangeKind: {
+                type: 'string',
+                enum: ['install', 'update', 'delete'],
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  reference: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'applied',
+                  },
+                },
+                required: ['kind', 'reference'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  reason: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                required: ['kind', 'reason'],
+              },
+            ],
+            title: 'SkillLibraryChangeResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          resources: {},
+        },
         list: {
           mode: 'query',
           input: {
@@ -13408,6 +13500,9 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  writable: {
+                    type: 'boolean',
+                  },
                   revision: {
                     type: 'string',
                   },
@@ -13438,7 +13533,7 @@ export const contracts = {
                     const: 'page',
                   },
                 },
-                required: ['kind', 'revision', 'entries', 'diagnostics'],
+                required: ['kind', 'writable', 'revision', 'entries', 'diagnostics'],
               },
               {
                 type: 'object',
@@ -13459,6 +13554,9 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  installed: {
+                    type: 'boolean',
+                  },
                   reference: {
                     type: 'string',
                   },
@@ -13488,6 +13586,7 @@ export const contracts = {
                   },
                 },
                 required: [
+                  'installed',
                   'reference',
                   'source',
                   'name',
@@ -13518,6 +13617,152 @@ export const contracts = {
                   },
                 },
                 required: ['revision', 'query', 'offset'],
+              },
+            },
+          },
+          resources: {},
+        },
+        preview: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              kind: {
+                $ref: '#/$defs/SkillLibraryChangeKind',
+              },
+              reference: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              revision: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+            },
+            required: ['kind', 'reference', 'revision'],
+            title: 'SkillLibraryChange',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              SkillLibraryChangeKind: {
+                type: 'string',
+                enum: ['install', 'update', 'delete'],
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  review: {
+                    $ref: '#/$defs/SkillLibraryReview',
+                  },
+                  target: {
+                    type: 'string',
+                  },
+                  entries: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 0,
+                  },
+                  paths: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  pathsTruncated: {
+                    type: 'boolean',
+                  },
+                  locallyModified: {
+                    type: 'boolean',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'ready',
+                  },
+                },
+                required: [
+                  'kind',
+                  'review',
+                  'target',
+                  'entries',
+                  'paths',
+                  'pathsTruncated',
+                  'locallyModified',
+                ],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  reason: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                required: ['kind', 'reason'],
+              },
+            ],
+            title: 'SkillLibraryPreview',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              SkillLibraryReview: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  change: {
+                    $ref: '#/$defs/SkillLibraryChange',
+                  },
+                  digest: {
+                    type: 'string',
+                    minLength: 71,
+                    maxLength: 71,
+                  },
+                },
+                required: ['change', 'digest'],
+              },
+              SkillLibraryChange: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  kind: {
+                    $ref: '#/$defs/SkillLibraryChangeKind',
+                  },
+                  reference: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 512,
+                  },
+                  revision: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                },
+                required: ['kind', 'reference', 'revision'],
+              },
+              SkillLibraryChangeKind: {
+                type: 'string',
+                enum: ['install', 'update', 'delete'],
               },
             },
           },
@@ -13557,6 +13802,9 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  writable: {
+                    type: 'boolean',
+                  },
                   entry: {
                     $ref: '#/$defs/SkillLibraryEntry',
                   },
@@ -13591,7 +13839,7 @@ export const contracts = {
                     const: 'page',
                   },
                 },
-                required: ['kind', 'entry', 'revision', 'text', 'offset', 'totalBytes'],
+                required: ['kind', 'writable', 'entry', 'revision', 'text', 'offset', 'totalBytes'],
               },
               {
                 type: 'object',
@@ -13623,6 +13871,9 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  installed: {
+                    type: 'boolean',
+                  },
                   reference: {
                     type: 'string',
                   },
@@ -13652,6 +13903,7 @@ export const contracts = {
                   },
                 },
                 required: [
+                  'installed',
                   'reference',
                   'source',
                   'name',

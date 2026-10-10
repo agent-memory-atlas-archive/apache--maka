@@ -27,12 +27,18 @@ import type {
   Emission,
   ReadingCommand,
   SkillLibraryCursor,
+  SkillLibraryChangeKind,
+  SkillLibraryPreview,
+  SkillLibraryChangeResult,
+  OperationReply,
+  RecoveryRef,
   SkillLibraryDocument,
   SkillLibraryPage,
   TextChunk,
 } from '../../plugin-sdk/src/index.js';
 import { skillLibraryContract, type SkillLibraryProps } from './contracts.js';
-import { copy } from './locale.js';
+import { sameValue } from './value.js';
+import { copy, type Copy } from './locale.js';
 import { compactLabel, fill, output, pixels, type Presentation, type Node } from './view.js';
 
 type Page = Extract<SkillLibraryPage, { kind: 'page' }>;
@@ -45,7 +51,8 @@ type Request =
       cursor: SkillLibraryCursor | null;
       history: number[];
     }
-  | { kind: 'read'; key: string };
+  | { kind: 'read'; key: string }
+  | { kind: 'preview' | 'mutate' | 'receipt'; key: string };
 interface State {
   revision: number;
   serial: number;
@@ -59,7 +66,9 @@ interface State {
   history: number[];
   document: Document | null;
   pending: Request | null;
-  notice: 'skillsFailed' | 'skillsChanged' | 'searchTooLong' | null;
+  notice: keyof Copy | null;
+  preview: Extract<SkillLibraryPreview, { kind: 'ready' }> | null;
+  current: { reference: RecoveryRef | null } | null;
   active: number;
   reveal: ReadingCommand | null;
 }
@@ -68,6 +77,9 @@ function same(a: EditorTextRef | null, b: EditorTextRef | null) {
 }
 function dirty(state: State) {
   return !!state.observation && !same(state.basis, state.observation.snapshot.text);
+}
+function readable(state: State) {
+  return state.notice !== 'skillsChanged' && state.notice !== 'searchTooLong' && !dirty(state);
 }
 function list(
   state: State,
@@ -130,6 +142,70 @@ function read(state: State, reference: string, revision: string, offset: number)
     },
   ];
 }
+function preview(state: State, kind: SkillLibraryChangeKind): Action[] {
+  const document = state.document;
+  if (!document?.writable || state.current || (!document.entry.valid && kind !== 'delete'))
+    return [];
+  const key = `skills-${++state.serial}`;
+  state.pending = { kind: 'preview', key };
+  state.notice = null;
+  return [
+    {
+      key,
+      binding: 'skills',
+      member: 0,
+      method: 'preview',
+      resources: {},
+      input: { kind, reference: document.entry.reference, revision: document.revision },
+    },
+  ];
+}
+function recover(state: State): Action[] {
+  if (!state.current?.reference || state.pending) return [];
+  const key = `skills-${++state.serial}`;
+  state.pending = { kind: 'receipt', key };
+  return [
+    {
+      key,
+      binding: 'receipts',
+      member: 0,
+      method: 'read',
+      resources: {},
+      input: state.current.reference,
+    },
+  ];
+}
+function rejection(reason: string): keyof Copy {
+  return reason === 'already_installed'
+    ? 'skillsAlreadyInstalled'
+    : reason === 'not_installed'
+      ? 'skillsNotInstalled'
+      : 'skillsChangeRejected';
+}
+function settle(state: State, props: SkillLibraryProps, reply: OperationReply): Action[] {
+  if (
+    !state.current ||
+    (state.current.reference && !sameValue(state.current.reference, reply.reference)) ||
+    reply.reference.contract.name !== 'maka.skills.Library' ||
+    reply.reference.method !== 'apply'
+  )
+    return [];
+  state.current.reference = reply.reference;
+  if (reply.receipt.kind !== 'recorded' || reply.receipt.outcome.kind !== 'returned') {
+    state.notice = 'skillsUnknown';
+    return [];
+  }
+  const result = reply.receipt.outcome.value as SkillLibraryChangeResult;
+  state.current = null;
+  if (result.kind === 'applied') {
+    state.document = null;
+    const actions = state.open && props.open ? list(state) : [];
+    state.notice = reply.receipt.cleanup.kind === 'confirmed' ? null : 'skillsCleanupUnknown';
+    return actions;
+  }
+  state.notice = result.kind === 'changed' ? 'skillsChanged' : rejection(result.reason);
+  return [];
+}
 function reveal(state: State, key: string) {
   state.reveal = {
     sequence: (state.reveal?.sequence ?? 0) + 1,
@@ -150,14 +226,54 @@ function frame<N extends Node>(
     text = copy(props.locale);
   const tui = presentation.target === 'tui';
   const busy = !!state.pending;
-  const available = state.open && props.open && !busy && !state.notice && !dirty(state);
+  const available = state.open && props.open && !busy && !state.preview && readable(state);
   const document = state.document;
   const content: N[] = [];
-  if (document) {
+  if (state.preview) {
+    const preview = state.preview;
+    const kind = preview.review.change.kind;
+    content.push(
+      ui.text('skills-preview-title', text.skillsConfirmTitle, 17, props.theme.text, 550),
+      ui.text('skills-preview-target', preview.target),
+      ui.text(
+        'skills-preview-summary',
+        kind === 'delete'
+          ? text.skillsDeleteDetail
+          : kind === 'update'
+            ? text.skillsUpdateDetail
+            : text.skillsInstallDetail,
+      ),
+      ui.text('skills-preview-count', `${text.skillsEntryCount}: ${preview.entries}`),
+      ...(preview.locallyModified && kind === 'update'
+        ? [ui.text('skills-preview-modified', text.skillsLocalModified)]
+        : []),
+      presentation.slot(
+        'skills-preview-paths',
+        'source',
+        {
+          source: preview.paths.map((path) => JSON.stringify(path)).join('\n'),
+          appearance: props.theme.markdown.code,
+          selection: props.theme.markdown.selection,
+          terminal: props.theme.terminal,
+          disabled: false,
+          focusOnPointer: true,
+        },
+        {},
+      ),
+      ...(preview.pathsTruncated
+        ? [ui.text('skills-preview-truncated', text.skillsPathsTruncated)]
+        : []),
+    );
+  } else if (document) {
     const entry = document.entry;
     content.push(
       ui.text('skill-name', entry.name, 17, props.theme.text, 550),
-      ui.text('skill-source', entry.source, 13, props.theme.muted),
+      ui.text(
+        'skill-source',
+        entry.installed ? text.skillsInstalled : entry.source,
+        13,
+        props.theme.muted,
+      ),
       ui.text('skill-description', entry.description),
       ui.text(
         'skill-range',
@@ -190,7 +306,10 @@ function frame<N extends Node>(
     state.page?.entries.forEach((entry, at) => {
       const key = rowKey(state, at);
       const label = compactLabel(entry.name, tui ? 100 : 200);
-      const summary = compactLabel(`${entry.source} · ${entry.description}`, tui ? 160 : 240);
+      const summary = compactLabel(
+        `${entry.installed ? text.skillsInstalled : entry.source} · ${entry.description}`,
+        tui ? 160 : 240,
+      );
       content.push(
         ui.item
           ? ui.item(
@@ -248,6 +367,9 @@ function frame<N extends Node>(
         { visible: !document, gap: 0 },
       ),
       ...(busy ? [ui.text('skills-loading', text.skillsLoading, 13, props.theme.muted)] : []),
+      ...(state.current
+        ? [ui.button('check-change', text.skillsCheckResult, busy || !state.current.reference)]
+        : []),
       ...(state.notice
         ? [ui.text('skills-notice', text[state.notice], 13, props.theme.muted)]
         : []),
@@ -266,26 +388,53 @@ function frame<N extends Node>(
         },
         { input: 'reading-input' },
       ),
+      ...(document?.writable && !state.preview
+        ? [
+            ui.box(
+              'skills-management',
+              document.entry.installed
+                ? [ui.button('delete-skill', text.skillsDelete, !available || !!state.current)]
+                : [
+                    ui.button(
+                      'install-skill',
+                      text.skillsInstall,
+                      !available || !!state.current || !document.entry.valid,
+                    ),
+                    ui.button(
+                      'update-skill',
+                      text.skillsUpdate,
+                      !available || !!state.current || !document.entry.valid,
+                    ),
+                  ],
+              { row: true, gap: tui ? 1 : 8, terminal: { wrap: true }, style: { wrap: true } },
+            ),
+          ]
+        : []),
       ui.box(
         'skills-controls',
-        [
-          ...(document
-            ? [
-                ui.button('back', text.back, busy),
-                ui.button(
-                  'body-previous',
-                  text.sourcePrevious,
-                  !available || document.before == null,
-                ),
-                ui.button('body-next', text.sourceNext, !available || document.after == null),
-              ]
-            : [
-                ui.button('previous', text.skillsPrevious, !available || !state.history.length),
-                ui.button('next', text.skillsNext, !available || !state.page?.after),
-              ]),
-          ui.button('refresh', text.refreshSessions, busy),
-          ui.button('close', text.closeModels),
-        ],
+        state.preview
+          ? [
+              ui.button('confirm-change', text.skillsConfirm, busy, true),
+              ui.button('cancel-change', text.cancel, busy),
+            ]
+          : [
+              ...(document
+                ? [
+                    ui.button('back', text.back, busy || !!state.preview),
+                    ui.button(
+                      'body-previous',
+                      text.sourcePrevious,
+                      !available || document.before == null,
+                    ),
+                    ui.button('body-next', text.sourceNext, !available || document.after == null),
+                  ]
+                : [
+                    ui.button('previous', text.skillsPrevious, !available || !state.history.length),
+                    ui.button('next', text.skillsNext, !available || !state.page?.after),
+                  ]),
+              ui.button('refresh', text.refreshSessions, busy || !!state.preview),
+              ui.button('close', text.closeModels),
+            ],
         { row: true, gap: tui ? 1 : 8, style: { wrap: true }, terminal: { wrap: true } },
       ),
     ],
@@ -320,6 +469,8 @@ export function skillLibrary<N extends Node>(
         document: null,
         pending: null,
         notice: null,
+        preview: null,
+        current: null,
         active: 0,
         reveal: null,
       };
@@ -330,11 +481,13 @@ export function skillLibrary<N extends Node>(
       let actions: Action[] = [];
       if (!props.open) {
         state.open = false;
-        state.pending = null;
+        state.preview = null;
+        if (state.pending?.kind !== 'mutate' && state.pending?.kind !== 'receipt')
+          state.pending = null;
       } else if (!state.open) {
         state.open = true;
         state.document = null;
-        actions = search(state);
+        actions = state.current ? recover(state) : state.pending ? [] : search(state);
       }
       return frame(presentation, state, props, actions);
     },
@@ -344,7 +497,15 @@ export function skillLibrary<N extends Node>(
       let actions: Action[] = [];
       if (input.kind === 'component' && input.child === 'skills-reading' && input.name === 'input')
         input = input.event as ComponentInput;
-      if (!state.open || !props.open) return frame(presentation, state, props);
+      if (
+        (!state.open || !props.open) &&
+        !(
+          input.kind === 'action' &&
+          input.key === state.pending?.key &&
+          (state.pending.kind === 'mutate' || state.pending.kind === 'receipt')
+        )
+      )
+        return frame(presentation, state, props);
       if (input.kind === 'component' && input.child === 'skills-query') {
         if (input.name === 'changed') {
           state.observation = input.event as EditorObservation;
@@ -356,8 +517,25 @@ export function skillLibrary<N extends Node>(
         const request = state.pending;
         state.pending = null;
         const result = input.event as ActionOutcome;
-        if (result.status !== 'succeeded') state.notice = 'skillsFailed';
-        else if (request.kind === 'query') {
+        if (request.kind === 'mutate') {
+          if (result.status === 'operation') actions = settle(state, props, result.reply);
+          else if (result.status === 'not_accepted') {
+            state.current = null;
+            state.notice = 'skillsFailed';
+          } else state.notice = 'skillsUnknown';
+        } else if (request.kind === 'receipt') {
+          if (result.status === 'succeeded')
+            actions = settle(state, props, result.value as OperationReply);
+          else state.notice = 'skillsUnknown';
+        } else if (result.status !== 'succeeded') state.notice = 'skillsFailed';
+        else if (request.kind === 'preview') {
+          const preview = result.value as SkillLibraryPreview;
+          if (preview.kind === 'ready') {
+            state.preview = preview;
+            reveal(state, 'skills-preview-title');
+          } else
+            state.notice = preview.kind === 'changed' ? 'skillsChanged' : rejection(preview.reason);
+        } else if (request.kind === 'query') {
           if (!same(request.basis, state.observation?.snapshot.text ?? null))
             state.notice = 'skillsFailed';
           else {
@@ -392,20 +570,56 @@ export function skillLibrary<N extends Node>(
         }
       } else if (input.kind === 'raw') {
         if (input.key === 'close') {
-          state.open = false;
-          state.pending = null;
-          events.push({ name: 'closed', value: {} });
+          if (state.preview) state.preview = null;
+          else {
+            state.open = false;
+            if (state.pending?.kind !== 'mutate' && state.pending?.kind !== 'receipt')
+              state.pending = null;
+            events.push({ name: 'closed', value: {} });
+          }
         } else if (!state.pending) {
-          if (input.key === 'back') {
+          if (input.key === 'check-change') actions = recover(state);
+          else if (input.key === 'cancel-change') state.preview = null;
+          else if (input.key === 'confirm-change' && state.preview && !state.current) {
+            const key = `skills-${++state.serial}`;
+            state.pending = { kind: 'mutate', key };
+            state.current = { reference: null };
+            actions = [
+              {
+                key,
+                binding: 'skills',
+                member: 0,
+                method: 'apply',
+                input: state.preview.review,
+                resources: {},
+              },
+            ];
+            state.preview = null;
+          } else if (state.preview) {
+            /* Keep the reviewed change until confirmation or cancellation. */
+          } else if (input.key === 'back') {
             state.document = null;
             reveal(state, rowKey(state, state.active));
           } else if (input.key === 'refresh' || input.key === 'search') {
             state.document = null;
             actions = search(state);
-          } else if (!state.notice && !dirty(state)) {
+          } else if (readable(state)) {
             const document = state.document,
               page = state.page;
             if (document) {
+              if (
+                input.key === 'install-skill' ||
+                input.key === 'update-skill' ||
+                input.key === 'delete-skill'
+              )
+                actions = preview(
+                  state,
+                  input.key === 'install-skill'
+                    ? 'install'
+                    : input.key === 'update-skill'
+                      ? 'update'
+                      : 'delete',
+                );
               const offset =
                 input.key === 'body-previous'
                   ? document.before

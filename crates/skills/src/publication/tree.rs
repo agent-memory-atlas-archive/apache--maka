@@ -128,7 +128,8 @@ impl Tree {
         }
         Ok(content_digest(&serde_json::to_vec(&manifest)?))
     }
-    pub(crate) async fn read_view(
+    /// Capture a complete bounded tree through an existing read capability.
+    pub async fn read_view(
         files: &maka_plugins::filesystem::ReadDirectory,
         path: &str,
     ) -> Result<Self, Error> {

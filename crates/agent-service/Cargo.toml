@@ -25,6 +25,7 @@ publish.workspace = true
 [dependencies]
 base64 = "0.22.1"
 cap-std.workspace = true
+cap-fs-ext = "4.0.3"
 maka-agent.workspace = true
 maka-config.workspace = true
 maka-event-log.workspace = true

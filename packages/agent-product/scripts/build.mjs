@@ -161,6 +161,7 @@ const specifications = {
     module: 'skill-library',
     imports: {
       skills: one(sdk.contracts.skillLibrary),
+      receipts: one(sdk.contracts.receiptReader),
       input: one(sdk.contracts.textInput),
       reader: one(sdk.contracts.textReader),
       source: one(sdk.contracts.sourceText),

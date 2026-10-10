@@ -161,3 +161,31 @@ fn legacy_and_unsafe_markers_fail_closed() {
     fs::write(path.join(ROOT_MARKER), vec![b' '; 1025]).unwrap();
     assert!(owner.validate_current().is_err());
 }
+
+#[test]
+#[cfg(unix)]
+fn captured_directory_must_match_the_owner_even_after_the_path_is_restored() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("root");
+    let retained = temp.path().join("retained");
+    let owner = RootOwner::create(&path, &namespaces(temp.path())).unwrap();
+    let original = fs::File::open(&path).unwrap();
+    owner.validate_directory_handle(&original).unwrap();
+    assert!(
+        owner
+            .validate_directory_handle(&fs::File::open(path.join(ROOT_MARKER)).unwrap())
+            .is_err()
+    );
+    // Capture a replacement between path checks, then restore the original.
+    fs::rename(&path, &retained).unwrap();
+    fs::create_dir(&path).unwrap();
+    let replacement = fs::File::open(&path).unwrap();
+    fs::remove_dir(&path).unwrap();
+    fs::rename(&retained, &path).unwrap();
+    owner.validate_current().unwrap();
+    assert!(owner.validate_directory_handle(&replacement).is_err());
+    owner.validate_directory_handle(&original).unwrap();
+    // The original inode alone cannot revive a fenced owner either.
+    fs::rename(&path, &retained).unwrap();
+    assert!(owner.validate_directory_handle(&original).is_err());
+}

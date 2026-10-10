@@ -307,6 +307,11 @@ export const configurations = {
     type: 'object',
     additionalProperties: false,
     properties: {
+      manage: {
+        type: 'boolean',
+        description: "Enable installation into this instance's own private collection.",
+        default: false,
+      },
       sources: {
         type: 'array',
         items: {

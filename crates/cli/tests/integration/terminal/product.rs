@@ -488,6 +488,8 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
         )
         .unwrap();
     }
+    std::fs::create_dir_all(source.join("skill-39/scripts")).unwrap();
+    std::fs::write(source.join("skill-39/scripts/check"), "original resource").unwrap();
     let deployment = Uuid::new_v4();
     let host_id = Uuid::new_v4();
     let manager_id = Uuid::new_v4();
@@ -498,7 +500,7 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
             "hostRoot":host_root, "hostDeployment":host_id, "managementDeployment":manager_id,
             "studioRoot":directory.path().join("unused"), "studioDeployment":Uuid::new_v4(),
             "workspaceRoots":[{"label":"Workspace", "path":workspace}],
-            "skills":{"sources":[{"id":"local", "label":"Test collection", "path":source}]},
+            "skills":{"manage":true,"sources":[{"id":"local", "label":"Test collection", "path":source}]},
         }),
         &refs,
     );
@@ -603,12 +605,102 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
     );
     tui.send(b"\r");
     tui.wait_for("Instructions for skill-39");
+    click(&mut tui, "[ Install ]", accent);
+    tui.wait_for("Review skill change");
+    click(&mut tui, "[ Cancel ]", accent);
+    tui.wait_for("Instructions for skill-39");
+    click(&mut tui, "[ Install ]", accent);
+    tui.wait_for("Review skill change");
+    click(&mut tui, "[ Confirm change ]", accent);
+    tui.wait_for("Installed · Library entry 39");
+    let store = std::fs::read_dir(host_root.join("skill-libraries"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let installed = store.join("skills/skill-39");
+    assert_eq!(
+        std::fs::read(installed.join("scripts/check")).unwrap(),
+        b"original resource"
+    );
+    // Update review includes the complete installed tree. An intervening local
+    // resource edit refuses publication, and the next explicit review preserves it.
+    std::fs::write(
+        installed.join("SKILL.md"),
+        "---\nname: skill-39\ndescription: Local skill 39\n---\nLOCAL CHANGES",
+    )
+    .unwrap();
+    std::fs::write(
+        source.join("skill-39/SKILL.md"),
+        "---\nname: skill-39\ndescription: Updated skill 39 source\n---\nUPDATED SKILL 39",
+    )
+    .unwrap();
+    click(&mut tui, "[ Refresh ]", accent);
+    tui.wait_until(|screen| {
+        screen.contains("Test collection · Updated skill 39 source")
+            && !screen.contains("Loading skills")
+    });
+    click(
+        &mut tui,
+        "Test collection · Updated skill 39 source",
+        accent,
+    );
+    tui.wait_for("UPDATED SKILL 39");
+    click(&mut tui, "[ Update installed copy ]", accent);
+    tui.wait_for("The installed instructions have local changes.");
+    std::fs::write(installed.join("scripts/check"), "edited after preview").unwrap();
+    click(&mut tui, "[ Confirm change ]", accent);
+    tui.wait_for("Skills changed.");
+    assert!(
+        std::fs::read_to_string(installed.join("SKILL.md"))
+            .unwrap()
+            .contains("LOCAL CHANGES")
+    );
+    click(&mut tui, "[ Refresh ]", accent);
+    tui.wait_until(|screen| {
+        screen.contains("Test collection · Updated skill 39 source")
+            && !screen.contains("Loading skills")
+    });
+    click(
+        &mut tui,
+        "Test collection · Updated skill 39 source",
+        accent,
+    );
+    tui.wait_for("UPDATED SKILL 39");
+    click(&mut tui, "[ Update installed copy ]", accent);
+    tui.wait_for("Review skill change");
+    click(&mut tui, "[ Confirm change ]", accent);
+    tui.wait_for("Installed · Updated skill 39 source");
+    assert!(
+        std::fs::read_to_string(installed.join("SKILL.md"))
+            .unwrap()
+            .contains("UPDATED SKILL 39")
+    );
+    assert_eq!(
+        std::fs::read(installed.join("scripts/check")).unwrap(),
+        b"edited after preview"
+    );
+    click(&mut tui, "Installed · Updated skill 39 source", accent);
+    tui.wait_for("UPDATED SKILL 39");
+    click(&mut tui, "[ Delete installed copy ]", accent);
+    tui.wait_for("Delete this installed skill and all its resource files.");
+    click(&mut tui, "[ Confirm change ]", accent);
+    tui.wait_until(|screen| {
+        screen.contains("Test collection · Updated skill 39 source")
+            && !screen.contains("Installed ·")
+    });
+    assert!(!installed.exists());
+    assert_eq!(
+        std::fs::read(source.join("skill-39/scripts/check")).unwrap(),
+        b"original resource"
+    );
     tui.send(b"\x1b");
     tui.wait_until(|screen| !screen.contains("╭Skills"));
     tui.send(b"\x0b");
     tui.wait_for("› Skills");
     tui.send(b"\r");
-    tui.wait_for("Library entry 39");
+    tui.wait_for("Updated skill 39 source");
     assert!(tui.screen.snapshot().unwrap().screen.contains("skill-39"));
     tui.send(b"\x1b");
     tui.wait_until(|screen| !screen.contains("╭Skills"));

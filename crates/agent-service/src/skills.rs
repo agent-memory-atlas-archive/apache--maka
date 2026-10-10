@@ -20,6 +20,7 @@
 //! Ordinary skill library service, reusing the original bounded discovery/parser.
 //! Files are data; neither references nor declared tools authorize execution.
 pub mod contract;
+mod management;
 use contract::*;
 pub use contract::{configuration_schema, contract};
 use futures_util::future::BoxFuture;
@@ -47,20 +48,28 @@ pub(crate) fn provide(registry: &mut NativeRegistry) -> Result<(), String> {
         Arc::new(|context, configuration| {
             Box::pin(async move {
                 let opened = async {
-                    let store = context
-                        .persistence()
-                        .ok_or("skills_require_persistence")?
-                        .store();
-                    let managed = store
+                    let persistence = context.persistence().ok_or("skills_require_persistence")?;
+                    let root = persistence
+                        .store()
                         .owned_root()
-                        .map_err(|_| "skills_root_unavailable")?
-                        .canonical_path()
-                        .to_owned();
-                    let configuration = serde_json::from_value(configuration)
+                        .map_err(|_| "skills_root_unavailable")?;
+                    let managed = root.canonical_path().to_owned();
+                    let configuration: Configuration = serde_json::from_value(configuration)
                         .map_err(|_| "skills_configuration_invalid")?;
-                    tokio::task::spawn_blocking(move || Library::open(configuration, managed))
-                        .await
-                        .map_err(|_| "skills_open_failed")?
+                    let manage = configuration.manage;
+                    let namespace = crate::owner::namespace(
+                        &persistence.source().state_domain,
+                        persistence.source().deployment,
+                        context.activation().instance(),
+                    );
+                    let mut library =
+                        tokio::task::spawn_blocking(move || Library::open(configuration, managed))
+                            .await
+                            .map_err(|_| "skills_open_failed")??;
+                    if manage {
+                        library.managed = Some(management::Managed::open(root, namespace).await?);
+                    }
+                    Ok::<_, String>(library)
                 }
                 .await;
                 match opened {
@@ -89,6 +98,7 @@ pub(crate) fn provide(registry: &mut NativeRegistry) -> Result<(), String> {
 #[derive(Clone)]
 struct Library {
     sources: Vec<(Source, ReadRoot)>,
+    managed: Option<Arc<management::Managed>>,
 }
 impl Library {
     fn open(configuration: Configuration, managed: PathBuf) -> Result<Self, String> {
@@ -128,10 +138,13 @@ impl Library {
                 .map_err(|_| "skills_source_unavailable")?;
             sources.push((source, root));
         }
-        Ok(Self { sources })
+        Ok(Self {
+            sources,
+            managed: None,
+        })
     }
     async fn snapshot(&self, scope: &Scope) -> Result<Snapshot, String> {
-        let sources: Vec<_> = self
+        let mut sources: Vec<_> = self
             .sources
             .iter()
             .map(|(source, root)| {
@@ -146,10 +159,27 @@ impl Library {
                 }
             })
             .collect();
+        if let Some(managed) = &self.managed {
+            let access = managed.read.bind_scope(scope);
+            sources.insert(
+                0,
+                maka_skills::Source {
+                    root: access.location(),
+                    access,
+                    directory: PathBuf::from("skills"),
+                    scope: maka_skills::SkillScope::Workspace,
+                    source: maka_skills::SkillSource::Maka,
+                    reference_prefix: "installed".into(),
+                },
+            );
+        }
         let discovery = maka_skills::scan(&sources, &scope.cancellation)
             .await
             .map_err(|_| "skills_discovery_unavailable")?;
         let label = |reference: &str| {
+            if reference.starts_with("installed:") {
+                return "Installed";
+            }
             self.sources
                 .iter()
                 .find(|(source, _)| reference.starts_with(&format!("source:{}:", source.id)))
@@ -191,7 +221,13 @@ impl Library {
             .diagnostics
             .iter()
             .map(|diagnostic| {
-                let label = &self.sources[diagnostic.precedence].0.label;
+                let label = if self.managed.is_some() && diagnostic.precedence == 0 {
+                    "Installed"
+                } else {
+                    &self.sources[diagnostic.precedence - usize::from(self.managed.is_some())]
+                        .0
+                        .label
+                };
                 format!("{label}: {:?}", diagnostic.reason)
             })
             .collect::<BTreeSet<_>>()
@@ -200,6 +236,7 @@ impl Library {
             .collect();
         let revision = maka_runtime::artifact::content_digest(
             &serde_json::to_vec(&(
+                self.managed.is_some(),
                 self.sources
                     .iter()
                     .map(|(source, _)| source)
@@ -213,6 +250,7 @@ impl Library {
             .map_err(|_| "skills_encoding_failed")?,
         );
         Ok(Snapshot {
+            writable: self.managed.is_some(),
             entries,
             diagnostics,
             revision,
@@ -220,6 +258,7 @@ impl Library {
     }
 }
 struct Snapshot {
+    writable: bool,
     entries: Vec<(Entry, String, String)>,
     diagnostics: Vec<String>,
     revision: String,
@@ -243,6 +282,7 @@ fn entry(
     let short_name = bound(name, 256);
     let short_description = bound(description, 2048);
     Entry {
+        installed: reference.starts_with("installed:"),
         reference: reference.into(),
         source: source.into(),
         metadata_truncated: short_name != name
@@ -303,6 +343,7 @@ impl Snapshot {
         for entry in filtered.iter().skip(offset).take(32) {
             entries.push(entry.clone());
             let page = Page::Page {
+                writable: self.writable,
                 revision: self.revision.clone(),
                 entries: entries.clone(),
                 after: after(entries.len()),
@@ -318,6 +359,7 @@ impl Snapshot {
         }
         let after = after(entries.len());
         Ok(Page::Page {
+            writable: self.writable,
             revision: self.revision,
             after,
             entries,
@@ -348,6 +390,7 @@ impl Snapshot {
             before += 1;
         }
         Ok(Document::Page {
+            writable: self.writable,
             entry: Box::new(entry),
             revision: self.revision,
             text: text[start..end].into(),
@@ -383,6 +426,17 @@ impl Handler for Library {
                     let input =
                         serde_json::from_value(input).map_err(|_| "skills_query_invalid")?;
                     encode(library.snapshot(context.scope()).await?.read(input)?)
+                }
+                "preview" => {
+                    let input =
+                        serde_json::from_value(input).map_err(|_| "skills_change_invalid")?;
+                    encode(library.preview(input, context.scope()).await?)
+                }
+                "apply" => {
+                    let input =
+                        serde_json::from_value(input).map_err(|_| "skills_change_invalid")?;
+                    let operation = context.operation().ok_or("skills_mutation_required")?;
+                    encode(library.apply(input, operation, context.scope()).await?)
                 }
                 _ => Err("skills_method_unavailable".into()),
             }
