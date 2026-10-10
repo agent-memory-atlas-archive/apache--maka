@@ -276,7 +276,7 @@ function frame<N extends Node>(
               truncate: true,
             }),
           ],
-          { gap: 0, surface: true },
+          { gap: 0 },
         ),
         active,
         !editableChoices(state, props),
@@ -401,7 +401,9 @@ function frame<N extends Node>(
       ui.box(
         'model-choices',
         [
-          ui.text('model-heading', text.models, 13, props.theme.muted),
+          ...(target === 'desktop'
+            ? [ui.text('model-heading', text.models, 13, props.theme.muted)]
+            : []),
           ui.box(
             'model-query-scope',
             [
@@ -531,16 +533,22 @@ function frame<N extends Node>(
                 { changed: 'default-changed' },
               ),
             ],
-            { scroll: target === 'tui' ? 'manual' : 'none', terminal: { grow: 1, basis: 0 } },
+            { terminal: { grow: 1, basis: 0 } },
           ),
         ],
-        { visible: state.defaultsOpen, gap: target === 'desktop' ? 8 : 0, terminal: { grow: 1 } },
+        {
+          visible: state.defaultsOpen,
+          gap: target === 'desktop' ? 8 : 1,
+          autoFocus: true,
+          terminal: { grow: 1 },
+          shortcuts: [{ key: 'escape', modifiers: [], input: 'default-back', enabled: true }],
+        },
       ),
     ],
     {
       visible: target === 'desktop' || state.open,
       terminal: { grow: 1 },
-      surface: true,
+      surface: target === 'desktop',
       padding: target === 'desktop' ? 12 : 0,
       style: { width: fill, minWidth: 0, background: 0 },
     },

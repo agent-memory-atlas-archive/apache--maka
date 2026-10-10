@@ -125,7 +125,7 @@ Earlier operations have a separate bounded pane because caller history is shared
 
 The desktop model selector uses the public anchored Popup scene.
 
-Both model selectors retain one native search input and search the complete enabled catalog through bounded pages. Plain Up/Down changes the active choice while keeping the query focused; Enter or a pointer choice verifies the original native text revision before selecting. Desktop reveals the active row through the existing native ReadingArea; TUI keeps its three-choice presentation. Caret movement acknowledges text without restarting search. Closing, defaults and busy scopes stop automatic scanning; defaults refresh reads its independent metadata even with an invalid search draft.
+Both model selectors retain one native search input and search the complete enabled catalog through bounded pages. TUI Up/Down enters the native scrolling list; arrows stage a model, with Apply or Enter confirming the model and thinking level against the original query revision. Caret movement acknowledges text without restarting search. Closing, defaults and busy scopes stop automatic scanning; defaults refresh reads its independent metadata even with an invalid search draft. TUI default confirmations and receipt history use nested native dialogs: Escape returns one level, and confirmation identity text scrolls above fixed Cancel/Confirm controls.
 
 Opening its model/default/history workflows keeps the composer in place; Escape or an
 outside click asks the plugin to close. The default child stays mounted across

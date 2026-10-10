@@ -31,7 +31,7 @@ import type {
 import { modelDefaultContract, type ModelDefaultProps } from './contracts.js';
 import { copy, type Copy } from './locale.js';
 import { sameValue } from './value.js';
-import { compactLabel, output, type Presentation, type Node } from './view.js';
+import { compactLabel, fill, output, pixels, type Presentation, type Node } from './view.js';
 
 type Request =
   | { kind: 'mutate' }
@@ -47,7 +47,6 @@ interface State {
   revision: number;
   serial: number;
   confirmation: Intent | null;
-  page: number;
   current: {
     revision: number;
     target: ConnectionTarget | null;
@@ -137,23 +136,11 @@ function frame<N extends Node>(
         : saved?.kind === 'unavailable'
           ? text.defaultUnavailable
           : text.noDefault;
-  const lines = (state.confirmation?.identity ?? [])
-    .flatMap((value) => value.split(/\r?\n/u))
-    .flatMap((line) => {
-      if (target === 'desktop') return [line];
-      const characters = [...line],
-        result: string[] = [];
-      for (let at = 0; at < characters.length; at += 36)
-        result.push(characters.slice(at, at + 36).join(''));
-      return result.length ? result : [''];
-    });
-  const size = target === 'tui' ? 3 : 18,
-    pages = Math.max(1, Math.ceil(lines.length / size));
-  const page = Math.min(state.page, pages - 1);
   const main = ui.box(
     'default-main',
     [
       ui.text('default-heading', text.defaultModel, 16, props.theme.text, 550),
+      ui.text('default-summary', summary, 13, props.theme.muted),
       ui.box(
         'default-actions',
         [
@@ -181,7 +168,6 @@ function frame<N extends Node>(
           style: { wrap: true },
         },
       ),
-      ui.text('default-summary', summary, 13, props.theme.muted),
       ...(target === 'desktop'
         ? [ui.text('default-help', text.defaultHelp, 13, props.theme.muted)]
         : []),
@@ -189,18 +175,48 @@ function frame<N extends Node>(
         ? [ui.text('default-notice', text[state.notice], 13, props.theme.muted)]
         : []),
     ],
-    { visible: !state.confirmation && !state.historyOpen, gap: target === 'desktop' ? 8 : 1 },
+    {
+      visible: !state.confirmation && !state.historyOpen,
+      gap: target === 'desktop' ? 8 : 1,
+      scroll: target === 'tui' ? 'manual' : 'none',
+      terminal: { grow: 1 },
+    },
   );
   const confirmation = ui.box(
     'default-confirmation',
     [
+      ...(state.confirmation
+        ? [
+            ui.box(
+              'default-identity',
+              [
+                ui.text(
+                  'default-question',
+                  state.confirmation?.target ? text.confirmSetDefault : text.confirmClearDefault,
+                  13,
+                ),
+                ...(!canConfirm(state, props)
+                  ? [ui.text('default-stale', text.defaultConflict, 13, props.theme.muted)]
+                  : []),
+                ...(state.confirmation?.identity ?? []).map((value, at) =>
+                  ui.text('default-line-' + at, value, 13),
+                ),
+              ],
+              {
+                scroll: 'manual',
+                autoFocus: true,
+                gap: target === 'desktop' ? 8 : 1,
+                terminal: { grow: 1, basis: 0 },
+                style: { width: fill, height: pixels(220), minHeight: 0 },
+              },
+            ),
+          ]
+        : []),
       ui.box(
         'default-confirm-actions',
         [
-          ui.button('default-confirm', text.confirmDefault, !canConfirm(state, props)),
           ui.button('default-cancel', text.cancel),
-          ...(page > 0 ? [ui.button('default-previous', text.previousModels)] : []),
-          ...(page + 1 < pages ? [ui.button('default-next', text.moreTarget)] : []),
+          ui.button('default-confirm', text.confirmDefault, !canConfirm(state, props), true),
         ],
         {
           row: true,
@@ -209,22 +225,12 @@ function frame<N extends Node>(
           style: { wrap: true },
         },
       ),
-      ui.text(
-        'default-question',
-        state.confirmation?.target ? text.confirmSetDefault : text.confirmClearDefault,
-        13,
-      ),
-      ...(!canConfirm(state, props)
-        ? [ui.text('default-stale', text.defaultConflict, 13, props.theme.muted)]
-        : []),
-      ...(pages > 1
-        ? [ui.text('default-page', page + 1 + ' / ' + pages, 12, props.theme.muted)]
-        : []),
-      ...lines
-        .slice(page * size, (page + 1) * size)
-        .map((line, at) => ui.text('default-line-' + at, line, 13)),
     ],
-    { visible: !!state.confirmation, gap: target === 'desktop' ? 8 : 1 },
+    {
+      visible: !!state.confirmation,
+      gap: target === 'desktop' ? 8 : 1,
+      terminal: { grow: 1 },
+    },
   );
   const earlier = ui.box(
     'default-earlier',
@@ -295,11 +301,36 @@ function frame<N extends Node>(
         );
       }),
     ],
-    { visible: state.historyOpen, gap: target === 'desktop' ? 8 : 1 },
+    {
+      visible: state.historyOpen,
+      gap: target === 'desktop' ? 8 : 1,
+      scroll: 'manual',
+      terminal: { grow: 1 },
+      style: { width: fill, maxHeight: 280 },
+    },
   );
   const out = output(
     state,
-    ui.box('model-default', [main, confirmation, earlier], { gap: 0 }),
+    ui.box(
+      'model-default',
+      target === 'tui'
+        ? [
+            ui.dialog(
+              'default-dialog',
+              state.historyOpen ? text.earlierDefaultOperations : text.defaultModel,
+              main,
+              ui.box('default-dialog-content', [confirmation, earlier], {
+                gap: 0,
+                terminal: { grow: 1 },
+              }),
+              !!state.confirmation || state.historyOpen,
+              undefined,
+              { width: 64, height: state.historyOpen ? 18 : 14 },
+            ),
+          ]
+        : [main, confirmation, earlier],
+      { gap: 0, terminal: { grow: 1 } },
+    ),
     events,
   );
   out.actions = actions;
@@ -315,7 +346,6 @@ export function modelDefault<N extends Node>(
         revision: 0,
         serial: 0,
         confirmation: null,
-        page: 0,
         current: null,
         pending: {},
         notice: null,
@@ -332,6 +362,8 @@ export function modelDefault<N extends Node>(
       return frame(presentation, state, props);
     },
     event(state, input, props) {
+      if (input.kind === 'raw' && input.key === 'default-dialog')
+        input = { ...input, key: state.historyOpen ? 'default-history-back' : 'default-cancel' };
       state.revision++;
       const actions: Action[] = [],
         events: Emission[] = [];
@@ -378,9 +410,6 @@ export function modelDefault<N extends Node>(
       } else if (input.kind === 'raw') {
         const key = input.key;
         if (key === 'default-cancel') state.confirmation = null;
-        else if (key === 'default-next' && state.confirmation) state.page++;
-        else if (key === 'default-previous' && state.confirmation)
-          state.page = Math.max(0, state.page - 1);
         else if (key === 'default-confirm' && canConfirm(state, props)) {
           const intent = state.confirmation!;
           state.confirmation = null;
@@ -440,7 +469,6 @@ export function modelDefault<N extends Node>(
                 ...new Set([selected.connectionName, selected.label, selected.selection.modelId]),
               ],
             };
-            state.page = 0;
           } else if (key === 'default-clear' && saved.kind !== 'none') {
             state.confirmation = {
               revision: props.catalogRevision!,
@@ -456,7 +484,6 @@ export function modelDefault<N extends Node>(
                     ]
                   : [copy(props.locale).defaultUnavailable, saved.target.modelId],
             };
-            state.page = 0;
           }
         }
       }

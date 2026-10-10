@@ -2747,46 +2747,6 @@ for (const [target, module] of defaultModules) {
       assert.deepEqual(form.props.selection, defaultChoice);
     },
   );
-  test(
-    target + ' every legal long default identity remains available on bounded confirmation pages',
-    () => {
-      const selected = {
-        selection: { connectionId: 'original-connection', revision: 3, modelId: 'm'.repeat(512) },
-        connectionName: '界'.repeat(255) + '\n',
-        thinkingLevels: [],
-        defaultThinkingLevel: null,
-        label: '🙂'.repeat(256),
-      };
-      const form = make({ selection: selected });
-      form.raw('default-set');
-      let all = '';
-      let count = 0;
-      while (true) {
-        const pane = form.output.frame.view.children.find((n) => n.key === 'default-confirmation');
-        const lines = pane.children.filter((n) => n.key.startsWith('default-line-'));
-        assert.ok(lines.length <= (target === 'tui' ? 3 : 18));
-        if (target === 'tui') assert.ok(lines.every((n) => [...n.text].length <= 36));
-        all += lines.map((n) => n.text).join('');
-        count++;
-        if (
-          !pane.children
-            .find((n) => n.key === 'default-confirm-actions')
-            .children.some((n) => n.key === 'default-next')
-        )
-          break;
-        form.raw('default-next');
-        assert.ok(count < 100);
-      }
-      assert.equal(
-        all,
-        selected.connectionName.replace(/\r?\n/gu, '') +
-          selected.label +
-          selected.selection.modelId,
-      );
-      form.raw('default-confirm');
-      assert.equal(form.find('setDefault').input.target.modelId, selected.selection.modelId);
-    },
-  );
 }
 function sceneNode(node, match) {
   if (typeof match === 'string' ? node.key === match : match(node)) return node;
