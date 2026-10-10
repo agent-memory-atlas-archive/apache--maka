@@ -51,6 +51,17 @@ pub struct InputProps {
     pub placeholder: String,
     #[serde(default)]
     pub command: Option<EditorCommand>,
+    /// Clipboard default for physical Enter at this original editor revision.
+    /// Programmatic submitted events never execute this native default.
+    #[serde(default)]
+    pub submit_copy: Option<SubmitCopy>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SubmitCopy {
+    pub basis: EditorTextRef,
+    #[schemars(length(min = 1, max = 65536))]
+    pub text: String,
 }
 fn default_max_bytes() -> u32 {
     65536
@@ -86,6 +97,15 @@ pub fn reduce(call: ComponentCall<'_>) -> crate::Result<ComponentOutput<InputPro
     let typed: InputProps = serde_json::from_value(props.clone())
         .map_err(|error| crate::Error::Invalid(error.to_string()))?;
     let limit = typed.max_bytes;
+    if typed
+        .submit_copy
+        .as_ref()
+        .is_some_and(|copy| copy.text.is_empty() || copy.text.len() > 65536)
+    {
+        return Err(crate::Error::Invalid(
+            "input submit copy exceeds clipboard byte budget".into(),
+        ));
+    }
     if !(1..=65536).contains(&limit)
         || previous.is_some_and(|state| state["maxBytes"].as_u64() != Some(u64::from(limit)))
     {
@@ -169,5 +189,12 @@ mod tests {
         })
         .unwrap();
         assert_eq!(next.frame.state["maxBytes"], 512);
+        for text in [String::new(), "界".repeat(21846)] {
+            props["submitCopy"] =
+                json!({"basis":{"owner":"original","revision":0,"bytes":0},"text":text});
+            assert!(reduce(ComponentCall::Mount { props: &props }).is_err());
+        }
+        props["submitCopy"]["text"] = json!("x".repeat(65536));
+        assert!(reduce(ComponentCall::Mount { props: &props }).is_ok());
     }
 }

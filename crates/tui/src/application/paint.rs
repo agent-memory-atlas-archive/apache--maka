@@ -446,7 +446,10 @@ impl Slots<'_> {
             .as_mut()
             .and_then(|scene| scene.scope.as_mut())
             .map(|scope| {
-                scope.documents.push(std::rc::Rc::downgrade(document));
+                scope.documents.push(super::selection::Participant {
+                    document: std::rc::Rc::downgrade(document),
+                    child: scope.child.clone(),
+                });
                 scope.scope.clone()
             })
     }
@@ -1313,12 +1316,31 @@ impl Presenter {
                         focus_shortcuts: focus_shortcuts.clone(),
                     }));
                 }
+                let reading_children = scene.scope.as_ref().is_some_and(|scope| {
+                    scope
+                        .root
+                        .as_ref()
+                        .is_some_and(|(id, root)| *id == mount.id() && root == key)
+                });
                 for (child, relative) in children.into_iter().zip(flow.children) {
+                    let previous_child = if reading_children {
+                        scene
+                            .scope
+                            .as_mut()
+                            .unwrap()
+                            .child
+                            .replace(child.key().to_owned())
+                    } else {
+                        None
+                    };
                     let area = Placement::new(
                         relative.translated(inner.x, inner.y - i64::from(offset)),
                         inner.visible(),
                     );
                     self.paint_node(mount, child, area, buffer, scene, &mut pass)?;
+                    if reading_children {
+                        scene.scope.as_mut().unwrap().child = previous_child;
+                    }
                 }
                 if scrolling || scoped {
                     scene.ancestry.pop();

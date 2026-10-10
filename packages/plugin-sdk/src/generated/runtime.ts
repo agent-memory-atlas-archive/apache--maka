@@ -3459,6 +3459,11 @@ export interface ReadingObservation {
    */
   readingRevision: number;
   viewport?: ReadingViewport | null;
+  /**
+   * Direct content child containing the native selection focus. Renderers
+   * without this observation return null. This key conveys no read authority.
+   */
+  selectedChildKey?: string | null;
   pendingCommand?: number | null;
   /**
    * Only the most recently settled command is retained, without a ledger.
@@ -3585,6 +3590,20 @@ export interface InputProps {
   terminalPaste?: TerminalPaste & string;
   placeholder?: string;
   command?: EditorCommand | null;
+  /**
+   * Clipboard default for physical Enter at this original editor revision.
+   * Programmatic submitted events never execute this native default.
+   */
+  submitCopy?: SubmitCopy | null;
+}
+export interface SubmitCopy {
+  basis: EditorTextRef;
+  text: string;
+}
+export interface EditorTextRef {
+  owner: string;
+  revision: number;
+  bytes: number;
 }
 export interface EditorObservation {
   revision: number;
@@ -3596,11 +3615,6 @@ export interface EditorSnapshot {
   selection: TextRange;
   reversed: boolean;
   marked: TextRange | null;
-}
-export interface EditorTextRef {
-  owner: string;
-  revision: number;
-  bytes: number;
 }
 export interface TextRange {
   start: number;

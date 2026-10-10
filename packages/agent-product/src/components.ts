@@ -38,6 +38,8 @@ import {
   type ComposerProps,
   type NavigationProps,
   type TimelineProps,
+  type ToolFileContext,
+  type TimelineFileContext,
 } from './contracts.js';
 import {
   syncSearch,
@@ -113,6 +115,8 @@ interface Reading extends Revision {
   observation: ReadingObservation | null;
   command: ReadingCommand | null;
   landing: TimelineProps['landing'];
+  files: Record<string, ToolFileContext>;
+  fileContext: TimelineFileContext | null;
 }
 export function components<N extends Node>(
   presentation: Presentation<N>,
@@ -483,6 +487,21 @@ export function components<N extends Node>(
       text = copy(props.locale);
     const search = state.search?.closing ? null : state.search;
     const rows = toolCards(props.messages);
+    const validFile = (id: string, context: ToolFileContext) => {
+      const message = rows.find(({ message }) => message.id === id)?.message;
+      return (
+        context.sessionId === props.toolContext?.sessionId &&
+        context.through === props.toolContext.through &&
+        context.toolUseId === message?.tool?.toolUseId &&
+        !!toolPresentation(message.tool.call?.presentation) &&
+        context.presentation === (message.tool.call?.presentation ?? null) &&
+        context.call === (message.tool.call?.sequence ?? null) &&
+        context.result === (message.tool.result?.sequence ?? null)
+      );
+    };
+    state.files = Object.fromEntries(
+      Object.entries(state.files).filter(([id, context]) => validFile(id, context)),
+    );
     const tools = rows
       .map(({ message }) => message)
       .filter(
@@ -566,7 +585,7 @@ export function components<N extends Node>(
                 expanded,
                 focusOnPointer: !search,
               },
-              {},
+              { fileContext: 'fileContext' },
             )
           : tool
             ? ui.box(
@@ -752,7 +771,7 @@ export function components<N extends Node>(
             ? [ui.button('end', text.toEnd, state.observation.pendingCommand != null)]
             : []),
         ];
-    return output(
+    const out = output(
       state,
       ui.box(
         'timeline-frame',
@@ -976,6 +995,27 @@ export function components<N extends Node>(
         },
       ),
     );
+    const selected =
+      state.observation?.selectedChildKey ?? state.observation?.viewport?.visibleChildKeys[0];
+    const row = rows.find(
+      ({ message }) =>
+        'message-' + message.id === selected || 'time-' + message.contentKey === selected,
+    );
+    const context: TimelineFileContext | null = props.toolContext
+      ? {
+          ...props.toolContext,
+          landing: props.landing.sequence,
+          path:
+            target === 'tui' && !props.source && !search && !props.loading && row
+              ? (state.files[row.message.id]?.path ?? null)
+              : null,
+        }
+      : null;
+    if (!sameValue(state.fileContext, context)) {
+      state.fileContext = context;
+      out.events.push({ name: 'fileContext', value: context });
+    }
+    return out;
   };
   return {
     composer: {
@@ -1119,6 +1159,8 @@ export function components<N extends Node>(
           revision: 0,
           search: null,
           expanded: [],
+          files: {},
+          fileContext: null,
           observation: null,
           command:
             props.landing.sequence > 0
@@ -1147,6 +1189,7 @@ export function components<N extends Node>(
                 }
               : state.command,
           landing: props.landing,
+          observation: state.landing.sequence === props.landing.sequence ? state.observation : null,
         };
         syncSearch(next, target === 'tui' ? props.search : null);
         return timelineFrame(next, props);
@@ -1161,6 +1204,16 @@ export function components<N extends Node>(
           if (input.child === 'reading' && input.name === 'observed')
             next.observation = input.event as ReadingObservation;
           if (input.name === 'input') input = input.event as ComponentInput;
+        }
+        if (
+          input.kind === 'component' &&
+          input.name === 'fileContext' &&
+          input.child.startsWith('tool-details-')
+        ) {
+          next.files = {
+            ...state.files,
+            [input.child.slice('tool-details-'.length)]: input.event as ToolFileContext,
+          };
         }
         const actions: Action[] = [];
         const handled = searchEvent(next, input, props, actions);

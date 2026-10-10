@@ -409,10 +409,14 @@ plaintext value or text runs, and platform surrounding-text queries return masks
 in the original UTF-16 units. Captures retain the original immutable UTF-8 bytes;
 masking does not remove an explicitly granted Reader capability. Normal settings
 composition should bind secure capture to its trusted setter and omit Reader.
-Native Enter is consumed before keybindings and emits `submitted` as a business
-event, not a synchronous native decision. TUI emits this independently of its
-retryable observation/receipt slot. OS input-method and screen-reader acceptance
-requires separate platform verification.
+Native Enter is consumed before keybindings and emits `submitted`, independently
+of the retryable observation/receipt slot. Optional `submitCopy: {basis, text}`
+attaches a physical clipboard default to that original editor text reference.
+The native owner checks owner/revision/byte length and active composition before
+submission; stale references do not submit. Only a successful synchronous input
+batch that permits the default can copy, within the 64 KiB UTF-8 limit. Scripted
+`submitted` events cannot write the clipboard. OS input-method and screen-reader
+acceptance requires separate platform verification.
 
 Retained presentation is an immutable projection of the original frame. A scene
 Stack may set `visible: false`; native parents use `NativeView::with_hidden_slots`

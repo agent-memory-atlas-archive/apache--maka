@@ -76,10 +76,11 @@ import type {
   ServiceApprovalProps,
   SelectedModel,
   TimelineProps,
+  TimelineFileContext,
 } from './contracts.js';
 import { sameValue } from './value.js';
 import { copy, type Copy } from './locale.js';
-import { fill, output, pixels, type Presentation, type Node } from './view.js';
+import { compactLabel, fill, output, pixels, type Presentation, type Node } from './view.js';
 
 import {
   attachmentFiles,
@@ -239,6 +240,7 @@ export interface State {
   } | null;
   landing: { sequence: number; edge: 'start' | 'end' };
   tailReceipt: { landing: number; readingRevision: number } | null;
+  fileContext: TimelineFileContext | null;
   followAttempt: { through: number; landing: number; readingRevision: number } | null;
   parts: DisplayPart[];
   run: AgentRun | null;
@@ -538,6 +540,7 @@ function select(state: State, actions: Action[], session: AgentSession) {
   state.source = null;
   state.image = null;
   state.tailReceipt = null;
+  state.fileContext = null;
   state.followAttempt = null;
   state.navigation++;
   state.parts = [];
@@ -659,6 +662,7 @@ function executionPending(state: State) {
 }
 
 type RootCommand =
+  | 'copy-file-path'
   | 'search-open'
   | 'help-open'
   | 'interaction-open'
@@ -728,6 +732,18 @@ function rootCommands(
   const text = copy(locale);
   const route = conversationRoute(state) && (state.dialog === null || state.dialog === 'palette');
   const review = reviewTarget(state);
+  const file = state.fileContext;
+  const filePath =
+    file &&
+    file.sessionId === state.selected?.id &&
+    file.through === state.window?.page.through &&
+    file.landing === state.landing.sequence &&
+    !state.loading &&
+    !state.source &&
+    !state.image &&
+    !state.searchOpen
+      ? file.path
+      : null;
   const commands: (PaletteCommand & { kind: RootCommand })[] = [
     ...(target === 'tui'
       ? [
@@ -737,6 +753,16 @@ function rootCommands(
             label: text.findConversation,
             hint: 'Ctrl F',
             disabled: !route || !state.selected || state.loading || !!state.source || !!state.image,
+          },
+          {
+            kind: 'copy-file-path' as const,
+            id: 'copy-file-path',
+            label: text.toolCopyPath,
+            hint: filePath
+              ? compactLabel(filePath.split(/[/\\]/u).filter(Boolean).at(-1) || filePath, 32)
+              : '',
+            disabled: !route || !filePath,
+            ...(filePath ? { copyText: filePath } : {}),
           },
         ]
       : []),
@@ -1956,6 +1982,7 @@ function frame<N extends Node>(
       markRead: 'mark-read',
       source: 'source',
       toolSource: 'tool-source',
+      fileContext: 'fileContext',
       viewImage: 'view-image',
       sourceFirst: 'source-first',
       sourcePrevious: 'source-previous',
@@ -2736,6 +2763,7 @@ export function workspace<N extends Node>(
         navigation: 0,
         landing: { sequence: 0, edge: 'end' },
         tailReceipt: null,
+        fileContext: null,
         followAttempt: null,
         parts: [],
         run: null,
@@ -3085,6 +3113,15 @@ export function workspace<N extends Node>(
                 { sessionId: state.selected.id, expectedRevision: event.revision, edit },
               );
           }
+        } else if (input.child === 'timeline' && input.name === 'fileContext') {
+          const context = input.event as TimelineFileContext | null;
+          if (
+            !context ||
+            (context.sessionId === state.selected?.id &&
+              context.through === state.window?.page.through &&
+              context.landing === state.landing.sequence)
+          )
+            state.fileContext = context;
         } else if (input.child === 'timeline' && input.name === 'searchClosed') {
           state.searchOpen = false;
         } else if (input.child === 'timeline' && input.name === 'tailReady') {

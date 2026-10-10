@@ -217,6 +217,7 @@ impl Owner {
             pending_command: self.pending.as_ref().map(|pending| pending.sequence),
             receipt: self.receipt.clone(),
             find: None,
+            selected_child_key: None,
         }
     }
     fn schedule(owner: &Entity<Self>, window: &mut Window, cx: &mut App) {

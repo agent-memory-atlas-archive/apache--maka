@@ -210,6 +210,8 @@ pub enum WidgetInput {
     PreserveFocus,
     /// An immediate business event; never replaces retryable native observations.
     Emitted(NativeInput),
+    /// A physical native submission with an original, revision-checked default.
+    SubmitCopy(NativeInput, String),
 }
 type Job = Pin<Box<dyn Future<Output = (Uuid, TaskCompletion)> + Send>>;
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -624,6 +626,10 @@ impl Presenter {
             let Some(native) = self.resources.input(&target, &event)? else {
                 return Ok(());
             };
+            let (native, submit_copy) = match native {
+                WidgetInput::SubmitCopy(input, text) => (WidgetInput::Emitted(input), Some(text)),
+                other => (other, None),
+            };
             let native = match native {
                 WidgetInput::ExitFocus => {
                     self.exit_native_focus()?;
@@ -631,12 +637,20 @@ impl Presenter {
                 }
                 WidgetInput::Emitted(emitted) => {
                     let revision = self.application.frame(&target.mount)?.revision;
-                    self.application.dispatch(
+                    let decision = self.application.dispatch(
                         &target.mount,
                         revision,
                         &emitted.key,
                         emitted.value,
                     )?;
+                    if !decision.prevent_default
+                        && !self.application.is_retiring(&target.mount)
+                        && self.resources.admits(&target)
+                        && self.target_admitted(&target)
+                        && let Some(text) = submit_copy
+                    {
+                        self.clipboard = Some(text.into());
+                    }
                     if !matches!(event, Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown))
                     {
                         self.focus = Some(target);
@@ -874,7 +888,7 @@ impl Presenter {
         crate::terminal::copy(writer, &text).map_err(|error| Error::Invalid(error.to_string()))?;
         Ok(true)
     }
-    /// Complete the last accepted physical copy button's default action. The
+    /// Complete the last accepted physical clipboard default action. The
     /// runner calls this immediately after input, before reading another event.
     /// OSC52 delivery does not prove that the terminal accepted the clipboard.
     pub fn flush_clipboard(&mut self, writer: &mut impl std::io::Write) -> maka_ui::Result<bool> {

@@ -272,15 +272,23 @@ fn copy_button_default_action_requires_success_and_original_live_owner(cx: &mut 
     let (entity, window, _) = harness(cx);
     let mode = Rc::new(Cell::new(0));
     let current = mode.clone();
+    let route = entity.downgrade();
     cx.update_window(window, |_, _, cx| {
         entity.update(cx, |h, _| {
             let live = h.state().input.0.clone();
-            h.slots.input = Input(Rc::new(move |_, _, _, _| {
+            h.slots.input = Input(Rc::new(move |_, _, window, cx| {
                 if current.get() == 2 {
                     return Err(maka_ui::Error::Invalid("rejected click".into()));
                 }
                 if current.get() == 3 {
                     *live.borrow_mut() = None;
+                }
+                if current.get() == 4 {
+                    route
+                        .update(cx, |h, cx| {
+                            h.recipe.presentation(h.state.as_mut(), false, window, cx)
+                        })
+                        .unwrap();
                 }
                 Ok(maka_ui::InputDecision {
                     prevent_default: current.get() == 1,
@@ -297,7 +305,14 @@ fn copy_button_default_action_requires_success_and_original_live_owner(cx: &mut 
         json!({"kind":"button","key":"copy","label":"Copy","copy_text":"原文\nexact","style":{"width":{"unit":"pixels","value":100},"height":{"unit":"pixels","value":40}}}),
     );
     draw(cx, window);
-    for next in [0, 1, 2, 3] {
+    for next in [0, 1, 2, 4, 3] {
+        cx.update_window(window, |_, window, cx| {
+            entity.update(cx, |h, cx| {
+                h.recipe.presentation(h.state.as_mut(), true, window, cx)
+            });
+        })
+        .unwrap();
+        draw(cx, window);
         mode.set(next);
         cx.update(|cx| {
             cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("sentinel".into()))
@@ -306,7 +321,7 @@ fn copy_button_default_action_requires_success_and_original_live_owner(cx: &mut 
             .simulate_click(point(px(10.), px(10.)), Modifiers::default());
         assert_eq!(
             cx.update(|cx| cx.read_from_clipboard().unwrap().text().unwrap()),
-            if next == 0 {
+            if next == 0 || next == 4 {
                 "原文\nexact"
             } else {
                 "sentinel"

@@ -33,6 +33,26 @@ use std::{
 };
 pub(super) type DocumentRef = Rc<RefCell<Document>>;
 pub(super) type DocumentWeak = Weak<RefCell<Document>>;
+/// Geometry metadata for the original document, committed only after flush.
+#[derive(Clone)]
+pub(super) struct Participant {
+    pub document: DocumentWeak,
+    pub child: Option<String>,
+}
+impl std::ops::Deref for Participant {
+    type Target = DocumentWeak;
+    fn deref(&self) -> &Self::Target {
+        &self.document
+    }
+}
+impl From<DocumentWeak> for Participant {
+    fn from(document: DocumentWeak) -> Self {
+        Self {
+            document,
+            child: None,
+        }
+    }
+}
 #[derive(Clone)]
 pub(super) struct Glyphs {
     pub source: Arc<str>,
@@ -56,7 +76,7 @@ struct Endpoint {
 }
 #[derive(Default)]
 pub(super) struct Scope {
-    documents: Vec<DocumentWeak>,
+    documents: Vec<Participant>,
     selection: Option<(Endpoint, Endpoint)>,
     drag: Option<DocumentWeak>,
     pub revision: u64,
@@ -148,7 +168,7 @@ impl SelectionScope {
     }
     /// Only embedding-confirmed output calls this. Doc binding is one weak
     /// identity; transferring it immediately withdraws the previous scope.
-    pub fn present(&self, documents: Vec<DocumentWeak>, area: Placement) {
+    pub fn present(&self, documents: Vec<Participant>, area: Placement) {
         for weak in &documents {
             if let Some(document) = weak.upgrade() {
                 let old = Self::active(&document);
@@ -164,7 +184,7 @@ impl SelectionScope {
         }
         let mut scope = self.0.borrow_mut();
         if let Some((a, b)) = &scope.selection {
-            let position = |docs: &[DocumentWeak], endpoint: &Endpoint| {
+            let position = |docs: &[Participant], endpoint: &Endpoint| {
                 docs.iter().position(|doc| doc.ptr_eq(&endpoint.document))
             };
             let unchanged = match (
@@ -211,7 +231,7 @@ impl SelectionScope {
     pub fn standalone(document: &DocumentRef, area: Placement) {
         let existing = document.borrow().standalone.clone();
         let scope = existing.unwrap_or_default();
-        scope.present(vec![Rc::downgrade(document)], area);
+        scope.present(vec![Rc::downgrade(document).into()], area);
         document.borrow_mut().standalone = Some(scope);
     }
     fn endpoints(&self) -> Option<(usize, usize, usize, usize)> {
@@ -257,6 +277,21 @@ impl SelectionScope {
             .as_ref()
             .filter(|(_, cursor)| cursor.document.ptr_eq(&Rc::downgrade(document)))
             .map_or(0, |(_, cursor)| cursor.byte)
+    }
+    /// The native focus endpoint, including a collapsed caret. Suspension by a
+    /// modal retains context; retirement or transfer of the document withdraws it.
+    pub fn selected_child(&self) -> Option<String> {
+        let scope = self.0.borrow();
+        let (_, focus) = scope.selection.as_ref()?;
+        let participant = scope
+            .documents
+            .iter()
+            .find(|doc| doc.ptr_eq(&focus.document))?;
+        let document = participant.upgrade()?;
+        let doc = document.borrow();
+        (doc.alive && !doc.disabled && doc.binding.ptr_eq(&Rc::downgrade(&self.0)))
+            .then(|| participant.child.clone())
+            .flatten()
     }
     pub fn has_selection(&self) -> bool {
         self.endpoints()
@@ -372,7 +407,7 @@ impl SelectionScope {
             if d <= distance {
                 distance = d;
                 nearest = Some(Endpoint {
-                    document: weak.clone(),
+                    document: weak.document.clone(),
                     byte: glyphs.layout.pointer(glyphs.area, 0, point).0,
                 });
             }
@@ -453,11 +488,11 @@ impl SelectionScope {
                     };
                     pair = Some((
                         Endpoint {
-                            document: first.clone(),
+                            document: first.document.clone(),
                             byte: 0,
                         },
                         Endpoint {
-                            document: last.clone(),
+                            document: last.document.clone(),
                             byte: last_doc.borrow().source.len(),
                         },
                     ));
@@ -506,7 +541,7 @@ impl SelectionScope {
                                 .position(|doc| doc.ptr_eq(&cursor.document))
                                 .unwrap();
                             if i > 0 {
-                                target = scope.documents[i - 1].clone();
+                                target = scope.documents[i - 1].document.clone();
                                 let Some(previous) = target.upgrade() else {
                                     return false;
                                 };
@@ -523,7 +558,7 @@ impl SelectionScope {
                                 .position(|doc| doc.ptr_eq(&cursor.document))
                                 .unwrap();
                             if let Some(next) = scope.documents.get(i + 1) {
-                                target = next.clone();
+                                target = next.document.clone();
                                 0
                             } else {
                                 cursor.byte
@@ -568,8 +603,10 @@ impl SelectionScope {
     }
 }
 pub(super) struct ScopePaint {
+    pub root: Option<(uuid::Uuid, String)>,
+    pub child: Option<String>,
     pub scope: SelectionScope,
-    pub documents: Vec<DocumentWeak>,
+    pub documents: Vec<Participant>,
     pub area: Placement,
     pub find: Option<super::reading::find::Paint>,
     pub reveal: Option<super::reading::find::Reveal>,
@@ -605,8 +642,10 @@ mod tests {
         );
         let new = SelectionScope::default();
         let candidate = ScopePaint {
+            root: None,
+            child: None,
             scope: new.clone(),
-            documents: vec![Rc::downgrade(&document)],
+            documents: vec![Rc::downgrade(&document).into()],
             area,
             find: None,
             reveal: None,
@@ -614,7 +653,7 @@ mod tests {
         assert_eq!(Rc::strong_count(&document), 1);
         drop(candidate);
         assert_eq!(old.copy().unwrap().as_deref(), Some("original"));
-        new.present(vec![Rc::downgrade(&document)], area);
+        new.present(vec![Rc::downgrade(&document).into()], area);
         assert_eq!(old.copy().unwrap(), None);
         assert!(!old.has_selection());
         assert!(document.borrow().standalone.is_none());

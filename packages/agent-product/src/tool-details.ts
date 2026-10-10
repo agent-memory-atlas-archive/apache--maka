@@ -26,7 +26,7 @@ import type {
   HistorySource,
   SourcePosition,
 } from '../../plugin-sdk/src/index.js';
-import { toolDetailsContract, type ToolDetailsProps } from './contracts.js';
+import { toolDetailsContract, type ToolDetailsProps, type ToolFileContext } from './contracts.js';
 import { copy } from './locale.js';
 import { sameValue } from './value.js';
 import { compactLabel, fill, output, type Node, type Presentation } from './view.js';
@@ -66,6 +66,7 @@ type State = {
   context: ToolDetailsProps['context'];
   tool: ToolDetailsProps['tool'];
   parts: Record<string, Part>;
+  published: ToolFileContext | null;
 };
 function bytes(text: string) {
   let size = 0;
@@ -457,12 +458,31 @@ export function toolDetails<N extends Node>(
       ),
     );
     out.actions = actions;
+    const context: ToolFileContext = {
+      ...props.context,
+      toolUseId: props.tool.toolUseId,
+      presentation: props.tool.call?.presentation ?? null,
+      call: props.tool.call?.sequence ?? null,
+      result: props.tool.result?.sequence ?? null,
+      path: filePath || null,
+    };
+    if (!sameValue(state.published, context)) {
+      state.published = context;
+      out.events.push({ name: 'fileContext', value: context });
+    }
     return out;
   }
   return {
     mount(props) {
       return frame(
-        { revision: 0, serial: 0, context: { ...props.context }, tool: props.tool, parts: {} },
+        {
+          revision: 0,
+          serial: 0,
+          context: { ...props.context },
+          tool: props.tool,
+          parts: {},
+          published: null,
+        },
         props,
       );
     },

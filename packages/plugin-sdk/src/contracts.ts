@@ -2336,6 +2336,12 @@ export const contracts = {
                 },
               ],
             },
+            selectedChildKey: {
+              description:
+                'Direct content child containing the native selection focus. Renderers\nwithout this observation return null. This key conveys no read authority.',
+              type: ['string', 'null'],
+              maxLength: 256,
+            },
             pendingCommand: {
               type: ['integer', 'null'],
               format: 'uint64',
@@ -4086,6 +4092,19 @@ export const contracts = {
             ],
             default: null,
           },
+          submitCopy: {
+            description:
+              'Clipboard default for physical Enter at this original editor revision.\nProgrammatic submitted events never execute this native default.',
+            anyOf: [
+              {
+                $ref: '#/$defs/SubmitCopy',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            default: null,
+          },
         },
         additionalProperties: false,
         required: ['appearance', 'accessibilityLabel', 'readOnly', 'disabled', 'tabIndex'],
@@ -4319,6 +4338,41 @@ export const contracts = {
                 required: ['kind', 'text'],
               },
             ],
+          },
+          SubmitCopy: {
+            type: 'object',
+            properties: {
+              basis: {
+                $ref: '#/$defs/EditorTextRef',
+              },
+              text: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 65536,
+              },
+            },
+            additionalProperties: false,
+            required: ['basis', 'text'],
+          },
+          EditorTextRef: {
+            type: 'object',
+            properties: {
+              owner: {
+                type: 'string',
+              },
+              revision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              bytes: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+              },
+            },
+            additionalProperties: false,
+            required: ['owner', 'revision', 'bytes'],
           },
         },
       },
@@ -4601,6 +4655,19 @@ export const contracts = {
             ],
             default: null,
           },
+          submitCopy: {
+            description:
+              'Clipboard default for physical Enter at this original editor revision.\nProgrammatic submitted events never execute this native default.',
+            anyOf: [
+              {
+                $ref: '#/$defs/SubmitCopy',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            default: null,
+          },
         },
         additionalProperties: false,
         required: ['appearance', 'accessibilityLabel', 'readOnly', 'disabled', 'tabIndex'],
@@ -4834,6 +4901,41 @@ export const contracts = {
                 required: ['kind', 'text'],
               },
             ],
+          },
+          SubmitCopy: {
+            type: 'object',
+            properties: {
+              basis: {
+                $ref: '#/$defs/EditorTextRef',
+              },
+              text: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 65536,
+              },
+            },
+            additionalProperties: false,
+            required: ['basis', 'text'],
+          },
+          EditorTextRef: {
+            type: 'object',
+            properties: {
+              owner: {
+                type: 'string',
+              },
+              revision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              bytes: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+              },
+            },
+            additionalProperties: false,
+            required: ['owner', 'revision', 'bytes'],
           },
         },
       },

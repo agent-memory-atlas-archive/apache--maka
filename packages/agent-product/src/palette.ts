@@ -94,6 +94,7 @@ function rows(state: State, props: PaletteProps) {
 function enabled(state: State, props: PaletteProps, choice: Choice) {
   return (
     interactive(state, props) &&
+    !!state.observation &&
     !dirty(state) &&
     !state.queryError &&
     state.pending?.kind !== 'text' &&
@@ -223,6 +224,7 @@ function frame<N extends Node>(
         justify: 'start',
         ...(active ? { background: props.theme.selected } : {}),
       },
+      choice.kind === 'command' ? choice.command.copyText : undefined,
     );
 
     return button;
@@ -232,6 +234,14 @@ function frame<N extends Node>(
     !dirty(state) &&
     !state.queryError &&
     state.pending?.kind !== 'text';
+  const selected = all[state.active]?.choice;
+  const submitCopy =
+    selected?.kind === 'command' &&
+    selected.command.copyText &&
+    enabled(state, props, selected) &&
+    state.observation
+      ? { basis: state.observation.snapshot.text, text: selected.command.copyText }
+      : null;
   const view = ui.box(
     'palette-content',
     [
@@ -247,6 +257,7 @@ function frame<N extends Node>(
           readOnly: false,
           disabled: !interactive(state, props),
           tabIndex: 1,
+          submitCopy,
         },
         { changed: 'query', submitted: 'choose' },
       ),
@@ -388,6 +399,14 @@ export function palette<N extends Node>(
       state.revision++;
       const actions: Action[] = [],
         events: Emission[] = [];
+      const choose = (choice: Choice) => {
+        if (choice.kind === 'command' && choice.command.copyText) {
+          // The visible action owns physical clipboard admission. Enter also
+          // checks the original native query revision before emitting submit.
+          close(state);
+          events.push({ name: 'invoked', value: { id: choice.command.id } });
+        } else actions.push(...capture(state, choice));
+      };
       if (input.kind === 'component' && input.child === 'palette-rows' && input.name === 'input')
         input = input.event as ComponentInput;
       if (input.kind === 'action' && input.key === state.pending?.key) {
@@ -445,7 +464,7 @@ export function palette<N extends Node>(
           actions.push(...resume(state, props));
         } else if (input.name === 'submitted') {
           const row = rows(state, props)[state.active];
-          if (row && enabled(state, props, row.choice)) actions.push(...capture(state, row.choice));
+          if (row && enabled(state, props, row.choice)) choose(row.choice);
         }
       } else if (input.kind === 'raw') {
         if (input.key === 'close') {
@@ -454,7 +473,7 @@ export function palette<N extends Node>(
         } else if (interactive(state, props)) {
           const all = rows(state, props);
           const row = all.find((row) => row.key === input.key);
-          if (row && enabled(state, props, row.choice)) actions.push(...capture(state, row.choice));
+          if (row && enabled(state, props, row.choice)) choose(row.choice);
           else if (!dirty(state) && !state.queryError && state.pending?.kind !== 'text') {
             if (input.key === 'first' || input.key === 'last') {
               state.active = input.key === 'first' ? 0 : Math.max(0, all.length - 1);

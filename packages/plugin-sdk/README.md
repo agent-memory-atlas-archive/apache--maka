@@ -167,6 +167,11 @@ selection owners retain geometry and selection; plugins receive `observed` facts
 and `input` events, never pixel offsets. Numbered `start`, `end`, and `reveal_child`
 commands settle as `applied`, `cancelled`, or `rejected`; omission does not replay
 an accepted command. Observations retain only the current command and latest receipt.
+TUI additionally reports `selectedChildKey`, the direct content child containing
+the original native selection focus (including a collapsed caret). Geometry binds
+only after successful output; modal suspension retains context, while document
+retirement/transfer withdraws it. Other renderers currently return null. This is
+a display observation, not a source-read capability or a second selection owner.
 The native `tail` continuation admits implicit replacement only while the original
 painted end, reading intent and scoped selection remain eligible. A wheel or active
 selection produces `stale` feedback; it does not undo the independent service read.

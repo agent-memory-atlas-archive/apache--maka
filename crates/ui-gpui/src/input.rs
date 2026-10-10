@@ -48,6 +48,7 @@ pub struct InputOwner {
     focus: maka_ui::focus::FocusOnReveal,
     _keyboard: Option<Subscription>,
     label: String,
+    submit_copy: Option<SubmitCopy>,
 }
 impl InputOwner {
     /// Original editor correlation, including across application processes.
@@ -120,6 +121,7 @@ impl InputOwner {
                 _observation: observation,
                 projection,
                 label: props.accessibility_label.clone(),
+                submit_copy: props.submit_copy.clone(),
                 secret,
                 max_bytes,
                 visible: true,
@@ -140,7 +142,7 @@ impl InputOwner {
             {
                 return;
             }
-            let Ok(Some(input)) = weak.update(cx, |owner, cx| {
+            let Ok(Some((input, copy))) = weak.update(cx, |owner, cx| {
                 if !window
                     .input_focus_is_admitted(owner.state.read(cx).presentation().focus_handle())
                     || !owner.accepts_text_input(window, cx)
@@ -151,14 +153,40 @@ impl InputOwner {
                 {
                     return None;
                 }
-                owner.input.0.borrow().clone()
+                owner.refresh(false, window, cx);
+                if owner.submit_copy.as_ref().is_some_and(|copy| {
+                    copy.basis.owner != owner.id
+                        || copy.basis.revision != owner.revision
+                        || copy.basis.bytes != owner.snapshot.text.len()
+                }) {
+                    return None;
+                }
+                owner.input.0.borrow().clone().map(|input| {
+                    (
+                        input,
+                        owner.submit_copy.as_ref().map(|copy| copy.text.clone()),
+                    )
+                })
             }) else {
                 return;
             };
             window.prevent_default();
             cx.stop_propagation();
-            if (input.0)("submit", serde_json::json!({}), window, cx).is_err() {
-                eprintln!("input submit rejected");
+            match (input.0)("submit", serde_json::json!({}), window, cx) {
+                Ok(decision) if !decision.prevent_default => {
+                    if let Some(text) = copy
+                        && weak
+                            // A successful callback may close its own dialog.
+                            // Complete this admitted event while its original
+                            // owner lives; admission still gates the next event.
+                            .update(cx, |owner, _| owner.input.0.borrow().is_some())
+                            .unwrap_or(false)
+                    {
+                        cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    }
+                }
+                Err(_) => eprintln!("input submit rejected"),
+                _ => {}
             }
         });
         owner.update(cx, |owner, _| owner._keyboard = Some(subscription));
@@ -283,6 +311,7 @@ impl InputOwner {
         });
     }
     fn apply(&mut self, props: &InputProps, window: &mut Window, cx: &mut Context<Self>) {
+        self.submit_copy = props.submit_copy.clone();
         self.focus
             .reconcile(props.auto_focus && self.visible && !props.disabled);
         // Notify observers may still be queued after keyboard/selection input.

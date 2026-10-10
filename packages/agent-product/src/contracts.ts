@@ -95,11 +95,27 @@ export interface ModelsProps {
   selection: SelectedModel | null;
   busy: boolean;
 }
+export interface ToolFileContext {
+  sessionId: string;
+  through: number;
+  toolUseId: string;
+  presentation: string | null;
+  call: number | null;
+  result: number | null;
+  path: string | null;
+}
+export interface TimelineFileContext {
+  sessionId: string;
+  through: number;
+  landing: number;
+  path: string | null;
+}
 export interface PaletteCommand {
   id: string;
   label: string;
   hint: string;
   disabled: boolean;
+  copyText?: string;
 }
 export interface PaletteProps {
   theme: Theme;
@@ -327,12 +343,16 @@ export const paletteContract = component(
     commands: {
       type: 'array',
       maxItems: 128,
-      items: object({
-        id: { type: 'string', minLength: 1, maxLength: 120, pattern: '^[A-Za-z0-9:._-]+$' },
-        label: { type: 'string', minLength: 1, maxLength: 256 },
-        hint: { type: 'string', maxLength: 64 },
-        disabled: { type: 'boolean' },
-      }),
+      items: object(
+        {
+          id: { type: 'string', minLength: 1, maxLength: 120, pattern: '^[A-Za-z0-9:._-]+$' },
+          label: { type: 'string', minLength: 1, maxLength: 256 },
+          hint: { type: 'string', maxLength: 64 },
+          disabled: { type: 'boolean' },
+          copyText: { type: 'string', minLength: 1, maxLength: 65536 },
+        },
+        ['id', 'label', 'hint', 'disabled'],
+      ),
     },
   }),
   {
@@ -413,6 +433,7 @@ export const imageViewerContract = component(
   }),
   { closed: object({}) },
 );
+const filePath = { anyOf: [{ type: 'string', minLength: 1, maxLength: 4096 }, { type: 'null' }] };
 export const toolDetailsContract = component(
   'maka.agent.ToolDetails',
   object({
@@ -423,7 +444,17 @@ export const toolDetailsContract = component(
     expanded: { type: 'boolean' },
     focusOnPointer: { type: 'boolean' },
   }),
-  {},
+  {
+    fileContext: object({
+      sessionId: string,
+      through: { type: 'integer', minimum: 1 },
+      toolUseId: string,
+      presentation: { anyOf: [string, { type: 'null' }] },
+      call: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
+      result: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
+      path: filePath,
+    }),
+  },
 );
 export const timelineContract = component(
   'maka.agent.Timeline',
@@ -520,6 +551,17 @@ export const timelineContract = component(
     sourceRetry: object({}),
     sourceField: withDefs(object({ field: { $ref: '#/$defs/SourceField' } })),
     searchClosed: object({}),
+    fileContext: {
+      anyOf: [
+        object({
+          sessionId: string,
+          through: { type: 'integer', minimum: 1 },
+          landing: { type: 'integer', minimum: 0 },
+          path: filePath,
+        }),
+        { type: 'null' },
+      ],
+    },
     tailReady: object({
       landing: { type: 'integer', minimum: 0 },
       readingRevision: { type: 'integer', minimum: 0 },

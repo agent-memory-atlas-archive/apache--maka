@@ -145,6 +145,10 @@ pub struct ReadingObservation {
     /// Immediate native intent; can be newer than the painted viewport.
     pub reading_revision: u64,
     pub viewport: Option<ReadingViewport>,
+    /// Direct content child containing the native selection focus. Renderers
+    /// without this observation return null. This key conveys no read authority.
+    #[schemars(length(max = 256))]
+    pub selected_child_key: Option<String>,
     pub pending_command: Option<u64>,
     /// Only the most recently settled command is retained, without a ledger.
     pub receipt: Option<ReadingReceipt>,

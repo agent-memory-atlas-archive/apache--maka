@@ -93,6 +93,57 @@ fn close(presenter: &mut Presenter) {
     presenter.shutdown().unwrap();
 }
 #[test]
+fn selected_child_follows_original_native_focus_and_only_committed_group_geometry() {
+    let group = |key: &str, child| json!({"kind":"stack","key":key,"direction":"column","gap":0,"padding":0,"background":0,"children":[child]});
+    let (_runtime, mut presenter, props) = native(vec![
+        group("message-a", source("one", "first")),
+        group("message-b", source("two", "second")),
+    ]);
+    draw(&mut presenter, 20, 4);
+    assert!(observation(&presenter)["selectedChildKey"].is_null());
+    mouse(
+        &mut presenter,
+        MouseEventKind::Down(MouseButton::Left),
+        1,
+        0,
+    );
+    assert_eq!(observation(&presenter)["selectedChildKey"], "message-a");
+    mouse(
+        &mut presenter,
+        MouseEventKind::Drag(MouseButton::Left),
+        3,
+        1,
+    );
+    assert_eq!(observation(&presenter)["selectedChildKey"], "message-b");
+    assert_eq!(copied(&mut presenter).unwrap(), b"irst\nsec");
+    mouse(&mut presenter, MouseEventKind::Up(MouseButton::Left), 3, 1);
+    let scope = state(&presenter).reading.as_ref().unwrap().scope.clone();
+    scope.suspend();
+    assert_eq!(scope.selected_child().as_deref(), Some("message-b"));
+    draw(&mut presenter, 20, 4);
+    props.borrow_mut()["content"]["children"][1]["key"] = json!("message-renamed");
+    refresh(&mut presenter);
+    let area = Rect::new(0, 0, 20, 4);
+    let mut buffer = Buffer::empty(area);
+    drop(presenter.paint(area, &mut buffer).unwrap());
+    assert_eq!(scope.selected_child().as_deref(), Some("message-b"));
+    draw(&mut presenter, 20, 4);
+    presenter.sync_native().unwrap();
+    assert_eq!(
+        observation(&presenter)["selectedChildKey"],
+        "message-renamed"
+    );
+    props.borrow_mut()["content"]["children"]
+        .as_array_mut()
+        .unwrap()
+        .pop();
+    refresh(&mut presenter);
+    draw(&mut presenter, 20, 4);
+    presenter.sync_native().unwrap();
+    assert!(observation(&presenter)["selectedChildKey"].is_null());
+    close(&mut presenter);
+}
+#[test]
 fn responsive_reading_uses_inner_width_and_preserves_source_owners_and_scroll() {
     let content = json!({"kind":"stack","key":"reading","direction":"column","gap":0,"padding":2,"background":0,
         "wide":{"min_width":100,"direction":"row","children":{"list":{"basis_fraction":{"numerator":34,"denominator":100}}}},

@@ -739,7 +739,8 @@ impl NodePresentation for Node {
                             if decision.prevent_default {
                                 window.prevent_default();
                             } else if let Some(text) = &copy_text
-                                && click_admission.get()
+                                // Closing a menu settles this admitted default;
+                                // it only revokes admission for later events.
                                 && click_alive.0.borrow().is_some()
                             {
                                 cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(

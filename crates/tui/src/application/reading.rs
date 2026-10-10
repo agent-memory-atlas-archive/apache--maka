@@ -128,6 +128,7 @@ impl ReadingState {
         }
         let observation = ReadingObservation {
             reading_revision: self.scope.revision(),
+            selected_child_key: self.scope.selected_child(),
             viewport: self.viewport.clone(),
             pending_command: self
                 .pending
@@ -459,6 +460,7 @@ impl Widget for Reading {
         let generation = state.generation;
         let reading = state.reading.as_ref().unwrap();
         let intent = reading.scope.intent();
+        let root = Some((slots.parent.id(), reading.root_key.clone()));
         let pending = reading
             .pending
             .as_ref()
@@ -503,6 +505,8 @@ impl Widget for Reading {
             .as_deref_mut()
             .ok_or_else(|| maka_ui::Error::Invalid("cannot paint while measuring".into()))?;
         let previous = scene.scope.replace(ScopePaint {
+            root,
+            child: None,
             scope,
             documents: Vec::new(),
             area: area.inner(padding.into()),

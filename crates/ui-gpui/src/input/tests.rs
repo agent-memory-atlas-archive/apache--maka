@@ -102,6 +102,129 @@ fn draw(cx: &mut TestAppContext, window: AnyWindowHandle) {
     cx.run_until_parked();
 }
 #[gpui::test]
+fn submit_copy_requires_original_revision_and_honors_callback_veto_and_retirement(
+    cx: &mut TestAppContext,
+) {
+    let MountedInput {
+        owner,
+        window,
+        live,
+        ..
+    } = harness(cx, false);
+    cx.update_window(window, |_, window, cx| {
+        owner
+            .read(cx)
+            .state
+            .clone()
+            .update(cx, |state, cx| state.focus(window, cx));
+        cx.write_to_clipboard(ClipboardItem::new_string("sentinel".into()));
+    })
+    .unwrap();
+    draw(cx, window);
+    cx.simulate_input(window, "path");
+    draw(cx, window);
+    let configure = |cx: &mut TestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            owner.update(cx, |owner, cx| {
+                owner.refresh(false, window, cx);
+                let mut configured = props();
+                configured.submit_copy = Some(maka_ui::input::SubmitCopy {
+                    basis: owner.observation_snapshot().text,
+                    text: "/remote/原文 file.rs".into(),
+                });
+                owner.apply(&configured, window, cx);
+            });
+        })
+        .unwrap();
+        draw(cx, window);
+    };
+    let clipboard =
+        |cx: &mut TestAppContext| cx.update(|cx| cx.read_from_clipboard().unwrap().text().unwrap());
+    configure(cx);
+    let input = live.0.borrow().clone().unwrap();
+    cx.update_window(window, |_, window, cx| {
+        (input.0)("submit", json!({}), window, cx).unwrap();
+    })
+    .unwrap();
+    assert_eq!(clipboard(cx), "sentinel");
+    cx.simulate_keystrokes(window, "enter");
+    assert_eq!(clipboard(cx), "/remote/原文 file.rs");
+    cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string("sentinel".into())));
+    cx.simulate_input(window, " changed");
+    cx.simulate_keystrokes(window, "enter");
+    assert_eq!(
+        clipboard(cx),
+        "sentinel",
+        "a newer native query cannot copy an older choice"
+    );
+    configure(cx);
+    *live.0.borrow_mut() = Some(Input(Rc::new(|_, _, _, _| {
+        Ok(maka_ui::InputDecision {
+            prevent_default: true,
+            stop_propagation: true,
+        })
+    })));
+    cx.simulate_keystrokes(window, "enter");
+    assert_eq!(clipboard(cx), "sentinel");
+    *live.0.borrow_mut() = Some(Input(Rc::new(|_, _, _, _| {
+        Err(maka_ui::Error::Invalid("rejected".into()))
+    })));
+    cx.simulate_keystrokes(window, "enter");
+    assert_eq!(clipboard(cx), "sentinel");
+    let weak = owner.downgrade();
+    *live.0.borrow_mut() = Some(Input(Rc::new(move |key, _, _, cx| {
+        if key == "submit" {
+            weak.update(cx, |owner, cx| {
+                owner.visible = false;
+                owner
+                    .state
+                    .update(cx, |state, cx| state.set_disabled(true, cx));
+            })
+            .unwrap();
+        }
+        Ok(Default::default())
+    })));
+    cx.simulate_keystrokes(window, "enter");
+    assert_eq!(
+        clipboard(cx),
+        "/remote/原文 file.rs",
+        "closing the original dialog does not undo its accepted default"
+    );
+    cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string("sentinel".into())));
+    cx.simulate_keystrokes(window, "enter");
+    assert_eq!(
+        clipboard(cx),
+        "sentinel",
+        "the hidden query cannot start another default"
+    );
+    cx.update_window(window, |_, window, cx| {
+        owner.update(cx, |owner, cx| {
+            owner.visible = true;
+            owner.state.update(cx, |state, cx| {
+                state.set_disabled(false, cx);
+                state.focus(window, cx);
+            });
+        });
+    })
+    .unwrap();
+    draw(cx, window);
+    let retiring = live.0.clone();
+    *live.0.borrow_mut() = Some(Input(Rc::new(move |key, _, _, _| {
+        if key == "submit" {
+            retiring.borrow_mut().take();
+        }
+        Ok(Default::default())
+    })));
+    cx.simulate_keystrokes(window, "enter");
+    assert_eq!(
+        clipboard(cx),
+        "sentinel",
+        "retiring the original owner cancels its default"
+    );
+    cx.simulate_keystrokes(window, "enter");
+    assert_eq!(clipboard(cx), "sentinel");
+}
+#[gpui::test]
 fn secret_native_ingress_masks_ax_platform_and_clipboard_but_preserves_original_bytes(
     cx: &mut TestAppContext,
 ) {

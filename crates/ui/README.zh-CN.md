@@ -268,8 +268,10 @@ SecretInput 在原 owner 生命周期中保持掩码。AccessKit password 节点
 或 TextRun；平台 surrounding-text 查询按原 UTF-16 单位返回掩码。捕获仍为原不可变
 UTF-8 bytes；掩码不会撤销显式授予的 Reader 能力。普通设置组合应将 secure capture
 绑定给可信 setter，并不绑定 Reader。原生 Enter 在 keybinding 前 consume，随后发布
-`submitted` 业务事件，不返回同步原生 decision。TUI 将它与可重试的观察/回执分开发送。
-OS 输入法与屏幕阅读器仍需逐平台验收。
+`submitted`，与可重试的观察/回执分开发送。可选 `submitCopy: {basis, text}` 将物理复制
+默认动作绑定到原编辑器文本引用；原生 owner 核对 owner/revision/字节数与 IME 状态，
+过期引用不提交。只有同步输入批次成功且允许默认动作时才复制，UTF-8 上限 64 KiB。
+脚本触发 `submitted` 不写剪贴板。OS 输入法与屏幕阅读器仍需逐平台验收。
 
 保留式呈现是原 frame 的不可变投影。场景 Stack 可设置 `visible: false`；原生父组件
 通过 `NativeView::with_hidden_slots` 指定已声明的精确 slot key。全部子组件保持挂载，

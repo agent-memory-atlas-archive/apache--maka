@@ -69,6 +69,10 @@ fn configured_input(
       .replace("on:{changed:'changed'}", "on:{changed:'changed',submitted:'submitted'}")
       .replace("name:'changed',value:event.event", "name:event.name,value:event.event")
       .replace("else if(event.kind==='component'){next.observation=event.event;if(event.name==='submitted')next.submissions=(state.submissions??0)+1;}", "else if(event.kind==='component'){if(event.name==='submitted')next.submits=(next.submits??0)+1;else next.observation=event.event;}");
+    if original.manifest().id=="dynamic.app" {
+      source=source.replace("delete editor.props.readingViewport;", "delete editor.props.readingViewport;delete editor.props.submitVeto;delete editor.props.submitReject;");
+      source.push_str("const submitEvent=app.event;app.event=(state,event,...rest)=>{const submitting=event.kind==='component'&&event.name==='submitted';if(submitting&&state.options?.submitReject)throw Error('submission rejected');const out=submitEvent(state,event,...rest);if(submitting&&state.options?.submitVeto)out.decision={preventDefault:true,stopPropagation:true};return out;};");
+    }
     if dialog && original.manifest().id=="dynamic.app" {
       source=source.replace("if(event.key==='configure')", "if(event.key==='modalToggle')next.modal=event.event.open;if(event.key==='dialog')next.modal=false;if(event.key==='configure')");
       source.push_str(r#"
@@ -897,6 +901,68 @@ fn bounded_query_paste_uses_one_native_edit_and_capacity_survives_commands_and_u
     );
     assert_eq!(text(&tui), full);
     assert_eq!(observation(&tui)["snapshot"]["text"]["owner"], original);
+    close(&mut tui);
+}
+
+#[test]
+fn submit_copy_requires_physical_enter_current_query_and_accepted_original_callback() {
+    let (_runtime, mut tui) = input_presenter(false, false);
+    draw(&mut tui, 80, 24);
+    tui.input(Event::Paste("file".into())).unwrap();
+    let basis = observation(&tui)["snapshot"]["text"].clone();
+    let copy = json!({"basis":basis,"text":"/remote/原文 file.rs"});
+    dispatch(&mut tui, "configure", json!({"submitCopy":copy}));
+    draw(&mut tui, 80, 24);
+    let native = tui.focus.as_ref().unwrap().mount.clone();
+    let revision = tui.application.frame(&native).unwrap().revision;
+    tui.application
+        .dispatch(&native, revision, "submit", json!({}))
+        .unwrap();
+    let mut clipboard = Vec::new();
+    assert!(!tui.flush_clipboard(&mut clipboard).unwrap());
+    draw(&mut tui, 80, 24);
+    tui.input(key(KeyCode::Enter)).unwrap();
+    assert!(tui.flush_clipboard(&mut clipboard).unwrap());
+    let mut expected = Vec::new();
+    crate::terminal::copy(&mut expected, "/remote/原文 file.rs").unwrap();
+    assert_eq!(clipboard, expected);
+    assert!(!tui.flush_clipboard(&mut clipboard).unwrap());
+
+    for option in ["submitVeto", "disabled", "readOnly"] {
+        dispatch(
+            &mut tui,
+            "configure",
+            json!({"submitCopy":copy,"autoFocus":true,option:true}),
+        );
+        draw(&mut tui, 80, 24);
+        tui.input(key(KeyCode::Enter)).unwrap();
+        assert!(!tui.flush_clipboard(&mut clipboard).unwrap());
+    }
+    dispatch(
+        &mut tui,
+        "configure",
+        json!({"submitCopy":copy,"autoFocus":true}),
+    );
+    draw(&mut tui, 80, 24);
+    tui.input(Event::Paste(" changed".into())).unwrap();
+    draw(&mut tui, 80, 24);
+    let submitted = tui.application.frame(&tui.root).unwrap().state["submits"].clone();
+    tui.input(key(KeyCode::Enter)).unwrap();
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["submits"],
+        submitted
+    );
+    assert!(!tui.flush_clipboard(&mut clipboard).unwrap());
+    assert_eq!(clipboard, expected);
+    let latest = observation(&tui)["snapshot"]["text"].clone();
+    dispatch(
+        &mut tui,
+        "configure",
+        json!({"submitCopy":{"basis":latest,"text":"rejected"},"submitReject":true,"autoFocus":true}),
+    );
+    draw(&mut tui, 80, 24);
+    assert!(tui.input(key(KeyCode::Enter)).is_err());
+    assert!(!tui.flush_clipboard(&mut clipboard).unwrap());
     close(&mut tui);
 }
 

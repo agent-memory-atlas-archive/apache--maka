@@ -138,6 +138,9 @@ Desktop 和 TUI 提供 `contracts.readingArea`（`maka.ui.reading`，导出 `Rea
 声明的绑定组合。原生滚动与文本选区 owner 保留几何和选区；插件只接收 `observed` 事实
 和 `input` 事件，不保存像素 offset。递增编号的 `start`、`end`、`reveal_child` 命令结算为
 `applied`、`cancelled` 或 `rejected`；省略命令不会重放已接受的命令，只保留当前命令与最近回执。
+TUI 另报告 `selectedChildKey`，表示原生选区焦点（含折叠光标）所在的直接内容子节点。
+归属只在实际输出成功后提交；modal 暂停保留上下文，原文退休/转移则撤销。其它呈现器
+目前返回 null。它是展示观察，不授予原文读取能力，也不增加第二个选区 owner。
 原生 `tail` continuation 仅在原实际绘制的末尾、阅读意图和本阅读区选区仍符合条件时准入隐式替换；
 滚轮或活动选区使反馈成为 `stale`，不撤销独立服务读取。
 

@@ -105,10 +105,18 @@ impl Widget for Recipe {
                     return Ok(WidgetInput::Navigate);
                 }
                 if key.code == KeyCode::Enter && key.modifiers.is_empty() && !self.props.read_only {
-                    return Ok(WidgetInput::Emitted(NativeInput {
+                    let input = NativeInput {
                         key: "submit".into(),
                         value: serde_json::json!({}),
-                    }));
+                    };
+                    owner.refresh();
+                    return Ok(match &self.props.submit_copy {
+                        Some(copy) if owner.snapshot().text == copy.basis => {
+                            WidgetInput::SubmitCopy(input, copy.text.clone())
+                        }
+                        Some(_) => WidgetInput::Consumed(Some(owner.observation())),
+                        None => WidgetInput::Emitted(input),
+                    });
                 }
                 let navigation = matches!(
                     key.code,

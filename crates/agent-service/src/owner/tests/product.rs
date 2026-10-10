@@ -115,8 +115,12 @@ fn assert_file_copy(
     label: &str,
     path: &std::path::Path,
 ) {
-    use base64::Engine as _;
     click(presenter, label);
+    assert_file_clipboard(presenter, path);
+}
+#[track_caller]
+fn assert_file_clipboard(presenter: &mut maka_tui::application::Presenter, path: &std::path::Path) {
+    use base64::Engine as _;
     let mut copied = Vec::new();
     assert!(presenter.flush_clipboard(&mut copied).unwrap());
     assert_eq!(
@@ -929,7 +933,7 @@ process.stdout.write(output.outputFiles[0].text);
             KeyModifiers::CONTROL,
         )))
         .unwrap();
-    await_screen(&mut presenter, "Search commands or conversations");
+    wait_for_target(&mut presenter, "[ Close commands ]", 0);
     presenter
         .input(Event::Paste("another folder".into()))
         .unwrap();
@@ -1882,6 +1886,49 @@ process.stdout.write(output.outputFiles[0].text);
                 "[ Copy file path ]",
                 &fixture.workspace.join("native-approved.txt"),
             );
+            // Both original native selection and first-visible fallback must
+            // survive the modal and copy with one Enter in the native query.
+            for (selected, name) in [
+                (true, "native-file-command.txt"),
+                (false, "native-file-fallback.txt"),
+            ] {
+                click(&mut presenter, "native file contents");
+                if !selected {
+                    presenter
+                        .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+                        .unwrap();
+                }
+                presenter
+                    .input(Event::Key(KeyEvent::new(
+                        KeyCode::Char('k'),
+                        KeyModifiers::CONTROL,
+                    )))
+                    .unwrap();
+                wait_for_target(&mut presenter, "[ Close commands ]", 0);
+                presenter
+                    .input(Event::Key(KeyEvent::new(
+                        KeyCode::Char('a'),
+                        KeyModifiers::CONTROL,
+                    )))
+                    .unwrap();
+                presenter
+                    .input(Event::Paste("Copy file path".into()))
+                    .unwrap();
+                wait_for_target(&mut presenter, "[ › Copy file path", 0);
+                capture(&mut presenter, name);
+                presenter
+                    .input(Event::Key(KeyEvent::new(
+                        KeyCode::Enter,
+                        KeyModifiers::NONE,
+                    )))
+                    .unwrap();
+                assert_file_clipboard(
+                    &mut presenter,
+                    &fixture.workspace.join("native-approved.txt"),
+                );
+                await_screen(&mut presenter, "File background draft");
+                assert!(!screen(&draw(&mut presenter)).contains("[ Close commands ]"));
+            }
         }
         click(&mut presenter, "[ Tool arguments ]");
         await_screen(&mut presenter, "native-approved.txt");

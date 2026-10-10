@@ -3157,7 +3157,16 @@ for (const target of ['desktop', 'tui']) {
         );
       }
       assert.equal(out.actions.length, 0);
-      assert.equal(out.events.length, 0);
+      assert.deepEqual(out.events, [
+        {
+          name: 'fileContext',
+          value: {
+            ...client.timeline.toolContext,
+            landing: client.timeline.landing.sequence,
+            path: null,
+          },
+        },
+      ]);
       assert.deepEqual(
         client.messages.map((message) => message.source),
         [39, 40],
@@ -6281,6 +6290,54 @@ for (const target of ['tui', 'desktop']) {
   }
   const viewport = (form) =>
     modelSlots(form.output.frame.view).find((node) => node.key === 'palette-rows').props;
+  test(`${target} palette copy commands bind physical Enter to the current native query and close without I/O`, () => {
+    const text = '/remote/原文 file.rs';
+    const command = {
+      id: 'copy-file-path',
+      label: 'Copy file path',
+      hint: '',
+      disabled: false,
+      copyText: text,
+    };
+    const form = make([command]);
+    const unobserved = new FormClient(component, form.props);
+    assert.equal(viewport(unobserved).content.children[0].disabled, true);
+    unobserved.input({ kind: 'component', child: 'palette-query', name: 'submitted', event: {} });
+    assert.deepEqual(
+      unobserved.output.events,
+      [],
+      'Enter cannot close a copy choice before native query admission exists',
+    );
+    const query = () =>
+      modelSlots(form.output.frame.view).find((node) => node.key === 'palette-query').props;
+    assert.deepEqual(query().submitCopy, { basis: modelObservation('', 1).snapshot.text, text });
+    assert.equal(viewport(form).content.children[0].copy_text, text);
+    native(form, 'Copy', 2);
+    assert.equal(query().submitCopy, null, 'an unsynchronized query has no clipboard default');
+    assert.equal(viewport(form).content.children[0].disabled, true);
+    read(form, 'Copy', 2);
+    assert.deepEqual(query().submitCopy, {
+      basis: modelObservation('Copy', 2).snapshot.text,
+      text,
+    });
+    form.input({ kind: 'component', child: 'palette-query', name: 'submitted', event: {} });
+    assert.deepEqual(form.output.actions, []);
+    assert.deepEqual(form.output.events, [{ name: 'invoked', value: { id: command.id } }]);
+    const invoked = form.output.events;
+    form.update({ open: false });
+    assert.equal(query().submitCopy, null);
+    const clicked = make([command]);
+    clicked.raw('command-copy-file-path');
+    assert.deepEqual(clicked.output.events, invoked);
+    const disabled = make([{ ...command, disabled: true }]);
+    disabled.input({ kind: 'component', child: 'palette-query', name: 'submitted', event: {} });
+    assert.deepEqual(disabled.output.events, []);
+    assert.equal(
+      modelSlots(disabled.output.frame.view).find((node) => node.key === 'palette-query').props
+        .submitCopy,
+      null,
+    );
+  });
   test(`${target} command IDs reserve the native key byte budget and labels retain Unicode`, async () => {
     const { default: Ajv } = await import('ajv/dist/2020.js');
     const { paletteContract } = await import(
@@ -10848,7 +10905,7 @@ test('history preview does not accept selected JSON as the matching original fie
   assert.equal(find.state.search.history.preview.sections[0].source, null);
 });
 
-async function detailClient(target, method, expanded = true) {
+async function detailClient(target, method, expanded = true, sessionId = uuid(1)) {
   const { component } = await import(
     pathToFileURL(resolve(root, `dist/packages/tool-details/${target}.js`))
   );
@@ -10857,7 +10914,7 @@ async function detailClient(target, method, expanded = true) {
     locale: 'en',
     expanded,
     focusOnPointer: true,
-    context: { sessionId: uuid(1), through: 100 },
+    context: { sessionId, through: 100 },
     tool: {
       toolUseId: uuid(901),
       call: {
@@ -12968,3 +13025,127 @@ for (const target of ['tui', 'desktop']) {
     },
   );
 }
+
+test('TUI file command follows original native message focus, falls back to first visible, and rejects old file contexts', async () => {
+  const { component: timeline } = await import(
+    pathToFileURL(resolve(root, 'dist/packages/timeline/tui.js'))
+  );
+  const rootModule = await import(pathToFileURL(resolve(root, 'dist/packages/workspace/tui.js')));
+  rootModule.activate({ locale: 'en' });
+  const detail = await detailClient('tui', 'readText', false, session.id);
+  answerFilePath(detail, ['path'], 'file.rs', '/remote/file.rs');
+  const file = detail.out.events.find((event) => event.name === 'fileContext').value;
+  assert.equal(file.path, '/remote/file.rs');
+  detail.out.frame.state.published = Object.fromEntries(Object.entries(file).reverse());
+  detail.update({});
+  assert.deepEqual(detail.out.events, [], 'metadata equality ignores transport object-key order');
+  const tool = detail.props.tool;
+  const client = new Client(rootModule.component).start({
+    through: 100,
+    chunks: [
+      historyChunk('path', { sequence: 40, messageId: uuid(901), role: 'tool_call', tool }),
+      historyChunk('content', { sequence: 50, messageId: uuid(902), role: 'tool_result', tool }),
+      historyChunk('ordinary', { sequence: 60, messageId: uuid(903), role: 'assistant' }),
+    ],
+  });
+  let props = client.timeline;
+  let out = timeline.mount(props, {});
+  const dispatch = (child, name, event) => {
+    const input = { kind: 'component', child, name, event };
+    out = timeline.event(
+      structuredClone(out.frame.state),
+      child.startsWith('tool-details-')
+        ? { kind: 'component', child: 'reading', name: 'input', event: input }
+        : input,
+      props,
+      {},
+    );
+    for (const event of out.events.filter((event) => event.name === 'fileContext'))
+      client.input({ kind: 'component', child: 'timeline', name: event.name, event: event.value });
+  };
+  const observed = (selectedChildKey, visibleChildKeys) =>
+    dispatch('reading', 'observed', {
+      readingRevision: 1,
+      selectedChildKey,
+      viewport: { readingRevision: 1, atEnd: false, visibleChildKeys },
+      pendingCommand: null,
+      receipt: null,
+      find: null,
+    });
+  dispatch('tool-details-' + uuid(901), 'fileContext', file);
+  observed(null, ['message-' + uuid(901), 'message-' + uuid(903)]);
+  assert.equal(client.state.fileContext.path, '/remote/file.rs');
+  out.frame.state.fileContext = Object.fromEntries(
+    Object.entries(out.frame.state.fileContext).reverse(),
+  );
+  out = timeline.update(structuredClone(out.frame.state), props, {});
+  assert.deepEqual(out.events, [], 'the root cannot be retriggered by an equivalent observation');
+  client.raw('palette-open');
+  const command = () =>
+    modelSlots(client.output.frame.view.content)
+      .find((node) => node.key === 'command-palette')
+      .props.commands.find((command) => command.id === 'copy-file-path');
+  assert.equal(command().copyText, '/remote/file.rs');
+  assert.equal(command().disabled, false);
+  observed('message-' + uuid(903), ['message-' + uuid(901)]);
+  assert.equal(
+    client.state.fileContext.path,
+    null,
+    'selected ordinary message cannot fall back to another file',
+  );
+  assert.equal(command().disabled, true);
+  observed('message-' + uuid(901), ['message-' + uuid(903)]);
+  assert.equal(command().copyText, '/remote/file.rs');
+  dispatch('tool-details-' + uuid(901), 'fileContext', { ...file, result: 99, path: '/wrong' });
+  assert.equal(command().disabled, true, 'another original tool result cannot supply this path');
+  dispatch('tool-details-' + uuid(901), 'fileContext', file);
+  assert.equal(command().disabled, false);
+  const originalProps = props;
+  props = {
+    ...props,
+    messages: props.messages.map((message) =>
+      message.tool
+        ? {
+            ...message,
+            tool: { ...message.tool, call: { ...message.tool.call, presentation: null } },
+          }
+        : message,
+    ),
+  };
+  out = timeline.update(structuredClone(out.frame.state), props, {});
+  assert.deepEqual(
+    out.frame.state.files,
+    {},
+    'a replaced presentation cannot retain file metadata',
+  );
+  props = originalProps;
+  dispatch('tool-details-' + uuid(901), 'fileContext', file);
+  observed(null, ['time-' + props.messages.find((message) => message.id === uuid(901)).contentKey]);
+  assert.equal(
+    out.frame.state.fileContext.path,
+    '/remote/file.rs',
+    'a turn footer belongs to its preceding message',
+  );
+  props = { ...props, toolContext: { ...props.toolContext, through: 101 } };
+  out = timeline.update(structuredClone(out.frame.state), props, {});
+  assert.deepEqual(out.frame.state.files, {});
+  assert.equal(out.frame.state.fileContext.path, null);
+  detail.update({ context: { ...detail.props.context, through: 101 } });
+  const revised = detail.out.events.find((event) => event.name === 'fileContext').value;
+  assert.equal(revised.through, 101);
+  assert.equal(revised.path, '/remote/file.rs', 'same immutable source survives a later fence');
+  props = { ...props, landing: { sequence: props.landing.sequence + 1, edge: 'start' } };
+  out = timeline.update(structuredClone(out.frame.state), props, {});
+  assert.equal(
+    out.frame.state.observation,
+    null,
+    'new history landing cannot borrow the previous viewport',
+  );
+  client.input({
+    kind: 'component',
+    child: 'timeline',
+    name: 'fileContext',
+    event: { ...file, landing: client.state.landing.sequence + 1, path: '/stale' },
+  });
+  assert.equal(client.state.fileContext.path, '/remote/file.rs');
+});

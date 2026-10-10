@@ -134,7 +134,7 @@ Desktop navigation can be collapsed without unmounting its component or the comp
 Conversation navigation subscribes to the native Agent catalog. Background activity, metadata and pending interactions update the current directory page without replacing the selected conversation, history window or native drafts. Needs You shows the complete private pending-session count, independent of the 32-row page. Refresh retains the current page's first-session anchor and falls back when its tail disappears; Next/Previous use the latest snapshot revision. Successful explicit creation reveals the new conversation. A failed subscription retains visible content until explicit Refresh. The command palette keeps its separate revision-bound list query.
 
 
-The `command-palette` package exports ordinary `CommandPalette` content for explicit compositions, with parent-controlled `open`, current command guards and `invoked`/`selected`/`closed` events. It imports TextInput, TextReader, ReadingArea and Agent. Search requires all whitespace-separated terms in a command's label/id/hint or a session's id/title; it scans the original revision-bound directory and keeps at most 32 matching sessions, with an explicit More window. Choice confirmation captures the original native query revision. The parent handles command ids and re-observes selected sessions through Agent; presentation and modal input isolation belong to its scene.
+The `command-palette` package exports ordinary `CommandPalette` content for explicit compositions, with parent-controlled `open`, current command guards and `invoked`/`selected`/`closed` events. It imports TextInput, TextReader, ReadingArea and Agent. Search requires all whitespace-separated terms in a command's label/id/hint or a session's id/title; it scans the original revision-bound directory and keeps at most 32 matching sessions, with an explicit More window. Service and navigation choices capture the original native query revision. Optional command `copyText` uses the physical button default or TextInput's revision-checked `submitCopy`, so keyboard Enter copies once while the native query retains focus; scripted component events only notify the parent. The parent handles command ids and re-observes selected sessions through Agent; presentation and modal input isolation belong to its scene.
 
 ## Plugin controls
 
@@ -200,3 +200,11 @@ forced process loss can lose writes not yet acknowledged. Save, source, format,
 quota or corruption errors preserve the previous record and expose Retry. There
 is no silent overwrite, JavaScript text mirror, restored undo stack or automatic
 send. Native clipboard contents are not read during restoration.
+
+The TUI command palette's Copy file path follows the original native reading focus,
+falling back to the first visible message when no selection exists. ToolDetails
+publishes bounded Host-resolved display metadata; Timeline checks the original
+session, fence, tool sequences and presentation before forwarding current context.
+History landing and source changes clear stale context. Paths do not grant file
+access or open a local path. Whole-message browse/copy parity and the remaining TUI
+migration are still pending; Desktop product design follows the team branch.
