@@ -20,7 +20,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -33,6 +33,29 @@ const appearance = await import(
 );
 const values = { appearance: [appearance.activate({ scheme: 'light' }).Appearance.value] };
 const sdk = await import(pathToFileURL(resolve(root, 'dist/authoring/plugin-sdk/src/index.mjs')));
+test('each bundled UI exports the exact contracts admitted by its original manifest', async () => {
+  let checked = 0;
+  for (const name of readdirSync(resolve(root, 'dist/packages'))) {
+    const directory = resolve(root, 'dist/packages', name);
+    const manifest = JSON.parse(readFileSync(resolve(directory, 'maka.extension.json'), 'utf8'));
+    for (const target of ['desktop', 'tui']) {
+      const entry = manifest.application.entries[target];
+      if (entry?.implementation.kind !== 'javascript') continue;
+      const guest = await import(pathToFileURL(resolve(directory, entry.implementation.module)));
+      const declarations = guest.activate({ locale: 'en', scheme: 'light' });
+      assert.deepEqual(Object.keys(declarations).sort(), Object.keys(entry.exports).sort());
+      for (const [key, declaration] of Object.entries(declarations)) {
+        assert.deepEqual(
+          declaration.contract,
+          entry.exports[key].contract,
+          `${name}/${target}/${key}`,
+        );
+        checked++;
+      }
+    }
+  }
+  assert.ok(checked >= 50);
+});
 test('typed scene constructors serialize directly into the actual Rust scene schemas', async () => {
   const desktopText = sdk.ui.desktop.text({ key: 'desktop-text', text: '界面', color: 0xffffff });
   const terminalText = sdk.ui.terminal.text({
@@ -689,6 +712,8 @@ test('both product compositions use actual immutable package refs and check in t
         if (productName === 'agent')
           configuration.skills = {
             bundled: true,
+            home: '/private/product-home',
+            projectRoots: [{ label: 'Projects', path: '/private/product-projects' }],
             preferences: presentation === 'tui',
             sources: [{ id: 'local', label: 'Local', path: '/private/product-skills' }],
           };
@@ -769,7 +794,7 @@ test('both product compositions use actual immutable package refs and check in t
         const business = connections.hosts.find((host) => host.name === 'local');
         const manager = connections.hosts.find((host) => host.name === 'manager');
         if (productName === 'agent') {
-          assert.equal(host.instances.skills.configuration.values.bundled, true);
+          assert.deepEqual(host.instances.skills.configuration.values, configuration.skills);
           assert.deepEqual(
             business.endpoints.skills.grant.methods,
             presentation === 'tui' ? ['list', 'read', 'setPreference'] : ['list', 'read'],

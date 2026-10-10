@@ -42,6 +42,7 @@ fn operation(review: &Review) -> Operation {
 }
 async fn review(library: &Library, kind: ChangeKind, reference: &str, scope: &Scope) -> Review {
     let change = Change {
+        workspace: library.workspace.clone(),
         kind,
         reference: reference.into(),
         revision: library.snapshot(scope).await.unwrap().revision,
@@ -54,6 +55,8 @@ async fn review(library: &Library, kind: ChangeKind, reference: &str, scope: &Sc
 async fn library(root: Arc<RootOwner>, source: &std::path::Path, namespace: &str) -> Library {
     let mut library = Library::open(
         Configuration {
+            home: None,
+            project_roots: vec![],
             bundled: false,
             manage: true,
             preferences: false,
@@ -257,6 +260,7 @@ async fn management_rejects_external_deletion_disabled_access_and_links_into_pri
     let call = scope();
     let mut library = library(root.clone(), &source, "one").await;
     let change = Change {
+        workspace: None,
         kind: ChangeKind::Delete,
         reference: "source:local:review".into(),
         revision: library.snapshot(&call).await.unwrap().revision,
@@ -313,6 +317,7 @@ fn deletion_review_keeps_exact_paths_and_marks_bounded_path_excerpts() {
     let plan = Plan {
         review: Review {
             change: Change {
+                workspace: None,
                 kind: ChangeKind::Delete,
                 reference: "installed:review".into(),
                 revision: "sha256:".into(),
@@ -379,6 +384,7 @@ async fn bundled_files_are_read_only_and_installed_overrides_can_be_removed() {
         ..
     } = snapshot
         .read(super::super::Read {
+            workspace: None,
             reference: "bundled:maka-plugin-authoring".into(),
             revision: revision.clone(),
             offset: 0,
@@ -394,6 +400,7 @@ async fn bundled_files_are_read_only_and_installed_overrides_can_be_removed() {
             library
                 .preview(
                     Change {
+                        workspace: None,
                         kind,
                         reference: "bundled:maka-plugin-authoring".into(),
                         revision: revision.clone()
@@ -444,6 +451,97 @@ async fn bundled_files_are_read_only_and_installed_overrides_can_be_removed() {
             .entries
             .iter()
             .all(|(e, _, _)| e.bundled && !e.installed && e.shadowed_by.is_none())
+    );
+    call.finish().await.unwrap();
+}
+
+#[tokio::test]
+async fn project_installation_keeps_its_reviewed_workspace_and_relative_resource_tree() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("sources");
+    std::fs::create_dir_all(&source).unwrap();
+    let project = dir.path().join("project");
+    super::super::tests::write(
+        &project.join(".agents/skills"),
+        "review",
+        "project instructions",
+    );
+    std::fs::create_dir_all(project.join(".agents/skills/review/references")).unwrap();
+    std::fs::write(
+        project.join(".agents/skills/review/references/guide"),
+        "project resource",
+    )
+    .unwrap();
+    let (project, directory_identity) = maka_fs_tools::directory::capture(&project).unwrap();
+    let identity = maka_fs_tools::workspace::ensure_directory_identity(
+        project.clone(),
+        maka_fs_tools::directory::open(&project, &directory_identity).unwrap(),
+    )
+    .await
+    .unwrap();
+    let workspace = crate::contract::Workspace {
+        path: project.to_str().unwrap().into(),
+        directory_identity,
+        identity,
+    };
+    let root = Arc::new(
+        RootOwner::create(
+            &dir.path().join("host"),
+            &RootNamespaces {
+                ownership: dir.path().join("owners"),
+                control: dir.path().join("control"),
+            },
+        )
+        .unwrap(),
+    );
+    let mut library = library(root.clone(), &source, "project").await;
+    library.projects = vec![Arc::new(
+        maka_fs_tools::workspace::directory::PublishedDirectory::open(&project).unwrap(),
+    )];
+    let call = scope();
+    let scoped = library
+        .for_workspace(Some(workspace.clone()), &call)
+        .await
+        .unwrap();
+    let reference = scoped.snapshot(&call).await.unwrap().entries[0]
+        .0
+        .reference
+        .clone();
+    let install = review(&scoped, ChangeKind::Install, &reference, &call).await;
+    assert_eq!(install.change.workspace, Some(workspace));
+    let original = library
+        .for_workspace(install.change.workspace.clone(), &call)
+        .await
+        .unwrap();
+    assert!(matches!(
+        original
+            .apply_operation(install.clone(), &operation(&install), &call)
+            .await
+            .unwrap(),
+        ChangeResult::Applied { .. }
+    ));
+    assert_eq!(
+        std::fs::read_to_string(
+            root.canonical_path()
+                .join("skill-libraries/project/skills/review/references/guide")
+        )
+        .unwrap(),
+        "project resource"
+    );
+    let snapshot = original.snapshot(&call).await.unwrap();
+    assert!(
+        snapshot
+            .entries
+            .iter()
+            .any(|(e, _, _)| e.installed && e.shadowed_by.as_deref() == Some(reference.as_str()))
+    );
+    std::fs::remove_dir_all(project.join(".agents/skills/review")).unwrap();
+    let snapshot = original.snapshot(&call).await.unwrap();
+    assert!(
+        snapshot
+            .entries
+            .iter()
+            .all(|(e, _, _)| e.installed && e.shadowed_by.is_none())
     );
     call.finish().await.unwrap();
 }

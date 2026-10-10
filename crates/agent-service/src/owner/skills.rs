@@ -105,6 +105,7 @@ impl Owner {
     pub(super) async fn prepare_skills(
         &self,
         mut message: MessageInput,
+        workspace: Option<crate::contract::Workspace>,
         parent: &Scope,
     ) -> Result<Input, String> {
         if parent.cancellation.is_cancelled() {
@@ -134,6 +135,7 @@ impl Owner {
             };
         };
         let input = serde_json::to_value(SkillToolRequest {
+            workspace,
             tools: self.tools.names(),
             input: Prepare {
                 message: message.text.clone(),

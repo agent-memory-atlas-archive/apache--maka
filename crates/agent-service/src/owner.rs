@@ -478,20 +478,26 @@ impl Owner {
         let mut message: MessageInput = text.into();
         message.attachments = self.attachment_refs(&id, attachments).await?;
         let unprepared = message;
-        let (message, required_tools) =
-            match self.prepare_skills(unprepared.clone(), parent).await? {
-                skills::Input::Ready {
-                    message,
-                    required_tools,
-                } => (message, required_tools),
-                skills::Input::Rejected { reason, skills } => {
-                    return Ok(SendResult::Rejected {
-                        session_id: id,
-                        reason,
-                        skills,
-                    });
-                }
-            };
+        let (message, required_tools) = match self
+            .prepare_skills(
+                unprepared.clone(),
+                Some(session.configuration.workspace.clone()),
+                parent,
+            )
+            .await?
+        {
+            skills::Input::Ready {
+                message,
+                required_tools,
+            } => (message, required_tools),
+            skills::Input::Rejected { reason, skills } => {
+                return Ok(SendResult::Rejected {
+                    session_id: id,
+                    reason,
+                    skills,
+                });
+            }
+        };
         let delivered = RootSourceMessage {
             message: DeliveredMessage {
                 message_id: format!("m_{identity}"),

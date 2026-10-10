@@ -31,7 +31,8 @@ await rm(destination, { recursive: true, force: true });
 await mkdir(destination, { recursive: true });
 // These authoring modules use the real generated runtime contracts. No second
 // schema, package digest or native availability registry lives in this builder.
-await build({
+const authoring = await build({
+  absWorkingDir: root,
   entryPoints: [
     resolve(root, 'src/contracts.ts'),
     resolve(root, 'src/composition.ts'),
@@ -43,11 +44,19 @@ await build({
   format: 'esm',
   outExtension: { '.js': '.mjs' },
   logLevel: 'silent',
+  metafile: true,
 });
 const own = await import(
   pathToFileURL(resolve(destination, 'authoring/agent-product/src/contracts.mjs'))
 );
 const sdk = await import(pathToFileURL(resolve(destination, 'authoring/plugin-sdk/src/index.mjs')));
+// Evaluate the original schemas once during authoring. Literal exports let the
+// guest bundler discard unused contracts instead of carrying every native schema
+// and every product contract constructor into each isolated UI module.
+const guestContracts = Object.entries(own)
+  .filter(([, value]) => typeof value !== 'function')
+  .map(([name, value]) => `export const ${name} = ${JSON.stringify(value)};`)
+  .join('\n');
 // Compile the original Rust-generated input contracts; guests never compile
 // schemas, coerce values, or keep a second hand-written ModelOverride schema.
 const validator = new Ajv({
@@ -357,7 +366,9 @@ specifications.credential = {
   },
 };
 const packages = [];
-const bundleInputs = new Set();
+const bundleInputs = new Set(
+  Object.keys(authoring.metafile.inputs).map((input) => resolve(root, input)),
+);
 for (const [name, spec] of Object.entries(specifications)) {
   const directory = resolve(destination, 'packages', name);
   await mkdir(directory, { recursive: true });
@@ -391,6 +402,18 @@ for (const [name, spec] of Object.entries(specifications)) {
       target: 'es2022',
       logLevel: 'silent',
       metafile: true,
+      plugins: [
+        {
+          name: 'product-contract-literals',
+          setup(builder) {
+            builder.onLoad({ filter: /\/contracts\.ts$/ }, (args) =>
+              args.path === resolve(root, 'src/contracts.ts')
+                ? { contents: guestContracts, loader: 'js' }
+                : undefined,
+            );
+          },
+        },
+      ],
       banner: {
         js: (await readFile(resolve(root, 'src/view.ts'), 'utf8')).split('\n\n', 1)[0].trim(),
       },

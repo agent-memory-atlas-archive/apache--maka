@@ -224,7 +224,10 @@ impl ToolPreparer for Service {
                     let input = match selection.input {
                         ToolInput::Json => input,
                         ToolInput::Skill => {
-                            serde_json::json!({"input": input, "tools": tool_names.as_ref()})
+                            let workspace = crate::permissions::live(&store, &context.invocation)
+                                .await?
+                                .workspace;
+                            serde_json::json!({"input": input, "tools": tool_names.as_ref(), "workspace":workspace})
                         }
                     };
                     let operation = operation_id(&context);

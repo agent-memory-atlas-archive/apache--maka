@@ -50,11 +50,13 @@ fn model_text(sent: &Value, role: &str) -> String {
 async fn skill_input_freezes_original_admission_and_queue_edits_before_actual_http() {
     tokio::time::timeout(Duration::from_secs(60), async {
         let dir = tempfile::tempdir().unwrap();
-        document(dir.path(), "VERSION ONE", "CAPTURED ONE");
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let f = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None,
-            Some(service_tools::Setup::skill_preparation(dir.path().into(), true))).await;
+            Some(service_tools::Setup::skill_preparation(dir.path().into(), true).with_standard_sources())).await;
         let session = f.create("Skill preparation").await;
+        let workspace = f.owner.session(&session).await.unwrap().configuration.workspace;
+        let source = std::path::Path::new(&workspace.path).join(".maka/skills");
+        document(&source, "VERSION ONE", "CAPTURED ONE");
         let original = "🦀 /skill:review inspect this";
         assert_eq!(send(&f, &session, original, Uuid::new_v4()).await["kind"], "started");
         let (mut first, _) = listener.accept().await.unwrap();
@@ -81,15 +83,15 @@ async fn skill_input_freezes_original_admission_and_queue_edits_before_actual_ht
         let rejected = send(&f, &session, "/skill:missing", Uuid::new_v4()).await;
         assert_eq!(rejected["kind"], "rejected");
         assert_eq!(rejected["skills"]["failed"][0]["reason"], "not_found");
-        document(dir.path(), "VERSION TWO", "CAPTURED TWO");
+        document(&source, "VERSION TWO", "CAPTURED TWO");
         let edit = json!({"sessionId":session,"expectedRevision":queued["revision"],"edit":{"kind":"update","messageId":queued["messageId"],"message":"/skill:review edited"}});
         let updated = f.mutation(2, "editQueue", edit, Uuid::new_v4()).await.unwrap();
         assert_eq!(updated["kind"], "committed");
-        std::fs::write(dir.path().join("review/SKILL.md"), "invalid").unwrap();
+        std::fs::write(source.join("review/SKILL.md"), "invalid").unwrap();
         let failed = f.mutation(2, "editQueue", json!({"sessionId":session,"expectedRevision":updated["revision"],"edit":{"kind":"update","messageId":queued["messageId"],"message":"/skill:review rejected edit"}}), Uuid::new_v4()).await.unwrap();
         assert_eq!(failed["kind"], "rejected");
         assert_eq!(f.query("queueMessage", json!({"sessionId":session,"expectedRevision":updated["revision"],"messageId":queued["messageId"]})).await.unwrap()["message"], "/skill:review edited");
-        document(dir.path(), "VERSION THREE", "CAPTURED THREE");
+        document(&source, "VERSION THREE", "CAPTURED THREE");
         assert_eq!(send(&f, &session, "/skill:review queued", operation).await, queued);
         response(&mut first).await;
         let (mut second, _) = listener.accept().await.unwrap();

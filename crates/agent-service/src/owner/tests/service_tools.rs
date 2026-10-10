@@ -139,6 +139,7 @@ pub(super) struct Setup {
     processes: bool,
     skills: Option<std::path::PathBuf>,
     bundled_skills: bool,
+    standard_sources: bool,
     prepare_skills: bool,
     skill_tools: bool,
     preparation: Option<Arc<PreparationProbe>>,
@@ -162,6 +163,7 @@ impl Setup {
             processes: false,
             skills: None,
             bundled_skills: false,
+            standard_sources: false,
             prepare_skills: false,
             skill_tools: true,
             preparation: None,
@@ -181,6 +183,7 @@ impl Setup {
             processes: false,
             skills: None,
             bundled_skills: false,
+            standard_sources: false,
             prepare_skills: false,
             skill_tools: true,
             preparation: None,
@@ -206,6 +209,7 @@ impl Setup {
             processes: false,
             skills: None,
             bundled_skills: false,
+            standard_sources: false,
             prepare_skills: false,
             skill_tools: true,
             preparation: None,
@@ -224,6 +228,10 @@ impl Setup {
             skills: Some(path),
             ..Self::javascript()
         }
+    }
+    pub(super) fn with_standard_sources(mut self) -> Self {
+        self.standard_sources = true;
+        self
     }
     pub(super) fn with_bundled_skills(mut self) -> Self {
         self.bundled_skills = true;
@@ -390,6 +398,8 @@ impl Setup {
         }
     }
     pub(super) fn install(&self, input: &mut Input, packages: &mut Vec<Package>) {
+        let project_roots =
+            input.instances["provider"].configuration.values["workspaceRoots"].clone();
         let mut manifest = packages[0].manifest().clone();
         manifest
             .application
@@ -471,7 +481,10 @@ impl Setup {
                 use_package: PackageUse::Entry,
                 configuration: if let Some(path) = &self.skills {
                     NodeConfiguration { values: serde_json::from_value(json!({
-                        "bundled":self.bundled_skills, "sources":[{"id":"fixture","label":"Fixture","path":path}], "manage":false, "preferences":false
+                        "bundled":self.bundled_skills,
+                        "home":self.standard_sources.then_some(path),
+                        "projectRoots":if self.standard_sources {project_roots.clone()} else {json!([])},
+                        "sources":if self.standard_sources {json!([])} else {json!([{"id":"fixture","label":"Fixture","path":path}])}, "manage":false, "preferences":false
                     })).unwrap(), parameters: BTreeMap::new() }
                 } else if self.processes {
                     NodeConfiguration { values: serde_json::from_value(json!({
@@ -1549,7 +1562,9 @@ async fn skill_preparation_parent_scope_owns_work_after_observer_loss_and_cleanu
             let owner = f.owner.clone();
             let request = parent.clone();
             let observer =
-                tokio::spawn(async move { owner.prepare_skills("hello".into(), &request).await });
+                tokio::spawn(
+                    async move { owner.prepare_skills("hello".into(), None, &request).await },
+                );
             probe.entered.acquire().await.unwrap().forget();
             observer.abort();
             assert!(matches!(observer.await, Err(error) if error.is_cancelled()));

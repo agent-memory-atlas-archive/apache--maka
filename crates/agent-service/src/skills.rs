@@ -42,6 +42,9 @@ use std::{
     sync::Arc,
 };
 
+mod sources;
+use sources::CapturedSource;
+
 pub const IMPLEMENTATION: &str = "maka.skills.library";
 pub const EXPORT: &str = "skills";
 // Even maximally escaped control bytes leave room for metadata in the JSON budget.
@@ -104,7 +107,11 @@ async fn activate(context: NativeContext, configuration: Value) -> NativeActivat
 #[derive(Clone)]
 struct Library {
     bundled: bool,
-    sources: Vec<(Source, ReadRoot)>,
+    sources: Vec<CapturedSource>,
+    projects: Vec<Arc<maka_fs_tools::workspace::directory::PublishedDirectory>>,
+    private: PathBuf,
+    workspace: Option<crate::contract::Workspace>,
+    policy: Arc<maka_sandbox::filesystem::Compiled>,
     preferences: preferences::Store,
     preferences_writable: bool,
     managed: Option<Arc<management::Managed>>,
@@ -122,7 +129,7 @@ impl Library {
         let policy = Arc::new(
             Policy {
                 default: Access::Read,
-                rules: vec![Rule::subtree(managed, Access::Deny)],
+                rules: vec![Rule::subtree(&managed, Access::Deny)],
                 deny_globs: vec![],
             }
             .compile()
@@ -149,9 +156,17 @@ impl Library {
                 .map_err(|_| "skills_source_unavailable")?
                 .restrict(policy.clone())
                 .map_err(|_| "skills_source_unavailable")?;
-            sources.push((source, root));
+            sources.push(CapturedSource::custom(source, root));
         }
+        if let Some(home) = configuration.home {
+            sources.extend(sources::home(&home, policy.clone())?);
+        }
+        let projects = sources::projects(configuration.project_roots, &managed)?;
         Ok(Self {
+            projects,
+            private: managed,
+            workspace: None,
+            policy,
             bundled: configuration.bundled,
             sources,
             preferences,
@@ -163,22 +178,12 @@ impl Library {
         let mut sources: Vec<_> = self
             .sources
             .iter()
-            .map(|(source, root)| {
-                let access = root.bind_scope(scope);
-                maka_skills::Source {
-                    root: access.location(),
-                    access,
-                    directory: PathBuf::new(),
-                    scope: maka_skills::SkillScope::Custom,
-                    source: maka_skills::SkillSource::Custom,
-                    reference_prefix: format!("source:{}", source.id),
-                }
-            })
+            .map(|source| source.bind(scope))
             .collect();
         if let Some(managed) = &self.managed {
             let access = managed.read.bind_scope(scope);
             sources.insert(
-                0,
+                self.sources.iter().take_while(|s| s.project()).count(),
                 maka_skills::Source {
                     root: access.location(),
                     access,
@@ -208,8 +213,8 @@ impl Library {
             }
             self.sources
                 .iter()
-                .find(|(source, _)| reference.starts_with(&format!("source:{}:", source.id)))
-                .map(|(source, _)| source.label.as_str())
+                .find(|source| source.contains(reference))
+                .map(|source| source.metadata.label.as_str())
                 .unwrap_or("")
         };
         let mut entries = Vec::new();
@@ -254,12 +259,20 @@ impl Library {
             .diagnostics
             .iter()
             .map(|diagnostic| {
-                let label = if self.managed.is_some() && diagnostic.precedence == 0 {
+                let project_count = self
+                    .sources
+                    .iter()
+                    .take_while(|source| source.project())
+                    .count();
+                let label = if self.managed.is_some() && diagnostic.precedence == project_count {
                     "Installed"
                 } else {
-                    &self.sources[diagnostic.precedence - usize::from(self.managed.is_some())]
-                        .0
-                        .label
+                    &self.sources[diagnostic.precedence
+                        - usize::from(
+                            self.managed.is_some() && diagnostic.precedence > project_count,
+                        )]
+                    .metadata
+                    .label
                 };
                 format!("{label}: {:?}", diagnostic.reason)
             })
@@ -269,12 +282,13 @@ impl Library {
             .collect();
         let revision = maka_runtime::artifact::content_digest(
             &serde_json::to_vec(&(
+                &self.workspace,
                 self.managed.is_some(),
                 self.preferences_writable,
                 preferences.revision,
                 self.sources
                     .iter()
-                    .map(|(source, _)| source)
+                    .map(|source| (&source.metadata, &source.directory, &source.prefix))
                     .collect::<Vec<_>>(),
                 entries
                     .iter()
@@ -470,16 +484,28 @@ impl Handler for Library {
                 "list" => {
                     let input =
                         serde_json::from_value(input).map_err(|_| "skills_query_invalid")?;
+                    let input: List = input;
+                    let library = library
+                        .for_workspace(input.workspace.clone(), context.scope())
+                        .await?;
                     encode(library.snapshot(context.scope()).await?.list(input)?)
                 }
                 "read" => {
                     let input =
                         serde_json::from_value(input).map_err(|_| "skills_query_invalid")?;
+                    let input: Read = input;
+                    let library = library
+                        .for_workspace(input.workspace.clone(), context.scope())
+                        .await?;
                     encode(library.snapshot(context.scope()).await?.read(input)?)
                 }
                 "preview" => {
                     let input =
                         serde_json::from_value(input).map_err(|_| "skills_change_invalid")?;
+                    let input: Change = input;
+                    let library = library
+                        .for_workspace(input.workspace.clone(), context.scope())
+                        .await?;
                     encode(library.preview(input, context.scope()).await?)
                 }
                 "setPreference" => {
@@ -497,6 +523,10 @@ impl Handler for Library {
                     let input =
                         serde_json::from_value(input).map_err(|_| "skills_change_invalid")?;
                     let operation = context.operation().ok_or("skills_mutation_required")?;
+                    let input: Review = input;
+                    let library = library
+                        .for_workspace(input.change.workspace.clone(), context.scope())
+                        .await?;
                     encode(library.apply(input, operation, context.scope()).await?)
                 }
                 _ => Err("skills_method_unavailable".into()),

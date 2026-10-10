@@ -98,6 +98,8 @@ async fn model_resolution_uses_original_eligibility_preferences_and_identity_bef
     std::fs::write(a.join("invalid/SKILL.md"), "invalid").unwrap();
     let library = Library::open(
         Configuration {
+            home: None,
+            project_roots: vec![],
             bundled: false,
             manage: false,
             preferences: true,
@@ -338,6 +340,8 @@ async fn model_resources_keep_original_root_and_revision_and_do_not_mix_changed_
     std::os::unix::fs::symlink(&outside, root.join("review/escape")).unwrap();
     let library = Library::open(
         Configuration {
+            home: None,
+            project_roots: vec![],
             bundled: false,
             manage: false,
             preferences: false,
@@ -449,6 +453,8 @@ async fn instruction_delivery_bounds_keep_utf8_and_report_truncation_in_the_orig
     write(&root, "large", &"大段说明🦀\"\n".repeat(20_000));
     let library = Library::open(
         Configuration {
+            home: None,
+            project_roots: vec![],
             bundled: false,
             manage: false,
             preferences: false,
@@ -507,6 +513,8 @@ async fn bundled_skills_share_model_eligibility_preparation_and_exact_resource_p
     let dir = tempfile::tempdir().unwrap();
     let mut library = Library::open(
         Configuration {
+            home: None,
+            project_roots: vec![],
             bundled: true,
             manage: false,
             preferences: true,

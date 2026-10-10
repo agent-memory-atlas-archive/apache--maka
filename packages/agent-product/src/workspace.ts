@@ -3219,7 +3219,12 @@ function frame<N extends Node>(
                 presentation.slot(
                   'skill-library',
                   'skills',
-                  { theme, locale, open: state.dialog === 'skills' },
+                  {
+                    theme,
+                    locale,
+                    open: state.dialog === 'skills',
+                    workspace: state.selected?.workspace ?? null,
+                  },
                   { closed: 'closed' },
                 ),
               ]

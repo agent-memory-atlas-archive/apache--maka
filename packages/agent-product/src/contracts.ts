@@ -21,6 +21,7 @@ import {
   contracts as native,
   type Contract,
   type AgentSession,
+  type AgentWorkspace,
   type AgentDataSource,
   type InteractionRecord,
   type SettingsModelChoice,
@@ -161,7 +162,9 @@ export interface HelpProps {
   locale: string;
   open: boolean;
 }
-export interface SkillLibraryProps extends HelpProps {}
+export interface SkillLibraryProps extends HelpProps {
+  workspace?: AgentWorkspace | null;
+}
 export interface DirectoryPickerProps {
   theme: Theme;
   locale: string;
@@ -422,7 +425,15 @@ export const helpContract = component(
 );
 export const skillLibraryContract = component(
   'maka.agent.SkillLibrary',
-  object({ theme: { $ref: '#/$defs/Theme' }, locale, open: { type: 'boolean' } }),
+  object(
+    {
+      theme: { $ref: '#/$defs/Theme' },
+      locale,
+      open: { type: 'boolean' },
+      workspace: { anyOf: [{ $ref: '#/$defs/AgentWorkspace' }, { type: 'null' }] },
+    },
+    ['theme', 'locale', 'open'],
+  ),
   { closed: object({}) },
 );
 export const directoryPickerContract = component(

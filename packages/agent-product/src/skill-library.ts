@@ -19,6 +19,7 @@
 
 import type {
   Action,
+  AgentWorkspace,
   ActionOutcome,
   Component,
   ComponentInput,
@@ -57,6 +58,7 @@ type Request =
   | { kind: 'read'; key: string }
   | { kind: 'preview' | 'mutate' | 'receipt' | 'outcome'; key: string };
 interface State {
+  workspace: AgentWorkspace | null;
   revision: number;
   serial: number;
   open: boolean;
@@ -75,6 +77,19 @@ interface State {
   current: { method: 'apply' | 'setPreference'; reference: RecoveryRef | null } | null;
   active: number;
   reveal: ReadingCommand | null;
+}
+function selectWorkspace(state: State, props: SkillLibraryProps) {
+  if (state.current || sameValue(state.workspace, props.workspace ?? null)) return false;
+  state.workspace = props.workspace ?? null;
+  state.page = null;
+  state.document = null;
+  state.preview = null;
+  state.pending = null;
+  state.cursor = 0;
+  state.history = [];
+  state.active = 0;
+  state.notice = null;
+  return true;
 }
 function same(a: EditorTextRef | null, b: EditorTextRef | null) {
   return a?.owner === b?.owner && a?.revision === b?.revision;
@@ -99,7 +114,7 @@ function list(
       binding: 'skills',
       member: 0,
       method: 'list',
-      input: { query: state.query, cursor },
+      input: { query: state.query, cursor, workspace: state.workspace },
       resources: {},
     },
   ];
@@ -141,7 +156,7 @@ function read(state: State, reference: string, revision: string, offset: number)
       binding: 'skills',
       member: 0,
       method: 'read',
-      input: { reference, revision, offset },
+      input: { reference, revision, offset, workspace: state.workspace },
       resources: {},
     },
   ];
@@ -160,7 +175,12 @@ function preview(state: State, kind: SkillLibraryChangeKind): Action[] {
       member: 0,
       method: 'preview',
       resources: {},
-      input: { kind, reference: document.entry.reference, revision: document.revision },
+      input: {
+        kind,
+        reference: document.entry.reference,
+        revision: document.revision,
+        workspace: state.workspace,
+      },
     },
   ];
 }
@@ -221,13 +241,15 @@ function settle(
   if (state.current.method === 'setPreference') {
     const result = reply.receipt.outcome.value as SkillLibraryPreferenceResult;
     state.current = null;
+    const changed = selectWorkspace(state, props);
     state.cleanupUnconfirmed = reply.receipt.cleanup.kind !== 'confirmed';
     if (result.kind === 'applied') {
       state.document = null;
       return state.open && props.open ? list(state) : [];
     }
+    const actions = changed && state.open && props.open ? list(state) : [];
     state.notice = result.kind === 'changed' ? 'skillsChanged' : 'skillsChangeRejected';
-    return [];
+    return actions;
   }
   return settledResult(
     state,
@@ -243,6 +265,7 @@ function settledResult(
   cleanup: OperationCleanup,
 ): Action[] {
   state.current = null;
+  const changed = selectWorkspace(state, props);
   state.cleanupUnconfirmed = cleanup.kind !== 'confirmed';
   if (result.kind === 'applied') {
     state.document = null;
@@ -250,8 +273,9 @@ function settledResult(
     state.notice = null;
     return actions;
   }
+  const actions = changed && state.open && props.open ? list(state) : [];
   state.notice = result.kind === 'changed' ? 'skillsChanged' : rejection(result.reason);
-  return [];
+  return actions;
 }
 function reveal(state: State, key: string) {
   state.reveal = {
@@ -275,7 +299,9 @@ function frame<N extends Node>(
   const busy = !!state.pending;
   const available = state.open && props.open && !busy && !state.preview && readable(state);
   const document = state.document;
-  const content: N[] = [];
+  const content: N[] = state.workspace
+    ? [ui.text('skills-project', state.workspace.path, 12, props.theme.muted)]
+    : [];
   if (state.preview) {
     const preview = state.preview;
     const kind = preview.review.change.kind;
@@ -340,7 +366,7 @@ function frame<N extends Node>(
     entry.issues.forEach((issue, at) => content.push(ui.text(`skill-issue-${at}`, issue)));
     content.push(
       presentation.slot(
-        `skill-body-${document.entry.reference}-${document.offset}`,
+        `skill-body-${state.pageKey}-${state.active}-${document.offset}`,
         'source',
         {
           source: document.text,
@@ -530,6 +556,7 @@ export function skillLibrary<N extends Node>(
   return {
     mount(props) {
       const state: State = {
+        workspace: props.workspace ?? null,
         revision: 0,
         serial: 0,
         open: props.open,
@@ -554,6 +581,7 @@ export function skillLibrary<N extends Node>(
     update(previous, props) {
       const state = { ...previous, revision: previous.revision + 1 };
       let actions: Action[] = [];
+      const changed = selectWorkspace(state, props);
       if (!props.open) {
         state.open = false;
         state.preview = null;
@@ -563,7 +591,7 @@ export function skillLibrary<N extends Node>(
           state.pending?.kind !== 'outcome'
         )
           state.pending = null;
-      } else if (!state.open) {
+      } else if (!state.open || changed) {
         state.open = true;
         state.document = null;
         actions = state.current ? recover(state) : state.pending ? [] : search(state);
@@ -602,6 +630,7 @@ export function skillLibrary<N extends Node>(
           if (result.status === 'operation') actions = settle(state, props, result.reply);
           else if (result.status === 'not_accepted') {
             state.current = null;
+            if (selectWorkspace(state, props) && state.open && props.open) actions = list(state);
             state.notice = 'skillsFailed';
           } else state.notice = 'skillsUnknown';
         } else if (request.kind === 'receipt') {

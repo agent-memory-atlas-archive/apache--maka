@@ -24,6 +24,7 @@ use super::*;
 #[derive(Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SkillToolRequest<T> {
+    pub workspace: Option<crate::contract::Workspace>,
     #[schemars(length(max = 128))]
     pub tools: Vec<String>,
     pub input: T,

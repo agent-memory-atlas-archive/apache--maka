@@ -13601,6 +13601,16 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  workspace: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentWorkspace',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   kind: {
                     $ref: '#/$defs/SkillLibraryChangeKind',
                   },
@@ -13616,6 +13626,26 @@ export const contracts = {
                   },
                 },
                 required: ['kind', 'reference', 'revision'],
+              },
+              AgentWorkspace: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                required: ['path', 'directoryIdentity', 'identity'],
               },
               SkillLibraryChangeKind: {
                 type: 'string',
@@ -13676,6 +13706,16 @@ export const contracts = {
             type: 'object',
             additionalProperties: false,
             properties: {
+              workspace: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/AgentWorkspace',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
               query: {
                 type: 'string',
                 maxLength: 256,
@@ -13695,6 +13735,26 @@ export const contracts = {
             title: 'SkillLibraryList',
             $schema: 'https://json-schema.org/draft/2020-12/schema',
             $defs: {
+              AgentWorkspace: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                required: ['path', 'directoryIdentity', 'identity'],
+              },
               SkillLibraryCursor: {
                 type: 'object',
                 additionalProperties: false,
@@ -13890,6 +13950,16 @@ export const contracts = {
             type: 'object',
             additionalProperties: false,
             properties: {
+              workspace: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/AgentWorkspace',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
               tools: {
                 type: 'array',
                 items: {
@@ -13907,6 +13977,26 @@ export const contracts = {
             title: 'SkillToolRequest',
             $schema: 'https://json-schema.org/draft/2020-12/schema',
             $defs: {
+              AgentWorkspace: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                required: ['path', 'directoryIdentity', 'identity'],
+              },
               SkillModelLoad: {
                 type: 'object',
                 additionalProperties: false,
@@ -14372,6 +14462,16 @@ export const contracts = {
             type: 'object',
             additionalProperties: false,
             properties: {
+              workspace: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/AgentWorkspace',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
               tools: {
                 type: 'array',
                 items: {
@@ -14389,6 +14489,26 @@ export const contracts = {
             title: 'SkillToolRequest',
             $schema: 'https://json-schema.org/draft/2020-12/schema',
             $defs: {
+              AgentWorkspace: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                required: ['path', 'directoryIdentity', 'identity'],
+              },
               SkillPrepare: {
                 type: 'object',
                 additionalProperties: false,
@@ -14688,6 +14808,16 @@ export const contracts = {
             type: 'object',
             additionalProperties: false,
             properties: {
+              workspace: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/AgentWorkspace',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
               kind: {
                 $ref: '#/$defs/SkillLibraryChangeKind',
               },
@@ -14706,6 +14836,26 @@ export const contracts = {
             title: 'SkillLibraryChange',
             $schema: 'https://json-schema.org/draft/2020-12/schema',
             $defs: {
+              AgentWorkspace: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                required: ['path', 'directoryIdentity', 'identity'],
+              },
               SkillLibraryChangeKind: {
                 type: 'string',
                 enum: ['install', 'update', 'delete'],
@@ -14804,6 +14954,16 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  workspace: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentWorkspace',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   kind: {
                     $ref: '#/$defs/SkillLibraryChangeKind',
                   },
@@ -14820,6 +14980,26 @@ export const contracts = {
                 },
                 required: ['kind', 'reference', 'revision'],
               },
+              AgentWorkspace: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                required: ['path', 'directoryIdentity', 'identity'],
+              },
               SkillLibraryChangeKind: {
                 type: 'string',
                 enum: ['install', 'update', 'delete'],
@@ -14834,6 +15014,16 @@ export const contracts = {
             type: 'object',
             additionalProperties: false,
             properties: {
+              workspace: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/AgentWorkspace',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
               reference: {
                 type: 'string',
                 minLength: 1,
@@ -14855,6 +15045,28 @@ export const contracts = {
             required: ['reference', 'revision', 'offset'],
             title: 'SkillLibraryRead',
             $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              AgentWorkspace: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                required: ['path', 'directoryIdentity', 'identity'],
+              },
+            },
           },
           output: {
             oneOf: [
@@ -15022,6 +15234,16 @@ export const contracts = {
             type: 'object',
             additionalProperties: false,
             properties: {
+              workspace: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/AgentWorkspace',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
               tools: {
                 type: 'array',
                 items: {
@@ -15039,6 +15261,26 @@ export const contracts = {
             title: 'SkillToolRequest',
             $schema: 'https://json-schema.org/draft/2020-12/schema',
             $defs: {
+              AgentWorkspace: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                required: ['path', 'directoryIdentity', 'identity'],
+              },
               SkillModelSearch: {
                 type: 'object',
                 additionalProperties: false,

@@ -4532,6 +4532,55 @@ export interface SetDefaultConnectionTargetInput {
  */
 export interface SkillLibraryConfiguration {
   /**
+   * Explicit user root; only its standard .maka/skills and .agents/skills collections are scanned.
+   */
+  home?: string | null;
+  /**
+   * Explicit ceilings for a request's selected project. An observation grants no access.
+   *
+   * @maxItems 8
+   */
+  projectRoots?:
+    | []
+    | [DirectoryRootSpec]
+    | [DirectoryRootSpec, DirectoryRootSpec]
+    | [DirectoryRootSpec, DirectoryRootSpec, DirectoryRootSpec]
+    | [DirectoryRootSpec, DirectoryRootSpec, DirectoryRootSpec, DirectoryRootSpec]
+    | [
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+      ]
+    | [
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+      ]
+    | [
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+      ]
+    | [
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+      ];
+  /**
    * Include the immutable skill instructions and resources shipped with this build.
    */
   bundled?: boolean;
@@ -4596,8 +4645,14 @@ export interface SkillLibrarySource {
   path: string;
 }
 export interface SkillLibraryList {
+  workspace?: AgentWorkspace | null;
   query: string;
   cursor?: SkillLibraryCursor | null;
+}
+export interface AgentWorkspace {
+  path: string;
+  directoryIdentity: string;
+  identity: string;
 }
 export interface SkillLibraryCursor {
   revision: string;
@@ -4622,6 +4677,7 @@ export interface SkillPreference {
   pinned: boolean;
 }
 export interface SkillLibraryRead {
+  workspace?: AgentWorkspace | null;
   reference: string;
   /**
    * Complete catalog revision from the list/read response.
@@ -4630,6 +4686,7 @@ export interface SkillLibraryRead {
   offset: number;
 }
 export interface SkillLibraryChange {
+  workspace?: AgentWorkspace | null;
   kind: SkillLibraryChangeKind;
   reference: string;
   revision: string;
@@ -4779,11 +4836,6 @@ export interface AgentDataSource {
   stateDomain: string;
   deployment: string;
   namespace: InstanceId;
-}
-export interface AgentWorkspace {
-  path: string;
-  directoryIdentity: string;
-  identity: string;
 }
 export interface AgentDirectory {
   name: string;

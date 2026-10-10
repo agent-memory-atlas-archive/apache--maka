@@ -325,6 +325,23 @@ export const configurations = {
     type: 'object',
     additionalProperties: false,
     properties: {
+      home: {
+        type: ['string', 'null'],
+        description:
+          'Explicit user root; only its standard .maka/skills and .agents/skills collections are scanned.',
+        minLength: 1,
+        maxLength: 4096,
+      },
+      projectRoots: {
+        type: 'array',
+        items: {
+          $ref: '#/$defs/DirectoryRootSpec',
+        },
+        description:
+          "Explicit ceilings for a request's selected project. An observation grants no access.",
+        maxItems: 8,
+        default: [],
+      },
       bundled: {
         type: 'boolean',
         description:
@@ -354,6 +371,19 @@ export const configurations = {
     title: 'SkillLibraryConfiguration',
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     $defs: {
+      DirectoryRootSpec: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          label: {
+            type: 'string',
+          },
+          path: {
+            type: 'string',
+          },
+        },
+        required: ['label', 'path'],
+      },
       SkillLibrarySource: {
         type: 'object',
         additionalProperties: false,

@@ -82,14 +82,14 @@ async function client(target, writable = true, preferencesWritable = false) {
         method === 'outcome' ? action.binding === 'outcomes' : action.method === method,
       );
     },
-    open() {
+    open(selected = entry) {
       c.reply(c.action('list'), {
         kind: 'page',
         writable,
         preferencesWritable,
         preferenceRevision: 7,
         revision: digest,
-        entries: [entry],
+        entries: [selected],
         after: null,
         diagnostics: [],
       });
@@ -100,7 +100,7 @@ async function client(target, writable = true, preferencesWritable = false) {
         preferencesWritable,
         preferenceRevision: 7,
         revision: digest,
-        entry,
+        entry: selected,
         text: 'Instructions',
         offset: 0,
         before: null,
@@ -135,6 +135,140 @@ async function client(target, writable = true, preferencesWritable = false) {
   return c;
 }
 for (const target of ['tui', 'desktop']) {
+  test(`${target} long project references fit native document keys and refreshed pages replace them`, async () => {
+    const c = await client(target);
+    const project = { ...entry, reference: `project:${'a'.repeat(64)}:agents:${'b'.repeat(255)}` };
+    const bodyKey = () => {
+      const visit = (value) => {
+        if (!value || typeof value !== 'object') return null;
+        if (typeof value.key === 'string' && value.key.startsWith('skill-body-')) return value.key;
+        for (const child of Object.values(value)) {
+          const found = visit(child);
+          if (found) return found;
+        }
+        return null;
+      };
+      const key = visit(c.out.frame.view);
+      assert.ok(key);
+      assert.ok(Buffer.byteLength(key) <= 128);
+      return key;
+    };
+    c.open(project);
+    const original = bodyKey();
+    c.raw('refresh');
+    c.open({ ...project, reference: project.reference.replace('agents:', 'maka:') });
+    assert.notEqual(bodyKey(), original);
+  });
+  test(`${target} changing workspace drops old reads and previews without mixing projects`, async () => {
+    const a = {
+      path: '/project-a',
+      directoryIdentity: digest,
+      identity: 'workspace:v1:00000000-0000-4000-8000-000000000001',
+    };
+    const b = {
+      ...a,
+      path: '/project-b',
+      identity: 'workspace:v1:00000000-0000-4000-8000-000000000002',
+    };
+    const c = await client(target);
+    c.update({ workspace: a });
+    const old = c.action('list');
+    assert.deepEqual(old.input.workspace, a);
+    c.update({ workspace: b });
+    const current = c.action('list');
+    assert.deepEqual(current.input.workspace, b);
+    assert.notEqual(current.key, old.key);
+    c.reply(old, { kind: 'page', entries: [entry] });
+    assert.equal(c.state.page, null);
+    c.reply(current, {
+      kind: 'page',
+      writable: true,
+      preferencesWritable: false,
+      preferenceRevision: 0,
+      revision: digest,
+      entries: [entry],
+      after: null,
+      diagnostics: [],
+    });
+    c.raw(`${c.state.pageKey}-row-0`);
+    assert.deepEqual(c.action('read').input.workspace, b);
+    c.update({ workspace: a });
+    assert.equal(c.state.document, null);
+    assert.deepEqual(c.action('list').input.workspace, a);
+    c.open().preview();
+    assert.deepEqual(c.state.preview.review.change.workspace, a);
+    c.update({ workspace: b });
+    assert.equal(c.state.preview, null);
+    c.raw('confirm-change');
+    assert.equal(c.action('apply'), undefined);
+  });
+  test(`${target} changing workspace keeps an unknown mutation on its original receipt`, async () => {
+    const a = {
+      path: '/project-a',
+      directoryIdentity: digest,
+      identity: 'workspace:v1:00000000-0000-4000-8000-000000000001',
+    };
+    const b = {
+      ...a,
+      path: '/project-b',
+      identity: 'workspace:v1:00000000-0000-4000-8000-000000000002',
+    };
+    const c = await client(target);
+    c.update({ workspace: a }).open().preview().raw('confirm-change');
+    const action = c.action('apply');
+    assert.deepEqual(action.input.change.workspace, a);
+    c.operation(action, { kind: 'unavailable', diagnostic: 'Reply lost' });
+    c.update({ workspace: b });
+    assert.deepEqual(c.state.workspace, a);
+    c.raw('check-change');
+    assert.deepEqual(c.action('read').input, reference);
+    c.reply(c.action('read'), {
+      reference,
+      receipt: {
+        kind: 'recorded',
+        outcome: { kind: 'returned', value: { kind: 'applied', reference: 'installed:review' } },
+        cleanup: { kind: 'confirmed' },
+      },
+    });
+    assert.deepEqual(c.state.workspace, b);
+    assert.deepEqual(c.action('list').input.workspace, b);
+  });
+  test(`${target} rejected original changes refresh the newly selected workspace after settlement`, async () => {
+    const workspace = {
+      path: '/next',
+      directoryIdentity: digest,
+      identity: 'workspace:v1:00000000-0000-4000-8000-000000000002',
+    };
+    for (const method of ['apply', 'setPreference']) {
+      for (const accepted of [true, false]) {
+        const c = (await client(target, true, true)).open();
+        if (method === 'apply') c.preview().raw('confirm-change');
+        else c.raw('toggle-enabled');
+        const action = c.action(method);
+        c.update({ workspace });
+        assert.equal(c.state.workspace, null);
+        if (accepted)
+          c.operation(
+            action,
+            {
+              kind: 'recorded',
+              outcome: { kind: 'returned', value: { kind: 'changed' } },
+              cleanup: { kind: 'confirmed' },
+            },
+            { ...reference, method },
+          );
+        else
+          c.event({
+            kind: 'action',
+            key: action.key,
+            event: { status: 'not_accepted', reason: 'denied' },
+          });
+        assert.equal(c.state.current, null);
+        assert.deepEqual(c.action('list').input.workspace, workspace);
+        assert.equal(c.state.notice, accepted ? 'skillsChanged' : 'skillsFailed');
+      }
+    }
+  });
   test(`${target} built-in instructions show their origin and permit only preference changes`, async () => {
     const c = await client(target, true, true);
     const builtin = { ...entry, bundled: true, reference: 'bundled:review', source: 'Built-in' };

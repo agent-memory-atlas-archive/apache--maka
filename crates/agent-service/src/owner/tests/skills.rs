@@ -172,3 +172,47 @@ async fn bundled_authoring_resources_reach_the_actual_model_without_added_author
         f.config.shutdown().await.unwrap();
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn standard_skills_follow_each_actual_session_for_preparation_and_model_requests() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let write = |root:&std::path::Path, name:&str, body:&str| {
+            std::fs::create_dir_all(root.join(name)).unwrap();
+            std::fs::write(root.join(name).join("SKILL.md"),format!("---\nname: {name}\ndescription: Review project\n---\n{body}")).unwrap();
+        };
+        let home=tempfile::tempdir().unwrap();
+        write(&home.path().join(".maka/skills"),"review","home instructions");
+        let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let setup=service_tools::Setup::skill_preparation(home.path().to_owned(),true).with_standard_sources();
+        let f=Fixture::with_services(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None,None,Some(setup)).await;
+        let roots=f.query("directories",json!({"kind":"roots"})).await.unwrap();
+        let mut references=Vec::new();
+        for (index,instructions) in [(0,"project A instructions"),(1,"project B instructions")] {
+            let path=std::path::Path::new(roots["roots"][index]["path"].as_str().unwrap());
+            write(&path.join(".agents/skills"),"review",instructions);
+            let created=f.mutation(2,"create",json!({"title":"Project skill","labels":[],"workspace":{"kind":"directory","selection":roots["roots"][index]["selection"]}}),Uuid::new_v4()).await.unwrap();
+            let session=created["session"]["id"].as_str().unwrap();
+            let sent=f.mutation(2,"send",json!({"sessionId":session,"message":"/skill:review","model":f.selection().await}),Uuid::new_v4()).await.unwrap();
+            assert_eq!(sent["kind"],"started","{sent}");
+            let (mut socket,_)=listener.accept().await.unwrap();
+            let request=request(&mut socket).await;
+            assert!(request["messages"].to_string().contains(instructions));
+            assert!(!request["messages"].to_string().contains("home instructions"));
+            for tool in request["tools"].as_array().unwrap() {
+                assert!(tool["function"]["parameters"]["properties"].get("workspace").is_none());
+            }
+            tool(&mut socket,"FindGuide",json!({"query":"review"})).await;
+            let (mut socket,catalog)=next(&listener).await;
+            assert_eq!(catalog["totalEligible"],1,"{catalog}");
+            let reference=catalog["matches"][0]["ref"].as_str().unwrap().to_owned();
+            assert!(reference.starts_with("project:")); references.push(reference);
+            tool(&mut socket,"LoadGuide",json!({"name":"review","revision":catalog["revision"]})).await;
+            let (mut socket,loaded)=next(&listener).await;
+            assert_eq!(loaded["instructions"],instructions,"{loaded}");
+            response(&mut socket).await;
+            f.drained().await;
+        }
+        assert_ne!(references[0],references[1]);
+        f.app.shutdown().await.unwrap(); f.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}

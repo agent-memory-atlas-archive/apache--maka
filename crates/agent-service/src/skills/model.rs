@@ -57,8 +57,9 @@ impl Library {
     ) -> Result<Value, String> {
         let request: SkillToolRequest<Value> =
             serde_json::from_value(input).map_err(|_| "skills_query_invalid")?;
+        let library = self.for_workspace(request.workspace, scope).await?;
         let host = host(request.tools)?;
-        let discovery = self.discover(scope).await?;
+        let discovery = library.discover(scope).await?;
         let preferences = self.preferences.read(scope).await?;
         let preference_revision = preferences.revision;
         let preferences = Preferences::Available(preferences.entries);
@@ -69,6 +70,7 @@ impl Library {
         };
         let revision = maka_runtime::artifact::content_digest(
             &serde_json::to_vec(&(
+                &library.workspace,
                 catalog
                     .fingerprint()
                     .map_err(|_| "skills_encoding_failed")?,

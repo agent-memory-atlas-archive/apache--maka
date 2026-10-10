@@ -182,18 +182,21 @@ impl Library {
                 if !entry.valid {
                     return rejected("invalid_skill");
                 }
-                let Some((id, root)) = self.sources.iter().find_map(|(source, root)| {
+                let Some((id, root)) = self.sources.iter().find_map(|source| {
                     change
                         .reference
-                        .strip_prefix(&format!("source:{}:", source.id))
+                        .strip_prefix(&format!("{}:", source.prefix))
                         .filter(|id| maka_skills::safe_source_id(id))
-                        .map(|id| (id, root))
+                        .map(|id| (id, source))
                 }) else {
                     return rejected("read_only_source");
                 };
-                let tree = Tree::read_view(&root.bind_scope(scope), id)
-                    .await
-                    .map_err(store_error)?;
+                let tree = Tree::read_view(
+                    &root.root.bind_scope(scope),
+                    &root.directory.join(id).to_string_lossy(),
+                )
+                .await
+                .map_err(store_error)?;
                 if tree
                     .get("SKILL.md")
                     .map(maka_runtime::artifact::content_digest)

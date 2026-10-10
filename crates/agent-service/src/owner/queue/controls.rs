@@ -174,7 +174,16 @@ impl Owner {
                 content.text = message;
                 let unprepared = content;
                 let (message, required_tools) = match self
-                    .prepare_skills(unprepared.clone(), parent)
+                    .prepare_skills(
+                        unprepared.clone(),
+                        Some(
+                            self.session(&input.session_id)
+                                .await?
+                                .configuration
+                                .workspace,
+                        ),
+                        parent,
+                    )
                     .await?
                 {
                     skills::Input::Ready {

@@ -474,7 +474,8 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
     let root = directory.path().join("ui");
     let host_root = directory.path().join("host");
     let workspace = directory.path().join("workspace");
-    let source = directory.path().join("skills");
+    let home = directory.path().join("home");
+    let source = home.join(".maka/skills");
     std::fs::create_dir(&workspace).unwrap();
     for index in 0..40 {
         let skill = source.join(format!("skill-{index:02}"));
@@ -507,7 +508,7 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
             "hostRoot":host_root, "hostDeployment":host_id, "managementDeployment":manager_id,
             "studioRoot":directory.path().join("unused"), "studioDeployment":Uuid::new_v4(),
             "workspaceRoots":[{"label":"Workspace", "path":workspace}],
-            "skills":{"manage":true,"preferences":true,"sources":[{"id":"local", "label":"Test collection", "path":source}]},
+            "skills":{"manage":true,"preferences":true,"home":home, "projectRoots":[{"label":"Workspace", "path":workspace}], "sources":[]},
         }),
         &refs,
     );
@@ -666,12 +667,12 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
     .unwrap();
     click(&mut tui, "[ Refresh ]", accent);
     tui.wait_until(|screen| {
-        screen.contains("Test collection · Updated skill 39 source")
+        screen.contains("User .maka/skills · Updated skill 39 source")
             && !screen.contains("Loading skills")
     });
     click(
         &mut tui,
-        "Test collection · Updated skill 39 source",
+        "User .maka/skills · Updated skill 39 source",
         accent,
     );
     tui.wait_for("UPDATED SKILL 39");
@@ -687,12 +688,12 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
     );
     click(&mut tui, "[ Refresh ]", accent);
     tui.wait_until(|screen| {
-        screen.contains("Test collection · Updated skill 39 source")
+        screen.contains("User .maka/skills · Updated skill 39 source")
             && !screen.contains("Loading skills")
     });
     click(
         &mut tui,
-        "Test collection · Updated skill 39 source",
+        "User .maka/skills · Updated skill 39 source",
         accent,
     );
     tui.wait_for("UPDATED SKILL 39");
@@ -715,7 +716,7 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
     tui.wait_for("Delete this installed skill and all its resource files.");
     click(&mut tui, "[ Confirm change ]", accent);
     tui.wait_until(|screen| {
-        screen.contains("Test collection · Updated skill 39 source")
+        screen.contains("User .maka/skills · Updated skill 39 source")
             && !screen.contains("Installed ·")
     });
     assert!(!installed.exists());
@@ -738,6 +739,32 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
     for path in [&root, &host_root] {
         drop(RootOwner::open(path, &ns).unwrap());
     }
+    // Seed two canonical sessions without a model connection. The actual UI
+    // still selects each session and forwards its workspace through the gateway.
+    runtime.block_on(async {
+        use sha2::{Digest, Sha256};
+        let store = EventLog::for_root(Arc::new(RootOwner::open(&host_root, &ns).unwrap()))
+            .await
+            .unwrap();
+        let loaded = store.load_application(host_id).await.unwrap().unwrap();
+        let namespace = vec![agent["host"]["instances"]["agent"]["key"].as_str().unwrap()];
+        let bytes = serde_json::to_vec(&(&loaded.source.reference.state_domain, host_id, namespace)).unwrap();
+        let prefix = format!("ma_{:x}_", Sha256::digest(bytes));
+        for (index, title) in ["Project Alpha", "Project Beta"].into_iter().enumerate() {
+            let path = workspace.join(format!("project-{index}"));
+            let skill = path.join(".agents/skills/project-guide");
+            std::fs::create_dir_all(&skill).unwrap();
+            std::fs::write(skill.join("SKILL.md"), format!("---\nname: project-guide\ndescription: Project instructions\n---\n{title} instructions")).unwrap();
+            let (path, directory_identity) = maka_fs_tools::directory::capture(&path).unwrap();
+            let handle = maka_fs_tools::directory::open(&path, &directory_identity).unwrap();
+            let identity = maka_fs_tools::workspace::ensure_directory_identity(path.clone(), handle).await.unwrap();
+            store.create_session(&format!("{prefix}{index:032x}"), "fixture", &json!({
+                "title":title,"labels":[],"workspace":{"path":path,"directoryIdentity":directory_identity,"identity":identity},
+                "permissions":{"access":"workspace_write","requestPermissions":true},"boundary_revision":0,
+            }), index as u64 + 1).await.unwrap();
+        }
+        store.shutdown().await.unwrap();
+    });
     // A normal Host/UI restart retains the actual enabled/pinned preference.
     let mut reopened = Pty::spawn(&[
         "application",
@@ -759,6 +786,54 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
     reopened.wait_for("Disabled · Pinned");
     reopened.send(b"\x1b");
     reopened.wait_until(|screen| !screen.contains("╭Skills"));
+    for (title, disabled) in [
+        ("Project Alpha", false),
+        ("Project Beta", false),
+        ("Project Alpha", true),
+    ] {
+        click(&mut reopened, title, accent);
+        // Session selection is asynchronous; the prior catalog must not be
+        // mistaken for the new workspace before the header has changed.
+        reopened.wait_until(|screen| {
+            screen
+                .lines()
+                .next()
+                .is_some_and(|line| line.contains(title))
+        });
+        reopened.send(b"\x0b");
+        reopened.wait_for("› Skills");
+        reopened.send(b"\r");
+        // Reopening retains the old list while refreshing; visible rows are
+        // disabled until that query finishes, even when the project is unchanged.
+        reopened.wait_until(|screen| {
+            screen.contains("Project instructions") && !screen.contains("Loading skills")
+        });
+        click(&mut reopened, "project-guide", accent);
+        reopened.wait_for(&format!("{title} instructions"));
+        if disabled {
+            reopened.wait_for("Disabled");
+        } else {
+            reopened.wait_for("Disable");
+            assert!(
+                !reopened
+                    .screen
+                    .snapshot()
+                    .unwrap()
+                    .screen
+                    .contains("Disabled")
+            );
+            if title == "Project Alpha" {
+                click(&mut reopened, "[ Disable ]", accent);
+                reopened.wait_until(|screen| {
+                    screen.contains("Project instructions")
+                        && !screen.contains(&format!("{title} instructions"))
+                        && !screen.contains("Loading skills")
+                });
+            }
+        }
+        reopened.send(b"\x1b");
+        reopened.wait_until(|screen| !screen.contains("╭Skills"));
+    }
     reopened.send(b"\x11");
     reopened.finish();
     assert!(!reopened.screen.snapshot().unwrap().alternate_screen);
@@ -786,7 +861,7 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
         ui.shutdown().await.unwrap();
         cursor
     });
-    std::fs::remove_dir_all(&source).unwrap();
+    std::fs::remove_dir_all(&home).unwrap();
     let mut recovered = Pty::spawn(&[
         "application",
         "run",

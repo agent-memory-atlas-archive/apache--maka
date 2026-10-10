@@ -33,6 +33,13 @@ pub use preparation::*;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "SkillLibraryConfiguration")]
 pub struct Configuration {
+    /// Explicit user root; only its standard .maka/skills and .agents/skills collections are scanned.
+    #[schemars(length(min = 1, max = 4096))]
+    pub home: Option<String>,
+    /// Explicit ceilings for a request's selected project. An observation grants no access.
+    #[serde(default)]
+    #[schemars(length(max = 8))]
+    pub project_roots: Vec<maka_runtime_host::server::DirectoryRootSpec>,
     /// Include the immutable skill instructions and resources shipped with this build.
     #[serde(default)]
     pub bundled: bool,
@@ -72,6 +79,7 @@ pub struct Cursor {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "SkillLibraryList")]
 pub struct List {
+    pub workspace: Option<crate::contract::Workspace>,
     #[schemars(length(max = 256))]
     pub query: String,
     pub cursor: Option<Cursor>,
@@ -116,6 +124,7 @@ pub enum Page {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "SkillLibraryRead")]
 pub struct Read {
+    pub workspace: Option<crate::contract::Workspace>,
     #[schemars(length(min = 1, max = 512))]
     pub reference: String,
     /// Complete catalog revision from the list/read response.
@@ -161,6 +170,7 @@ pub enum ChangeKind {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "SkillLibraryChange")]
 pub struct Change {
+    pub workspace: Option<crate::contract::Workspace>,
     pub kind: ChangeKind,
     #[schemars(length(min = 1, max = 512))]
     pub reference: String,
