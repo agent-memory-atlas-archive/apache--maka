@@ -1000,3 +1000,27 @@ fn declared_tab_and_interrupt_keep_original_focus_and_cannot_run_after_hiding() 
     assert_eq!(tui.application.frame(&child).unwrap().state["commands"], 5);
     close(&mut tui);
 }
+
+#[test]
+fn closing_a_surface_waits_for_its_native_child_without_reporting_cleanup_failure() {
+    let (_runtime, mut tui) = input_presenter(false, false);
+    draw(&mut tui, 40, 12);
+    let outer = tui.application.child_mount(&tui.root, "editor").unwrap();
+    let child = tui.application.child_mount(outer, "draft").unwrap().clone();
+    let mut original = tui.resources.owners[&child.id()]
+        .resources
+        .reserve()
+        .unwrap();
+    original.start();
+    tui.retire().unwrap();
+    tui.surface_closed(&tui.surface(), Ok(())).unwrap();
+    assert!(!tui.can_shutdown());
+    assert!(tui.application.frame(&child).is_ok());
+    assert!(tui.application.frame(&tui.root).is_ok());
+    tui.pump().unwrap();
+    assert!(!tui.can_shutdown());
+    original.complete(Ok(()));
+    tui.pump().unwrap();
+    assert!(tui.can_shutdown());
+    tui.shutdown().unwrap();
+}

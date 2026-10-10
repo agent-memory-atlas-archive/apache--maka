@@ -216,7 +216,11 @@ impl Pty {
             self.read();
             if let Some(status) = self.child.try_wait().unwrap() {
                 self.read();
-                assert!(status.success());
+                assert!(
+                    status.success(),
+                    "TUI exited {status}:\n{}",
+                    String::from_utf8_lossy(&self.output[self.output.len().saturating_sub(8192)..])
+                );
                 return;
             }
             assert!(Instant::now() < deadline, "TUI did not exit");

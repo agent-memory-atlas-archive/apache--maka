@@ -29,7 +29,7 @@ pub(super) struct Owner {
     pub identity: Rc<()>,
     pub recipe: Rc<dyn Widget>,
     pub state: Box<dyn Any>,
-    resources: std::sync::Arc<maka_plugins::call::Resources>,
+    pub(super) resources: std::sync::Arc<maka_plugins::call::Resources>,
     kind: TypeId,
     revision: Option<u64>,
     pub live: bool,

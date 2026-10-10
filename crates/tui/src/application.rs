@@ -1057,6 +1057,8 @@ impl Presenter {
             self.focus = None;
         }
         let mut failure = None;
+        // A native child can still own a worker after its parent's resources
+        // close. Keep both mounts until the original child actually settles.
         for mount in retired {
             if mount == self.root {
                 if let SurfaceState::Retiring { cause, cleanup } = &mut self.surface
@@ -1071,6 +1073,7 @@ impl Presenter {
                     };
                     match self.application.close(&mount, native.and(cleanup)) {
                         Ok(()) => self.surface = SurfaceState::Closed { cause },
+                        Err(Error::Core(maka_plugin_core::Error::CleanupPending)) => {}
                         Err(error) => {
                             failure.get_or_insert(error);
                         }
@@ -1082,8 +1085,11 @@ impl Presenter {
                     Ok(true) => Ok(()),
                     Err(error) => Err(error),
                 };
-                if let Err(error) = self.application.close(&mount, cleanup) {
-                    failure.get_or_insert(error);
+                match self.application.close(&mount, cleanup) {
+                    Ok(()) | Err(Error::Core(maka_plugin_core::Error::CleanupPending)) => {}
+                    Err(error) => {
+                        failure.get_or_insert(error);
+                    }
                 }
             }
         }
