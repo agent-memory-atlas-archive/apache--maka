@@ -221,6 +221,7 @@ function frame<N extends Node>(
     ],
     {
       visible: state.route === 'catalog',
+      autoFocus: true,
       gap: target === 'desktop' ? 16 : 1,
       padding: target === 'desktop' ? 24 : 1,
       terminal: { grow: 1 },

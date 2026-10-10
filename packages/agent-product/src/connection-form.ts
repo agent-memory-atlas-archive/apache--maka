@@ -875,6 +875,7 @@ function frame<N extends Node>(
             ),
           ],
       {
+        autoFocus: true,
         shortcuts:
           target === 'tui'
             ? [

@@ -1327,3 +1327,75 @@ fn dialog_deferred_native_layout_panic_returns_error_and_releases_original_owner
     presenter.shutdown().unwrap();
     assert_eq!(drops.get(), 1);
 }
+
+#[test]
+fn revealed_container_focus_waits_for_flush_and_preserves_user_navigation() {
+    let mut initial = scroll_scene("manual", &"reading\n".repeat(30));
+    initial["children"][0]["auto_focus"] = json!(true);
+    initial["children"][0]["visible"] = json!(false);
+    initial["children"]
+        .as_array_mut()
+        .unwrap()
+        .insert(0, json!({"kind":"button","key":"header","label":"Header"}));
+    let source = Rc::new(std::cell::RefCell::new(initial));
+    let (_runtime, mut presenter) = native(
+        View::ChangingScene(source.clone()),
+        Rc::new(Cell::new(true)),
+    );
+    flushed(&mut presenter, 24, 8);
+    assert_eq!(presenter.focus.as_ref().unwrap().key, "header");
+    source.borrow_mut()["children"][1]["visible"] = json!(true);
+    refresh(&mut presenter);
+    presenter.sync_native().unwrap();
+    let area = Rect::new(0, 0, 24, 8);
+    let mut buffer = Buffer::empty(area);
+    drop(presenter.paint(area, &mut buffer).unwrap());
+    assert_eq!(presenter.focus.as_ref().unwrap().key, "header");
+    let stale = presenter.paint(area, &mut buffer).unwrap();
+    source.borrow_mut()["children"][1]["visible"] = json!(false);
+    refresh(&mut presenter);
+    source.borrow_mut()["children"][1]["visible"] = json!(true);
+    refresh(&mut presenter);
+    presenter.sync_native().unwrap();
+    presenter.present(stale);
+    assert_eq!(presenter.focus.as_ref().unwrap().key, "header");
+    let first = presenter.paint(area, &mut buffer).unwrap();
+    let twin = presenter.paint(area, &mut buffer).unwrap();
+    presenter.present(first);
+    assert_eq!(presenter.focus.as_ref().unwrap().key, "body");
+    presenter.input(key(KeyCode::PageDown)).unwrap();
+    assert!(scroll_state(&presenter, "body").0 > 0);
+    presenter.input(key(KeyCode::Tab)).unwrap();
+    let chosen = presenter.focus.as_ref().unwrap().key.clone();
+    assert_ne!(chosen, "body");
+    presenter.present(twin);
+    assert_eq!(presenter.focus.as_ref().unwrap().key, chosen);
+    flushed(&mut presenter, 24, 2);
+    flushed(&mut presenter, 24, 8);
+    assert_eq!(presenter.focus.as_ref().unwrap().key, chosen);
+
+    // A newly revealed form chooses its first enabled, actually placed control.
+    source.borrow_mut()["children"][1]["visible"] = json!(false);
+    refresh(&mut presenter);
+    flushed(&mut presenter, 24, 8);
+    source.borrow_mut()["children"][1]["visible"] = json!(true);
+    source.borrow_mut()["children"][1]["children"] = json!([
+        {"kind":"button","key":"disabled","label":"Disabled","disabled":true},
+        {"kind":"button","key":"edit","label":"Edit"}
+    ]);
+    refresh(&mut presenter);
+    flushed(&mut presenter, 24, 8);
+    assert_eq!(presenter.focus.as_ref().unwrap().key, "edit");
+    let before = presenter.application.frame(&presenter.root).unwrap().state["count"]
+        .as_u64()
+        .unwrap();
+    presenter.input(key(KeyCode::Enter)).unwrap();
+    assert_eq!(
+        presenter.application.frame(&presenter.root).unwrap().state["count"],
+        before + 1
+    );
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
+    presenter.shutdown().unwrap();
+}

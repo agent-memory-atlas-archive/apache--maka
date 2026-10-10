@@ -243,6 +243,7 @@ pub struct PaintedScene {
     pub(super) viewport: Rect,
     pub(super) targets: Vec<Target>,
     pub(super) keyboard: Option<std::rc::Rc<Ancestor>>,
+    focus_offers: Vec<(TargetIdentity, Target)>,
     placed: std::collections::BTreeSet<uuid::Uuid>,
     laid_out: std::collections::BTreeMap<uuid::Uuid, PaintedMount>,
     dependencies: std::collections::BTreeMap<uuid::Uuid, PaintedMount>,
@@ -624,6 +625,7 @@ impl Presenter {
             tooltip: None,
             viewport: area,
             targets: Vec::new(),
+            focus_offers: Vec::new(),
             placed: Default::default(),
             laid_out: Default::default(),
             dependencies: Default::default(),
@@ -776,12 +778,38 @@ impl Presenter {
                 autofocus.get_or_insert_with(|| target.clone());
             }
         }
+        for (container, candidate) in scene.focus_offers {
+            if !frames_current
+                || !super::dialog::same_scope(&container.scope, &scope)
+                || !self.application.mount_visible(&container.mount)
+                || !scene.targets.iter().any(|target| {
+                    target.same(&candidate)
+                        && super::dialog::same_scope(&target.scope, &candidate.scope)
+                })
+            {
+                continue;
+            }
+            let Some(owner) = self.resources.owners.get_mut(&container.mount.id()) else {
+                continue;
+            };
+            if !owner.live || !std::rc::Rc::ptr_eq(&owner.identity, &container.owner) {
+                continue;
+            }
+            if owner
+                .state
+                .downcast_mut::<super::scroll::SceneState>()
+                .and_then(|state| state.focus.get_mut(&container.key))
+                .is_some_and(maka_ui::focus::FocusOnReveal::presented)
+            {
+                autofocus.get_or_insert(candidate);
+            }
+        }
         self.drag = self
             .drag
             .take()
             .filter(|target| self.resources.pointer_capture(target).unwrap_or(false))
             .and_then(|old| scene.targets.iter().find(|new| new.same(&old)).cloned());
-        // A newly revealed native input wins this presentation. Consume the
+        // A newly revealed control wins this presentation. Consume the
         // modal return either way; it must not steal focus on a later frame.
         let restored = self
             .restore_focus
@@ -1442,6 +1470,7 @@ impl Presenter {
                 shortcuts,
                 focus_shortcuts,
                 focus_group,
+                auto_focus,
                 wheel,
                 viewport,
                 ..
@@ -1598,6 +1627,39 @@ impl Presenter {
                 }
                 if scrolling || scoped {
                     scene.ancestry.pop();
+                }
+                if *auto_focus
+                    && self.resources.owners[&mount.id()]
+                        .state
+                        .downcast_ref::<super::scroll::SceneState>()
+                        .unwrap()
+                        .focus
+                        .get(key)
+                        .is_some_and(maka_ui::focus::FocusOnReveal::pending)
+                {
+                    let targets = &scene.targets[target_start..];
+                    let candidate = targets
+                        .iter()
+                        .filter(|target| target.tab_index >= 0 && !target.area.is_empty())
+                        .min_by_key(|target| (target.tab_index == 0, target.tab_index))
+                        .or_else(|| {
+                            targets.iter().find(|target| {
+                                target.mount == *mount
+                                    && target.key == *key
+                                    && matches!(target.kind, TargetKind::Scroll)
+                            })
+                        });
+                    if let Some(candidate) = candidate {
+                        scene.focus_offers.push((
+                            TargetIdentity {
+                                mount: mount.clone(),
+                                key: key.clone(),
+                                owner: self.resources.owners[&mount.id()].identity.clone(),
+                                scope: scene.input_scope.clone(),
+                            },
+                            candidate.clone(),
+                        ));
+                    }
                 }
                 if let Some(border) = border {
                     let focused = self.focus.as_ref().is_some_and(|focused| {

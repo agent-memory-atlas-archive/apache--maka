@@ -31,6 +31,7 @@ pub(super) struct SceneState {
     pub dialogs: BTreeMap<String, std::rc::Rc<super::dialog::Opening>>,
     pub reading: Option<super::reading::ReadingState>,
     pub scrolls: BTreeMap<String, ScrollState>,
+    pub focus: BTreeMap<String, maka_ui::focus::FocusOnReveal>,
 }
 #[derive(Default)]
 pub(super) struct ScrollState {
@@ -68,6 +69,70 @@ impl Viewport {
     }
 }
 impl SceneState {
+    pub fn prepare_focus_scopes(&mut self, node: &Node, visible: bool) {
+        fn visit(node: &Node, visible: bool, state: &mut SceneState, keys: &mut Vec<String>) {
+            match node {
+                Node::Item { content, .. } => visit(content, visible, state, keys),
+                Node::Dialog {
+                    background,
+                    content,
+                    open,
+                    ..
+                } => {
+                    visit(background, visible, state, keys);
+                    visit(content, visible && *open, state, keys);
+                }
+                Node::ContextMenu {
+                    key,
+                    background,
+                    content,
+                    ..
+                } => {
+                    visit(background, visible, state, keys);
+                    visit(
+                        content,
+                        visible && state.dialogs.contains_key(key),
+                        state,
+                        keys,
+                    );
+                }
+                Node::AdaptivePane {
+                    background,
+                    content,
+                    ..
+                } => {
+                    visit(background, visible, state, keys);
+                    // Placement decides inline/overlay admission. Resizing alone
+                    // must not re-arm an already presented focus offer.
+                    visit(content, visible, state, keys);
+                }
+                Node::Stack {
+                    key,
+                    auto_focus,
+                    visible: local,
+                    children,
+                    ..
+                } => {
+                    let visible = visible && *local;
+                    if *auto_focus {
+                        keys.push(key.clone());
+                        state
+                            .focus
+                            .entry(key.clone())
+                            .or_default()
+                            .reconcile(visible);
+                    }
+                    for child in children {
+                        visit(child, visible, state, keys);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut keys = Vec::new();
+        visit(node, visible, self, &mut keys);
+        self.focus.retain(|key, _| keys.contains(key));
+    }
     pub fn commit(&mut self, node: &Node) {
         fn visit(node: &Node, keys: &mut Vec<String>) {
             if let Node::Item { content, .. } = node {

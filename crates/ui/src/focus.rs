@@ -17,9 +17,9 @@
  * under the License.
  */
 
-//! Native one-shot focus on an input's eligibility transition. Clipping does
+//! Native one-shot focus on structural eligibility transitions. Clipping does
 //! not change eligibility; only actual presentation consumes a pending offer.
-//! 原生输入的单次聚焦机会：结构可见与可用性决定资格，视口裁剪不重新触发。
+//! 原生控件的单次聚焦机会：结构可见与可用性决定资格，视口裁剪不重新触发。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FocusOnReveal {
     #[default]

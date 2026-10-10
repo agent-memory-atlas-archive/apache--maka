@@ -405,6 +405,10 @@ pub enum Node {
         /// One Tab stop; arrows navigate its items in declaration order.
         #[serde(default)]
         focus_group: bool,
+        /// On structural reveal, focus the first visible enabled tab stop;
+        /// a scrollable container without tab stops receives focus itself.
+        #[serde(default)]
+        auto_focus: bool,
         #[serde(default)]
         wheel: Option<WheelCommands>,
         #[serde(default)]

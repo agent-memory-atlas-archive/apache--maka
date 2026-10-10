@@ -495,6 +495,11 @@ export type TerminalScene =
        * One Tab stop; arrows navigate its items in declaration order.
        */
       focus_group?: boolean;
+      /**
+       * On structural reveal, focus the first visible enabled tab stop;
+       * a scrollable container without tab stops receives focus itself.
+       */
+      auto_focus?: boolean;
       wheel?: TerminalWheelCommands | null;
       /**
        * @maxItems 32

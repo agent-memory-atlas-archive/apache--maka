@@ -476,6 +476,8 @@ scrollbar dragging navigate the presented list. Clipped/resized lists use actual
 visible rows. Props supply localized browse, parent, empty and truncation labels;
 observations never expose local paths or directory contents.
 
+Terminal Stack accepts `auto_focus` (default false) for the same one-shot reveal behavior. After successful presentation it chooses the first visible enabled tab stop in the container, or its own scroll target if no tab stop is available. Native editor offers take priority, then inner containers before outer containers. Stable redraws and clipping do not steal focus.
+
 TextInput, SecretInput and Textarea accept optional `autoFocus` (default false). A structurally visible, enabled input offers its original native focus once on reveal. Stable updates and viewport clipping do not repeat the offer. Hidden or disabled inputs cancel it; showing or enabling them can offer again. Actual native presentation admits the first eligible offer and consumes the other painted offers. Desktop keeps active native composition in its original editor. These props do not replace native text, selection or undo ownership.
 
 Textarea can opt into terminal file-path paste with `filePaste: {context, maxFiles}`

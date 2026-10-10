@@ -100,17 +100,14 @@ impl super::Widget for Node {
         Some(self)
     }
     fn prepare_focus(&self, state: &mut dyn std::any::Any, visible: bool) {
-        state
-            .downcast_mut::<super::scroll::SceneState>()
-            .unwrap()
-            .prepare_dialogs(self, visible);
+        let state = state.downcast_mut::<super::scroll::SceneState>().unwrap();
+        state.prepare_dialogs(self, visible);
+        state.prepare_focus_scopes(self, visible);
     }
     fn deactivate(&self, state: &mut dyn std::any::Any) {
-        state
-            .downcast_mut::<super::scroll::SceneState>()
-            .unwrap()
-            .dialogs
-            .clear();
+        let state = state.downcast_mut::<super::scroll::SceneState>().unwrap();
+        state.dialogs.clear();
+        state.focus.clear();
     }
     fn handles_tab(&self, state: &dyn std::any::Any, key: &str) -> bool {
         matches!(self.overlay(key), Some(Node::Choice(_)))

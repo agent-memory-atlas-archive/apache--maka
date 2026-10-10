@@ -53,6 +53,7 @@ interface BoxOptions {
   background?: number;
   viewport?: boolean;
   focusGroup?: boolean;
+  autoFocus?: boolean;
   wheel?: { up: string; down: string };
   border?: boolean;
   busy?: boolean;
@@ -414,6 +415,7 @@ function terminalPaint(theme: Theme): Painter<TerminalNode> {
         focus_shortcuts: options.focusShortcuts ?? [],
         viewport: options.viewport ?? false,
         focus_group: options.focusGroup ?? false,
+        auto_focus: options.autoFocus ?? false,
         wheel: options.wheel ?? null,
         border: options.border
           ? {

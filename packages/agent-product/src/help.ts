@@ -90,6 +90,7 @@ export function help<N extends Node>(
                 ),
                 {
                   scroll: 'manual',
+                  autoFocus: true,
                   gap: terminal ? 0 : 12,
                   terminal: { grow: 1, basis: 0 },
                   style: { width: fill, height: pixels(280), minWidth: 0, minHeight: 0 },

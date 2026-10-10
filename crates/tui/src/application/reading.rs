@@ -218,6 +218,7 @@ impl Widget for Reading {
     fn prepare_focus(&self, state: &mut dyn Any, visible: bool) {
         let state = state_mut(state);
         state.prepare_dialogs(&self.node, visible);
+        state.prepare_focus_scopes(&self.node, visible);
         let reading = state.reading.as_mut().unwrap();
         reading.focus_visible = visible && self.node.visible();
         if !reading.focus_visible
@@ -467,6 +468,7 @@ impl Widget for Reading {
     }
     fn deactivate(&self, state: &mut dyn Any) {
         state_mut(state).dialogs.clear();
+        state_mut(state).focus.clear();
         let reading = state_mut(state).reading.as_mut().unwrap();
         reading.alive = false;
         reading.cancel();
