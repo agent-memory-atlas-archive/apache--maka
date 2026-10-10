@@ -32,7 +32,7 @@ import { sameValue } from './value.js';
 import { compactLabel, fill, output, type Node, type Presentation } from './view.js';
 
 /** These keys explicitly name display contracts. Names and JSON shapes do not. */
-export function toolPresentation(key: string | null | undefined) {
+export function filePresentation(key: string | null | undefined) {
   switch (key) {
     case 'maka.workspace.Files@1/readText':
       return 'read';
@@ -46,8 +46,31 @@ export function toolPresentation(key: string | null | undefined) {
       return null;
   }
 }
+export function toolPresentation(key: string | null | undefined) {
+  switch (key) {
+    case 'maka.workspace.Processes@1/execute':
+      return 'execute';
+    case 'maka.workspace.Processes@1/read':
+      return 'processRead';
+    case 'maka.workspace.Processes@1/writeStdin':
+      return 'stdin';
+    case 'maka.workspace.Processes@1/stop':
+      return 'stop';
+    default:
+      return filePresentation(key);
+  }
+}
 function compactPart(id: string) {
-  return id === 'path' || id === 'status' || id === 'resolvedPath';
+  return [
+    'path',
+    'status',
+    'resolvedPath',
+    'command',
+    'reference',
+    'resultKind',
+    'processStatus',
+    'exitCode',
+  ].includes(id);
 }
 type Part = {
   field: 'arguments' | 'result';
@@ -144,7 +167,11 @@ function scalar(state: State, id: string): string | number | null {
   if (part.format === 'text') return part.page!.text;
   try {
     const value: unknown = JSON.parse(part.page!.text);
-    return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+    return typeof value === 'number' &&
+      Number.isSafeInteger(value) &&
+      (id === 'exitCode' || value >= 0)
+      ? value
+      : null;
   } catch {
     return null;
   }
@@ -200,7 +227,67 @@ export function toolDetails<N extends Node>(
       state.parts = {};
     }
     const kind = toolPresentation(state.tool.call?.presentation);
-    if (kind && state.tool.call) {
+    const file = filePresentation(state.tool.call?.presentation);
+    const process = !!kind && !file;
+    if (process && state.tool.call) {
+      if (kind === 'execute') add(state, 'command', 'arguments', ['command']);
+      else add(state, 'reference', 'arguments', ['ref']);
+      if (state.tool.result) add(state, 'status', 'result', ['kind']);
+      if (scalar(state, 'status') === 'completed') {
+        add(state, 'resultKind', 'result', ['value', 'kind']);
+        const resultKind = scalar(state, 'resultKind');
+        if (resultKind === 'terminal' || resultKind === 'shell_run') {
+          add(state, 'processStatus', 'result', ['value', 'status']);
+          if (kind !== 'execute') add(state, 'command', 'result', ['value', 'cmd']);
+          else if (resultKind === 'shell_run') add(state, 'reference', 'result', ['value', 'ref']);
+          const status = scalar(state, 'processStatus');
+          if (
+            status === 'completed' ||
+            status === 'failed' ||
+            status === 'timed_out' ||
+            status === 'cancelled'
+          )
+            add(state, 'exitCode', 'result', ['value', 'exitCode'], 'json');
+          if (props.expanded) {
+            add(state, 'cwd', 'result', ['value', 'cwd']);
+            if (
+              typeof status === 'string' &&
+              !(
+                kind === 'execute' &&
+                resultKind === 'shell_run' &&
+                (status === 'starting' || status === 'running')
+              )
+            )
+              add(state, 'outputMode', 'result', ['value', 'output', 'mode']);
+            if (status === 'failed' || status === 'orphaned')
+              add(state, 'processFailure', 'result', ['value', 'failureMessage']);
+            const mode = scalar(state, 'outputMode');
+            if (mode === 'pipes') {
+              for (const id of ['stdout', 'stderr']) {
+                add(state, id, 'result', ['value', 'output', id]);
+                add(
+                  state,
+                  id + 'Truncated',
+                  'result',
+                  ['value', 'output', id + 'Truncated'],
+                  'json',
+                );
+              }
+            } else if (mode === 'pty') {
+              for (const id of ['screen', 'scrollback'])
+                add(state, id, 'result', ['value', 'output', id]);
+              add(state, 'truncated', 'result', ['value', 'output', 'truncated'], 'json');
+            }
+            if (mode === 'pipes' || mode === 'pty')
+              add(state, 'redacted', 'result', ['value', 'output', 'redacted'], 'json');
+            if (kind === 'stdin' || kind === 'stop')
+              add(state, 'control', 'result', ['value', 'operation'], 'json');
+          }
+        }
+      } else if (props.expanded && scalar(state, 'status') === 'failed')
+        add(state, 'failure', 'result', ['message']);
+    }
+    if (file && state.tool.call) {
       add(state, 'path', 'arguments', kind === 'patch' ? ['operation', 'path'] : ['path']);
       if (state.tool.result) add(state, 'status', 'result', ['kind']);
       if (scalar(state, 'status') === 'completed' && (kind === 'write' || kind === 'edit'))
@@ -225,19 +312,28 @@ export function toolDetails<N extends Node>(
         } else if (scalar(state, 'status') === 'failed')
           add(state, 'failure', 'result', ['message']);
       }
-      for (const [id, part] of Object.entries(state.parts))
-        if (
-          (props.expanded || compactPart(id)) &&
-          (!part.page || part.preparing) &&
-          !part.pending &&
-          !part.failed
-        )
-          request(state, part, part.position, actions);
     }
+    for (const [id, part] of Object.entries(state.parts))
+      if (
+        (props.expanded || compactPart(id)) &&
+        (!part.page || part.preparing) &&
+        !part.pending &&
+        !part.failed
+      )
+        request(state, part, part.position, actions);
     const ui = presentation.paint(props.theme),
       text = copy(props.locale);
     const labels: Record<string, string> = {
       path: text.toolFilePath,
+      command: text.terminalCommandLabel,
+      reference: text.toolProcessRef,
+      cwd: text.toolProcessCwd,
+      stdout: text.toolStdout,
+      stderr: text.toolStderr,
+      screen: text.toolScreen,
+      scrollback: text.toolScrollback,
+      processFailure: text.toolProcessFailure,
+      control: text.toolProcessControl,
       before: kind === 'write' ? text.toolRecordedBefore : text.toolRequestedBefore,
       after: text.toolRequestedAfter,
       content: text.toolReadContent,
@@ -406,10 +502,10 @@ export function toolDetails<N extends Node>(
           props.theme.muted,
         ),
       );
-    if (state.parts.status?.failed)
+    if (file && state.parts.status?.failed)
       sections.push(ui.button('status-retry', text.sourceRetry, !!state.parts.status.pending));
     const summary: N[] = [];
-    if (kind) {
+    if (file) {
       const label =
         typeof path === 'string' && path.trim()
           ? compactLabel(path, presentation.target === 'tui' ? 28 : 64)
@@ -436,6 +532,71 @@ export function toolDetails<N extends Node>(
               : []),
             ui.button(`summary-${id}-retry`, text.sourceRetry, !!part.pending),
           );
+      }
+    }
+    if (process) {
+      const commandPart = state.parts.command;
+      const command =
+        commandPart?.page?.offset === 0 && !commandPart.failed
+          ? commandPart.page.text + (complete(commandPart) ? '' : '…')
+          : scalar(state, 'reference');
+      if (typeof command === 'string')
+        summary.push(
+          ui.text(
+            'process-summary',
+            compactLabel(command, presentation.target === 'tui' ? 72 : 96),
+            14,
+            props.theme.muted,
+          ),
+        );
+      if (command == null && (state.parts.command?.pending || state.parts.reference?.pending))
+        summary.push(ui.text('process-summary-loading', text.loading, 13, props.theme.muted));
+      const status = scalar(state, 'processStatus');
+      const statusLabels: Record<string, string> = {
+        starting: text.toolProcessStarting,
+        running: text.toolProcessRunning,
+        completed: text.completed,
+        failed: text.toolProcessFailed,
+        timed_out: text.toolProcessTimedOut,
+        cancelled: text.toolProcessCancelled,
+        orphaned: text.toolProcessOrphaned,
+      };
+      const exit = scalar(state, 'exitCode');
+      const statusText =
+        typeof status === 'string' && Object.hasOwn(statusLabels, status)
+          ? `${text.toolProcessRecorded}: ${statusLabels[status]}${typeof exit === 'number' ? ` · ${text.toolExitCode}: ${exit}` : ''}`
+          : scalar(state, 'status') === 'failed'
+            ? text.toolBusinessFailure
+            : null;
+      if (statusText) {
+        summary.push(ui.text('process-summary-status', statusText, 13, props.theme.muted));
+        sections.unshift(ui.text('process-status', statusText, 13, props.theme.muted));
+      }
+      for (const id of ['stdoutTruncated', 'stderrTruncated', 'truncated', 'redacted']) {
+        const part = state.parts[id];
+        if (part && complete(part) && part.page!.text === 'true')
+          sections.push(
+            ui.text(
+              id + '-notice',
+              id === 'redacted' ? text.toolOutputRedacted : text.terminalTruncated,
+              13,
+              props.theme.muted,
+            ),
+          );
+      }
+      for (const [id, part] of Object.entries(state.parts)) {
+        if (!part.failed) continue;
+        const notice = (prefix: string) =>
+          ui.box(
+            prefix + id + '-unavailable',
+            [
+              ui.text(prefix + id + '-error', text.sourceFailed, 13, props.theme.muted),
+              ui.button(prefix + id + '-retry', text.sourceRetry, !!part.pending),
+            ],
+            { row: true, gap: 1 },
+          );
+        if (compactPart(id)) summary.push(notice('summary-'));
+        if (!(id in labels)) sections.push(notice(''));
       }
     }
     const out = output(

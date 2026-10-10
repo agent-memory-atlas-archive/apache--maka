@@ -232,6 +232,7 @@ impl Setup {
                 title: None,
                 name: name.into(),
                 method: method.into(),
+                presentation: Some(format!("maka.workspace.Processes@1/{method}")),
                 ..self.selection()
             })
             .collect()

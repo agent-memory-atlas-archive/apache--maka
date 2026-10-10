@@ -105,6 +105,10 @@ export function messageView<N extends Node>(
           write: text.toolWriteAction,
           edit: text.toolEditAction,
           patch: text.toolPatchAction,
+          execute: text.terminalCommand,
+          processRead: text.toolProcessRead,
+          stdin: text.toolProcessInput,
+          stop: text.stop,
         }[kind]
       : tool && message.tool?.call?.name;
   const result = message.tool?.result;

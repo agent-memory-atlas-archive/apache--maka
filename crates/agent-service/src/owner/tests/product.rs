@@ -23,6 +23,8 @@ mod drafts;
 mod message_copy;
 #[path = "product/message_details.rs"]
 mod message_details;
+#[path = "product/process_details.rs"]
+mod process_details;
 #[path = "product/studio.rs"]
 mod studio;
 #[cfg(target_os = "macos")]
@@ -427,7 +429,7 @@ fn packaged_product(case: ProductCase) {
             request_with_key(&mut socket, "private-fixture-key").await;
             let workspace = response_ready.await.unwrap();
             if process_permissions {
-                let input = json!({"command":"printf 'native file contents' > native-approved.txt","login":false,"timeout_ms":5000,
+                let input = json!({"command":"printf 'native file contents' > native-approved.txt; printf 'process stdout'; printf 'process stderr' >&2; exit 7","login":false,"timeout_ms":5000,
                     "additional_permissions":{"filesystem":[{"path":workspace.join("native-approved.txt"),"scope":"exact","access":"write"}],"network":"denied"},
                     "justification":"Save the command output in the selected workspace."});
                 let delta = json!({"id":"process-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"process-call","type":"function","function":{"name":"Execute","arguments":input.to_string()}}]},"finish_reason":null}]});
@@ -1877,9 +1879,19 @@ process.stdout.write(output.outputFiles[0].text);
             click(&mut presenter, "[ Hide details ]");
             await_screen(&mut presenter, "[ Copy · native-approved.txt ]");
         }
+        if process_permissions {
+            await_screen(
+                &mut presenter,
+                "Recorded process status: Failed · Exit code: 7",
+            );
+            capture(&mut presenter, "native-process-summary.txt");
+        }
         // The preceding service result exposes business JSON and the exact
         // original receipt through one retained, fenced source reader.
         click(&mut presenter, "[ Show details ]");
+        if process_permissions {
+            process_details::run(&mut presenter, &capture);
+        }
         if !process_permissions {
             await_screen(&mut presenter, "Requested content");
             await_screen(&mut presenter, "native file contents");
@@ -1985,6 +1997,9 @@ process.stdout.write(output.outputFiles[0].text);
         click(&mut presenter, "[ Tool result ]");
         await_screen(&mut presenter, "completed");
         click(&mut presenter, "[ Back to conversation ]");
+        if process_permissions {
+            process_details::header(&mut presenter);
+        }
         click(&mut presenter, "[ Hide details ]");
         click(&mut presenter, "[ Read message source ]");
         await_screen(&mut presenter, "[ Back to conversation ]");
@@ -2107,22 +2122,22 @@ process.stdout.write(output.outputFiles[0].text);
             .unwrap();
         presenter.input(Event::Paste("native".into())).unwrap();
         await_screen(&mut presenter, "[ 2.");
-        // The selected canonical tool row includes its name, body and arguments,
-        // and uses the same retained disclosure as the ordinary timeline.
-        await_screen(&mut presenter, "Message");
+        // The matching original field can reveal below the disclosure header.
         await_screen(&mut presenter, "native file contents");
-        // The matching field is revealed after its source arrives. With a
-        // settlement line, the heading can sit above this short preview.
-        let (column, row) = wait_for_target(&mut presenter, "Message", 0);
-        presenter
-            .input(Event::Mouse(MouseEvent {
-                kind: MouseEventKind::ScrollUp,
-                column,
-                row,
-                modifiers: KeyModifiers::NONE,
-            }))
-            .unwrap();
-        draw(&mut presenter);
+        if process_permissions {
+            process_details::header(&mut presenter);
+        } else {
+            let (column, row) = wait_for_target(&mut presenter, "Message", 0);
+            presenter
+                .input(Event::Mouse(MouseEvent {
+                    kind: MouseEventKind::ScrollUp,
+                    column,
+                    row,
+                    modifiers: KeyModifiers::NONE,
+                }))
+                .unwrap();
+            draw(&mut presenter);
+        }
         click(&mut presenter, "[ Hide details ]");
         await_screen(&mut presenter, "[ Show details ]");
         assert!(!screen(&draw(&mut presenter)).contains("Message"));

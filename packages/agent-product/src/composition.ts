@@ -356,15 +356,20 @@ export function composition(configuration: CompositionConfiguration): Applicatio
     'agent',
     {
       ...configuration.agent,
-      // This composition binds `files` to the known native v1 contract. Freeze
-      // its display key in Agent configuration, before any call is admitted.
-      tools: configuration.agent.tools.map((tool) =>
-        tool.presentation === undefined &&
-        tool.import === 'files' &&
-        ['readText', 'write', 'edit', 'applyPatch'].includes(tool.method)
-          ? { ...tool, presentation: `maka.workspace.Files@1/${tool.method}` }
-          : tool,
-      ),
+      // These imports bind known native v1 contracts. Freeze presentation in
+      // the configuration; tool names and response shapes cannot opt into it.
+      tools: configuration.agent.tools.map((tool) => {
+        if (tool.presentation !== undefined) return tool;
+        const contract =
+          tool.import === 'files' &&
+          ['readText', 'write', 'edit', 'applyPatch'].includes(tool.method)
+            ? 'maka.workspace.Files'
+            : tool.import === 'processes' &&
+                ['execute', 'read', 'writeStdin', 'stop'].includes(tool.method)
+              ? 'maka.workspace.Processes'
+              : null;
+        return contract ? { ...tool, presentation: `${contract}@1/${tool.method}` } : tool;
+      }),
     },
     {
       ...(asksForms ? { forms: [local('forms', 'forms')] } : {}),

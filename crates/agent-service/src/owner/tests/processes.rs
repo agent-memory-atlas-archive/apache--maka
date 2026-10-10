@@ -120,6 +120,30 @@ async fn native_process_foreground_enforces_workspace_and_protected_boundaries()
         .await;
         assert_eq!(result["value"]["status"], "completed", "{result}");
         assert_eq!(result["value"]["output"]["stdout"], "native");
+        let facts = service_tools::facts(&f, &session).await;
+        assert!(facts.iter().any(|fact| matches!(fact, maka_runtime::event::Fact::ToolDispatched {presentation:Some(key), ..} if key == "maka.workspace.Processes@1/execute")));
+        let through = *f.store.subscribe_commits().borrow();
+        while !f.store.prepare_transcript(&session, through, 32).await.unwrap() {}
+        let mut position = json!({"kind":"start"});
+        let mut result_row = None;
+        for _ in 0..32 {
+            let page=f.query("history",json!({"sessionId":session,"through":through,"position":position})).await.unwrap();
+            if page["kind"] == "preparing" { continue; }
+            if let Some(row)=page["chunks"].as_array().unwrap().iter().find(|row| row["role"]=="tool_result") {
+                result_row=Some(row.clone()); break;
+            }
+            assert!(!page["after"].is_null(), "process result missing from complete history: {page}");
+            position=json!({"kind":"after","cursor":page["after"]});
+        }
+        let row=result_row.expect("bounded process history");
+        assert_eq!(row["tool"]["call"]["presentation"], "maka.workspace.Processes@1/execute");
+        for (path, expected) in [(json!(["value","output","stdout"]),"native"),(json!(["value","exitCode"]),"0")] {
+            let source=f.query("source",json!({"sessionId":session,"through":through,"source":{"kind":"sequence","sequence":row["sequence"]},"field":"result","path":path,"position":{"kind":"start"}})).await.unwrap();
+            assert_eq!(source["source"]["text"], expected);
+            assert_eq!(source["source"]["tool"]["call"]["presentation"], "maka.workspace.Processes@1/execute");
+            assert!(source["filePath"].is_null());
+        }
+
         assert_eq!(
             std::fs::read_to_string(f.workspace.join("actual.txt")).unwrap(),
             "native"

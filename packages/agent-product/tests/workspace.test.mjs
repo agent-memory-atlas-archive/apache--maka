@@ -943,6 +943,10 @@ test('both product compositions use actual immutable package refs and check in t
             ...configuration.processes,
             sessionOwner: [keys.agent],
           });
+          assert.equal(
+            host.instances.agent.configuration.values.tools.at(-1).presentation,
+            'maka.workspace.Processes@1/execute',
+          );
           assert.deepEqual(host.instances.agent.bindings.processes, [
             { kind: 'instance', path: ['workspace-processes'], export: 'processes' },
           ]);
@@ -10911,7 +10915,13 @@ test('history preview does not accept selected JSON as the matching original fie
   assert.equal(find.state.search.history.preview.sections[0].source, null);
 });
 
-async function detailClient(target, method, expanded = true, sessionId = uuid(1)) {
+async function detailClient(
+  target,
+  method,
+  expanded = true,
+  sessionId = uuid(1),
+  contract = 'maka.workspace.Files',
+) {
   const { component } = await import(
     pathToFileURL(resolve(root, `dist/packages/tool-details/${target}.js`))
   );
@@ -10928,7 +10938,7 @@ async function detailClient(target, method, expanded = true, sessionId = uuid(1)
         name: 'Arbitrary alias',
         title: null,
         pending: false,
-        presentation: `maka.workspace.Files@1/${method}`,
+        presentation: `${contract}@1/${method}`,
       },
       result: { sequence: 50, isError: false, image: false },
     },
@@ -10940,7 +10950,11 @@ async function detailClient(target, method, expanded = true, sessionId = uuid(1)
     requests: new Map(),
     adopt(out) {
       this.out = out;
-      for (const action of out.actions) this.requests.set(action.key, action);
+      for (const action of out.actions) {
+        assert.equal(action.binding, 'agent');
+        assert.equal(action.method, 'source', 'historical cards must only read original source');
+        this.requests.set(action.key, action);
+      }
       return out;
     },
     update(patch) {
@@ -13640,3 +13654,129 @@ test('TUI copy names and reads the canonical tool result or arguments', async ()
     assert.deepEqual(out.actions, []);
   }
 });
+
+for (const target of ['tui', 'desktop']) {
+  test(`${target} explicit process cards separate returned operations from recorded exit and page original streams`, async () => {
+    const client = await detailClient(
+      target,
+      'execute',
+      false,
+      uuid(1),
+      'maka.workspace.Processes',
+    );
+    assert.deepEqual(
+      [...client.requests.values()].map((a) => a.input.path),
+      [['command'], ['kind']],
+    );
+    client.answer(['command'], 'printf original; exit 7');
+    client.answer(['kind'], 'completed');
+    client.answer(['value', 'kind'], 'terminal');
+    client.answer(['value', 'status'], 'failed');
+    client.answer(['value', 'exitCode'], '7', { format: 'json' });
+    assert.match(
+      JSON.stringify(client.out.frame.view),
+      /Recorded process status: Failed · Exit code: 7/,
+    );
+    assert.equal(client.requests.size, 0, 'collapsed card never hydrates output');
+    client.update({ expanded: true });
+    client.answer(['value', 'cwd'], '/recorded/workspace');
+    client.answer(['value', 'failureMessage'], 'Command exited with code 7');
+    client.answer(['value', 'output', 'mode'], 'pipes');
+    const first = '中😀\n',
+      second = 'original tail',
+      totalBytes = Buffer.byteLength(first + second);
+    client.answer(['value', 'output', 'stdout'], first, { totalBytes });
+    client.answer(['value', 'output', 'stderr'], 'original diagnostic');
+    client.answer(['value', 'output', 'stdoutTruncated'], 'true', { format: 'json' });
+    client.answer(['value', 'output', 'stderrTruncated'], 'false', { format: 'json' });
+    client.answer(['value', 'output', 'redacted'], 'true', { format: 'json' });
+    assert.equal(client.slots().find((s) => s.key === 'stdout-body').props.source, first);
+    assert.equal(
+      client.slots().find((s) => s.key === 'stderr-body').props.source,
+      'original diagnostic',
+    );
+    assert.match(JSON.stringify(client.out.frame.view), /Output is truncated/);
+    assert.match(JSON.stringify(client.out.frame.view), /Output was redacted/);
+    client.raw('stdout-next');
+    const next = client.find(['value', 'output', 'stdout']);
+    assert.deepEqual(next.input.position, { kind: 'after', offset: Buffer.byteLength(first) });
+    assert.equal(next.input.through, 100);
+    client.answer(['value', 'output', 'stdout'], second, {
+      offset: Buffer.byteLength(first),
+      totalBytes,
+    });
+    assert.equal(client.slots().find((s) => s.key === 'stdout-body').props.source, second);
+    assert.equal(
+      client.out.frame.state.published.path,
+      null,
+      'process cwd is never a file capability',
+    );
+  });
+  test(`${target} process snapshots retain recorded PTY controls without live reads or implicit input`, async () => {
+    const background = await detailClient(
+      target,
+      'execute',
+      true,
+      uuid(1),
+      'maka.workspace.Processes',
+    );
+    background.answer(['command'], 'sleep 30');
+    background.answer(['kind'], 'completed');
+    background.answer(['value', 'kind'], 'shell_run');
+    background.answer(['value', 'ref'], 'maka://runtime/background-tasks/original');
+    background.answer(['value', 'status'], 'running');
+    background.answer(['value', 'cwd'], '/recorded');
+    assert.equal(background.requests.size, 0, 'active execute records omit output');
+    for (const method of ['read', 'writeStdin', 'stop']) {
+      const client = await detailClient(target, method, true, uuid(1), 'maka.workspace.Processes');
+      client.answer(['ref'], 'maka://runtime/background-tasks/original');
+      client.answer(['kind'], 'completed');
+      client.answer(['value', 'kind'], 'shell_run');
+      client.answer(['value', 'cmd'], 'original command');
+      client.answer(['value', 'status'], 'cancelled');
+      client.answer(['value', 'exitCode'], '130', { format: 'json' });
+      client.answer(['value', 'cwd'], '/recorded');
+      client.answer(['value', 'output', 'mode'], 'pty');
+      client.answer(['value', 'output', 'screen'], '原始 screen');
+      client.answer(['value', 'output', 'scrollback'], 'earlier screen');
+      client.answer(['value', 'output', 'truncated'], 'false', { format: 'json' });
+      client.answer(['value', 'output', 'redacted'], 'false', { format: 'json' });
+      if (method !== 'read')
+        client.answer(
+          ['value', 'operation'],
+          JSON.stringify({ kind: method === 'stop' ? 'stop' : 'pty_control', applied: false }),
+          { format: 'json' },
+        );
+      assert.equal(client.slots().find((s) => s.key === 'screen-body').props.source, '原始 screen');
+      assert.equal(client.requests.size, 0);
+      client.update({ expanded: false });
+      client.update({ expanded: true });
+      assert.equal(client.requests.size, 0, 'folding does not poll a process');
+      assert.equal(client.out.frame.state.published.path, null);
+    }
+  });
+  test(`${target} process presentation requires an explicit contract and rejects mismatched immutable evidence`, async () => {
+    const client = await detailClient(target, 'execute', true, uuid(1), 'maka.workspace.Processes');
+    const command = client.find(['command']);
+    client.complete(command, {
+      status: 'succeeded',
+      value: client.page(command, 'spoofed', {
+        tool: { ...client.props.tool, toolUseId: uuid(999) },
+      }),
+    });
+    assert.equal(client.out.frame.state.parts.command.failed, true);
+    assert.ok(!client.slots().some((s) => s.props.source === 'spoofed'));
+    const late = client.find(['kind']);
+    client.requests.clear();
+    client.update({
+      tool: {
+        ...client.props.tool,
+        call: { ...client.props.tool.call, presentation: null, name: 'Shell' },
+      },
+    });
+    assert.equal(client.out.actions.length, 0);
+    client.complete(late, { status: 'succeeded', value: client.page(late, 'completed') });
+    assert.equal(Object.keys(client.out.frame.state.parts).length, 0);
+    assert.equal(client.out.actions.length, 0);
+  });
+}

@@ -57,7 +57,7 @@ import {
 } from './message-copy.js';
 import { copy } from './locale.js';
 import { toolCards } from './tool-cards.js';
-import { toolPresentation } from './tool-details.js';
+import { filePresentation, toolPresentation } from './tool-details.js';
 import { messageView, sourceFieldLabel } from './message-view.js';
 import { output, fill, pixels, compactLabel, type Presentation, type Node } from './view.js';
 import { sameValue } from './value.js';
@@ -542,7 +542,7 @@ export function components<N extends Node>(
         context.sessionId === props.toolContext?.sessionId &&
         context.through === props.toolContext.through &&
         context.toolUseId === message?.tool?.toolUseId &&
-        !!toolPresentation(message.tool.call?.presentation) &&
+        !!filePresentation(message.tool.call?.presentation) &&
         context.presentation === (message.tool.call?.presentation ?? null) &&
         context.call === (message.tool.call?.sequence ?? null) &&
         context.result === (message.tool.result?.sequence ?? null)
