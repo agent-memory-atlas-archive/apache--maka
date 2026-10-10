@@ -109,6 +109,7 @@ pub fn registry() -> NativeRegistry<dyn Widget> {
     super::terminal::register(&mut registry);
     super::rows::register(&mut registry);
     super::checkpoint::register(&mut registry);
+    super::text_file::register(&mut registry);
     super::morph_mark::register(&mut registry);
     super::textarea::register(&mut registry);
     super::input::register(&mut registry);

@@ -143,6 +143,8 @@ A `raw` event and its synchronous component observers may return `decision: { pr
 
 Desktop and TUI provide `contracts.locale` through the explicit `maka.ui.locale` native instance (`Locale` value export). It captures `LC_ALL`, `LC_MESSAGES`, `LANG`, then the platform locale at activation, normalizes POSIX locale names, and preserves the language, script and region. `C`/`POSIX` and unavailable or malformed values resolve to `en`. Products own supported languages and explicit preferences; this value grants no environment-variable access.
 
+The TUI `maka.ui.text-file` native instance exports `contracts.textFile` (`TextFile`). Installation configuration grants one absolute `path`; null disables it. Owner-addressed read/write commands cannot select paths. It accepts regular UTF-8 files up to 16 KiB, rejects symbolic links at the file entry, and atomically replaces a file after checking its expected SHA-256 digest. This detects ordinary external edits, not an atomic cross-process compare-and-swap. Native workers begin after commit, obey resource budgets and drain on retirement; observations do not automatically persist product state. Product plugins own file formats and import/export policy.
+
 ```sh
 npm run schema:generate -w @maka-agent/plugin-sdk
 npm run schema:check -w @maka-agent/plugin-sdk

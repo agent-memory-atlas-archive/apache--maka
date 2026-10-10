@@ -3023,6 +3023,204 @@ export const contracts = {
       },
     },
   },
+  textFile: {
+    name: 'maka.ui.TextFile',
+    version: 1,
+    transport: 'local',
+    interface: {
+      kind: 'component',
+      props: {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        title: 'TextFileProps',
+        type: 'object',
+        properties: {
+          command: {
+            anyOf: [
+              {
+                $ref: '#/$defs/TextFileCommand',
+              },
+              {
+                type: 'null',
+              },
+            ],
+          },
+        },
+        additionalProperties: false,
+        $defs: {
+          TextFileCommand: {
+            type: 'object',
+            properties: {
+              owner: {
+                type: 'string',
+              },
+              sequence: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              operation: {
+                $ref: '#/$defs/TextFileOperation',
+              },
+            },
+            additionalProperties: false,
+            required: ['owner', 'sequence', 'operation'],
+          },
+          TextFileOperation: {
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'read',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  expectedDigest: {
+                    type: ['string', 'null'],
+                  },
+                  text: {
+                    type: 'string',
+                    maxLength: 16384,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'write',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'text'],
+              },
+            ],
+          },
+        },
+      },
+      events: {
+        changed: {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          title: 'TextFileObservation',
+          type: 'object',
+          properties: {
+            owner: {
+              type: 'string',
+            },
+            path: {
+              type: ['string', 'null'],
+            },
+            sequence: {
+              type: 'integer',
+              format: 'uint64',
+              minimum: 0,
+            },
+            state: {
+              $ref: '#/$defs/TextFileState',
+            },
+          },
+          additionalProperties: false,
+          required: ['owner', 'sequence', 'state'],
+          $defs: {
+            TextFileState: {
+              oneOf: [
+                {
+                  type: 'object',
+                  properties: {
+                    kind: {
+                      type: 'string',
+                      const: 'unavailable',
+                    },
+                  },
+                  required: ['kind'],
+                  additionalProperties: false,
+                },
+                {
+                  type: 'object',
+                  properties: {
+                    kind: {
+                      type: 'string',
+                      const: 'idle',
+                    },
+                  },
+                  required: ['kind'],
+                  additionalProperties: false,
+                },
+                {
+                  type: 'object',
+                  properties: {
+                    kind: {
+                      type: 'string',
+                      const: 'loading',
+                    },
+                  },
+                  required: ['kind'],
+                  additionalProperties: false,
+                },
+                {
+                  type: 'object',
+                  properties: {
+                    kind: {
+                      type: 'string',
+                      const: 'saving',
+                    },
+                  },
+                  required: ['kind'],
+                  additionalProperties: false,
+                },
+                {
+                  type: 'object',
+                  properties: {
+                    digest: {
+                      type: ['string', 'null'],
+                    },
+                    text: {
+                      type: ['string', 'null'],
+                    },
+                    kind: {
+                      type: 'string',
+                      const: 'ready',
+                    },
+                  },
+                  additionalProperties: false,
+                  required: ['kind'],
+                },
+                {
+                  type: 'object',
+                  properties: {
+                    error: {
+                      $ref: '#/$defs/TextFileError',
+                    },
+                    kind: {
+                      type: 'string',
+                      const: 'failed',
+                    },
+                  },
+                  additionalProperties: false,
+                  required: ['kind', 'error'],
+                },
+              ],
+            },
+            TextFileError: {
+              type: 'string',
+              enum: [
+                'read_failed',
+                'write_failed',
+                'invalid_file',
+                'too_large',
+                'invalid_utf8',
+                'conflict',
+                'worker_failed',
+              ],
+            },
+          },
+        },
+      },
+      captures: {},
+    },
+  },
   morphMark: {
     name: 'maka.ui.MorphMark',
     version: 1,

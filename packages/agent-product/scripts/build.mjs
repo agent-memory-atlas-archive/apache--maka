@@ -388,6 +388,7 @@ for (const [name, spec] of Object.entries(specifications)) {
     Object.assign(entries.tui.imports, {
       rows: one(sdk.contracts.rows),
       checkpoint: one(sdk.contracts.valueCheckpoint),
+      themeFile: one(sdk.contracts.textFile),
       welcome: one(sdk.contracts.morphMark),
       input: one(sdk.contracts.textInput),
     });
@@ -443,6 +444,15 @@ const mechanical = {
         'maka.ui.morph-mark',
         { MorphMark: required(sdk.contracts.morphMark) },
         sdk.configurations.morphMark,
+      ),
+    },
+  },
+  'text-file': {
+    entries: {
+      tui: native(
+        'maka.ui.text-file',
+        { TextFile: required(sdk.contracts.textFile) },
+        sdk.configurations.textFile,
       ),
     },
   },

@@ -109,6 +109,8 @@ Page/Home/End 与稳定子节点锚点由原生 owner 持有。绘制只读，�
 
 Desktop 与 TUI 通过显式 `maka.ui.locale` 原生实例提供 `contracts.locale`（`Locale` 值导出）。激活时依次读取 `LC_ALL`、`LC_MESSAGES`、`LANG` 与系统语言，规范化 POSIX 名称并保留语言、文字和地区。`C`/`POSIX`、缺失或无效值回退到 `en`。支持哪些语言以及显式偏好的优先级由产品决定；该值不授予环境变量读取能力。
 
+TUI 的 `maka.ui.text-file` 原生实例导出 `contracts.textFile`（`TextFile`）。安装配置只授予一个绝对 `path`，null 表示禁用；带 owner 的读写命令不能选择路径。它仅接受 16 KiB 以内的普通 UTF-8 文件，拒绝文件入口的符号链接，保存时检查预期 SHA-256 摘要后原子替换文件。这可检测通常的外部修改，但不是跨进程原子 CAS。原生 worker 仅在 commit 后启动，遵守资源预算并在退役时排空；观察结果不会自动持久化产品状态。文件格式及导入/导出策略由产品插件维护。
+
 ```sh
 npm run schema:generate -w @maka-agent/plugin-sdk
 npm run schema:check -w @maka-agent/plugin-sdk

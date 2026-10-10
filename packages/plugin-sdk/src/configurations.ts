@@ -19,6 +19,19 @@
 
 // Generated from Rust runtime schemas. Run npm run schema:generate -w @maka-agent/plugin-sdk.
 export const configurations = {
+  textFile: {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    title: 'TextFileConfiguration',
+    type: 'object',
+    properties: {
+      path: {
+        type: ['string', 'null'],
+        minLength: 1,
+        maxLength: 4096,
+      },
+    },
+    additionalProperties: false,
+  },
   morphMark: {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     title: 'MorphMarkConfiguration',

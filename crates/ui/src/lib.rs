@@ -48,6 +48,7 @@ pub mod shortcut;
 pub mod source;
 pub mod terminal;
 pub mod text;
+pub mod text_file;
 pub mod textarea;
 mod tree;
 mod values;

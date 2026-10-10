@@ -44,7 +44,7 @@ node packages/agent-product/scripts/compose.mjs \
   --maka /absolute/path/to/maka
 ```
 
-TUI 外观页提供 Maka、Dusk、Paper、Terminal 与自定义配色，支持英文、简中、繁中、ASCII 符号与减少动画。自动语言依次跟随原生进程的 `LC_ALL`、`LC_MESSAGES`、`LANG` 与系统语言；已保存的显式语言优先，选择“自动”可恢复跟随环境，即使组合配置了固定语言。自定义名称、基底和语义/语法色即时预览；保存沿原实例 checkpoint 持久化 UI 偏好，关闭未保存的编辑会恢复已保存外观，并保留会话草稿。主题文件导入/导出和完整原 TUI 体验对齐仍未完成。
+TUI 外观页提供 Maka、Dusk、Paper、Terminal 与自定义配色，支持英文、简中、繁中、ASCII 符号与减少动画。自动语言依次跟随原生进程的 `LC_ALL`、`LC_MESSAGES`、`LANG` 与系统语言；已保存的显式语言优先，选择“自动”可恢复跟随环境，即使组合配置了固定语言。自定义名称、基底和语义/语法色即时预览；保存沿原实例 checkpoint 持久化 UI 偏好，关闭未保存的编辑会恢复已保存外观，并保留会话草稿。安装配置可用绝对路径 `themeFile` 开启主题文件的重新读取与保存（16 KiB 以内的 UTF-8 自定义主题 JSON）。重新读取只改变预览，保存到文件只导出自定义主题；当前偏好仍需“保存并应用”。编辑器显示文件路径，外部修改后必须重新读取才能导出。完整原 TUI 体验对齐仍未完成。
 
 安装配置包含 `presentation`（`desktop`/`tui`）、完整 `locale`（或 `auto`）、`scheme`（`light`/`dark`）、`hostRoot`、`hostDeployment`、`managementDeployment`、SDK 生成的 `AgentConfiguration` 对应 `agent`，以及 `keys`。连接凭据和 endpoint 属于选中的 Host Root，不进入产品组合。
 

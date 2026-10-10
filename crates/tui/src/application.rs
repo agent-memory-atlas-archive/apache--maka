@@ -45,6 +45,7 @@ mod scroll;
 mod selection;
 mod source;
 mod terminal;
+mod text_file;
 mod textarea;
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use futures_util::{FutureExt, StreamExt, stream::FuturesUnordered};

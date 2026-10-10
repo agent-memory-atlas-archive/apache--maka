@@ -65,6 +65,7 @@ export const packageNames = [
   'label',
   'rows',
   'checkpoint',
+  'text-file',
   'morph-mark',
   'appearance',
   'locale',
@@ -91,6 +92,8 @@ export interface CompositionConfiguration {
   locale: string;
   scheme: 'light' | 'dark';
   appearance?: Omit<AppearanceConfiguration, 'scheme'>;
+  /** Fixed local custom-theme import/export file; absent disables file operations. */
+  themeFile?: string;
   packages: Record<PackageName, PackageRef>;
   keys: Record<PackageName, string>;
   agent: AgentConfiguration;
@@ -416,6 +419,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
           ? {
               rows: [local('rows', 'Rows')],
               checkpoint: [local('checkpoint', 'Checkpoint')],
+              themeFile: [local('text-file', 'TextFile')],
               welcome: [local('morph-mark', 'MorphMark')],
               input: [local('input', 'TextInput')],
             }
@@ -517,6 +521,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
       ? {
           rows: node('rows'),
           checkpoint: node('checkpoint'),
+          'text-file': node('text-file', { path: configuration.themeFile ?? null }),
           'morph-mark': node('morph-mark', { ...welcomeMark }),
         }
       : {}),

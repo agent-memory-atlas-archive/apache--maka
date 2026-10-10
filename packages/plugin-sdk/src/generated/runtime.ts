@@ -73,6 +73,8 @@ export type RuntimeProtocol =
   | ReadingObservation
   | RowsProps
   | ValueCheckpointProps
+  | TextFileProps
+  | TextFileObservation
   | MorphMarkProps
   | MorphMarkConfiguration
   | ValueCheckpointObservation
@@ -1035,6 +1037,45 @@ export type ValueCheckpointCommand =
       value: unknown;
       kind: 'write';
     };
+export type TextFileOperation =
+  | {
+      kind: 'read';
+    }
+  | {
+      expectedDigest?: string | null;
+      text: string;
+      kind: 'write';
+    };
+export type TextFileState =
+  | {
+      kind: 'unavailable';
+    }
+  | {
+      kind: 'idle';
+    }
+  | {
+      kind: 'loading';
+    }
+  | {
+      kind: 'saving';
+    }
+  | {
+      digest?: string | null;
+      text?: string | null;
+      kind: 'ready';
+    }
+  | {
+      error: TextFileError;
+      kind: 'failed';
+    };
+export type TextFileError =
+  | 'read_failed'
+  | 'write_failed'
+  | 'invalid_file'
+  | 'too_large'
+  | 'invalid_utf8'
+  | 'conflict'
+  | 'worker_failed';
 export type ValueCheckpointState =
   | {
       kind: 'loading';
@@ -3757,6 +3798,20 @@ export interface ValueCheckpointProps {
   key: string;
   format: string;
   command?: ValueCheckpointCommand | null;
+}
+export interface TextFileProps {
+  command?: TextFileCommand | null;
+}
+export interface TextFileCommand {
+  owner: string;
+  sequence: number;
+  operation: TextFileOperation;
+}
+export interface TextFileObservation {
+  owner: string;
+  path?: string | null;
+  sequence: number;
+  state: TextFileState;
 }
 export interface MorphMarkProps {
   background: TerminalColor;

@@ -25,6 +25,8 @@ import type {
   EditorCommand,
   InputProps,
   TextChunk,
+  TextFileCommand,
+  TextFileObservation,
   ValueCheckpointCommand,
   ValueCheckpointObservation,
 } from '../../plugin-sdk/src/index.js';
@@ -64,6 +66,12 @@ export interface AppearanceEditor {
   fields: { name: Field; hex: Field };
   reads: Record<string, { field: 'name' | 'hex'; captured: EditorObservation }>;
   error: string | null;
+  file: {
+    observed: TextFileObservation | null;
+    command: TextFileCommand | null;
+    reload: { draft: string; fields: string } | null;
+    message: string | null;
+  };
 }
 const field = (): Field => ({ observed: null, command: null, sequence: 0, initialized: false });
 export const initialAppearance = (): AppearanceEditor => ({
@@ -77,6 +85,7 @@ export const initialAppearance = (): AppearanceEditor => ({
   fields: { name: field(), hex: field() },
   reads: {},
   error: null,
+  file: { observed: null, command: null, reload: null, message: null },
 });
 export function effectiveAppearance(state: AppearanceEditor, base: Theme): Theme {
   const config = (state.open ? state.draft : state.saved)?.appearance;
@@ -173,6 +182,25 @@ function setColor(state: AppearanceEditor, value: string) {
   state.draft!.appearance.theme = 'custom';
   state.error = null;
 }
+function fileBusy(state: AppearanceEditor): boolean {
+  return state.file.command !== null;
+}
+function fieldVersions(state: AppearanceEditor): string {
+  return JSON.stringify([
+    state.fields.name.observed?.snapshot.text,
+    state.fields.hex.observed?.snapshot.text,
+  ]);
+}
+function fileRead(state: AppearanceEditor, reload: boolean) {
+  const observed = state.file.observed;
+  if (!observed || observed.state.kind === 'unavailable' || fileBusy(state)) return;
+  const sequence = ++state.sequence;
+  state.file.command = { owner: observed.owner, sequence, operation: { kind: 'read' } };
+  state.file.message = null;
+  state.file.reload = reload
+    ? { draft: JSON.stringify(state.draft), fields: fieldVersions(state) }
+    : null;
+}
 export function appearanceEvent(
   state: AppearanceEditor,
   input: ComponentInput,
@@ -180,6 +208,60 @@ export function appearanceEvent(
   locale: string,
   actions: Action[],
 ): boolean {
+  if (input.kind === 'component' && input.child === 'appearance-file') {
+    const observed = input.event as TextFileObservation;
+    const file = state.file;
+    // A replacement native mount cannot complete a command addressed to the old owner.
+    if (file.observed?.owner !== observed.owner) {
+      file.command = null;
+      file.reload = null;
+      file.message = null;
+    }
+    file.observed = observed;
+    if (observed.state.kind === 'idle') fileRead(state, false);
+    if (!file.command || observed.sequence !== file.command.sequence) return true;
+    if (observed.state.kind === 'loading' || observed.state.kind === 'saving') return true;
+    const writing = file.command.operation.kind === 'write';
+    file.command = null;
+    const reload = file.reload;
+    file.reload = null;
+    if (observed.state.kind === 'failed') {
+      file.message =
+        observed.state.error === 'conflict'
+          ? 'theme-file-changed'
+          : observed.state.error === 'too_large'
+            ? 'theme-file-large'
+            : writing
+              ? 'theme-file-save'
+              : 'theme-file-unreadable';
+      return true;
+    }
+    if (observed.state.kind !== 'ready') return true;
+    if (writing) file.message = 'theme-exported';
+    if (!reload || !state.open || !state.draft) return true;
+    if (reload.draft !== JSON.stringify(state.draft) || reload.fields !== fieldVersions(state)) {
+      file.message = 'theme-reload-stale';
+      return true;
+    }
+    if (observed.state.text == null) {
+      file.message = 'theme-file-missing';
+      return true;
+    }
+    try {
+      const theme = JSON.parse(observed.state.text) as CustomTheme;
+      terminalPalette({ ...state.draft.appearance, theme: 'custom', customTheme: theme });
+      state.draft.appearance.theme = 'custom';
+      state.draft.appearance.customTheme = theme;
+      state.reads = {};
+      reset(state, 'name', theme.name);
+      reset(state, 'hex', roleHex(state));
+      state.error = null;
+      file.message = 'theme-imported';
+    } catch {
+      file.message = 'theme-import-invalid';
+    }
+    return true;
+  }
   if (input.kind === 'component' && input.child === 'appearance-checkpoint') {
     const observed = input.event as ValueCheckpointObservation;
     state.checkpoint = observed;
@@ -283,6 +365,7 @@ export function appearanceEvent(
       state.open = false;
       state.draft = null;
       state.reads = {};
+      state.file.reload = null;
     }
     return true;
   }
@@ -291,7 +374,32 @@ export function appearanceEvent(
     state.error = null;
     return true;
   }
-  if (saving) return true;
+  if (saving || fileBusy(state)) return true;
+  if (input.key === 'appearance-file-reload') {
+    fileRead(state, true);
+    return true;
+  }
+  if (input.key === 'appearance-file-save') {
+    const observed = state.file.observed;
+    if (observed?.state.kind !== 'ready' || Object.keys(state.reads).length || state.error)
+      return true;
+    try {
+      terminalPalette({ ...state.draft.appearance, theme: 'custom' });
+      state.file.command = {
+        owner: observed.owner,
+        sequence: ++state.sequence,
+        operation: {
+          kind: 'write',
+          expectedDigest: observed.state.digest,
+          text: JSON.stringify(custom(state), null, 2) + '\n',
+        },
+      };
+      state.file.message = null;
+    } catch {
+      state.error = 'theme-import-invalid';
+    }
+    return true;
+  }
   const choice = input.event as { kind?: string; key?: string };
   if (
     input.key === 'appearance-theme' &&
@@ -373,7 +481,8 @@ export function appearanceView<N extends Node>(
   const ui = presentation.paint(theme);
   const t = (key: string) => tuiText(locale, key);
   const draft = state.draft;
-  const busy = state.checkpoint?.state.kind !== 'ready' || state.command?.kind === 'write';
+  const busy =
+    state.checkpoint?.state.kind !== 'ready' || state.command?.kind === 'write' || fileBusy(state);
   const select = (key: string, label: string, choices: [string, string][], current: string) =>
     ui.choice!(
       key,
@@ -492,6 +601,35 @@ export function appearanceView<N extends Node>(
             ),
             { row: true, gap: 0, terminal: { wrap: true } },
           ),
+          ...(state.file.observed && state.file.observed.state.kind !== 'unavailable'
+            ? [
+                ui.box(
+                  'appearance-file-actions',
+                  [
+                    ui.button('appearance-file-reload', t('theme-reload-file'), busy),
+                    ui.button(
+                      'appearance-file-save',
+                      t('theme-export'),
+                      busy ||
+                        state.file.observed.state.kind !== 'ready' ||
+                        !!state.error ||
+                        !!Object.keys(state.reads).length,
+                    ),
+                  ],
+                  { row: true, gap: 1 },
+                ),
+                ui.text(
+                  'appearance-file-path',
+                  tuiText(locale, 'theme-path', { path: state.file.observed.path ?? '' }),
+                  13,
+                  theme.muted,
+                ),
+                ui.text('appearance-file-hint', t('theme-file-draft-hint'), 13, theme.muted),
+                ...(state.file.message
+                  ? [ui.text('appearance-file-message', t(state.file.message), 13, theme.muted)]
+                  : []),
+              ]
+            : []),
           ui.text('appearance-preview', t('theme-preview'), 14, theme.text),
           ui.box(
             'appearance-preview-row',
@@ -522,6 +660,12 @@ export function appearanceView<N extends Node>(
       'appearance-retained',
       [
         background,
+        presentation.slot(
+          'appearance-file',
+          'themeFile',
+          { command: state.file.command },
+          { changed: 'appearance-file' },
+        ),
         presentation.slot(
           'appearance-checkpoint',
           'checkpoint',
