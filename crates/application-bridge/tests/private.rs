@@ -509,7 +509,7 @@ async fn native_ui(
                 instance: description.provider.clone(),
                 export: description.export.clone(),
             },
-            registration_epoch: description.registration_epoch,
+            registration_epoch: description.registration_epoch.unwrap(),
             contract: description.contract.clone(),
             implementation,
         });

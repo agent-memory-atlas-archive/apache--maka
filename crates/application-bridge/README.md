@@ -32,17 +32,23 @@ remains separate work.
     "name": "primary",
     "location": { "kind": "process", "root": "/path/to/host/root" },
     "deployment": "00000000-0000-0000-0000-000000000010",
-    "consumer": ["00000000-0000-0000-0000-000000000013"],
-    "imports": {
-      "tasks": { "methods": ["read", "create"], "recovery": false },
-      "receipts": { "methods": ["read"], "recovery": true }
+    "endpoints": {
+      "tasks": {
+        "consumer": ["00000000-0000-0000-0000-000000000013"],
+        "import": "tasks", "grant": { "methods": ["read", "create"], "recovery": false }
+      },
+      "receipts": {
+        "consumer": ["00000000-0000-0000-0000-000000000014"],
+        "import": "receipts", "grant": { "methods": ["read"], "recovery": true }
+      }
     }
   }]
 }
 ```
 
-`name` is the alias selected by the UI's remote capability observations. `consumer`
-is the existing Host consumer instance; `imports` names its explicit bindings.
+`name` is the alias selected by the UI's remote capability observations. Each
+`endpoints` entry selects an existing Host `consumer`, its explicit `import`, and
+a method/recovery `grant`. Independent consumers share one Host and Root owner.
 The Host composition must select a gateway instance with implementation
 `maka.application.gateway` and its imports, or another appropriate compiled
 consumer. No factory or service is automatically activated. Other Rust factories
@@ -112,12 +118,15 @@ and a nonnil incarnation nonce. The input is closed JSON, bounded to 512 KiB.
 Stdin/stdout carry Bootstrap/Ready, Capture/Captured, Approve/Approved and Close/Closed. Each import selects
 exactly one existing provider. Compiled gateway/agent/settings availability comes
 from this executable; the persisted Host composition selects executed instances.
-Process and cohost startup wait for the explicitly selected consumer to become
-active, then capture its exact bindings. An unrelated initialization failure does
-not close these healthy endpoints or imply whole-deployment convergence. A consumer
-that depends on the failed instance remains unavailable; compositions must separate
-recovery consumers from business dependencies. Original failed work and cleanup
-still belong to the same Application and Root.
+Process and cohost startup wait for each selected consumer's activation attempt,
+then capture its exact binding or a checked unavailable declaration. An unavailable
+entry has no registration epoch, cannot be selected or invoked, and must still match
+the configured grant and UI observation. No registration is invented. An unrelated
+initialization failure does not close healthy endpoints or imply whole-deployment
+convergence. Compositions separate recovery consumers from business dependencies;
+failed work and cleanup still belong to the same Application and Root. A later
+registration requires a fresh captured catalogue and explicit approval, never an
+upgrade of the original unavailable selection.
 
 `runtime_host::ipc` is the canonical physical listener/connector used by both Host
 paths. Unix sockets require a private current-account parent and use mode 0600;

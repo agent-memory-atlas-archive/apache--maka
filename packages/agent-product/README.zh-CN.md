@@ -48,7 +48,7 @@ TUI 外观页提供 Maka、Dusk、Paper、Terminal 与自定义配色，支持�
 
 安装配置包含 `presentation`（`desktop`/`tui`）、完整 `locale`（或 `auto`）、`scheme`（`light`/`dark`）、`hostRoot`、`hostDeployment`、`managementDeployment`、SDK 生成的 `AgentConfiguration` 对应 `agent`，以及 `keys`。连接凭据和 endpoint 属于选中的 Host Root，不进入产品组合。
 
-`keys` 为 `src/composition.ts` 导出的所有包名分配稳定非零 UUID；安装时生成一次并保存，构建新 revision 时沿用。部署 UUID 同样属于安装身份，不能每次构建重建业务 namespace。具体字段、包名和配置约束见英文文档。
+`keys` 为 `src/composition.ts` 导出的 `instanceNames` 中所有实例名分配稳定非零 UUID；安装时生成一次并保存，构建新 revision 时沿用。部署 UUID 同样属于安装身份，不能每次构建重建业务 namespace。具体字段、包名和配置约束见英文文档。
 
 组合命令调用真实 Rust CLI 校验包并计算精确引用，输出并检查 `host.json`、`management-host.json`、`ui.json`、`remote-exports.json`、`connections.json`、`packages.json`。它不初始化 Root、不提交部署、不启动执行。`connections.json` 属于可信启动器输入，其中的逐方法和恢复 grant 需要明确选定。
 
@@ -142,3 +142,5 @@ TUI 命令面板提供“复制消息”和“复制消息原文”，沿原生�
 已保存的 ChatGPT 订阅连接可参与原生模型选择和执行。到期凭证复用原有持久刷新 owner，保留并发交换合并、已收到替换凭证的结算与退出排空。当前连接编辑器只显示其能够编辑的 API Key 提供方操作；交互式订阅登录尚未接入该编辑器。
 
 TUI 的常用操作保留在页面内，命令面板作为备用入口。新建会话、会话行、消息与工具卡片提供右击菜单及可见的「⋯」按钮；新建菜单可选择其他工作目录，会话详情就地打开，完整文本消息可直接复制原文，有原生选区时提供复制选区。未完整加载的消息保留原文查看入口。菜单复用现有操作条件和原生弹层焦点管理。
+
+恢复页使用独立的普通 ReadingArea 实例与 Host 恢复消费者。其依赖不包含 Agent、Skills Library 或 Settings；业务初始化失败时，仍可在同一 Host 查询原回执和技能发布结果。

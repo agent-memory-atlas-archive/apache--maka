@@ -606,10 +606,10 @@ test('both product compositions use actual immutable package refs and check in t
   skip: !process.env.MAKA_PRODUCT_CLI_CHECK,
 }, async () => {
   const binary = resolve(root, '../..', process.env.CARGO_TARGET_DIR ?? 'target', 'debug/maka');
-  const { packageNames } = await import(
+  const { instanceNames } = await import(
     pathToFileURL(resolve(root, 'dist/authoring/agent-product/src/composition.mjs'))
   );
-  const keys = Object.fromEntries(packageNames.map((name, index) => [name, uuid(index + 1)]));
+  const keys = Object.fromEntries(instanceNames.map((name, index) => [name, uuid(index + 1)]));
   const directory = mkdtempSync(resolve(tmpdir(), 'maka-product-composition-'));
   try {
     const sourcePackage = resolve(root, 'dist/packages/appearance');
@@ -747,6 +747,7 @@ test('both product compositions use actual immutable package refs and check in t
           assert.deepEqual(Object.keys(host.instances).sort(), [
             'gateway',
             'receipts',
+            'recovery-gateway',
             'settings',
             'skill-outcomes',
           ]);
@@ -754,10 +755,13 @@ test('both product compositions use actual immutable package refs and check in t
         const business = connections.hosts.find((host) => host.name === 'local');
         const manager = connections.hosts.find((host) => host.name === 'manager');
         assert.equal(host.instances['skill-outcomes'].key, keys['skill-outcomes']);
-        assert.deepEqual(host.instances.gateway.bindings.skillOutcomes, [
+        assert.deepEqual(host.instances['recovery-gateway'].bindings.skillOutcomes, [
           { kind: 'instance', path: ['skill-outcomes'], export: 'Outcomes' },
         ]);
-        assert.deepEqual(business.imports.skillOutcomes, { methods: ['read'], recovery: true });
+        assert.deepEqual(business.endpoints.skillOutcomes.grant, {
+          methods: ['read'],
+          recovery: true,
+        });
         assert.deepEqual(ui.instances.recovery.bindings.skillOutcomes, [
           {
             kind: 'remote',
@@ -768,22 +772,48 @@ test('both product compositions use actual immutable package refs and check in t
         ]);
         assert.deepEqual(manager.location, { kind: 'cohost' });
         assert.equal(manager.deployment, configuration.managementDeployment);
-        assert.deepEqual(manager.imports.management.methods, [
+        assert.deepEqual(manager.endpoints.management.grant.methods, [
           'instances',
           'setEnabled',
           'readDocument',
           'replace',
           'install',
         ]);
-        assert.equal(manager.imports.receipts.recovery, true);
+        assert.equal(manager.endpoints.receipts.grant.recovery, true);
         assert.deepEqual(business.location, {
           kind: 'process',
           root: configuration.hostRoot,
         });
-        assert.deepEqual(business.consumer, [
+        assert.deepEqual(business.endpoints.settings.consumer, [
           keys[productName === 'agent' ? 'gateway' : 'studio-gateway'],
         ]);
-        assert.equal('agent' in business.imports, productName === 'agent');
+        assert.equal('agent' in business.endpoints, productName === 'agent');
+        assert.deepEqual(ui.instances.recovery.bindings.reading, [
+          { kind: 'instance', path: ['recovery-reading'], export: 'ReadingArea' },
+        ]);
+        assert.deepEqual(
+          ui.instances.deployment.bindings.reading,
+          ui.instances.recovery.bindings.reading,
+        );
+        assert.equal(ui.instances['recovery-reading'].key, keys['recovery-reading']);
+        assert.notEqual(ui.instances['recovery-reading'].key, ui.instances['reading-area'].key);
+        assert.deepEqual(
+          ui.instances['recovery-reading'].package,
+          ui.instances['reading-area'].package,
+        );
+        assert.deepEqual(Object.keys(ui.instances['recovery-reading'].bindings), ['source']);
+
+        assert.deepEqual(Object.keys(host.instances['recovery-gateway'].bindings).sort(), [
+          'receipts',
+          'skillOutcomes',
+        ]);
+        assert.equal('receipts' in host.instances.gateway.bindings, false);
+        assert.equal('skillOutcomes' in host.instances.gateway.bindings, false);
+        for (const name of ['receipts', 'skillOutcomes']) {
+          assert.deepEqual(business.endpoints[name].consumer, [keys['recovery-gateway']]);
+          assert.equal(business.endpoints[name].import, name);
+        }
+
         assert.equal('questions' in host.instances, questionsEnabled);
         assert.equal('forms' in host.instances, questionsEnabled);
         if (questionsEnabled) {
@@ -862,10 +892,10 @@ test('both product compositions use actual immutable package refs and check in t
 
         assert.equal(business.deployment, configuration.hostDeployment);
         assert.deepEqual(
-          business.imports.settings.methods,
+          business.endpoints.settings.grant.methods,
           Object.keys(sdk.contracts.settings.interface.methods),
         );
-        assert.equal(business.imports.settings.recovery, true);
+        assert.equal(business.endpoints.settings.grant.recovery, true);
         const secret = JSON.parse(
           readFileSync(resolve(root, 'dist/packages/credential/maka.extension.json')),
         );

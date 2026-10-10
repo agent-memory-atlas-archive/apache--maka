@@ -22,6 +22,7 @@
 //! this module never treats caller observations or credentials in JSON as trust.
 mod catalogue;
 mod client;
+mod endpoints;
 pub mod ipc;
 pub mod native;
 mod policy;
@@ -30,6 +31,7 @@ mod server;
 mod wire;
 pub use catalogue::{Catalogue, Description, Selection};
 pub use client::Call;
+pub use endpoints::Endpoints;
 pub use policy::{Endpoint, NativeGrant, Peer, PeerPolicy, Peers};
 pub use server::Server;
 pub use wire::{Reply, Source};

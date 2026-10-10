@@ -171,7 +171,7 @@ fn startup_configuration_is_closed_and_bounded_before_opening_any_host() {
     assert!(Configuration::read(&path).err().unwrap().contains("1 MiB"));
     let mut cohost = json!({"hosts":[{
         "name":"local", "location":{"kind":"cohost"}, "deployment":uuid::Uuid::new_v4(),
-        "consumer":support::identity(13), "imports":{"business":{"methods":["read"],"recovery":false}}
+        "endpoints":{"business":{"consumer":support::identity(13),"import":"business","grant":{"methods":["read"],"recovery":false}}}
     }]});
     std::fs::write(&path, serde_json::to_vec(&cohost).unwrap()).unwrap();
     Configuration::read(&path).unwrap();
@@ -276,8 +276,7 @@ async fn cancelled_cohost_start_keeps_original_initializer_native_file_and_sql_u
         )
         .unwrap();
     let configuration = serde_json::from_value(json!({"hosts":[{
-        "name":"local", "location":{"kind":"cohost"}, "deployment":host, "consumer":support::identity(13),
-        "imports":{"business":{"methods":["read","write"],"recovery":false}, "receipts":{"methods":["read"],"recovery":true}}
+        "name":"local", "location":{"kind":"cohost"}, "deployment":host, "endpoints":{"business":{"consumer":support::identity(13),"import":"business","grant":{"methods":["read","write"],"recovery":false}},"receipts":{"consumer":support::identity(13),"import":"receipts","grant":{"methods":["read"],"recovery":true}}}
     }]})).unwrap();
     let mut connections = Connections::prepare(
         store.clone(),
@@ -346,7 +345,7 @@ async fn cancelled_cohost_start_keeps_original_initializer_native_file_and_sql_u
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn cohost_selected_endpoints_survive_an_independent_startup_failure() {
+async fn cohost_retains_independent_receipts_when_selected_business_cannot_start() {
     use maka_application_bridge::{Connections, HostExecutable};
     use maka_plugin_core::composition::PresentationTarget;
     tokio::time::timeout(std::time::Duration::from_secs(20), async {
@@ -357,19 +356,19 @@ async fn cohost_selected_endpoints_survive_an_independent_startup_failure() {
             control: directory.path().join("control"),
         };
         let store = Arc::new(EventLog::for_root(Arc::new(RootOwner::create(&root, &namespaces).unwrap())).await.unwrap());
-        let (input, packages) = support::host_with_startup_failure();
+        let (input, packages) = support::host_with_unavailable_business();
         let host = uuid::Uuid::new_v4();
         store.commit_application(host, 0, input, vec![], packages).await.unwrap();
         let (input, packages, observations) = support::ui(PresentationTarget::Tui);
         let ui = store.commit_application(uuid::Uuid::new_v4(), 0, input, observations, packages).await.unwrap();
         let configuration = serde_json::from_value(json!({"hosts":[{
-            "name":"local", "location":{"kind":"cohost"}, "deployment":host, "consumer":support::identity(13),
-            "imports":{"business":{"methods":["read","write"],"recovery":false}, "receipts":{"methods":["read"],"recovery":true}}
+            "name":"local", "location":{"kind":"cohost"}, "deployment":host, "endpoints":{"business":{"consumer":support::identity(13),"import":"business","grant":{"methods":["read","write"],"recovery":false}},"receipts":{"consumer":support::identity(14),"import":"receipts","grant":{"methods":["read"],"recovery":true}}}
         }]})).unwrap();
         let mut connections = Connections::prepare(store.clone(), ui.deployment, PresentationTarget::Tui,
             configuration, namespaces.clone(), HostExecutable::new("unused-cohost-program".into(), vec![]).unwrap(), NativeRegistry::default()).await.unwrap();
         connections.start().await.unwrap();
-        assert_eq!(connections.registrations().len(), 2);
+        assert_eq!(connections.registrations().len(), 1);
+        assert_eq!(connections.registrations()[0].target.export, "Receipts");
         assert_eq!(RootOwner::open(&root, &namespaces).err().unwrap().kind(), std::io::ErrorKind::WouldBlock);
         connections.close().await.unwrap();
         store.shutdown().await.unwrap();

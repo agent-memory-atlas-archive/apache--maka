@@ -119,8 +119,7 @@ impl Fixture {
                     root: self.directory.path().join("host"),
                 },
                 deployment: self.host,
-                consumer: support::identity(13),
-                imports: BTreeMap::from([
+                endpoints: BTreeMap::<String, Grant>::from([
                     (
                         "business".into(),
                         Grant {
@@ -139,7 +138,19 @@ impl Fixture {
                             recovery,
                         },
                     ),
-                ]),
+                ])
+                .into_iter()
+                .map(|(name, grant)| {
+                    (
+                        name.clone(),
+                        maka_application_bridge::HostEndpoint {
+                            consumer: support::identity(13),
+                            import: name,
+                            grant,
+                        },
+                    )
+                })
+                .collect(),
             }],
         }
     }
@@ -332,9 +343,10 @@ fn preflight_and_failed_child_start_do_not_unlock_the_actual_caller() {
     f.reopened("host");
     let mut configuration = f.configuration(true, true);
     configuration.hosts[0]
-        .imports
+        .endpoints
         .get_mut("business")
         .unwrap()
+        .grant
         .methods
         .insert("undeclared".into());
     let mut connections = f.prepare(configuration).unwrap();

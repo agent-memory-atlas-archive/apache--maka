@@ -113,6 +113,43 @@ pub fn host_with_startup_failure() -> (Input, Vec<Package>) {
     packages.push(failing);
     (input, packages)
 }
+pub fn host_with_unavailable_business() -> (Input, Vec<Package>) {
+    let (mut input, mut packages) = host();
+    let old = packages
+        .iter_mut()
+        .find(|p| p.manifest().id == "local.business")
+        .unwrap();
+    *old = counter::package(
+        "local.business",
+        old.manifest().application.clone().unwrap(),
+        Some("export function activate() { throw Error('business initializer rejected'); }".into()),
+    );
+    input.instances.get_mut("business").unwrap().package = old.application_ref().into();
+    let recovery = host_package(
+        "local.recovery",
+        EntryDeclaration {
+            scene: None,
+            implementation: Implementation::Native {
+                implementation: maka_application_bridge::GATEWAY.into(),
+            },
+            configuration: json!({"type":"object","additionalProperties":false}),
+            imports: BTreeMap::from([("receipts".into(), import(receipt_reader_contract()))]),
+            exports: BTreeMap::new(),
+        },
+        None,
+    );
+    let mut node = counter::node(&recovery, 14);
+    node.bindings.insert(
+        "receipts".into(),
+        vec![Target::Instance {
+            path: vec!["reader".into()],
+            export: "Receipts".into(),
+        }],
+    );
+    input.instances.insert("recovery".into(), node);
+    packages.push(recovery);
+    (input, packages)
+}
 pub fn host() -> (Input, Vec<Package>) {
     let service = host_package(
         "local.business",

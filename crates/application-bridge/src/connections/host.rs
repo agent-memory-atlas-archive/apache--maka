@@ -72,7 +72,7 @@ pub(super) enum HostOwner {
     Cohost {
         application: Option<maka_runtime_host::application::Application>,
         server: Option<Arc<crate::transport::Server>>,
-        captured: Option<BTreeMap<String, crate::transport::Endpoint>>,
+        captured: Option<crate::transport::Endpoints>,
     },
 }
 impl OwnedHost {
@@ -89,8 +89,7 @@ impl OwnedHost {
                         .as_ref()
                         .ok_or("cohost is not initialized")?
                         .client(),
-                    &self.configuration.consumer,
-                    &self.configuration.imports,
+                    &self.configuration.endpoints,
                 )
                 .await?;
                 let catalogue = crate::transport::Catalogue::captured(&endpoints);

@@ -26,9 +26,10 @@ Server、PeerPolicy 和 native 调用 adapter。网络认证仍需继续。
 完整 JSON 示例见[英文说明](README.md)。
 
 `hosts[].name` 对应 UI remote observation 的 deployment alias；`location` 显式选择
-`{kind:"process",root:"..."}` 或 `{kind:"cohost"}`，`deployment` 选择实际 Host 来源；`consumer` 是已有 Host 消费者的 InstanceId 数组。
-`imports` 选择该消费者的显式绑定，每项提供明确的 `methods` 白名单和独立
-`recovery` 布尔。方法必须存在于实际捕获的服务契约，endpoint 必须匹配选定的 UI
+`{kind:"process",root:"..."}` 或 `{kind:"cohost"}`，`deployment` 选择实际 Host 来源；每个 `endpoints` 项用 `consumer` InstanceId 数组和 `import` 选择已有消费者的显式绑定。
+其 `grant` 提供明确的 `methods` 白名单和独立 `recovery` 布尔。独立消费者共用一个 Host 和 Root owner。
+启动等待所选消费者的本次激活尝试；失败项只发布经过检查的声明，没有 registration epoch，不能 select 或调用，但仍须满足 grant 和 UI 契约检查。
+恢复消费者与业务依赖分离；原失败资源和清理仍属于同一个 Application。后来恢复的实际注册必须重新 Capture/Approve，不会升级旧不可用项。方法必须存在于实际捕获的服务契约，endpoint 必须匹配选定的 UI
 来源观察。启动捕获精确 `DeploymentRef`，后续 desired source 更新不能继承原批准。
 普通 query/mutation 权限不授予原操作回执恢复权限。
 

@@ -23,7 +23,7 @@ use crate::{Grant, Result};
 use maka_event_log::applications::intents::CallerConfirmation;
 use maka_plugin_core::{
     composition::InstanceId,
-    contract::{Interface, Transport},
+    contract::{Contract, Interface, Transport},
     deployment::DeploymentRef,
 };
 use maka_plugins::call::{Identity, Issuer, Scope};
@@ -221,18 +221,22 @@ pub struct Endpoint {
 }
 impl Endpoint {
     pub fn new(binding: Binding, grant: Grant) -> Result<Self> {
-        let Interface::Service { methods } = &binding.contract().interface else {
-            return Err("Application endpoint requires a service".into());
-        };
-        if binding.contract().transport != Transport::Remote
-            || grant.methods.is_empty()
-            || grant.methods.len() > 64
-            || grant.methods.iter().any(|name| !methods.contains_key(name))
-        {
-            return Err("invalid Application endpoint grant".into());
-        }
+        check_grant(binding.contract(), &grant)?;
         Ok(Self { binding, grant })
     }
+}
+pub(super) fn check_grant(contract: &Contract, grant: &Grant) -> Result<()> {
+    let Interface::Service { methods } = &contract.interface else {
+        return Err("Application endpoint requires a service".into());
+    };
+    if contract.transport != Transport::Remote
+        || grant.methods.is_empty()
+        || grant.methods.len() > 64
+        || grant.methods.iter().any(|name| !methods.contains_key(name))
+    {
+        return Err("invalid Application endpoint grant".into());
+    }
+    Ok(())
 }
 /// Explicit trusted launcher approval for one edge of native domain work.
 /// Imports select providers; this separate declaration authorizes calls.

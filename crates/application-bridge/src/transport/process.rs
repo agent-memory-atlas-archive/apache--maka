@@ -18,8 +18,8 @@
  */
 
 //! Shared Host process bootstrap and actual lifecycle acknowledgements.
-use super::{Catalogue, Endpoint, Peer, PeerPolicy, Server, wire};
-use crate::{Grant, Result};
+use super::{Catalogue, Endpoints, Peer, PeerPolicy, Server, wire};
+use crate::{HostEndpoint, Result};
 use maka_event_log::{
     EventLog,
     root::{RootNamespaces, RootOwner},
@@ -49,8 +49,7 @@ pub struct Bootstrap {
     pub namespaces: RootNamespaces,
     pub source: DeploymentRef,
     pub consumers: BTreeSet<InstanceId>,
-    pub consumer: InstanceId,
-    pub imports: BTreeMap<String, Grant>,
+    pub endpoints: BTreeMap<String, HostEndpoint>,
     pub native: Vec<super::NativeGrant>,
     pub address: PathBuf,
     pub nonce: Uuid,
@@ -60,20 +59,17 @@ impl Bootstrap {
         Peer::new(self.source.clone(), self.consumers.clone())?;
         if self.deployment.is_nil()
             || self.nonce.is_nil()
-            || self.imports.is_empty()
-            || self.imports.len() > 128
-            || self.consumer.0.is_empty()
-            || self.consumer.0.len() > 64
-            || self.consumer.0.iter().any(Uuid::is_nil)
-            || self.imports.iter().any(|(name, g)| {
-                name.is_empty()
-                    || name.len() > 256
-                    || g.methods.is_empty()
-                    || g.methods.len() > 64
-                    || g.methods.iter().any(|m| m.is_empty() || m.len() > 256)
-            })
+            || self.endpoints.is_empty()
+            || self.endpoints.len() > 128
+            || self
+                .endpoints
+                .keys()
+                .any(|name| name.is_empty() || name.len() > 256)
         {
             return Err("invalid Host bootstrap".into());
+        }
+        for endpoint in self.endpoints.values() {
+            endpoint.validate()?;
         }
         if self.native.len() > 128 {
             return Err("maximum 128 native service grants".into());
@@ -385,8 +381,7 @@ pub async fn serve(native: NativeRegistry) -> Result<()> {
         Ok(application) => {
             let result = async {
                 let client = application.client();
-                client.ready_instance(&bootstrap.consumer).await?;
-                let endpoints = capture_endpoints(&client, &bootstrap.consumer, &bootstrap.imports).await?;
+                let endpoints = start_endpoints(&client, &bootstrap.endpoints).await?;
                 let server = Server::new(client.clone(), policy, endpoints)?;
                 let ready = Event::Ready {
                     nonce: bootstrap.nonce,
@@ -402,7 +397,7 @@ pub async fn serve(native: NativeRegistry) -> Result<()> {
                             command = input.read_bounded::<Command>(BOOTSTRAP_LIMIT) => {
                                 match command {
                                     Ok(Command::Capture { nonce }) if nonce == bootstrap.nonce => {
-                                        let result = capture_endpoints(&client, &bootstrap.consumer, &bootstrap.imports).await;
+                                        let result = capture_endpoints(&client, &bootstrap.endpoints).await;
                                         let result = match result {
                                             Ok(endpoints) => {
                                                 let catalogue = Catalogue::captured(&endpoints);
@@ -507,23 +502,36 @@ fn capture_reply(nonce: Uuid, result: Result<Catalogue>) -> Event {
         },
     }
 }
+pub(crate) async fn start_endpoints(
+    client: &Client,
+    selections: &BTreeMap<String, HostEndpoint>,
+) -> Result<Endpoints> {
+    // Reject malformed selectors and grants before waiting for initialization.
+    // These observations own no jobs; all initializers belong to Application.
+    drop(capture_endpoints(client, selections).await?);
+    for consumer in selections
+        .values()
+        .map(|endpoint| &endpoint.consumer)
+        .collect::<BTreeSet<_>>()
+    {
+        // A failed consumer can yield only a declaration in the final capture.
+        // Closing or invalid configuration still fails that exact owner request.
+        let _ = client.ready_instance(consumer).await;
+    }
+    capture_endpoints(client, selections).await
+}
 pub(crate) async fn capture_endpoints(
     client: &Client,
-    consumer: &InstanceId,
-    imports: &BTreeMap<String, Grant>,
-) -> Result<BTreeMap<String, Endpoint>> {
-    let consumer = client.activation(consumer)?;
-    let mut endpoints = BTreeMap::new();
-    for (name, grant) in imports {
-        let mut bindings = client.bind(consumer.clone(), name.clone()).await?;
-        if bindings.len() != 1 {
-            return Err("Host import requires one explicitly selected provider".into());
-        }
-        endpoints.insert(
-            name.clone(),
-            Endpoint::new(bindings.pop().unwrap(), grant.clone())?,
-        );
+    selections: &BTreeMap<String, HostEndpoint>,
+) -> Result<Endpoints> {
+    let mut endpoints = Endpoints::empty();
+    for (name, selection) in selections {
+        let captured = client
+            .capture_import(selection.consumer.clone(), selection.import.clone())
+            .await?;
+        endpoints.insert(name.clone(), captured, selection.grant.clone())?;
     }
+    endpoints.validate()?;
     Ok(endpoints)
 }
 async fn drain_server(server: &Server) {

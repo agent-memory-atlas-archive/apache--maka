@@ -203,8 +203,7 @@ impl Fixture {
             namespaces: self.namespaces.clone(),
             source: self.source.clone(),
             consumers: [support::identity(2)].into(),
-            consumer: support::identity(13),
-            imports: BTreeMap::from([
+            endpoints: BTreeMap::<String, Grant>::from([
                 (
                     "business".into(),
                     Grant {
@@ -219,7 +218,19 @@ impl Fixture {
                         recovery: true,
                     },
                 ),
-            ]),
+            ])
+            .into_iter()
+            .map(|(name, grant)| {
+                (
+                    name.clone(),
+                    maka_application_bridge::HostEndpoint {
+                        consumer: support::identity(13),
+                        import: name,
+                        grant,
+                    },
+                )
+            })
+            .collect(),
             address: address.clone(),
             nonce,
         };
@@ -660,11 +671,15 @@ fn failed_start_preserves_the_same_child_actual_closed_acknowledgement() {
     for missing_import in [true, false] {
         let (mut child, mut control, mut bootstrap) = f.launch();
         if missing_import {
-            bootstrap.imports.insert(
+            bootstrap.endpoints.insert(
                 "missing".into(),
-                Grant {
-                    methods: ["read".into()].into(),
-                    recovery: false,
+                maka_application_bridge::HostEndpoint {
+                    consumer: support::identity(13),
+                    import: "missing".into(),
+                    grant: Grant {
+                        methods: ["read".into()].into(),
+                        recovery: false,
+                    },
                 },
             );
         } else {
@@ -838,5 +853,149 @@ fn private_host_recovery_failure_closes_original_sql_owner_without_publishing_re
     // The shared recovery boundary also waits for legacy Host's original SQL
     // owner; a returned startup error is not merely a request to drop it later.
     drop(RootOwner::open(&f.host_path(), &f.namespaces).unwrap());
+    f.cleanup();
+}
+
+#[test]
+fn unavailable_business_keeps_original_receipt_in_the_same_host() {
+    let f = Fixture::new();
+    let host = f.start_host();
+    let mut write = f.open(&host, "business", "write", Value::Null, token(), f.source());
+    let reference = f.timer.block_on(async {
+        write.start().await.unwrap();
+        assert!(matches!(
+            write.receive().await.unwrap(),
+            Reply::Prepared { .. }
+        ));
+        let reference = write.reference().unwrap().clone();
+        let intent = f
+            .caller
+            .record_application_intent(
+                f.source.clone(),
+                support::identity(2),
+                reference.clone(),
+                Value::Null,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            write.commit(intent).await.unwrap(),
+            Reply::Mutation {
+                cleanup: Ok(()),
+                ..
+            }
+        ));
+        reference
+    });
+    drop(write);
+    f.wait(host);
+    f.timer.block_on(async {
+        let store = EventLog::for_root(Arc::new(
+            RootOwner::open(&f.host_path(), &f.namespaces).unwrap(),
+        ))
+        .await
+        .unwrap();
+        let previous = store.application_head(f.host).await.unwrap().unwrap();
+        let (input, packages) = support::host_with_unavailable_business();
+        store
+            .commit_application(f.host, previous.revision, input, vec![], packages)
+            .await
+            .unwrap();
+        store.shutdown().await.unwrap();
+    });
+    let (child, mut control, mut bootstrap) = f.launch();
+    bootstrap
+        .endpoints
+        .get_mut("business")
+        .unwrap()
+        .grant
+        .methods
+        .remove("feed");
+    bootstrap.endpoints.get_mut("receipts").unwrap().consumer = support::identity(14);
+    let recovery = bootstrap.endpoints.remove("receipts").unwrap();
+    bootstrap.endpoints.insert("recovery".into(), recovery);
+    let catalogue = f.timer.block_on(control.start(&bootstrap)).unwrap();
+    let missing = catalogue.describe("business").unwrap();
+    assert_eq!(missing.provider, support::identity(11));
+    assert_eq!(missing.export, "Counter");
+    assert_eq!(missing.contract, support::business());
+    assert_eq!(missing.registration_epoch, None);
+    assert!(catalogue.select("business").is_err());
+    assert!(catalogue.select("recovery").is_ok());
+    assert_eq!(f.timer.block_on(control.capture()).unwrap(), catalogue);
+    let mut host = HostProcess {
+        child,
+        control,
+        catalogue,
+        connector: ipc::Connector::new(bootstrap.address, bootstrap.nonce).unwrap(),
+    };
+    let mut recovery = f.open(
+        &host,
+        "recovery",
+        "read",
+        serde_json::to_value(&reference).unwrap(),
+        Attachments::new(),
+        f.source(),
+    );
+    let reply = f.timer.block_on(async {
+        recovery.start().await.unwrap();
+        serde_json::from_value::<OperationReply>(finished(recovery.receive().await.unwrap()))
+            .unwrap()
+    });
+    assert_eq!(reply.reference, reference);
+    assert!(matches!(
+        reply.receipt,
+        Receipt::Recorded {
+            outcome: OperationOutcome::Returned { .. },
+            cleanup: OperationCleanup::Confirmed
+        }
+    ));
+    drop(recovery);
+    // Metadata with an invented epoch never creates a server binding.
+    let mut forged = serde_json::to_value(&host.catalogue).unwrap();
+    forged["endpoints"]["business"]["registration_epoch"] = json!(Uuid::new_v4());
+    let forged: Catalogue = serde_json::from_value(forged).unwrap();
+    assert!(
+        f.timer
+            .block_on(host.control.approve(
+                f.source.clone(),
+                [support::identity(2)].into(),
+                Default::default(),
+                Some(forged.clone())
+            ))
+            .unwrap_err()
+            .contains("captured endpoints differ")
+    );
+    let captured = f.timer.block_on(host.control.capture()).unwrap();
+    assert_eq!(
+        captured.describe("business").unwrap().registration_epoch,
+        None
+    );
+    f.timer
+        .block_on(host.control.approve(
+            f.source.clone(),
+            [support::identity(2)].into(),
+            Default::default(),
+            Some(captured),
+        ))
+        .unwrap();
+    host.catalogue = forged;
+    let mut refused = f.open(
+        &host,
+        "business",
+        "read",
+        Value::Null,
+        Attachments::new(),
+        f.source(),
+    );
+    assert!(
+        f.timer
+            .block_on(refused.start())
+            .unwrap_err()
+            .contains("endpoint is not granted")
+    );
+    assert!(refused.cleanup_confirmed());
+    drop(refused);
+    f.wait(host);
     f.cleanup();
 }

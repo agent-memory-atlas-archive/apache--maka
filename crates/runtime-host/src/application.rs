@@ -245,6 +245,16 @@ pub struct Accepted {
     pub id: Uuid,
     result: oneshot::Receiver<QueryCompletion>,
 }
+
+/// One current declared import. Missing registrations carry no call authority.
+pub enum CapturedImport {
+    Ready(Binding),
+    Unavailable {
+        provider: InstanceId,
+        export: String,
+        contract: Contract,
+    },
+}
 /// Independent business and executor-cleanup observations from the original Host owner.
 pub struct QueryCompletion {
     pub result: Result<Value>,
@@ -389,6 +399,11 @@ struct Dispatch {
 }
 
 pub(super) enum Command {
+    CaptureImport {
+        consumer: InstanceId,
+        import: String,
+        reply: oneshot::Sender<Result<CapturedImport>>,
+    },
     Bind {
         consumer: Activation,
         import: String,
@@ -799,6 +814,26 @@ impl Client {
         self.dispatch
             .commands
             .try_send(Command::Bind {
+                consumer,
+                import,
+                reply,
+            })
+            .map_err(|e| e.to_string())?;
+        result
+            .await
+            .map_err(|_| "Host deployment is closed".to_string())?
+    }
+    /// Capture one declared provider from the current checked plan and its
+    /// actual registration in the same owner turn. This never waits or activates.
+    pub async fn capture_import(
+        &self,
+        consumer: InstanceId,
+        import: String,
+    ) -> Result<CapturedImport> {
+        let (reply, result) = oneshot::channel();
+        self.dispatch
+            .commands
+            .try_send(Command::CaptureImport {
                 consumer,
                 import,
                 reply,

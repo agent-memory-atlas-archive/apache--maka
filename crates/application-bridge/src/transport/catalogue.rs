@@ -18,7 +18,7 @@
  */
 
 //! Read-only facts from actual captured Host registrations.
-use super::{policy::Endpoint, wire};
+use super::{Endpoints, wire};
 use crate::Result;
 use maka_plugin_core::{
     composition::InstanceId,
@@ -35,7 +35,8 @@ pub struct Description {
     pub provider: InstanceId,
     pub export: String,
     pub contract: Contract,
-    pub registration_epoch: Uuid,
+    /// None is a checked declaration without a current executable registration.
+    pub registration_epoch: Option<Uuid>,
 }
 /// This catalogue is received over the embedding's authenticated bootstrap.
 /// It grants no admission and never constructs a Host Binding from metadata.
@@ -55,33 +56,30 @@ impl Selection {
     }
 }
 impl Catalogue {
-    pub(crate) fn captured(endpoints: &BTreeMap<String, Endpoint>) -> Self {
+    pub(crate) fn captured(endpoints: &Endpoints) -> Self {
         Self {
-            endpoints: endpoints
-                .iter()
-                .map(|(name, endpoint)| {
-                    let binding = &endpoint.binding;
-                    (
-                        name.clone(),
-                        Description {
-                            provider: binding.provider().instance().clone(),
-                            export: binding.export().into(),
-                            contract: binding.contract().clone(),
-                            registration_epoch: binding.registration_epoch(),
-                        },
-                    )
-                })
-                .collect(),
+            endpoints: endpoints.descriptions(),
         }
     }
+    pub(crate) fn check_names<'a>(&self, names: impl Iterator<Item = &'a String>) -> Result<()> {
+        if !self.endpoints.keys().eq(names) {
+            return Err("Host endpoint catalogue differs from configured selections".into());
+        }
+        Ok(())
+    }
+    pub fn describe(&self, endpoint: &str) -> Result<&Description> {
+        self.endpoints
+            .get(endpoint)
+            .ok_or("Host endpoint not found".into())
+    }
     pub fn select(&self, endpoint: &str) -> Result<Selection> {
+        let description = self.describe(endpoint)?.clone();
+        if description.registration_epoch.is_none() {
+            return Err("Host endpoint is unavailable".into());
+        }
         Ok(Selection {
             endpoint: endpoint.into(),
-            description: self
-                .endpoints
-                .get(endpoint)
-                .ok_or("Host endpoint not found")?
-                .clone(),
+            description,
         })
     }
     /// Preserve buffered bytes from the exact same physical bootstrap stream.
@@ -99,7 +97,9 @@ impl Catalogue {
         for (name, description) in &self.endpoints {
             if name.is_empty()
                 || name.len() > 256
-                || description.registration_epoch.is_nil()
+                || description
+                    .registration_epoch
+                    .is_some_and(|epoch| epoch.is_nil())
                 || description.provider.0.is_empty()
                 || description.provider.0.len() > 64
                 || description.provider.0.iter().any(Uuid::is_nil)

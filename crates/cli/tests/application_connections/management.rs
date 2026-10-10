@@ -168,7 +168,12 @@ fn actual_child_manager_install_uses_original_grants_dual_roots_and_journaled_im
     for install_allowed in [false, true] {
         let f = fixture();
         let mut config = f.configuration(true, true);
-        config.hosts[0].imports.get_mut("business").unwrap().methods = if install_allowed {
+        config.hosts[0]
+            .endpoints
+            .get_mut("business")
+            .unwrap()
+            .grant
+            .methods = if install_allowed {
             BTreeSet::from(["read".into(), "install".into(), "replace".into()])
         } else {
             BTreeSet::from(["read".into()])
@@ -342,7 +347,12 @@ fn cohost_manager_installs_ui_bytes_and_adopts_without_reopening_root_or_replaci
             .unwrap();
         let mut config = f.configuration(true, true);
         config.hosts[0].location = HostLocation::Cohost {};
-        config.hosts[0].imports.get_mut("business").unwrap().methods = if install_allowed {
+        config.hosts[0]
+            .endpoints
+            .get_mut("business")
+            .unwrap()
+            .grant
+            .methods = if install_allowed {
             BTreeSet::from(["read".into(), "install".into(), "replace".into()])
         } else {
             BTreeSet::from(["read".into()])

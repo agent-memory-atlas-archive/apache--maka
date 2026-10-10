@@ -73,7 +73,10 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Call<R, W> {
         resources: Attachments,
     ) -> Self {
         let open = Open {
-            registration_epoch: endpoint.description.registration_epoch,
+            registration_epoch: endpoint
+                .description
+                .registration_epoch
+                .expect("Selection requires an actual registration"),
             endpoint: endpoint.endpoint,
             source: source.clone(),
             method,
@@ -475,7 +478,7 @@ mod tests {
                     description: super::super::Description {
                         provider: source().consumer,
                         export: "Service".into(),
-                        registration_epoch: uuid::Uuid::new_v4(),
+                        registration_epoch: Some(uuid::Uuid::new_v4()),
                         contract: maka_plugin_core::operation::receipt_reader_contract(),
                     },
                 },

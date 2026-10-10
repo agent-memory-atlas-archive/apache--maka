@@ -137,9 +137,10 @@ fn failed_deferred_owner_preserves_old_ui_and_allows_a_corrected_source() {
         secondary(&f, &mut configuration);
         if !lost_capture {
             configuration.hosts[1]
-                .imports
+                .endpoints
                 .get_mut("business")
                 .unwrap()
+                .grant
                 .methods
                 .insert("undeclared".into());
         }

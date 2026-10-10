@@ -61,7 +61,7 @@ The TUI Appearance page provides Maka, Dusk, Paper, Terminal and custom palettes
 
 `installation.json` supplies `presentation` (`desktop` or `tui`), the full `locale` tag (or `auto`), `scheme` (`light` or `dark`), `hostRoot`, `hostDeployment`, `managementDeployment`, `agent` and `keys`. `agent` is the SDK's generated `AgentConfiguration`: explicit `workspaceRoots` (`[{ label, path }]`, absolute directories), finite `maxActiveRuns`/`maxSteps`, initial `permissions` (`{ "access": "read_only", "requestPermissions": true }` or `workspace_write`) and explicit `tools` (use `[]` for a text-only composition). Credentials and endpoint settings belong to that Host Root; they do not belong in the product source.
 
-`keys` maps every name exported by `src/composition.ts` to a nonnil UUID. Allocate these once for an installation and keep them across rebuilds. `managementDeployment` is a stable Host UUID in the UI Root, distinct from the UI and business Host deployment. New package revisions do not imply new data namespaces.
+`keys` maps every name in `instanceNames` exported by `src/composition.ts` to a nonnil UUID. Allocate these once for an installation and keep them across rebuilds. `managementDeployment` is a stable Host UUID in the UI Root, distinct from the UI and business Host deployment. New package revisions do not imply new data namespaces.
 
 The authoring command asks the actual Rust CLI to validate every package and compute its pinned reference. It writes and checks `host.json`, `management-host.json`, `ui.json`, `remote-exports.json`, `connections.json` and `packages.json`. It does not initialize a Root, commit a deployment or start execution. `connections.json` is trusted launcher configuration; inspect its explicit method and recovery grants before use.
 
@@ -245,3 +245,5 @@ opened by right click or their visible `⋯` control. Conversation details open 
 place; the new-conversation menu selects another workspace. Complete text messages offer direct source copying, and a native selection
 adds Copy selection. Partial messages retain the original source reader. The
 menus share ordinary action guards and native modal focus custody.
+
+Recovery uses its own ordinary ReadingArea instance and Host recovery consumer. Its dependency graph contains no Agent, Skills Library, or Settings service; business initialization failure leaves original receipt and skill-outcome reads available in the same Host.

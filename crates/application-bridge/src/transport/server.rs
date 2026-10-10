@@ -21,7 +21,7 @@
 use super::{
     catalogue::Catalogue,
     ipc::{Accepted, Hello},
-    policy::{Endpoint, Peers, PolicyOwner},
+    policy::{Peers, PolicyOwner},
     wire::{self, Control, Open, Reader, Reply},
 };
 use crate::Result;
@@ -53,7 +53,7 @@ struct Failed {
 pub struct Server {
     client: Client,
     policy: PolicyOwner,
-    endpoints: Mutex<BTreeMap<String, Endpoint>>,
+    endpoints: Mutex<super::Endpoints>,
     slots: Arc<Semaphore>,
     stop: CancellationToken,
     tasks: TaskTracker,
@@ -64,14 +64,10 @@ impl Server {
     pub fn new(
         client: Client,
         policy: PolicyOwner,
-        endpoints: BTreeMap<String, Endpoint>,
+        endpoints: impl Into<super::Endpoints>,
     ) -> Result<Arc<Self>> {
-        if endpoints.is_empty()
-            || endpoints.len() > 128
-            || endpoints.keys().any(|n| n.is_empty() || n.len() > 256)
-        {
-            return Err("invalid Application endpoints".into());
-        }
+        let endpoints = endpoints.into();
+        endpoints.validate()?;
         Ok(Arc::new(Self {
             client,
             policy,
@@ -86,13 +82,8 @@ impl Server {
     pub fn catalogue(&self) -> Catalogue {
         Catalogue::captured(&self.endpoints.lock().unwrap())
     }
-    pub(crate) fn replace_endpoints(&self, endpoints: BTreeMap<String, Endpoint>) -> Result<()> {
-        if endpoints.is_empty()
-            || endpoints.len() > 128
-            || endpoints.keys().any(|n| n.is_empty() || n.len() > 256)
-        {
-            return Err("invalid Application endpoints".into());
-        }
+    pub(crate) fn replace_endpoints(&self, endpoints: super::Endpoints) -> Result<()> {
+        endpoints.validate()?;
         let gate = self.admission.lock().unwrap();
         if *gate {
             return Err("Application transport is closing".into());

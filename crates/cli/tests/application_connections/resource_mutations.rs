@@ -362,7 +362,7 @@ fn actual_resource_mutation_counts_preparing_running_and_closing_and_rechecks_or
  {
     let f = fixture_with_ui(true);
     let mut configuration = f.configuration(true, false);
-    configuration.hosts[0].imports.remove("receipts");
+    configuration.hosts[0].endpoints.remove("receipts");
     let mut connections = f.connect(configuration);
     let mut native = support::counter::scene::registry(PresentationTarget::Desktop);
     native

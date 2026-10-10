@@ -230,8 +230,7 @@ fn actual_quit_drains_cohost_native_sql_write_before_shared_store_close(cx: &mut
         )
         .unwrap();
     let configuration = serde_json::from_value(serde_json::json!({"hosts":[{
-        "name":"local", "location":{"kind":"cohost"}, "deployment":host, "consumer":host_fixture::identity(13),
-        "imports":{"business":{"methods":["read"],"recovery":false}}
+        "name":"local", "location":{"kind":"cohost"}, "deployment":host, "endpoints":{"business":{"consumer":host_fixture::identity(13),"import":"business","grant":{"methods":["read"],"recovery":false}}}
     }]})).unwrap();
     let mut connections = timer
         .block_on(Connections::prepare(

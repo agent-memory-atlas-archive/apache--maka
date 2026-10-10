@@ -207,7 +207,7 @@ mod probe {
             std::fs::write(
                 &path,
                 serde_json::to_vec(
-                    &json!({"hosts":[{"name":"local","location":{"kind":"process","root":directory.join("host")},"deployment":host,"consumer":fixture::identity(13),"imports":{"business":{"methods":["read","write"],"recovery":false},"receipts":{"methods":["read"],"recovery":true}}}]}),
+                    &json!({"hosts":[{"name":"local","location":{"kind":"process","root":directory.join("host")},"deployment":host,"endpoints":{"business":{"consumer":fixture::identity(13),"import":"business","grant":{"methods":["read","write"],"recovery":false}},"receipts":{"consumer":fixture::identity(13),"import":"receipts","grant":{"methods":["read"],"recovery":true}}}}]}),
                 )?,
             )?;
         }

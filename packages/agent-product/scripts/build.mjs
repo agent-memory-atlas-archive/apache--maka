@@ -483,6 +483,17 @@ const mechanical = {
     },
   },
   rows: { entries: { tui: native('maka.ui.rows', { Rows: required(sdk.contracts.rows) }) } },
+  'recovery-gateway': {
+    entries: {
+      host: {
+        ...native('maka.application.gateway', {}),
+        imports: {
+          skillOutcomes: one(sdk.contracts.skillOutcomes),
+          receipts: one(sdk.contracts.receiptReader),
+        },
+      },
+    },
+  },
   'studio-gateway': {
     id: 'maka.studio.gateway',
     entries: {
@@ -490,8 +501,6 @@ const mechanical = {
         ...native('maka.application.gateway', {}),
         imports: {
           settings: one(sdk.contracts.settings),
-          skillOutcomes: one(sdk.contracts.skillOutcomes),
-          receipts: one(sdk.contracts.receiptReader),
         },
       },
     },
@@ -699,8 +708,6 @@ const mechanical = {
           terminal: { contract: sdk.contracts.terminal, cardinality: { kind: 'optional' } },
           skills: { contract: sdk.contracts.skillLibrary, cardinality: { kind: 'optional' } },
           settings: one(sdk.contracts.settings),
-          skillOutcomes: one(sdk.contracts.skillOutcomes),
-          receipts: one(sdk.contracts.receiptReader),
         },
       },
     },

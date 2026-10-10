@@ -152,6 +152,26 @@ async fn failed_initial_start_keeps_independent_initializers_and_original_cleanu
         for id in [id(1), id(2), id(3)] {
             assert!(client.ready_instance(&id).await.is_err());
         }
+        use maka_runtime_host::application::CapturedImport;
+        match client.capture_import(id(2), "echo".into()).await.unwrap() {
+            CapturedImport::Unavailable {
+                provider,
+                export,
+                contract: declared,
+            } => {
+                assert_eq!(provider, id(1));
+                assert_eq!(export, "echo");
+                assert_eq!(declared, contract(MethodMode::Query));
+            }
+            CapturedImport::Ready(_) => panic!("failed dependency cannot mint a binding"),
+        }
+        assert!(client.capture_import(id(999), "echo".into()).await.is_err());
+        assert!(
+            client
+                .capture_import(id(2), "missing".into())
+                .await
+                .is_err()
+        );
         healthy_release.add_permits(1);
         let reader = client.ready_instance(&id(5)).await.unwrap();
         let healthy = client.activation(&id(4)).unwrap();
@@ -249,6 +269,10 @@ async fn failed_initial_start_keeps_independent_initializers_and_original_cleanu
             ready.await.unwrap();
         }
         assert_ne!(client.activation(&id(1)).unwrap(), failed);
+        assert!(matches!(
+            client.capture_import(id(2), "echo".into()).await.unwrap(),
+            CapturedImport::Ready(_)
+        ));
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
         assert_eq!(client.activation(&id(4)).unwrap(), healthy);
         assert_eq!(client.snapshot().effective, Some(repaired));

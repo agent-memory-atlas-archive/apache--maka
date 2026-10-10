@@ -50,6 +50,7 @@ export const packageNames = [
   'help',
   'studio',
   'studio-gateway',
+  'recovery-gateway',
   'deployment',
   'deployment-manager',
   'deployment-gateway',
@@ -90,6 +91,8 @@ export const packageNames = [
   'gateway',
 ] as const;
 export type PackageName = (typeof packageNames)[number];
+export const instanceNames = [...packageNames, 'recovery-reading'] as const;
+export type InstanceName = (typeof instanceNames)[number];
 import type { AppearanceConfiguration } from './terminal-theme.js';
 export interface CompositionConfiguration {
   presentation: 'desktop' | 'tui';
@@ -99,7 +102,7 @@ export interface CompositionConfiguration {
   /** Fixed local custom-theme import/export file; absent disables file operations. */
   themeFile?: string;
   packages: Record<PackageName, PackageRef>;
-  keys: Record<PackageName, string>;
+  keys: Record<InstanceName, string>;
   agent: AgentConfiguration;
   processes?: WorkspaceProcessConfiguration;
   skills?: SkillLibraryConfiguration;
@@ -120,7 +123,7 @@ function settingsComposition(
   gateway: 'gateway' | 'studio-gateway',
 ) {
   const { packages, keys } = configuration;
-  const local = (name: PackageName, exportName: string): BindingTarget => ({
+  const local = (name: InstanceName, exportName: string): BindingTarget => ({
     kind: 'instance',
     path: [name],
     export: exportName,
@@ -138,8 +141,9 @@ function settingsComposition(
     name: PackageName,
     values: Record<string, unknown> = {},
     bindings: Record<string, BindingTarget[]> = {},
+    identity: InstanceName = name,
   ): CompositionNode => ({
-    key: keys[name],
+    key: keys[identity],
     package: { source: 'pinned', package: packages[name] },
     usePackage: 'entry',
     configuration: { values },
@@ -151,13 +155,19 @@ function settingsComposition(
       settings: node('settings'),
       'skill-outcomes': node('skill-outcomes'),
       receipts: node('receipts'),
+      'recovery-gateway': node(
+        'recovery-gateway',
+        {},
+        {
+          skillOutcomes: [local('skill-outcomes', 'Outcomes')],
+          receipts: [local('receipts', 'Receipts')],
+        },
+      ),
       gateway: node(
         gateway,
         {},
         {
           settings: [local('settings', 'Settings')],
-          skillOutcomes: [local('skill-outcomes', 'Outcomes')],
-          receipts: [local('receipts', 'Receipts')],
         },
       ),
     },
@@ -198,7 +208,7 @@ function settingsComposition(
           ],
           appearance: [local('appearance', 'Appearance')],
           locale: [local('locale', 'Locale')],
-          reading: [local('reading-area', 'ReadingArea')],
+          reading: [local('recovery-reading', 'ReadingArea')],
           surface: [local('surface', 'Surface')],
         },
       ),
@@ -207,7 +217,7 @@ function settingsComposition(
         'deployment',
         {},
         {
-          reading: [local('reading-area', 'ReadingArea')],
+          reading: [local('recovery-reading', 'ReadingArea')],
           editor: [local('editor', 'Textarea')],
           file: [local('file', 'FilePicker')],
           management: [
@@ -290,6 +300,12 @@ function settingsComposition(
       file: node('file'),
       reader: node('reader'),
       'reading-area': node('reading-area', {}, { source: [local('source-text', 'SourceText')] }),
+      'recovery-reading': node(
+        'reading-area',
+        {},
+        { source: [local('source-text', 'SourceText')] },
+        'recovery-reading',
+      ),
       history: node('history'),
     },
     recovery: local('recovery', 'Recovery'),
@@ -322,42 +338,52 @@ function settingsComposition(
       declaration: { contract: contracts.receiptReader, availability: 'required' },
     },
   );
+  const expose = (consumer: PackageName, name: string, methods: string[], recovery: boolean) => ({
+    consumer: [keys[consumer]],
+    import: name,
+    grant: { methods, recovery },
+  });
   const connections = {
     hosts: [
       {
         name: 'manager',
         location: { kind: 'cohost' },
         deployment: configuration.managementDeployment,
-        consumer: [keys['deployment-gateway']],
-        imports: {
-          management: {
-            methods: ['instances', 'setEnabled', 'readDocument', 'replace', 'install'],
-            recovery: false,
-          },
-          receipts: { methods: ['read'], recovery: true },
+        endpoints: {
+          management: expose(
+            'deployment-gateway',
+            'management',
+            ['instances', 'setEnabled', 'readDocument', 'replace', 'install'],
+            false,
+          ),
+          receipts: expose('deployment-gateway', 'receipts', ['read'], true),
         },
       },
       {
         name: 'local',
         location: { kind: 'process', root: configuration.hostRoot },
         deployment: configuration.hostDeployment,
-        consumer: [keys[gateway]],
-        imports: {
-          receipts: { methods: ['read'], recovery: true },
-          settings: { methods: Object.keys(contracts.settings.interface.methods), recovery: true },
-          skillOutcomes: { methods: ['read'], recovery: true },
+        endpoints: {
+          receipts: expose('recovery-gateway', 'receipts', ['read'], true),
+          settings: expose(
+            gateway,
+            'settings',
+            Object.keys(contracts.settings.interface.methods),
+            true,
+          ),
+          skillOutcomes: expose('recovery-gateway', 'skillOutcomes', ['read'], true),
         },
       },
     ],
   };
-  return { host, managementHost, ui, remoteExports, connections, local, remote, node };
+  return { host, managementHost, ui, remoteExports, connections, local, remote, node, expose };
 }
 /** Product source assembled exclusively from ordinary checked plugin bindings.
  * Keys and the Host deployment belong to the installation, not to a build.
  */
 export function composition(configuration: CompositionConfiguration): ApplicationSources {
   const { keys } = configuration;
-  const { host, managementHost, ui, remoteExports, connections, local, remote, node } =
+  const { host, managementHost, ui, remoteExports, connections, local, remote, node, expose } =
     settingsComposition(configuration, 'gateway');
   const asksForms = configuration.agent.tools.some((tool) => tool.import === 'forms');
   const asksQuestions = configuration.agent.tools.some((tool) => tool.import === 'questions');
@@ -436,13 +462,13 @@ export function composition(configuration: CompositionConfiguration): Applicatio
       capability: { deployment: 'local', instance: [keys.skills], export: 'skills' },
       declaration: { contract: contracts.skillLibrary, availability: 'required' },
     });
-    Object.assign(connections.hosts.find((host) => host.name === 'local')!.imports, {
-      skills: {
-        methods: configuration.skills.manage
-          ? ['list', 'read', 'preview', 'apply']
-          : ['list', 'read'],
-        recovery: !!configuration.skills.manage,
-      },
+    Object.assign(connections.hosts.find((host) => host.name === 'local')!.endpoints, {
+      skills: expose(
+        'gateway',
+        'skills',
+        configuration.skills.manage ? ['list', 'read', 'preview', 'apply'] : ['list', 'read'],
+        !!configuration.skills.manage,
+      ),
     });
   }
   Object.assign(ui.instances, {
@@ -627,8 +653,8 @@ export function composition(configuration: CompositionConfiguration): Applicatio
     capability: { deployment: 'local', instance: [keys.agent], export: 'agent' },
     declaration: { contract: contracts.agent, availability: 'required' },
   });
-  Object.assign(connections.hosts.find((host) => host.name === 'local')!.imports, {
-    agent: { methods: Object.keys(contracts.agent.interface.methods), recovery: true },
+  Object.assign(connections.hosts.find((host) => host.name === 'local')!.endpoints, {
+    agent: expose('gateway', 'agent', Object.keys(contracts.agent.interface.methods), true),
   });
   if (configuration.processes) {
     remoteExports.push({
@@ -639,8 +665,13 @@ export function composition(configuration: CompositionConfiguration): Applicatio
       },
       declaration: { contract: contracts.terminal, availability: 'required' },
     });
-    Object.assign(connections.hosts.find((host) => host.name === 'local')!.imports, {
-      terminal: { methods: Object.keys(contracts.terminal.interface.methods), recovery: true },
+    Object.assign(connections.hosts.find((host) => host.name === 'local')!.endpoints, {
+      terminal: expose(
+        'gateway',
+        'terminal',
+        Object.keys(contracts.terminal.interface.methods),
+        true,
+      ),
     });
   }
   if (asksForms || asksQuestions || fileMethods.length || processMethods.length)

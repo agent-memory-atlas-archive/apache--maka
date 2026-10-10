@@ -169,10 +169,10 @@ fn authored(
     refs: &BTreeMap<String, maka_plugin_core::package::PackageRef>,
 ) -> (Value, Value, [Color; 2]) {
     let output = Command::new("node").args(["--input-type=module", "-e", r#"
-        const {composition,studioComposition,packageNames}=await import(process.argv[1]);
+        const {composition,studioComposition,instanceNames}=await import(process.argv[1]);
         const configuration=JSON.parse(process.argv[2]);
         const packages=JSON.parse(process.argv[3]);
-        const keys=Object.fromEntries(packageNames.map((name,i)=>[name,
+        const keys=Object.fromEntries(instanceNames.map((name,i)=>[name,
             '00000000-0000-0000-0000-'+String(i+20).padStart(12,'0')]));
         const common={...configuration,packages,keys};
         const {activate}=await import(process.argv[4]);
@@ -352,7 +352,14 @@ fn agent_installs_studio_and_production_launcher_replaces_the_surface_and_backen
         .as_object()
         .unwrap()
         .values()
-        .map(|node| node["package"]["package"].clone())
+        .map(|node| {
+            serde_json::from_value::<maka_plugin_core::package::PackageRef>(
+                node["package"]["package"].clone(),
+            )
+            .unwrap()
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
         .collect();
     let document: DeploymentDocument = serde_json::from_value(
         json!({"input":studio["ui"], "remoteExports":studio["remoteExports"], "packages":selected}),
@@ -710,33 +717,10 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
     for path in [&root, &host_root] {
         drop(RootOwner::open(path, &ns).unwrap());
     }
-    // Restart the actual UI into its independent recovery root after removing
-    // the library and source. Its durable caller intents still name the original
-    // provider; no current business role is used to find publication receipts.
+    // Keep both deployments and all endpoint selections unchanged. Removing the
+    // selected source makes the actual Library initializer fail on restart;
+    // ordinary UI startup must fall back to its independent recovery root.
     runtime.block_on(async {
-        let host = EventLog::for_root(Arc::new(RootOwner::open(&host_root, &ns).unwrap()))
-            .await
-            .unwrap();
-        let mut loaded = host.load_application(host_id).await.unwrap().unwrap();
-        loaded.source.input.instances.remove("skills");
-        loaded
-            .source
-            .input
-            .instances
-            .get_mut("gateway")
-            .unwrap()
-            .bindings
-            .remove("skills");
-        host.commit_application(
-            host_id,
-            loaded.source.reference.revision,
-            loaded.source.input,
-            loaded.source.remote_exports,
-            loaded.packages,
-        )
-        .await
-        .unwrap();
-        host.shutdown().await.unwrap();
         let ui = EventLog::for_root(Arc::new(RootOwner::open(&root, &ns).unwrap()))
             .await
             .unwrap();
@@ -746,42 +730,11 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
             .unwrap();
         assert!(!intents.is_empty());
         assert_eq!(intents[0].reference.contract.name, "maka.skills.Library");
-        let mut loaded = ui.load_application(deployment).await.unwrap().unwrap();
-        loaded.source.input.instances.remove("skill-library");
-        let workspace = loaded.source.input.instances.get_mut("workspace").unwrap();
-        workspace.bindings.remove("skills");
-        workspace
-            .configuration
-            .values
-            .insert("skills".into(), json!(false));
-        loaded.source.input.launch = loaded.source.input.recovery.clone();
-        loaded
-            .source
-            .remote_exports
-            .retain(|remote| remote.declaration.contract.name != "maka.skills.Library");
-        ui.commit_application(
-            deployment,
-            loaded.source.reference.revision,
-            loaded.source.input,
-            loaded.source.remote_exports,
-            loaded.packages,
-        )
-        .await
-        .unwrap();
+        let loaded = ui.load_application(deployment).await.unwrap().unwrap();
+        assert_ne!(loaded.source.input.launch, loaded.source.input.recovery);
+        assert!(loaded.source.input.instances.contains_key("skill-library"));
         ui.shutdown().await.unwrap();
     });
-    let mut connection: Value =
-        serde_json::from_slice(&std::fs::read(&connections).unwrap()).unwrap();
-    connection["hosts"]
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .find(|host| host["name"] == "local")
-        .unwrap()["imports"]
-        .as_object_mut()
-        .unwrap()
-        .remove("skills");
-    std::fs::write(&connections, serde_json::to_vec(&connection).unwrap()).unwrap();
     std::fs::remove_dir_all(&source).unwrap();
     let mut recovered = Pty::spawn(&[
         "application",

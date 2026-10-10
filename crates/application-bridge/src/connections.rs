@@ -63,10 +63,37 @@ pub struct Host {
     pub name: String,
     pub location: HostLocation,
     pub deployment: Uuid,
-    pub consumer: InstanceId,
-    pub imports: BTreeMap<String, Grant>,
+    pub endpoints: BTreeMap<String, HostEndpoint>,
     #[serde(default)]
     pub native: Vec<crate::transport::NativeGrant>,
+}
+/// One trusted exposure through an explicit Host consumer and declared import.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostEndpoint {
+    pub consumer: InstanceId,
+    pub import: String,
+    pub grant: Grant,
+}
+impl HostEndpoint {
+    pub(crate) fn validate(&self) -> Result<()> {
+        if self.consumer.0.is_empty()
+            || self.consumer.0.len() > 32
+            || self.consumer.0.iter().any(Uuid::is_nil)
+            || self.import.is_empty()
+            || self.import.len() > 256
+            || self.grant.methods.is_empty()
+            || self.grant.methods.len() > 64
+            || self
+                .grant
+                .methods
+                .iter()
+                .any(|method| method.is_empty() || method.len() > 256)
+        {
+            return Err("invalid Host endpoint selection or grant".into());
+        }
+        Ok(())
+    }
 }
 /// Explicit executor location chosen by the trusted launcher. Cohost borrows
 /// the already owned UI Store; it never opens a filesystem Root.
@@ -108,16 +135,10 @@ impl Configuration {
                 || host.name.len() > 256
                 || !names.insert(&host.name)
                 || host.deployment.is_nil()
-                || host.imports.is_empty()
-                || host.imports.len() > 128
+                || host.endpoints.is_empty()
+                || host.endpoints.len() > 128
             {
                 return Err("invalid or duplicate local Host declaration".into());
-            }
-            if host.consumer.0.is_empty()
-                || host.consumer.0.len() > 32
-                || host.consumer.0.iter().any(Uuid::is_nil)
-            {
-                return Err("invalid Host consumer identity".into());
             }
             if host.native.len() > 128 {
                 return Err("maximum 128 native service grants".into());
@@ -125,15 +146,11 @@ impl Configuration {
             for grant in &host.native {
                 grant.validate()?;
             }
-            for (name, grant) in &host.imports {
-                if name.is_empty()
-                    || name.len() > 256
-                    || grant.methods.is_empty()
-                    || grant.methods.len() > 64
-                    || grant.methods.iter().any(|m| m.is_empty() || m.len() > 256)
-                {
-                    return Err("invalid local service grant".into());
+            for (name, endpoint) in &host.endpoints {
+                if name.is_empty() || name.len() > 256 {
+                    return Err("invalid Host endpoint name".into());
                 }
+                endpoint.validate()?;
             }
         }
         Ok(())
@@ -316,9 +333,9 @@ impl Connections {
                 .start_selected(host.clone(), prepared.consumers, self.source.clone())
                 .await?;
             let owned = self.hosts.last_mut().unwrap();
-            for import in host.imports.keys() {
-                let selection = catalogue.select(import)?;
-                let description = selection.description();
+            catalogue.check_names(host.endpoints.keys())?;
+            for import in host.endpoints.keys() {
+                let description = catalogue.describe(import)?;
                 let target = RemoteCapability {
                     deployment: host.name.clone(),
                     instance: description.provider.clone(),
@@ -334,9 +351,13 @@ impl Connections {
                         "Host endpoint differs from the selected UI source observation".into(),
                     );
                 }
+                let Some(registration_epoch) = description.registration_epoch else {
+                    continue;
+                };
+                let selection = catalogue.select(import)?;
                 self.registrations.push(RemoteService {
                     target,
-                    registration_epoch: description.registration_epoch,
+                    registration_epoch,
                     contract: description.contract.clone(),
                     implementation: Arc::new(native::Service::new(
                         owned.connection.as_ref().unwrap().clone(),
@@ -381,8 +402,7 @@ impl Connections {
             namespaces: self.namespaces.clone(),
             source,
             consumers,
-            consumer: host.consumer.clone(),
-            imports: host.imports.clone(),
+            endpoints: host.endpoints.clone(),
             native: host.native.clone(),
             address: address.path.clone(),
             nonce,
@@ -470,13 +490,8 @@ impl Connections {
         );
         let app = application.as_ref().unwrap();
         let client = app.client();
-        client.ready_instance(&configuration.consumer).await?;
-        let endpoints = crate::transport::process::capture_endpoints(
-            &client,
-            &configuration.consumer,
-            &configuration.imports,
-        )
-        .await?;
+        let endpoints =
+            crate::transport::process::start_endpoints(&client, &configuration.endpoints).await?;
         let actual = crate::transport::Server::new(client, policy, endpoints)?;
         let catalogue = actual.catalogue();
         *server = Some(actual.clone());
@@ -614,9 +629,9 @@ impl Connections {
                 Some(owned.capture().await?)
             };
             if let Some(catalogue) = &catalogue {
-                for import in owned.configuration.imports.keys() {
-                    let selection = catalogue.select(import)?;
-                    let description = selection.description();
+                catalogue.check_names(owned.configuration.endpoints.keys())?;
+                for import in owned.configuration.endpoints.keys() {
+                    let description = catalogue.describe(import)?;
                     let target = RemoteCapability {
                         deployment: name.clone(),
                         instance: description.provider.clone(),
@@ -636,16 +651,20 @@ impl Connections {
                             "Host endpoint differs from selected UI source observation".into()
                         );
                     }
+                    let Some(registration_epoch) = description.registration_epoch else {
+                        continue;
+                    };
+                    let selection = catalogue.select(import)?;
                     let value = if let Some(registered) =
                         self.registrations.iter().find(|registered| {
                             registered.target == target
-                                && registered.registration_epoch == description.registration_epoch
+                                && registered.registration_epoch == registration_epoch
                         }) {
                         registered.clone()
                     } else {
                         RemoteService {
                             target,
-                            registration_epoch: description.registration_epoch,
+                            registration_epoch,
                             contract: description.contract.clone(),
                             implementation: Arc::new(native::Service::new(
                                 owned.connection.as_ref().unwrap().clone(),
@@ -660,11 +679,7 @@ impl Connections {
             owned.check_approval(&source, &consumers, &retain, &catalogue)?;
             staged.push(Some((approved, consumers, catalogue)));
         }
-        if required.iter().any(|target| {
-            !published
-                .iter()
-                .any(|registered| &registered.target == target)
-        }) {
+        if required.iter().any(|target| !targets.contains(target)) {
             return Err("UI source selects an endpoint outside its configured grants".into());
         }
         // Complete the whole batch's known validation before changing any grant.

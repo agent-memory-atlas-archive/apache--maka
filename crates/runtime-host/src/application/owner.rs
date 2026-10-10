@@ -860,8 +860,72 @@ impl Owner {
             })
             .collect()
     }
+    fn capture_import(&self, consumer: &InstanceId, import: &str) -> Result<CapturedImport> {
+        if self.closing {
+            return Err("Host deployment is closing".into());
+        }
+        let instance = self
+            .runtime
+            .desired()
+            .instances()
+            .get(consumer)
+            .filter(|instance| !instance.disabled)
+            .ok_or("Host consumer is not declared and enabled")?;
+        if !instance
+            .entry
+            .as_ref()
+            .is_some_and(|entry| entry.imports.contains_key(import))
+        {
+            return Err("Host consumer import is not declared".into());
+        }
+        let [declared] = instance
+            .bindings
+            .get(import)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+        else {
+            return Err("Host import requires one explicitly selected provider".into());
+        };
+        let Provider::Local {
+            instance: provider,
+            export,
+        } = &declared.provider
+        else {
+            return Err("Host import requires a local provider".into());
+        };
+        if let Some(activation) = self.activations.get(consumer)
+            && self
+                .runtime
+                .status(activation)
+                .is_ok_and(|status| status.phase == Phase::Active)
+        {
+            let mut bindings = self.capture_bindings(activation, import)?;
+            if let Some(binding) = bindings.pop() {
+                if !bindings.is_empty()
+                    || binding.provider().instance() != provider
+                    || binding.export() != export
+                    || binding.contract() != &declared.declaration.contract
+                {
+                    return Err("Host registration differs from its declared import".into());
+                }
+                return Ok(CapturedImport::Ready(binding));
+            }
+        }
+        Ok(CapturedImport::Unavailable {
+            provider: provider.clone(),
+            export: export.clone(),
+            contract: declared.declaration.contract.clone(),
+        })
+    }
     fn command(&mut self, command: Command) {
         match command {
+            Command::CaptureImport {
+                consumer,
+                import,
+                reply,
+            } => {
+                let _ = reply.send(self.capture_import(&consumer, &import));
+            }
             Command::Bind {
                 consumer,
                 import,
