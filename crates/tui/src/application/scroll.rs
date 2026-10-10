@@ -78,6 +78,11 @@ impl SceneState {
                 content,
                 ..
             }
+            | Node::ContextMenu {
+                background,
+                content,
+                ..
+            }
             | Node::AdaptivePane {
                 background,
                 content,
@@ -277,17 +282,21 @@ impl SceneState {
         };
         let next = (i64::from(state.offset) + delta).clamp(0, i64::from(viewport.end())) as u32;
         state.intent += 1;
-        if let Some(reading) = self
+        let reading_scroll = if let Some(reading) = self
             .reading
             .as_mut()
             .filter(|reading| reading.root_key == key)
         {
             reading.scope.touch();
+            reading.scrolled(delta);
             reading.cancel();
-        }
+            true
+        } else {
+            false
+        };
         let changed = state.offset != next;
         state.offset = next;
-        changed
+        changed || reading_scroll
     }
 }
 

@@ -142,9 +142,25 @@ pub struct ReadingReceipt {
 pub struct ReadingViewport {
     /// Explicit reading intent used by the actually painted children.
     pub reading_revision: u64,
+    #[serde(default)]
+    pub at_start: bool,
     pub at_end: bool,
     #[schemars(length(max = 4096))]
     pub visible_child_keys: Vec<String>,
+}
+/// Most recent physical scroll. Layout changes and programmatic landings do not
+/// create a new request, so a product can load adjacent content without loops.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReadingScroll {
+    pub reading_revision: u64,
+    pub direction: ReadingScrollDirection,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadingScrollDirection {
+    Up,
+    Down,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -152,6 +168,8 @@ pub struct ReadingObservation {
     /// Immediate native intent; can be newer than the painted viewport.
     pub reading_revision: u64,
     pub viewport: Option<ReadingViewport>,
+    #[serde(default)]
+    pub scroll: Option<ReadingScroll>,
     /// Direct content child containing the native selection focus. Renderers
     /// without this observation return null. This key conveys no read authority.
     #[schemars(length(max = 256))]

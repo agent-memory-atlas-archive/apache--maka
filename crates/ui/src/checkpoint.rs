@@ -20,6 +20,7 @@
 //! Opt-in native editor persistence. Recipes hold no database or worker owner.
 #[cfg(test)]
 mod tests;
+pub mod value;
 mod worker;
 use crate::{
     budget::{Kind, NativeBudget, Permit},

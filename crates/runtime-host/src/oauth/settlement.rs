@@ -36,7 +36,7 @@ pub(super) enum Outcome {
 impl State {
     pub async fn resolve(
         &mut self,
-        provider: Binding,
+        provider: RefreshProvider,
         connection: Connection,
         context: Context,
         shutdown: &CancellationToken,

@@ -27,6 +27,32 @@ use std::{
 use tokio::sync::{Mutex as AsyncMutex, watch};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
+enum RefreshProvider {
+    Contribution(Binding),
+    Native {
+        identity: Identity,
+        definition: Arc<maka_plugins::provider::Definition>,
+    },
+}
+impl RefreshProvider {
+    fn identity(&self) -> &Identity {
+        match self {
+            Self::Contribution(binding) => binding.identity(),
+            Self::Native { identity, .. } => identity,
+        }
+    }
+    fn prepare_refresh(
+        &self,
+        connection: Connection,
+        credential: maka_runtime::provider::Credential,
+    ) -> Result<maka_plugins::provider::RefreshCall, maka_plugins::provider::Error> {
+        match self {
+            Self::Contribution(binding) => binding.prepare_refresh(connection, credential),
+            Self::Native { definition, .. } => definition.prepare_refresh(connection, credential),
+        }
+    }
+}
+
 mod settlement;
 use settlement::State;
 
@@ -128,6 +154,32 @@ impl Credential {
         provider: Binding,
         context: Context,
     ) -> Result<ProviderCredential, ModelError> {
+        self.resolve_provider(RefreshProvider::Contribution(provider), context)
+            .await
+    }
+
+    /// Use the same durable refresh owner for compiled native provider policy.
+    pub async fn resolve_native(
+        &self,
+        identity: Identity,
+        definition: Arc<maka_plugins::provider::Definition>,
+        context: Context,
+    ) -> Result<ProviderCredential, ModelError> {
+        self.resolve_provider(
+            RefreshProvider::Native {
+                identity,
+                definition,
+            },
+            context,
+        )
+        .await
+    }
+
+    async fn resolve_provider(
+        &self,
+        provider: RefreshProvider,
+        context: Context,
+    ) -> Result<ProviderCredential, ModelError> {
         if provider.identity() != &self.snapshot.target().provider {
             return Err(failure("Provider does not match credential recipient"));
         }
@@ -161,7 +213,7 @@ impl Credential {
 impl Generation {
     async fn resolve(
         &self,
-        provider: Binding,
+        provider: RefreshProvider,
         connection: Connection,
         mut context: Context,
     ) -> Result<ProviderCredential, ModelError> {
@@ -361,6 +413,27 @@ mod tests {
         _registration: maka_plugins::Registration,
     }
     impl Fixture {
+        async fn resolve(
+            &self,
+            credential: &Credential,
+            context: Context,
+            native: bool,
+        ) -> Result<ProviderCredential, ModelError> {
+            if native {
+                let definition = Arc::new(
+                    Definition::new(
+                        self.provider.definition().descriptor().clone(),
+                        Arc::new(RefreshProvider),
+                    )
+                    .unwrap(),
+                );
+                credential
+                    .resolve_native(self.provider.identity().clone(), definition, context)
+                    .await
+            } else {
+                credential.resolve(self.provider.clone(), context).await
+            }
+        }
         async fn new() -> Self {
             let temp = tempfile::tempdir().unwrap();
             let root = RootOwner::create(
@@ -454,65 +527,66 @@ mod tests {
     async fn refresh_is_single_flight_across_cancelled_waiters_and_retains_spent_grants_during_drain()
      {
         tokio::time::timeout(std::time::Duration::from_secs(15), async {
-            let fixture = Fixture::new().await;
-            let workers = TaskTracker::new();
-            let stop = CancellationToken::new();
-            let authority = Authority::new(workers.clone(), stop.clone());
-            let binding = authority.bind(fixture.snapshot.clone()).unwrap();
-            let (context, admitted, reply) = exchange();
-            let mut abandoned =
-                Box::pin(binding.resolve(fixture.provider.clone(), context.clone()));
-            assert!(poll!(abandoned.as_mut()).is_pending());
-            assert_eq!(admitted.await.unwrap(), b"old");
-            let mut waiters = (0..16)
-                .map(|_| Box::pin(binding.resolve(fixture.provider.clone(), context.clone())))
-                .collect::<Vec<_>>();
-            for waiter in &mut waiters {
-                assert!(poll!(waiter.as_mut()).is_pending());
+            for native in [false, true] {
+                let fixture = Fixture::new().await;
+                let workers = TaskTracker::new();
+                let stop = CancellationToken::new();
+                let authority = Authority::new(workers.clone(), stop.clone());
+                let binding = authority.bind(fixture.snapshot.clone()).unwrap();
+                let (context, admitted, reply) = exchange();
+                let mut abandoned = Box::pin(fixture.resolve(&binding, context.clone(), native));
+                assert!(poll!(abandoned.as_mut()).is_pending());
+                assert_eq!(admitted.await.unwrap(), b"old");
+                let mut waiters = (0..16)
+                    .map(|_| Box::pin(fixture.resolve(&binding, context.clone(), native)))
+                    .collect::<Vec<_>>();
+                for waiter in &mut waiters {
+                    assert!(poll!(waiter.as_mut()).is_pending());
+                }
+                drop(abandoned);
+                context.cancellation.cancel();
+                assert!(reply.send(envelope("next", Some(0))).is_ok());
+                for result in join_all(waiters).await {
+                    assert_eq!(result.unwrap().credential().secret, "next");
+                }
+                let current = fixture
+                    .snapshot
+                    .current_generation()
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    current.basis().revision,
+                    fixture.snapshot.basis().revision + 1
+                );
+                assert!(authority.bind(fixture.snapshot.clone()).is_err());
+                let next = authority.bind(current).unwrap();
+                let (context, admitted, reply) = exchange();
+                let mut resolving = Box::pin(fixture.resolve(&next, context, native));
+                assert!(poll!(resolving.as_mut()).is_pending());
+                assert_eq!(
+                    admitted.await.unwrap(),
+                    b"next",
+                    "new request supplies its own transport"
+                );
+                stop.cancel();
+                assert!(reply.send(envelope("final", None)).is_ok());
+                assert_eq!(resolving.await.unwrap().credential().secret, "final");
+                workers.close();
+                workers.wait().await;
+                let current = fixture
+                    .snapshot
+                    .current_generation()
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    current.basis().revision,
+                    fixture.snapshot.basis().revision + 2
+                );
+                assert!(current.credential() == &envelope("final", None));
+                fixture.store.shutdown().await.unwrap();
             }
-            drop(abandoned);
-            context.cancellation.cancel();
-            assert!(reply.send(envelope("next", Some(0))).is_ok());
-            for result in join_all(waiters).await {
-                assert_eq!(result.unwrap().credential().secret, "next");
-            }
-            let current = fixture
-                .snapshot
-                .current_generation()
-                .await
-                .unwrap()
-                .unwrap();
-            assert_eq!(
-                current.basis().revision,
-                fixture.snapshot.basis().revision + 1
-            );
-            assert!(authority.bind(fixture.snapshot.clone()).is_err());
-            let next = authority.bind(current).unwrap();
-            let (context, admitted, reply) = exchange();
-            let mut resolving = Box::pin(next.resolve(fixture.provider.clone(), context));
-            assert!(poll!(resolving.as_mut()).is_pending());
-            assert_eq!(
-                admitted.await.unwrap(),
-                b"next",
-                "new request supplies its own transport"
-            );
-            stop.cancel();
-            assert!(reply.send(envelope("final", None)).is_ok());
-            assert_eq!(resolving.await.unwrap().credential().secret, "final");
-            workers.close();
-            workers.wait().await;
-            let current = fixture
-                .snapshot
-                .current_generation()
-                .await
-                .unwrap()
-                .unwrap();
-            assert_eq!(
-                current.basis().revision,
-                fixture.snapshot.basis().revision + 2
-            );
-            assert!(current.credential() == &envelope("final", None));
-            fixture.store.shutdown().await.unwrap();
         })
         .await
         .unwrap();

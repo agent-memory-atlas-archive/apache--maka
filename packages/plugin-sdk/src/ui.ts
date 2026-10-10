@@ -137,6 +137,9 @@ export const ui = {
     },
   },
   terminal: {
+    contextMenu(value: Props<TerminalKind<'context_menu'>>): TerminalKind<'context_menu'> {
+      return node('tui', { ...value, kind: 'context_menu' });
+    },
     adaptivePane(value: Props<TerminalKind<'adaptive_pane'>>): TerminalKind<'adaptive_pane'> {
       return node('tui', { ...value, kind: 'adaptive_pane' });
     },

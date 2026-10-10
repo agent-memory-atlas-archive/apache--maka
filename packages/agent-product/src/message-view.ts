@@ -144,6 +144,200 @@ export function messageView<N extends Node>(
     settlement = result?.settlement;
   const time =
     message.role === 'user' || message.role === 'assistant' ? timeLabel(message.timestamp) : null;
+  if (target === 'tui') {
+    const user = message.role === 'user';
+    const thinking = message.role === 'thinking';
+    const failed =
+      message.role === 'failure' ||
+      result?.isError ||
+      settlement === 'failed' ||
+      settlement === 'rejected';
+    const marker = user
+      ? theme.ascii
+        ? '>'
+        : '❯'
+      : tool || thinking || failed
+        ? theme.ascii
+          ? '*'
+          : '•'
+        : ' ';
+    const markerColor = failed
+      ? theme.error
+      : message.waiting
+        ? theme.warning
+        : tool && result
+          ? theme.success
+          : user || message.live
+            ? theme.accent
+            : theme.subtle;
+    const row = (key: string, children: N[], band = false) =>
+      ui.box(key, children, {
+        row: true,
+        gap: 0,
+        surface: band,
+        terminal: { grow: 0 },
+        ...(time && key === 'message-body-' + message.id
+          ? {
+              wide: {
+                min_width: 60,
+                direction: 'row' as const,
+                children: { ['time-' + message.id]: { basis: Math.min(time.length + 1, 24) } },
+              },
+            }
+          : {}),
+      });
+    const gutter = (rail = false) =>
+      ui.box(
+        'gutter-' + message.id + (rail ? '-rail' : ''),
+        [
+          ui.text(
+            'marker-' + message.id + (rail ? '-rail' : ''),
+            rail ? (theme.ascii ? '|' : '│') : marker,
+            14,
+            rail ? theme.border : markerColor,
+          ),
+        ],
+        { terminal: { basis: 2 }, surface: user },
+      );
+    const heading = tool
+      ? row('tool-heading-' + message.id, [
+          gutter(),
+          message.toggle
+            ? ui.button(
+                message.toggle,
+                compactLabel(name ?? caption, 72),
+                false,
+                true,
+                { background: 0, align: 'start' },
+                undefined,
+                expanded ? text.collapseTool : text.expandTool,
+              )
+            : ui.text('role-' + message.id, name ?? caption, 14, theme.text, 600),
+          ...(status ? [ui.text('tool-status-' + message.id, '  ' + status, 13, theme.muted)] : []),
+        ])
+      : row(
+          'message-body-' + message.id,
+          [
+            message.browse && ui.item
+              ? ui.item(message.browse.key, gutter(), message.browse.current, false, {
+                  followFocus: true,
+                  submit: true,
+                  submitSpace: true,
+                })
+              : gutter(),
+            ui.box('body-' + message.id, [body], {
+              gap: 0,
+              surface: user,
+              terminal: { grow: 1, shrink: true },
+            }),
+            ...(time
+              ? [
+                  ui.box(
+                    'time-' + message.id,
+                    [ui.text('timestamp-' + message.id, time, 12, theme.subtle)],
+                    { surface: user, terminal: { basis: 0 } },
+                  ),
+                ]
+              : []),
+          ],
+          user,
+        );
+    const actions = tool
+      ? message.actions
+      : [
+          ...(!message.continued && message.text
+            ? [
+                ui.button(
+                  'copy-raw-' + message.id,
+                  user ? text.copyMessage : text.copySource,
+                  false,
+                  false,
+                  {},
+                  message.text,
+                ),
+              ]
+            : []),
+          ...message.sourceActions,
+        ];
+    const hasMenu = !!ui.contextMenu && actions.length > 0;
+    const card = ui.box(
+      (hasMenu ? 'message-card-' : 'message-') + message.id,
+      [
+        ...(user && !theme.terminal?.terminal
+          ? [ui.box('band-top-' + message.id, [], { surface: true, terminal: { basis: 1 } })]
+          : []),
+        tool && message.browse && ui.item
+          ? ui.item(message.browse.key, heading, message.browse.current, false, {
+              followFocus: true,
+              submit: true,
+              submitSpace: true,
+            })
+          : heading,
+        ...(tool
+          ? [
+              ui.box(
+                'details-' + message.id,
+                [
+                  row('tool-detail-row-' + message.id, [
+                    gutter(true),
+                    ui.box(
+                      'tool-panel-' + message.id,
+                      [
+                        body,
+                        ui.box(
+                          'tool-actions-' + message.id,
+                          ui.contextMenu ? [] : message.actions,
+                          {
+                            visible: expanded,
+                            row: true,
+                            gap: 1,
+                            surface: true,
+                            terminal: { wrap: true },
+                          },
+                        ),
+                      ],
+                      { gap: 0, surface: true, terminal: { grow: 1, shrink: true } },
+                    ),
+                  ]),
+                ],
+                { gap: 0, visible: expanded || !!message.structured },
+              ),
+            ]
+          : []),
+        ...(tool && result?.isError && !settlement
+          ? [ui.text('tool-error-' + message.id, text.toolReportedError, 13, theme.error)]
+          : []),
+        ...(tool && !expanded && !message.structured && message.text
+          ? [
+              ui.text(
+                'summary-' + message.id,
+                '  ' + compactLabel(message.text, 72),
+                14,
+                theme.muted,
+              ),
+            ]
+          : []),
+        ...(message.continued
+          ? [ui.text('continued-' + message.id, '  ' + text.partial, 12, theme.subtle)]
+          : []),
+        ...(!tool && !ui.contextMenu
+          ? [
+              ui.box('message-actions-' + message.id, message.sourceActions, {
+                gap: 0,
+                visible: !!message.browse?.current || !message.text,
+              }),
+            ]
+          : []),
+        ...(user && !theme.terminal?.terminal
+          ? [ui.box('band-bottom-' + message.id, [], { surface: true, terminal: { basis: 1 } })]
+          : []),
+      ],
+      { gap: 0, surface: user },
+    );
+    return hasMenu
+      ? ui.contextMenu!('message-' + message.id, caption, card, actions, text.copy)
+      : card;
+  }
   const label = name
     ? caption + ' · ' + compactLabel(name, target === 'desktop' ? 64 : 24)
     : caption;

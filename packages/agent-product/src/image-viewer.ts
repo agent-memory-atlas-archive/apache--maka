@@ -206,7 +206,7 @@ function frame<N extends Node>(
     state,
     ui.box('image-viewer', content, {
       visible: props.image !== null,
-      padding: target === 'desktop' ? 24 : 0,
+      padding: target === 'desktop' ? 24 : 1,
       style: { width: fill, maxWidth: 856, height: fill },
       terminal: { grow: 1 },
       scroll: 'manual',

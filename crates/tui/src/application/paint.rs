@@ -123,8 +123,39 @@ pub(super) fn text(text: &str, area: Placement, buffer: &mut Buffer, style: Styl
         }
     }
 }
+fn paint_button(
+    label: &str,
+    area: Placement,
+    buffer: &mut Buffer,
+    style: Style,
+    align: Option<maka_ui::scene::terminal::Align>,
+) {
+    let area = area.clipped(buffer.area);
+    buffer.set_style(area.visible(), style.remove_modifier(Modifier::UNDERLINED));
+    let spare = area.width.saturating_sub(label.width() as u16);
+    let offset = match align.unwrap_or(maka_ui::scene::terminal::Align::Center) {
+        maka_ui::scene::terminal::Align::Start => 0,
+        maka_ui::scene::terminal::Align::Center => spare / 2,
+        maka_ui::scene::terminal::Align::End => spare,
+    };
+    text(
+        label,
+        Placement::new(
+            CellRect::new(area.x + i64::from(offset), area.y, area.width - offset, 1),
+            area.clip,
+        ),
+        buffer,
+        style,
+    );
+}
 #[derive(Clone)]
 pub(super) enum TargetKind {
+    SelectionCopy {
+        text: std::rc::Rc<str>,
+    },
+    ContextMenu {
+        button: bool,
+    },
     Action {
         copy_text: Option<std::rc::Rc<str>>,
     },
@@ -192,15 +223,23 @@ impl std::ops::Deref for Target {
     }
 }
 impl Target {
+    pub fn role(&self) -> (std::mem::Discriminant<TargetKind>, bool) {
+        (
+            std::mem::discriminant(&self.kind),
+            matches!(self.kind, TargetKind::ContextMenu { button: true }),
+        )
+    }
     pub fn same(&self, other: &Self) -> bool {
         self.mount == other.mount
             && self.key == other.key
             && std::rc::Rc::ptr_eq(&self.owner, &other.owner)
+            && self.role() == other.role()
     }
 }
 /// A pending scene is not input geometry until the embedding confirms a flush.
 /// 绘制成功并完成实际 flush 后，才发布对应的命中区域。
 pub struct PaintedScene {
+    tooltip: Option<(Option<super::dialog::Scope>, Placement, String, Style)>,
     pub(super) viewport: Rect,
     pub(super) targets: Vec<Target>,
     pub(super) keyboard: Option<std::rc::Rc<Ancestor>>,
@@ -278,6 +317,9 @@ pub(super) struct MeasureContext<'a> {
     viewport: Size,
 }
 impl MeasureContext<'_> {
+    pub(super) fn time(self) -> std::time::Instant {
+        self.cache.time
+    }
     fn within(self, viewport: Size) -> Self {
         Self { viewport, ..self }
     }
@@ -469,6 +511,19 @@ impl Slots<'_> {
         })
     }
 
+    pub(super) fn animation_phase(&self, period: u32) -> Option<f32> {
+        self.presenter.window_focused.then(|| {
+            (self
+                .measurements
+                .cache
+                .time
+                .saturating_duration_since(self.presenter.animation_origin)
+                .as_millis()
+                % u128::from(period)) as f32
+                / period as f32
+        })
+    }
+
     /// The original focused native input within this mounted widget, if any.
     pub fn focused_key(&self) -> Option<&str> {
         self.presenter
@@ -528,8 +583,30 @@ impl Slots<'_> {
     }
 }
 
-pub(super) fn color(rgb: u32) -> Color {
-    Color::Rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
+pub(super) fn color(value: impl Into<maka_ui::scene::terminal::Color>) -> Color {
+    use maka_ui::scene::terminal::{Color as Input, NamedColor as N};
+    match value.into() {
+        Input::Rgb(rgb) => Color::Rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8),
+        Input::Named(named) => match named {
+            N::Reset => Color::Reset,
+            N::Black => Color::Black,
+            N::Red => Color::Red,
+            N::Green => Color::Green,
+            N::Yellow => Color::Yellow,
+            N::Blue => Color::Blue,
+            N::Magenta => Color::Magenta,
+            N::Cyan => Color::Cyan,
+            N::Gray => Color::Gray,
+            N::DarkGray => Color::DarkGray,
+            N::LightRed => Color::LightRed,
+            N::LightGreen => Color::LightGreen,
+            N::LightYellow => Color::LightYellow,
+            N::LightBlue => Color::LightBlue,
+            N::LightMagenta => Color::LightMagenta,
+            N::LightCyan => Color::LightCyan,
+            N::White => Color::White,
+        },
+    }
 }
 impl Presenter {
     pub fn paint(&self, area: Rect, buffer: &mut Buffer) -> maka_ui::Result<PaintedScene> {
@@ -544,6 +621,7 @@ impl Presenter {
                 .fg(Color::Rgb(235, 235, 240)),
         );
         let mut scene = PaintedScene {
+            tooltip: None,
             viewport: area,
             targets: Vec::new(),
             placed: Default::default(),
@@ -572,6 +650,35 @@ impl Presenter {
             self.paint_dialogs(buffer, &mut scene, measurements)
         }))
         .map_err(|_| maka_ui::Error::Invalid("terminal native painting panicked".into()))??;
+        if let Some((scope, anchor, hint, style)) = &scene.tooltip
+            && super::dialog::same_scope(scope, &scene.foreground_path.last().cloned())
+            && area.height > 1
+        {
+            let width = (sanitize(hint).width() as u16)
+                .saturating_add(2)
+                .min(area.width);
+            let x = anchor.visible().x.min(area.right().saturating_sub(width));
+            let y = if anchor.visible().bottom() < area.bottom() {
+                anchor.visible().bottom()
+            } else {
+                anchor.visible().y.saturating_sub(1).max(area.y)
+            };
+            let tooltip: Placement = Rect::new(x, y, width, 1).into();
+            buffer.set_stringn(
+                x,
+                y,
+                " ".repeat(usize::from(width)),
+                usize::from(width),
+                *style,
+            );
+            paint_button(
+                &truncated_line(hint, width.saturating_sub(2)),
+                tooltip,
+                buffer,
+                *style,
+                None,
+            );
+        }
         Ok(scene)
     }
     pub fn present(&mut self, mut scene: PaintedScene) {
@@ -771,7 +878,9 @@ impl Presenter {
         measurements: MeasureContext<'_>,
     ) -> maka_ui::Result<super::scene::Layout> {
         match node {
-            Node::Dialog { background, .. } | Node::AdaptivePane { background, .. } => {
+            Node::Dialog { background, .. }
+            | Node::ContextMenu { background, .. }
+            | Node::AdaptivePane { background, .. } => {
                 self.node_layout(mount, background, measurements)
             }
             Node::Item { content, .. } => self.node_layout(mount, content, measurements),
@@ -840,20 +949,33 @@ impl Presenter {
                             body_height.max(pane_height),
                         )
                     }
+                    Node::ContextMenu { background, .. } => {
+                        let (w, h) =
+                            self.measure(mount, background, width.saturating_sub(3), measurements)?;
+                        (w.saturating_add(3).min(width), h.max(1))
+                    }
                     Node::Choice(choice) => super::choice::size(choice, width),
                     Node::Item { content, .. } => {
                         self.measure(mount, content, width, measurements)?
                     }
-                    Node::Text { text, truncate, .. } => {
-                        if *truncate {
-                            (
-                                truncated_line(text, width).width() as u16,
-                                u32::from(width > 0),
-                            )
-                        } else {
-                            text_size(text, width)
-                        }
-                    }
+                    Node::Text {
+                        text,
+                        truncate,
+                        animation,
+                        ..
+                    } => std::iter::once(text.as_str())
+                        .chain(animation.iter().map(|frame| frame.text.as_str()))
+                        .map(|text| {
+                            if *truncate {
+                                (
+                                    truncated_line(text, width).width() as u16,
+                                    u32::from(width > 0),
+                                )
+                            } else {
+                                text_size(text, width)
+                            }
+                        })
+                        .fold((0, 0), |a, b| (a.0.max(b.0), a.1.max(b.1))),
                     Node::Button { label, .. } => (
                         sanitize(label)
                             .replace('\n', " ")
@@ -992,6 +1114,7 @@ impl Presenter {
                 disabled,
                 current,
                 selected_color,
+                selected_foreground,
                 follow_focus,
                 submit,
                 submit_space,
@@ -1035,6 +1158,12 @@ impl Presenter {
                     } else {
                         Style::default()
                     };
+                    if *current {
+                        style = style.add_modifier(Modifier::BOLD);
+                        if let Some(foreground) = selected_foreground {
+                            style = style.fg(color(*foreground));
+                        }
+                    }
                     if self.focus.as_ref().is_some_and(|old| old.same(&target)) {
                         style = style.add_modifier(Modifier::UNDERLINED);
                     } else if self.hover.as_ref().is_some_and(|old| old.same(&target)) {
@@ -1048,6 +1177,7 @@ impl Presenter {
                 key,
                 background,
                 content,
+                overlay,
                 ..
             } => {
                 let state = self.resources.owners[&mount.id()]
@@ -1069,10 +1199,24 @@ impl Presenter {
                 });
                 if inline > 0 {
                     let pane = Placement::new(
-                        CellRect::new(area.x, area.y, inline, area.height),
+                        CellRect::new(area.x, area.y, inline.saturating_sub(1), area.height),
                         area.clip,
                     );
                     self.paint_node(mount, content, pane, buffer, scene, pass)?;
+                    let divider = Placement::new(
+                        CellRect::new(area.x + i64::from(inline) - 1, area.y, 1, area.height),
+                        area.clip,
+                    )
+                    .visible();
+                    for y in divider.y..divider.bottom() {
+                        buffer.set_stringn(
+                            divider.x,
+                            y,
+                            if overlay.ascii { "|" } else { "│" },
+                            1,
+                            Style::default().fg(color(overlay.border_color)),
+                        );
+                    }
                 }
                 let body = Placement::new(
                     CellRect::new(
@@ -1093,6 +1237,9 @@ impl Presenter {
                         anchor: None,
                     });
                 }
+            }
+            Node::ContextMenu { .. } => {
+                self.paint_context_menu(mount, node, area, buffer, scene, pass)?;
             }
             Node::Choice(choice) => {
                 self.paint_choice(mount, choice, area, buffer, scene, pass.choices)?
@@ -1122,26 +1269,83 @@ impl Presenter {
             }
             Node::Text {
                 text: content,
-                color: rgb,
+                color: foreground,
                 truncate,
+                align,
+                bold,
+                animation,
                 ..
             } => {
-                let style = Style::default().fg(color(*rgb));
-                if *truncate {
-                    text(&truncated_line(content, area.width), area, buffer, style);
+                let total: u128 = animation.iter().map(|frame| u128::from(frame.millis)).sum();
+                let mut offset = if self.window_focused && total > 0 {
+                    measurements
+                        .cache
+                        .time
+                        .saturating_duration_since(self.animation_origin)
+                        .as_millis()
+                        % total
                 } else {
-                    text(content, area, buffer, style);
+                    0
+                };
+                let content = animation
+                    .iter()
+                    .find_map(|frame| {
+                        if offset < u128::from(frame.millis) {
+                            Some(frame.text.as_str())
+                        } else {
+                            offset -= u128::from(frame.millis);
+                            None
+                        }
+                    })
+                    .unwrap_or(content);
+                let mut style = Style::default().fg(color(*foreground));
+                if *bold {
+                    style = style.add_modifier(Modifier::BOLD);
+                }
+                let rows = if *truncate {
+                    vec![truncated_line(content, area.width)]
+                } else {
+                    lines(content, area.width)
+                };
+                for (row, content) in rows.iter().enumerate() {
+                    let remaining = area.width.saturating_sub(content.width() as u16);
+                    let offset = match align {
+                        maka_ui::scene::terminal::Align::Start => 0,
+                        maka_ui::scene::terminal::Align::Center => remaining / 2,
+                        maka_ui::scene::terminal::Align::End => remaining,
+                    };
+                    text(
+                        content,
+                        Placement::new(
+                            CellRect::new(
+                                area.x + i64::from(offset),
+                                area.y + row as i64,
+                                area.width.saturating_sub(offset),
+                                1,
+                            ),
+                            area.clip,
+                        ),
+                        buffer,
+                        style,
+                    );
                 }
             }
             Node::Button {
                 key,
                 label,
+                align,
+                hint,
                 focus_child,
                 copy_text,
                 disabled,
                 color: foreground,
+                background,
+                hover_background,
+                bold,
             } => {
-                let label = format!("[ {} ]", sanitize(label).replace('\n', " "));
+                // Original Surface buttons: a centered, elided label in a
+                // four-cell-padded hit area, without punctuation as chrome.
+                let label = truncated_line(label, area.width);
                 let button_area =
                     Placement::new(CellRect::new(area.x, area.y, area.width, 1), area.clip);
                 if button_area.is_empty() {
@@ -1151,11 +1355,15 @@ impl Presenter {
                 if let Some(foreground) = foreground {
                     style = style.fg(color(*foreground));
                 }
+                if *bold {
+                    style = style.add_modifier(Modifier::BOLD);
+                }
+                if let Some(background) = background {
+                    style = style.bg(color(*background));
+                }
                 if *disabled {
-                    if foreground.is_none() {
-                        style = style.add_modifier(Modifier::DIM);
-                    }
-                    text(&label, button_area, buffer, style);
+                    style = style.add_modifier(Modifier::DIM);
+                    paint_button(&label, button_area, buffer, style, *align);
                     return Ok(());
                 }
                 let target = Target {
@@ -1186,10 +1394,32 @@ impl Presenter {
                     },
                 };
                 if self.focus.as_ref().is_some_and(|old| old.same(&target)) {
-                    style = style.add_modifier(Modifier::REVERSED);
+                    style = style.add_modifier(Modifier::UNDERLINED);
+                    if scene
+                        .input_scope
+                        .as_ref()
+                        .and_then(|scope| scope.upgrade())
+                        .is_some_and(|opening| opening.anchor.is_some())
+                        && let Some(background) = hover_background
+                    {
+                        style = style.bg(color(*background));
+                    }
+                } else if self.hover.as_ref().is_some_and(|old| old.same(&target)) {
+                    style = match hover_background {
+                        Some(background) => style.bg(color(*background)),
+                        None => style.add_modifier(Modifier::BOLD),
+                    };
                 }
                 // Buttons are single-line, clipped rather than wrapped to hidden hit cells.
-                text(&label, target.area, buffer, style);
+                paint_button(&label, target.area, buffer, style, *align);
+                if !hint.is_empty() && self.hover.as_ref().is_some_and(|old| old.same(&target)) {
+                    scene.tooltip = Some((
+                        scene.input_scope.clone(),
+                        button_area,
+                        hint.clone(),
+                        style.remove_modifier(Modifier::UNDERLINED),
+                    ));
+                }
                 scene.targets.push(target);
             }
             Node::Component(slot) => self.paint_mount(
@@ -1216,7 +1446,9 @@ impl Presenter {
                 viewport,
                 ..
             } => {
-                buffer.set_style(area.visible(), Style::default().bg(color(*background)));
+                if let Some(background) = background {
+                    buffer.set_style(area.visible(), Style::default().bg(color(*background)));
+                }
                 let target_start = scene.targets.len();
                 let inner = if border.is_some() {
                     super::border::inner(area)
@@ -1373,14 +1605,38 @@ impl Presenter {
                             .iter()
                             .any(|target| target.same(focused))
                     });
+                    let background = background.map(color).unwrap_or_else(|| {
+                        let visible = area.visible();
+                        buffer
+                            .cell((visible.x, visible.y))
+                            .map_or(Color::Reset, |cell| cell.bg)
+                    });
                     super::border::paint(
                         buffer,
                         area,
-                        color(if focused {
-                            border.focused_color
-                        } else {
-                            border.color
-                        }),
+                        {
+                            let foreground = color(if focused {
+                                border.focused_color
+                            } else {
+                                border.color
+                            });
+                            if border.breathing && self.window_focused {
+                                let millis = measurements
+                                    .time()
+                                    .saturating_duration_since(self.animation_origin)
+                                    .as_millis();
+                                let phase = (millis % 2800) as f32 / 2800.0;
+                                let breath = (1.0 - (phase * std::f32::consts::TAU).cos()) * 0.5;
+                                super::source::reveal::blend(
+                                    foreground,
+                                    background,
+                                    0.36 + 0.64 * breath,
+                                )
+                                .unwrap_or(foreground)
+                            } else {
+                                foreground
+                            }
+                        },
                         border.style,
                     );
                 }

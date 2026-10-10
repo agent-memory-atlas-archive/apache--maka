@@ -32,6 +32,14 @@ export const contracts = {
         title: 'MarkdownProps',
         type: 'object',
         properties: {
+          ascii: {
+            type: 'boolean',
+            default: false,
+          },
+          animate: {
+            type: 'boolean',
+            default: false,
+          },
           source: {
             type: 'string',
             maxLength: 65536,
@@ -57,6 +65,17 @@ export const contracts = {
           MarkdownAppearance: {
             type: 'object',
             properties: {
+              terminal: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/TerminalPalette',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                default: null,
+              },
               body: {
                 $ref: '#/$defs/TextAppearance',
               },
@@ -114,6 +133,134 @@ export const contracts = {
               'border',
               'dark',
               'paragraphGap',
+            ],
+          },
+          TerminalPalette: {
+            description:
+              'Semantic terminal colors for rich text and editors, supplied by the product.',
+            type: 'object',
+            properties: {
+              background: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              foreground: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              surface: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              accent: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              thinking: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              success: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              warning: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              error: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              muted: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              subtle: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              border: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              scrollbar: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              selection: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              selectionText: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              search: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              searchActive: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              searchText: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              syntax: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/TerminalColor',
+                },
+                minItems: 7,
+                maxItems: 7,
+              },
+              terminal: {
+                type: 'boolean',
+              },
+            },
+            additionalProperties: false,
+            required: [
+              'background',
+              'foreground',
+              'surface',
+              'accent',
+              'thinking',
+              'success',
+              'warning',
+              'error',
+              'muted',
+              'subtle',
+              'border',
+              'scrollbar',
+              'selection',
+              'selectionText',
+              'search',
+              'searchActive',
+              'searchText',
+              'syntax',
+              'terminal',
+            ],
+          },
+          TerminalColor: {
+            description:
+              "Terminal colors retain the user's ANSI palette and default background.\nNumeric values are RGB; named values are emitted as terminal attributes.",
+            anyOf: [
+              {
+                type: 'integer',
+                format: 'uint32',
+                minimum: 0,
+                maximum: 16777215,
+              },
+              {
+                $ref: '#/$defs/TerminalNamedColor',
+              },
+            ],
+          },
+          TerminalNamedColor: {
+            type: 'string',
+            enum: [
+              'reset',
+              'black',
+              'red',
+              'green',
+              'yellow',
+              'blue',
+              'magenta',
+              'cyan',
+              'gray',
+              'dark_gray',
+              'light_red',
+              'light_green',
+              'light_yellow',
+              'light_blue',
+              'light_magenta',
+              'light_cyan',
+              'white',
             ],
           },
           TextAppearance: {
@@ -402,6 +549,17 @@ export const contracts = {
           DiffAppearance: {
             type: 'object',
             properties: {
+              terminal: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/TerminalPalette',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                default: null,
+              },
               text: {
                 $ref: '#/$defs/TextAppearance',
               },
@@ -423,6 +581,134 @@ export const contracts = {
             },
             additionalProperties: false,
             required: ['text', 'background', 'added', 'removed', 'selection', 'dark'],
+          },
+          TerminalPalette: {
+            description:
+              'Semantic terminal colors for rich text and editors, supplied by the product.',
+            type: 'object',
+            properties: {
+              background: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              foreground: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              surface: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              accent: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              thinking: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              success: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              warning: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              error: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              muted: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              subtle: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              border: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              scrollbar: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              selection: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              selectionText: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              search: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              searchActive: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              searchText: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              syntax: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/TerminalColor',
+                },
+                minItems: 7,
+                maxItems: 7,
+              },
+              terminal: {
+                type: 'boolean',
+              },
+            },
+            additionalProperties: false,
+            required: [
+              'background',
+              'foreground',
+              'surface',
+              'accent',
+              'thinking',
+              'success',
+              'warning',
+              'error',
+              'muted',
+              'subtle',
+              'border',
+              'scrollbar',
+              'selection',
+              'selectionText',
+              'search',
+              'searchActive',
+              'searchText',
+              'syntax',
+              'terminal',
+            ],
+          },
+          TerminalColor: {
+            description:
+              "Terminal colors retain the user's ANSI palette and default background.\nNumeric values are RGB; named values are emitted as terminal attributes.",
+            anyOf: [
+              {
+                type: 'integer',
+                format: 'uint32',
+                minimum: 0,
+                maximum: 16777215,
+              },
+              {
+                $ref: '#/$defs/TerminalNamedColor',
+              },
+            ],
+          },
+          TerminalNamedColor: {
+            type: 'string',
+            enum: [
+              'reset',
+              'black',
+              'red',
+              'green',
+              'yellow',
+              'blue',
+              'magenta',
+              'cyan',
+              'gray',
+              'dark_gray',
+              'light_red',
+              'light_green',
+              'light_yellow',
+              'light_blue',
+              'light_magenta',
+              'light_cyan',
+              'white',
+            ],
           },
           TextAppearance: {
             type: 'object',
@@ -811,6 +1097,21 @@ export const contracts = {
           InputAppearance: {
             type: 'object',
             properties: {
+              ascii: {
+                type: 'boolean',
+                default: false,
+              },
+              terminal: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/TerminalPalette',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                default: null,
+              },
               text: {
                 $ref: '#/$defs/TextAppearance',
               },
@@ -862,6 +1163,134 @@ export const contracts = {
               'borderWidth',
               'radius',
               'padding',
+            ],
+          },
+          TerminalPalette: {
+            description:
+              'Semantic terminal colors for rich text and editors, supplied by the product.',
+            type: 'object',
+            properties: {
+              background: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              foreground: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              surface: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              accent: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              thinking: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              success: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              warning: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              error: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              muted: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              subtle: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              border: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              scrollbar: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              selection: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              selectionText: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              search: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              searchActive: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              searchText: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              syntax: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/TerminalColor',
+                },
+                minItems: 7,
+                maxItems: 7,
+              },
+              terminal: {
+                type: 'boolean',
+              },
+            },
+            additionalProperties: false,
+            required: [
+              'background',
+              'foreground',
+              'surface',
+              'accent',
+              'thinking',
+              'success',
+              'warning',
+              'error',
+              'muted',
+              'subtle',
+              'border',
+              'scrollbar',
+              'selection',
+              'selectionText',
+              'search',
+              'searchActive',
+              'searchText',
+              'syntax',
+              'terminal',
+            ],
+          },
+          TerminalColor: {
+            description:
+              "Terminal colors retain the user's ANSI palette and default background.\nNumeric values are RGB; named values are emitted as terminal attributes.",
+            anyOf: [
+              {
+                type: 'integer',
+                format: 'uint32',
+                minimum: 0,
+                maximum: 16777215,
+              },
+              {
+                $ref: '#/$defs/TerminalNamedColor',
+              },
+            ],
+          },
+          TerminalNamedColor: {
+            type: 'string',
+            enum: [
+              'reset',
+              'black',
+              'red',
+              'green',
+              'yellow',
+              'blue',
+              'magenta',
+              'cyan',
+              'gray',
+              'dark_gray',
+              'light_red',
+              'light_green',
+              'light_yellow',
+              'light_blue',
+              'light_magenta',
+              'light_cyan',
+              'white',
             ],
           },
           TextAppearance: {
@@ -1083,6 +1512,21 @@ export const contracts = {
         title: 'SourceTextProps',
         type: 'object',
         properties: {
+          animate: {
+            type: 'boolean',
+            default: false,
+          },
+          terminal: {
+            anyOf: [
+              {
+                $ref: '#/$defs/TerminalPalette',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            default: null,
+          },
           source: {
             type: 'string',
             maxLength: 65536,
@@ -1105,6 +1549,134 @@ export const contracts = {
         additionalProperties: false,
         required: ['source', 'appearance', 'selection', 'disabled'],
         $defs: {
+          TerminalPalette: {
+            description:
+              'Semantic terminal colors for rich text and editors, supplied by the product.',
+            type: 'object',
+            properties: {
+              background: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              foreground: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              surface: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              accent: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              thinking: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              success: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              warning: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              error: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              muted: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              subtle: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              border: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              scrollbar: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              selection: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              selectionText: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              search: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              searchActive: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              searchText: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              syntax: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/TerminalColor',
+                },
+                minItems: 7,
+                maxItems: 7,
+              },
+              terminal: {
+                type: 'boolean',
+              },
+            },
+            additionalProperties: false,
+            required: [
+              'background',
+              'foreground',
+              'surface',
+              'accent',
+              'thinking',
+              'success',
+              'warning',
+              'error',
+              'muted',
+              'subtle',
+              'border',
+              'scrollbar',
+              'selection',
+              'selectionText',
+              'search',
+              'searchActive',
+              'searchText',
+              'syntax',
+              'terminal',
+            ],
+          },
+          TerminalColor: {
+            description:
+              "Terminal colors retain the user's ANSI palette and default background.\nNumeric values are RGB; named values are emitted as terminal attributes.",
+            anyOf: [
+              {
+                type: 'integer',
+                format: 'uint32',
+                minimum: 0,
+                maximum: 16777215,
+              },
+              {
+                $ref: '#/$defs/TerminalNamedColor',
+              },
+            ],
+          },
+          TerminalNamedColor: {
+            type: 'string',
+            enum: [
+              'reset',
+              'black',
+              'red',
+              'green',
+              'yellow',
+              'blue',
+              'magenta',
+              'cyan',
+              'gray',
+              'dark_gray',
+              'light_red',
+              'light_green',
+              'light_yellow',
+              'light_blue',
+              'light_magenta',
+              'light_cyan',
+              'white',
+            ],
+          },
           TextAppearance: {
             type: 'object',
             properties: {
@@ -1912,6 +2484,17 @@ export const contracts = {
         title: 'RowsProps',
         type: 'object',
         properties: {
+          terminal: {
+            anyOf: [
+              {
+                $ref: '#/$defs/TerminalPalette',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            default: null,
+          },
           revision: {
             type: 'integer',
             format: 'uint64',
@@ -1991,6 +2574,134 @@ export const contracts = {
           'scrollbar',
         ],
         $defs: {
+          TerminalPalette: {
+            description:
+              'Semantic terminal colors for rich text and editors, supplied by the product.',
+            type: 'object',
+            properties: {
+              background: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              foreground: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              surface: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              accent: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              thinking: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              success: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              warning: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              error: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              muted: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              subtle: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              border: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              scrollbar: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              selection: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              selectionText: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              search: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              searchActive: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              searchText: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              syntax: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/TerminalColor',
+                },
+                minItems: 7,
+                maxItems: 7,
+              },
+              terminal: {
+                type: 'boolean',
+              },
+            },
+            additionalProperties: false,
+            required: [
+              'background',
+              'foreground',
+              'surface',
+              'accent',
+              'thinking',
+              'success',
+              'warning',
+              'error',
+              'muted',
+              'subtle',
+              'border',
+              'scrollbar',
+              'selection',
+              'selectionText',
+              'search',
+              'searchActive',
+              'searchText',
+              'syntax',
+              'terminal',
+            ],
+          },
+          TerminalColor: {
+            description:
+              "Terminal colors retain the user's ANSI palette and default background.\nNumeric values are RGB; named values are emitted as terminal attributes.",
+            anyOf: [
+              {
+                type: 'integer',
+                format: 'uint32',
+                minimum: 0,
+                maximum: 16777215,
+              },
+              {
+                $ref: '#/$defs/TerminalNamedColor',
+              },
+            ],
+          },
+          TerminalNamedColor: {
+            type: 'string',
+            enum: [
+              'reset',
+              'black',
+              'red',
+              'green',
+              'yellow',
+              'blue',
+              'magenta',
+              'cyan',
+              'gray',
+              'dark_gray',
+              'light_red',
+              'light_green',
+              'light_yellow',
+              'light_blue',
+              'light_magenta',
+              'light_cyan',
+              'white',
+            ],
+          },
           Row: {
             type: 'object',
             properties: {
@@ -2136,6 +2847,236 @@ export const contracts = {
           required: ['revision', 'row', 'action'],
         },
       },
+      captures: {},
+    },
+  },
+  valueCheckpoint: {
+    name: 'maka.ui.ValueCheckpoint',
+    version: 1,
+    transport: 'local',
+    interface: {
+      kind: 'component',
+      props: {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        title: 'ValueCheckpointProps',
+        type: 'object',
+        properties: {
+          key: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 512,
+          },
+          format: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+          },
+          command: {
+            anyOf: [
+              {
+                $ref: '#/$defs/ValueCheckpointCommand',
+              },
+              {
+                type: 'null',
+              },
+            ],
+          },
+        },
+        additionalProperties: false,
+        required: ['key', 'format'],
+        $defs: {
+          ValueCheckpointCommand: {
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  sequence: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'read',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'sequence'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  sequence: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  expectedRevision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  value: true,
+                  kind: {
+                    type: 'string',
+                    const: 'write',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'sequence', 'value'],
+              },
+            ],
+          },
+        },
+      },
+      events: {
+        changed: {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          title: 'ValueCheckpointObservation',
+          type: 'object',
+          properties: {
+            sequence: {
+              type: 'integer',
+              format: 'uint64',
+              minimum: 0,
+            },
+            state: {
+              $ref: '#/$defs/ValueCheckpointState',
+            },
+          },
+          additionalProperties: false,
+          required: ['sequence', 'state'],
+          $defs: {
+            ValueCheckpointState: {
+              oneOf: [
+                {
+                  type: 'object',
+                  properties: {
+                    kind: {
+                      type: 'string',
+                      const: 'loading',
+                    },
+                  },
+                  required: ['kind'],
+                  additionalProperties: false,
+                },
+                {
+                  type: 'object',
+                  properties: {
+                    kind: {
+                      type: 'string',
+                      const: 'saving',
+                    },
+                  },
+                  required: ['kind'],
+                  additionalProperties: false,
+                },
+                {
+                  type: 'object',
+                  properties: {
+                    revision: {
+                      type: ['integer', 'null'],
+                      format: 'uint64',
+                      minimum: 0,
+                    },
+                    value: true,
+                    kind: {
+                      type: 'string',
+                      const: 'ready',
+                    },
+                  },
+                  additionalProperties: false,
+                  required: ['kind'],
+                },
+                {
+                  type: 'object',
+                  properties: {
+                    diagnostic: {
+                      type: 'string',
+                    },
+                    kind: {
+                      type: 'string',
+                      const: 'failed',
+                    },
+                  },
+                  additionalProperties: false,
+                  required: ['kind', 'diagnostic'],
+                },
+              ],
+            },
+          },
+        },
+      },
+      captures: {},
+    },
+  },
+  morphMark: {
+    name: 'maka.ui.MorphMark',
+    version: 1,
+    transport: 'local',
+    interface: {
+      kind: 'component',
+      props: {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        title: 'MorphMarkProps',
+        type: 'object',
+        properties: {
+          background: {
+            $ref: '#/$defs/TerminalColor',
+          },
+          foreground: {
+            $ref: '#/$defs/TerminalColor',
+          },
+          motion: {
+            type: 'boolean',
+          },
+          ascii: {
+            type: 'boolean',
+          },
+        },
+        additionalProperties: false,
+        required: ['background', 'foreground', 'motion', 'ascii'],
+        $defs: {
+          TerminalColor: {
+            description:
+              "Terminal colors retain the user's ANSI palette and default background.\nNumeric values are RGB; named values are emitted as terminal attributes.",
+            anyOf: [
+              {
+                type: 'integer',
+                format: 'uint32',
+                minimum: 0,
+                maximum: 16777215,
+              },
+              {
+                $ref: '#/$defs/TerminalNamedColor',
+              },
+            ],
+          },
+          TerminalNamedColor: {
+            type: 'string',
+            enum: [
+              'reset',
+              'black',
+              'red',
+              'green',
+              'yellow',
+              'blue',
+              'magenta',
+              'cyan',
+              'gray',
+              'dark_gray',
+              'light_red',
+              'light_green',
+              'light_yellow',
+              'light_blue',
+              'light_magenta',
+              'light_cyan',
+              'white',
+            ],
+          },
+        },
+      },
+      events: {},
       captures: {},
     },
   },
@@ -2415,6 +3356,17 @@ export const contracts = {
                 },
               ],
             },
+            scroll: {
+              anyOf: [
+                {
+                  $ref: '#/$defs/ReadingScroll',
+                },
+                {
+                  type: 'null',
+                },
+              ],
+              default: null,
+            },
             selectedChildKey: {
               description:
                 'Direct content child containing the native selection focus. Renderers\nwithout this observation return null. This key conveys no read authority.',
@@ -2460,6 +3412,10 @@ export const contracts = {
                   format: 'uint64',
                   minimum: 0,
                 },
+                atStart: {
+                  type: 'boolean',
+                  default: false,
+                },
                 atEnd: {
                   type: 'boolean',
                 },
@@ -2473,6 +3429,27 @@ export const contracts = {
               },
               additionalProperties: false,
               required: ['readingRevision', 'atEnd', 'visibleChildKeys'],
+            },
+            ReadingScroll: {
+              description:
+                'Most recent physical scroll. Layout changes and programmatic landings do not\ncreate a new request, so a product can load adjacent content without loops.',
+              type: 'object',
+              properties: {
+                readingRevision: {
+                  type: 'integer',
+                  format: 'uint64',
+                  minimum: 0,
+                },
+                direction: {
+                  $ref: '#/$defs/ReadingScrollDirection',
+                },
+              },
+              additionalProperties: false,
+              required: ['readingRevision', 'direction'],
+            },
+            ReadingScrollDirection: {
+              type: 'string',
+              enum: ['up', 'down'],
             },
             ReadingReceipt: {
               type: 'object',
@@ -2583,6 +3560,17 @@ export const contracts = {
           appearance: {
             $ref: '#/$defs/TextAppearance',
           },
+          terminalForeground: {
+            anyOf: [
+              {
+                $ref: '#/$defs/TerminalColor',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            default: null,
+          },
           elapsed: {
             anyOf: [
               {
@@ -2657,6 +3645,43 @@ export const contracts = {
             type: 'integer',
             format: 'uint32',
             minimum: 0,
+          },
+          TerminalColor: {
+            description:
+              "Terminal colors retain the user's ANSI palette and default background.\nNumeric values are RGB; named values are emitted as terminal attributes.",
+            anyOf: [
+              {
+                type: 'integer',
+                format: 'uint32',
+                minimum: 0,
+                maximum: 16777215,
+              },
+              {
+                $ref: '#/$defs/TerminalNamedColor',
+              },
+            ],
+          },
+          TerminalNamedColor: {
+            type: 'string',
+            enum: [
+              'reset',
+              'black',
+              'red',
+              'green',
+              'yellow',
+              'blue',
+              'magenta',
+              'cyan',
+              'gray',
+              'dark_gray',
+              'light_red',
+              'light_green',
+              'light_yellow',
+              'light_blue',
+              'light_magenta',
+              'light_cyan',
+              'white',
+            ],
           },
           Elapsed: {
             type: 'object',
@@ -2827,6 +3852,21 @@ export const contracts = {
           TextareaAppearance: {
             type: 'object',
             properties: {
+              ascii: {
+                type: 'boolean',
+                default: false,
+              },
+              terminal: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/TerminalPalette',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                default: null,
+              },
               text: {
                 $ref: '#/$defs/TextAppearance',
               },
@@ -2882,6 +3922,134 @@ export const contracts = {
               'radius',
               'padding',
               'scrollbar',
+            ],
+          },
+          TerminalPalette: {
+            description:
+              'Semantic terminal colors for rich text and editors, supplied by the product.',
+            type: 'object',
+            properties: {
+              background: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              foreground: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              surface: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              accent: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              thinking: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              success: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              warning: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              error: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              muted: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              subtle: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              border: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              scrollbar: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              selection: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              selectionText: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              search: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              searchActive: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              searchText: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              syntax: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/TerminalColor',
+                },
+                minItems: 7,
+                maxItems: 7,
+              },
+              terminal: {
+                type: 'boolean',
+              },
+            },
+            additionalProperties: false,
+            required: [
+              'background',
+              'foreground',
+              'surface',
+              'accent',
+              'thinking',
+              'success',
+              'warning',
+              'error',
+              'muted',
+              'subtle',
+              'border',
+              'scrollbar',
+              'selection',
+              'selectionText',
+              'search',
+              'searchActive',
+              'searchText',
+              'syntax',
+              'terminal',
+            ],
+          },
+          TerminalColor: {
+            description:
+              "Terminal colors retain the user's ANSI palette and default background.\nNumeric values are RGB; named values are emitted as terminal attributes.",
+            anyOf: [
+              {
+                type: 'integer',
+                format: 'uint32',
+                minimum: 0,
+                maximum: 16777215,
+              },
+              {
+                $ref: '#/$defs/TerminalNamedColor',
+              },
+            ],
+          },
+          TerminalNamedColor: {
+            type: 'string',
+            enum: [
+              'reset',
+              'black',
+              'red',
+              'green',
+              'yellow',
+              'blue',
+              'magenta',
+              'cyan',
+              'gray',
+              'dark_gray',
+              'light_red',
+              'light_green',
+              'light_yellow',
+              'light_blue',
+              'light_magenta',
+              'light_cyan',
+              'white',
             ],
           },
           TextAppearance: {
@@ -4191,6 +5359,21 @@ export const contracts = {
           InputAppearance: {
             type: 'object',
             properties: {
+              ascii: {
+                type: 'boolean',
+                default: false,
+              },
+              terminal: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/TerminalPalette',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                default: null,
+              },
               text: {
                 $ref: '#/$defs/TextAppearance',
               },
@@ -4242,6 +5425,134 @@ export const contracts = {
               'borderWidth',
               'radius',
               'padding',
+            ],
+          },
+          TerminalPalette: {
+            description:
+              'Semantic terminal colors for rich text and editors, supplied by the product.',
+            type: 'object',
+            properties: {
+              background: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              foreground: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              surface: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              accent: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              thinking: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              success: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              warning: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              error: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              muted: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              subtle: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              border: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              scrollbar: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              selection: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              selectionText: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              search: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              searchActive: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              searchText: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              syntax: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/TerminalColor',
+                },
+                minItems: 7,
+                maxItems: 7,
+              },
+              terminal: {
+                type: 'boolean',
+              },
+            },
+            additionalProperties: false,
+            required: [
+              'background',
+              'foreground',
+              'surface',
+              'accent',
+              'thinking',
+              'success',
+              'warning',
+              'error',
+              'muted',
+              'subtle',
+              'border',
+              'scrollbar',
+              'selection',
+              'selectionText',
+              'search',
+              'searchActive',
+              'searchText',
+              'syntax',
+              'terminal',
+            ],
+          },
+          TerminalColor: {
+            description:
+              "Terminal colors retain the user's ANSI palette and default background.\nNumeric values are RGB; named values are emitted as terminal attributes.",
+            anyOf: [
+              {
+                type: 'integer',
+                format: 'uint32',
+                minimum: 0,
+                maximum: 16777215,
+              },
+              {
+                $ref: '#/$defs/TerminalNamedColor',
+              },
+            ],
+          },
+          TerminalNamedColor: {
+            type: 'string',
+            enum: [
+              'reset',
+              'black',
+              'red',
+              'green',
+              'yellow',
+              'blue',
+              'magenta',
+              'cyan',
+              'gray',
+              'dark_gray',
+              'light_red',
+              'light_green',
+              'light_yellow',
+              'light_blue',
+              'light_magenta',
+              'light_cyan',
+              'white',
             ],
           },
           TextAppearance: {
@@ -4754,6 +6065,21 @@ export const contracts = {
           InputAppearance: {
             type: 'object',
             properties: {
+              ascii: {
+                type: 'boolean',
+                default: false,
+              },
+              terminal: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/TerminalPalette',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                default: null,
+              },
               text: {
                 $ref: '#/$defs/TextAppearance',
               },
@@ -4805,6 +6131,134 @@ export const contracts = {
               'borderWidth',
               'radius',
               'padding',
+            ],
+          },
+          TerminalPalette: {
+            description:
+              'Semantic terminal colors for rich text and editors, supplied by the product.',
+            type: 'object',
+            properties: {
+              background: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              foreground: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              surface: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              accent: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              thinking: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              success: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              warning: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              error: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              muted: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              subtle: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              border: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              scrollbar: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              selection: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              selectionText: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              search: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              searchActive: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              searchText: {
+                $ref: '#/$defs/TerminalColor',
+              },
+              syntax: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/TerminalColor',
+                },
+                minItems: 7,
+                maxItems: 7,
+              },
+              terminal: {
+                type: 'boolean',
+              },
+            },
+            additionalProperties: false,
+            required: [
+              'background',
+              'foreground',
+              'surface',
+              'accent',
+              'thinking',
+              'success',
+              'warning',
+              'error',
+              'muted',
+              'subtle',
+              'border',
+              'scrollbar',
+              'selection',
+              'selectionText',
+              'search',
+              'searchActive',
+              'searchText',
+              'syntax',
+              'terminal',
+            ],
+          },
+          TerminalColor: {
+            description:
+              "Terminal colors retain the user's ANSI palette and default background.\nNumeric values are RGB; named values are emitted as terminal attributes.",
+            anyOf: [
+              {
+                type: 'integer',
+                format: 'uint32',
+                minimum: 0,
+                maximum: 16777215,
+              },
+              {
+                $ref: '#/$defs/TerminalNamedColor',
+              },
+            ],
+          },
+          TerminalNamedColor: {
+            type: 'string',
+            enum: [
+              'reset',
+              'black',
+              'red',
+              'green',
+              'yellow',
+              'blue',
+              'magenta',
+              'cyan',
+              'gray',
+              'dark_gray',
+              'light_red',
+              'light_green',
+              'light_yellow',
+              'light_blue',
+              'light_magenta',
+              'light_cyan',
+              'white',
             ],
           },
           TextAppearance: {
@@ -15662,6 +17116,11 @@ export const contracts = {
               SettingsConnectionSummary: {
                 type: 'object',
                 properties: {
+                  editable: {
+                    description:
+                      'Editing controls implemented by this Settings service for the provider.',
+                    type: 'boolean',
+                  },
                   basis: {
                     $ref: '#/$defs/ConnectionVersionBasis',
                   },
@@ -15684,7 +17143,15 @@ export const contracts = {
                   },
                 },
                 additionalProperties: false,
-                required: ['basis', 'slug', 'name', 'provider', 'enabled', 'enabledModelCount'],
+                required: [
+                  'editable',
+                  'basis',
+                  'slug',
+                  'name',
+                  'provider',
+                  'enabled',
+                  'enabledModelCount',
+                ],
               },
               ConnectionVersionBasis: {
                 type: 'object',

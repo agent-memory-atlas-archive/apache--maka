@@ -111,6 +111,8 @@ pub enum ConnectionsRead {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "SettingsConnectionSummary")]
 pub struct ConnectionSummary {
+    /// Editing controls implemented by this Settings service for the provider.
+    pub editable: bool,
     pub basis: maka_runtime::configuration::ConnectionVersionBasis,
     pub slug: String,
     pub name: String,

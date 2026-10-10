@@ -53,9 +53,6 @@ mod settings;
 #[path = "tests/images.rs"]
 mod images;
 
-#[path = "tests/product.rs"]
-mod product;
-
 #[path = "tests/workspaces.rs"]
 mod workspaces;
 

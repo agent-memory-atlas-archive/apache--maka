@@ -28,11 +28,15 @@ use std::rc::{Rc, Weak};
 
 pub(super) struct Opening {
     pub pending_flush: std::cell::Cell<bool>,
+    pub anchor: Option<ratatui::layout::Position>,
+    pub selection: Option<Rc<str>>,
 }
 impl Opening {
     pub(super) fn new() -> Self {
         Self {
             pending_flush: std::cell::Cell::new(true),
+            anchor: None,
+            selection: None,
         }
     }
 }
@@ -57,6 +61,7 @@ pub(super) struct WeakTarget {
     mount: maka_plugin_core::runtime::Mount,
     key: String,
     owner: Weak<()>,
+    role: (std::mem::Discriminant<TargetKind>, bool),
 }
 impl WeakTarget {
     pub(super) fn new(target: &Target) -> Self {
@@ -64,15 +69,20 @@ impl WeakTarget {
             mount: target.mount.clone(),
             key: target.key.clone(),
             owner: Rc::downgrade(&target.owner),
+            role: target.role(),
         }
     }
     pub(super) fn matches(&self, target: &Target) -> bool {
         target.mount == self.mount
             && target.key == self.key
             && self.owner.ptr_eq(&Rc::downgrade(&target.owner))
+            && self.role == target.role()
     }
     pub(super) fn same(&self, other: &Self) -> bool {
-        self.mount == other.mount && self.key == other.key && self.owner.ptr_eq(&other.owner)
+        self.mount == other.mount
+            && self.key == other.key
+            && self.owner.ptr_eq(&other.owner)
+            && self.role == other.role
     }
     pub(super) fn exited(&self, exits: &[Exit]) -> bool {
         exits
@@ -108,7 +118,13 @@ impl super::scroll::SceneState {
                         }
                     }
                 }
-                Node::AdaptivePane {
+                Node::ContextMenu {
+                    key,
+                    background,
+                    content,
+                    ..
+                }
+                | Node::AdaptivePane {
                     key,
                     background,
                     content,
@@ -366,7 +382,9 @@ impl Presenter {
             .view
             .scene()
             .and_then(|node| node.overlay(&target.key))
-            .is_some_and(|node| matches!(node, Node::AdaptivePane { .. }))
+            .is_some_and(|node| {
+                matches!(node, Node::AdaptivePane { .. } | Node::ContextMenu { .. })
+            })
         {
             let state = self
                 .resources
@@ -445,7 +463,7 @@ impl Presenter {
                 .expect("original deferred overlay");
             let full = scene.viewport;
             let (body, padding) = match node {
-                Node::Dialog { .. } | Node::AdaptivePane { .. } => {
+                Node::Dialog { .. } | Node::ContextMenu { .. } | Node::AdaptivePane { .. } => {
                     let (appearance, content) = node.dialog_content().unwrap();
                     let maka_ui::scene::terminal::DialogAppearance {
                         width,
@@ -458,20 +476,43 @@ impl Presenter {
                     } else {
                         0
                     };
-                    let width = (*width).min(full.width.saturating_sub(margin * 2));
+                    let mut width = (*width).min(full.width.saturating_sub(margin * 2));
                     let maximum_height = (*height).min(full.height.saturating_sub(margin * 2));
                     let padding = (*padding)
                         .min(width.saturating_sub(3) / 2)
                         .min(maximum_height.saturating_sub(3) / 2);
                     let inset = padding.saturating_add(1).saturating_mul(2);
-                    let (_, content_height) = self.measure(
+                    let (content_width, content_height) = self.measure(
                         &deferred.mount,
                         content,
                         width.saturating_sub(inset),
                         measurements,
                     )?;
+                    if matches!(node, Node::ContextMenu { .. }) {
+                        let copy_width = match node {
+                            Node::ContextMenu {
+                                copy_selection_label: Some(label),
+                                ..
+                            } if deferred
+                                .opening
+                                .upgrade()
+                                .is_some_and(|opening| opening.selection.is_some()) =>
+                            {
+                                super::paint::text_size(label, width).0
+                            }
+                            _ => 0,
+                        };
+                        width =
+                            width.min(content_width.max(copy_width).saturating_add(inset).max(4));
+                    }
                     // Growing content needs a bounded viewport before flex allocation;
                     // its zero-basis children intentionally have no intrinsic height.
+                    let selection_row = u32::from(
+                        deferred
+                            .opening
+                            .upgrade()
+                            .is_some_and(|opening| opening.selection.is_some()),
+                    );
                     let height = if self
                         .node_layout(&deferred.mount, content, measurements)?
                         .grow
@@ -481,18 +522,27 @@ impl Presenter {
                     } else {
                         maximum_height.min(
                             content_height
+                                .saturating_add(selection_row)
                                 .saturating_add(u32::from(inset))
                                 .min(u32::from(u16::MAX)) as u16,
                         )
                     }
                     .max(1);
-                    let body = ratatui::layout::Rect::new(
+                    let mut body = ratatui::layout::Rect::new(
                         full.x + full.width.saturating_sub(width) / 2,
                         full.y + full.height.saturating_sub(height) / 2,
                         width,
                         height,
                     );
 
+                    if let Some(anchor) = deferred
+                        .opening
+                        .upgrade()
+                        .and_then(|opening| opening.anchor)
+                    {
+                        body.x = anchor.x.clamp(full.x, full.right().saturating_sub(width));
+                        body.y = anchor.y.clamp(full.y, full.bottom().saturating_sub(height));
+                    }
                     (body, padding)
                 }
                 Node::Choice(choice) => {
@@ -564,7 +614,7 @@ impl Presenter {
                         scene,
                     ));
                 }
-                Node::Dialog { .. } | Node::AdaptivePane { .. } => {
+                Node::Dialog { .. } | Node::ContextMenu { .. } | Node::AdaptivePane { .. } => {
                     let (appearance, content) = node.dialog_content().unwrap();
                     let maka_ui::scene::terminal::DialogAppearance {
                         label,
@@ -574,17 +624,97 @@ impl Presenter {
                     } = appearance;
                     Block::new()
                         .borders(Borders::ALL)
-                        .title(super::sanitize(label))
+                        .border_set(if appearance.ascii {
+                            ratatui::symbols::border::Set {
+                                top_left: "+",
+                                top_right: "+",
+                                bottom_left: "+",
+                                bottom_right: "+",
+                                horizontal_top: "-",
+                                horizontal_bottom: "-",
+                                vertical_left: "|",
+                                vertical_right: "|",
+                            }
+                        } else {
+                            ratatui::symbols::border::ROUNDED
+                        })
+                        .title(ratatui::text::Span::styled(
+                            if matches!(node, Node::ContextMenu { .. }) {
+                                String::new()
+                            } else {
+                                super::sanitize(label)
+                            },
+                            Style::default().fg(super::paint::color(
+                                appearance.title_color.unwrap_or(*border_color),
+                            )),
+                        ))
                         .style(Style::default().bg(super::paint::color(*background_color)))
                         .border_style(Style::default().fg(super::paint::color(*border_color)))
                         .render(body, buffer);
-                    self.paint_node(
-                        &deferred.mount,
-                        content,
+                    let mut content_area =
                         super::Placement::from(body).inner(ratatui::layout::Margin::new(
                             padding.saturating_add(1),
                             padding.saturating_add(1),
-                        )),
+                        ));
+                    if let Node::ContextMenu {
+                        copy_selection_label: Some(label),
+                        ..
+                    } = node
+                        && let Some(text) = deferred
+                            .opening
+                            .upgrade()
+                            .and_then(|opening| opening.selection.clone())
+                    {
+                        let row = super::Placement::new(
+                            super::CellRect::new(
+                                content_area.x,
+                                content_area.y,
+                                content_area.width,
+                                1,
+                            ),
+                            content_area.clip,
+                        );
+                        let target = Target {
+                            identity: TargetIdentity {
+                                mount: deferred.mount.clone(),
+                                key: deferred.key.clone(),
+                                owner: self.resources.owners[&deferred.mount.id()].identity.clone(),
+                                scope: scene.input_scope.clone(),
+                            },
+                            revision: self.application.frame(&deferred.mount)?.revision,
+                            area: row,
+                            tab_index: 0,
+                            autofocus: false,
+                            kind: TargetKind::SelectionCopy { text },
+                            ancestors: Vec::new(),
+                        };
+                        let mut style = Style::default().fg(super::paint::color(
+                            appearance.title_color.unwrap_or(appearance.border_color),
+                        ));
+                        if self.focus.as_ref().is_some_and(|focus| focus.same(&target))
+                            || self.hover.as_ref().is_some_and(|hover| hover.same(&target))
+                        {
+                            style = style.add_modifier(ratatui::style::Modifier::REVERSED);
+                        }
+                        buffer.set_style(row.visible(), style);
+                        super::paint::text(label, row, buffer, style);
+                        if !row.is_empty() {
+                            scene.targets.push(target);
+                        }
+                        content_area = super::Placement::new(
+                            super::CellRect::new(
+                                content_area.x,
+                                content_area.y + 1,
+                                content_area.width,
+                                content_area.height.saturating_sub(1),
+                            ),
+                            content_area.clip,
+                        );
+                    }
+                    self.paint_node(
+                        &deferred.mount,
+                        content,
+                        content_area,
                         buffer,
                         scene,
                         &mut super::paint::NodePaint {

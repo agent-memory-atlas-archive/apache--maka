@@ -27,6 +27,7 @@ import {
   type RemoteObservation,
   type Target as BindingTarget,
 } from '../../plugin-sdk/src/index.js';
+import { welcomeMark } from './welcome.js';
 export const packageNames = [
   'workspace',
   'recovery',
@@ -63,6 +64,8 @@ export const packageNames = [
   'reading-area',
   'label',
   'rows',
+  'checkpoint',
+  'morph-mark',
   'appearance',
   'surface',
   'editor',
@@ -81,10 +84,12 @@ export const packageNames = [
   'gateway',
 ] as const;
 export type PackageName = (typeof packageNames)[number];
+import type { AppearanceConfiguration } from './terminal-theme.js';
 export interface CompositionConfiguration {
   presentation: 'desktop' | 'tui';
   locale: string;
   scheme: 'light' | 'dark';
+  appearance?: Omit<AppearanceConfiguration, 'scheme'>;
   packages: Record<PackageName, PackageRef>;
   keys: Record<PackageName, string>;
   agent: AgentConfiguration;
@@ -262,7 +267,7 @@ function settingsComposition(
           history: [local('history', 'History')],
         },
       ),
-      appearance: node('appearance', { scheme: configuration.scheme }),
+      appearance: node('appearance', { scheme: configuration.scheme, ...configuration.appearance }),
       surface: node('surface'),
       editor: node('editor'),
       file: node('file'),
@@ -392,7 +397,11 @@ export function composition(configuration: CompositionConfiguration): Applicatio
   Object.assign(ui.instances, {
     workspace: node(
       'workspace',
-      { locale: configuration.locale, terminals: !!configuration.processes },
+      {
+        locale: configuration.locale,
+        terminals: !!configuration.processes,
+        place: configuration.agent.workspaceRoots[0].path,
+      },
       {
         agent: [remote('agent', 'agent')],
         file: [local('file', 'FilePicker')],
@@ -400,7 +409,14 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         reader: [local('reader', 'Reader')],
         history: [local('history', 'History')],
         composer: [local('composer', 'Composer')],
-        ...(configuration.presentation === 'tui' ? { rows: [local('rows', 'Rows')] } : {}),
+        ...(configuration.presentation === 'tui'
+          ? {
+              rows: [local('rows', 'Rows')],
+              checkpoint: [local('checkpoint', 'Checkpoint')],
+              welcome: [local('morph-mark', 'MorphMark')],
+              input: [local('input', 'TextInput')],
+            }
+          : {}),
         palette: [local('command-palette', 'CommandPalette')],
         directories: [local('directory-picker', 'DirectoryPicker')],
         details: [local('session-details', 'SessionDetails')],
@@ -493,7 +509,13 @@ export function composition(configuration: CompositionConfiguration): Applicatio
       },
     ),
     composer: node('composer', {}, { editor: [local('editor', 'Textarea')] }),
-    ...(configuration.presentation === 'tui' ? { rows: node('rows') } : {}),
+    ...(configuration.presentation === 'tui'
+      ? {
+          rows: node('rows'),
+          checkpoint: node('checkpoint'),
+          'morph-mark': node('morph-mark', { ...welcomeMark }),
+        }
+      : {}),
     navigation: node('navigation'),
     'image-viewer': node(
       'image-viewer',

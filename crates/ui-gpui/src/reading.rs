@@ -204,6 +204,7 @@ impl Owner {
                 .painted_observation()
                 .map(|painted| ReadingViewport {
                     reading_revision: painted.reading_revision,
+                    at_start: painted.offset.y >= gpui_kit::px(0.),
                     at_end: painted.at_end,
                     visible_child_keys: painted
                         .visible_child_keys
@@ -214,6 +215,7 @@ impl Owner {
                         })
                         .collect(),
                 }),
+            scroll: None,
             pending_command: self.pending.as_ref().map(|pending| pending.sequence),
             receipt: self.receipt.clone(),
             find: None,

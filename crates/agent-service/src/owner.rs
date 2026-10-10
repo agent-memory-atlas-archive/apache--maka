@@ -88,6 +88,7 @@ pub(crate) struct Owner {
     pub prefix: String,
     pub data_source: DataSource,
     configuration: Arc<ConfigurationStore>,
+    credentials: crate::model::Credentials,
     revision: SourceRevision,
     pub workspace_roots: Vec<workspace::Root>,
     managed_worktrees: std::path::PathBuf,
@@ -134,6 +135,15 @@ impl Owner {
             .map_err(|_| "agent_executor_unavailable")?;
         let cells = maka_js_runtime::CodeExecutor::new(1, maka_js_runtime::CellLimits::default())
             .map_err(|_| "agent_executor_unavailable")?;
+        let workers = TaskTracker::new();
+        let stop = CancellationToken::new();
+        let credentials = crate::model::Credentials {
+            executor: models.clone(),
+            refresh: Arc::new(maka_runtime_host::oauth::Authority::new(
+                workers.clone(),
+                stop.clone(),
+            )),
+        };
         let engine = Engine::new(persistence.store().clone(), models, cells);
         let revision = SourceRevision {
             kind: SourceKind::ModelProvider,
@@ -161,12 +171,13 @@ impl Owner {
             upload_capacity: Arc::new(Semaphore::new(1)),
             settings,
             configuration,
+            credentials,
             engine,
             tools,
             tool_basis,
             runs: Mutex::default(),
-            workers: TaskTracker::new(),
-            stop: CancellationToken::new(),
+            workers,
+            stop,
         }))
     }
     pub fn operation_id(&self, operation: &maka_plugin_core::operation::RecoveryRef) -> String {
@@ -431,6 +442,7 @@ impl Owner {
         }
         let (source, prepared) = crate::model::Source::select(
             self.configuration.clone(),
+            self.credentials.clone(),
             selection,
             thinking_level,
             id.clone(),

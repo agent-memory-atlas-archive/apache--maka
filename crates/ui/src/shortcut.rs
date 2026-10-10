@@ -176,7 +176,7 @@ pub fn inputs(
             return Err("shortcut collides with typed native input".into());
         }
         inputs.insert(shortcut.input.clone(), serde_json::Value::Bool(true));
-        if inputs.len() > 64 {
+        if inputs.len() > crate::native::MAX_INPUTS {
             return Err("scene input limit".into());
         }
     }
@@ -222,7 +222,7 @@ mod tests {
         assert_eq!(table.len(), 1);
         table.insert("command".into(), json!({"type":"object"}));
         assert!(inputs(std::slice::from_ref(&command), &mut table).is_err());
-        let mut table = (0..64)
+        let mut table = (0..crate::native::MAX_INPUTS)
             .map(|n| (format!("input-{n}"), json!(true)))
             .collect();
         assert!(inputs(&[command], &mut table).is_err());

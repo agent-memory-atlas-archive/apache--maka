@@ -145,10 +145,6 @@ impl Setup {
         self.title = Some(title);
         self
     }
-    pub(super) fn require_confirmation(mut self) -> Self {
-        self.confirmation = contract::ToolConfirmation::Required;
-        self
-    }
     fn javascript() -> Self {
         Self {
             title: None,

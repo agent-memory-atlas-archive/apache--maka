@@ -24,6 +24,8 @@ use maka_ui::{appearance::Color, source::SourceTextProps};
 
 fn props(source: &str) -> SourceTextProps {
     SourceTextProps {
+        animate: false,
+        terminal: None,
         focus_on_pointer: true,
         source: source.into(),
         appearance: appearance().body,
@@ -345,6 +347,8 @@ fn controlled_dialog_restores_nonselectable_markdown_but_not_disabled_document(
         .update_window(f.window, |_, window, cx| {
             let document = crate::markdown::test_document(
                 &maka_ui::markdown::MarkdownProps {
+                    animate: false,
+                    ascii: false,
                     source: "[Original link](https://example.com)".into(),
                     appearance: appearance(),
                     selectable: false,

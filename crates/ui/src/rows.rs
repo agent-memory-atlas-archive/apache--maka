@@ -28,6 +28,8 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RowsProps {
+    #[serde(default)]
+    pub terminal: Option<crate::scene::terminal::Palette>,
     pub revision: u64,
     /// Select this row on keyboard entry. None retains the current selection,
     /// or selects the first row when there is no current selection.

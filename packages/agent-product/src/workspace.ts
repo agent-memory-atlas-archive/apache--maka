@@ -17,6 +17,15 @@
  * under the License.
  */
 
+import {
+  initialAppearance,
+  effectiveAppearance,
+  effectiveLocale,
+  appearanceEvent,
+  appearanceView,
+  type AppearanceEditor,
+} from './appearance-editor.js';
+import { tuiText } from './tui-locale.js';
 import type {
   Action,
   ActionOutcome,
@@ -123,6 +132,7 @@ type Request =
       navigation: number;
       latest: boolean;
       implicit: boolean;
+      extend?: boolean;
       position: HistoryPosition;
     }
   | {
@@ -194,6 +204,7 @@ interface QueueEdit {
   command: EditorCommand | null;
 }
 export interface State {
+  preferences: AppearanceEditor;
   drafts: DraftRecord[];
   attachments: AttachmentDrafts;
   revision: number;
@@ -216,6 +227,7 @@ export interface State {
   deploymentOpen: boolean;
   sidebar: { open: boolean } | { command: TerminalPaneCommand | null };
   terminals: boolean;
+  place: string;
   dialog:
     | 'attachments'
     | 'terminal'
@@ -227,7 +239,10 @@ export interface State {
     | 'question'
     | 'approval'
     | null;
-  window: { page: Extract<AgentHistoryPage, { kind: 'ready' }>; latest: boolean } | null;
+  window: {
+    page: Extract<AgentHistoryPage, { kind: 'ready' }>;
+    latest: boolean;
+  } | null;
   navigation: number;
   image: { sessionId: string; through: number; sequence: number } | null;
   source: {
@@ -248,7 +263,11 @@ export interface State {
   fileContext: TimelineFileContext | null;
   copyRequest: number | null;
   messageCopy: MessageCopyObservation | null;
-  followAttempt: { through: number; landing: number; readingRevision: number } | null;
+  followAttempt: {
+    through: number;
+    landing: number;
+    readingRevision: number;
+  } | null;
   parts: DisplayPart[];
   run: AgentRun | null;
   queue: AgentQueue | null;
@@ -262,7 +281,11 @@ export interface State {
     record: InteractionRecord | null;
     notice: Notice;
   } | null;
-  questionSubmission: { attempt: number; answers: (string | null)[]; waiting: number[] } | null;
+  questionSubmission: {
+    attempt: number;
+    answers: (string | null)[];
+    waiting: number[];
+  } | null;
   runThrough: number;
   loading: boolean;
   live: {
@@ -275,7 +298,11 @@ export interface State {
     field: 'body' | 'thinking';
   }[];
   latestKnown: number;
-  watch: { key: string; input: { sessionId: string; after: number }; last: number } | null;
+  watch: {
+    key: string;
+    input: { sessionId: string; after: number };
+    last: number;
+  } | null;
   pending: Record<string, Request>;
   uncertain: Uncertain | null;
   restoring: boolean;
@@ -505,14 +532,24 @@ function history(
   through: number,
   latest: boolean,
   implicit = false,
+  extend = false,
 ) {
   if (!state.selected) return;
-  if (!implicit) state.loading = true;
+  if (!implicit && !extend) state.loading = true;
   const navigation = ++state.navigation;
   intent(
     state,
     actions,
-    { kind: 'history', epoch: state.epoch, navigation, through, latest, implicit, position },
+    {
+      kind: 'history',
+      epoch: state.epoch,
+      navigation,
+      through,
+      latest,
+      implicit,
+      position,
+      extend,
+    },
     'agent',
     'history',
     { sessionId: state.selected.id, through, position, includeThinking: true },
@@ -689,6 +726,7 @@ type RootCommand =
   | 'help-open'
   | 'interaction-open'
   | 'create'
+  | 'appearance-open'
   | 'model-setup'
   | 'terminal-open'
   | 'details-open'
@@ -914,7 +952,24 @@ function rootCommands(
       hint: 'Ctrl/⌘ B',
       disabled: !route,
     },
-    { kind: 'settings', id: 'settings', label: text.settings, hint: '', disabled: !route },
+    ...(target === 'tui'
+      ? [
+          {
+            kind: 'appearance-open' as const,
+            id: 'appearance-open',
+            label: tuiText(locale, 'settings-appearance'),
+            hint: '',
+            disabled: !route,
+          },
+        ]
+      : []),
+    {
+      kind: 'settings',
+      id: 'settings',
+      label: text.settings,
+      hint: '',
+      disabled: !route,
+    },
     {
       kind: 'deployment-open',
       id: 'deployment-open',
@@ -988,10 +1043,12 @@ function rootCommand(
     const review = reviewTarget(state)!;
     openInteraction(state, actions, review.requestId, review.kind);
   } else if (kind === 'create') createSession(state, actions, locale);
+  else if (kind === 'appearance-open') state.preferences.open = true;
   else if (kind === 'model-setup') openModelSetup(state);
   else if (kind === 'create-workspace') {
     if (!state.model || state.modelRefreshing) openModelSetup(state);
     else state.dialog = 'directories';
+    if (target === 'tui') controlSidebar(state, 'dismiss_transient');
   } else if (kind === 'terminal-open') state.dialog = 'terminal';
   else if (kind === 'details-open') state.dialog = 'details';
   else if (kind === 'navigation-toggle') controlSidebar(state, 'toggle');
@@ -1610,11 +1667,44 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
         );
         break;
       }
-      state.window = { page, latest: request.latest };
-      state.landing = {
-        sequence: state.landing.sequence + 1,
-        edge: request.position.kind === 'before' || request.latest ? 'end' : 'start',
-      };
+      const old = state.window;
+      const splitMessage = old?.page.chunks.some((oldChunk) =>
+        page.chunks.some(
+          (chunk) => chunk.sequence === oldChunk.sequence && chunk.field === oldChunk.field,
+        ),
+      );
+      if (request.extend && old?.page.through === page.through && !splitMessage) {
+        const before = request.position.kind === 'before';
+        const chunks = before
+          ? [...page.chunks, ...old.page.chunks]
+          : [...old.page.chunks, ...page.chunks];
+        let bytes = chunks.reduce((total, chunk) => total + utf8Bytes(chunk.text), 0);
+        let first = before ? page.before : old.page.before;
+        let last = before ? old.page.after : page.after;
+        // Adjacent canonical pages share one fence. Retain the displayed edge
+        // and its native anchor. Keep two complete pages so loading an adjacent
+        // page cannot evict the message that anchors the current viewport.
+        while (chunks.length > 16 || bytes > 131072) {
+          const removed = before ? chunks.pop()! : chunks.shift()!;
+          bytes -= utf8Bytes(removed.text);
+          if (before)
+            last = { sequence: removed.sequence, offset: removed.offset, field: removed.field };
+          else {
+            const start = chunks[0]!;
+            first = { sequence: start.sequence, offset: start.offset, field: start.field };
+          }
+        }
+        state.window = {
+          page: { ...page, chunks, before: first, after: last },
+          latest: last === null,
+        };
+      } else {
+        state.window = { page, latest: request.latest };
+        state.landing = {
+          sequence: state.landing.sequence + 1,
+          edge: request.position.kind === 'before' || request.latest ? 'end' : 'start',
+        };
+      }
       state.loading = false;
       if (!request.implicit) state.notice = null;
       state.live = state.live.filter(
@@ -1907,49 +1997,111 @@ function frame<N extends Node>(
     state.searchOpen = false;
     state.browse = null;
   }
-  const theme = values.appearance?.[0] as Theme;
+  const baseTheme = values.appearance?.[0] as Theme;
+  if (target === 'tui' && state.preferences.open && !state.preferences.draft)
+    appearanceEvent(
+      state.preferences,
+      { kind: 'raw', key: 'appearance-open', event: {} },
+      baseTheme,
+      locale,
+      actions,
+    );
+  locale = target === 'tui' ? effectiveLocale(state.preferences, locale) : locale;
+  const theme = target === 'tui' ? effectiveAppearance(state.preferences, baseTheme) : baseTheme;
   const text = copy(locale),
     ui = presentation.paint(theme),
     busy = mutationPending(state);
   const catalogBusy = busy || catalogPending(state);
+  const commands = rootCommands(state, locale, target);
+  const createButton = ui.button(
+    'create',
+    target === 'tui' ? '+ ' + tuiText(locale, 'sidebar-new-session') : text.new,
+    !commands.some((command) => command.kind === 'create' && !command.disabled),
+    false,
+    target === 'tui' ? { background: 0, align: 'start' } : {},
+  );
+  const createEntry = ui.contextMenu
+    ? ui.contextMenu('navigation-create-menu', text.new, createButton, [
+        ui.button(
+          'create-workspace',
+          text.newWorkspace,
+          !commands.some((command) => command.kind === 'create-workspace' && !command.disabled),
+        ),
+      ])
+    : createButton;
   const navigation = ui.box(
     'navigation-panel',
     [
-      ui.text('navigation-brand', 'maka', 24, theme.text, 650),
-      ui.button(
-        'create',
-        text.new,
-        !rootCommands(state, locale, target).some(
-          (command) => command.kind === 'create' && !command.disabled,
-        ),
-      ),
-      ui.text('navigation-heading', text.conversations, 12, theme.muted, 550),
+      target === 'tui'
+        ? ui.box(
+            'navigation-heading',
+            [
+              ui.box('navigation-create-cell', [createEntry], { terminal: { grow: 1 } }),
+              ui.button(
+                'navigation-back',
+                theme.ascii ? 'x' : '×',
+                false,
+                false,
+                { background: 0, align: 'start' },
+                undefined,
+                text.hideSidebar,
+              ),
+            ],
+            { row: true, gap: 0 },
+          )
+        : ui.text('navigation-brand', 'Maka', 24, theme.text, 650),
+      ...(target === 'desktop' ? [createEntry] : []),
+      ...(target === 'desktop'
+        ? [ui.text('navigation-heading', text.conversations, 12, theme.muted, 550)]
+        : []),
       ui.box(
         'catalog-filters',
-        (['all', 'needs_you'] as const).map((filter) => {
-          const label =
-            filter === 'all'
-              ? text.allSessions
-              : state.catalog
-                ? `${text.needsYou} (${state.catalog.needsYouCount})`
-                : text.needsYou;
-          const selected = state.catalogFilter === filter;
-          return ui.item
-            ? ui.item(
-                `catalog-filter-${filter}`,
-                ui.text(`catalog-filter-label-${filter}`, label, 12, theme.text),
-                selected,
-                catalogBusy,
-              )
-            : ui.button(
-                `catalog-filter-${filter}`,
-                label,
-                catalogBusy,
-                false,
-                selected ? { background: theme.selected } : {},
-              );
-        }),
-        { row: true, focusGroup: target === 'tui' },
+        [
+          ...(['all', 'needs_you'] as const).map((filter) => {
+            const label =
+              filter === 'all'
+                ? text.allSessions
+                : state.catalog
+                  ? `${text.needsYou} (${state.catalog.needsYouCount})`
+                  : text.needsYou;
+            const selected = state.catalogFilter === filter;
+            return ui.item
+              ? ui.item(
+                  `catalog-filter-${filter}`,
+                  ui.text(`catalog-filter-label-${filter}`, label, 12, theme.text),
+                  selected,
+                  catalogBusy,
+                )
+              : ui.button(
+                  `catalog-filter-${filter}`,
+                  label,
+                  catalogBusy,
+                  false,
+                  selected ? { background: theme.selected } : {},
+                );
+          }),
+          ...(target === 'tui'
+            ? [
+                ui.box('catalog-filter-space', [], { terminal: { grow: 1 } }),
+                ui.box(
+                  'catalog-refresh-cell',
+                  [
+                    ui.button(
+                      'catalog-refresh',
+                      theme.ascii ? 'r' : '↻',
+                      catalogBusy,
+                      false,
+                      { background: 0 },
+                      undefined,
+                      text.refreshSessions,
+                    ),
+                  ],
+                  { terminal: { basis: 3 } },
+                ),
+              ]
+            : []),
+        ],
+        { row: true, focusGroup: target === 'tui', gap: 1 },
       ),
       ...(!state.catalogFailed &&
       !catalogPending(state) &&
@@ -1975,7 +2127,9 @@ function frame<N extends Node>(
           ...(state.catalog?.after
             ? [ui.button('catalog-more', text.moreSessions, catalogBusy || state.catalogFailed)]
             : []),
-          ui.button('catalog-refresh', text.refreshSessions, catalogBusy),
+          ...(target === 'desktop'
+            ? [ui.button('catalog-refresh', text.refreshSessions, catalogBusy)]
+            : []),
         ],
         { row: true, style: { wrap: true }, terminal: { wrap: true } },
       ),
@@ -1991,9 +2145,41 @@ function frame<N extends Node>(
         },
         { select: 'select' },
       ),
+      ...(target === 'tui'
+        ? [
+            ui.box(
+              'navigation-footer',
+              [
+                ui.button(
+                  'appearance-open',
+                  `${theme.ascii ? 'S' : '⛭'} ${tuiText(locale, 'settings-appearance')}`,
+                  false,
+                  false,
+                  { background: 0, align: 'start' },
+                ),
+                ui.button(
+                  'settings',
+                  `${theme.ascii ? 'C' : '⇄'} ${tuiText(locale, 'route-connections')}`,
+                  busy,
+                  false,
+                  { background: 0, align: 'start' },
+                ),
+                ui.button(
+                  'deployment-open',
+                  `${theme.ascii ? 'P' : '◇'} ${text.deploymentTitle}`,
+                  busy,
+                  false,
+                  { background: 0, align: 'start' },
+                ),
+              ],
+              { gap: 0 },
+            ),
+          ]
+        : []),
     ],
     {
-      surface: true,
+      surface: target === 'desktop',
+      gap: target === 'tui' ? 0 : undefined,
       padding: target === 'desktop' ? 20 : 1,
       style: { height: fill, width: fill },
       terminal: { grow: 1 },
@@ -2175,6 +2361,7 @@ function frame<N extends Node>(
     {
       send: 'send',
       stop: 'stop',
+      attachments: 'attachments',
       changed: 'draft',
       files: 'files',
       checkpoint: 'checkpoint',
@@ -2182,25 +2369,42 @@ function frame<N extends Node>(
     },
   );
   const queueProps: RowsProps = {
+    terminal: theme.terminal,
     entry: state.queue?.entries.at(-1)?.messageId ?? null,
     revision: state.queue?.revision ?? 0,
     rows: (state.queue?.entries ?? []).map((entry): RowsProps['rows'][number] => {
       const lane = state.queue!.entries.filter((row) => row.kind === entry.kind);
       const index = lane.findIndex((row) => row.messageId === entry.messageId);
       const enabled = !busy && !executionPending(state);
-      const up = { key: 'up', label: '↑', enabled: enabled && index > 0 };
-      const down = { key: 'down', label: '↓', enabled: enabled && index + 1 < lane.length };
-      const edit = { key: 'edit', label: '✎', enabled };
-      const retract = { key: 'retract', label: '×', enabled };
+      const up = {
+        key: 'up',
+        label: theme.ascii ? '^' : '↑',
+        enabled: enabled && index > 0,
+      };
+      const down = {
+        key: 'down',
+        label: theme.ascii ? 'v' : '↓',
+        enabled: enabled && index + 1 < lane.length,
+      };
+      const edit = { key: 'edit', label: theme.ascii ? 'e' : '✎', enabled };
+      const retract = {
+        key: 'retract',
+        label: theme.ascii ? 'x' : '×',
+        enabled,
+      };
       return {
         key: entry.messageId,
-        text: ` ${entry.kind === 'steering' ? '↗' : entry.kind === 'in_flight' ? '…' : '↳'} ${entry.preview}`,
+        text: ` ${entry.kind === 'steering' ? (theme.ascii ? '^' : '↗') : entry.kind === 'in_flight' ? (theme.ascii ? '...' : '…') : theme.ascii ? '+' : '↳'} ${entry.preview}`,
         actions:
           entry.kind === 'in_flight'
             ? []
             : entry.kind === 'followup'
               ? [
-                  { key: 'promote', label: '↗', enabled: enabled && !!state.run },
+                  {
+                    key: 'promote',
+                    label: theme.ascii ? '^' : '↗',
+                    enabled: enabled && !!state.run,
+                  },
                   up,
                   down,
                   edit,
@@ -2225,7 +2429,12 @@ function frame<N extends Node>(
     muted: theme.muted,
     selected: theme.selected,
     hovered: theme.surface,
-    scrollbar: { thumb: '┃', track: '│', thumbColor: theme.text, trackColor: theme.border },
+    scrollbar: {
+      thumb: theme.ascii ? '#' : '┃',
+      track: theme.ascii ? '|' : '│',
+      thumbColor: theme.text,
+      trackColor: theme.border,
+    },
   };
   const status = state.notice
     ? text[state.notice]
@@ -2236,12 +2445,24 @@ function frame<N extends Node>(
       : state.selected?.archived
         ? text.archivedConversation
         : '';
-  const title = ui.text('title', state.selected?.title ?? 'maka', 17, theme.text, 550, {
-    width: pixels(0),
-    grow: 1,
-    minWidth: 0,
-    truncate: true,
-  });
+  const title = ui.text(
+    'title',
+    state.settingsOpen
+      ? text.settings
+      : state.deploymentOpen
+        ? text.deploymentTitle
+        : (state.selected?.title ?? tuiText(locale, 'route-workspace')),
+    17,
+    theme.text,
+    650,
+    {
+      align: 'center',
+      width: pixels(0),
+      grow: 1,
+      minWidth: 0,
+      truncate: true,
+    },
+  );
   const models = presentation.slot(
     'models',
     'models',
@@ -2256,123 +2477,245 @@ function frame<N extends Node>(
     { selected: 'model', setup: 'model-setup', connections: 'model-connections' },
   );
 
+  const header = ui.box(
+    'header',
+    [
+      ...(target === 'desktop'
+        ? [
+            ui.box('context', [title, ui.button('navigation-toggle', sidebarLabel(state, text))], {
+              row: true,
+              gap: 8,
+              style: { width: fill, align: 'center' },
+            }),
+            ui.box(
+              'toolbar',
+              [
+                ui.box('model-control', [models], {
+                  style: { width: pixels(0), grow: 1, minWidth: 0 },
+                }),
+                ui.button('palette-open', text.paletteTitle),
+                ui.button(
+                  'details-open',
+                  text.detailsOpen,
+                  !rootCommands(state, locale, target).some(
+                    (command) => command.kind === 'details-open' && !command.disabled,
+                  ),
+                ),
+                ui.button('terminal-open', text.terminalTitle, !state.selected || state.loading),
+                ui.button('settings', text.settings),
+                ui.button('deployment-open', text.deploymentTitle),
+              ],
+              { row: true, gap: 8, style: { width: fill, align: 'center' } },
+            ),
+          ]
+        : [
+            ui.box(
+              'header-left',
+              [
+                ui.button(
+                  'navigation-toggle',
+                  theme.ascii ? '=' : '≡',
+                  false,
+                  false,
+                  { background: 0 },
+                  undefined,
+                  text.toggleSidebar + ' · Ctrl+B',
+                ),
+              ],
+              { row: true, gap: 0, terminal: { basis: 9 } },
+            ),
+            ui.box(
+              'header-task',
+              [
+                ui.box('header-title-leading', [], { terminal: { grow: 1 } }),
+                ...(state.selected && !state.settingsOpen && !state.deploymentOpen
+                  ? [
+                      state.run?.state === 'waiting_for_user'
+                        ? ui.text('task-face', '-_-', 14, theme.warning)
+                        : ui.activity('task-face', state.run ? 'spring' : 'familiar', theme.accent),
+                    ]
+                  : []),
+                ui.box('header-title', [title], { terminal: { shrink: true } }),
+                ui.box('header-title-trailing', [], { terminal: { grow: 1 } }),
+              ],
+              { row: true, gap: 1, terminal: { grow: 1, shrink: true } },
+            ),
+            ui.box(
+              'toolbar',
+              [
+                ...(['details-open', 'terminal-open', 'palette-open'] as const).map((key, at) =>
+                  ui.box(
+                    `${key}-cell`,
+                    [
+                      ui.button(
+                        key,
+                        [theme.ascii ? 'i' : 'ⓘ', '>_', theme.ascii ? ':' : '⌘'][at]!,
+                        key !== 'palette-open' && !state.selected,
+                        false,
+                        { background: 0 },
+                        undefined,
+                        [text.detailsOpen, text.terminalTitle, text.paletteTitle + ' · Ctrl+K'][at],
+                      ),
+                    ],
+                    { terminal: { basis: 3 } },
+                  ),
+                ),
+              ],
+              { row: true, gap: 0, terminal: { basis: 9 } },
+            ),
+          ]),
+      ...((target === 'desktop' ? state.interactions?.entries : [])
+        ?.filter((entry) =>
+          ['question', 'form', 'service_approval', 'permissions'].includes(entry.kind),
+        )
+        .map((entry, index) =>
+          ui.button(
+            `${entry.kind === 'question' || entry.kind === 'form' ? 'question' : 'approval'}-open-${entry.requestId}`,
+            `${entry.kind === 'form' ? text.formTitle : entry.kind === 'question' ? text.questionsTitle : entry.kind === 'permissions' ? text.permissionApprovalTitle : text.approvalTitle} ${index + 1}`,
+            !state.selected || state.selected.archived || mutationPending(state),
+          ),
+        ) ?? []),
+      ...(target === 'desktop' && (!state.model || state.modelRefreshing)
+        ? [
+            ui.text(
+              'model-setup-hint',
+              state.modelSetup === 'loading'
+                ? text.loadingModels
+                : state.modelSetup === 'unavailable'
+                  ? text.modelsUnavailable
+                  : state.modelSetup === 'connect'
+                    ? text.setupConnectionHint
+                    : text.setupModelHint,
+              13,
+              theme.muted,
+            ),
+            ...(state.modelSetup === 'connect'
+              ? [ui.button('model-setup', text.configureModels, busy)]
+              : []),
+          ]
+        : []),
+      ...(target === 'desktop' && status ? [ui.text('status', status, 13, theme.muted)] : []),
+      ...(state.uncertain
+        ? [
+            ui.button(
+              'check',
+              text.check,
+              Object.values(state.pending).some((request) => request.kind === 'receipt'),
+            ),
+          ]
+        : []),
+      ...(state.notice === 'unavailable' ? [ui.button('reload', text.loading, state.loading)] : []),
+    ],
+    {
+      row: target === 'tui',
+      gap: target === 'desktop' ? 8 : 0,
+      style: {
+        width: fill,
+        shrink: 0,
+        padding: { top: 16, right: 24, bottom: 16, left: 24 },
+      },
+    },
+  );
+  const welcome =
+    !!state.selected &&
+    !state.selected.archived &&
+    !state.loading &&
+    !!state.window &&
+    !state.window.page.chunks.length &&
+    !state.live.length &&
+    !state.run &&
+    !state.source &&
+    !state.image &&
+    !state.searchOpen;
   const main = ui.box(
     'main',
     [
-      ui.box(
-        'header',
-        [
-          ...(target === 'desktop'
-            ? [
+      ...(target === 'desktop' ? [header] : []),
+      ...(target === 'tui'
+        ? [
+            ui.box(
+              'home',
+              [
+                ui.box('home-top', [], { terminal: { grow: 1 } }),
                 ui.box(
-                  'context',
-                  [title, ui.button('navigation-toggle', sidebarLabel(state, text))],
-                  { row: true, gap: 8, style: { width: fill, align: 'center' } },
-                ),
-                ui.box(
-                  'toolbar',
+                  'home-center',
                   [
-                    ui.box('model-control', [models], {
-                      style: { width: pixels(0), grow: 1, minWidth: 0 },
-                    }),
-                    ui.button('palette-open', text.paletteTitle),
-                    ui.button(
-                      'details-open',
-                      text.detailsOpen,
-                      !rootCommands(state, locale, target).some(
-                        (command) => command.kind === 'details-open' && !command.disabled,
-                      ),
+                    ui.box('home-left', [], { terminal: { grow: 1 } }),
+                    ui.box(
+                      'home-content',
+                      [
+                        ui.text('home-title', 'Maka', 24, theme.text, 650, {
+                          align: 'center',
+                        }),
+                        ...(state.place
+                          ? [
+                              ui.text(
+                                'home-place',
+                                state.place.split(/[\\/]/).filter(Boolean).at(-1) ?? state.place,
+                                14,
+                                theme.subtle,
+                                400,
+                                {
+                                  align: 'center',
+                                  truncate: true,
+                                },
+                              ),
+                            ]
+                          : []),
+                        ui.box('home-gap', [], { terminal: { basis: 1 } }),
+                        ...(!state.model || state.modelRefreshing
+                          ? [
+                              ui.text(
+                                'home-setup',
+                                tuiText(
+                                  locale,
+                                  state.modelSetup === 'loading'
+                                    ? 'connections-loading'
+                                    : state.modelSetup === 'unavailable'
+                                      ? 'home-setup-failed'
+                                      : state.modelSetup === 'connect'
+                                        ? 'home-needs-connection'
+                                        : 'home-needs-default',
+                                ),
+                                14,
+                                state.modelSetup === 'unavailable' ? theme.warning : theme.subtle,
+                                400,
+                                { align: 'center' },
+                              ),
+                            ]
+                          : []),
+                        ui.button(
+                          'home-new',
+                          state.model
+                            ? '+ ' + tuiText(locale, 'sidebar-new-session') + '   Ctrl+N'
+                            : tuiText(
+                                locale,
+                                state.modelSetup === 'connect'
+                                  ? 'route-connections'
+                                  : 'default-model-title',
+                              ),
+                          catalogBusy || (!state.model && state.modelSetup === 'loading'),
+                          true,
+                          { background: 0 },
+                        ),
+                      ],
+                      { gap: 1, terminal: { basis: 52, shrink: true } },
                     ),
-                    ui.button(
-                      'terminal-open',
-                      text.terminalTitle,
-                      !state.selected || state.loading,
-                    ),
-                    ui.button('settings', text.settings),
-                    ui.button('deployment-open', text.deploymentTitle),
+                    ui.box('home-right', [], { terminal: { grow: 1 } }),
                   ],
-                  { row: true, gap: 8, style: { width: fill, align: 'center' } },
+                  { row: true, gap: 0 },
                 ),
-              ]
-            : [
-                title,
-                models,
-                ui.box(
-                  'toolbar',
-                  [
-                    ui.button('palette-open', text.paletteTitle),
-                    ui.button(
-                      'details-open',
-                      text.detailsOpen,
-                      !rootCommands(state, locale, target).some(
-                        (command) => command.kind === 'details-open' && !command.disabled,
-                      ),
-                    ),
-                    ui.button(
-                      'terminal-open',
-                      text.terminalTitle,
-                      !state.selected || state.loading,
-                    ),
-                    ui.button('settings', text.settings),
-                    ui.button('deployment-open', text.deploymentTitle),
-                    ui.button('navigation-toggle', text.toggleSidebar),
-                  ],
-                  { row: true, gap: 0, terminal: { wrap: true } },
-                ),
-              ]),
-          ...((target === 'desktop' ? state.interactions?.entries : [])
-            ?.filter((entry) =>
-              ['question', 'form', 'service_approval', 'permissions'].includes(entry.kind),
-            )
-            .map((entry, index) =>
-              ui.button(
-                `${entry.kind === 'question' || entry.kind === 'form' ? 'question' : 'approval'}-open-${entry.requestId}`,
-                `${entry.kind === 'form' ? text.formTitle : entry.kind === 'question' ? text.questionsTitle : entry.kind === 'permissions' ? text.permissionApprovalTitle : text.approvalTitle} ${index + 1}`,
-                !state.selected || state.selected.archived || mutationPending(state),
-              ),
-            ) ?? []),
-          ...(!state.model || state.modelRefreshing
-            ? [
-                ui.text(
-                  'model-setup-hint',
-                  state.modelSetup === 'loading'
-                    ? text.loadingModels
-                    : state.modelSetup === 'unavailable'
-                      ? text.modelsUnavailable
-                      : state.modelSetup === 'connect'
-                        ? text.setupConnectionHint
-                        : text.setupModelHint,
-                  13,
-                  theme.muted,
-                ),
-                ...(state.modelSetup === 'connect'
-                  ? [ui.button('model-setup', text.configureModels, busy)]
-                  : []),
-              ]
-            : []),
-          ...(status ? [ui.text('status', status, 13, theme.muted)] : []),
-          ...(state.uncertain
-            ? [
-                ui.button(
-                  'check',
-                  text.check,
-                  Object.values(state.pending).some((request) => request.kind === 'receipt'),
-                ),
-              ]
-            : []),
-          ...(state.notice === 'unavailable'
-            ? [ui.button('reload', text.loading, state.loading)]
-            : []),
-        ],
-        {
-          gap: target === 'desktop' ? 8 : 0,
-          style: {
-            width: fill,
-            shrink: 0,
-            padding: { top: 16, right: 24, bottom: 16, left: 24 },
-          },
-        },
-      ),
+                ui.box('home-bottom', [], { terminal: { grow: 1 } }),
+              ],
+              {
+                gap: 0,
+                visible: !state.selected,
+                viewport: true,
+                terminal: { grow: 1 },
+              },
+            ),
+          ]
+        : []),
       ...(state.selected?.archived && attached.length && !state.source && !state.image
         ? [ui.box('archived-attachments', [attachmentsButton], { row: true })]
         : []),
@@ -2392,7 +2735,13 @@ function frame<N extends Node>(
                 imageViewer,
               ],
               {
-                style: { width: fill, height: pixels(0), grow: 1, shrink: 1, minHeight: 0 },
+                style: {
+                  width: fill,
+                  height: pixels(0),
+                  grow: 1,
+                  shrink: 1,
+                  minHeight: 0,
+                },
               },
             ),
             ui.box(
@@ -2412,8 +2761,25 @@ function frame<N extends Node>(
                 ui.box(
                   'conversation',
                   [
+                    ui.box(
+                      'welcome-mark',
+                      [
+                        presentation.slot(
+                          'welcome',
+                          'welcome',
+                          {
+                            background: theme.terminal?.background ?? theme.background >>> 8,
+                            foreground: theme.terminal?.foreground ?? theme.text >>> 8,
+                            motion: theme.motion,
+                            ascii: theme.ascii,
+                          },
+                          {},
+                        ),
+                      ],
+                      { visible: welcome, terminal: { grow: 1 } },
+                    ),
                     ui.box('retained-timeline', [timeline], {
-                      visible: !state.image,
+                      visible: !state.image && !welcome,
                       style: { width: fill, height: fill },
                       terminal: { grow: 1 },
                     }),
@@ -2435,20 +2801,37 @@ function frame<N extends Node>(
                           ),
                         ]
                       : []),
-                    presentation.slot('queue', 'rows', queueProps, { activated: 'queue-action' }),
+                    presentation.slot('queue', 'rows', queueProps, {
+                      activated: 'queue-action',
+                    }),
                     ...(queueProps.rows.length && ui.focusButton
                       ? [
                           ui.box(
                             'queue-status',
                             [
-                              ui.box('queue-status-space', [], { terminal: { basis: 0, grow: 1 } }),
-                              ui.focusButton('queue-focus', `≡ ${queueProps.rows.length}`, 'queue'),
+                              ui.box('queue-status-space', [], {
+                                terminal: { basis: 0, grow: 1 },
+                              }),
+                              ui.focusButton(
+                                'queue-focus',
+                                `${theme.ascii ? '=' : '≡'} ${queueProps.rows.length}`,
+                                'queue',
+                              ),
                             ],
                             { row: true, gap: 0 },
                           ),
                         ]
                       : []),
-                    ...(!state.selected?.archived ? [attachmentsButton] : []),
+                    ...(attached.length
+                      ? [
+                          ui.text(
+                            'attached-count',
+                            `${text.attachmentTitle} · ${attached.length}`,
+                            12,
+                            theme.muted,
+                          ),
+                        ]
+                      : []),
                     ui.box('composer-navigation', [composer], {
                       terminal: { shrink: true },
                       focusShortcuts: [
@@ -2468,11 +2851,36 @@ function frame<N extends Node>(
                   },
                 ),
               ],
-              { gap: 0, viewport: true, terminal: { grow: 1 } },
+              {
+                gap: 0,
+                visible: !!state.selected,
+                viewport: true,
+                terminal: { grow: 1 },
+              },
+            ),
+            ui.box(
+              'session-metadata',
+              [
+                ui.box('model-metadata', [models], {
+                  terminal: { grow: 1, shrink: true },
+                }),
+                ...(status
+                  ? [
+                      ui.text(
+                        'status',
+                        status,
+                        12,
+                        state.run?.state === 'waiting_for_user' ? theme.warning : theme.muted,
+                      ),
+                    ]
+                  : []),
+              ],
+              { row: true, gap: 1, visible: !!state.selected },
             ),
           ]),
     ],
     {
+      gap: target === 'tui' ? 0 : undefined,
       terminal: { grow: 1 },
       style: {
         width: target === 'desktop' ? pixels(0) : fill,
@@ -2497,15 +2905,19 @@ function frame<N extends Node>(
           ui.adaptivePane!(
             'navigation-pane',
             text.conversations,
-            main,
             ui.box(
-              'navigation-content',
-              [ui.button('navigation-back', text.hideSidebar), navigation],
-              {
-                gap: 0,
-                terminal: { grow: 1 },
-              },
+              'page',
+              [
+                ui.box('page-inset-start', [], { terminal: { basis: 1 } }),
+                main,
+                ui.box('page-inset-end', [], { terminal: { basis: 1 } }),
+              ],
+              { row: true, gap: 0, terminal: { grow: 1 } },
             ),
+            ui.box('navigation-content', [navigation], {
+              gap: 0,
+              terminal: { grow: 1 },
+            }),
             'command' in state.sidebar ? state.sidebar.command : null,
           ),
         ],
@@ -2520,6 +2932,7 @@ function frame<N extends Node>(
   const background = ui.box(
     'product',
     [
+      ...(target === 'tui' ? [header] : []),
       conversation,
       ...(state.deploymentOpen
         ? [
@@ -2544,6 +2957,7 @@ function frame<N extends Node>(
     ],
     {
       gap: 0,
+      background: theme.background,
       style: { width: fill, height: fill, align: 'center' },
       terminal: { grow: 1 },
       shortcuts: [
@@ -2821,6 +3235,8 @@ function frame<N extends Node>(
       state.dialog === 'terminal' ? { width: pixels(900) } : {},
     ),
   );
+  if (target === 'tui')
+    out.frame.view = appearanceView(presentation, state.preferences, theme, locale, out.frame.view);
   out.frame.surface =
     target === 'desktop'
       ? { kind: 'window', binding: 'surface', title: 'maka', width: 1100, height: 760 }
@@ -2858,11 +3274,15 @@ export function workspace<N extends Node>(
   presentation: Presentation<N>,
   locale: string,
   terminals = false,
+  place = '',
 ): Component<State, Record<string, never>, N> {
   const target = presentation.target;
+  const configuredLocale = locale;
   return {
     mount(_props, values) {
       const state: State = {
+        place,
+        preferences: initialAppearance(),
         revision: 0,
         attachments: { files: [], selection: null, paste: null },
         drafts: [],
@@ -2920,17 +3340,37 @@ export function workspace<N extends Node>(
       const actions: Action[] = [];
       catalog(state);
       intent(state, actions, { kind: 'restorePage' }, 'history', 'page', { after: 0, limit: 1 });
-      return frame(presentation, locale, state, values, actions);
+      return frame(presentation, configuredLocale, state, values, actions);
     },
     update(state, _props, values) {
-      return frame(presentation, locale, { ...state, revision: state.revision + 1 }, values);
+      return frame(
+        presentation,
+        configuredLocale,
+        { ...state, revision: state.revision + 1 },
+        values,
+      );
     },
     event(previous, input, _props, values) {
       // Callbacks receive detached committed state. Mutations here belong only to
       // the candidate frame and publish with its intents in one UI transaction.
       const state = previous;
+      if (input.kind === 'component' && input.child === 'composer' && input.name === 'attachments')
+        input = { kind: 'raw', key: 'attachments-open', event: {} };
       state.revision++;
       const actions: Action[] = [];
+      const locale =
+        target === 'tui' ? effectiveLocale(state.preferences, configuredLocale) : configuredLocale;
+      if (
+        target === 'tui' &&
+        appearanceEvent(
+          state.preferences,
+          input,
+          values.appearance?.[0] as Theme,
+          configuredLocale,
+          actions,
+        )
+      )
+        return frame(presentation, configuredLocale, state, values, actions);
       if (input.kind === 'action') {
         const outcome = input.event as ActionOutcome;
         if (state.catalogWatch?.key === input.key) {
@@ -2984,15 +3424,15 @@ export function workspace<N extends Node>(
       } else if (input.kind === 'component') {
         if (input.child === 'composer' && input.name === 'checkpoint') {
           state.drafts = observeDraft(state.drafts, input.event as DraftCheckpoint, state.selected);
-          return frame(presentation, locale, state, values, actions);
+          return frame(presentation, configuredLocale, state, values, actions);
         }
         if (input.child === 'composer' && input.name === 'draftCheck') {
           retryDraft(state.drafts, (input.event as { owner: string }).owner);
-          return frame(presentation, locale, state, values, actions);
+          return frame(presentation, configuredLocale, state, values, actions);
         }
         if (input.child === 'composer' && input.name === 'files' && target === 'tui') {
           pastedFiles(state.attachments, input.event as DraftFilePaste);
-          return frame(presentation, locale, state, values, actions);
+          return frame(presentation, configuredLocale, state, values, actions);
         }
         if (input.child === attachmentChild(state.attachments) && input.name === 'changed') {
           if (
@@ -3001,7 +3441,7 @@ export function workspace<N extends Node>(
             !mutationPending(state)
           )
             state.attachments.selection.file = input.event as FileObservation;
-          return frame(presentation, locale, state, values, actions);
+          return frame(presentation, configuredLocale, state, values, actions);
         }
         if (input.child === `permission-approval-${state.interaction?.attempt}`) {
           if (state.dialog === 'approval') {
@@ -3031,7 +3471,7 @@ export function workspace<N extends Node>(
                 });
             }
           }
-          return frame(presentation, locale, state, values, actions);
+          return frame(presentation, configuredLocale, state, values, actions);
         }
         if (input.child === `service-approval-${state.interaction?.attempt}`) {
           if (state.dialog === 'approval') {
@@ -3046,7 +3486,7 @@ export function workspace<N extends Node>(
                 });
             }
           }
-          return frame(presentation, locale, state, values, actions);
+          return frame(presentation, configuredLocale, state, values, actions);
         }
         if (input.child === questionChild(state)) {
           if (state.dialog === 'question') {
@@ -3066,7 +3506,7 @@ export function workspace<N extends Node>(
                 input.event as { requestId: string; answers: QuestionDraft[] },
               );
           }
-          return frame(presentation, locale, state, values, actions);
+          return frame(presentation, configuredLocale, state, values, actions);
         }
         if (input.child === 'queue-editor') {
           const edit = state.queueEdit;
@@ -3136,15 +3576,15 @@ export function workspace<N extends Node>(
               }
             }
           }
-          return frame(presentation, locale, state, values, actions);
+          return frame(presentation, configuredLocale, state, values, actions);
         }
         if (input.child === 'help') {
           if (input.name === 'closed' && state.dialog === 'help') state.dialog = null;
-          return frame(presentation, locale, state, values, actions);
+          return frame(presentation, configuredLocale, state, values, actions);
         }
         if (input.child === 'terminal-panel') {
           if (input.name === 'closed' && state.dialog === 'terminal') state.dialog = null;
-          return frame(presentation, locale, state, values, actions);
+          return frame(presentation, configuredLocale, state, values, actions);
         }
         if (input.child === 'session-details') {
           if (input.name === 'closed' && state.dialog === 'details') state.dialog = null;
@@ -3152,7 +3592,7 @@ export function workspace<N extends Node>(
             if (state.selected?.id === (input.event as { sessionId: string }).sessionId)
               observe(state, actions);
           }
-          return frame(presentation, locale, state, values, actions);
+          return frame(presentation, configuredLocale, state, values, actions);
         }
         if (input.child === 'directory-picker') {
           if (state.dialog === 'directories' && conversationRoute(state)) {
@@ -3170,7 +3610,7 @@ export function workspace<N extends Node>(
               state.dialog = null;
             }
           }
-          return frame(presentation, locale, state, values, actions);
+          return frame(presentation, configuredLocale, state, values, actions);
         }
         if (input.child === 'command-palette') {
           if (state.dialog === 'palette' && conversationRoute(state)) {
@@ -3194,7 +3634,7 @@ export function workspace<N extends Node>(
               state.dialog = null;
             }
           }
-          return frame(presentation, locale, state, values, actions);
+          return frame(presentation, configuredLocale, state, values, actions);
         }
 
         if (target === 'tui' && input.child === 'queue' && input.name === 'activated') {
@@ -3375,10 +3815,11 @@ export function workspace<N extends Node>(
           !mutationPending(state) &&
           !catalogPending(state)
         ) {
-          const sessionId = (input.event as { sessionId: string }).sessionId;
+          const { sessionId, details } = input.event as { sessionId: string; details?: boolean };
           const session = state.catalog?.sessions.find((item) => item.id === sessionId);
           if (session) {
-            select(state, actions, session);
+            if (state.selected?.id !== session.id) select(state, actions, session);
+            if (details && !executionPending(state)) state.dialog = 'details';
             if (target === 'tui') controlSidebar(state, 'dismiss_transient');
           }
         } else if (input.child === 'image-viewer' && input.name === 'closed') {
@@ -3518,14 +3959,43 @@ export function workspace<N extends Node>(
               };
               readHistorySource(state, actions, { kind: 'start' });
             }
-          } else if (input.name === 'older' && page.before)
-            history(state, actions, { kind: 'before', cursor: page.before }, page.through, false);
-          else if (input.name === 'newer' && page.after)
-            history(state, actions, { kind: 'after', cursor: page.after }, page.through, false);
+          } else if (
+            input.name === 'older' &&
+            page.before &&
+            !Object.values(state.pending).some(
+              (request) => request.kind === 'history' && request.epoch === state.epoch,
+            )
+          )
+            history(
+              state,
+              actions,
+              { kind: 'before', cursor: page.before },
+              page.through,
+              false,
+              false,
+              target === 'tui',
+            );
+          else if (
+            input.name === 'newer' &&
+            page.after &&
+            !Object.values(state.pending).some(
+              (request) => request.kind === 'history' && request.epoch === state.epoch,
+            )
+          )
+            history(
+              state,
+              actions,
+              { kind: 'after', cursor: page.after },
+              page.through,
+              false,
+              false,
+              target === 'tui',
+            );
           else if (input.name === 'latest')
             history(state, actions, { kind: 'tail' }, state.latestKnown, true);
         }
       } else if (input.kind === 'raw') {
+        if (input.key === 'home-new') rootCommand(state, actions, locale, 'create', target);
         if (
           input.key.startsWith('file-paste-') &&
           state.attachments.paste &&
@@ -3702,7 +4172,7 @@ export function workspace<N extends Node>(
           if (command) rootCommand(state, actions, locale, command.kind, target);
         }
       }
-      return frame(presentation, locale, state, values, actions);
+      return frame(presentation, configuredLocale, state, values, actions);
     },
   };
 }

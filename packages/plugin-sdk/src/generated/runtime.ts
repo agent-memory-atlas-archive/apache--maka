@@ -72,6 +72,10 @@ export type RuntimeProtocol =
   | ReadingProps
   | ReadingObservation
   | RowsProps
+  | ValueCheckpointProps
+  | MorphMarkProps
+  | MorphMarkConfiguration
+  | ValueCheckpointObservation
   | RowActivated
   | InputProps
   | EditorObservation
@@ -388,11 +392,11 @@ export type TerminalScene =
       current?: string | null;
       disabled?: boolean;
       ascii?: boolean;
-      foreground: number;
-      background: number;
-      border: number;
-      selected: number;
-      accent: number;
+      foreground: TerminalColor;
+      background: TerminalColor;
+      border: TerminalColor;
+      selected: TerminalColor;
+      accent: TerminalColor;
       kind: 'choice';
     }
   | {
@@ -403,7 +407,8 @@ export type TerminalScene =
       /**
        * Current-row fill; absent uses the terminal's reverse-video selection.
        */
-      selected_color?: number | null;
+      selected_color?: TerminalColor | null;
+      selected_foreground?: TerminalColor | null;
       follow_focus?: boolean;
       submit?: boolean;
       /**
@@ -414,17 +419,40 @@ export type TerminalScene =
     }
   | {
       key: string;
+      /**
+       * Native Copy selection entry; absent omits selection capture.
+       */
+      copy_selection_label?: string | null;
       background: TerminalScene;
       content: TerminalScene;
-      open: boolean;
+      ascii?: boolean;
       label: string;
       /**
        * Maximum foreground body dimensions, in terminal cells.
        */
       width: number;
       height: number;
-      background_color: number;
-      border_color: number;
+      background_color: TerminalColor;
+      border_color: TerminalColor;
+      title_color?: TerminalColor | null;
+      padding?: number;
+      kind: 'context_menu';
+    }
+  | {
+      key: string;
+      background: TerminalScene;
+      content: TerminalScene;
+      open: boolean;
+      ascii?: boolean;
+      label: string;
+      /**
+       * Maximum foreground body dimensions, in terminal cells.
+       */
+      width: number;
+      height: number;
+      background_color: TerminalColor;
+      border_color: TerminalColor;
+      title_color?: TerminalColor | null;
       padding?: number;
       kind: 'dialog';
     }
@@ -446,7 +474,10 @@ export type TerminalScene =
       wide?: TerminalResponsiveStack | null;
       gap: number;
       padding: number;
-      background: number;
+      /**
+       * Layout-only stacks inherit their parent; an explicit color fills the area.
+       */
+      background?: TerminalColor | null;
       children: TerminalScene[];
       /**
        * One cell outside padding; absent means no border or border inset.
@@ -479,16 +510,27 @@ export type TerminalScene =
   | {
       key: string;
       text: string;
-      color: number;
+      color: TerminalColor;
       /**
        * Render a single line, eliding overflow at a complete grapheme.
        */
       truncate?: boolean;
+      /**
+       * @maxItems 64
+       */
+      animation?: TerminalAnimationFrame[];
+      align?: TerminalAlign & string;
+      bold?: boolean;
       kind: 'text';
     }
   | {
       key: string;
       label: string;
+      /**
+       * Label alignment within the button hit area; absent centers it.
+       */
+      align?: TerminalAlign | null;
+      hint?: string;
       /**
        * Enter a declared child's native focus target instead of emitting a click.
        */
@@ -502,7 +544,19 @@ export type TerminalScene =
       /**
        * Absent foreground uses the terminal's default text color.
        */
-      color?: number | null;
+      color?: TerminalColor | null;
+      /**
+       * Fill the whole button hit area at rest; absent inherits its parent.
+       */
+      background?: TerminalColor | null;
+      /**
+       * Hover lifts the fill without selecting or focusing the button.
+       */
+      hover_background?: TerminalColor | null;
+      /**
+       * Emphasize the label and hit area independently of keyboard focus.
+       */
+      bold?: boolean;
       kind: 'button';
     }
   | {
@@ -515,6 +569,29 @@ export type TerminalScene =
       };
       kind: 'component';
     };
+/**
+ * Terminal colors retain the user's ANSI palette and default background.
+ * Numeric values are RGB; named values are emitted as terminal attributes.
+ */
+export type TerminalColor = number | TerminalNamedColor;
+export type TerminalNamedColor =
+  | 'reset'
+  | 'black'
+  | 'red'
+  | 'green'
+  | 'yellow'
+  | 'blue'
+  | 'magenta'
+  | 'cyan'
+  | 'gray'
+  | 'dark_gray'
+  | 'light_red'
+  | 'light_green'
+  | 'light_yellow'
+  | 'light_blue'
+  | 'light_magenta'
+  | 'light_cyan'
+  | 'white';
 export type TerminalPaneOperation = 'toggle' | 'dismiss_transient';
 export type TerminalDirection = 'row' | 'column';
 export type TerminalBorderStyle = 'rounded' | 'square' | 'ascii';
@@ -523,6 +600,7 @@ export type Modifier = 'control' | 'primary' | 'alt' | 'shift' | 'super';
  * Native scroll policy; offsets and accepted viewport geometry remain native.
  */
 export type TerminalScrollPolicy = 'none' | 'manual' | 'anchor' | 'follow_end';
+export type TerminalAlign = 'start' | 'center' | 'end';
 export type DesktopScene =
   | {
       key: string;
@@ -944,7 +1022,35 @@ export type ReadingTarget =
       kind: 'reveal_child';
     };
 export type FindStep = 'first' | 'next' | 'previous';
+export type ReadingScrollDirection = 'up' | 'down';
 export type ReadingStatus = 'applied' | 'cancelled' | 'rejected';
+export type ValueCheckpointCommand =
+  | {
+      sequence: number;
+      kind: 'read';
+    }
+  | {
+      sequence: number;
+      expectedRevision?: number | null;
+      value: unknown;
+      kind: 'write';
+    };
+export type ValueCheckpointState =
+  | {
+      kind: 'loading';
+    }
+  | {
+      kind: 'saving';
+    }
+  | {
+      revision?: number | null;
+      value?: unknown;
+      kind: 'ready';
+    }
+  | {
+      diagnostic: string;
+      kind: 'failed';
+    };
 export type TerminalPaste = 'reject_controls' | 'spaces';
 export type EditorOutcome =
   | {
@@ -2838,14 +2944,16 @@ export interface TerminalChoiceOption {
  * Appearance shared by controlled dialogs and transient adaptive panes.
  */
 export interface TerminalDialogAppearance {
+  ascii?: boolean;
   label: string;
   /**
    * Maximum foreground body dimensions, in terminal cells.
    */
   width: number;
   height: number;
-  background_color: number;
-  border_color: number;
+  background_color: TerminalColor;
+  border_color: TerminalColor;
+  title_color?: TerminalColor | null;
   padding?: number;
 }
 /**
@@ -2898,8 +3006,9 @@ export interface TerminalFractionalBasis {
  * Focus color follows any focused native target inside this stack.
  */
 export interface TerminalBorder {
-  color: number;
-  focused_color: number;
+  breathing?: boolean;
+  color: TerminalColor;
+  focused_color: TerminalColor;
   style: TerminalBorderStyle;
 }
 /**
@@ -2932,6 +3041,10 @@ export interface FocusShortcut {
   modifiers: Modifier[];
   child: string;
   enabled: boolean;
+}
+export interface TerminalAnimationFrame {
+  text: string;
+  millis: number;
 }
 /**
  * Desktop layout and appearance are a presenter ABI, never kernel policy.
@@ -3064,6 +3177,7 @@ export interface CallerIntent {
 export interface LabelProps {
   text: string;
   appearance: TextAppearance;
+  terminalForeground?: TerminalColor | null;
   elapsed?: Elapsed | null;
 }
 export interface Elapsed {
@@ -3108,6 +3222,8 @@ export interface TextareaProps {
   persistence?: EditorPersistence | null;
 }
 export interface TextareaAppearance {
+  ascii?: boolean;
+  terminal?: TerminalPalette | null;
   text: TextAppearance;
   mutedForeground: Color;
   background: Color;
@@ -3122,6 +3238,42 @@ export interface TextareaAppearance {
   radius: number;
   padding: Insets;
   scrollbar: ScrollbarAppearance;
+}
+/**
+ * Semantic terminal colors for rich text and editors, supplied by the product.
+ */
+export interface TerminalPalette {
+  background: TerminalColor;
+  foreground: TerminalColor;
+  surface: TerminalColor;
+  accent: TerminalColor;
+  thinking: TerminalColor;
+  success: TerminalColor;
+  warning: TerminalColor;
+  error: TerminalColor;
+  muted: TerminalColor;
+  subtle: TerminalColor;
+  border: TerminalColor;
+  scrollbar: TerminalColor;
+  selection: TerminalColor;
+  selectionText: TerminalColor;
+  search: TerminalColor;
+  searchActive: TerminalColor;
+  searchText: TerminalColor;
+  /**
+   * @minItems 7
+   * @maxItems 7
+   */
+  syntax: [
+    TerminalColor,
+    TerminalColor,
+    TerminalColor,
+    TerminalColor,
+    TerminalColor,
+    TerminalColor,
+    TerminalColor,
+  ];
+  terminal: boolean;
 }
 export interface ScrollbarAppearance {
   mode: ScrollbarMode;
@@ -3247,6 +3399,8 @@ export interface FileDescriptor {
   digest: string;
 }
 export interface MarkdownProps {
+  ascii?: boolean;
+  animate?: boolean;
   source: string;
   appearance: MarkdownAppearance;
   selectable: boolean;
@@ -3257,6 +3411,7 @@ export interface MarkdownProps {
   focusOnPointer?: boolean;
 }
 export interface MarkdownAppearance {
+  terminal?: TerminalPalette | null;
   body: TextAppearance;
   code: TextAppearance;
   /**
@@ -3302,6 +3457,7 @@ export interface DiffRow {
   language?: string | null;
 }
 export interface DiffAppearance {
+  terminal?: TerminalPalette | null;
   text: TextAppearance;
   background: Color;
   added: Color;
@@ -3325,6 +3481,8 @@ export interface FilePickerProps {
   tabIndex: number;
 }
 export interface InputAppearance {
+  ascii?: boolean;
+  terminal?: TerminalPalette | null;
   text: TextAppearance;
   mutedForeground: Color;
   background: Color;
@@ -3381,6 +3539,8 @@ export interface ImageReceipt {
   error?: ImageError | null;
 }
 export interface SourceTextProps {
+  animate?: boolean;
+  terminal?: TerminalPalette | null;
   source: string;
   appearance: TextAppearance;
   selection: Color;
@@ -3477,6 +3637,7 @@ export interface ReadingObservation {
    */
   readingRevision: number;
   viewport?: ReadingViewport | null;
+  scroll?: ReadingScroll | null;
   /**
    * Direct content child containing the native selection focus. Renderers
    * without this observation return null. This key conveys no read authority.
@@ -3494,11 +3655,20 @@ export interface ReadingViewport {
    * Explicit reading intent used by the actually painted children.
    */
   readingRevision: number;
+  atStart?: boolean;
   atEnd: boolean;
   /**
    * @maxItems 4096
    */
   visibleChildKeys: string[];
+}
+/**
+ * Most recent physical scroll. Layout changes and programmatic landings do not
+ * create a new request, so a product can load adjacent content without loops.
+ */
+export interface ReadingScroll {
+  readingRevision: number;
+  direction: ReadingScrollDirection;
 }
 export interface ReadingReceipt {
   sequence: number;
@@ -3523,6 +3693,7 @@ export interface ReadingMatch {
   offset: number;
 }
 export interface RowsProps {
+  terminal?: TerminalPalette | null;
   revision: number;
   /**
    * Select this row on keyboard entry. None retains the current selection,
@@ -3581,6 +3752,43 @@ export interface RowScrollbar {
   track: string;
   thumbColor: Color;
   trackColor: Color;
+}
+export interface ValueCheckpointProps {
+  key: string;
+  format: string;
+  command?: ValueCheckpointCommand | null;
+}
+export interface MorphMarkProps {
+  background: TerminalColor;
+  foreground: TerminalColor;
+  motion: boolean;
+  ascii: boolean;
+}
+export interface MorphMarkConfiguration {
+  /**
+   * @minItems 2
+   * @maxItems 2
+   */
+  shapes: [MorphShape, MorphShape];
+  color: TerminalColor;
+  period: number;
+}
+export interface MorphShape {
+  /**
+   * @minItems 1
+   * @maxItems 32
+   */
+  paths: [[number, number][], ...[number, number][][]];
+  radius: number;
+  /**
+   * @maxItems 32
+   */
+  miters: number[];
+  columns: number;
+}
+export interface ValueCheckpointObservation {
+  sequence: number;
+  state: ValueCheckpointState;
 }
 export interface RowActivated {
   revision: number;
@@ -3808,6 +4016,10 @@ export interface ConnectionTarget {
   modelId: string;
 }
 export interface SettingsConnectionSummary {
+  /**
+   * Editing controls implemented by this Settings service for the provider.
+   */
+  editable: boolean;
   basis: ConnectionVersionBasis;
   slug: string;
   name: string;

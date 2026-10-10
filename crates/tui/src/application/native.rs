@@ -42,11 +42,16 @@ impl Widget for Label {
         buffer: &mut Buffer,
     ) -> maka_ui::Result<()> {
         let rgba = self.props.appearance.foreground.0;
-        let mut style = Style::default().fg(Color::Rgb(
-            (rgba >> 24) as u8,
-            (rgba >> 16) as u8,
-            (rgba >> 8) as u8,
-        ));
+        let foreground = self
+            .props
+            .terminal_foreground
+            .map(paint::color)
+            .unwrap_or(Color::Rgb(
+                (rgba >> 24) as u8,
+                (rgba >> 16) as u8,
+                (rgba >> 8) as u8,
+            ));
+        let mut style = Style::default().fg(foreground);
         if self.props.appearance.font.weight >= 600 {
             style = style.add_modifier(Modifier::BOLD);
         }
@@ -103,6 +108,8 @@ pub fn registry() -> NativeRegistry<dyn Widget> {
         .expect("unique label factory");
     super::terminal::register(&mut registry);
     super::rows::register(&mut registry);
+    super::checkpoint::register(&mut registry);
+    super::morph_mark::register(&mut registry);
     super::textarea::register(&mut registry);
     super::input::register(&mut registry);
     super::file::register(&mut registry);

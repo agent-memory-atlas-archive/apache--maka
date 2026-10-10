@@ -399,7 +399,7 @@ function frame<N extends Node>(
           ui.text('details-permissions-help', text.permissionPolicyHelp, 12, props.theme.muted),
         ],
         {
-          gap: target === 'desktop' ? 8 : 0,
+          gap: target === 'desktop' ? 8 : 1,
           scroll: 'anchor',
           terminal: { grow: 1, basis: 0 },
           style: { width: fill, maxHeight: 420 },
@@ -430,7 +430,13 @@ function frame<N extends Node>(
                 ),
               ]
             : []),
-          ui.button('history', text.detailsHistory, !!state.reviewed),
+          ui.button(
+            'history',
+            text.detailsHistory,
+            !!state.reviewed,
+            false,
+            target === 'tui' ? { background: 0, align: 'start' } : {},
+          ),
           ui.button('close', text.cancel),
         ],
         {
@@ -442,7 +448,7 @@ function frame<N extends Node>(
       ),
     ],
     {
-      gap: target === 'desktop' ? 8 : 0,
+      gap: target === 'desktop' ? 8 : 1,
       visible: !state.reviewed && !state.historyOpen,
       terminal: { grow: 1 },
       style: { width: fill },
@@ -525,7 +531,7 @@ function frame<N extends Node>(
     ],
     {
       visible: !!reviewed && !state.historyOpen,
-      gap: target === 'desktop' ? 8 : 0,
+      gap: target === 'desktop' ? 8 : 1,
       terminal: { grow: 1 },
       style: { width: fill },
     },
@@ -567,14 +573,28 @@ function frame<N extends Node>(
               ),
             ),
           ],
-          { row: target === 'desktop', gap: 0 },
+          { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
         );
       }),
       ui.box(
         'details-history-actions',
         [
-          ui.button('history-back', text.back),
-          ui.button('history-refresh', text.refreshDefaultOperations),
+          ui.button(
+            'history-back',
+            text.back,
+            false,
+            false,
+            target === 'tui' ? { background: 0, align: 'start' } : {},
+          ),
+          ui.button(
+            'history-refresh',
+            target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.refreshDefaultOperations,
+            false,
+            false,
+            target === 'tui' ? { background: 0 } : {},
+            undefined,
+            text.refreshDefaultOperations,
+          ),
           ...(state.historyNext !== null ? [ui.button('history-more', text.moreOperations)] : []),
         ],
         { row: true, gap: 1, style: { wrap: true }, terminal: { wrap: true } },
@@ -582,7 +602,7 @@ function frame<N extends Node>(
     ],
     {
       visible: state.historyOpen,
-      gap: target === 'desktop' ? 8 : 0,
+      gap: target === 'desktop' ? 8 : 1,
       scroll: 'anchor',
       terminal: { grow: 1 },
       style: { width: fill },

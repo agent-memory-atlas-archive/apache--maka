@@ -682,6 +682,7 @@ export function historyView<N extends Node>(
                             ? props.theme.markdown.body
                             : props.theme.markdown.code,
                         selection: props.theme.markdown.selection,
+                        terminal: props.theme.terminal,
                         disabled: false,
                       },
                   {},

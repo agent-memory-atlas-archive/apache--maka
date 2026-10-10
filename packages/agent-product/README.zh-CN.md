@@ -44,6 +44,8 @@ node packages/agent-product/scripts/compose.mjs \
   --maka /absolute/path/to/maka
 ```
 
+TUI 外观页提供 Maka、Dusk、Paper、Terminal 与自定义配色，支持英文、简中、繁中、ASCII 符号与减少动画。自定义名称、基底和语义/语法色即时预览；保存沿原实例 checkpoint 持久化 UI 偏好，关闭未保存的编辑会恢复已保存外观，并保留会话草稿。主题文件导入/导出和完整原 TUI 体验对齐仍未完成。
+
 安装配置包含 `presentation`（`desktop`/`tui`）、完整 `locale`、`scheme`（`light`/`dark`）、`hostRoot`、`hostDeployment`、`managementDeployment`、SDK 生成的 `AgentConfiguration` 对应 `agent`，以及 `keys`。连接凭据和 endpoint 属于选中的 Host Root，不进入产品组合。
 
 `keys` 为 `src/composition.ts` 导出的所有包名分配稳定非零 UUID；安装时生成一次并保存，构建新 revision 时沿用。部署 UUID 同样属于安装身份，不能每次构建重建业务 namespace。具体字段、包名和配置约束见英文文档。
@@ -128,3 +130,7 @@ TUI 命令面板提供“复制消息”和“复制消息原文”，沿原生�
 后内容 128 KiB。读取中、流式、空消息、失败或超限时禁用对应命令；格式化失败不
 丢弃已完成的原文。关闭面板撤销请求，旧响应不能提供新命令的文本。只有原生物理
 输入写入剪贴板，后台读取完成不会自动复制。
+
+已保存的 ChatGPT 订阅连接可参与原生模型选择和执行。到期凭证复用原有持久刷新 owner，保留并发交换合并、已收到替换凭证的结算与退出排空。当前连接编辑器只显示其能够编辑的 API Key 提供方操作；交互式订阅登录尚未接入该编辑器。
+
+TUI 的常用操作保留在页面内，命令面板作为备用入口。新建会话、会话行、消息与工具卡片提供右击菜单及可见的「⋯」按钮；新建菜单可选择其他工作目录，会话详情就地打开，完整文本消息可直接复制原文，有原生选区时提供复制选区。未完整加载的消息保留原文查看入口。菜单复用现有操作条件和原生弹层焦点管理。

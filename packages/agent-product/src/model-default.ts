@@ -174,7 +174,12 @@ function frame<N extends Node>(
             : []),
           ui.button('default-history', text.earlierDefaultOperations),
         ],
-        { row: target === 'desktop', gap: 0, style: { wrap: true } },
+        {
+          row: true,
+          gap: target === 'desktop' ? 8 : 1,
+          terminal: { wrap: true },
+          style: { wrap: true },
+        },
       ),
       ui.text('default-summary', summary, 13, props.theme.muted),
       ...(target === 'desktop'
@@ -184,7 +189,7 @@ function frame<N extends Node>(
         ? [ui.text('default-notice', text[state.notice], 13, props.theme.muted)]
         : []),
     ],
-    { visible: !state.confirmation && !state.historyOpen, gap: target === 'desktop' ? 8 : 0 },
+    { visible: !state.confirmation && !state.historyOpen, gap: target === 'desktop' ? 8 : 1 },
   );
   const confirmation = ui.box(
     'default-confirmation',
@@ -197,7 +202,12 @@ function frame<N extends Node>(
           ...(page > 0 ? [ui.button('default-previous', text.previousModels)] : []),
           ...(page + 1 < pages ? [ui.button('default-next', text.moreTarget)] : []),
         ],
-        { row: target === 'desktop', gap: 0, style: { wrap: true } },
+        {
+          row: true,
+          gap: target === 'desktop' ? 8 : 1,
+          terminal: { wrap: true },
+          style: { wrap: true },
+        },
       ),
       ui.text(
         'default-question',
@@ -214,7 +224,7 @@ function frame<N extends Node>(
         .slice(page * size, (page + 1) * size)
         .map((line, at) => ui.text('default-line-' + at, line, 13)),
     ],
-    { visible: !!state.confirmation, gap: target === 'desktop' ? 8 : 0 },
+    { visible: !!state.confirmation, gap: target === 'desktop' ? 8 : 1 },
   );
   const earlier = ui.box(
     'default-earlier',
@@ -222,13 +232,32 @@ function frame<N extends Node>(
       ui.box(
         'default-history-actions',
         [
-          ui.button('default-history-back', text.back),
-          ui.button('default-history-refresh', text.refreshDefaultOperations),
+          ui.button(
+            'default-history-back',
+            text.back,
+            false,
+            false,
+            target === 'tui' ? { background: 0, align: 'start' } : {},
+          ),
+          ui.button(
+            'default-history-refresh',
+            target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.refreshDefaultOperations,
+            false,
+            false,
+            target === 'tui' ? { background: 0 } : {},
+            undefined,
+            text.refreshDefaultOperations,
+          ),
           ...(state.historyNext !== null
             ? [ui.button('default-history-more', text.moreOperations)]
             : []),
         ],
-        { row: target === 'desktop', gap: 0, style: { wrap: true } },
+        {
+          row: true,
+          gap: target === 'desktop' ? 8 : 1,
+          terminal: { wrap: true },
+          style: { wrap: true },
+        },
       ),
       ...(target === 'desktop'
         ? [ui.text('default-history-help', text.earlierDefaultHelp, 13, props.theme.muted)]
@@ -266,7 +295,7 @@ function frame<N extends Node>(
         );
       }),
     ],
-    { visible: state.historyOpen, gap: target === 'desktop' ? 8 : 0 },
+    { visible: state.historyOpen, gap: target === 'desktop' ? 8 : 1 },
   );
   const out = output(
     state,

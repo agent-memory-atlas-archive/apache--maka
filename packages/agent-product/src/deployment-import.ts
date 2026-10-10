@@ -77,15 +77,21 @@ export function importView<N extends Node>(
           ui.box(
             'deployment-import-heading',
             [
-              ui.button('deployment-import-back', text.back),
+              ui.button(
+                'deployment-import-back',
+                text.back,
+                false,
+                false,
+                target === 'tui' ? { background: 0, align: 'start' } : {},
+              ),
               ui.text('deployment-import-title', text.deploymentInstall, 22, props.theme.text, 600),
             ],
-            { row: target === 'desktop', gap: target === 'desktop' ? 8 : 0 },
+            { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
           ),
           ui.text('deployment-import-help', text.deploymentInstallHelp, 13, props.theme.muted),
           ...(notice ? [ui.text('deployment-import-notice', notice, 13, props.theme.muted)] : []),
         ],
-        { gap: target === 'desktop' ? 8 : 0, style: { shrink: 0 } },
+        { gap: target === 'desktop' ? 8 : 1, style: { shrink: 0 } },
       ),
       ui.box(
         'deployment-import-body',
@@ -201,7 +207,17 @@ export function importView<N extends Node>(
                 true,
               ),
               ...(conflict
-                ? [ui.button('deployment-import-refresh', text.deploymentRefresh, busy)]
+                ? [
+                    ui.button(
+                      'deployment-import-refresh',
+                      target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.deploymentRefresh,
+                      busy,
+                      false,
+                      target === 'tui' ? { background: 0 } : {},
+                      undefined,
+                      text.deploymentRefresh,
+                    ),
+                  ]
                 : []),
               ...(recoverable ? [ui.button('deployment-import-check', text.check, pending)] : []),
               ui.button('deployment-import-history', text.deploymentHistory, pending),
@@ -209,7 +225,12 @@ export function importView<N extends Node>(
                 ? [ui.button('deployment-import-advanced', text.deploymentEdit, busy)]
                 : []),
             ],
-        { row: target === 'desktop', gap: 0, style: { wrap: true, shrink: 0 } },
+        {
+          row: true,
+          gap: target === 'desktop' ? 8 : 1,
+          terminal: { wrap: true },
+          style: { wrap: true, shrink: 0 },
+        },
       ),
     ],
     {

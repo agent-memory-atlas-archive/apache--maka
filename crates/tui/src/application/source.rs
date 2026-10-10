@@ -35,16 +35,27 @@ use unicode_width::UnicodeWidthStr;
 
 use super::selection::{Document, DocumentRef, Glyphs, SelectionScope};
 mod diff;
+pub(super) mod reveal;
 struct Geometry {
     glyphs: Glyphs,
     parent: Option<SelectionScope>,
 }
 pub(super) struct Owner {
+    reveal: reveal::Reveal,
     pub document: DocumentRef,
 }
 impl Owner {
     fn apply(&mut self, recipe: &Recipe) {
         let props = &recipe.0;
+        let previous = self.document.borrow().source.clone();
+        if props.animate && props.source.starts_with(previous.as_ref()) {
+            self.reveal.append(
+                previous.len()..props.source.len(),
+                Some(std::time::Instant::now()),
+            );
+        } else {
+            self.reveal.clear();
+        }
         let format_changed = match (&self.document.borrow().markdown, &recipe.1) {
             (Some(old), Some(new)) => !Arc::ptr_eq(old, new),
             (None, None) => false,
@@ -91,6 +102,7 @@ fn color(rgba: u32) -> Color {
 impl Widget for Recipe {
     fn create(&self, _: super::NativeContext) -> Box<dyn Any> {
         Box::new(Owner {
+            reveal: reveal::Reveal::default(),
             document: Rc::new(std::cell::RefCell::new(Document {
                 source: Arc::from(self.0.source.as_str()),
                 geometry_revision: 0,
@@ -267,11 +279,22 @@ impl Widget for Recipe {
             .map(|find| find.highlights(&document))
             .unwrap_or_default();
         let range = scope.as_ref().map_or(0..0, |scope| scope.range(&document));
-        let mut normal = Style::default().fg(color(self.0.appearance.foreground.0));
+        let terminal = self.0.terminal.as_ref();
+        let mut normal = Style::default().fg(terminal.map_or_else(
+            || color(self.0.appearance.foreground.0),
+            |p| super::paint::color(p.foreground),
+        ));
         if self.0.appearance.font.weight >= 600 {
             normal = normal.add_modifier(Modifier::BOLD);
         }
-        let selected = normal.bg(color(self.0.selection.0));
+        let selected = terminal.map_or_else(
+            || normal.bg(color(self.0.selection.0)),
+            |p| {
+                normal
+                    .bg(super::paint::color(p.selection))
+                    .fg(super::paint::color(p.selection_text))
+            },
+        );
         let visible = area.visible();
         let first = (i64::from(visible.y) - area.y).max(0) as usize;
         for (row_index, row) in layout
@@ -298,11 +321,26 @@ impl Widget for Recipe {
                     .get(highlights.partition_point(|(range, _)| range.end <= cell.bytes.start))
                     .filter(|(range, _)| range.start < cell.bytes.end)
                 {
-                    let style = normal.add_modifier(Modifier::UNDERLINED);
-                    if *active {
-                        style.add_modifier(Modifier::REVERSED | Modifier::BOLD)
+                    if let Some(p) = terminal {
+                        let style = normal.bg(super::paint::color(if *active {
+                            p.search_active
+                        } else {
+                            p.search
+                        }));
+                        if *active {
+                            style
+                                .fg(super::paint::color(p.search_text))
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            style
+                        }
                     } else {
-                        style
+                        let style = normal.add_modifier(Modifier::UNDERLINED);
+                        if *active {
+                            style.add_modifier(Modifier::REVERSED | Modifier::BOLD)
+                        } else {
+                            style
+                        }
                     }
                 } else {
                     normal
@@ -391,6 +429,9 @@ impl Recipe {
         buffer: &mut Buffer,
     ) -> maka_ui::Result<()> {
         use unicode_segmentation::UnicodeSegmentation;
+        let fade = slots.native_state::<Owner>()?.reveal.clone();
+        let time =
+            (self.0.animate && slots.presenter.window_focused).then_some(slots.measurements.time());
         let document = slots.native_state::<Owner>()?.document.clone();
         let parent = if self.2 && !self.0.disabled {
             slots.participant(&document, area)
@@ -436,7 +477,11 @@ impl Recipe {
             .unwrap_or_default();
         let scope = parent.clone().or_else(|| SelectionScope::active(&document));
         let range = scope.as_ref().map_or(0..0, |scope| scope.range(&document));
-        let mut normal = Style::default().fg(color(self.0.appearance.foreground.0));
+        let terminal = self.0.terminal.as_ref();
+        let mut normal = Style::default().fg(terminal.map_or_else(
+            || color(self.0.appearance.foreground.0),
+            |p| super::paint::color(p.foreground),
+        ));
         if self.0.appearance.font.weight >= 600 {
             normal = normal.add_modifier(Modifier::BOLD);
         }
@@ -451,6 +496,11 @@ impl Recipe {
             .skip(first)
             .take(usize::from(visible.height))
         {
+            let mut revealed = visual.clone();
+            if let Some(palette) = &self.0.terminal {
+                fade.paint(visual, &mut revealed.line, time, terminal_palette(palette));
+            }
+            let visual = &revealed;
             let text = visual.line.to_string();
             let mut column = 0;
             let mut styles = Vec::with_capacity(visual.line.spans.len());
@@ -486,14 +536,33 @@ impl Recipe {
                 }
                 if let Some(logical) = logical {
                     if logical.start < range.end && logical.end > range.start {
-                        style = style.bg(color(self.0.selection.0));
+                        style = if let Some(p) = terminal {
+                            style
+                                .bg(super::paint::color(p.selection))
+                                .fg(super::paint::color(p.selection_text))
+                        } else {
+                            style.bg(color(self.0.selection.0))
+                        };
                     } else if let Some((_, active)) = highlights
                         .get(highlights.partition_point(|(hit, _)| hit.end <= logical.start))
                         .filter(|(hit, _)| hit.start < logical.end)
                     {
-                        style = style.add_modifier(Modifier::UNDERLINED);
-                        if *active {
-                            style = style.add_modifier(Modifier::REVERSED | Modifier::BOLD);
+                        if let Some(p) = terminal {
+                            style = style.bg(super::paint::color(if *active {
+                                p.search_active
+                            } else {
+                                p.search
+                            }));
+                            if *active {
+                                style = style
+                                    .fg(super::paint::color(p.search_text))
+                                    .add_modifier(Modifier::BOLD);
+                            }
+                        } else {
+                            style = style.add_modifier(Modifier::UNDERLINED);
+                            if *active {
+                                style = style.add_modifier(Modifier::REVERSED | Modifier::BOLD);
+                            }
                         }
                     }
                 }
@@ -532,8 +601,38 @@ impl Recipe {
         Ok(())
     }
 }
+fn terminal_palette(p: &maka_ui::scene::terminal::Palette) -> crate::markdown::Palette {
+    let mut colors = crate::markdown::Palette::default();
+    let c = super::paint::color;
+    colors.background = c(p.background);
+    colors.foreground = c(p.foreground);
+    colors.surface = c(p.surface);
+    colors.accent = c(p.accent);
+    colors.warning = c(p.warning);
+    colors.muted = c(p.muted);
+    colors.subtle = c(p.subtle);
+    colors.border = c(p.border);
+    colors.success = c(p.success);
+    colors.error = c(p.error);
+    colors.syntax = p.syntax.map(c);
+    colors.terminal = p.terminal;
+    colors.headings = [
+        colors.syntax[5],
+        colors.accent,
+        colors.syntax[0],
+        colors.muted,
+        colors.muted,
+        colors.subtle,
+    ]
+    .map(|color| Style::default().fg(color).add_modifier(Modifier::BOLD));
+    colors.headings[5] = Style::default().fg(colors.subtle);
+    colors
+}
 fn markdown_palette(a: &maka_ui::markdown::MarkdownAppearance) -> crate::markdown::Palette {
     let mut colors = crate::markdown::Palette::default();
+    if let Some(p) = &a.terminal {
+        return terminal_palette(p);
+    }
     if !a.dark {
         colors.syntax = [
             0x804caf, 0x246c48, 0x5e6c82, 0x985812, 0x205fc1, 0x147078, 0x4c5c72,
@@ -572,7 +671,7 @@ pub(super) fn compile_markdown(
     let document = Arc::new(
         crate::markdown::prepared::Document::markdown(
             &props.source,
-            false,
+            props.ascii,
             markdown_palette(&props.appearance),
         )
         .map_err(|e| maka_ui::Error::Invalid(e.into()))?,
@@ -583,6 +682,8 @@ pub(super) fn compile_markdown(
         ));
     }
     let source = SourceTextProps {
+        animate: props.animate,
+        terminal: props.appearance.terminal.clone(),
         source: document.text().to_owned(),
         appearance: props.appearance.body,
         selection: props.appearance.selection,
@@ -616,6 +717,9 @@ pub(super) fn compile_diff(props: &serde_json::Value) -> maka_ui::Result<NativeV
     colors.surface = colors.background;
     colors.success = color(a.added.0);
     colors.error = color(a.removed.0);
+    if let Some(p) = &a.terminal {
+        colors = terminal_palette(p);
+    }
     let document = Arc::new(
         crate::markdown::prepared::Document::diff(&text, &rows, props.ascii, colors)
             .map_err(|e| maka_ui::Error::Invalid(e.into()))?,
@@ -626,6 +730,8 @@ pub(super) fn compile_diff(props: &serde_json::Value) -> maka_ui::Result<NativeV
         ));
     }
     let source = SourceTextProps {
+        animate: false,
+        terminal: props.appearance.terminal.clone(),
         source: document.text().to_owned(),
         appearance: props.appearance.text,
         selection: props.appearance.selection,

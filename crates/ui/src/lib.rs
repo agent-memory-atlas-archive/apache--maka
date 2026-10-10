@@ -36,6 +36,7 @@ pub use deployment::{CommittedUpdate, DeploymentStatus, PreparedUpdate};
 pub mod image;
 pub mod input;
 pub mod markdown;
+pub mod morph_mark;
 mod native;
 pub mod operations;
 pub mod reading;

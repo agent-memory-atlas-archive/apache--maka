@@ -28,6 +28,74 @@ use std::{
     time::Instant,
 };
 
+/// Semantic terminal colors for rich text and editors, supplied by the product.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "TerminalPalette")]
+pub struct Palette {
+    pub background: Color,
+    pub foreground: Color,
+    pub surface: Color,
+    pub accent: Color,
+    pub thinking: Color,
+    pub success: Color,
+    pub warning: Color,
+    pub error: Color,
+    pub muted: Color,
+    pub subtle: Color,
+    pub border: Color,
+    pub scrollbar: Color,
+    pub selection: Color,
+    pub selection_text: Color,
+    pub search: Color,
+    pub search_active: Color,
+    pub search_text: Color,
+    pub syntax: [Color; 7],
+    pub terminal: bool,
+}
+
+/// Terminal colors retain the user's ANSI palette and default background.
+/// Numeric values are RGB; named values are emitted as terminal attributes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+#[schemars(rename = "TerminalColor")]
+pub enum Color {
+    Rgb(#[schemars(range(max = 0xffffff))] u32),
+    Named(NamedColor),
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename = "TerminalNamedColor")]
+pub enum NamedColor {
+    Reset,
+    Black,
+    Red,
+    Green,
+    Yellow,
+    Blue,
+    Magenta,
+    Cyan,
+    Gray,
+    DarkGray,
+    LightRed,
+    LightGreen,
+    LightYellow,
+    LightBlue,
+    LightMagenta,
+    LightCyan,
+    White,
+}
+impl Color {
+    pub fn valid(self) -> bool {
+        !matches!(self, Self::Rgb(value) if value > 0xffffff)
+    }
+}
+impl From<u32> for Color {
+    fn from(value: u32) -> Self {
+        Self::Rgb(value)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[schemars(rename = "TerminalDirection")]
@@ -116,10 +184,10 @@ pub enum ScrollPolicy {
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "TerminalBorder")]
 pub struct Border {
-    #[schemars(range(max = 0xffffff))]
-    pub color: u32,
-    #[schemars(range(max = 0xffffff))]
-    pub focused_color: u32,
+    #[serde(default)]
+    pub breathing: bool,
+    pub color: Color,
+    pub focused_color: Color,
     pub style: BorderStyle,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -130,6 +198,26 @@ pub enum BorderStyle {
     Square,
     Ascii,
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename = "TerminalAlign")]
+pub enum Align {
+    #[default]
+    Start,
+    Center,
+    End,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "TerminalAnimationFrame")]
+pub struct AnimationFrame {
+    #[schemars(length(max = 256))]
+    pub text: String,
+    #[schemars(range(min = 1, max = 60000))]
+    pub millis: u16,
+}
+
 /// Native single-choice menu. Only committed selections leave the presenter.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -144,11 +232,11 @@ pub struct Choice {
     pub disabled: bool,
     #[serde(default)]
     pub ascii: bool,
-    pub foreground: u32,
-    pub background: u32,
-    pub border: u32,
-    pub selected: u32,
-    pub accent: u32,
+    pub foreground: Color,
+    pub background: Color,
+    pub border: Color,
+    pub selected: Color,
+    pub accent: Color,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -170,7 +258,7 @@ impl Choice {
                 self.accent,
             ]
             .iter()
-            .any(|color| *color > 0xffffff)
+            .any(|color| !color.valid())
             || self.options.iter().any(|option| {
                 option.key.is_empty()
                     || option.key.len() > 128
@@ -189,12 +277,16 @@ impl Choice {
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "TerminalDialogAppearance")]
 pub struct DialogAppearance {
+    #[serde(default)]
+    pub ascii: bool,
     pub label: String,
     /// Maximum foreground body dimensions, in terminal cells.
     pub width: u16,
     pub height: u16,
-    pub background_color: u32,
-    pub border_color: u32,
+    pub background_color: Color,
+    pub border_color: Color,
+    #[serde(default)]
+    pub title_color: Option<Color>,
     #[serde(default)]
     pub padding: u16,
 }
@@ -204,8 +296,9 @@ impl DialogAppearance {
             || self.label.len() > 512
             || self.width == 0
             || self.height == 0
-            || self.background_color > 0xffffff
-            || self.border_color > 0xffffff
+            || !self.background_color.valid()
+            || !self.border_color.valid()
+            || self.title_color.is_some_and(|color| !color.valid())
             || self.padding > 1024
         {
             return Err("invalid terminal dialog presentation".into());
@@ -246,8 +339,9 @@ pub enum Node {
         current: bool,
         /// Current-row fill; absent uses the terminal's reverse-video selection.
         #[serde(default)]
-        #[schemars(range(max = 0xffffff))]
-        selected_color: Option<u32>,
+        selected_color: Option<Color>,
+        #[serde(default)]
+        selected_foreground: Option<Color>,
         #[serde(default)]
         follow_focus: bool,
         #[serde(default)]
@@ -255,6 +349,18 @@ pub enum Node {
         /// Emit submit for physical Space; focus and pointer activation stay separate.
         #[serde(default)]
         submit_space: bool,
+    },
+    /// Native object menu: right click or its visible action button opens locally.
+    ContextMenu {
+        key: String,
+        /// Native Copy selection entry; absent omits selection capture.
+        #[serde(default)]
+        #[schemars(length(max = 512))]
+        copy_selection_label: Option<String>,
+        background: Box<Node>,
+        content: Box<Node>,
+        #[serde(flatten)]
+        appearance: DialogAppearance,
     },
     Dialog {
         key: String,
@@ -284,7 +390,9 @@ pub enum Node {
         wide: Option<ResponsiveStack>,
         gap: u16,
         padding: u16,
-        background: u32,
+        /// Layout-only stacks inherit their parent; an explicit color fills the area.
+        #[serde(default)]
+        background: Option<Color>,
         children: Vec<Node>,
         /// One cell outside padding; absent means no border or border inset.
         #[serde(default)]
@@ -315,14 +423,27 @@ pub enum Node {
     Text {
         key: String,
         text: String,
-        color: u32,
+        color: Color,
         /// Render a single line, eliding overflow at a complete grapheme.
         #[serde(default)]
         truncate: bool,
+        #[serde(default)]
+        #[schemars(length(max = 64))]
+        animation: Vec<AnimationFrame>,
+        #[serde(default)]
+        align: Align,
+        #[serde(default)]
+        bold: bool,
     },
     Button {
         key: String,
         label: String,
+        /// Label alignment within the button hit area; absent centers it.
+        #[serde(default)]
+        align: Option<Align>,
+        #[serde(default)]
+        #[schemars(length(max = 512))]
+        hint: String,
         /// Enter a declared child's native focus target instead of emitting a click.
         #[serde(default)]
         focus_child: Option<String>,
@@ -334,8 +455,16 @@ pub enum Node {
         disabled: bool,
         /// Absent foreground uses the terminal's default text color.
         #[serde(default)]
-        #[schemars(range(max = 0xffffff))]
-        color: Option<u32>,
+        color: Option<Color>,
+        /// Fill the whole button hit area at rest; absent inherits its parent.
+        #[serde(default)]
+        background: Option<Color>,
+        /// Hover lifts the fill without selecting or focusing the button.
+        #[serde(default)]
+        hover_background: Option<Color>,
+        /// Emphasize the label and hit area independently of keyboard focus.
+        #[serde(default)]
+        bold: bool,
     },
     Component(ComponentSlot),
 }
@@ -349,6 +478,7 @@ impl Node {
             | Self::Text { key, .. }
             | Self::Button { key, .. }
             | Self::Dialog { key, .. }
+            | Self::ContextMenu { key, .. }
             | Self::AdaptivePane { key, .. }
             | Self::Item { key, .. } => key,
             Self::Component(slot) => &slot.key,
@@ -358,9 +488,9 @@ impl Node {
     pub fn layout(&self) -> Layout {
         match self {
             Self::Stack { layout, .. } => *layout,
-            Self::Dialog { background, .. } | Self::AdaptivePane { background, .. } => {
-                background.layout()
-            }
+            Self::Dialog { background, .. }
+            | Self::ContextMenu { background, .. }
+            | Self::AdaptivePane { background, .. } => background.layout(),
             Self::Item { content, .. } => content.layout(),
             _ => Layout::default(),
         }
@@ -385,6 +515,7 @@ impl Node {
             | Self::Text { key, .. }
             | Self::Button { key, .. }
             | Self::Dialog { key, .. }
+            | Self::ContextMenu { key, .. }
             | Self::AdaptivePane { key, .. }
             | Self::Item { key, .. } => key,
             Self::Component(slot) => &slot.key,
@@ -397,6 +528,14 @@ impl Node {
             || !keys.insert(key.clone())
         {
             return Err("invalid or duplicate UI node identity".into());
+        }
+        if let Self::ContextMenu {
+            copy_selection_label: Some(label),
+            ..
+        } = self
+            && label.len() > 512
+        {
+            return Err("context menu selection label exceeds limit".into());
         }
         if let Self::Stack {
             shortcuts,
@@ -411,14 +550,23 @@ impl Node {
             Self::Item {
                 content,
                 selected_color,
+                selected_foreground,
                 ..
             } => {
-                if selected_color.is_some_and(|color| color > 0xffffff) {
+                if selected_color.is_some_and(|color| !color.valid())
+                    || selected_foreground.is_some_and(|color| !color.valid())
+                {
                     return Err("invalid item selection color".into());
                 }
                 content.validate(depth + 1, keys, deadline)?;
             }
-            Self::Dialog {
+            Self::ContextMenu {
+                appearance,
+                background,
+                content,
+                ..
+            }
+            | Self::Dialog {
                 appearance,
                 background,
                 content,
@@ -493,9 +641,9 @@ impl Node {
                 }
                 if *gap > 1024
                     || *padding > 1024
-                    || *background > 0xffffff
+                    || background.is_some_and(|color| !color.valid())
                     || border.is_some_and(|border| {
-                        border.color > 0xffffff || border.focused_color > 0xffffff
+                        !border.color.valid() || !border.focused_color.valid()
                     })
                 {
                     return Err("invalid UI style".into());
@@ -504,20 +652,37 @@ impl Node {
                     child.validate(depth + 1, keys, deadline)?;
                 }
             }
-            Self::Text { text, color, .. } => {
-                if text.len() > 64 * 1024 || *color > 0xffffff {
+            Self::Text {
+                text,
+                color,
+                animation,
+                ..
+            } => {
+                if text.len() > 64 * 1024
+                    || !color.valid()
+                    || animation.len() > 64
+                    || animation
+                        .iter()
+                        .any(|frame| frame.millis == 0 || frame.text.len() > 256)
+                {
                     return Err("invalid text".into());
                 }
             }
             Self::Button {
                 label,
+                hint,
                 color,
+                background,
+                hover_background,
                 copy_text,
                 focus_child,
                 ..
             } => {
                 if label.len() > 4096
-                    || color.is_some_and(|color| color > 0xffffff)
+                    || hint.len() > 512
+                    || color.is_some_and(|color| !color.valid())
+                    || background.is_some_and(|color| !color.valid())
+                    || hover_background.is_some_and(|color| !color.valid())
                     || copy_text
                         .as_ref()
                         .is_some_and(|text| text.is_empty() || text.len() > 64 * 1024)
@@ -563,6 +728,11 @@ impl Node {
                 content,
                 ..
             }
+            | Self::ContextMenu {
+                background,
+                content,
+                ..
+            }
             | Self::AdaptivePane {
                 background,
                 content,
@@ -603,7 +773,12 @@ impl Node {
                     background.wheel_commands(key)
                 }
             }
-            Self::AdaptivePane {
+            Self::ContextMenu {
+                background,
+                content,
+                ..
+            }
+            | Self::AdaptivePane {
                 background,
                 content,
                 ..
@@ -631,7 +806,12 @@ impl Node {
             background.shortcut_inputs(inputs, visible)?;
             content.shortcut_inputs(inputs, visible && *open)?;
         }
-        if let Self::AdaptivePane {
+        if let Self::ContextMenu {
+            background,
+            content,
+            ..
+        }
+        | Self::AdaptivePane {
             background,
             content,
             ..
@@ -660,7 +840,7 @@ impl Node {
                         }
                         inputs.insert(key.clone(), Value::Bool(true));
                     }
-                    if inputs.len() > 64 {
+                    if inputs.len() > crate::native::MAX_INPUTS {
                         return Err("scene input limit".into());
                     }
                 }
@@ -693,7 +873,7 @@ impl Node {
                 ..
             } => {
                 *input_count += 1;
-                if *input_count > 64 {
+                if *input_count > crate::native::MAX_INPUTS {
                     return Err("scene input limit".into());
                 }
                 if visible && !disabled {
@@ -710,7 +890,7 @@ impl Node {
             }
             Self::Choice(choice) => {
                 *input_count += 1;
-                if *input_count > 64 {
+                if *input_count > crate::native::MAX_INPUTS {
                     return Err("scene input limit".into());
                 }
                 if visible && !choice.disabled && !choice.options.is_empty() {
@@ -754,12 +934,17 @@ impl Node {
                     deadline,
                 )?;
             }
-            Self::AdaptivePane {
+            Self::ContextMenu {
+                background,
+                content,
+                ..
+            }
+            | Self::AdaptivePane {
                 background,
                 content,
                 ..
             } => {
-                // Adaptive visibility is local layout; both declarations keep
+                // Native visibility is local layout; both declarations keep
                 // their original component owners and input schemas.
                 background.metadata(slots, inputs, hidden_slots, input_count, visible, deadline)?;
                 content.metadata(slots, inputs, hidden_slots, input_count, visible, deadline)?;
@@ -780,7 +965,7 @@ impl Node {
                 ..
             } => {
                 *input_count += 1;
-                if *input_count > 64 {
+                if *input_count > crate::native::MAX_INPUTS {
                     return Err("scene input limit".into());
                 }
                 if visible
@@ -823,6 +1008,12 @@ impl Node {
                 content,
                 ..
             }
+            | Self::ContextMenu {
+                key: own,
+                background,
+                content,
+                ..
+            }
             | Self::AdaptivePane {
                 key: own,
                 background,
@@ -845,7 +1036,12 @@ impl Node {
 impl Node {
     pub fn dialog_content(&self) -> Option<(&DialogAppearance, &Node)> {
         match self {
-            Self::Dialog {
+            Self::ContextMenu {
+                appearance,
+                content,
+                ..
+            }
+            | Self::Dialog {
                 appearance,
                 content,
                 ..

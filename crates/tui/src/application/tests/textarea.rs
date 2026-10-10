@@ -341,7 +341,7 @@ fn composer_boundary_shares_focus_and_keeps_the_borderless_editor_at_its_actual_
     assert_eq!(buffer[(0, 0)].symbol(), "╭");
     assert_eq!(buffer[(39, 2)].symbol(), "╯");
     assert_eq!(buffer[(0, 0)].fg, Color::Rgb(0xab, 0xcd, 0xef));
-    assert_eq!(buffer[(31, 1)].symbol(), "[");
+    assert_eq!(buffer[(33, 1)].symbol(), "S");
     for (key, expected) in [
         ("send", Color::Rgb(0xab, 0xcd, 0xef)),
         ("back", Color::Rgb(0x11, 0x22, 0x33)),

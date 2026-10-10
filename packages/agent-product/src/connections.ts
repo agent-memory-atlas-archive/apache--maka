@@ -110,15 +110,29 @@ function frame<N extends Node>(
               ui.box(
                 'header',
                 [
-                  ui.button('back', text.back),
+                  ui.button(
+                    'back',
+                    text.back,
+                    false,
+                    false,
+                    target === 'tui' ? { background: 0, align: 'start' } : {},
+                  ),
                   ui.text('heading', text.settings, 22, props.theme.text, 600),
                 ],
-                { row: target === 'desktop', gap: target === 'desktop' ? 8 : 0 },
+                { row: true, gap: target === 'desktop' ? 8 : 1 },
               ),
               ui.box(
                 'page-actions',
                 [
-                  ui.button('refresh', text.refreshConnections, !!state.pending),
+                  ui.button(
+                    'refresh',
+                    target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.refreshConnections,
+                    !!state.pending,
+                    false,
+                    target === 'tui' ? { background: 0 } : {},
+                    undefined,
+                    text.refreshConnections,
+                  ),
                   ui.button(
                     'create',
                     text.createConnection,
@@ -132,7 +146,7 @@ function frame<N extends Node>(
                     ? [ui.button('more', text.moreConnections, !!state.pending)]
                     : []),
                 ],
-                { row: target === 'desktop', gap: 0 },
+                { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
               ),
               ...(state.pending
                 ? [ui.text('loading', text.connecting, 13, props.theme.muted)]
@@ -167,29 +181,40 @@ function frame<N extends Node>(
                           ),
                         ]
                       : []),
-                    ui.button(
-                      'open-' + (at + (target === 'tui' ? state.offset : 0)),
-                      text.credentials,
-                      !!state.pending,
-                    ),
-                    ui.button(
-                      'edit-' + (at + (target === 'tui' ? state.offset : 0)),
-                      text.editConnection,
-                      !!state.pending,
+                    ui.box(
+                      'connection-actions-' + at,
+                      [
+                        ui.button(
+                          'open-' + (at + (target === 'tui' ? state.offset : 0)),
+                          text.credentials,
+                          !!state.pending,
+                        ),
+                        ui.button(
+                          'edit-' + (at + (target === 'tui' ? state.offset : 0)),
+                          text.editConnection,
+                          !!state.pending,
+                        ),
+                      ],
+                      {
+                        visible: connection.editable,
+                        row: true,
+                        gap: target === 'desktop' ? 8 : 1,
+                        terminal: { wrap: true },
+                      },
                     ),
                   ],
                   {
-                    gap: target === 'desktop' ? 6 : 0,
-                    padding: target === 'desktop' ? 16 : 0,
-                    surface: true,
+                    gap: target === 'desktop' ? 6 : 1,
+                    padding: target === 'desktop' ? 16 : 1,
+                    surface: target === 'desktop',
                     style: { width: fill },
                   },
                 ),
               ),
             ],
             {
-              gap: target === 'desktop' ? 16 : 0,
-              padding: target === 'desktop' ? 24 : 0,
+              gap: target === 'desktop' ? 16 : 1,
+              padding: target === 'desktop' ? 24 : 1,
               scroll: 'anchor',
               style: { width: fill, height: fill, maxWidth: 760, minWidth: 0, minHeight: 0 },
             },
@@ -286,7 +311,7 @@ export function connections<N extends Node>(
           else if (state.next !== null) actions.push(...page(state, true));
         } else if (!state.pending && /^(open|edit)-(0|[1-9][0-9]*)$/.test(input.key)) {
           const connection = state.connections[Number(input.key.slice(5))];
-          if (connection) {
+          if (connection?.editable) {
             state.detailRoute = input.key.startsWith('edit-') ? 'form' : 'credential';
             actions.push(...request(state, 'detail', connection.basis, connection.basis));
           }

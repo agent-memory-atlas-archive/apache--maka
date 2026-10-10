@@ -67,6 +67,10 @@ pub struct Insets {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct InputAppearance {
+    #[serde(default)]
+    pub ascii: bool,
+    #[serde(default)]
+    pub terminal: Option<crate::scene::terminal::Palette>,
     pub text: TextAppearance,
     pub muted_foreground: Color,
     pub background: Color,
@@ -85,6 +89,10 @@ pub struct InputAppearance {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TextareaAppearance {
+    #[serde(default)]
+    pub ascii: bool,
+    #[serde(default)]
+    pub terminal: Option<crate::scene::terminal::Palette>,
     pub text: TextAppearance,
     pub muted_foreground: Color,
     pub background: Color,

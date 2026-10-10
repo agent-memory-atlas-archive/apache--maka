@@ -208,6 +208,7 @@ fn appearance() -> maka_ui::markdown::MarkdownAppearance {
         foreground: Color(0x000000ff),
     };
     maka_ui::markdown::MarkdownAppearance {
+        terminal: None,
         body: text.clone(),
         code: text.clone(),
         headings: std::array::from_fn(|_| text.clone()),
@@ -229,6 +230,8 @@ fn original_markdown_completed_selection_and_owner_gap_stay_in_reading_scope(
     cx.update(gpui_kit::init);
     let text = "**Original** selection 中文";
     let props = maka_ui::markdown::MarkdownProps {
+        animate: false,
+        ascii: false,
         source: text.into(),
         appearance: appearance(),
         selectable: true,

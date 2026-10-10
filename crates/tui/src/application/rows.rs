@@ -386,6 +386,22 @@ impl Widget for Rows {
         let bar = (self.props.rows.len() > rows && viewport.height > 1 && viewport.width > 0)
             .then(|| Rect::new(viewport.right() - 1, viewport.y, 1, viewport.height));
         // Reserve the original trailing scrollbar column, even when content fits.
+        let terminal = self.props.terminal.as_ref();
+        let foreground = terminal.map_or_else(
+            || color(self.props.foreground),
+            |p| super::paint::color(p.foreground),
+        );
+        let muted =
+            terminal.map_or_else(|| color(self.props.muted), |p| super::paint::color(p.muted));
+        let selected_fill = terminal.map_or_else(
+            || color(self.props.selected),
+            |p| super::paint::color(p.selection),
+        );
+        let selected_text = terminal.map_or(foreground, |p| super::paint::color(p.selection_text));
+        let hovered_fill = terminal.map_or_else(
+            || color(self.props.hovered),
+            |p| super::paint::color(p.surface),
+        );
         let width = area.width.saturating_sub(1);
         let mut hits = vec![];
         for (line, row) in self.props.rows.iter().skip(offset).take(rows).enumerate() {
@@ -393,11 +409,11 @@ impl Widget for Rows {
             let hovered = owner.hover.as_ref() == Some(&row.key);
             let bounds = CellRect::new(area.x, area.y + line as i64, width, 1);
             let row_area = Placement::new(bounds, area.clip).clipped(buffer.area);
-            let mut style = Style::default().fg(color(self.props.muted));
+            let mut style = Style::default().fg(muted);
             if selected && focused {
-                style = style.bg(color(self.props.selected));
+                style = style.bg(selected_fill).fg(selected_text);
             } else if hovered {
-                style = style.bg(color(self.props.hovered));
+                style = style.bg(hovered_fill);
             }
             for y in row_area.visible().y..row_area.visible().bottom() {
                 for x in row_area.visible().x..row_area.visible().right() {
@@ -450,7 +466,7 @@ impl Widget for Rows {
                     area.clip,
                 );
                 let action_style = if action.enabled {
-                    style.fg(color(self.props.foreground))
+                    style.fg(foreground)
                 } else {
                     style.add_modifier(Modifier::DIM)
                 };
@@ -479,11 +495,16 @@ impl Widget for Rows {
                 let style = &self.props.scrollbar;
                 buffer[(bar.x, bar.y + line as u16)]
                     .set_char(if active { style.thumb } else { style.track })
-                    .set_style(Style::default().fg(color(if active {
-                        style.thumb_color
-                    } else {
-                        style.track_color
-                    })));
+                    .set_style(Style::default().fg(terminal.map_or_else(
+                        || {
+                            color(if active {
+                                style.thumb_color
+                            } else {
+                                style.track_color
+                            })
+                        },
+                        |p| super::paint::color(if active { p.scrollbar } else { p.border }),
+                    )));
             }
         }
         slots.native_target("rows", area, self.props.tab_index, false)?;

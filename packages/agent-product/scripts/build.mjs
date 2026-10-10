@@ -139,7 +139,14 @@ const specifications = {
       imageViewer: one(own.imageViewerContract),
       appearance: one(own.themeContract),
     },
-    configuration: own.object({ locale: own.locale, terminals: { type: 'boolean' } }, ['locale']),
+    configuration: own.object(
+      {
+        locale: own.locale,
+        terminals: { type: 'boolean' },
+        place: { type: 'string', maxLength: 4096 },
+      },
+      ['locale'],
+    ),
   },
   'terminal-panel': {
     contract: own.terminalPanelContract,
@@ -184,7 +191,7 @@ const specifications = {
     export: 'Appearance',
     module: 'theme',
     imports: {},
-    configuration: own.object({ scheme: { enum: ['light', 'dark'] } }),
+    configuration: own.appearanceConfigurationSchema,
   },
 };
 specifications.models = {
@@ -335,9 +342,9 @@ for (const [name, spec] of Object.entries(specifications)) {
     const module = target + '.js';
     let contents;
     if (name === 'appearance')
-      contents = `export {activate} from '${resolve(root, 'src/theme.ts')}';`;
+      contents = `import {activate as appearance} from '${resolve(root, 'src/theme.ts')}';export function activate(configuration){return appearance(configuration,${target === 'tui'});}`;
     else if (name === 'workspace')
-      contents = `import {workspace} from '${resolve(root, 'src/workspace.ts')}';import {workspaceContract} from '${resolve(root, 'src/contracts.ts')}';export let component;export function activate(configuration){component=workspace(presentations.${target},configuration.locale,configuration.terminals === true);return {Workspace:{kind:'component',contract:workspaceContract,component:['component']}};}`;
+      contents = `import {workspace} from '${resolve(root, 'src/workspace.ts')}';import {workspaceContract} from '${resolve(root, 'src/contracts.ts')}';export let component;export function activate(configuration){component=workspace(presentations.${target},configuration.locale,configuration.terminals === true, configuration.place ?? '');return {Workspace:{kind:'component',contract:workspaceContract,component:['component']}};}`;
     else if (name === 'studio' || name === 'recovery')
       contents = `import {${name},activate as exports} from '${resolve(root, 'src/' + name + '.ts')}';export let component;export function activate(configuration){component=${name}(presentations.${target},configuration.locale);return exports();}`;
     else if (name === 'connection-form')
@@ -374,7 +381,13 @@ for (const [name, spec] of Object.entries(specifications)) {
       ...(name === 'appearance' ? {} : { scene: { name: `maka.${target}.scene`, version: 1 } }),
     };
   }
-  if (name === 'workspace') entries.tui.imports.rows = one(sdk.contracts.rows);
+  if (name === 'workspace')
+    Object.assign(entries.tui.imports, {
+      rows: one(sdk.contracts.rows),
+      checkpoint: one(sdk.contracts.valueCheckpoint),
+      welcome: one(sdk.contracts.morphMark),
+      input: one(sdk.contracts.textInput),
+    });
   if (name === 'tool-details') entries.tui.imports.diff = one(sdk.contracts.diff);
   if (name === 'image-viewer') entries.desktop.imports.image = one(sdk.contracts.image);
   if (name === 'timeline') {
@@ -412,6 +425,20 @@ const mechanical = {
         native('maka.ui.terminal', { TerminalView: required(sdk.contracts.terminalView) }),
       ]),
     ),
+  },
+  'morph-mark': {
+    entries: {
+      tui: native(
+        'maka.ui.morph-mark',
+        { MorphMark: required(sdk.contracts.morphMark) },
+        sdk.configurations.morphMark,
+      ),
+    },
+  },
+  checkpoint: {
+    entries: {
+      tui: native('maka.ui.checkpoint', { Checkpoint: required(sdk.contracts.valueCheckpoint) }),
+    },
   },
   rows: { entries: { tui: native('maka.ui.rows', { Rows: required(sdk.contracts.rows) }) } },
   'studio-gateway': {

@@ -70,6 +70,7 @@ pub(crate) async fn page(store: &ConfigurationStore, input: Value) -> Result<Val
     let connections = catalog.connections[offset..end]
         .iter()
         .map(|row| ConnectionSummary {
+            editable: definition(&row.provider).is_ok(),
             basis: ConnectionVersionBasis {
                 connection_id: row.connection_id.clone(),
                 revision: row.revision,

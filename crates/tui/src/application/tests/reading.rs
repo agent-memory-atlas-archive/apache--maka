@@ -532,7 +532,7 @@ fn real_native_reading_slot_inherits_root_grow_and_receipts_route_through_origin
     let buffer = draw(&mut presenter, 20, 4);
     assert_eq!(buffer[(0, 0)].symbol(), "t");
     assert_eq!(buffer[(0, 2)].symbol(), "f");
-    assert_eq!(buffer[(0, 3)].symbol(), "[");
+    assert_eq!(buffer[(8, 3)].symbol(), "B");
     presenter.sync_native().unwrap();
     assert_eq!(
         observation(&presenter)["receipt"],
@@ -751,7 +751,7 @@ fn hidden_native_component_root_does_not_take_parent_grow_space() {
     let (_runtime, mut presenter) =
         layout::native(layout::View::ReadingSlot(props), Rc::new(Cell::new(true)));
     let buffer = draw(&mut presenter, 20, 4);
-    assert_eq!(buffer[(0, 0)].symbol(), "[");
+    assert_eq!(buffer[(8, 0)].symbol(), "B");
     assert_eq!(buffer[(0, 3)].symbol(), " ");
     close(&mut presenter);
 }
@@ -823,3 +823,6 @@ mod markdown;
 
 #[path = "reading/keyboard.rs"]
 mod keyboard;
+
+#[path = "reading/context_menu.rs"]
+mod context_menu;

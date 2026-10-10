@@ -57,6 +57,8 @@ node packages/agent-product/scripts/compose.mjs \
   --maka /absolute/path/to/maka
 ```
 
+The TUI Appearance page provides Maka, Dusk, Paper, Terminal and custom palettes, English/Simplified Chinese/Traditional Chinese, ASCII symbols and reduced motion. Custom names, base palettes and semantic/syntax colors preview immediately. Save persists UI preferences through the original instance checkpoint; closing an unsaved edit restores the saved appearance without replacing conversation drafts. Theme file import/export and complete legacy TUI parity remain unfinished.
+
 `installation.json` supplies `presentation` (`desktop` or `tui`), the full `locale` tag, `scheme` (`light` or `dark`), `hostRoot`, `hostDeployment`, `managementDeployment`, `agent` and `keys`. `agent` is the SDK's generated `AgentConfiguration`: explicit `workspaceRoots` (`[{ label, path }]`, absolute directories), finite `maxActiveRuns`/`maxSteps`, initial `permissions` (`{ "access": "read_only", "requestPermissions": true }` or `workspace_write`) and explicit `tools` (use `[]` for a text-only composition). Credentials and endpoint settings belong to that Host Root; they do not belong in the product source.
 
 `keys` maps every name exported by `src/composition.ts` to a nonnil UUID. Allocate these once for an installation and keep them across rebuilds. `managementDeployment` is a stable Host UUID in the UI Root, distinct from the UI and business Host deployment. New package revisions do not imply new data namespaces.
@@ -206,7 +208,7 @@ falling back to the first visible message when no selection exists. ToolDetails
 publishes bounded Host-resolved display metadata; Timeline checks the original
 session, fence, tool sequences and presentation before forwarding current context.
 History landing and source changes clear stale context. Paths do not grant file
-access or open a local path. Whole-message browse/copy parity and the remaining TUI
+access or open a local path. The remaining TUI presentation and default-launcher
 migration are still pending; Desktop product design follows the team branch.
 
 The TUI palette supplies Copy message and Copy message source for the original
@@ -219,3 +221,12 @@ JSON-escaped content. Pending, streaming, empty, failed or oversized copy target
 stay disabled; valid source remains available if formatting fails. Closing the
 palette drops the request, and old replies cannot supply a later command. Only
 physical native activation writes the clipboard; background completion does not.
+
+Saved ChatGPT subscription connections participate in native model selection and execution. Expiring credentials use the existing durable refresh owner, including single-flight exchange, retained replacements and shutdown settlement. The current connection editor exposes controls only for the API-key providers it can edit; interactive subscription sign-in is not yet part of that editor.
+
+The TUI keeps common actions in the page and uses the command palette as an
+alternative. New conversation, conversation rows and message/tool cards have local context menus,
+opened by right click or their visible `⋯` control. Conversation details open in
+place; the new-conversation menu selects another workspace. Complete text messages offer direct source copying, and a native selection
+adds Copy selection. Partial messages retain the original source reader. The
+menus share ordinary action guards and native modal focus custody.

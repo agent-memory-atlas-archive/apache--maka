@@ -93,6 +93,40 @@ const view = ui.terminal.stack({
 });
 ```
 
+Terminal buttons elide their label inside a four-cell-padded hit area. Optional `align`
+selects start, center (the default), or end alignment.
+`background` fills that area; `hover_background` lifts it on hover. Both are optional
+RGB colors; `bold` adds role emphasis. Keyboard focus underlines the area; hovering never selects or focuses.
+Disabled buttons are dim, inherit the parent background and accept no input.
+
+`ui.terminal.contextMenu` wraps `background` content with a visible `⋯` control and
+an object menu. Right click, the control, or Shift+F10 opens it near the object;
+Up/Down selects an action, Escape or an outside click closes it, and accepted
+actions return focus. Its `content` uses ordinary declared buttons. Optional
+`copy_selection_label` adds a native Copy entry only when a bounded original
+selection was captured by the opening gesture. Copy requires physical activation.
+Native views admit up to 256 named inputs, with the existing 64 child-slot limit,
+1 MiB callback limit, and compilation deadline. This accommodates retained rows
+and their object actions within one bounded scene.
+
+Terminal dialogs accept `ascii` borders and an independent `title_color`. Input and
+Textarea appearances also expose `ascii`. Markdown, literal source, diff and Rows
+accept product-supplied terminal palettes, including ANSI terminal colors; the
+renderer does not choose the product theme. `LabelProps.terminalForeground`
+overrides the RGBA foreground only in the terminal presenter.
+
+The terminal native `maka.ui.checkpoint` factory exports `maka.ui.ValueCheckpoint`
+for small UI preferences. It uses the original component-instance checkpoint scope;
+`key` and `format` remain fixed while mounted. Writes carry the observed revision,
+are limited to 16 KiB JSON, and drain before retirement. `changed` reports loading,
+saving, ready or failed; it is not a Host settings authority.
+
+`maka.ui.morph-mark` exports a noninteractive `maka.ui.MorphMark` component. The
+product supplies two bounded path formations, color and period in configuration;
+props supply background, foreground, motion and ASCII preference. It reuses the
+terminal animation clock only while visible and motion is enabled. Product logos
+and geometry belong to product packages.
+
 `TerminalLayout` is generated from the actual terminal protocol.
 A Stack's `layout.grow` distributes remaining cells after fixed siblings;
 `basis` sets its base length in the parent's main axis. Row `wrap` lays out

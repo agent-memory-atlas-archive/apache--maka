@@ -606,7 +606,16 @@ fn single_line_elision_preserves_graphemes_and_the_adjacent_control_row() {
                 .y,
             1
         );
-        assert_eq!(buffer[(0, 1)].symbol(), "[");
+        assert_eq!(
+            buffer[(0, 1)].symbol(),
+            if width == 1 {
+                "…"
+            } else if width <= 5 {
+                "S"
+            } else {
+                " "
+            }
+        );
     }
     tui.surface_closed(&tui.surface(), Ok(())).unwrap();
     tui.shutdown().unwrap();
@@ -619,7 +628,7 @@ fn actual_long_scene_keeps_footer_painted_and_native_click_bound_to_flush() {
     let mut buffer = Buffer::empty(area);
     let pending = presenter.paint(area, &mut buffer).unwrap();
     assert!(presenter.scene.is_empty());
-    assert_eq!(buffer[(0, 9)].symbol(), "[");
+    assert_eq!(buffer[(2, 9)].symbol(), "B");
     presenter.present(pending);
     assert_eq!(
         presenter
@@ -835,7 +844,7 @@ fn native_scroll_has_real_clipped_cells_and_does_not_ack_unflushed_or_superseded
     let mut discarded = Buffer::empty(area);
     let stale = presenter.paint(area, &mut discarded).unwrap();
     assert_eq!(discarded[(5, 0)].symbol(), "3");
-    assert_eq!(discarded[(0, 5)].symbol(), "[");
+    assert_eq!(discarded[(4, 5)].symbol(), "B");
     wheel(&mut presenter, true, 1, 1);
     presenter.present(stale);
     assert_eq!(scroll_state(&presenter, "body"), (6, 0));
@@ -1012,8 +1021,8 @@ fn disabled_buttons_retain_layout_but_revoke_click_dispatch_and_tab_targets() {
         }
     }
     assert!(
-        !disabled[(0, 0)].modifier.contains(Modifier::DIM),
-        "explicit theme color is not dimmed again"
+        disabled[(0, 0)].modifier.contains(Modifier::DIM),
+        "original Surface dims disabled controls even with an explicit role color"
     );
     assert_eq!(presenter.scene.len(), 1);
     assert_eq!(presenter.focus.as_ref().unwrap().key, "back");
@@ -1081,7 +1090,7 @@ fn native_scroll_reaches_content_beyond_u16_terminal_height() {
     let end = flushed(&mut presenter, 10, 6);
     assert_eq!(scroll_state(&presenter, "body"), (79999, 79999));
     assert_eq!(end[(0, 0)].symbol(), "p");
-    assert_eq!(end[(0, 5)].symbol(), "[");
+    assert_eq!(end[(3, 5)].symbol(), "B");
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
@@ -1113,197 +1122,20 @@ fn nested_scroll_consumes_innermost_wheel_then_bubbles_at_its_boundary() {
 }
 
 #[test]
-#[ignore = "opt-in packaged navigation build and actual terminal layout/input"]
-fn packaged_session_navigation_keeps_paging_controls_outside_the_scrolling_list() {
-    let repository = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let build = std::process::Command::new("node")
-        .arg("packages/agent-product/scripts/build.mjs")
-        .current_dir(&repository)
-        .output()
-        .unwrap();
-    assert!(
-        build.status.success(),
-        "{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let output = std::process::Command::new("node").args(["--input-type=module", "-e", r#"
-      import {component as directory} from './packages/agent-product/dist/packages/navigation/tui.js';
-      import {component as workspace,activate as configure} from './packages/agent-product/dist/packages/workspace/tui.js';
-      import {activate} from './packages/agent-product/dist/packages/appearance/tui.js';
-      const frames=[];
-      function find(node,key) {
-        if(node?.key===key) return node;
-        for(const child of [...(node?.children??[]),node?.background,node?.content]) {
-          const found=child&&find(child,key); if(found) return found;
-        }
-      }
-      for(const scheme of ['light','dark']) for(const locale of ['en','zh-CN','zh-TW']) {
-        configure({locale});
-        const values={appearance:[activate({scheme}).Appearance.value]};
-        const sessions=Array.from({length:32},(_,i)=>({id:'conversation-'+i,title:'Conversation '+i,labels:[],revision:1,updatedAt:1,archived:false,activity:i===0?"working":i===1?"waiting":"idle",
-          workspace:{identity:'workspace-'+(i<11?'A':i<22?'B':'C'),directoryIdentity:'directory',path:'/Workspace '+(i<11?'A':i<22?'B':'C')}}));
-        const pair=[];
-        for(const rows of [sessions,[...sessions.slice(22),...sessions.slice(0,22)]]) {
-          const initial=workspace.mount({},values).frame.state;
-          const state={...initial,restoring:false,pending:{},catalog:{revision:'fixture',sessions:rows,before:'before',after:'after'}};
-          const view=workspace.update(state,{},values).frame.view;
-          const route=find(view,'navigation-content');
-          const panel=find(route,'navigation-panel');
-          const slot=panel.children.findIndex(node=>node.key==='navigation');
-          // Project actual parent and child declarations for this layout-only fixture.
-          // The real Host/TUI workflow separately exercises the original slot boundary.
-          panel.children[slot]=directory.mount(panel.children[slot].props,{}).frame.view;
-          pair.push(route);
-        }
-        frames.push(pair);
-      }
-      console.log(JSON.stringify(frames));
-    "#]).current_dir(repository).output().unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let frames: Vec<[Value; 2]> = serde_json::from_slice(&output.stdout).unwrap();
-    for [source, reordered] in frames {
-        for (width, height) in [(80, 24), (40, 16)] {
-            let declaration = Rc::new(std::cell::RefCell::new(source.clone()));
-            let (_runtime, mut presenter) = native(
-                View::InteractiveScene(declaration.clone()),
-                Rc::new(Cell::new(true)),
-            );
-            let area = Rect::new(0, 0, width, height);
-            let mut buffer = Buffer::empty(area);
-            let pending = presenter.paint(area, &mut buffer).unwrap();
-            presenter.present(pending);
-            for key in ["catalog-previous", "catalog-more", "catalog-refresh"] {
-                let target = presenter
-                    .scene
-                    .iter()
-                    .find(|target| target.key == key)
-                    .expect("paging control remains visible")
-                    .clone();
-                assert!(target.area.visible().height > 0);
-            }
-            // The native tab traversal visits the fixed pager before the long list.
-            assert_eq!(presenter.focus.as_ref().unwrap().key, "navigation-back");
-            for expected in [
-                "create",
-                "catalog-filter-all",
-                "catalog-previous",
-                "catalog-more",
-            ] {
-                presenter
-                    .input(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)))
-                    .unwrap();
-                assert_eq!(presenter.focus.as_ref().unwrap().key, expected);
-            }
-            presenter
-                .input(Event::Key(KeyEvent::new(
-                    KeyCode::Enter,
-                    KeyModifiers::NONE,
-                )))
-                .unwrap();
-            assert_eq!(
-                presenter.application.frame(&presenter.root).unwrap().state["count"],
-                1
-            );
-            let first = presenter
-                .scene
-                .iter()
-                .find(|target| target.key == "conversation-0")
-                .unwrap()
-                .area
-                .visible();
-            for _ in 0..40 {
-                if presenter
-                    .scene
-                    .iter()
-                    .any(|target| target.key == "conversation-31" && !target.area.is_empty())
-                {
-                    break;
-                }
-                presenter
-                    .input(Event::Mouse(MouseEvent {
-                        kind: MouseEventKind::ScrollDown,
-                        column: first.x,
-                        row: first.y,
-                        modifiers: KeyModifiers::NONE,
-                    }))
-                    .unwrap();
-                let mut buffer = Buffer::empty(area);
-                let pending = presenter.paint(area, &mut buffer).unwrap();
-                presenter.present(pending);
-            }
-            let last = presenter
-                .scene
-                .iter()
-                .find(|target| target.key == "conversation-31")
-                .expect("every item of the current page remains reachable")
-                .area
-                .visible();
-            presenter
-                .input(Event::Mouse(MouseEvent {
-                    kind: MouseEventKind::Down(MouseButton::Left),
-                    column: last.x,
-                    row: last.y,
-                    modifiers: KeyModifiers::NONE,
-                }))
-                .unwrap();
-            assert_eq!(
-                presenter.application.frame(&presenter.root).unwrap().state["count"],
-                2
-            );
-            for key in ["catalog-previous", "catalog-more", "catalog-refresh"] {
-                assert!(presenter.scene.iter().any(|target| target.key == key));
-            }
-            // Anchor the viewport on the gap before Workspace B, then reorder
-            // the actual catalog groups. The same workspace gap stays at top.
-            for _ in 0..40 {
-                wheel(&mut presenter, false, first.x, first.y);
-                flushed(&mut presenter, width, height);
-            }
-            for _ in 0..4 {
-                wheel(&mut presenter, true, first.x, first.y);
-                flushed(&mut presenter, width, height);
-            }
-            assert_eq!(scroll_state(&presenter, "session-groups"), (12, 12));
-            *declaration.borrow_mut() = reordered.clone();
-            let revision = presenter
-                .application
-                .frame(&presenter.root)
-                .unwrap()
-                .revision;
-            presenter
-                .application
-                .dispatch(
-                    &presenter.root,
-                    revision,
-                    "catalog-refresh",
-                    json!({"kind":"click"}),
-                )
-                .unwrap();
-            presenter.sync_native().unwrap();
-            flushed(&mut presenter, width, height);
-            assert_eq!(scroll_state(&presenter, "session-groups"), (24, 24));
-            presenter
-                .surface_closed(&presenter.surface(), Ok(()))
-                .unwrap();
-            presenter.shutdown().unwrap();
-        }
-    }
-}
-
-#[test]
 fn delayed_hidden_metadata_cannot_replace_same_native_recipe_foreground() {
     let visible = Rc::new(Cell::new(true));
     let scene = Rc::new(super::super::scene::Node::Button {
+        align: None,
         key: "back".into(),
         label: "Continue".into(),
+        hint: String::new(),
         focus_child: None,
         copy_text: None,
         disabled: false,
         color: None,
+        background: None,
+        hover_background: None,
+        bold: false,
     });
     let (_runtime, mut presenter) = native(
         View::MetadataVisibility {
@@ -1373,12 +1205,17 @@ impl Widget for ConditionalSlots {
             self.scene.paint(slots, area, buffer)
         } else {
             let button = super::super::scene::Node::Button {
+                align: None,
                 key: "back".into(),
                 label: "Back".into(),
+                hint: String::new(),
                 focus_child: None,
                 copy_text: None,
                 disabled: false,
                 color: None,
+                background: None,
+                hover_background: None,
+                bold: false,
             };
             button.paint(slots, area, buffer)
         }

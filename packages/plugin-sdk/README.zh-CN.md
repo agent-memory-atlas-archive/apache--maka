@@ -78,6 +78,24 @@ const view = ui.terminal.stack({
 });
 ```
 
+Terminal 按钮用 `align`（start/center/end，默认 center）指定标签对齐，预留四列点击间距，超宽时按字素省略。
+可选 RGB 字段 `background` 填充整个区域，`hover_background` 提供悬停填充。
+`bold` 表达强调样式。键盘焦点使用下划线；悬停不选择、不夺取焦点。禁用按钮变暗且不接收输入，仍保留显式指定的背景。Stack 背景可省略，使纯布局容器继承周围表面。
+
+Terminal Dialog 支持 `ascii` 边框及独立的 `title_color`；Input、Textarea 的
+appearance 同样支持 `ascii`。Markdown、原文、Diff 和 Rows 接受产品提供的终端
+调色板（包括 ANSI 终端颜色），呈现器不选择产品主题。
+`LabelProps.terminalForeground` 仅在终端替代 RGBA 前景色。
+
+终端原生 `maka.ui.checkpoint` 工厂导出 `maka.ui.ValueCheckpoint`，沿原组件实例的
+checkpoint 作用域保存小型 UI 偏好。存活期间 `key`、`format` 固定，写入携带观察到
+的 revision，JSON 上限 16 KiB，已接纳写入在退休前排空。`changed` 报告
+loading/saving/ready/failed，不构成 Host Settings 的第二份权威。
+
+`maka.ui.morph-mark` 导出无交互的 `maka.ui.MorphMark`：产品通过配置提供两组有界
+路径、颜色与周期，props 指定背景、前景、动画和 ASCII 偏好。仅在可见且启用动画
+时使用终端共享时钟；Logo 和具体几何留在产品包。
+
 `TerminalLayout` 从实际终端协议生成。Stack 的 `layout.grow`
 在固定兄弟节点占位后分配剩余格子；`basis` 指定其在父主轴上的基础长度。Row 的
 `wrap` 将控件分到后续行，每行分别分配弹性宽度，并按实际宽度测量换行高度。
@@ -247,3 +265,5 @@ UI activate 返回带 component 或 value kind 的 `UiExport`。value 通过普�
 激活格式。
 
 Agent 图片工具使用生成的 `AgentToolImageFrame` 契约及 `result: "image"`，声明为不带输入资源的订阅。逐块 `await emit`：`mimeType`／`totalBytes` 恒定，`offset` 连续，`data` 为带 padding 的 Base64；每块解码后固定 32768 字节，最后一块为正数余量。支持 PNG、JPEG、GIF、WebP，总量 1–5242880 字节、每边 1–2000 像素。全部发送后返回 `{ kind: "complete" }`；将 complete 作为事件发送、仅 EOF、失败返回、取消或未确认清理均不能发布图片。Agent 校验实际字节并写入原不可变工具产物，路径／产物 ID／类似图片的 JSON 不提供权限。JSON 工具须显式选择 `result: "json"`，结果仍按 JSON 处理。
+
+终端 `ui.terminal.contextMenu` 在 `background` 对象旁提供可见的「⋯」入口，支持右击与 Shift+F10。菜单 `content` 使用普通按钮，方向键选择，Esc 或外部点击关闭，接受操作后返回原焦点。可选 `copy_selection_label` 只在打开手势捕获到有界原生选区时提供复制项，实际复制仍要求物理操作。原生视图的命名输入上限为 256，保留 64 个子 slot、1 MiB 回调和编译时限。

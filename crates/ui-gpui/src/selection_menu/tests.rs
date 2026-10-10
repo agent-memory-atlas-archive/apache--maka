@@ -161,6 +161,8 @@ fn fixture_with_ax(
     cx.update(gpui_kit::init);
     let (root, visual) = cx.add_window_view(|window, cx| {
         let source = |value: &str| SourceTextProps {
+            animate: false,
+            terminal: None,
             focus_on_pointer: true,
             source: value.into(),
             appearance: text(),

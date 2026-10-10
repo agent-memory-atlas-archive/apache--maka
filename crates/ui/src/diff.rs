@@ -81,6 +81,8 @@ pub enum DiffPatch {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DiffAppearance {
+    #[serde(default)]
+    pub terminal: Option<crate::scene::terminal::Palette>,
     pub text: TextAppearance,
     pub background: Color,
     pub added: Color,

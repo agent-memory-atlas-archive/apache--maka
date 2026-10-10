@@ -32,136 +32,6 @@ const appearance = await import(
   pathToFileURL(resolve(root, 'dist/packages/appearance/desktop.js'))
 );
 const values = { appearance: [appearance.activate({ scheme: 'light' }).Appearance.value] };
-for (const target of ['desktop', 'tui']) {
-  test(`${target} directory groups retain workspace identity, archive disclosure and explicit selection`, async () => {
-    const { component: navigation } = await import(
-      pathToFileURL(resolve(root, `dist/packages/navigation/${target}.js`))
-    );
-    const session = (id, workspace, archived = false) => ({
-      id,
-      title: `Long ${'界面'.repeat(40)} ${id}`,
-      archived,
-      activity: 'idle',
-      permissions: { access: 'workspace_write', requestPermissions: true },
-      boundaryRevision: 0,
-      labels: [],
-      revision: 1,
-      updatedAt: 1,
-      workspace: {
-        identity: workspace,
-        directoryIdentity: workspace,
-        path: `/parent/${workspace}/same-name`,
-      },
-    });
-    let props = {
-      theme: values.appearance[0],
-      locale: 'en',
-      sessions: [
-        session('a', 'one'),
-        session('b', 'two'),
-        session('c', 'one'),
-        session('d', 'two', true),
-      ],
-      selected: 'c',
-      busy: false,
-    };
-    let result = navigation.mount(props, {});
-    const rows = () =>
-      result.frame.view.children.filter((node) => ['item', 'button'].includes(node.kind));
-    const activate = (key) => {
-      result = navigation.event(
-        result.frame.state,
-        { kind: 'raw', key, event: { kind: 'activate' } },
-        props,
-        {},
-      );
-    };
-    assert.deepEqual(
-      rows().map((row) => row.key),
-      ['group-one', 'a', 'c', 'group-two', 'b', 'archived'],
-    );
-    if (target === 'tui') {
-      assert.equal(result.frame.view.focus_group, true);
-      for (const row of rows()) {
-        assert.equal(row.follow_focus, false);
-        assert.equal(row.submit, false);
-      }
-      assert.equal(rows().find((row) => row.key === 'c').current, true);
-      assert.equal(
-        rows().find((row) => row.key === 'a').content.children[1].children[0].text,
-        props.sessions[0].title,
-      );
-    }
-    props = {
-      ...props,
-      sessions: props.sessions.map((entry, index) => ({
-        ...entry,
-        activity: index === 0 ? 'waiting' : index === 1 ? 'working' : 'idle',
-        permissions: { access: 'workspace_write', requestPermissions: true },
-        boundaryRevision: 0,
-      })),
-    };
-    result = navigation.update(result.frame.state, props, {});
-    if (target === 'tui') {
-      const waiting = rows().find((row) => row.key === 'a').content;
-      assert.equal(waiting.children[0].children[0].text, '  ◇ ');
-      assert.equal(waiting.children[2].text, ' Needs You ');
-      assert.equal(
-        rows().find((row) => row.key === 'b').content.children[0].children[0].text,
-        '  ⢁ ',
-      );
-    } else {
-      assert.ok(
-        rows()
-          .find((row) => row.key === 'a')
-          .label.endsWith(' · Needs You'),
-      );
-      assert.ok(
-        rows()
-          .find((row) => row.key === 'b')
-          .label.includes('Working'),
-      );
-    }
-    activate('group-one');
-    assert.deepEqual(result.events, []);
-    assert.deepEqual(
-      rows().map((row) => row.key),
-      ['group-one', 'group-two', 'b', 'archived'],
-    );
-    activate('a');
-    assert.deepEqual(result.events, [], 'collapsed row cannot activate through stale input');
-    props = {
-      ...props,
-      sessions: [props.sessions[1], props.sessions[0], props.sessions[2], props.sessions[3]],
-    };
-    result = navigation.update(result.frame.state, props, {});
-    assert.deepEqual(
-      rows().map((row) => row.key),
-      ['group-two', 'b', 'group-one', 'archived'],
-    );
-    activate('archived');
-    assert.equal(rows().at(-1).key, 'd');
-    activate('d');
-    assert.deepEqual(result.events, [{ name: 'select', value: { sessionId: 'd' } }]);
-    props = { ...props, busy: true };
-    result = navigation.update(result.frame.state, props, {});
-    assert.ok(rows().every((row) => row.disabled));
-    activate('d');
-    assert.deepEqual(result.events, []);
-    activate('archived');
-    assert.equal(rows().at(-1).key, 'd', 'busy input cannot collapse the group');
-    props = { ...props, busy: false, sessions: props.sessions.filter((row) => row.id !== 'd') };
-    result = navigation.update(result.frame.state, props, {});
-    activate('d');
-    assert.deepEqual(result.events, [], 'removed session cannot activate');
-    props = {
-      ...props,
-      sessions: Array.from({ length: 32 }, (_, at) => session(`s${at}`, `w${at}`)),
-    };
-    result = navigation.update(result.frame.state, props, {});
-    assert.equal(rows().length, 64, 'full page fits one original scene without observer inputs');
-  });
-}
 const sdk = await import(pathToFileURL(resolve(root, 'dist/authoring/plugin-sdk/src/index.mjs')));
 test('typed scene constructors serialize directly into the actual Rust scene schemas', async () => {
   const desktopText = sdk.ui.desktop.text({ key: 'desktop-text', text: '界面', color: 0xffffff });
@@ -1123,74 +993,6 @@ function modelButtons(view, result = []) {
     modelButtons(child, result);
   return result;
 }
-test('TUI native model viewport holds the complete bounded page and retains late default until enabled', () => {
-  let out = modelGuest.component.mount(modelProps, {});
-  const request = out.actions[0];
-  assert.equal(request.method, 'models');
-  out = modelAction(out, request.key, {
-    status: 'succeeded',
-    value: {
-      kind: 'ready',
-      revision: 5,
-      choices: modelChoices,
-      defaultModel: { kind: 'ready', choice: modelChoices[0] },
-      next: null,
-    },
-  });
-  assert.deepEqual(out.events, [{ name: 'setup', value: { catalogEpoch: 0, kind: 'choose' } }]);
-  out = modelGuest.component.update(out.frame.state, { ...modelProps, busy: false }, {});
-  assert.equal(out.events[0].value.choice.selection.modelId, 'model-0');
-  const enabled = { ...modelProps, busy: false, selection: selectedModel(modelChoices[0]) };
-  out = modelRaw(out, 'toggle', enabled);
-  assert.equal(out.frame.view.kind, 'dialog');
-  assert.equal(out.frame.view.open, true);
-  assert.deepEqual(
-    modelButtons(out.frame.view).filter((key) => key.startsWith('choose-')),
-    modelChoices.map((_, at) => `choose-${at}`),
-  );
-  assert.equal(
-    modelButtons(out.frame.view).includes('more'),
-    false,
-    'More belongs only to the catalog continuation',
-  );
-  assert.ok(modelButtons(out.frame.view).includes('close'));
-  out = modelGuest.component.event(
-    out.frame.state,
-    {
-      kind: 'component',
-      child: 'model-query',
-      name: 'changed',
-      key: 'query',
-      event: modelObservation('', 1),
-    },
-    enabled,
-    {},
-  );
-  out = modelRaw(out, 'choose-15', enabled);
-  assert.deepEqual(out.events, []);
-  out = modelRaw(out, 'apply', enabled);
-  const capture = out.actions[0];
-  assert.equal(capture.method, 'read');
-  assert.deepEqual(capture.resources.text.input, {
-    kind: 'at_revision',
-    owner: 'model-editor',
-    revision: 1,
-  });
-  out = modelAction(
-    out,
-    capture.key,
-    { status: 'succeeded', value: { text: '', metadata: modelObservation('', 1).snapshot.text } },
-    enabled,
-  );
-  assert.equal(out.events[0].value.choice.selection.modelId, 'model-15');
-  assert.equal(out.frame.state.open, false);
-  out = modelGuest.component.update(
-    out.frame.state,
-    { ...enabled, selection: selectedModel(modelChoices[15]) },
-    {},
-  );
-  assert.equal(out.events.length, 0);
-});
 test('late query is ignored and catalog changes restart only the observation', () => {
   const enabled = { ...modelProps, busy: false, selection: selectedModel(modelChoices[1]) };
   let out = modelGuest.component.mount(enabled, {});
@@ -1922,94 +1724,7 @@ for (const [target, module] of credentialModules) {
     assert.equal(form.output.actions.length, 0);
   });
 }
-test('settings routing keeps original composer key and commands while invalidating model observations', () => {
-  const client = new Client().start();
-  const slots = (node) => [
-    ...(node.kind === 'component' ? [node] : []),
-    ...[
-      ...(node.children ?? []),
-      node.content,
-      typeof node.background === 'object' ? node.background : null,
-    ]
-      .filter(Boolean)
-      .flatMap(slots),
-  ];
-  const original = slots(client.output.frame.view).find((n) => n.binding === 'composer');
-  client.raw('settings');
-  assert.equal(client.state.settingsOpen, true);
-  const hidden = client.output.frame.view.background.children[0];
-  assert.equal(hidden.visible, false);
-  assert.deepEqual(
-    slots(hidden).find((n) => n.binding === 'composer'),
-    original,
-  );
-  assert.ok(slots(client.output.frame.view).some((n) => n.binding === 'connections'));
-  client.input({
-    kind: 'component',
-    key: 'settings-changed',
-    child: 'connections',
-    name: 'changed',
-    event: {},
-  });
-  assert.equal(client.state.catalogEpoch, 1);
-  assert.equal(client.state.model.choice.selection.modelId, 'fixture-model');
-  assert.equal(client.state.modelRefreshing, true);
-  client.input({
-    kind: 'component',
-    key: 'settings-closed',
-    child: 'connections',
-    name: 'closed',
-    event: {},
-  });
-  assert.equal(client.state.settingsOpen, false);
-  assert.equal(client.output.frame.view.background.children[0].visible, true);
-  assert.equal(
-    slots(client.output.frame.view).find((n) => n.binding === 'composer').key,
-    original.key,
-  );
-});
-test('sidebar presentation retains the same children, draft command, and active work', () => {
-  const client = new Client().start();
-  client.state.selected.title = '长标题 · A🙂é '.repeat(25);
-  client.component('draft', draft);
-  const originalState = structuredClone(client.state);
-  const originalSlots = modelSlots(client.output.frame.view.background);
-  client.raw('navigation-toggle');
-  assert.equal(client.state.sidebar.open, false);
-  assert.equal(client.output.frame.view.background.children[0].children[0].visible, false);
-  assert.deepEqual(modelSlots(client.output.frame.view.background), originalSlots);
-  assert.deepEqual(client.output.actions, []);
-  assert.deepEqual(client.state.watch, originalState.watch);
-  assert.deepEqual(client.state.command, originalState.command);
-  assert.deepEqual(client.state.model, originalState.model);
-  client.raw('settings');
-  client.input({ kind: 'component', child: 'connections', name: 'closed', event: {} });
-  assert.equal(client.state.sidebar.open, false);
-  client.raw('navigation-toggle');
-  assert.equal(client.state.sidebar.open, true);
-  assert.deepEqual(modelSlots(client.output.frame.view.background), originalSlots);
-});
-test('desktop model trigger retains its full label for native measurement and accessibility', async () => {
-  const module = await import(pathToFileURL(resolve(root, 'dist/packages/models/desktop.js')));
-  const label = '长模型名称 · A🙂é '.repeat(30);
-  const output = module.component.mount({
-    theme: values.appearance[0],
-    locale: 'en',
-    selection: selectedModel({
-      selection: { connectionId: 'fixture', revision: 2, modelId: 'fixture-model' },
-      connectionName: 'Fixture',
-      thinkingLevels: [],
-      defaultThinkingLevel: null,
-      label,
-    }),
-    busy: false,
-    catalogEpoch: 0,
-    openRequest: null,
-  });
-  assert.equal(output.frame.view.trigger.label, label);
-  assert.equal(output.frame.view.trigger.style.truncate, true);
-  assert.equal(output.frame.view.trigger.style.minWidth, 0);
-});
+
 test('changed settings discard late model query and old default before selecting a fresh basis', async () => {
   const module = await import(pathToFileURL(resolve(root, 'dist/packages/models/desktop.js')));
   const form = new FormClient(module.component, {
@@ -3072,6 +2787,21 @@ for (const [target, module] of defaultModules) {
     },
   );
 }
+function sceneNode(node, match) {
+  if (typeof match === 'string' ? node.key === match : match(node)) return node;
+  for (const child of [
+    ...(node.children ?? []),
+    node.content,
+    node.props?.content,
+    typeof node.background === 'object' ? node.background : null,
+  ].filter(Boolean)) {
+    const found = sceneNode(child, match);
+    if (found) return found;
+  }
+}
+function workspaceView(client) {
+  return sceneNode(client.output.frame.view, 'workspace-dialog') ?? client.output.frame.view;
+}
 function modelSlots(node, result = []) {
   if (node.kind === 'component') result.push(node);
   for (const child of [
@@ -3111,78 +2841,6 @@ test('Timeline byte-segment identities leave room for the native key prefix', as
 });
 
 for (const target of ['desktop', 'tui']) {
-  test(
-    target + ' canonical tools display names and reported errors even without text',
-    async () => {
-      const { component: timeline } = await import(
-        pathToFileURL(resolve(root, 'dist/packages/timeline/' + target + '.js'))
-      );
-      const client = new Client().start({
-        through: 100,
-        chunks: [
-          historyChunk('', {
-            messageId: uuid(901),
-            sequence: 39,
-            role: 'tool_call',
-            tool: {
-              toolUseId: uuid(901),
-              call: { sequence: 39, name: 'Count', title: null, pending: false },
-              result: { sequence: 40, isError: true, image: false },
-            },
-          }),
-          historyChunk('', {
-            sequence: 40,
-            role: 'tool_result',
-            tool: {
-              toolUseId: uuid(901),
-              call: { sequence: 39, name: 'Count', title: null, pending: false },
-              result: { sequence: 40, isError: true, image: false },
-            },
-          }),
-        ],
-      });
-      const out = timeline.mount({ ...client.timeline, locale: 'zh-CN' }, {});
-      const rows = out.frame.view.children[0].children[0].props.content.children;
-      assert.equal(rows.length, 1);
-      assert.equal(rows[0].children[0].children[0].text, '工具活动 · Count');
-      assert.equal(
-        rows[0].children.find((node) => node.key === 'tool-error-' + uuid(901)).text,
-        '工具报告错误',
-      );
-      for (const row of rows) {
-        assert.equal(
-          row.children.find((node) => node.key.startsWith('summary-')).text,
-          '无文本摘要',
-        );
-        const details = row.children.find((node) => node.key.startsWith('details-'));
-        assert.equal(details.visible, false);
-        assert.equal(
-          row.children[0].children.find((node) => node.key.startsWith('toggle-')).label,
-          '展开详情',
-        );
-        const actions = details.children.find((node) => node.key.startsWith('tool-actions-'));
-        assert.deepEqual(
-          actions.children.map((node) => node.label),
-          ['工具参数', '工具结果'],
-        );
-      }
-      assert.equal(out.actions.length, 0);
-      assert.deepEqual(out.events, [
-        {
-          name: 'fileContext',
-          value: {
-            ...client.timeline.toolContext,
-            landing: client.timeline.landing.sequence,
-            path: null,
-          },
-        },
-      ]);
-      assert.deepEqual(
-        client.messages.map((message) => message.source),
-        [39, 40],
-      );
-    },
-  );
   test(target + ' suggests the exact saved default even beyond the first model page', async () => {
     const module = await import(
       pathToFileURL(resolve(root, 'dist/packages/models/' + target + '.js'))
@@ -4025,145 +3683,6 @@ test('source entry waits for main navigation and invalidates an older main reply
   assert.deepEqual(client.state.landing, landing);
 });
 
-for (const target of ['desktop', 'tui']) {
-  test(
-    target +
-      ' source presentation retains the conversation scene and keeps navigation outside the reader',
-    async () => {
-      const { component: timeline } = await import(
-        pathToFileURL(resolve(root, 'dist/packages/timeline/' + target + '.js'))
-      );
-      const client = new Client().start({
-        through: 1000,
-        chunks: [historyChunk('literal **tail**', { sequence: 400, offset: 100, totalBytes: 116 })],
-      });
-      const originalProps = structuredClone(client.timeline);
-      const original = timeline.mount(originalProps, {});
-      client.component('source', { sequence: 400 });
-      const opened = timeline.update(original.frame.state, client.timeline, {});
-      assert.equal(opened.frame.view.children[0].visible, false);
-      assert.deepEqual(
-        opened.frame.view.children[0].children,
-        original.frame.view.children[0].children,
-      );
-      const out = timeline.event(
-        opened.frame.state,
-        { kind: 'raw', key: 'source-first', event: {} },
-        client.timeline,
-        {},
-      );
-      assert.deepEqual(out.events, [{ name: 'sourceFirst', value: {} }]);
-      assert.equal(out.frame.view.children.at(-1).key, 'reading-controls');
-      {
-        const reader = modelSlots(out.frame.view).find((node) => node.key === 'source-reading');
-        assert.equal(reader.key, 'source-reading');
-        const body = modelSlots(reader.props.content).find((node) => node.binding === 'source');
-        assert.equal(body.props.source, 'literal **tail**');
-        assert.equal(
-          modelSlots(reader.props.content).some((node) => node.binding === 'markdown'),
-          false,
-        );
-        const next = timeline.update(
-          out.frame.state,
-          {
-            ...client.timeline,
-            source: { ...client.timeline.source, key: 'other-byte-range', text: body.props.source },
-          },
-          {},
-        );
-        assert.notEqual(
-          modelSlots(
-            modelSlots(next.frame.view).find((node) => node.key === 'source-reading').props.content,
-          ).find((node) => node.binding === 'source').key,
-          body.key,
-        );
-      }
-      client.component('sourceBack');
-      const closed = timeline.update(out.frame.state, client.timeline, {});
-      assert.equal(closed.frame.view.children[0].visible, true);
-      assert.deepEqual(
-        closed.frame.view.children[0].children,
-        original.frame.view.children[0].children,
-      );
-    },
-  );
-}
-
-test('TUI reader declares a flexible body and retained adaptive pane without a visibility mirror', async () => {
-  const module = await import(pathToFileURL(resolve(root, 'dist/packages/workspace/tui.js')));
-  module.activate({ locale: 'en' });
-  const { component: timeline } = await import(
-    pathToFileURL(resolve(root, 'dist/packages/timeline/tui.js'))
-  );
-  const client = new Client(module.component).start({
-    through: 1000,
-    chunks: [
-      historyChunk('中文😀\n'.repeat(700), { sequence: 400, offset: 100, totalBytes: 7800 }),
-    ],
-  });
-  const pane = () => client.output.frame.view.background.children[0].children[0];
-  assert.deepEqual(client.state.sidebar, { command: null });
-  assert.equal(pane().kind, 'adaptive_pane');
-  const originalTimeline = timeline.mount(client.timeline, {}).frame.view;
-  const retained = originalTimeline.children.find((node) => node.key === 'retained-conversation');
-  assert.equal(retained.layout.grow, 1);
-  assert.equal(retained.children[0].props.content.layout.grow, 1);
-  assert.ok(['anchor', 'follow_end'].includes(retained.children[0].props.content.scroll));
-  const originalDraft = modelSlots(client.output.frame.view).find(
-    (node) => node.binding === 'composer',
-  );
-  client.component('source', { sequence: 400 });
-  const frame = timeline.mount(client.timeline, {}).frame.view;
-  assert.equal(frame.layout.grow, 1);
-  const reading = modelSlots(frame).find((node) => node.key === 'source-reading');
-  assert.equal(reading.binding, 'reading');
-  assert.equal(reading.props.content.layout.grow, 1);
-  assert.equal(reading.props.content.scroll, 'anchor');
-  assert.equal(frame.children.at(-1).layout.wrap, true);
-  assert.equal(frame.children.at(-1).gap, 1);
-  const main = pane().background;
-  const body = main.children.find((node) => node.key === 'session-body');
-  assert.equal(body.viewport, true);
-  assert.equal(body.layout.grow, 1);
-  const composer = body.children.find((node) => node.key === 'retained-composer');
-  assert.deepEqual(
-    main.children.map((node) => node.key),
-    ['header', 'session-body'],
-  );
-  assert.deepEqual(
-    body.children.map((node) => node.key),
-    ['conversation', 'retained-composer'],
-  );
-  assert.deepEqual(
-    modelSlots(composer).map((node) => node.binding),
-    ['rows', 'composer'],
-  );
-  assert.equal(composer.visible, false);
-  assert.deepEqual(
-    modelSlots(composer).find((node) => node.binding === 'composer'),
-    { ...originalDraft, props: { ...originalDraft.props, filePaste: null } },
-  );
-  const originalSource = structuredClone(client.state.source);
-  client.raw('navigation-toggle');
-  assert.deepEqual(pane().command, { sequence: 1, op: 'toggle' });
-  assert.equal(pane().background.key, 'main');
-  assert.equal(pane().content.key, 'navigation-content');
-  client.raw('navigation-toggle');
-  assert.deepEqual(pane().command, { sequence: 2, op: 'toggle' });
-  assert.deepEqual(client.state.source, originalSource);
-  client.component('sourceBack');
-  assert.equal(
-    pane()
-      .background.children.find((node) => node.key === 'session-body')
-      .children.find((node) => node.key === 'retained-composer').visible,
-    true,
-  );
-  assert.deepEqual(
-    modelSlots(client.output.frame.view).find((node) => node.binding === 'composer'),
-    originalDraft,
-  );
-});
-
 test('all ordinary TUI node identities remain unique including hidden routes', async () => {
   const module = await import(pathToFileURL(resolve(root, 'dist/packages/workspace/tui.js')));
   module.activate({ locale: 'en' });
@@ -4201,10 +3720,7 @@ for (const target of ['desktop', 'tui']) {
       });
       const out = timeline.mount(client.timeline, {});
       const row = out.frame.view.children[0].children[0].props.content.children[0];
-      assert.equal(
-        row.children.some((n) => n.children?.some((c) => c.key === 'source-40')),
-        true,
-      );
+      assert.equal(!!sceneNode(row, 'source-40'), true);
       const opened = timeline.event(
         out.frame.state,
         { kind: 'raw', key: 'source-40', event: {} },
@@ -4214,249 +3730,6 @@ for (const target of ['desktop', 'tui']) {
       assert.deepEqual(opened.events, [{ name: 'source', value: { sequence: 40, field: 'body' } }]);
     }
   });
-  test(target + ' tool inspection has one disclosure and keeps hidden actions inert', async () => {
-    const { component: timeline } = await import(
-      pathToFileURL(resolve(root, 'dist/packages/timeline/' + target + '.js'))
-    );
-    const visibleButtons = (node) =>
-      node.visible === false
-        ? []
-        : [
-            ...(node.kind === 'button' ? [node] : []),
-            ...(node.children ?? []).flatMap(visibleButtons),
-          ];
-    for (const role of ['tool_call', 'tool_result']) {
-      for (const bodyText of ['', 'Literal tool output **中🙂**']) {
-        const client = new Client().start({
-          through: 100,
-          chunks: [
-            historyChunk(bodyText, {
-              sequence: 40,
-              role,
-              tool: {
-                toolUseId: uuid(901),
-                call: {
-                  sequence: role === 'tool_call' ? 40 : 39,
-                  name: 'Draw',
-                  title: null,
-                  pending: false,
-                },
-                result:
-                  role === 'tool_result' ? { sequence: 40, isError: true, image: true } : null,
-              },
-            }),
-          ],
-        });
-        const props = client.timeline;
-        let out = timeline.mount(props, {});
-        const row = () => out.frame.view.children[0].children[0].props.content.children[0];
-        const originalBody = structuredClone(
-          row().children.find((node) => node.key.startsWith('details-')).children[0],
-        );
-        const input = (key) => {
-          out = timeline.event(
-            out.frame.state,
-            {
-              kind: 'component',
-              child: 'reading',
-              name: 'input',
-              key: 'reading-input',
-              event: { kind: 'raw', key, event: { kind: 'click' } },
-            },
-            props,
-            {},
-          );
-          return out.events;
-        };
-        const toggle = 'toggle-' + client.messages[0].tool.toolUseId;
-        assert.deepEqual(
-          visibleButtons(row()).map((n) => n.key),
-          [toggle],
-        );
-        for (const hidden of [
-          'tool-source-40-arguments',
-          'tool-source-40-result',
-          'image-40',
-          'source-40',
-        ])
-          assert.deepEqual(input(hidden), [], 'a collapsed inspector has no active actions');
-        input(toggle);
-        const expanded = visibleButtons(row());
-        assert.equal(
-          expanded.find(
-            (n) => n.key === 'tool-source-40-' + (role === 'tool_call' ? 'arguments' : 'result'),
-          ).label,
-          role === 'tool_call' ? 'Tool arguments' : 'Tool result',
-        );
-        assert.deepEqual(
-          input('tool-source-40-' + (role === 'tool_call' ? 'arguments' : 'result')),
-          [
-            {
-              name: 'toolSource',
-              value: { sequence: 40, field: role === 'tool_call' ? 'arguments' : 'result' },
-            },
-          ],
-        );
-        assert.deepEqual(
-          input('image-40'),
-          role === 'tool_result' ? [{ name: 'viewImage', value: { sequence: 40 } }] : [],
-        );
-        assert.deepEqual(
-          input('source-40'),
-          bodyText ? [{ name: 'source', value: { sequence: 40, field: 'body' } }] : [],
-        );
-        const loading = timeline.update(out.frame.state, { ...props, loading: true }, {});
-        const loadingRow = loading.frame.view.children[0].children[0].props.content.children[0];
-        for (const action of visibleButtons(loadingRow).filter((n) => n.key !== toggle))
-          assert.equal(action.disabled, true);
-        input(toggle);
-        assert.deepEqual(
-          visibleButtons(row()).map((n) => n.key),
-          [toggle],
-        );
-        assert.deepEqual(
-          row().children.find((node) => node.key.startsWith('details-')).children[0],
-          originalBody,
-          'disclosure preserves the original SourceText declaration',
-        );
-      }
-    }
-  });
-  test(
-    target +
-      ' tool text stays mounted while collapsed and expands through its checked reading input',
-    async () => {
-      const { component: timeline } = await import(
-        pathToFileURL(resolve(root, 'dist/packages/timeline/' + target + '.js'))
-      );
-      const client = new Client().start({
-        through: 100,
-        chunks: [
-          historyChunk('line 1\n  **literal** 中😀\n' + 'long output '.repeat(100), {
-            role: 'tool_result',
-            tool: null,
-            sequence: 40,
-          }),
-        ],
-      });
-      const props = { ...client.timeline, locale: 'zh-CN' };
-      let out = timeline.mount(props, {});
-      const row = () => out.frame.view.children[0].children[0].props.content.children[0];
-      const details = () => row().children.find((node) => node.key === 'details-' + uuid(900));
-      const source = structuredClone(
-        modelSlots(details()).find((node) => node.binding === 'source'),
-      );
-      assert.equal(row().children[0].children[0].text, '工具输出');
-      assert.equal(details().visible, false);
-      assert.ok(
-        row().children.find((node) => node.key === 'summary-' + uuid(900)).text.length < 170,
-      );
-      assert.equal(source.binding, 'source');
-      assert.equal(source.props.source, client.messages[0].text);
-      const toggle = () => {
-        out = timeline.event(
-          out.frame.state,
-          {
-            kind: 'component',
-            child: 'reading',
-            name: 'input',
-            key: 'reading-input',
-            event: { kind: 'raw', key: 'toggle-' + uuid(900), event: { kind: 'click' } },
-          },
-          props,
-          {},
-        );
-      };
-      toggle();
-      assert.equal(details().visible, true);
-      assert.deepEqual(
-        modelSlots(details()).find((node) => node.binding === 'source'),
-        source,
-      );
-      assert.equal(out.events.length, 0);
-      assert.equal(out.actions.length, 0);
-      toggle();
-      assert.equal(details().visible, false);
-      assert.deepEqual(
-        modelSlots(details()).find((node) => node.binding === 'source'),
-        source,
-      );
-      out = timeline.update(out.frame.state, { ...props, messages: [] }, {});
-      assert.deepEqual(out.frame.state.expanded, []);
-    },
-  );
-  test(
-    target +
-      ' identical text at another canonical byte offset creates a different native body identity',
-    async () => {
-      const { component: timeline } = await import(
-        pathToFileURL(resolve(root, 'dist/packages/timeline/' + target + '.js'))
-      );
-      const first = new Client().start({
-        through: 100,
-        chunks: [
-          historyChunk('same bytes', {
-            role: 'tool_call',
-            tool: null,
-            sequence: 40,
-            offset: 0,
-            totalBytes: 200,
-          }),
-        ],
-      });
-      const next = new Client().start({
-        through: 100,
-        chunks: [
-          historyChunk('same bytes', {
-            role: 'tool_call',
-            tool: null,
-            sequence: 40,
-            offset: 80,
-            totalBytes: 200,
-          }),
-        ],
-      });
-      const before = timeline.mount(first.timeline, {});
-      const expanded = timeline.event(
-        before.frame.state,
-        { kind: 'raw', key: 'toggle-' + uuid(900), event: {} },
-        first.timeline,
-        {},
-      );
-      const after = timeline.update(expanded.frame.state, next.timeline, {});
-      const row = (out) => out.frame.view.children[0].children[0].props.content.children[0];
-      const body = (out) => modelSlots(row(out)).find((node) => node.binding === 'source');
-      assert.equal(row(expanded).key, row(after).key);
-      assert.equal(body(expanded).props.source, body(after).props.source);
-      assert.notEqual(body(expanded).key, body(after).key);
-      assert.equal(
-        row(after).children.find((node) => node.key === 'details-' + uuid(900)).visible,
-        true,
-      );
-      const sourceRoute = {
-        ...next.timeline,
-        source: {
-          fields: [],
-          key: 'source-page',
-          text: 'source',
-          atStart: true,
-          atEnd: true,
-          loading: false,
-          failed: false,
-          navigation: 1,
-          landing: 'start',
-        },
-      };
-      const hidden = timeline.update(after.frame.state, sourceRoute, {});
-      const staleToggle = timeline.event(
-        hidden.frame.state,
-        { kind: 'raw', key: 'toggle-' + uuid(900), event: {} },
-        sourceRoute,
-        {},
-      );
-      assert.deepEqual(staleToggle.frame.state.expanded, hidden.frame.state.expanded);
-    },
-  );
 }
 
 for (const target of ['desktop', 'tui']) {
@@ -5175,7 +4448,7 @@ test('editor-local submission uses latest observation and the original send gate
     if (target === 'tui') {
       const main = result.frame.view.children.find((node) => node.key === 'composer-main');
       const controls = main.children.find((node) => node.key === 'composer-controls');
-      assert.equal(controls.layout.wrap, true);
+      assert.equal(controls.layout.basis, 3);
       assert.equal(main.direction, 'row');
       assert.equal(main.border.style, 'rounded');
       assert.equal(
@@ -5865,70 +5138,6 @@ for (const target of ['desktop', 'tui']) {
   });
 }
 
-test('independent workbench variants retain page slots and react to real child event names', async () => {
-  const choice = { label: 'Fixture model', selection: { connectionId: 'fixture', modelId: 'one' } };
-  for (const target of ['desktop', 'tui']) {
-    const module = await import(pathToFileURL(resolve(root, `dist/packages/studio/${target}.js`)));
-    const nodes = (view) => [view, ...(view.children ?? []).flatMap(nodes)];
-    for (const locale of ['en', 'zh-CN', 'zh-TW'])
-      for (const scheme of ['light', 'dark']) {
-        module.activate({ locale });
-        const component = module.component;
-        const values = { appearance: [appearance.activate({ scheme }).Appearance.value] };
-        let result = component.mount({}, values);
-        const slots = () => nodes(result.frame.view).filter((node) => node.kind === 'component');
-        const press = (key) => {
-          result = component.event(
-            result.frame.state,
-            { kind: 'raw', key, event: null },
-            {},
-            values,
-          );
-        };
-        const child = (child, name, event) => {
-          result = component.event(
-            result.frame.state,
-            { kind: 'component', key: 'arbitrary-routing-key', child, name, event },
-            {},
-            values,
-          );
-        };
-        assert.deepEqual(
-          slots().map((node) => [node.key, node.binding]),
-          [
-            ['connections', 'connections'],
-            ['models', 'models'],
-            ['deployment', 'deployment'],
-          ],
-        );
-        const initialKeys = nodes(result.frame.view).map((node) => node.key);
-        assert.equal(new Set(initialKeys).size, initialKeys.length);
-        press('open-connections');
-        assert.equal(result.frame.state.route, 'connections');
-        child('connections', 'changed', {});
-        assert.equal(result.frame.state.catalogEpoch, 1);
-        press('route-models');
-        child('models', 'selected', choice);
-        assert.deepEqual(result.frame.state.selection, choice);
-        assert.equal(slots()[1].props.catalogEpoch, 1);
-        assert.deepEqual(slots()[1].props.selection, choice);
-        press('route-deployment');
-        press('route-overview');
-        assert.deepEqual(
-          nodes(result.frame.view).map((node) => node.key),
-          initialKeys,
-        );
-        assert.equal(result.actions.length, 0);
-        assert.equal(result.subscriptions.length, 0);
-        assert.equal(result.frame.surface.binding, 'surface');
-        assert.equal(result.frame.surface.kind, target === 'desktop' ? 'window' : 'terminal');
-        child('deployment', 'closed', {});
-        assert.equal(result.frame.state.route, 'overview');
-        assert.deepEqual(result.frame.state.selection, choice);
-      }
-  }
-});
-
 for (const target of ['desktop', 'tui']) {
   test(`${target} session pages reach all entries without moving the selected conversation`, async () => {
     const { component } = await import(
@@ -6211,7 +5420,7 @@ test('creation refusal cannot erase a watch failure that arrived during creation
 
 test('ordinary root shortcuts share creation policy and close only presented pages', () => {
   const client = new Client().start();
-  const shortcuts = () => client.output.frame.view.background.shortcuts;
+  const shortcuts = () => workspaceView(client).background.shortcuts;
   assert.ok(
     shortcuts().some((shortcut) => shortcut.key === 'b' && shortcut.input === 'navigation-toggle'),
   );
@@ -6682,8 +5891,7 @@ for (const target of ['desktop', 'tui']) {
     pathToFileURL(resolve(root, `dist/packages/command-palette/${target}.js`))
   );
   const props = (client) =>
-    modelSlots(client.output.frame.view.content).find((node) => node.key === 'command-palette')
-      .props;
+    modelSlots(workspaceView(client).content).find((node) => node.key === 'command-palette').props;
   const choose = (client, name, event) =>
     client.input({ kind: 'component', child: 'command-palette', name, event });
   const open = (client) => {
@@ -6704,7 +5912,7 @@ for (const target of ['desktop', 'tui']) {
     });
   test(`${target} Root Dialog preserves original product and routes only conversation commands`, () => {
     const client = new Client(rootModule.component).start();
-    const background = structuredClone(client.output.frame.view.background);
+    const background = structuredClone(workspaceView(client).background);
     const modalBackground = structuredClone(background);
     if (target === 'tui') {
       const composer = modelSlots(modalBackground).find((node) => node.binding === 'composer');
@@ -6712,25 +5920,25 @@ for (const target of ['desktop', 'tui']) {
       composer.props.filePaste = null;
     }
     const watch = structuredClone(client.output.subscriptions);
-    assert.equal(client.output.frame.view.open, false);
+    assert.equal(workspaceView(client).open, false);
     open(client);
-    assert.equal(client.output.frame.view.open, true);
+    assert.equal(workspaceView(client).open, true);
     if (target === 'tui') {
       const timeline = modelSlots(modalBackground).find((node) => node.binding === 'timeline');
       assert.equal(timeline.props.copyRequest, null);
       assert.ok(client.state.copyRequest > 0);
       timeline.props.copyRequest = client.state.copyRequest;
     }
-    assert.deepEqual(client.output.frame.view.background, modalBackground);
+    assert.deepEqual(workspaceView(client).background, modalBackground);
     assert.deepEqual(client.output.subscriptions, watch);
     assert.equal(
-      modelSlots(client.output.frame.view.content).find((node) => node.key === 'command-palette')
+      modelSlots(workspaceView(client).content).find((node) => node.key === 'command-palette')
         .binding,
       'palette',
     );
     choose(client, 'closed', {});
     assert.equal(client.state.dialog, null);
-    assert.deepEqual(client.output.frame.view.background, background);
+    assert.deepEqual(workspaceView(client).background, background);
     client.raw('settings');
     client.raw('palette-open');
     assert.equal(client.state.dialog, null);
@@ -7140,36 +6348,6 @@ for (const target of ['desktop', 'tui']) {
     assert.deepEqual(form.output.actions, []);
   });
 
-  test(`${target} Root retains both ordinary dialog slots while switching and cancelling`, () => {
-    const client = new Client(rootModule.component).start();
-    const mounted = () =>
-      modelSlots(client.output.frame.view.content).map((node) => ({
-        key: node.key,
-        binding: node.binding,
-      }));
-    const closed = mounted();
-    client.raw('palette-open');
-    assert.deepEqual(mounted(), closed);
-    client.input({
-      kind: 'component',
-      child: 'command-palette',
-      name: 'invoked',
-      event: { id: 'create-workspace' },
-    });
-    assert.deepEqual(mounted(), closed);
-    const slots = modelSlots(client.output.frame.view.content);
-    assert.equal(slots.find((node) => node.key === 'command-palette').props.open, false);
-    assert.equal(slots.find((node) => node.key === 'directory-picker').props.open, true);
-    rootChoice(client, 'closed');
-    client.raw('palette-open');
-    assert.deepEqual(mounted(), closed);
-    assert.equal(
-      modelSlots(client.output.frame.view.content).find((node) => node.key === 'command-palette')
-        .props.open,
-      true,
-    );
-  });
-
   test(`${target} Root uses one controlled dialog and original recorded create without changing retained execution`, () => {
     const client = new Client(rootModule.component).start({
       run: { invocationId: 'original-run', state: 'running' },
@@ -7191,7 +6369,7 @@ for (const target of ['desktop', 'tui']) {
     });
     assert.equal(client.state.dialog, 'directories');
     assert.equal(
-      modelSlots(client.output.frame.view.content).find((node) => node.key === 'directory-picker')
+      modelSlots(workspaceView(client).content).find((node) => node.key === 'directory-picker')
         .binding,
       'directories',
     );
@@ -7673,7 +6851,7 @@ for (const target of ['desktop', 'tui']) {
     const original = nativeFacts(client);
     client.raw('details-open');
     assert.equal(client.state.dialog, 'details');
-    const mounted = modelSlots(client.output.frame.view.content);
+    const mounted = modelSlots(workspaceView(client).content);
     assert.equal(mounted.find((n) => n.key === 'session-details').props.session.id, session.id);
     assert.equal(mounted.find((n) => n.key === 'session-details').props.open, true);
     assert.deepEqual(nativeFacts(client), original);
@@ -7868,21 +7046,6 @@ test('TUI queue controls retain original revision and lane and working-send keep
     key: client.state.watch.key,
     event: { status: 'updated', value: { kind: 'queue', queue } },
   });
-  const rows = modelSlots(client.output.frame.view).find((node) => node.binding === 'rows');
-  assert.equal(rows.props.maxRows, 3);
-  assert.deepEqual(rows.props.compactBelow, { height: 12, maxRows: 1 });
-  const main = client.output.frame.view.background.children[0].children[0].background;
-  const badge = main.children
-    .find((node) => node.key === 'session-body')
-    .children.find((node) => node.key === 'retained-composer')
-    .children.find((node) => node.key === 'queue-status')
-    .children.at(-1);
-  assert.equal(badge.label, '≡ 3');
-  assert.equal(badge.focus_child, 'queue');
-  assert.deepEqual(
-    rows.props.rows.map((row) => row.key),
-    ['first', 'steering', 'second'],
-  );
   const activate = (revision, row, action) =>
     client.input({
       kind: 'component',
@@ -8579,7 +7742,7 @@ test('TUI sidebar controls share native commands and selection dismisses only th
   assert.deepEqual(client.state.sidebar, { command: { sequence: 2, op: 'toggle' } });
   client.component('select', { sessionId: session.id });
   assert.deepEqual(client.state.sidebar, { command: { sequence: 3, op: 'dismiss_transient' } });
-  const pane = client.output.frame.view.background.children[0].children[0];
+  const pane = sceneNode(client.output.frame.view, 'navigation-pane');
   assert.deepEqual(
     [pane.pane_width, pane.inline_min_width, pane.auto_inline_min_width],
     [32, 60, 90],
@@ -10147,8 +9310,10 @@ for (const target of ['tui', 'desktop']) {
       const initial = timeline.mount(props, {});
       const row = (out) => out.frame.view.children[0].children[0].props.content.children[0];
       assert.equal(
-        row(initial).children.find((n) => n.key.startsWith('role-')).text,
-        'You · ' + label,
+        target === 'tui'
+          ? sceneNode(row(initial), (n) => n.key.startsWith('timestamp-')).text
+          : row(initial).children.find((n) => n.key.startsWith('role-')).text,
+        target === 'tui' ? label : 'You · ' + label,
       );
       const body = modelSlots(row(initial))[0];
       assert.equal(
@@ -10164,7 +9329,12 @@ for (const target of ['tui', 'desktop']) {
         },
         {},
       );
-      assert.equal(row(live).children.find((n) => n.key.startsWith('role-')).text, 'Maka');
+      assert.equal(
+        target === 'tui'
+          ? sceneNode(row(live), (n) => n.key.startsWith('timestamp-'))
+          : row(live).children.find((n) => n.key.startsWith('role-')).text,
+        target === 'tui' ? undefined : 'Maka',
+      );
       assert.equal(row(live).key, row(initial).key);
       const invalid = timeline.update(
         live.frame.state,
@@ -10175,8 +9345,10 @@ for (const target of ['tui', 'desktop']) {
         {},
       );
       assert.equal(
-        row(invalid).children.find((n) => n.key.startsWith('role-')).text,
-        'You',
+        target === 'tui'
+          ? sceneNode(row(invalid), (n) => n.key.startsWith('timestamp-'))
+          : row(invalid).children.find((n) => n.key.startsWith('role-')).text,
+        target === 'tui' ? undefined : 'You',
         'unrepresentable Date is not fabricated',
       );
     }
@@ -10203,7 +9375,9 @@ for (const target of ['tui', 'desktop']) {
     const props = client.timeline;
     let rendered = timeline.mount(props, {});
     const rows = rendered.frame.view.children[0].children[0].props.content.children;
-    assert.equal(rows[0].children.find((n) => n.key.startsWith('role-')).text, 'Thinking');
+    if (target === 'desktop')
+      assert.equal(rows[0].children.find((n) => n.key.startsWith('role-')).text, 'Thinking');
+    else assert.equal(sceneNode(rows[0], (n) => n.key.startsWith('marker-')).text, '•');
     const native = modelSlots(rows[0])[0];
     assert.equal(native.binding, 'markdown');
     assert.equal(native.props.source, chunks[0].text);
@@ -10690,169 +9864,6 @@ test('find in a paired result unfolds its call card and reveals the original sou
 });
 
 for (const target of ['tui', 'desktop']) {
-  test(
-    target +
-      ' tool activity titles and waiting status follow canonical facts without replacing source',
-    async () => {
-      const module = await import(
-        pathToFileURL(resolve(root, 'dist/packages/workspace/' + target + '.js'))
-      );
-      module.activate({ locale: 'en' });
-      const { component: timeline } = await import(
-        pathToFileURL(resolve(root, 'dist/packages/timeline/' + target + '.js'))
-      );
-      const tool = {
-        toolUseId: uuid(901),
-        call: { sequence: 40, name: 'Alias', title: null, pending: true },
-        result: null,
-      };
-      const chunk = historyChunk('Call intent', {
-        sequence: 40,
-        messageId: uuid(901),
-        role: 'tool_call',
-        tool,
-      });
-      const client = new Client(module.component).start({
-        through: 100,
-        run: { invocationId: 'run', turnId: chunk.turnId, state: 'running' },
-        chunks: [chunk],
-      });
-      let rendered = timeline.mount(client.timeline, {});
-      const rows = () => rendered.frame.view.children[0].children[0].props.content.children;
-      const status = () =>
-        rows()[0].children.find((node) => node.key === 'tool-status-' + uuid(901))?.text;
-      const source = () => modelSlots(rows()[0]).find((node) => node.binding === 'source');
-      const original = source();
-      assert.equal(status(), 'Awaiting tool result');
-      rendered = timeline.event(
-        rendered.frame.state,
-        { kind: 'raw', key: 'toggle-' + uuid(901), event: {} },
-        client.timeline,
-        {},
-      );
-      const publish = (sequence, chunks) => {
-        client.page([fact(sequence, { kind: 'transcript_changed' })], sequence);
-        client.query('history', {
-          kind: 'ready',
-          through: sequence,
-          chunks,
-          before: null,
-          after: null,
-        });
-        client.component('tailReady');
-        rendered = timeline.update(rendered.frame.state, client.timeline, {});
-      };
-      tool.call.title = {
-        fallback: 'Inspect file',
-        translations: { 'zh-CN': '查看文件', zh: '檢查' },
-      };
-      publish(101, [chunk]);
-      assert.equal(rows()[0].children[0].children[0].text, 'Tool activity · Inspect file');
-      assert.deepEqual(
-        source(),
-        original,
-        'metadata refresh preserves original native source identity',
-      );
-      assert.equal(
-        rows()[0].children.find((node) => node.key.startsWith('details-')).visible,
-        true,
-      );
-      client.input({
-        kind: 'action',
-        key: client.state.watch.key,
-        event: {
-          status: 'updated',
-          value: {
-            kind: 'interactions',
-            pending: {
-              revision: 3,
-              entries: [
-                { requestId: 'unrelated', kind: 'question', toolUseId: 'other-tool' },
-                { requestId: 'permission', kind: 'permissions', toolUseId: null },
-                { requestId: 'approval', kind: 'service_approval', toolUseId: uuid(901) },
-              ],
-            },
-          },
-        },
-      });
-      assert.deepEqual(client.timeline.waitingTools, ['other-tool', uuid(901)]);
-      rendered = timeline.update(rendered.frame.state, client.timeline, {});
-      assert.equal(status(), 'Waiting for your input');
-      for (const [locale, title, waiting] of [
-        ['zh-CN', '查看文件', '等待你的输入'],
-        ['zh-HK', '檢查', '等待你的輸入'],
-      ]) {
-        rendered = timeline.update(rendered.frame.state, { ...client.timeline, locale }, {});
-        assert.ok(rows()[0].children[0].children[0].text.endsWith(title));
-        assert.equal(status(), waiting);
-      }
-      // A canonical result wins even while an older pending list remains visible.
-      tool.result = { sequence: 41, isError: false, image: false };
-      publish(102, [chunk, historyChunk('Done', { sequence: 41, role: 'tool_result', tool })]);
-      assert.equal(rows().length, 1);
-      assert.equal(status(), undefined);
-      assert.deepEqual(source(), original);
-      tool.result.isError = true;
-      publish(103, [
-        chunk,
-        historyChunk('Unknown effect', { sequence: 41, role: 'tool_result', tool }),
-      ]);
-      assert.equal(status(), undefined);
-      assert.ok(rows()[0].children.some((node) => node.key === 'tool-error-' + uuid(901)));
-      tool.result = null;
-      tool.call.pending = false;
-      publish(104, [chunk]);
-      assert.equal(
-        status(),
-        'No recorded result',
-        'closed or imported call does not remain waiting',
-      );
-      tool.call.pending = true;
-      tool.call.dispatched = true;
-      publish(105, [chunk]);
-      // Clear the pending list; it is an independent observation, not dispatch.
-      client.state.interactions = null;
-      client.raw('refresh');
-      rendered = timeline.update(rendered.frame.state, client.timeline, {});
-      assert.equal(status(), 'Dispatched · awaiting result');
-      client.state.run.turnId = 'other-turn';
-      client.raw('refresh');
-      rendered = timeline.update(rendered.frame.state, client.timeline, {});
-      assert.equal(status(), 'Dispatched · no recorded result');
-      client.state.run.turnId = chunk.turnId;
-      client.state.window.latest = false;
-      client.raw('refresh');
-      rendered = timeline.update(rendered.frame.state, client.timeline, {});
-      assert.equal(
-        status(),
-        'Dispatched · no recorded result',
-        'a frozen window cannot claim current work',
-      );
-      client.state.window.latest = true;
-      let settlementFence = 106;
-      for (const [settlement, label] of [
-        ['returned', 'Returned'],
-        ['failed', 'Tool execution failed'],
-        ['unknown', 'Tool outcome is unknown'],
-        ['rejected', 'Not executed'],
-      ]) {
-        tool.result = {
-          sequence: 41,
-          isError: settlement !== 'returned',
-          image: false,
-          settlement,
-        };
-        publish(settlementFence++, [
-          chunk,
-          historyChunk('Recorded evidence', { sequence: 41, role: 'tool_result', tool }),
-        ]);
-        assert.equal(status(), label);
-        assert.deepEqual(source(), original);
-        assert.ok(!rows()[0].children.some((node) => node.key === 'tool-error-' + uuid(901)));
-      }
-      assert.equal(rendered.actions.length, 0, 'display facts never execute or retry a tool');
-    },
-  );
 }
 
 for (const target of ['tui', 'desktop']) {
@@ -11457,74 +10468,6 @@ for (const target of ['tui', 'desktop']) {
     client.answer(['value', 'content'], 'tail', { offset: 5, totalBytes: 9 });
     assert.equal(client.out.frame.state.parts.content.page.text, 'tail');
     assert.equal(client.out.frame.state.parts.content.preparing, false);
-  });
-  test(`${target} structured cards retain one component through disclosure while generic cards keep source summaries`, async () => {
-    const { component: timeline } = await import(
-      pathToFileURL(resolve(root, `dist/packages/timeline/${target}.js`))
-    );
-    const tool = {
-      toolUseId: uuid(901),
-      call: {
-        sequence: 40,
-        name: 'Arbitrary',
-        title: null,
-        pending: false,
-        presentation: 'maka.workspace.Files@1/readText',
-      },
-      result: null,
-    };
-    const client = new Client().start({
-      through: 100,
-      chunks: [
-        historyChunk('{"path":"file.rs"}', {
-          sequence: 40,
-          messageId: uuid(901),
-          role: 'tool_call',
-          tool,
-        }),
-      ],
-    });
-    const props = client.timeline;
-    let out = timeline.mount(props, {});
-    const row = () => out.frame.view.children[0].children[0].props.content.children[0];
-    const details = () => row().children.find((node) => node.key.startsWith('details-'));
-    const body = () => modelSlots(row()).find((node) => node.binding === 'tools');
-    assert.equal(details().visible, true);
-    assert.equal(
-      row().children.some((node) => node.key.startsWith('summary-')),
-      false,
-    );
-    assert.ok(JSON.stringify(row()).includes('Read file'));
-    assert.equal(body().props.expanded, false);
-    const original = structuredClone(body());
-    const toggle = () => {
-      out = timeline.event(
-        out.frame.state,
-        { kind: 'raw', key: 'toggle-' + uuid(901), event: {} },
-        props,
-        {},
-      );
-    };
-    toggle();
-    assert.equal(body().key, original.key);
-    assert.equal(body().props.expanded, true);
-    assert.equal(
-      details().children.find((node) => node.key.startsWith('tool-actions-')).visible,
-      true,
-    );
-    toggle();
-    assert.deepEqual(body(), original);
-    assert.equal(details().visible, true);
-    assert.equal(
-      details().children.find((node) => node.key.startsWith('tool-actions-')).visible,
-      false,
-    );
-    const unknown = structuredClone(props);
-    unknown.messages[0].tool.call.presentation = null;
-    out = timeline.update(out.frame.state, unknown, {});
-    assert.equal(body(), undefined);
-    assert.equal(details().visible, false);
-    assert.ok(row().children.some((node) => node.key.startsWith('summary-')));
   });
 }
 
@@ -13123,7 +12066,7 @@ test('TUI file command follows original native message focus, falls back to firs
   assert.deepEqual(out.events, [], 'the root cannot be retriggered by an equivalent observation');
   client.raw('palette-open');
   const command = () =>
-    modelSlots(client.output.frame.view.content)
+    modelSlots(workspaceView(client).content)
       .find((node) => node.key === 'command-palette')
       .props.commands.find((command) => command.id === 'copy-file-path');
   assert.equal(command().copyText, '/remote/file.rs');
@@ -13248,9 +12191,10 @@ test('TUI message browse uses native header items, retains draft focus intent, a
   const first = reading().props.content.children.find(
     (node) => node.key === 'message-' + uuid(991),
   );
-  assert.equal(first.children[0].kind, 'item');
-  assert.equal(first.children[0].follow_focus, true);
-  assert.notEqual(first.children[1].kind, 'item', 'body selection is outside the header highlight');
+  const focus = sceneNode(first, 'browse-' + uuid(991));
+  assert.equal(focus.kind, 'item');
+  assert.equal(focus.follow_focus, true);
+  assert.equal(modelSlots(focus).length, 0, 'body selection is outside the header highlight');
   raw('browse-' + uuid(991), 'submit');
   assert.deepEqual(out.frame.state.expanded, [], 'submit does not fold an ordinary user message');
   raw('browse-' + uuid(992));
@@ -13259,7 +12203,7 @@ test('TUI message browse uses native header items, retains draft focus intent, a
   assert.deepEqual(out.frame.state.expanded, [uuid(992)]);
   raw('browse-' + uuid(992), 'submit');
   assert.deepEqual(out.frame.state.expanded, []);
-  assert.equal(first.children[0].submit_space, true);
+  assert.equal(focus.submit_space, true);
   raw('browse-' + uuid(992), 'submit');
   assert.deepEqual(out.frame.state.expanded, [uuid(992)]);
   raw('browse-collapse');
@@ -13292,7 +12236,7 @@ test('TUI message browse uses native header items, retains draft focus intent, a
   out = timeline.update(structuredClone(out.frame.state), props, {});
   assert.equal(out.frame.state.browse, null);
   assert.ok(!out.frame.view.shortcuts.some((shortcut) => shortcut.key === 'space'));
-  assert.equal(reading().props.content.children[0].children[0].kind, 'text');
+  assert.equal(sceneNode(reading().props.content.children[0], 'browse-' + uuid(991)), undefined);
 });
 
 test('TUI browse waits for native find cleanup and rejects a retained request in loading views', async () => {

@@ -149,6 +149,7 @@ function frame<N extends Node>(
       ],
       {
         padding: target === 'desktop' ? 28 : 1,
+        background: theme.background,
         gap: target === 'desktop' ? (state.route === 'overview' ? 24 : 12) : 1,
         terminal: { grow: 1 },
         style: { width: fill, height: fill, maxWidth: 960, minWidth: 0 },

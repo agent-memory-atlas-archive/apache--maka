@@ -284,8 +284,8 @@ function frame<N extends Node>(
             ],
             {
               row: target === 'desktop',
-              gap: target === 'desktop' ? 16 : 0,
-              padding: target === 'desktop' ? 12 : 0,
+              gap: target === 'desktop' ? 16 : 1,
+              padding: target === 'desktop' ? 12 : 1,
               surface: target === 'desktop',
               style: { width: fill, wrap: true, shrink: 0, radius: 10, align: 'center' },
             },
@@ -297,10 +297,16 @@ function frame<N extends Node>(
       ui.box(
         'deployment-title-row',
         [
-          ui.button('deployment-back', text.back),
+          ui.button(
+            'deployment-back',
+            text.back,
+            false,
+            false,
+            target === 'tui' ? { background: 0, align: 'start' } : {},
+          ),
           ui.text('deployment-title', text.deploymentTitle, 22, props.theme.text, 600),
         ],
-        { row: target === 'desktop', gap: target === 'desktop' ? 8 : 0 },
+        { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
       ),
       ...(!current && !history
         ? [ui.text('deployment-help', text.deploymentHelp, 13, props.theme.muted)]
@@ -312,7 +318,7 @@ function frame<N extends Node>(
         ? [ui.text('deployment-loading', text.connecting, 13, props.theme.muted)]
         : []),
     ],
-    { gap: target === 'desktop' ? 8 : 0, style: { shrink: 0 } },
+    { gap: target === 'desktop' ? 8 : 1, style: { shrink: 0 } },
   );
   const footer = ui.box(
     'deployment-controls',
@@ -323,14 +329,36 @@ function frame<N extends Node>(
         ]
       : history
         ? [
-            ui.button('deployment-history-back', text.back),
-            ui.button('deployment-history-refresh', text.refreshDefaultOperations, !!state.pending),
+            ui.button(
+              'deployment-history-back',
+              text.back,
+              false,
+              false,
+              target === 'tui' ? { background: 0, align: 'start' } : {},
+            ),
+            ui.button(
+              'deployment-history-refresh',
+              target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.refreshDefaultOperations,
+              !!state.pending,
+              false,
+              target === 'tui' ? { background: 0 } : {},
+              undefined,
+              text.refreshDefaultOperations,
+            ),
             ...(state.historyNext !== null
               ? [ui.button('deployment-history-more', text.moreOperations, !!state.pending)]
               : []),
           ]
         : [
-            ui.button('deployment-refresh', text.deploymentRefresh, busy),
+            ui.button(
+              'deployment-refresh',
+              target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.deploymentRefresh,
+              busy,
+              false,
+              target === 'tui' ? { background: 0 } : {},
+              undefined,
+              text.deploymentRefresh,
+            ),
             ...(state.previous.length
               ? [ui.button('deployment-previous', text.deploymentPrevious, busy)]
               : []),
@@ -342,7 +370,12 @@ function frame<N extends Node>(
             ui.button('deployment-advanced', text.deploymentEdit, busy || !state.page),
             ui.button('deployment-import', text.deploymentInstall, busy || !state.page),
           ],
-    { row: target === 'desktop', gap: 0, style: { wrap: true, shrink: 0 } },
+    {
+      row: true,
+      gap: target === 'desktop' ? 8 : 1,
+      terminal: { wrap: true },
+      style: { wrap: true, shrink: 0 },
+    },
   );
   const out = output(
     state,
@@ -405,7 +438,7 @@ function frame<N extends Node>(
     ],
     {
       gap: 0,
-      padding: target === 'desktop' ? 24 : 0,
+      padding: target === 'desktop' ? 24 : 1,
       style: { width: fill, height: fill, maxWidth: 808, minWidth: 0 },
       terminal: { grow: 1 },
     },

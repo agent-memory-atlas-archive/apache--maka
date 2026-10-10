@@ -231,8 +231,12 @@ impl Presenter {
         };
         if choice.disabled {
             style = style.add_modifier(Modifier::DIM);
-        } else if self.focus.as_ref().is_some_and(|focus| focus.same(&target)) {
-            style = style.add_modifier(Modifier::REVERSED);
+        }
+        let mut value_style = style.bg(paint::color(choice.background));
+        if !choice.disabled && self.focus.as_ref().is_some_and(|focus| focus.same(&target)) {
+            value_style = value_style
+                .fg(paint::color(choice.accent))
+                .add_modifier(Modifier::UNDERLINED);
         }
         let tail = format!(
             "{} {}",
@@ -254,7 +258,7 @@ impl Presenter {
                 area.clip,
             ),
             buffer,
-            style,
+            value_style,
         );
         if !choice.disabled && !choice.options.is_empty() && !area.is_empty() {
             scene.targets.push(target);

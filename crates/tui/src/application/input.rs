@@ -191,22 +191,46 @@ impl Widget for Recipe {
         let owner = slots.native_state::<Owner>()?;
         let focused = slots.focused();
         let appearance = &self.props.appearance;
+        let terminal = appearance.terminal.as_ref();
+        let foreground = terminal.map_or_else(
+            || color(appearance.text.foreground),
+            |p| super::paint::color(p.foreground),
+        );
+        let background = terminal.map_or_else(
+            || color(appearance.background),
+            |p| super::paint::color(p.background),
+        );
+        let selection = terminal.map_or_else(
+            || color(appearance.selection),
+            |p| super::paint::color(p.selection),
+        );
+        let selection_text = terminal.map_or(foreground, |p| super::paint::color(p.selection_text));
+        let muted = terminal.map_or_else(
+            || color(appearance.muted_foreground),
+            |p| super::paint::color(p.subtle),
+        );
+        let border = terminal.map_or_else(
+            || {
+                color(if focused {
+                    appearance.focused_border
+                } else {
+                    appearance.border
+                })
+            },
+            |p| super::paint::color(if focused { p.accent } else { p.border }),
+        );
         buffer.set_style(
             area.visible(),
-            Style::default()
-                .bg(color(appearance.background))
-                .fg(color(appearance.text.foreground)),
+            Style::default().bg(background).fg(foreground),
         );
         let inner = if appearance.border_width > 0.0 {
             super::border::paint(
                 buffer,
                 area,
-                color(if focused {
-                    appearance.focused_border
-                } else {
-                    appearance.border
-                }),
-                if appearance.radius > 0.0 {
+                border,
+                if appearance.ascii {
+                    maka_ui::scene::terminal::BorderStyle::Ascii
+                } else if appearance.radius > 0.0 {
                     maka_ui::scene::terminal::BorderStyle::Rounded
                 } else {
                     maka_ui::scene::terminal::BorderStyle::Square
@@ -220,12 +244,8 @@ impl Widget for Recipe {
             inner,
             buffer,
             focused,
-            Style::default()
-                .fg(color(appearance.text.foreground))
-                .bg(color(appearance.background)),
-            Style::default()
-                .bg(color(appearance.selection))
-                .fg(color(appearance.text.foreground)),
+            Style::default().fg(foreground).bg(background),
+            Style::default().bg(selection).fg(selection_text),
             Style::default().add_modifier(Modifier::REVERSED),
         );
         if owner.editor.text().is_empty() {
@@ -233,7 +253,7 @@ impl Widget for Recipe {
                 &self.props.placeholder,
                 inner,
                 buffer,
-                Style::default().fg(color(appearance.muted_foreground)),
+                Style::default().fg(muted),
             );
         }
         let autofocus = owner.focus.pending();

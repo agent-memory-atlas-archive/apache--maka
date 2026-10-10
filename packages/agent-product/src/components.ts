@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { tuiText } from './tui-locale.js';
 import type {
   Component,
   AgentSession,
@@ -121,6 +122,7 @@ interface Reading extends Revision {
   search: ConversationSearch | null;
   expanded: string[];
   observation: ReadingObservation | null;
+  scrollRevision: number;
   command: ReadingCommand | null;
   landing: TimelineProps['landing'];
   files: Record<string, ToolFileContext>;
@@ -226,7 +228,8 @@ export function components<N extends Node>(
       tabIndex: 1,
       autoFocus: props.autoFocus,
       initialText: '',
-      placeholder: text.placeholder,
+      placeholder:
+        target === 'tui' ? tuiText(props.locale, 'composer-placeholder') : text.placeholder,
       command: null,
       filePaste: null,
       fileCommand: null,
@@ -303,14 +306,61 @@ export function components<N extends Node>(
         ...(target === 'desktop' ? [ui.text('hint', text.enterHint, 12, props.theme.muted)] : []),
         ...(props.running
           ? [
-              ui.button('stop', text.stop, props.busy),
-              ...(target === 'tui' ? [ui.button('send', text.send, !available, true)] : []),
+              ui.button(
+                'stop',
+                target === 'tui' ? (props.theme.ascii ? 'x' : '■') : text.stop,
+                props.busy,
+                false,
+                target === 'tui' ? { background: 0 } : {},
+                undefined,
+                text.stop,
+              ),
+              ...(target === 'tui'
+                ? [
+                    ui.button(
+                      'send',
+                      target === 'tui'
+                        ? props.running
+                          ? props.theme.ascii
+                            ? '+'
+                            : '↳'
+                          : props.theme.ascii
+                            ? '>'
+                            : '➤'
+                        : text.send,
+                      !available,
+                      true,
+                      target === 'tui' ? { background: 0 } : {},
+                      undefined,
+                      text.send,
+                    ),
+                  ]
+                : []),
             ]
-          : [ui.button('send', text.send, !available, true)]),
+          : [
+              ui.button(
+                'send',
+                target === 'tui'
+                  ? props.running
+                    ? props.theme.ascii
+                      ? '+'
+                      : '↳'
+                    : props.theme.ascii
+                      ? '>'
+                      : '➤'
+                  : text.send,
+                !available,
+                true,
+                target === 'tui' ? { background: 0 } : {},
+                undefined,
+                text.send,
+              ),
+            ]),
       ],
       {
         row: true,
-        terminal: { wrap: true },
+        gap: target === 'tui' ? 0 : undefined,
+        terminal: { basis: props.running ? 6 : 3 },
         style: { justify: 'between', align: 'center', width: fill },
       },
     );
@@ -336,12 +386,32 @@ export function components<N extends Node>(
         ...(props.context && !current
           ? [ui.text('draft-capacity', text.draftCapacity, 13, props.theme.muted)]
           : []),
+        ...(target === 'tui'
+          ? [
+              ui.box(
+                'composer-add-cell',
+                [
+                  ui.button(
+                    'attach',
+                    '+',
+                    props.busy || !props.context || loading || failed || unknown,
+                    false,
+                    { background: 0 },
+                    undefined,
+                    text.attachmentTitle,
+                  ),
+                ],
+                { terminal: { basis: 4 } },
+              ),
+            ]
+          : []),
         editor,
         controls,
       ],
       {
         row: target === 'tui',
         border: target === 'tui',
+        busy: props.running,
         gap: target === 'tui' ? 0 : 12,
         terminal: { shrink: true },
         style: { width: fill },
@@ -381,7 +451,7 @@ export function components<N extends Node>(
         'session-groups',
         sessionGroups(props).flatMap((group, index) => {
           const open = groupOpen(state, group.key);
-          const heading = `${open ? '▾' : '▸'} ${group.label}  ${group.sessions.length}`;
+          const heading = `${open ? (props.theme.ascii ? 'v' : '▾') : props.theme.ascii ? '>' : '▸'} ${group.label}  ${group.sessions.length}`;
           const label = ui.text(`${group.key}-label`, heading, 12, props.theme.muted, 500, {
             truncate: true,
           });
@@ -398,7 +468,7 @@ export function components<N extends Node>(
             ...(open
               ? group.sessions.map((session, at) => {
                   const current = session.id === props.selected;
-                  return ui.item
+                  const row = ui.item
                     ? ui.item(
                         session.id,
                         ui.box(
@@ -407,20 +477,34 @@ export function components<N extends Node>(
                             ui.box(
                               `session-status-${index}-${at}`,
                               [
-                                ui.text(
-                                  `session-glyph-${index}-${at}`,
-                                  session.activity === 'working'
-                                    ? '  ⢁ '
-                                    : session.activity === 'waiting'
-                                      ? '  ◇ '
-                                      : session.hasUnread
-                                        ? '  ● '
-                                        : '    ',
-                                  13,
-                                  session.activity === 'idle' && !session.hasUnread
-                                    ? props.theme.muted
-                                    : props.theme.accent,
-                                ),
+                                ...(session.activity === 'working'
+                                  ? [
+                                      ui.activity(
+                                        `session-glyph-${index}-${at}`,
+                                        'orbit',
+                                        props.theme.accent,
+                                        '  ',
+                                        ' ',
+                                      ),
+                                    ]
+                                  : [
+                                      ui.text(
+                                        `session-glyph-${index}-${at}`,
+                                        session.activity === 'waiting'
+                                          ? props.theme.ascii
+                                            ? '  ! '
+                                            : '  ◇ '
+                                          : session.hasUnread
+                                            ? props.theme.ascii
+                                              ? '  * '
+                                              : '  ● '
+                                            : '    ',
+                                        13,
+                                        session.activity === 'waiting'
+                                          ? props.theme.warning
+                                          : props.theme.accent,
+                                      ),
+                                    ]),
                               ],
                               { terminal: { basis: 4, shrink: false } },
                             ),
@@ -476,6 +560,15 @@ export function components<N extends Node>(
                           ...(current ? { background: props.theme.selected } : {}),
                         },
                       );
+                  return ui.contextMenu
+                    ? ui.contextMenu('session-menu-' + session.id, session.title, row, [
+                        ui.button(
+                          'details-' + session.id,
+                          copy(props.locale).detailsTitle,
+                          props.busy,
+                        ),
+                      ])
+                    : row;
                 })
               : []),
           ];
@@ -594,7 +687,18 @@ export function components<N extends Node>(
               'markdown',
               {
                 source: message.text,
-                appearance: props.theme.markdown,
+                appearance:
+                  message.role === 'thinking' && target === 'tui'
+                    ? {
+                        ...props.theme.markdown,
+                        body: { ...props.theme.markdown.body, foreground: props.theme.thinking },
+                        terminal: props.theme.terminal
+                          ? { ...props.theme.terminal, foreground: props.theme.terminal.thinking }
+                          : null,
+                      }
+                    : props.theme.markdown,
+                animate: props.live && props.theme.motion,
+                ascii: props.theme.ascii,
                 focusOnPointer: !search,
                 selectable: true,
                 disabled: false,
@@ -609,6 +713,7 @@ export function components<N extends Node>(
                 focusOnPointer: !search,
                 appearance: props.theme.markdown.body,
                 selection: props.theme.markdown.selection,
+                terminal: props.theme.terminal,
                 disabled: false,
               },
               {},
@@ -654,6 +759,7 @@ export function components<N extends Node>(
                             focusOnPointer: !search,
                             appearance: props.theme.markdown.body,
                             selection: props.theme.markdown.selection,
+                            terminal: props.theme.terminal,
                             disabled: false,
                           },
                           {},
@@ -736,8 +842,14 @@ export function components<N extends Node>(
       );
       if (!timing) return [messageNode];
       const mark = timing.finished
-        ? { completed: '✓', failed: '!', aborted: '■' }[timing.finished.outcome]
-        : '·';
+        ? {
+            completed: props.theme.ascii ? '+' : '✓',
+            failed: '!',
+            aborted: props.theme.ascii ? 'x' : '■',
+          }[timing.finished.outcome]
+        : props.theme.ascii
+          ? '.'
+          : '·';
       return [
         messageNode,
         presentation.slot(
@@ -746,6 +858,11 @@ export function components<N extends Node>(
           {
             text: mark + ' ',
             elapsed: { from: timing.startedAt, to: timing.finished?.at ?? null },
+            terminalForeground: props.theme.terminal
+              ? timing.finished
+                ? props.theme.terminal.muted
+                : props.theme.terminal.accent
+              : null,
             appearance: {
               font: { ...props.theme.markdown.body.font, size: 12 },
               foreground: timing.finished ? props.theme.muted : props.theme.accent,
@@ -758,7 +875,7 @@ export function components<N extends Node>(
     const content = ui.box(
       'timeline',
       [
-        ...(!messages.length && !props.loading
+        ...(target === 'desktop' && !messages.length && !props.loading
           ? [
               ui.box(
                 'welcome-column',
@@ -816,14 +933,29 @@ export function components<N extends Node>(
             : []),
           ...(props.source.failed ? [ui.button('source-retry', text.sourceRetry)] : []),
         ]
-      : [
-          ...(props.older ? [ui.button('older', text.older, props.loading)] : []),
-          ...(props.newer ? [ui.button('newer', text.newer, props.loading)] : []),
-          ...(props.latest ? [ui.button('latest', text.latest, props.loading)] : []),
-          ...(state.observation?.viewport && !state.observation.viewport.atEnd
-            ? [ui.button('end', text.toEnd, state.observation.pendingCommand != null)]
-            : []),
-        ];
+      : target === 'tui'
+        ? props.latest || (state.observation?.viewport && !state.observation.viewport.atEnd)
+          ? [
+              ui.box('reading-control-space', [], { terminal: { grow: 1 } }),
+              ui.button(
+                props.latest ? 'latest' : 'end',
+                props.theme.ascii ? 'v' : '↓',
+                props.loading,
+                false,
+                { background: 0 },
+                undefined,
+                props.latest ? text.latest : text.toEnd,
+              ),
+            ]
+          : []
+        : [
+            ...(props.older ? [ui.button('older', text.older, props.loading)] : []),
+            ...(props.newer ? [ui.button('newer', text.newer, props.loading)] : []),
+            ...(props.latest ? [ui.button('latest', text.latest, props.loading)] : []),
+            ...(state.observation?.viewport && !state.observation.viewport.atEnd
+              ? [ui.button('end', text.toEnd, state.observation.pendingCommand != null)]
+              : []),
+          ];
     const out = output(
       state,
       ui.box(
@@ -958,6 +1090,7 @@ export function components<N extends Node>(
                               ? props.theme.markdown.body
                               : props.theme.markdown.code,
                           selection: props.theme.markdown.selection,
+                          terminal: props.theme.terminal,
                           disabled: false,
                         },
                         {},
@@ -1188,6 +1321,8 @@ export function components<N extends Node>(
         ) {
           return composerFrame(next, props, [{ name: 'send', value: observation }]);
         }
+        if (input.kind === 'raw' && input.key === 'attach' && props.context && !props.busy)
+          return composerFrame(next, props, [{ name: 'attachments', value: {} }]);
         if (input.kind === 'raw' && input.key === 'stop' && props.running && !props.busy)
           return composerFrame(next, props, [{ name: 'stop', value: {} }]);
         return composerFrame(next, props);
@@ -1222,8 +1357,12 @@ export function components<N extends Node>(
             const session = groups
               .filter((group) => groupOpen(next, group.key))
               .flatMap((group) => group.sessions)
-              .find((session) => session.id === input.key);
-            if (session) events.push({ name: 'select', value: { sessionId: session.id } });
+              .find((session) => session.id === input.key || 'details-' + session.id === input.key);
+            if (session)
+              events.push({
+                name: 'select',
+                value: { sessionId: session.id, details: input.key === 'details-' + session.id },
+              });
           }
         }
         const out = navigationFrame(next, props);
@@ -1242,6 +1381,7 @@ export function components<N extends Node>(
           files: {},
           fileContext: null,
           observation: null,
+          scrollRevision: 0,
           command:
             props.landing.sequence > 0
               ? { sequence: 1, target: { kind: props.landing.edge } }
@@ -1384,6 +1524,26 @@ export function components<N extends Node>(
               : [...next.expanded, tool.id];
         }
         const out = timelineFrame(next, props, messageCopyObservation(state));
+        const observed = next.observation;
+        if (
+          target === 'tui' &&
+          !props.source &&
+          !next.search &&
+          !props.loading &&
+          input.kind === 'component' &&
+          input.child === 'reading' &&
+          input.name === 'observed' &&
+          observed?.scroll &&
+          observed.scroll.readingRevision > next.scrollRevision &&
+          observed.viewport?.readingRevision === observed.readingRevision &&
+          observed.pendingCommand == null
+        ) {
+          next.scrollRevision = observed.scroll.readingRevision;
+          if (observed.scroll.direction === 'up' && observed.viewport.atStart && props.older)
+            out.events.push({ name: 'older', value: {} });
+          else if (observed.scroll.direction === 'down' && observed.viewport.atEnd && props.newer)
+            out.events.push({ name: 'newer', value: {} });
+        }
         if (
           !props.source &&
           !props.browse &&

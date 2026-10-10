@@ -247,6 +247,8 @@ function frame<N extends Node>(
     width: fill,
     minWidth: 0,
     justify: 'start',
+    align: 'start',
+    ...(target === 'tui' ? { background: 0 } : {}),
     truncate: true,
   });
 
@@ -264,7 +266,7 @@ function frame<N extends Node>(
           [
             ui.text(
               `model-name-${at}`,
-              `${active ? '›' : ' '} ${choice.label}`,
+              `${active ? (props.theme.ascii ? '>' : '›') : ' '} ${choice.label}`,
               13,
               props.theme.text,
               400,
@@ -315,7 +317,15 @@ function frame<N extends Node>(
     'model-actions',
     [
       ...(state.next ? [ui.button('more', text.moreModels, !!state.pending || props.busy)] : []),
-      ui.button('refresh', text.refreshModels, !!state.pending || props.busy),
+      ui.button(
+        'refresh',
+        target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.refreshModels,
+        !!state.pending || props.busy,
+        false,
+        target === 'tui' ? { background: 0 } : {},
+        undefined,
+        text.refreshModels,
+      ),
       ui.button('defaults', text.defaultModel),
       ui.button(
         'apply',
@@ -484,8 +494,22 @@ function frame<N extends Node>(
           ui.box(
             'default-navigation',
             [
-              ui.button('default-back', text.models),
-              ui.button('default-refresh', text.refreshModels, !!state.pending),
+              ui.button(
+                'default-back',
+                text.models,
+                false,
+                false,
+                target === 'tui' ? { background: 0, align: 'start' } : {},
+              ),
+              ui.button(
+                'default-refresh',
+                target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.refreshModels,
+                !!state.pending,
+                false,
+                target === 'tui' ? { background: 0 } : {},
+                undefined,
+                text.refreshModels,
+              ),
               ui.button('default-close', text.closeModels),
             ],
             { row: true, gap: 0, terminal: { wrap: true }, style: { wrap: true } },

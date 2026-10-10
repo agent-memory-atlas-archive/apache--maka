@@ -26,7 +26,6 @@ use maka_runtime::{
     composition::SourceRevision,
     configuration::{ModelCapabilities, ModelInfo, ModelSelection},
     execution::{ModelBinding, ThinkingLevel},
-    scope::Scope,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -68,8 +67,14 @@ pub(crate) struct AcceptedModel {
     provider_configuration: Value,
     basis: ExecutionBasis,
 }
+#[derive(Clone)]
+pub(crate) struct Credentials {
+    pub executor: maka_model::ModelExecutor,
+    pub refresh: Arc<maka_runtime_host::oauth::Authority>,
+}
 pub(crate) struct Source {
     configuration: Arc<ConfigurationStore>,
+    credentials: Credentials,
     pub accepted: AcceptedModel,
     definition: Arc<Definition>,
     session: String,
@@ -78,6 +83,7 @@ pub(crate) struct Source {
 impl Source {
     pub async fn select(
         configuration: Arc<ConfigurationStore>,
+        credentials: Credentials,
         selection: ModelSelection,
         thinking_level: Option<ThinkingLevel>,
         session: String,
@@ -89,20 +95,13 @@ impl Source {
             .map_err(|_| unavailable())?
             .ok_or_else(unavailable)?;
         let row = &material.connection;
-        if row.provider.package_id != maka_providers::api::ID
-            || row.provider.entry_id != maka_providers::api::ID
-            || row.provider.scope != Scope::Profile
-        {
-            return Err(unavailable());
-        }
-        let definition = Arc::new(
-            maka_providers::api::ApiProviders::definition(&row.provider.name)
-                .map_err(|_| unavailable())?,
-        );
+        let definition =
+            Arc::new(maka_providers::definition(&row.provider).map_err(|_| unavailable())?);
         let model = resolve(&definition, row, &selection.model_id, thinking_level).await?;
         revision.name = row.provider.name.clone();
         let source = Self {
             configuration,
+            credentials,
             accepted: AcceptedModel {
                 binding: ModelBinding {
                     connection_id: row.connection_id.clone(),
@@ -123,23 +122,17 @@ impl Source {
     }
     pub fn restore(
         configuration: Arc<ConfigurationStore>,
+        credentials: Credentials,
         accepted: AcceptedModel,
         session: String,
         mut revision: SourceRevision,
     ) -> Result<Self, RunError> {
-        if accepted.provider.package_id != maka_providers::api::ID
-            || accepted.provider.entry_id != maka_providers::api::ID
-            || accepted.provider.scope != Scope::Profile
-        {
-            return Err(unavailable());
-        }
-        let definition = Arc::new(
-            maka_providers::api::ApiProviders::definition(&accepted.provider.name)
-                .map_err(|_| unavailable())?,
-        );
+        let definition =
+            Arc::new(maka_providers::definition(&accepted.provider).map_err(|_| unavailable())?);
         revision.name = accepted.provider.name.clone();
         Ok(Self {
             configuration,
+            credentials,
             accepted,
             definition,
             session,
@@ -156,16 +149,41 @@ impl Source {
             return Err(unavailable());
         }
         let row = &material.connection;
+        let network = maka_network::Policy::from_host_settings(
+            &material.network.proxy,
+            material.network.password.as_deref(),
+        )
+        .map_err(|_| unavailable())?;
+        let credential = match material.credential {
+            Some(snapshot) if snapshot.credential().refresh_at.is_some() => Some(
+                self.credentials
+                    .refresh
+                    .bind(snapshot)
+                    .map_err(|_| RunError::InvalidInput("agent_authentication_unavailable".into()))?
+                    .resolve_native(
+                        self.accepted.provider.clone(),
+                        self.definition.clone(),
+                        maka_plugins::provider::Context {
+                            transport: self
+                                .credentials
+                                .executor
+                                .transport(&network)
+                                .map_err(|_| unavailable())?,
+                            cancellation: tokio_util::sync::CancellationToken::new(),
+                            interaction: None,
+                        },
+                    )
+                    .await
+                    .map_err(|_| RunError::InvalidInput("agent_authentication_unavailable".into()))?
+                    .credential()
+                    .clone(),
+            ),
+            Some(snapshot) => Some(snapshot.credential().clone()),
+            None => None,
+        };
         let credentials = self
             .definition
-            .authorize(
-                connection(row),
-                material
-                    .credential
-                    .as_ref()
-                    .map(|value| value.credential().clone()),
-                self.session.clone(),
-            )
+            .authorize(connection(row), credential, self.session.clone())
             .await
             .map_err(|_| RunError::InvalidInput("agent_authentication_unavailable".into()))?;
         let auth = match credentials {
@@ -174,11 +192,6 @@ impl Source {
                 ProviderAuth::RequestHeaders(headers)
             }
         };
-        let network = maka_network::Policy::from_host_settings(
-            &material.network.proxy,
-            material.network.password.as_deref(),
-        )
-        .map_err(|_| unavailable())?;
         Ok(PreparedModel {
             provider_id: self.accepted.provider.name.clone(),
             provider: ProviderConfig {

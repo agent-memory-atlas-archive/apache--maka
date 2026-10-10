@@ -163,7 +163,7 @@ export function documentView<N extends Node>(
               ui.button('deployment-document-back', text.back),
               ui.text('deployment-document-title', text.deploymentEdit, 22, props.theme.text, 600),
             ],
-            { row: target === 'desktop', gap: target === 'desktop' ? 8 : 0 },
+            { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
           ),
           ui.text('deployment-document-help', text.deploymentEditHelp, 13, props.theme.muted),
           ...(editor.phase === 'loading'
@@ -208,7 +208,7 @@ export function documentView<N extends Node>(
             : []),
           ...(notice ? [ui.text('deployment-document-notice', notice, 13, props.theme.muted)] : []),
         ],
-        { gap: target === 'desktop' ? 8 : 0, style: { shrink: 0 } },
+        { gap: target === 'desktop' ? 8 : 1, style: { shrink: 0 } },
       ),
       ...(diagnostic
         ? [

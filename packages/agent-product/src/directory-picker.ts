@@ -162,14 +162,18 @@ function frame<N extends Node>(
   const buttons = rows(state).map(({ key, directory }, at) => {
     const active = at === state.active;
     const label =
-      (target === 'tui' && active ? '› ' : '') +
+      (target === 'tui' ? (active ? (props.theme.ascii ? '> ' : '› ') : '  ') : '') +
       compactLabel(directory.name, target === 'tui' ? 64 : 120);
     const button = ui.button(key, label, !enabled, false, {
       width: fill,
       minWidth: 0,
       truncate: true,
       justify: 'start',
-      ...(active ? { background: props.theme.selected } : {}),
+      ...(target === 'tui'
+        ? { background: active ? props.theme.selected : 0 }
+        : active
+          ? { background: props.theme.selected }
+          : {}),
     });
 
     return button;
@@ -177,7 +181,9 @@ function frame<N extends Node>(
   const view = ui.box(
     'directory-picker',
     [
-      ui.text('directory-title', text.directoryTitle, 17, props.theme.text, 550),
+      ...(target === 'desktop'
+        ? [ui.text('directory-title', text.directoryTitle, 17, props.theme.text, 550)]
+        : []),
       ui.text('directory-help', text.directoryHelp, 13, props.theme.muted),
       ui.box(
         'directory-query-scope',
@@ -260,13 +266,23 @@ function frame<N extends Node>(
             : []),
           ui.button(
             'refresh',
-            text.directoryRefresh,
+            target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.directoryRefresh,
             !state.open || !props.open || props.busy || !!state.pending,
+            false,
+            target === 'tui' ? { background: 0 } : {},
+            undefined,
+            text.directoryRefresh,
           ),
           ...(current
             ? [ui.button(`${state.pageKey}-choose`, text.directoryChoose, !enabled)]
             : []),
-          ui.button('close', text.cancel),
+          ui.button(
+            'close',
+            text.cancel,
+            false,
+            false,
+            target === 'tui' ? { background: 0, align: 'start' } : {},
+          ),
         ],
         {
           row: true,

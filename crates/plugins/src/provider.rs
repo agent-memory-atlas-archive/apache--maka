@@ -208,6 +208,23 @@ impl Definition {
         Ok(credentials)
     }
 
+    /// Prepare refresh for a trusted native owner, which retains the actual
+    /// implementation and drains settlement independently of request waiters.
+    pub fn prepare_refresh(
+        &self,
+        connection: Connection,
+        credential: Credential,
+    ) -> Result<RefreshCall, Error> {
+        self.validate_configuration(&connection.configuration)?;
+        credential.validate().map_err(Error::Invalid)?;
+        Ok(RefreshCall {
+            call: None,
+            implementation: self.implementation.clone(),
+            connection,
+            credential,
+        })
+    }
+
     /// Authentication after the trusted embedding's actual execution admission.
     /// The embedding owns cancellation and physical settlement, as for authorize.
     pub async fn authenticate(

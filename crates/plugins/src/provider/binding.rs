@@ -132,7 +132,7 @@ impl Binding {
             .validate_configuration(&connection.configuration)?;
         credential.validate().map_err(Error::Invalid)?;
         Ok(RefreshCall {
-            call: self.admit()?,
+            call: Some(self.admit()?),
             implementation: self.definition().implementation.clone(),
             connection,
             credential,
@@ -161,10 +161,10 @@ impl Binding {
 
 /// A single admitted refresh. It owns the provider instance until settlement.
 pub struct RefreshCall {
-    call: CallGuard,
-    implementation: std::sync::Arc<dyn super::Provider>,
-    connection: super::Connection,
-    credential: super::authentication::Credential,
+    pub(super) call: Option<CallGuard>,
+    pub(super) implementation: std::sync::Arc<dyn super::Provider>,
+    pub(super) connection: super::Connection,
+    pub(super) credential: super::authentication::Credential,
 }
 
 impl RefreshCall {

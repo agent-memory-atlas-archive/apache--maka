@@ -27,6 +27,8 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MarkdownAppearance {
+    #[serde(default)]
+    pub terminal: Option<crate::scene::terminal::Palette>,
     pub body: TextAppearance,
     pub code: TextAppearance,
     /// Typography for heading levels 1 through 6, in source order.
@@ -45,6 +47,10 @@ pub struct MarkdownAppearance {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MarkdownProps {
+    #[serde(default)]
+    pub ascii: bool,
+    #[serde(default)]
+    pub animate: bool,
     #[schemars(length(max = 65536))]
     pub source: String,
     pub appearance: MarkdownAppearance,

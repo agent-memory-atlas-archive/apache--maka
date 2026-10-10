@@ -290,7 +290,13 @@ function frame<N extends Node>(
   const form = ui.box(
     'credential-form',
     [
-      ui.button('back', text.back),
+      ui.button(
+        'back',
+        text.back,
+        false,
+        false,
+        target === 'tui' ? { background: 0, align: 'start' } : {},
+      ),
       ui.text('heading', text.credentials, 22, props.theme.text, 600),
       ui.text(
         'connection',
@@ -353,7 +359,7 @@ function frame<N extends Node>(
             ? [ui.button('review', text.reviewConnection, !canReview)]
             : []),
         ],
-        { row: target === 'desktop', gap: target === 'desktop' ? 8 : 0 },
+        { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
       ),
       ...(state.notice ? [ui.text('notice', text[state.notice], 13, props.theme.muted)] : []),
       ...(state.confirmation && state.confirmation !== 'rebase'
@@ -388,15 +394,21 @@ function frame<N extends Node>(
                   state.confirmation === 'leave' ? text.keepEditing : text.cancel,
                 ),
               ],
-              { row: target === 'desktop', gap: 0 },
+              { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
             ),
           ]
         : []),
-      ui.button('history', text.earlierOperations),
+      ui.button(
+        'history',
+        text.earlierOperations,
+        false,
+        false,
+        target === 'tui' ? { background: 0, align: 'start' } : {},
+      ),
     ],
     {
       visible: !state.historyOpen && state.confirmation !== 'rebase',
-      gap: target === 'desktop' ? 14 : 0,
+      gap: target === 'desktop' ? 14 : 1,
       style: { width: fill, minWidth: 0 },
     },
   );
@@ -405,7 +417,13 @@ function frame<N extends Node>(
   const earlier = ui.box(
     'earlier-operations',
     [
-      ui.button('history-back', text.back),
+      ui.button(
+        'history-back',
+        text.back,
+        false,
+        false,
+        target === 'tui' ? { background: 0, align: 'start' } : {},
+      ),
       ui.text('history-heading', text.earlierOperations, 18, props.theme.text, 550),
       ui.text('history-help', text.earlierHelp, 13, props.theme.muted),
       ui.box(
@@ -413,8 +431,12 @@ function frame<N extends Node>(
         [
           ui.button(
             'history-refresh',
-            text.keyRefresh,
+            target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.keyRefresh,
             Object.values(state.pending).some((r) => r.kind === 'history' || r.kind === 'earlier'),
+            false,
+            target === 'tui' ? { background: 0 } : {},
+            undefined,
+            text.keyRefresh,
           ),
           ...(state.historyNext !== null
             ? [
@@ -428,7 +450,7 @@ function frame<N extends Node>(
               ]
             : []),
         ],
-        { row: target === 'desktop', gap: 0 },
+        { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
       ),
       ...(state.historyFailed
         ? [ui.text('history-error', text.historyUnavailable, 13, props.theme.muted)]
@@ -449,7 +471,7 @@ function frame<N extends Node>(
         ),
       ]),
     ],
-    { visible: state.historyOpen, gap: target === 'desktop' ? 12 : 0 },
+    { visible: state.historyOpen, gap: target === 'desktop' ? 12 : 1 },
   );
 
   const reviewed = state.reviewed?.target;
@@ -485,18 +507,18 @@ function frame<N extends Node>(
           ...(page > 0 ? [ui.button('review-previous', text.previousModels)] : []),
           ...(page + 1 < pages ? [ui.button('review-next', text.moreTarget)] : []),
         ],
-        { row: target === 'desktop', gap: 0 },
+        { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
       ),
       ui.text('review-page', page + 1 + ' / ' + pages, 13, props.theme.muted),
       ...details
         .slice(page * pageSize, (page + 1) * pageSize)
         .map((line, at) => ui.text('target-line-' + at, line, 14, props.theme.text)),
     ],
-    { visible: state.confirmation === 'rebase', gap: target === 'desktop' ? 12 : 0 },
+    { visible: state.confirmation === 'rebase', gap: target === 'desktop' ? 12 : 1 },
   );
   const view = ui.box('credential', [form, earlier, reviewPane], {
     gap: 0,
-    padding: target === 'desktop' ? 24 : 0,
+    padding: target === 'desktop' ? 24 : 1,
     scroll: 'anchor',
     style: { width: fill, height: fill, maxWidth: 680, minWidth: 0, minHeight: 0 },
   });

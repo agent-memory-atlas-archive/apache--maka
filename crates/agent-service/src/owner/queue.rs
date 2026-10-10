@@ -237,6 +237,7 @@ impl Owner {
         .await?;
         let source = crate::model::Source::restore(
             self.configuration.clone(),
+            self.credentials.clone(),
             basis.model.clone(),
             invocation.session_id.clone(),
             self.revision.clone(),

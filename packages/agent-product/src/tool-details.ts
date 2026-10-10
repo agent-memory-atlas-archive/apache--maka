@@ -400,7 +400,7 @@ export function toolDetails<N extends Node>(
                 'diff',
                 {
                   content,
-                  ascii: false,
+                  ascii: props.theme.ascii,
                   disabled: false,
                   focusOnPointer: props.focusOnPointer,
                   appearance: {
@@ -409,6 +409,7 @@ export function toolDetails<N extends Node>(
                     added: props.theme.markdown.dark ? 0x55cc88ff : 0x246c48ff,
                     removed: props.theme.markdown.dark ? 0xff6677ff : 0xbb2233ff,
                     selection: props.theme.markdown.selection,
+                    terminal: props.theme.terminal,
                     dark: props.theme.markdown.dark,
                   },
                 } satisfies DiffProps,
@@ -421,6 +422,7 @@ export function toolDetails<N extends Node>(
                   source,
                   appearance: props.theme.markdown.code,
                   selection: props.theme.markdown.selection,
+                  terminal: props.theme.terminal,
                   disabled: false,
                   focusOnPointer: props.focusOnPointer,
                 },
@@ -466,7 +468,16 @@ export function toolDetails<N extends Node>(
               id + '-controls',
               [
                 ...(id === 'path' && filePath && !part.failed && complete(part)
-                  ? [ui.button('copy-file-path', text.toolCopyPath, false, false, {}, filePath)]
+                  ? [
+                      ui.button(
+                        'copy-file-path',
+                        text.toolCopyPath,
+                        false,
+                        false,
+                        presentation.target === 'tui' ? { background: 0, align: 'start' } : {},
+                        filePath,
+                      ),
+                    ]
                   : []),
                 ...(part.failed
                   ? [ui.button(id + '-retry', text.sourceRetry, !!part.pending)]
@@ -516,7 +527,17 @@ export function toolDetails<N extends Node>(
               : text.loading;
       summary.push(
         filePath && typeof path === 'string' && !state.parts.path?.failed
-          ? ui.button('copy-file-summary', `${text.copy} · ${label}`, false, false, {}, filePath)
+          ? ui.button(
+              'copy-file-summary',
+              presentation.target === 'tui'
+                ? `${props.theme.ascii ? '+' : '⧉'} ${label}`
+                : `${text.copy} · ${label}`,
+              false,
+              false,
+              presentation.target === 'tui' ? { background: 0, align: 'start' } : {},
+              filePath,
+              text.toolCopyPath,
+            )
           : ui.text('file-summary', `${text.toolFilePath} · ${label}`, 14, props.theme.muted),
       );
       if (scalar(state, 'status') === 'failed')

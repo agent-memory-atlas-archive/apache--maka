@@ -147,7 +147,12 @@ impl SceneState {
                     visit(state, background, keys);
                     visit(state, content, keys);
                 }
-                Node::Dialog {
+                Node::ContextMenu {
+                    background,
+                    content,
+                    ..
+                }
+                | Node::Dialog {
                     background,
                     content,
                     ..

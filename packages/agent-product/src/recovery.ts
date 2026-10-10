@@ -140,6 +140,7 @@ export function recovery<N extends Node>(
                                     source: source.slice(start, end),
                                     appearance: theme.markdown.code,
                                     selection: theme.markdown.selection,
+                                    terminal: theme.terminal,
                                     disabled: false,
                                   },
                                   {},

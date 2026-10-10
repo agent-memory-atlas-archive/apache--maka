@@ -426,7 +426,13 @@ function frame<N extends Node>(
       ui.box(
         'form-header',
         [
-          ui.button('form-back', text.back),
+          ui.button(
+            'form-back',
+            text.back,
+            false,
+            false,
+            target === 'tui' ? { background: 0, align: 'start' } : {},
+          ),
           ui.text(
             'form-heading',
             state.baseline ? text.editConnection : text.createConnection,
@@ -435,7 +441,7 @@ function frame<N extends Node>(
             600,
           ),
         ],
-        { row: target === 'desktop', gap: 0 },
+        { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
       ),
       ui.box(
         'form-actions',
@@ -461,9 +467,15 @@ function frame<N extends Node>(
                 ),
               ]
             : []),
-          ui.button('form-history', text.earlierConnectionOperations),
+          ui.button(
+            'form-history',
+            text.earlierConnectionOperations,
+            false,
+            false,
+            target === 'tui' ? { background: 0, align: 'start' } : {},
+          ),
         ],
-        { row: target === 'desktop', gap: 0 },
+        { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
       ),
       ...(state.baseline
         ? [ui.button('form-remove', text.removeConnection, !canRemove(state, props))]
@@ -478,7 +490,15 @@ function frame<N extends Node>(
             ui.box(
               'provider-actions',
               [
-                ui.button('provider-refresh', text.refreshConnections, locked),
+                ui.button(
+                  'provider-refresh',
+                  target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.refreshConnections,
+                  locked,
+                  false,
+                  target === 'tui' ? { background: 0 } : {},
+                  undefined,
+                  text.refreshConnections,
+                ),
                 ...(state.providerOffset > 0
                   ? [ui.button('provider-previous', text.previousModels, locked)]
                   : []),
@@ -486,7 +506,7 @@ function frame<N extends Node>(
                   ? [ui.button('provider-more', text.moreProviders, locked)]
                   : []),
               ],
-              { row: target === 'desktop', gap: 0 },
+              { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
             ),
             ...(Object.values(state.pending).some((r) => r.kind === 'providers')
               ? [ui.text('provider-loading', text.connecting, 13, props.theme.muted)]
@@ -523,7 +543,7 @@ function frame<N extends Node>(
                   locked,
                 ),
               ],
-              { row: target === 'desktop', gap: target === 'desktop' ? 8 : 0 },
+              { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
             ),
             ...(target === 'tui'
               ? [
@@ -535,7 +555,7 @@ function frame<N extends Node>(
                         ? [ui.button('field-next', text.nextField)]
                         : []),
                     ],
-                    { gap: 0 },
+                    { row: true, gap: 1, terminal: { wrap: true } },
                   ),
                 ]
               : []),
@@ -572,7 +592,7 @@ function frame<N extends Node>(
                     ]
                   : []),
               ],
-              { row: target === 'desktop', gap: 0 },
+              { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
             ),
             ...(['models', 'overrides', 'overlay'].includes(name)
               ? [
@@ -648,14 +668,14 @@ function frame<N extends Node>(
           ],
           {
             visible: available && (target === 'desktop' || currentPane === name),
-            gap: target === 'desktop' ? 8 : 0,
+            gap: target === 'desktop' ? 8 : 1,
             padding: 0,
             style: { width: fill },
           },
         );
       }),
     ],
-    { visible: !state.historyOpen && !state.confirmation, gap: target === 'desktop' ? 16 : 0 },
+    { visible: !state.historyOpen && !state.confirmation, gap: target === 'desktop' ? 16 : 1 },
   );
   const reviewValue =
     state.confirmation === 'remove'
@@ -725,7 +745,7 @@ function frame<N extends Node>(
               ]),
           ui.button('form-cancel', text.keepEditing),
         ],
-        { row: target === 'desktop', gap: 0 },
+        { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
       ),
       ...(state.confirmation === 'rebase' || state.confirmation === 'remove'
         ? [
@@ -736,23 +756,37 @@ function frame<N extends Node>(
           ]
         : []),
     ],
-    { visible: !!state.confirmation, gap: target === 'desktop' ? 12 : 0 },
+    { visible: !!state.confirmation, gap: target === 'desktop' ? 12 : 1 },
   );
   const earlier = ui.box(
     'form-earlier',
     [
-      ui.button('form-history-back', text.back),
+      ui.button(
+        'form-history-back',
+        text.back,
+        false,
+        false,
+        target === 'tui' ? { background: 0, align: 'start' } : {},
+      ),
       ui.text('earlier-heading', text.earlierConnectionOperations, 20, props.theme.text, 550),
       ui.text('earlier-help', text.earlierConnectionHelp, 13, props.theme.muted),
       ui.box(
         'earlier-actions',
         [
-          ui.button('form-history-refresh', text.refreshConnections),
+          ui.button(
+            'form-history-refresh',
+            target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.refreshConnections,
+            false,
+            false,
+            target === 'tui' ? { background: 0 } : {},
+            undefined,
+            text.refreshConnections,
+          ),
           ...(state.historyNext !== null
             ? [ui.button('form-history-more', text.moreOperations)]
             : []),
         ],
-        { row: target === 'desktop', gap: 0 },
+        { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
       ),
       ...(state.historyFailed ? [ui.text('earlier-failed', text.historyUnavailable)] : []),
       ...state.earlier.map((entry, at) => {
@@ -789,13 +823,13 @@ function frame<N extends Node>(
         );
       }),
     ],
-    { visible: state.historyOpen, gap: target === 'desktop' ? 12 : 0 },
+    { visible: state.historyOpen, gap: target === 'desktop' ? 12 : 1 },
   );
   const out = output(
     state,
     ui.box('connection-form', [form, confirmation, earlier], {
       gap: 0,
-      padding: target === 'desktop' ? 24 : 0,
+      padding: target === 'desktop' ? 24 : 1,
       scroll: 'anchor',
       style: { width: fill, height: fill, maxWidth: 760, minWidth: 0, minHeight: 0 },
     }),

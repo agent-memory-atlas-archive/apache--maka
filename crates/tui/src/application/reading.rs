@@ -51,6 +51,7 @@ pub(super) struct ReadingState {
     last_command: Option<ReadingCommand>,
     receipt: Option<ReadingReceipt>,
     viewport: Option<ReadingViewport>,
+    scroll: Option<maka_ui::reading::ReadingScroll>,
     published: Option<ReadingObservation>,
     alive: bool,
     focus_visible: bool,
@@ -66,12 +67,24 @@ impl ReadingState {
             last_command: None,
             receipt: None,
             viewport: None,
+            scroll: None,
             published: None,
             alive: true,
             focus_visible: false,
             find: find::State::default(),
             find_intent: None,
         }
+    }
+    pub fn scrolled(&mut self, delta: i64) {
+        use maka_ui::reading::{ReadingScroll, ReadingScrollDirection};
+        self.scroll = Some(ReadingScroll {
+            reading_revision: self.scope.revision(),
+            direction: if delta < 0 {
+                ReadingScrollDirection::Up
+            } else {
+                ReadingScrollDirection::Down
+            },
+        });
     }
     pub fn cancel(&mut self) {
         if let Some(command) = self.pending.take() {
@@ -87,6 +100,7 @@ impl ReadingState {
             .expect("reading viewport revision");
         self.viewport = Some(ReadingViewport {
             reading_revision: revision,
+            at_start: viewport.offset == 0,
             at_end: viewport.at_end(),
             visible_child_keys: viewport.visible_child_keys.clone(),
         });
@@ -143,6 +157,7 @@ impl ReadingState {
             reading_revision: self.scope.revision(),
             selected_child_key: self.scope.selected_child(),
             viewport: self.viewport.clone(),
+            scroll: self.scroll.clone(),
             pending_command: self
                 .pending
                 .as_ref()

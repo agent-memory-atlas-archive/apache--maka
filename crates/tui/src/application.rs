@@ -21,7 +21,9 @@
 //! 统一插件应用内核的原生终端呈现器。
 mod adaptive;
 mod border;
+mod checkpoint;
 mod choice;
+mod context_menu;
 mod dialog;
 mod editor;
 mod file;
@@ -30,6 +32,7 @@ mod geometry;
 mod input;
 mod layout;
 mod markdown_text;
+mod morph_mark;
 mod native;
 mod paint;
 mod pointer;
@@ -248,6 +251,8 @@ impl SurfaceState {
 }
 
 pub struct Presenter {
+    animation_origin: std::time::Instant,
+    window_focused: bool,
     application: Application<dyn Widget>,
     root: Mount,
     scene: Vec<paint::Target>,
@@ -380,6 +385,9 @@ impl Presenter {
         let root = match application.mount_bootstrap(props) {
             Ok(root) => root,
             Err(error) => {
+                if let Some(initial) = application.deployment_status().error {
+                    eprintln!("application activation failed: {}", sanitize(&initial));
+                }
                 // This presenter has not created a terminal or renderer resources.
                 // Retain the foreground application until its actual modules close.
                 let mut reported = std::collections::BTreeSet::new();
@@ -402,6 +410,8 @@ impl Presenter {
             }
         };
         let mut presenter = Self {
+            animation_origin: std::time::Instant::now(),
+            window_focused: true,
             application,
             root,
             scene: Vec::new(),
@@ -476,6 +486,11 @@ impl Presenter {
         self.recover_result(result)
     }
     fn input_inner(&mut self, event: Event) -> maka_ui::Result<()> {
+        match event {
+            Event::FocusLost => self.window_focused = false,
+            Event::FocusGained => self.window_focused = true,
+            _ => {}
+        }
         if matches!(
             event,
             Event::Key(_) | Event::Paste(_) | Event::FocusLost | Event::Resize(..)
@@ -500,7 +515,10 @@ impl Presenter {
                 .scene
                 .iter()
                 .rev()
-                .find(|t| t.area.contains((mouse.column, mouse.row).into()))
+                .find(|t| {
+                    !matches!(t.kind, paint::TargetKind::ContextMenu { button: false })
+                        && t.area.contains((mouse.column, mouse.row).into())
+                })
                 .cloned();
             match target {
                 Some(target)
@@ -513,6 +531,9 @@ impl Presenter {
         } else {
             None
         };
+        if raw_pointer_target.is_none() && self.open_context_menu(&event)? {
+            return Ok(());
+        }
         if let Event::Mouse(mouse) = &event
             && mouse.kind == MouseEventKind::Moved
             && raw_pointer_target.is_none()
@@ -598,7 +619,10 @@ impl Presenter {
                     self.scene
                         .iter()
                         .rev()
-                        .find(|t| t.area.contains((mouse.column, mouse.row).into()))
+                        .find(|t| {
+                            !matches!(t.kind, paint::TargetKind::ContextMenu { button: false })
+                                && t.area.contains((mouse.column, mouse.row).into())
+                        })
                         .cloned()
                 }
                 Event::Mouse(mouse)
@@ -618,9 +642,26 @@ impl Presenter {
                 return Ok(());
             }
             if let paint::TargetKind::Backdrop { body } = &target.kind {
-                if matches!(event, Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) && !body.contains((mouse.column, mouse.row).into()))
+                if matches!(event, Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left | MouseButton::Right)) && !body.contains((mouse.column, mouse.row).into()))
                 {
                     self.dismiss(&target, maka_ui::dismiss::Reason::Outside)?;
+                } else {
+                    self.dismiss_escape(&event)?;
+                }
+                return Ok(());
+            }
+            if let paint::TargetKind::SelectionCopy { text } = &target.kind {
+                if !self.resources.admits(&target)
+                    || self.application.frame(&target.mount)?.revision != target.revision
+                {
+                    return Ok(());
+                }
+                if matches!(event, Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left))
+                    || matches!(event, Event::Key(key) if key.kind != KeyEventKind::Release && key.modifiers.is_empty() && matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')))
+                {
+                    self.clipboard = Some(text.clone());
+                    self.close_context_action(target.scope.as_ref());
+                    self.sync_native()?;
                 } else {
                     self.dismiss_escape(&event)?;
                 }
@@ -657,6 +698,14 @@ impl Presenter {
                     if !matches!(event, Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown))
                     {
                         self.focus = Some(target);
+                    }
+                    if !decision.prevent_default {
+                        self.close_context_action(
+                            self.focus
+                                .clone()
+                                .and_then(|target| target.scope.clone())
+                                .as_ref(),
+                        );
                     }
                     self.track_focus_return()?;
                     self.sync_native()?;
@@ -786,6 +835,7 @@ impl Presenter {
                 {
                     self.clipboard = Some(text.clone());
                 }
+                self.close_context_action(target.scope.as_ref());
                 self.focus = Some(target);
             }
             self.sync_native()?;

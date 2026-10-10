@@ -19,7 +19,7 @@
 
 use crate::contract::*;
 use futures_util::future::BoxFuture;
-use maka_runtime::{configuration::*, scope::Scope};
+use maka_runtime::configuration::*;
 use maka_runtime_host::application::{Context, Handler, NativeOwner};
 use serde_json::Value;
 use std::sync::Arc;
@@ -54,32 +54,57 @@ fn credential_result(
     }
 }
 fn selectable(row: &ConnectionCatalogEntry) -> bool {
-    row.enabled
-        && row.provider.scope == Scope::Profile
-        && row.provider.package_id == maka_providers::api::ID
-        && row.provider.entry_id == maka_providers::api::ID
+    row.enabled && maka_providers::definition(&row.provider).is_ok()
 }
-fn model_choice(row: &ConnectionCatalogEntry, model: &str) -> Option<ModelChoice> {
+async fn model_choice(row: &ConnectionCatalogEntry, model: &str) -> Option<ModelChoice> {
     let info = row
         .models
         .iter()
         .find(|info| info.id == model)
         .cloned()
         .unwrap_or_else(|| ModelInfo::new(model));
-    let metadata = maka_providers::api::ApiProviders::model_metadata(
-        &row.provider.name,
-        maka_plugins::provider::Connection {
-            id: row.connection_id.clone(),
-            revision: row.revision,
-            configuration: row.configuration.clone(),
-        },
-        info,
-        row.model_overrides
+    let metadata = if row.provider.package_id == maka_providers::codex::ID {
+        let overrides = row
+            .model_overrides
             .as_ref()
             .and_then(|all| all.get(model))
-            .cloned(),
-    )
-    .ok()?;
+            .cloned();
+        let default_thinking_level = overrides.as_ref().and_then(|o| o.default_thinking_level);
+        let resolved = maka_providers::definition(&row.provider)
+            .ok()?
+            .prepare(maka_plugins::provider::Resolve {
+                connection: maka_plugins::provider::Connection {
+                    id: row.connection_id.clone(),
+                    revision: row.revision,
+                    configuration: row.configuration.clone(),
+                },
+                model: info,
+                overrides,
+                thinking_level: None,
+            })
+            .await
+            .ok()?;
+        maka_providers::api::ModelMetadata {
+            info: resolved.info,
+            thinking_levels: resolved.thinking_levels,
+            default_thinking_level,
+        }
+    } else {
+        maka_providers::api::ApiProviders::model_metadata(
+            &row.provider.name,
+            maka_plugins::provider::Connection {
+                id: row.connection_id.clone(),
+                revision: row.revision,
+                configuration: row.configuration.clone(),
+            },
+            info,
+            row.model_overrides
+                .as_ref()
+                .and_then(|all| all.get(model))
+                .cloned(),
+        )
+        .ok()?
+    };
     let info = metadata.info;
     Some(ModelChoice {
         selection: ModelSelection {
@@ -93,24 +118,26 @@ fn model_choice(row: &ConnectionCatalogEntry, model: &str) -> Option<ModelChoice
         thinking_levels: metadata.thinking_levels,
     })
 }
-fn default_model(catalog: &ConnectionCatalogSnapshot) -> DefaultModel {
+async fn default_model(catalog: &ConnectionCatalogSnapshot) -> DefaultModel {
     match &catalog.default_target {
         None => DefaultModel::None,
-        Some(target) => match catalog
-            .connections
-            .iter()
-            .find(|row| {
+        Some(target) => {
+            let row = catalog.connections.iter().find(|row| {
                 row.connection_id == target.connection_id
                     && selectable(row)
                     && row.enabled_model_ids.contains(&target.model_id)
-            })
-            .and_then(|row| model_choice(row, &target.model_id))
-        {
-            Some(choice) => DefaultModel::Ready { choice },
-            None => DefaultModel::Unavailable {
-                target: target.clone(),
-            },
-        },
+            });
+            let choice = match row {
+                Some(row) => model_choice(row, &target.model_id).await,
+                None => None,
+            };
+            match choice {
+                Some(choice) => DefaultModel::Ready { choice },
+                None => DefaultModel::Unavailable {
+                    target: target.clone(),
+                },
+            }
+        }
     }
 }
 
@@ -264,7 +291,7 @@ impl Handler for Settings {
                                 break 'rows;
                             }
                             scanned += 1;
-                            let Some(choice) = model_choice(row, model) else {
+                            let Some(choice) = model_choice(row, model).await else {
                                 continue;
                             };
                             let matches = terms.is_empty() || {
@@ -284,7 +311,7 @@ impl Handler for Settings {
                     }
                     serde_json::to_value(ModelsPage::Ready {
                         revision: catalog.revision,
-                        default_model: default_model(&catalog),
+                        default_model: default_model(&catalog).await,
                         choices,
                         next,
                     })

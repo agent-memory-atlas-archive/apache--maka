@@ -388,7 +388,7 @@ impl Node {
                 ..
             } => {
                 *input_count += 1;
-                if *input_count > 64 {
+                if *input_count > crate::native::MAX_INPUTS {
                     return Err("scene input limit".into());
                 }
                 if visible && *open {
@@ -416,7 +416,7 @@ impl Node {
                 ..
             } => {
                 *input_count += 1;
-                if *input_count > 64 {
+                if *input_count > crate::native::MAX_INPUTS {
                     return Err("scene input limit".into());
                 }
                 if visible && *open {
@@ -447,7 +447,7 @@ impl Node {
             }
             Self::Button { key, .. } => {
                 *input_count += 1;
-                if *input_count > 64 {
+                if *input_count > crate::native::MAX_INPUTS {
                     return Err("scene input limit".into());
                 }
                 if visible {
@@ -456,7 +456,7 @@ impl Node {
             }
             Self::Canvas { key, .. } => {
                 *input_count += 1;
-                if *input_count > 64 {
+                if *input_count > crate::native::MAX_INPUTS {
                     return Err("scene input limit".into());
                 }
                 if visible {

@@ -157,6 +157,7 @@ async fn captured_execution_ignores_catalog_labels_and_other_models_but_rejects_
     let session = fixture.create("Original execution basis").await;
     let (mut source, _) = crate::model::Source::select(
         fixture.config.clone(),
+        fixture.owner.credentials.clone(),
         fixture.selection().await,
         None,
         session.clone(),
@@ -168,6 +169,7 @@ async fn captured_execution_ignores_catalog_labels_and_other_models_but_rejects_
     assert!(!persisted.contains("private-fixture-key"));
     source = crate::model::Source::restore(
         fixture.config.clone(),
+        fixture.owner.credentials.clone(),
         serde_json::from_str(&persisted).unwrap(),
         session,
         fixture.owner.revision.clone(),
@@ -241,6 +243,7 @@ async fn captured_execution_ignores_catalog_labels_and_other_models_but_rejects_
     assert!(source.capture().await.is_err());
     let (current, _) = crate::model::Source::select(
         fixture.config.clone(),
+        fixture.owner.credentials.clone(),
         fixture.selection().await,
         None,
         "current".into(),
@@ -255,6 +258,7 @@ async fn captured_execution_ignores_catalog_labels_and_other_models_but_rejects_
     assert!(current.capture().await.is_err());
     let (current, _) = crate::model::Source::select(
         fixture.config.clone(),
+        fixture.owner.credentials.clone(),
         fixture.selection().await,
         None,
         "current".into(),
@@ -615,6 +619,7 @@ async fn restored_thinking_preserves_explicit_choice_and_refuses_changed_default
     for level in [None, Some(High)] {
         let (source, prepared) = crate::model::Source::select(
             fixture.config.clone(),
+            fixture.owner.credentials.clone(),
             fixture.selection().await,
             level,
             session.clone(),
@@ -625,6 +630,7 @@ async fn restored_thinking_preserves_explicit_choice_and_refuses_changed_default
         let encoded = serde_json::to_vec(&source.accepted).unwrap();
         let restored = crate::model::Source::restore(
             fixture.config.clone(),
+            fixture.owner.credentials.clone(),
             serde_json::from_slice(&encoded).unwrap(),
             session.clone(),
             fixture.owner.revision.clone(),

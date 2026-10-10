@@ -213,7 +213,7 @@ function frame<N extends Node>(
         : `${text.paletteSession} · ${choice.session.title}`;
     const button = ui.button(
       key,
-      (target === 'tui' && active ? '› ' : '') +
+      (target === 'tui' ? (active ? (props.theme.ascii ? '> ' : '› ') : '  ') : '') +
         (target === 'tui' ? compactLabel(label, 68) : label),
       !enabled(state, props, choice),
       false,
@@ -222,7 +222,11 @@ function frame<N extends Node>(
         minWidth: 0,
         truncate: true,
         justify: 'start',
-        ...(active ? { background: props.theme.selected } : {}),
+        ...(target === 'tui'
+          ? { background: active ? props.theme.selected : 0 }
+          : active
+            ? { background: props.theme.selected }
+            : {}),
       },
       choice.kind === 'command' ? choice.command.copyText : undefined,
     );
@@ -245,7 +249,9 @@ function frame<N extends Node>(
   const view = ui.box(
     'palette-content',
     [
-      ui.text('palette-title', text.paletteTitle, 17, props.theme.text, 550),
+      ...(target === 'desktop'
+        ? [ui.text('palette-title', text.paletteTitle, 17, props.theme.text, 550)]
+        : []),
       presentation.slot(
         'palette-query',
         'input',
@@ -307,12 +313,22 @@ function frame<N extends Node>(
             ? [
                 ui.button(
                   'refresh',
-                  text.paletteRefresh,
+                  target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.paletteRefresh,
                   !!state.pending || !interactive(state, props),
+                  false,
+                  target === 'tui' ? { background: 0 } : {},
+                  undefined,
+                  text.paletteRefresh,
                 ),
               ]
             : []),
-          ui.button('close', text.paletteClose),
+          ui.button(
+            'close',
+            text.paletteClose,
+            false,
+            false,
+            target === 'tui' ? { background: 0, align: 'start' } : {},
+          ),
         ],
         {
           row: true,

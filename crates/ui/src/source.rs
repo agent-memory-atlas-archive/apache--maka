@@ -26,6 +26,10 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SourceTextProps {
+    #[serde(default)]
+    pub animate: bool,
+    #[serde(default)]
+    pub terminal: Option<crate::scene::terminal::Palette>,
     #[schemars(length(max = 65536))]
     pub source: String,
     pub appearance: TextAppearance,

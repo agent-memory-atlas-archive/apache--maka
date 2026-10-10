@@ -45,6 +45,10 @@ pub struct NativeView<V: ?Sized> {
     pub(crate) slot_render_depth: Rc<BTreeMap<String, u16>>,
     declaration: Option<Rc<Value>>,
 }
+// A retained page can expose primary controls and per-object menu actions.
+// The aggregate metadata byte limit and compilation deadline still bound work.
+pub(crate) const MAX_INPUTS: usize = 256;
+
 impl<V: ?Sized> NativeView<V> {
     pub fn new(
         view: Rc<V>,
@@ -62,7 +66,7 @@ impl<V: ?Sized> NativeView<V> {
             }
         }
         super::tree::check_call_bytes(&(&schemas, &slots))?;
-        if schemas.len() > 64 {
+        if schemas.len() > MAX_INPUTS {
             return Err(Error::Invalid("native component input limit".into()));
         }
         let mut inputs = BTreeMap::new();
@@ -379,6 +383,8 @@ pub struct LabelProps {
     #[schemars(length(max = 4096))]
     pub text: String,
     pub appearance: crate::appearance::TextAppearance,
+    #[serde(default, rename = "terminalForeground")]
+    pub terminal_foreground: Option<crate::scene::terminal::Color>,
     #[serde(default)]
     pub elapsed: Option<crate::elapsed::Elapsed>,
 }

@@ -27,6 +27,7 @@ import {
   type ThinkingLevel,
   type SettingsDefaultModel,
   type TextareaAppearance,
+  type TerminalPalette,
   type MarkdownAppearance,
   type InputAppearance,
   type ConnectionCredentialTarget,
@@ -53,7 +54,22 @@ export const object = (properties: Schema, required = Object.keys(properties)): 
 });
 export const string = { type: 'string', maxLength: 512 };
 export const locale = { type: 'string', minLength: 1, maxLength: 128 };
+import { appearanceConfigurationSchema, type AppearanceConfiguration } from './terminal-theme.js';
 export interface Theme {
+  configuration: AppearanceConfiguration;
+  terminal: TerminalPalette | null;
+  motion: boolean;
+  ascii: boolean;
+  thinking: number;
+  success: number;
+  warning: number;
+  error: number;
+  subtle: number;
+  scrollbar: number;
+  selectionText: number;
+  search: number;
+  searchActive: number;
+  searchText: number;
   background: number;
   surface: number;
   text: number;
@@ -287,6 +303,24 @@ const defs = {
   ...native.agent.interface.methods.respond.output.$defs,
 };
 const themeSchema = object({
+  configuration: appearanceConfigurationSchema,
+  terminal: { anyOf: [{ $ref: '#/$defs/TerminalPalette' }, { type: 'null' }] },
+  motion: { type: 'boolean' },
+  ascii: { type: 'boolean' },
+  ...Object.fromEntries(
+    [
+      'thinking',
+      'success',
+      'warning',
+      'error',
+      'subtle',
+      'scrollbar',
+      'selectionText',
+      'search',
+      'searchActive',
+      'searchText',
+    ].map((role) => [role, { type: 'integer', minimum: 0, maximum: 4294967295 }]),
+  ),
   background: { type: 'integer', minimum: 0, maximum: 4294967295 },
   surface: { type: 'integer', minimum: 0, maximum: 4294967295 },
   text: { type: 'integer', minimum: 0, maximum: 4294967295 },
@@ -429,7 +463,7 @@ export const navigationContract = component(
     selected: { anyOf: [string, { type: 'null' }] },
     busy: { type: 'boolean' },
   }),
-  { select: object({ sessionId: string }) },
+  { select: object({ sessionId: string, details: { type: 'boolean' } }, ['sessionId']) },
 );
 export const imageViewerContract = component(
   'maka.agent.ImageViewer',
@@ -782,6 +816,7 @@ export const composerContract = component(
     ),
     draftCheck: object({ owner: string }),
     stop: object({}),
+    attachments: object({}),
   },
   editor.captures,
 );
@@ -921,3 +956,5 @@ export const deploymentContract = component(
   object({ theme: { $ref: '#/$defs/Theme' }, locale }),
   { closed: object({}) },
 );
+
+export { appearanceConfigurationSchema } from './terminal-theme.js';
