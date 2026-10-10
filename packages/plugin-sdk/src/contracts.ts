@@ -3010,6 +3010,19 @@ export const contracts = {
       captures: {},
     },
   },
+  locale: {
+    name: 'maka.ui.Locale',
+    version: 1,
+    transport: 'local',
+    interface: {
+      kind: 'value',
+      schema: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 128,
+      },
+    },
+  },
   morphMark: {
     name: 'maka.ui.MorphMark',
     version: 1,

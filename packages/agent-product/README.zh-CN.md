@@ -44,9 +44,9 @@ node packages/agent-product/scripts/compose.mjs \
   --maka /absolute/path/to/maka
 ```
 
-TUI 外观页提供 Maka、Dusk、Paper、Terminal 与自定义配色，支持英文、简中、繁中、ASCII 符号与减少动画。自定义名称、基底和语义/语法色即时预览；保存沿原实例 checkpoint 持久化 UI 偏好，关闭未保存的编辑会恢复已保存外观，并保留会话草稿。主题文件导入/导出和完整原 TUI 体验对齐仍未完成。
+TUI 外观页提供 Maka、Dusk、Paper、Terminal 与自定义配色，支持英文、简中、繁中、ASCII 符号与减少动画。自动语言依次跟随原生进程的 `LC_ALL`、`LC_MESSAGES`、`LANG` 与系统语言；已保存的显式语言优先，选择“自动”可恢复跟随环境，即使组合配置了固定语言。自定义名称、基底和语义/语法色即时预览；保存沿原实例 checkpoint 持久化 UI 偏好，关闭未保存的编辑会恢复已保存外观，并保留会话草稿。主题文件导入/导出和完整原 TUI 体验对齐仍未完成。
 
-安装配置包含 `presentation`（`desktop`/`tui`）、完整 `locale`、`scheme`（`light`/`dark`）、`hostRoot`、`hostDeployment`、`managementDeployment`、SDK 生成的 `AgentConfiguration` 对应 `agent`，以及 `keys`。连接凭据和 endpoint 属于选中的 Host Root，不进入产品组合。
+安装配置包含 `presentation`（`desktop`/`tui`）、完整 `locale`（或 `auto`）、`scheme`（`light`/`dark`）、`hostRoot`、`hostDeployment`、`managementDeployment`、SDK 生成的 `AgentConfiguration` 对应 `agent`，以及 `keys`。连接凭据和 endpoint 属于选中的 Host Root，不进入产品组合。
 
 `keys` 为 `src/composition.ts` 导出的所有包名分配稳定非零 UUID；安装时生成一次并保存，构建新 revision 时沿用。部署 UUID 同样属于安装身份，不能每次构建重建业务 namespace。具体字段、包名和配置约束见英文文档。
 

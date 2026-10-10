@@ -17,6 +17,12 @@
  * under the License.
  */
 
+/** Explicit product preferences win; auto follows the bound native environment. */
+export function resolveLocale(configured: string, native: unknown): string {
+  if (configured && configured !== 'auto') return configured;
+  return typeof native === 'string' && native.length > 0 ? native : 'en';
+}
+
 export const en = {
   recoveryTitle: 'Recover application',
   recoveryRefreshFailed: 'Could not refresh. The last observation has been kept.',

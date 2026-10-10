@@ -82,6 +82,7 @@ const specifications = {
       managementReceipts: one(sdk.contracts.receiptReader),
       reading: one(sdk.contracts.readingArea),
       appearance: one(own.themeContract),
+      locale: one(sdk.contracts.locale),
     },
     configuration: own.object({ locale: own.locale }),
   },
@@ -95,6 +96,7 @@ const specifications = {
       models: one(own.modelsContract),
       deployment: one(own.deploymentContract),
       appearance: one(own.themeContract),
+      locale: one(sdk.contracts.locale),
     },
     configuration: own.object({ locale: own.locale }),
   },
@@ -138,6 +140,7 @@ const specifications = {
       timeline: one(own.timelineContract),
       imageViewer: one(own.imageViewerContract),
       appearance: one(own.themeContract),
+      locale: one(sdk.contracts.locale),
     },
     configuration: own.object(
       {
@@ -418,6 +421,14 @@ for (const [name, spec] of Object.entries(specifications)) {
   packages.push(name);
 }
 const mechanical = {
+  locale: {
+    entries: Object.fromEntries(
+      ['desktop', 'tui'].map((target) => [
+        target,
+        native('maka.ui.locale', { Locale: required(sdk.contracts.locale) }),
+      ]),
+    ),
+  },
   'terminal-view': {
     entries: Object.fromEntries(
       ['desktop', 'tui'].map((target) => [

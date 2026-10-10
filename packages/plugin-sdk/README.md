@@ -141,6 +141,8 @@ reading baseline. Hidden subtrees still require unique node keys.
 
 A `raw` event and its synchronous component observers may return `decision: { preventDefault: true, stopPropagation: true }`. Omitted flags default to false. Private admission follows only the original checked `on` routes; public component inputs keep their `component` kind. Flags join by OR, become visible after the whole transaction commits, and are never stored in a frame. Lifecycle emissions and action/subscription feedback cannot acquire admission through a raw DTO in their payload. Decisions affect the actual platform listener phase and cannot undo earlier native behavior.
 
+Desktop and TUI provide `contracts.locale` through the explicit `maka.ui.locale` native instance (`Locale` value export). It captures `LC_ALL`, `LC_MESSAGES`, `LANG`, then the platform locale at activation, normalizes POSIX locale names, and preserves the language, script and region. `C`/`POSIX` and unavailable or malformed values resolve to `en`. Products own supported languages and explicit preferences; this value grants no environment-variable access.
+
 ```sh
 npm run schema:generate -w @maka-agent/plugin-sdk
 npm run schema:check -w @maka-agent/plugin-sdk

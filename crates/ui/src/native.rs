@@ -327,6 +327,17 @@ impl<V: ?Sized + 'static> NativeRegistry<V> {
             })
             .expect("unique built-in surface");
         registry
+            .register("maka.ui.locale", |_, _values| {
+                Ok(BTreeMap::from([(
+                    "Locale".into(),
+                    NativeExport {
+                        contract: super::locale::contract(),
+                        value: NativeCapability::Value(Value::String(super::locale::system())),
+                    },
+                )]))
+            })
+            .expect("unique native locale");
+        registry
             .register("maka.text.reader", |_, _values| {
                 Ok(BTreeMap::from([(
                     "Reader".into(),

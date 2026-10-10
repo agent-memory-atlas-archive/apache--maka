@@ -247,6 +247,7 @@ pub(super) fn catalog() -> Value {
             "selectionMenu": maka_ui::selection_menu::selection_menu_contract(),
             "rows": maka_ui::rows::rows_contract(),
             "valueCheckpoint": maka_ui::checkpoint::value::contract(),
+            "locale": maka_ui::locale::contract(),
             "morphMark": maka_ui::morph_mark::contract(),
             "readingArea": maka_ui::reading::reading_contract(),
             "label": maka_ui::label_contract(), "textarea": textarea::textarea_contract(),

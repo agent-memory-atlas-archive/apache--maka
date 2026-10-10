@@ -38,6 +38,7 @@ import {
   type CustomTheme,
 } from './terminal-theme.js';
 import { tuiText } from './tui-locale.js';
+import { resolveLocale } from './locale.js';
 import { sameValue } from './value.js';
 import type { Node, Presentation } from './view.js';
 
@@ -91,16 +92,15 @@ export function effectiveAppearance(state: AppearanceEditor, base: Theme): Theme
       : base;
   }
 }
-export function effectiveLocale(state: AppearanceEditor, fallback: string): string {
+export function effectiveLocale(
+  state: AppearanceEditor,
+  fallback: string,
+  native: unknown,
+): string {
   const value = (state.open ? state.draft : state.saved)?.locale;
-  if (value && value !== 'auto') return value;
-  if (fallback && fallback !== 'auto') return fallback;
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().locale;
-  } catch {
-    return 'en';
-  }
+  return resolveLocale(value ?? fallback, native);
 }
+
 function valid(value: unknown): Preferences | null {
   if (!value || typeof value !== 'object') return null;
   const item = value as Preferences;
@@ -368,6 +368,7 @@ export function appearanceView<N extends Node>(
   theme: Theme,
   locale: string,
   background: N,
+  nativeLocale: string,
 ): N {
   const ui = presentation.paint(theme);
   const t = (key: string) => tuiText(locale, key);
@@ -420,7 +421,7 @@ export function appearanceView<N extends Node>(
               'appearance-language',
               t('settings-language'),
               [
-                ['auto', tuiText(locale, 'language-auto', { language: locale })],
+                ['auto', tuiText(locale, 'language-auto', { language: nativeLocale })],
                 ['en', 'English'],
                 ['zh-CN', '简体中文'],
                 ['zh-TW', '繁體中文'],

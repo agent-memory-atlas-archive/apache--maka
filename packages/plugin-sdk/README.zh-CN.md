@@ -107,6 +107,8 @@ Page/Home/End 与稳定子节点锚点由原生 owner 持有。绘制只读，�
 
 `raw` 事件及同一次输入的同步组件观察者可返回 `decision: { preventDefault: true, stopPropagation: true }`，省略标志为 false。私有准入仅沿原经过检查的 `on` 路径传递，公开组件事件仍为 `component`。旗标按 OR 合并，完整事务提交后才生效，不保留在 frame。生命周期 emission 与 action/subscription feedback 不能通过 payload 中的 raw DTO 获得准入。决定作用于实际平台监听阶段，不能撤销更早的原生行为。
 
+Desktop 与 TUI 通过显式 `maka.ui.locale` 原生实例提供 `contracts.locale`（`Locale` 值导出）。激活时依次读取 `LC_ALL`、`LC_MESSAGES`、`LANG` 与系统语言，规范化 POSIX 名称并保留语言、文字和地区。`C`/`POSIX`、缺失或无效值回退到 `en`。支持哪些语言以及显式偏好的优先级由产品决定；该值不授予环境变量读取能力。
+
 ```sh
 npm run schema:generate -w @maka-agent/plugin-sdk
 npm run schema:check -w @maka-agent/plugin-sdk

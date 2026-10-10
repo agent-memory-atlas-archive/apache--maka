@@ -23,7 +23,7 @@ import type {
   SettingsModelChoice,
 } from '../../plugin-sdk/src/index.js';
 import { studioContract, type Theme } from './contracts.js';
-import { copy } from './locale.js';
+import { copy, resolveLocale } from './locale.js';
 import { fill, output, pixels, type Presentation, type Node } from './view.js';
 
 type Route = 'overview' | 'connections' | 'models' | 'deployment';
@@ -39,6 +39,7 @@ function frame<N extends Node>(
   state: State,
   values: ComponentValues,
 ) {
+  locale = resolveLocale(locale, values.locale?.[0]);
   const target = presentation.target;
   const theme = values.appearance![0] as unknown as Theme;
   const text = copy(locale);

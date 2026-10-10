@@ -28,7 +28,7 @@ import type {
   RecoveryRef,
 } from '../../plugin-sdk/src/index.js';
 import { recoveryContract, type Theme } from './contracts.js';
-import { copy } from './locale.js';
+import { copy, resolveLocale } from './locale.js';
 import { sameValue } from './value.js';
 import { compactLabel, fill, output, pixels, type Node, type Presentation } from './view.js';
 
@@ -69,9 +69,10 @@ function boundary(text: string, page: number) {
 }
 export function recovery<N extends Node>(
   presentation: Presentation<N>,
-  locale: string,
+  configuredLocale: string,
 ): Component<State, Record<string, never>, N> {
   function frame(state: State, values: ComponentValues, actions: Action[] = []) {
+    const locale = resolveLocale(configuredLocale, values.locale?.[0]);
     const theme = values.appearance![0] as unknown as Theme;
     const text = copy(locale),
       ui = presentation.paint(theme);

@@ -90,7 +90,7 @@ import type {
   MessageCopyObservation,
 } from './contracts.js';
 import { sameValue } from './value.js';
-import { copy, type Copy } from './locale.js';
+import { copy, resolveLocale, type Copy } from './locale.js';
 import { compactLabel, fill, output, pixels, type Presentation, type Node } from './view.js';
 
 import {
@@ -2006,7 +2006,10 @@ function frame<N extends Node>(
       locale,
       actions,
     );
-  locale = target === 'tui' ? effectiveLocale(state.preferences, locale) : locale;
+  locale =
+    target === 'tui'
+      ? effectiveLocale(state.preferences, locale, values.locale?.[0])
+      : resolveLocale(locale, values.locale?.[0]);
   const theme = target === 'tui' ? effectiveAppearance(state.preferences, baseTheme) : baseTheme;
   const text = copy(locale),
     ui = presentation.paint(theme),
@@ -3236,7 +3239,14 @@ function frame<N extends Node>(
     ),
   );
   if (target === 'tui')
-    out.frame.view = appearanceView(presentation, state.preferences, theme, locale, out.frame.view);
+    out.frame.view = appearanceView(
+      presentation,
+      state.preferences,
+      theme,
+      locale,
+      out.frame.view,
+      resolveLocale('auto', values.locale?.[0]),
+    );
   out.frame.surface =
     target === 'desktop'
       ? { kind: 'window', binding: 'surface', title: 'maka', width: 1100, height: 760 }
@@ -3359,7 +3369,9 @@ export function workspace<N extends Node>(
       state.revision++;
       const actions: Action[] = [];
       const locale =
-        target === 'tui' ? effectiveLocale(state.preferences, configuredLocale) : configuredLocale;
+        target === 'tui'
+          ? effectiveLocale(state.preferences, configuredLocale, values.locale?.[0])
+          : resolveLocale(configuredLocale, values.locale?.[0]);
       if (
         target === 'tui' &&
         appearanceEvent(

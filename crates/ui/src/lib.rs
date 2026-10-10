@@ -35,6 +35,7 @@ mod frame;
 pub use deployment::{CommittedUpdate, DeploymentStatus, PreparedUpdate};
 pub mod image;
 pub mod input;
+pub mod locale;
 pub mod markdown;
 pub mod morph_mark;
 mod native;
