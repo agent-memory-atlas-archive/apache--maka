@@ -91,6 +91,58 @@ fn grouped_items_reuse_two_line_content_and_reveal_offscreen_keyboard_targets() 
     close(&mut p);
 }
 #[test]
+fn context_wrapped_items_keep_offscreen_navigation_and_visible_only_menu_hits() {
+    let mut node = scene();
+    for (index, item) in node["children"][1]["children"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .enumerate()
+    {
+        *item = json!({"kind":"context_menu","key":format!("menu-{index}"),"label":"Actions",
+            "width":12,"height":4,"padding":0,"background_color":0,"border_color":0xffffff,
+            "background":item.clone(),
+            "content":json!({"kind":"button","key":format!("action-{index}"),"label":"Details"})});
+    }
+    let source = Rc::new(RefCell::new(node));
+    let (_runtime, mut p) = layout::native(
+        layout::View::InteractiveScene(source),
+        Rc::new(Cell::new(true)),
+    );
+    draw(&mut p, 24, 6);
+    assert!(
+        p.scene
+            .iter()
+            .find(|target| target.key == "item-11")
+            .unwrap()
+            .area
+            .is_empty()
+    );
+    assert!(!p.scene.iter().any(|target| target.key == "menu-11"));
+    p.input(key(KeyCode::Tab)).unwrap();
+    draw(&mut p, 24, 6);
+    assert_eq!(p.focus.as_ref().unwrap().key, "item-2");
+    p.input(key(KeyCode::End)).unwrap();
+    draw(&mut p, 24, 6);
+    assert_eq!(p.focus.as_ref().unwrap().key, "item-11");
+    assert_eq!(p.focus.as_ref().unwrap().area.visible().height, 2);
+    p.input(Event::Key(KeyEvent::new(
+        KeyCode::F(10),
+        KeyModifiers::SHIFT,
+    )))
+    .unwrap();
+    draw(&mut p, 24, 6);
+    assert_eq!(p.focus.as_ref().unwrap().key, "action-11");
+    p.input(key(KeyCode::Esc)).unwrap();
+    draw(&mut p, 24, 6);
+    assert_eq!(p.focus.as_ref().unwrap().key, "item-11");
+    p.input(key(KeyCode::Home)).unwrap();
+    draw(&mut p, 24, 6);
+    assert_eq!(p.focus.as_ref().unwrap().key, "item-0");
+    close(&mut p);
+}
+
+#[test]
 fn grouped_items_directory_arrows_reveal_without_activating_a_destination() {
     let mut source = scene()["children"][1].clone();
     source["children"] = json!((0..64).map(item).collect::<Vec<_>>());

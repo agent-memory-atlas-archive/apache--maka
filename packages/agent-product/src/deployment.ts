@@ -492,6 +492,11 @@ function frame<N extends Node>(
       undefined,
       { width: 64, height: history ? 18 : 14 },
     );
+    out.frame.view = ui.box('deployment-main', [out.frame.view], {
+      visible: !state.documentOpen && !state.importer.open,
+      gap: 0,
+      terminal: { grow: 1 },
+    });
   }
   out.frame.view = ui.box(
     'deployment-pages',
@@ -711,6 +716,8 @@ export function deployment<N extends Node>(
         let key = input.key;
         if (key === 'deployment-dialog')
           key = state.confirmation ? 'deployment-cancel' : 'deployment-history-back';
+        if (key === 'deployment-document-dialog') key = 'deployment-document-cancel';
+        if (key === 'deployment-import-dialog') key = 'deployment-import-cancel';
         if (/^deployment-select-(0|[1-9][0-9]*)$/.test(key) && !state.pending && !state.current) {
           const at = Number(key.slice('deployment-select-'.length));
           const entry = state.page?.instances[at];

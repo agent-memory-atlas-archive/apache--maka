@@ -293,15 +293,17 @@ impl Presenter {
             memory.opening.strong_count() == 0
                 && matches!(memory.native_return, Some(Return::Exited))
         });
-        let departing = self
-            .physical_path
-            .last()
-            .and_then(|scope| {
-                self.modal_focus
-                    .iter()
-                    .find(|memory| memory.opening.ptr_eq(scope))
-            })
-            .and_then(restore);
+        let departing_memory = self.physical_path.last().and_then(|scope| {
+            self.modal_focus
+                .iter()
+                .find(|memory| memory.opening.ptr_eq(scope))
+        });
+        // An action can close its menu and open a dialog in the same frame.
+        // That replacement inherits the original return, not the retired action.
+        let replacement = departing_memory
+            .filter(|memory| memory.opening.strong_count() == 0)
+            .map(|memory| (memory.target.clone(), memory.native_return.clone()));
+        let departing = departing_memory.and_then(restore);
         let closed = self
             .modal_focus
             .iter()
@@ -328,18 +330,21 @@ impl Presenter {
                     .find(|memory| memory.opening.ptr_eq(descendant))
                     .map(|memory| (memory.target.clone(), memory.native_return.clone()))
             });
-            let (target, native_return) = inherited.unwrap_or_else(|| {
-                let native_return = match &self.native_return {
-                    Some(Return::Active { source, .. })
-                        if prior.as_ref().is_some_and(|prior| source.same(prior)) =>
-                    {
-                        self.native_return.clone()
-                    }
-                    Some(Return::Exited) => Some(Return::Exited),
-                    _ => None,
-                };
-                (prior.clone(), native_return)
-            });
+            let (target, native_return) =
+                inherited
+                    .or_else(|| replacement.clone())
+                    .unwrap_or_else(|| {
+                        let native_return = match &self.native_return {
+                            Some(Return::Active { source, .. })
+                                if prior.as_ref().is_some_and(|prior| source.same(prior)) =>
+                            {
+                                self.native_return.clone()
+                            }
+                            Some(Return::Exited) => Some(Return::Exited),
+                            _ => None,
+                        };
+                        (prior.clone(), native_return)
+                    });
             self.modal_focus.push(FocusReturn {
                 opening: opening.clone(),
                 target,

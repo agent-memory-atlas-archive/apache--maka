@@ -151,3 +151,36 @@ fn context_menu_copies_original_selection_without_business_event() {
     assert!(p.physical_path.is_empty());
     close(&mut p);
 }
+
+#[test]
+fn context_action_replacing_menu_with_dialog_keeps_original_focus_return() {
+    let (_runtime, mut p, props) = native(vec![
+        json!({"kind":"button","key":"before","label":"Before"}),
+        super::dialog::dialog(
+            "confirmation",
+            false,
+            menu(),
+            json!({"kind":"button","key":"cancel","label":"Cancel"}),
+        ),
+    ]);
+    draw(&mut p, 40, 12);
+    mouse(&mut p, MouseEventKind::Down(MouseButton::Left), 1, 1);
+    draw(&mut p, 40, 12);
+    let original = p.focus.clone().unwrap();
+    mouse(&mut p, MouseEventKind::Down(MouseButton::Right), 1, 1);
+    draw(&mut p, 40, 12);
+    p.input(key(KeyCode::Down)).unwrap();
+    draw(&mut p, 40, 12);
+    assert_eq!(p.focus.as_ref().unwrap().key, "details");
+    props.borrow_mut()["content"]["children"][1]["open"] = json!(true);
+    p.input(key(KeyCode::Enter)).unwrap();
+    draw(&mut p, 40, 12);
+    assert_eq!(p.physical_path.len(), 1);
+    assert_eq!(p.focus.as_ref().unwrap().key, "cancel");
+    assert!(!state(&p).dialogs.contains_key("message-menu"));
+    props.borrow_mut()["content"]["children"][1]["open"] = json!(false);
+    refresh(&mut p);
+    draw(&mut p, 40, 12);
+    assert!(p.focus.as_ref().unwrap().same(&original));
+    close(&mut p);
+}

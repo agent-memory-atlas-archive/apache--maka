@@ -197,9 +197,6 @@ impl Presenter {
         else {
             unreachable!()
         };
-        if area.is_empty() {
-            return Ok(());
-        }
         let target = paint::Target {
             identity: paint::TargetIdentity {
                 mount: mount.clone(),
@@ -214,7 +211,9 @@ impl Presenter {
             kind: paint::TargetKind::ContextMenu { button: false },
             ancestors: scene.ancestry.clone(),
         };
-        scene.targets.push(target.clone());
+        if !area.is_empty() {
+            scene.targets.push(target.clone());
+        }
         let width = area.width.saturating_sub(3);
         self.paint_node(
             mount,
@@ -224,6 +223,11 @@ impl Presenter {
             scene,
             pass,
         )?;
+        // A clipped menu still carries logical Item targets for keyboard
+        // navigation. Only its pointer targets and overlay require placement.
+        if area.is_empty() {
+            return Ok(());
+        }
         let button = Placement::new(
             CellRect::new(area.x + i64::from(width), area.y, area.width - width, 1),
             area.clip,

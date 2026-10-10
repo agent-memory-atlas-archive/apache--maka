@@ -151,7 +151,22 @@ export function documentView<N extends Node>(
   const ui = presentation.paint(props.theme),
     text = copy(props.locale);
   const confirming = !!editor.confirmation || editor.reloadConfirmation;
-  return ui.box(
+  const question = [
+    ui.text(
+      'deployment-document-confirm-title',
+      editor.reloadConfirmation ? text.deploymentReloadQuestion : text.deploymentSaveQuestion,
+      17,
+      props.theme.text,
+      550,
+    ),
+    ui.text(
+      'deployment-document-confirm-help',
+      editor.reloadConfirmation ? text.deploymentReloadHelp : text.deploymentSaveHelp,
+      14,
+      props.theme.muted,
+    ),
+  ];
+  const panel = ui.box(
     'deployment-document-panel',
     [
       ui.box(
@@ -262,42 +277,21 @@ export function documentView<N extends Node>(
           ),
         ],
         {
-          visible: !confirming,
+          visible: target === 'tui' || !confirming,
           terminal: { grow: 1 },
           style: { width: fill, height: pixels(0), grow: 1, shrink: 1, minHeight: 0 },
         },
       ),
-      ...(confirming
+      ...(confirming && target === 'desktop'
         ? [
-            ui.box(
-              'deployment-document-question',
-              [
-                ui.text(
-                  'deployment-document-confirm-title',
-                  editor.reloadConfirmation
-                    ? text.deploymentReloadQuestion
-                    : text.deploymentSaveQuestion,
-                  17,
-                  props.theme.text,
-                  550,
-                ),
-                ui.text(
-                  'deployment-document-confirm-help',
-                  editor.reloadConfirmation ? text.deploymentReloadHelp : text.deploymentSaveHelp,
-                  14,
-                  props.theme.muted,
-                ),
-              ],
-              {
-                terminal: { grow: 1 },
-                style: { width: fill, height: pixels(0), grow: 1, shrink: 1, minHeight: 0 },
-              },
-            ),
+            ui.box('deployment-document-question', question, {
+              style: { width: fill, height: pixels(0), grow: 1, shrink: 1, minHeight: 0 },
+            }),
           ]
         : []),
       ui.box(
         'deployment-document-footer',
-        confirming
+        confirming && target === 'desktop'
           ? [
               ui.button(
                 editor.reloadConfirmation
@@ -334,7 +328,7 @@ export function documentView<N extends Node>(
               {
                 key: 'escape',
                 modifiers: [],
-                input: confirming ? 'deployment-document-cancel' : 'deployment-document-back',
+                input: 'deployment-document-back',
                 enabled: true,
               },
             ]
@@ -343,5 +337,46 @@ export function documentView<N extends Node>(
       terminal: { grow: 1 },
       style: { width: fill, height: fill },
     },
+  );
+  if (target === 'desktop') return panel;
+  return ui.box(
+    'deployment-document-page',
+    [
+      ui.dialog(
+        'deployment-document-dialog',
+        text.deploymentEdit,
+        panel,
+        ui.box(
+          'deployment-document-dialog-content',
+          [
+            ui.box('deployment-document-dialog-body', question, {
+              scroll: 'manual',
+              terminal: { grow: 1 },
+              gap: 1,
+            }),
+            ui.box(
+              'deployment-document-dialog-actions',
+              [
+                ui.button('deployment-document-cancel', text.cancel, busy),
+                ui.button(
+                  editor.reloadConfirmation
+                    ? 'deployment-document-reload-confirm'
+                    : 'deployment-document-confirm',
+                  text.confirmDefault,
+                  busy,
+                  true,
+                ),
+              ],
+              { row: true, gap: 1, terminal: { wrap: true } },
+            ),
+          ],
+          { terminal: { grow: 1 } },
+        ),
+        confirming,
+        undefined,
+        { width: 64, height: 12 },
+      ),
+    ],
+    { visible: open, gap: 0, terminal: { grow: 1 } },
   );
 }
