@@ -195,7 +195,7 @@ fn is_copy(event: &Event) -> bool {
     matches!(event,Event::Key(key) if key.kind!=KeyEventKind::Release && matches!(key.code,KeyCode::Char('c'|'C')) && key.modifiers==KeyModifiers::CONTROL|KeyModifiers::SHIFT)
 }
 fn is_exit(event: &Event) -> bool {
-    matches!(event,Event::Key(key) if key.kind!=KeyEventKind::Release && key.code==KeyCode::Char('c') && key.modifiers==KeyModifiers::CONTROL)
+    matches!(event,Event::Key(key) if key.kind!=KeyEventKind::Release && matches!(key.code,KeyCode::Char('c' | 'q')) && key.modifiers==KeyModifiers::CONTROL)
 }
 
 #[cfg(test)]
@@ -219,6 +219,9 @@ mod tests {
         let exit = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
         assert!(is_exit(&exit));
         assert!(!is_copy(&exit));
+        let quit = Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL));
+        assert!(is_exit(&quit));
+        assert!(!is_copy(&quit));
         let mut released = KeyEvent::new(
             KeyCode::Char('c'),
             KeyModifiers::CONTROL | KeyModifiers::SHIFT,

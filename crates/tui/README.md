@@ -56,7 +56,9 @@ ordered disjoint ranges, language hints and source/row budgets are validated
 before layout. This is a TUI capability; it has no filesystem access.
 
 
-Ctrl+C retires the surface. The original guard checks every restoration operation
+Ctrl+Q or an unhandled Ctrl+C retires the surface. An active component shortcut
+can handle either chord first; a captured interactive terminal receives it instead.
+The original guard checks every restoration operation
 even after an earlier failure. Native workers, resource snapshots and accepted
 service calls retain their original owners until actual cleanup completes. Failed
 cleanup keeps the application fenced. `--connections` uses explicit

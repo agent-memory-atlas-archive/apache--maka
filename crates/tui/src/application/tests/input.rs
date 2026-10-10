@@ -439,7 +439,7 @@ fn reserved_shortcut_presenter(reserved: bool) -> (tokio::runtime::Runtime, Pres
                 source = source.replace("return frame({revision:state.revision+1}", "return frame({...state,revision:state.revision+1}");
                 source.push_str("const shortcutFrame=frame;frame=(state,props,events=[])=>{const out=shortcutFrame(state,props,events);if(state.disabled)out.frame.view.props.disabled=true;out.frame.view={kind:'stack',key:'scope',direction:'column',gap:0,padding:0,background:0,shortcuts:[{key:'b',modifiers:['control'],input:'inner',enabled:!props.readOnly},{key:'d',modifiers:['control'],input:'disable',enabled:true}],children:[out.frame.view]};return out;};");
             }
-            if reserved { source = source.replace("shortcuts:[{key:'b'", "shortcuts:[{key:'tab',modifiers:[],input:'close',enabled:true},{key:'tab',modifiers:['shift'],input:'close',enabled:true},{key:'c',modifiers:['control'],input:'close',enabled:true},{key:'b'"); }
+            if reserved { source = source.replace("shortcuts:[{key:'b'", "shortcuts:[{key:'tab',modifiers:[],input:'close',enabled:true},{key:'tab',modifiers:['shift'],input:'close',enabled:true},{key:'c',modifiers:['control'],input:'close',enabled:true},{key:'q',modifiers:['control'],input:'close',enabled:true},{key:'b'"); }
             files.insert(module.clone(), source.into_bytes());
         }
         files.insert("maka.extension.json".into(), serde_json::to_vec(&json!({"schemaVersion":2,"id":original.manifest().id,"application":declaration})).unwrap());
@@ -990,8 +990,13 @@ fn declared_tab_and_interrupt_keep_original_focus_and_cannot_run_after_hiding() 
     assert!(!tui.captures_keyboard().unwrap());
     assert!(tui.dispatch_focused_shortcut(&interrupt).unwrap());
     assert_eq!(tui.application.frame(&child).unwrap().state["commands"], 4);
+    draw(&mut tui, 80, 24);
+    let quit = Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL));
+    assert!(tui.dispatch_focused_shortcut(&quit).unwrap());
+    assert_eq!(tui.application.frame(&child).unwrap().state["commands"], 5);
     dispatch(&mut tui, "configure", json!({"visible":false}));
     assert!(!tui.dispatch_focused_shortcut(&interrupt).unwrap());
-    assert_eq!(tui.application.frame(&child).unwrap().state["commands"], 4);
+    assert!(!tui.dispatch_focused_shortcut(&quit).unwrap());
+    assert_eq!(tui.application.frame(&child).unwrap().state["commands"], 5);
     close(&mut tui);
 }
