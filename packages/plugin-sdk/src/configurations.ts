@@ -312,6 +312,11 @@ export const configurations = {
         description: "Enable installation into this instance's own private collection.",
         default: false,
       },
+      preferences: {
+        type: 'boolean',
+        description: 'Allow edits to enabled/pinned preferences, independently of file management.',
+        default: false,
+      },
       sources: {
         type: 'array',
         items: {

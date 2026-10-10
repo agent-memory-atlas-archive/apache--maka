@@ -30,6 +30,7 @@ import type {
   SkillLibraryChangeKind,
   SkillLibraryPreview,
   SkillLibraryChangeResult,
+  SkillLibraryPreferenceResult,
   SkillLibraryOutcome,
   OperationReply,
   OperationCleanup,
@@ -71,7 +72,7 @@ interface State {
   notice: keyof Copy | null;
   cleanupUnconfirmed: boolean;
   preview: Extract<SkillLibraryPreview, { kind: 'ready' }> | null;
-  current: { reference: RecoveryRef | null } | null;
+  current: { method: 'apply' | 'setPreference'; reference: RecoveryRef | null } | null;
   active: number;
   reveal: ReadingCommand | null;
 }
@@ -195,13 +196,13 @@ function settle(
     !state.current ||
     (state.current.reference && !sameValue(state.current.reference, reply.reference)) ||
     reply.reference.contract.name !== 'maka.skills.Library' ||
-    reply.reference.method !== 'apply'
+    reply.reference.method !== state.current.method
   )
     return [];
   state.current.reference = reply.reference;
   if (reply.receipt.kind !== 'recorded' || reply.receipt.outcome.kind !== 'returned') {
     state.notice = 'skillsUnknown';
-    if (readPublished && reply.receipt.kind === 'recorded') {
+    if (readPublished && state.current.method === 'apply' && reply.receipt.kind === 'recorded') {
       const key = `skills-${++state.serial}`;
       state.pending = { kind: 'outcome', key };
       return [
@@ -215,6 +216,17 @@ function settle(
         },
       ];
     }
+    return [];
+  }
+  if (state.current.method === 'setPreference') {
+    const result = reply.receipt.outcome.value as SkillLibraryPreferenceResult;
+    state.current = null;
+    state.cleanupUnconfirmed = reply.receipt.cleanup.kind !== 'confirmed';
+    if (result.kind === 'applied') {
+      state.document = null;
+      return state.open && props.open ? list(state) : [];
+    }
+    state.notice = result.kind === 'changed' ? 'skillsChanged' : 'skillsChangeRejected';
     return [];
   }
   return settledResult(
@@ -310,6 +322,10 @@ function frame<N extends Node>(
         props.theme.muted,
       ),
       ui.text('skill-description', entry.description),
+      ui.text(
+        'skill-preference',
+        `${entry.preference.enabled ? text.skillsEnabled : text.skillsDisabled}${entry.preference.pinned ? ` · ${text.skillsPinned}` : ''}`,
+      ),
       ui.text(
         'skill-range',
         `${text.toolByteRange}: ${document.totalBytes ? document.offset + 1 : 0}–${document.after ?? document.totalBytes} / ${document.totalBytes}`,
@@ -426,6 +442,26 @@ function frame<N extends Node>(
         },
         { input: 'reading-input' },
       ),
+      ...(document?.preferencesWritable && !state.preview
+        ? [
+            ui.box(
+              'skills-preferences',
+              [
+                ui.button(
+                  'toggle-enabled',
+                  document.entry.preference.enabled ? text.skillsDisable : text.skillsEnable,
+                  !available || !!state.current,
+                ),
+                ui.button(
+                  'toggle-pinned',
+                  document.entry.preference.pinned ? text.skillsUnpin : text.skillsPin,
+                  !available || !!state.current,
+                ),
+              ],
+              { row: true, gap: tui ? 1 : 8, terminal: { wrap: true }, style: { wrap: true } },
+            ),
+          ]
+        : []),
       ...(document?.writable && !state.preview
         ? [
             ui.box(
@@ -650,7 +686,7 @@ export function skillLibrary<N extends Node>(
           else if (input.key === 'confirm-change' && state.preview && !state.current) {
             const key = `skills-${++state.serial}`;
             state.pending = { kind: 'mutate', key };
-            state.current = { reference: null };
+            state.current = { method: 'apply', reference: null };
             state.cleanupUnconfirmed = false;
             actions = [
               {
@@ -675,6 +711,33 @@ export function skillLibrary<N extends Node>(
             const document = state.document,
               page = state.page;
             if (document) {
+              if (
+                (input.key === 'toggle-enabled' || input.key === 'toggle-pinned') &&
+                document.preferencesWritable &&
+                !state.current
+              ) {
+                const key = `skills-${++state.serial}`;
+                state.pending = { kind: 'mutate', key };
+                state.current = { method: 'setPreference', reference: null };
+                state.cleanupUnconfirmed = false;
+                const preference = { ...document.entry.preference };
+                if (input.key === 'toggle-enabled') preference.enabled = !preference.enabled;
+                else preference.pinned = !preference.pinned;
+                actions = [
+                  {
+                    key,
+                    binding: 'skills',
+                    member: 0,
+                    method: 'setPreference',
+                    resources: {},
+                    input: {
+                      reference: document.entry.reference,
+                      revision: document.preferenceRevision,
+                      preference,
+                    },
+                  },
+                ];
+              }
               if (
                 input.key === 'install-skill' ||
                 input.key === 'update-skill' ||

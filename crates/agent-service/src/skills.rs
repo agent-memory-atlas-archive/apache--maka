@@ -22,6 +22,7 @@
 pub mod contract;
 mod management;
 pub mod outcomes;
+mod preferences;
 use contract::*;
 pub use contract::{configuration_schema, contract};
 use futures_util::future::BoxFuture;
@@ -66,8 +67,9 @@ async fn activate(context: NativeContext, configuration: Value) -> NativeActivat
             persistence.source().deployment,
             context.activation().instance(),
         );
+        let preferences = preferences::Store::new(persistence.store().clone(), namespace.clone());
         let mut library =
-            tokio::task::spawn_blocking(move || Library::open(configuration, managed))
+            tokio::task::spawn_blocking(move || Library::open(configuration, managed, preferences))
                 .await
                 .map_err(|_| "skills_open_failed")??;
         if manage {
@@ -99,10 +101,16 @@ async fn activate(context: NativeContext, configuration: Value) -> NativeActivat
 #[derive(Clone)]
 struct Library {
     sources: Vec<(Source, ReadRoot)>,
+    preferences: preferences::Store,
+    preferences_writable: bool,
     managed: Option<Arc<management::Managed>>,
 }
 impl Library {
-    fn open(configuration: Configuration, managed: PathBuf) -> Result<Self, String> {
+    fn open(
+        configuration: Configuration,
+        managed: PathBuf,
+        preferences: preferences::Store,
+    ) -> Result<Self, String> {
         if configuration.sources.len() > 8 {
             return Err("skills_configuration_invalid".into());
         }
@@ -141,6 +149,8 @@ impl Library {
         }
         Ok(Self {
             sources,
+            preferences,
+            preferences_writable: configuration.preferences,
             managed: None,
         })
     }
@@ -177,6 +187,7 @@ impl Library {
         let discovery = maka_skills::scan(&sources, &scope.cancellation)
             .await
             .map_err(|_| "skills_discovery_unavailable")?;
+        let preferences = self.preferences.read(scope).await?;
         let label = |reference: &str| {
             if reference.starts_with("installed:") {
                 return "Installed";
@@ -217,6 +228,13 @@ impl Library {
             );
             entries.push((entry, skill.content_sha256, skill.document.body));
         }
+        for (entry, _, _) in &mut entries {
+            entry.preference = preferences
+                .entries
+                .get(&entry.reference)
+                .copied()
+                .unwrap_or_default();
+        }
         entries.sort_by(|a, b| a.0.reference.cmp(&b.0.reference));
         let diagnostics: Vec<_> = discovery
             .diagnostics
@@ -238,6 +256,8 @@ impl Library {
         let revision = maka_runtime::artifact::content_digest(
             &serde_json::to_vec(&(
                 self.managed.is_some(),
+                self.preferences_writable,
+                preferences.revision,
                 self.sources
                     .iter()
                     .map(|(source, _)| source)
@@ -252,6 +272,8 @@ impl Library {
         );
         Ok(Snapshot {
             writable: self.managed.is_some(),
+            preferences_writable: self.preferences_writable,
+            preference_revision: preferences.revision,
             entries,
             diagnostics,
             revision,
@@ -260,6 +282,8 @@ impl Library {
 }
 struct Snapshot {
     writable: bool,
+    preferences_writable: bool,
+    preference_revision: u64,
     entries: Vec<(Entry, String, String)>,
     diagnostics: Vec<String>,
     revision: String,
@@ -284,6 +308,7 @@ fn entry(
     let short_description = bound(description, 2048);
     Entry {
         installed: reference.starts_with("installed:"),
+        preference: Default::default(),
         reference: reference.into(),
         source: source.into(),
         metadata_truncated: short_name != name
@@ -345,6 +370,8 @@ impl Snapshot {
             entries.push(entry.clone());
             let page = Page::Page {
                 writable: self.writable,
+                preferences_writable: self.preferences_writable,
+                preference_revision: self.preference_revision,
                 revision: self.revision.clone(),
                 entries: entries.clone(),
                 after: after(entries.len()),
@@ -361,6 +388,8 @@ impl Snapshot {
         let after = after(entries.len());
         Ok(Page::Page {
             writable: self.writable,
+            preferences_writable: self.preferences_writable,
+            preference_revision: self.preference_revision,
             revision: self.revision,
             after,
             entries,
@@ -392,6 +421,8 @@ impl Snapshot {
         }
         Ok(Document::Page {
             writable: self.writable,
+            preferences_writable: self.preferences_writable,
+            preference_revision: self.preference_revision,
             entry: Box::new(entry),
             revision: self.revision,
             text: text[start..end].into(),
@@ -432,6 +463,17 @@ impl Handler for Library {
                     let input =
                         serde_json::from_value(input).map_err(|_| "skills_change_invalid")?;
                     encode(library.preview(input, context.scope()).await?)
+                }
+                "setPreference" => {
+                    let input =
+                        serde_json::from_value(input).map_err(|_| "skills_preference_invalid")?;
+                    context.operation().ok_or("skills_mutation_required")?;
+                    if !library.preferences_writable {
+                        return encode(PreferenceResult::Rejected {
+                            reason: "read_only_preferences".into(),
+                        });
+                    }
+                    encode(library.preferences.set(input, context.scope()).await?)
                 }
                 "apply" => {
                     let input =

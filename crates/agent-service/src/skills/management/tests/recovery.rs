@@ -44,6 +44,11 @@ const DEPLOYMENT: Uuid = Uuid::from_u128(91);
 struct Grant(Issuer);
 impl Policy for Grant {
     fn admit(&self, invocation: Invocation<'_>) -> Result<(), String> {
+        if invocation.method == "setPreference"
+            && self.0.evidence::<bool>(invocation.scope) != Some(&true)
+        {
+            return Err("preference mutation denied".into());
+        }
         self.0
             .owns(invocation.scope)
             .then_some(())
@@ -585,4 +590,152 @@ async fn publication_results_survive_host_process_loss_without_replaying_or_weak
         assert!(!installed.exists());
         reopened.close().await;
     }
+}
+
+#[tokio::test]
+async fn preference_mutations_require_independent_authority_and_keep_instance_state_across_activation()
+ {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("source/review")).unwrap();
+    std::fs::write(
+        dir.path().join("source/review/SKILL.md"),
+        super::document("original"),
+    )
+    .unwrap();
+    let fixture = Fixture::open(dir.path(), Some(false)).await;
+    let input = json!({"reference":"source:local:review","revision":0,"preference":{"enabled":false,"pinned":true}});
+    let client = fixture.app.client();
+    assert!(
+        client
+            .prepare_mutation(
+                fixture.binding().await,
+                "setPreference".into(),
+                input.clone(),
+                fixture.scope(false),
+                Uuid::new_v4(),
+                Attachments::new().into()
+            )
+            .await
+            .is_err()
+    );
+    async fn mutate(
+        fixture: &Fixture,
+        input: Value,
+    ) -> maka_plugin_core::operation::OperationReply {
+        let client = fixture.app.client();
+        let prepared = client
+            .prepare_mutation(
+                fixture.binding().await,
+                "setPreference".into(),
+                input,
+                fixture.scope(true),
+                Uuid::new_v4(),
+                Attachments::new().into(),
+            )
+            .await
+            .unwrap();
+        let intent = fixture
+            .store
+            .record_application_intent(
+                prepared.reference().source.clone(),
+                prepared.consumer().instance().clone(),
+                prepared.reference().clone(),
+                Value::Null,
+            )
+            .await
+            .unwrap();
+        client
+            .mutate(prepared, intent)
+            .await
+            .unwrap()
+            .result()
+            .await
+    }
+    let denied = mutate(&fixture, input.clone()).await;
+    assert!(
+        matches!(denied.receipt, Receipt::Recorded { outcome: OperationOutcome::Returned { ref value }, cleanup: OperationCleanup::Confirmed } if value["kind"] == "rejected" && value["reason"] == "read_only_preferences")
+    );
+    async fn configure(fixture: &Fixture, enabled: bool) {
+        let mut loaded = fixture
+            .store
+            .load_application(DEPLOYMENT)
+            .await
+            .unwrap()
+            .unwrap();
+        loaded
+            .source
+            .input
+            .instances
+            .get_mut("skills")
+            .unwrap()
+            .configuration
+            .values
+            .insert("preferences".into(), json!(enabled));
+        let next = fixture
+            .store
+            .commit_application(
+                DEPLOYMENT,
+                loaded.source.reference.revision,
+                loaded.source.input,
+                vec![],
+                loaded.packages,
+            )
+            .await
+            .unwrap();
+        fixture.app.adopt_committed(next).await.unwrap();
+        fixture.app.ready().await.unwrap();
+    }
+    configure(&fixture, true).await;
+    let before = fixture
+        .query("list", json!({"query":"","cursor":null}), false)
+        .await
+        .unwrap();
+    let applied = mutate(&fixture, input.clone()).await;
+    assert!(
+        matches!(applied.receipt, Receipt::Recorded { outcome: OperationOutcome::Returned { ref value }, cleanup: OperationCleanup::Confirmed } if value["kind"] == "applied")
+    );
+    let changed = fixture
+        .query(
+            "read",
+            json!({"reference":"source:local:review","revision":before["revision"],"offset":0}),
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(changed["kind"], "changed");
+    let stale = mutate(&fixture, input).await;
+    assert!(
+        matches!(stale.receipt, Receipt::Recorded { outcome: OperationOutcome::Returned { ref value }, .. } if value["kind"] == "changed")
+    );
+    configure(&fixture, false).await;
+    let page = fixture
+        .query("list", json!({"query":"","cursor":null}), false)
+        .await
+        .unwrap();
+    assert_eq!(page["preferencesWritable"], false);
+    assert_eq!(page["preferenceRevision"], 1);
+    assert_eq!(
+        page["entries"][0]["preference"],
+        json!({"enabled":false,"pinned":true})
+    );
+    let body = fixture
+        .query(
+            "read",
+            json!({"reference":"source:local:review","revision":page["revision"],"offset":0}),
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(body["text"], "original");
+    fixture.close().await;
+    let reopened = Fixture::open(dir.path(), None).await;
+    let page = reopened
+        .query("list", json!({"query":"","cursor":null}), false)
+        .await
+        .unwrap();
+    assert_eq!(
+        page["entries"][0]["preference"],
+        json!({"enabled":false,"pinned":true})
+    );
+    reopened.close().await;
 }

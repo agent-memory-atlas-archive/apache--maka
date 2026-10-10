@@ -20,7 +20,19 @@
 use super::*;
 use std::path::Path;
 
-fn scope() -> Scope {
+pub(super) async fn preferences(path: &Path) -> preferences::Store {
+    preferences::Store::new(
+        Arc::new(
+            maka_event_log::EventLog::open(
+                &path.join(format!("preferences-{}.sqlite", uuid::Uuid::new_v4())),
+            )
+            .await
+            .unwrap(),
+        ),
+        "test_".into(),
+    )
+}
+pub(super) fn scope() -> Scope {
     maka_plugins::call::Issuer::default()
         .issue(
             maka_plugins::call::Identity::Remote {
@@ -71,9 +83,11 @@ async fn original_discovery_paging_and_exact_body_reads_reject_stale_or_repurpos
     let library = Library::open(
         Configuration {
             manage: false,
+            preferences: true,
             sources: vec![source("a", &a), source("b", &b)],
         },
         dir.path().join("private"),
+        preferences(dir.path()).await,
     )
     .unwrap();
     let call = scope();
@@ -201,9 +215,11 @@ async fn selected_directory_handles_and_private_root_ceiling_remain_authoritativ
     let library = Library::open(
         Configuration {
             manage: false,
+            preferences: true,
             sources: vec![source("selected", &selected), source("private", &private)],
         },
         private.canonicalize().unwrap(),
+        preferences(dir.path()).await,
     )
     .unwrap();
     std::fs::rename(&selected, dir.path().join("original")).unwrap();
@@ -269,9 +285,11 @@ async fn cancellation_never_turns_discovery_failure_into_an_empty_catalog() {
     let library = Library::open(
         Configuration {
             manage: false,
+            preferences: true,
             sources: vec![source("local", dir.path())],
         },
         dir.path().join("private"),
+        preferences(dir.path()).await,
     )
     .unwrap();
     let call = scope();
@@ -282,9 +300,11 @@ async fn cancellation_never_turns_discovery_failure_into_an_empty_catalog() {
         Library::open(
             Configuration {
                 manage: false,
+                preferences: true,
                 sources: vec![source("same", dir.path()), source("same", dir.path())]
             },
-            dir.path().join("private")
+            dir.path().join("private"),
+            preferences(dir.path()).await
         )
         .is_err()
     );
@@ -298,9 +318,11 @@ async fn escaped_instruction_pages_remain_within_the_remote_delivery_budget() {
     let library = Library::open(
         Configuration {
             manage: false,
+            preferences: true,
             sources: vec![source("local", dir.path())],
         },
         dir.path().join("private"),
+        preferences(dir.path()).await,
     )
     .unwrap();
     let call = scope();

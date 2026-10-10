@@ -115,6 +115,8 @@ export type RuntimeProtocol =
   | SkillLibraryPreview
   | SkillLibraryChangeResult
   | SkillLibraryOutcome
+  | SkillLibrarySetPreference
+  | SkillLibraryPreferenceResult
   | AgentList
   | AgentCreate
   | AgentCreated
@@ -1662,6 +1664,8 @@ export type CatalogMutationResult =
 export type SkillLibraryPage =
   | {
       writable: boolean;
+      preferencesWritable: boolean;
+      preferenceRevision: number;
       revision: string;
       entries: SkillLibraryEntry[];
       after?: SkillLibraryCursor | null;
@@ -1674,6 +1678,8 @@ export type SkillLibraryPage =
 export type SkillLibraryDocument =
   | {
       writable: boolean;
+      preferencesWritable: boolean;
+      preferenceRevision: number;
       entry: SkillLibraryEntry;
       revision: string;
       text: string;
@@ -1710,6 +1716,18 @@ export type SkillLibraryPreview =
 export type SkillLibraryChangeResult =
   | {
       reference: string;
+      kind: 'applied';
+    }
+  | {
+      kind: 'changed';
+    }
+  | {
+      reason: string;
+      kind: 'rejected';
+    };
+export type SkillLibraryPreferenceResult =
+  | {
+      revision: number;
       kind: 'applied';
     }
   | {
@@ -4393,6 +4411,10 @@ export interface SkillLibraryConfiguration {
    */
   manage?: boolean;
   /**
+   * Allow edits to enabled/pinned preferences, independently of file management.
+   */
+  preferences?: boolean;
+  /**
    * @maxItems 8
    */
   sources:
@@ -4455,6 +4477,7 @@ export interface SkillLibraryCursor {
 }
 export interface SkillLibraryEntry {
   installed: boolean;
+  preference: SkillPreference;
   reference: string;
   source: string;
   name: string;
@@ -4463,6 +4486,10 @@ export interface SkillLibraryEntry {
   shadowedBy?: string | null;
   metadataTruncated: boolean;
   issues: string[];
+}
+export interface SkillPreference {
+  enabled: boolean;
+  pinned: boolean;
 }
 export interface SkillLibraryRead {
   reference: string;
@@ -4487,6 +4514,11 @@ export interface SkillLibraryReview {
 export interface SkillLibraryOutcome {
   original: OperationReply;
   published?: SkillLibraryChangeResult | null;
+}
+export interface SkillLibrarySetPreference {
+  reference: string;
+  revision: number;
+  preference: SkillPreference;
 }
 export interface AgentList {
   filter: AgentSessionFilter;

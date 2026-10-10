@@ -30,6 +30,7 @@ const entry = {
   description: 'Review a change',
   valid: true,
   installed: false,
+  preference: { enabled: true, pinned: false },
   shadowedBy: null,
   metadataTruncated: false,
   issues: [],
@@ -49,7 +50,7 @@ const reference = {
   contract: contracts.skillLibrary,
   recovery: 'journal_v1',
 };
-async function client(target, writable = true) {
+async function client(target, writable = true, preferencesWritable = false) {
   const { component } = await import(`../dist/packages/skill-library/${target}.js`);
   let props = { theme, locale: 'en', open: true };
   let out = component.mount(props, {});
@@ -84,6 +85,8 @@ async function client(target, writable = true) {
       c.reply(c.action('list'), {
         kind: 'page',
         writable,
+        preferencesWritable,
+        preferenceRevision: 7,
         revision: digest,
         entries: [entry],
         after: null,
@@ -93,6 +96,8 @@ async function client(target, writable = true) {
       c.reply(c.action('read'), {
         kind: 'page',
         writable,
+        preferencesWritable,
+        preferenceRevision: 7,
         revision: digest,
         entry,
         text: 'Instructions',
@@ -278,5 +283,63 @@ for (const target of ['tui', 'desktop']) {
         'The operation result is known, but resource cleanup is not confirmed.',
       ),
     );
+  });
+}
+
+for (const target of ['tui', 'desktop']) {
+  test(`${target} preference writes have separate authority and retain original unknown operations`, async () => {
+    const readonly = (await client(target, true, false)).open();
+    readonly.raw('toggle-enabled').raw('toggle-pinned');
+    assert.equal(readonly.out.actions.length, 0);
+    const c = (await client(target, false, true)).open().raw('toggle-enabled');
+    const mutation = c.action('setPreference');
+    assert.deepEqual(mutation.input, {
+      reference: entry.reference,
+      revision: 7,
+      preference: { enabled: false, pinned: false },
+    });
+    const original = { ...reference, method: 'setPreference' };
+    c.raw('close').update({ open: false });
+    c.operation(mutation, { kind: 'unavailable', diagnostic: 'reply lost' }, original);
+    c.update({ open: true });
+    const receipt = {
+      kind: 'recorded',
+      outcome: { kind: 'unresolved' },
+      cleanup: { kind: 'unconfirmed' },
+    };
+    c.reply(c.action('read'), { reference: original, receipt });
+    assert.equal(c.state.notice, 'skillsUnknown');
+    assert.equal(c.out.actions.length, 0, 'preference writes cannot use file publication outcomes');
+    c.raw('toggle-pinned');
+    assert.equal(c.out.actions.length, 0);
+    c.raw('check-change');
+    c.reply(c.action('read'), {
+      reference: original,
+      receipt: {
+        ...receipt,
+        outcome: { kind: 'returned', value: { kind: 'applied', revision: 8 } },
+      },
+    });
+    assert.equal(c.state.current, null);
+    assert.equal(c.state.cleanupUnconfirmed, true);
+    assert.ok(c.action('list'));
+    assert.ok(!c.action('setPreference'));
+  });
+  test(`${target} stale preference revision requires refresh before another write`, async () => {
+    const c = (await client(target, false, true)).open().raw('toggle-pinned');
+    const mutation = c.action('setPreference');
+    assert.equal(mutation.input.preference.pinned, true);
+    c.operation(
+      mutation,
+      {
+        kind: 'recorded',
+        outcome: { kind: 'returned', value: { kind: 'changed' } },
+        cleanup: { kind: 'confirmed' },
+      },
+      { ...reference, method: 'setPreference' },
+    );
+    assert.equal(c.state.notice, 'skillsChanged');
+    c.raw('toggle-enabled');
+    assert.equal(c.out.actions.length, 0);
   });
 }

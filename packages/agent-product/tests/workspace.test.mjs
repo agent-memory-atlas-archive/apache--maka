@@ -688,6 +688,7 @@ test('both product compositions use actual immutable package refs and check in t
         };
         if (productName === 'agent')
           configuration.skills = {
+            preferences: presentation === 'tui',
             sources: [{ id: 'local', label: 'Local', path: '/private/product-skills' }],
           };
         if (questionsEnabled)
@@ -754,6 +755,13 @@ test('both product compositions use actual immutable package refs and check in t
         }
         const business = connections.hosts.find((host) => host.name === 'local');
         const manager = connections.hosts.find((host) => host.name === 'manager');
+        if (productName === 'agent') {
+          assert.deepEqual(
+            business.endpoints.skills.grant.methods,
+            presentation === 'tui' ? ['list', 'read', 'setPreference'] : ['list', 'read'],
+          );
+          assert.equal(business.endpoints.skills.grant.recovery, presentation === 'tui');
+        }
         assert.equal(host.instances['skill-outcomes'].key, keys['skill-outcomes']);
         assert.deepEqual(host.instances['recovery-gateway'].bindings.skillOutcomes, [
           { kind: 'instance', path: ['skill-outcomes'], export: 'Outcomes' },

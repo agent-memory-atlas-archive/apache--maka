@@ -31,6 +31,9 @@ pub struct Configuration {
     /// Enable installation into this instance's own private collection.
     #[serde(default)]
     pub manage: bool,
+    /// Allow edits to enabled/pinned preferences, independently of file management.
+    #[serde(default)]
+    pub preferences: bool,
     #[schemars(length(max = 8))]
     pub sources: Vec<Source>,
 }
@@ -70,6 +73,7 @@ pub struct List {
 #[schemars(rename = "SkillLibraryEntry")]
 pub struct Entry {
     pub installed: bool,
+    pub preference: maka_skills::Preference,
     pub reference: String,
     pub source: String,
     pub name: String,
@@ -90,6 +94,8 @@ pub struct Entry {
 pub enum Page {
     Page {
         writable: bool,
+        preferences_writable: bool,
+        preference_revision: u64,
         revision: String,
         entries: Vec<Entry>,
         after: Option<Cursor>,
@@ -120,6 +126,8 @@ pub struct Read {
 pub enum Document {
     Page {
         writable: bool,
+        preferences_writable: bool,
+        preference_revision: u64,
         entry: Box<Entry>,
         revision: String,
         text: String,
@@ -188,6 +196,24 @@ pub enum ChangeResult {
     Changed,
     Rejected { reason: String },
 }
+#[derive(Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "SkillLibrarySetPreference")]
+pub struct SetPreference {
+    #[schemars(length(min = 1, max = 512))]
+    pub reference: String,
+    #[schemars(range(max = 9007199254740991_u64))]
+    pub revision: u64,
+    pub preference: maka_skills::Preference,
+}
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "SkillLibraryPreferenceResult")]
+pub enum PreferenceResult {
+    Applied { revision: u64 },
+    Changed,
+    Rejected { reason: String },
+}
 /// Canonical publication evidence alongside the unmodified original Host facts.
 #[derive(Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -206,6 +232,15 @@ pub fn contract() -> Contract {
         transport: Transport::Remote,
         interface: Interface::Service {
             methods: BTreeMap::from([
+                (
+                    "setPreference".into(),
+                    Method {
+                        mode: MethodMode::Mutation,
+                        input: schemars::schema_for!(SetPreference).into(),
+                        output: schemars::schema_for!(PreferenceResult).into(),
+                        resources: BTreeMap::new(),
+                    },
+                ),
                 (
                     "preview".into(),
                     Method {

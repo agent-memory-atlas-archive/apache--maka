@@ -19,8 +19,11 @@
 
 use crate::SkillFailureReason;
 use crate::{DiscoveredSkill, DiscoverySnapshot, Issue, IssueCode, Severity, fields};
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
+#[schemars(rename = "SkillPreference")]
 pub struct Preference {
     pub enabled: bool,
     pub pinned: bool,

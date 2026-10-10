@@ -466,8 +466,13 @@ export function composition(configuration: CompositionConfiguration): Applicatio
       skills: expose(
         'gateway',
         'skills',
-        configuration.skills.manage ? ['list', 'read', 'preview', 'apply'] : ['list', 'read'],
-        !!configuration.skills.manage,
+        [
+          'list',
+          'read',
+          ...(configuration.skills.manage ? ['preview', 'apply'] : []),
+          ...(configuration.skills.preferences ? ['setPreference'] : []),
+        ],
+        !!(configuration.skills.manage || configuration.skills.preferences),
       ),
     });
   }

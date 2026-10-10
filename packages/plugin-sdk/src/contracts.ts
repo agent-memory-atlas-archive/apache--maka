@@ -13503,6 +13503,14 @@ export const contracts = {
                   writable: {
                     type: 'boolean',
                   },
+                  preferencesWritable: {
+                    type: 'boolean',
+                  },
+                  preferenceRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
                   revision: {
                     type: 'string',
                   },
@@ -13533,7 +13541,15 @@ export const contracts = {
                     const: 'page',
                   },
                 },
-                required: ['kind', 'writable', 'revision', 'entries', 'diagnostics'],
+                required: [
+                  'kind',
+                  'writable',
+                  'preferencesWritable',
+                  'preferenceRevision',
+                  'revision',
+                  'entries',
+                  'diagnostics',
+                ],
               },
               {
                 type: 'object',
@@ -13556,6 +13572,9 @@ export const contracts = {
                 properties: {
                   installed: {
                     type: 'boolean',
+                  },
+                  preference: {
+                    $ref: '#/$defs/SkillPreference',
                   },
                   reference: {
                     type: 'string',
@@ -13587,6 +13606,7 @@ export const contracts = {
                 },
                 required: [
                   'installed',
+                  'preference',
                   'reference',
                   'source',
                   'name',
@@ -13595,6 +13615,19 @@ export const contracts = {
                   'metadataTruncated',
                   'issues',
                 ],
+              },
+              SkillPreference: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  enabled: {
+                    type: 'boolean',
+                  },
+                  pinned: {
+                    type: 'boolean',
+                  },
+                },
+                required: ['enabled', 'pinned'],
               },
               SkillLibraryCursor: {
                 type: 'object',
@@ -13805,6 +13838,14 @@ export const contracts = {
                   writable: {
                     type: 'boolean',
                   },
+                  preferencesWritable: {
+                    type: 'boolean',
+                  },
+                  preferenceRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
                   entry: {
                     $ref: '#/$defs/SkillLibraryEntry',
                   },
@@ -13839,7 +13880,17 @@ export const contracts = {
                     const: 'page',
                   },
                 },
-                required: ['kind', 'writable', 'entry', 'revision', 'text', 'offset', 'totalBytes'],
+                required: [
+                  'kind',
+                  'writable',
+                  'preferencesWritable',
+                  'preferenceRevision',
+                  'entry',
+                  'revision',
+                  'text',
+                  'offset',
+                  'totalBytes',
+                ],
               },
               {
                 type: 'object',
@@ -13874,6 +13925,9 @@ export const contracts = {
                   installed: {
                     type: 'boolean',
                   },
+                  preference: {
+                    $ref: '#/$defs/SkillPreference',
+                  },
                   reference: {
                     type: 'string',
                   },
@@ -13904,6 +13958,7 @@ export const contracts = {
                 },
                 required: [
                   'installed',
+                  'preference',
                   'reference',
                   'source',
                   'name',
@@ -13913,7 +13968,109 @@ export const contracts = {
                   'issues',
                 ],
               },
+              SkillPreference: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  enabled: {
+                    type: 'boolean',
+                  },
+                  pinned: {
+                    type: 'boolean',
+                  },
+                },
+                required: ['enabled', 'pinned'],
+              },
             },
+          },
+          resources: {},
+        },
+        setPreference: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              reference: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              revision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+              preference: {
+                $ref: '#/$defs/SkillPreference',
+              },
+            },
+            required: ['reference', 'revision', 'preference'],
+            title: 'SkillLibrarySetPreference',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              SkillPreference: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  enabled: {
+                    type: 'boolean',
+                  },
+                  pinned: {
+                    type: 'boolean',
+                  },
+                },
+                required: ['enabled', 'pinned'],
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'applied',
+                  },
+                },
+                required: ['kind', 'revision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  reason: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                required: ['kind', 'reason'],
+              },
+            ],
+            title: 'SkillLibraryPreferenceResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
           },
           resources: {},
         },

@@ -507,7 +507,7 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
             "hostRoot":host_root, "hostDeployment":host_id, "managementDeployment":manager_id,
             "studioRoot":directory.path().join("unused"), "studioDeployment":Uuid::new_v4(),
             "workspaceRoots":[{"label":"Workspace", "path":workspace}],
-            "skills":{"manage":true,"sources":[{"id":"local", "label":"Test collection", "path":source}]},
+            "skills":{"manage":true,"preferences":true,"sources":[{"id":"local", "label":"Test collection", "path":source}]},
         }),
         &refs,
     );
@@ -578,7 +578,28 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
     tui.wait_for("Library entry 00");
     click(&mut tui, "skill-00", accent);
     tui.wait_for("FIRST PAGE");
+    click(&mut tui, "[ Disable ]", accent);
+    tui.wait_until(|screen| {
+        screen.contains("Library entry 00")
+            && !screen.contains("Loading skills")
+            && !screen.contains("FIRST PAGE")
+    });
+    click(&mut tui, "skill-00", accent);
+    tui.wait_for("Disabled");
+    click(&mut tui, "[ Pin ]", accent);
+    tui.wait_until(|screen| {
+        screen.contains("Library entry 00")
+            && !screen.contains("Loading skills")
+            && !screen.contains("FIRST PAGE")
+    });
+    click(&mut tui, "skill-00", accent);
+    tui.wait_for("Disabled · Pinned");
     click(&mut tui, "[ Next excerpt ]", accent);
+    tui.wait_for("bytes: 4097");
+    // Preference controls reduce the visible body; use the original native
+    // wheel path to reach the final lines rather than assuming they all fit.
+    let (x, y) = position(&cells(&tui), "A skill instruction line.", false).unwrap();
+    tui.send(format!("\x1b[<65;{};{}M", x + 2, y + 1).as_bytes());
     tui.wait_for("LAST PAGE");
     click(&mut tui, "[ Previous excerpt ]", accent);
     tui.wait_for("FIRST PAGE");
@@ -717,15 +738,39 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
     for path in [&root, &host_root] {
         drop(RootOwner::open(path, &ns).unwrap());
     }
+    // A normal Host/UI restart retains the actual enabled/pinned preference.
+    let mut reopened = Pty::spawn(&[
+        "application",
+        "run",
+        "--root",
+        root.to_str().unwrap(),
+        "--deployment",
+        &deployment.to_string(),
+        "--connections",
+        connections.to_str().unwrap(),
+    ]);
+    reopened.wait_until_with_timeout(|screen| screen.contains("Plugins"), Duration::from_secs(30));
+    reopened.send(b"\x0b");
+    reopened.wait_for("Commands");
+    paste(&mut reopened, "Skills");
+    click(&mut reopened, "[ Skills ]", accent);
+    reopened.wait_for("Updated description");
+    click(&mut reopened, "skill-00", accent);
+    reopened.wait_for("Disabled · Pinned");
+    reopened.send(b"\x1b");
+    reopened.wait_until(|screen| !screen.contains("╭Skills"));
+    reopened.send(b"\x11");
+    reopened.finish();
+    assert!(!reopened.screen.snapshot().unwrap().alternate_screen);
     // Keep both deployments and all endpoint selections unchanged. Removing the
     // selected source makes the actual Library initializer fail on restart;
     // ordinary UI startup must fall back to its independent recovery root.
-    runtime.block_on(async {
+    let first_publication = runtime.block_on(async {
         let ui = EventLog::for_root(Arc::new(RootOwner::open(&root, &ns).unwrap()))
             .await
             .unwrap();
         let intents = ui
-            .application_deployment_intents(deployment, 0, 4)
+            .application_deployment_intents(deployment, 0, 8)
             .await
             .unwrap();
         assert!(!intents.is_empty());
@@ -733,7 +778,13 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
         let loaded = ui.load_application(deployment).await.unwrap().unwrap();
         assert_ne!(loaded.source.input.launch, loaded.source.input.recovery);
         assert!(loaded.source.input.instances.contains_key("skill-library"));
+        let cursor = intents
+            .iter()
+            .find(|intent| intent.reference.method == "apply")
+            .unwrap()
+            .cursor;
         ui.shutdown().await.unwrap();
+        cursor
     });
     std::fs::remove_dir_all(&source).unwrap();
     let mut recovered = Pty::spawn(&[
@@ -750,7 +801,18 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
         |screen| screen.contains("maka.skills.Library / apply"),
         Duration::from_secs(30),
     );
-    click(&mut recovered, "[ Check ]", accent);
+    // Select the original install by its actual history cursor. Additional
+    // preference operations must not retarget a generic last-visible Check.
+    let label = format!("#{first_publication} · maka.skills.Library / apply");
+    recovered.wait_for(&label);
+    let term = cells(&recovered);
+    let (_, y) = position(&term, &label, false).unwrap();
+    let row: String = (0..120)
+        .map(|x| term.grid()[Line((y + 1) as i32)][Column(x)].c)
+        .collect();
+    let x = row.find("Check").unwrap();
+    assert!(accent.contains(&term.grid()[Line((y + 1) as i32)][Column(x)].fg));
+    recovered.send(format!("\x1b[<0;{};{}M\x1b[<0;{};{}m", x + 2, y + 2, x + 2, y + 2).as_bytes());
     recovered.wait_for("Original skill result confirmed.");
     recovered.wait_for("installed:skill-39");
     assert!(!installed.exists());

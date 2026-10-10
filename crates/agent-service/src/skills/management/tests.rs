@@ -55,6 +55,7 @@ async fn library(root: Arc<RootOwner>, source: &std::path::Path, namespace: &str
     let mut library = Library::open(
         Configuration {
             manage: true,
+            preferences: false,
             sources: vec![Source {
                 id: "local".into(),
                 label: "Local".into(),
@@ -62,6 +63,7 @@ async fn library(root: Arc<RootOwner>, source: &std::path::Path, namespace: &str
             }],
         },
         root.canonical_path().to_owned(),
+        super::super::tests::preferences(source.parent().unwrap()).await,
     )
     .unwrap();
     library.managed = Some(Managed::open(root, namespace.into()).await.unwrap());
