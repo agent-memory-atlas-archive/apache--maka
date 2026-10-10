@@ -384,8 +384,8 @@ pub async fn serve(native: NativeRegistry) -> Result<()> {
     let result = match application {
         Ok(application) => {
             let result = async {
-                application.ready().await?;
                 let client = application.client();
+                client.ready_instance(&bootstrap.consumer).await?;
                 let endpoints = capture_endpoints(&client, &bootstrap.consumer, &bootstrap.imports).await?;
                 let server = Server::new(client.clone(), policy, endpoints)?;
                 let ready = Event::Ready {

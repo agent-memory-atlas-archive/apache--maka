@@ -469,14 +469,15 @@ impl Connections {
             .await?,
         );
         let app = application.as_ref().unwrap();
-        app.ready().await?;
+        let client = app.client();
+        client.ready_instance(&configuration.consumer).await?;
         let endpoints = crate::transport::process::capture_endpoints(
-            &app.client(),
+            &client,
             &configuration.consumer,
             &configuration.imports,
         )
         .await?;
-        let actual = crate::transport::Server::new(app.client(), policy, endpoints)?;
+        let actual = crate::transport::Server::new(client, policy, endpoints)?;
         let catalogue = actual.catalogue();
         *server = Some(actual.clone());
         owned.connection = Some(native::Connection::new(Arc::new(CohostConnector {

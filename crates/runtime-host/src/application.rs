@@ -49,7 +49,7 @@ use maka_plugin_core::{
     },
     package::{Implementation, PackageRef, Packages},
     plan::{Plan, RemoteExports},
-    runtime::{Activation, Capability, Published, Status},
+    runtime::{Activation, Capability, Phase, Published, Status},
 };
 use maka_plugins::{
     call::{Attachments, Issuer, Scope, Ticket},
@@ -57,7 +57,7 @@ use maka_plugins::{
 };
 use serde_json::Value;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     io::Write,
     sync::{Arc, Weak},
 };
@@ -351,6 +351,9 @@ pub struct Snapshot {
     pub effective: Option<DeploymentRef>,
     pub starting: bool,
     pub startup_error: Option<String>,
+    /// Failed initializers and their dependent instances in the desired source.
+    /// Cleanup may still be pending; only a new source permits another attempt.
+    pub initialization_failures: BTreeSet<InstanceId>,
     pub closing: bool,
     pub closed: bool,
     pub cleanup_error: Option<String>,
@@ -761,6 +764,34 @@ impl Client {
                 .changed()
                 .await
                 .map_err(|_| "Host owner disappeared during startup".to_string())?;
+        }
+    }
+    /// Observe one current instance without requiring unrelated startup work to
+    /// succeed. The returned activation still needs exact binding and admission.
+    pub async fn ready_instance(&self, id: &InstanceId) -> Result<Activation> {
+        let mut updates = self.updates.clone();
+        loop {
+            let snapshot = updates.borrow().clone();
+            if snapshot.closing {
+                return Err("Host deployment is closing".into());
+            }
+            if snapshot.initialization_failures.contains(id) {
+                return Err("Host instance failed to initialize".into());
+            }
+            if let Some(status) = snapshot
+                .instances
+                .iter()
+                .find(|s| s.activation.instance() == id && s.phase == Phase::Active)
+            {
+                return Ok(status.activation.clone());
+            }
+            if !snapshot.starting {
+                return Err("Host instance is unavailable".into());
+            }
+            updates
+                .changed()
+                .await
+                .map_err(|_| "Host owner disappeared during instance startup".to_string())?;
         }
     }
     pub async fn bind(&self, consumer: Activation, import: String) -> Result<Vec<Binding>> {

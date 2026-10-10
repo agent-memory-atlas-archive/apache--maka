@@ -19,6 +19,8 @@
 
 #[path = "reconciliation.rs"]
 mod reconciliation;
+#[path = "startup.rs"]
+mod startup;
 
 #[path = "peer_confirmations.rs"]
 mod peer_confirmations;

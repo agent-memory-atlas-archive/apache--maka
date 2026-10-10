@@ -112,6 +112,12 @@ and a nonnil incarnation nonce. The input is closed JSON, bounded to 512 KiB.
 Stdin/stdout carry Bootstrap/Ready, Capture/Captured, Approve/Approved and Close/Closed. Each import selects
 exactly one existing provider. Compiled gateway/agent/settings availability comes
 from this executable; the persisted Host composition selects executed instances.
+Process and cohost startup wait for the explicitly selected consumer to become
+active, then capture its exact bindings. An unrelated initialization failure does
+not close these healthy endpoints or imply whole-deployment convergence. A consumer
+that depends on the failed instance remains unavailable; compositions must separate
+recovery consumers from business dependencies. Original failed work and cleanup
+still belong to the same Application and Root.
 
 `runtime_host::ipc` is the canonical physical listener/connector used by both Host
 paths. Unix sockets require a private current-account parent and use mode 0600;

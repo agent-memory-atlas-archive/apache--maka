@@ -240,7 +240,7 @@ fn plugin_application_setup_rejection_is_clean_and_diagnostics_cannot_emit_escap
 #[allow(dead_code)]
 #[path = "../../../../application-bridge/tests/support/mod.rs"]
 mod local_fixture;
-fn local_arguments(directory: &std::path::Path) -> Vec<String> {
+fn local_arguments(directory: &std::path::Path, unrelated_failure: bool) -> Vec<String> {
     let timer = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_time()
@@ -261,7 +261,11 @@ fn local_arguments(directory: &std::path::Path) -> Vec<String> {
             let (input, packages, observations) = if let Some(target) = target {
                 local_fixture::ui(target)
             } else {
-                let (input, packages) = local_fixture::host();
+                let (input, packages) = if unrelated_failure {
+                    local_fixture::host_with_startup_failure()
+                } else {
+                    local_fixture::host()
+                };
                 (input, packages, vec![])
             };
             store
@@ -289,8 +293,15 @@ fn local_arguments(directory: &std::path::Path) -> Vec<String> {
 }
 #[test]
 fn production_terminal_connections_execute_host_mutation_and_read_original_receipt_before_exit() {
+    check_terminal_connections(false);
+}
+#[test]
+fn production_terminal_connections_remain_available_after_independent_host_startup_failure() {
+    check_terminal_connections(true);
+}
+fn check_terminal_connections(unrelated_failure: bool) {
     let directory = tempfile::tempdir().unwrap();
-    let args = local_arguments(directory.path());
+    let args = local_arguments(directory.path(), unrelated_failure);
     let args = args.iter().map(String::as_str).collect::<Vec<_>>();
     let mut tui = Pty::spawn(&args);
     tui.wait_for("Read Host");

@@ -90,6 +90,29 @@ fn host_package(name: &str, entry: EntryDeclaration, source: Option<String>) -> 
         source,
     )
 }
+pub fn host_with_startup_failure() -> (Input, Vec<Package>) {
+    let (mut input, mut packages) = host();
+    let declaration = packages
+        .iter()
+        .find(|p| p.manifest().id == "local.business")
+        .unwrap()
+        .manifest()
+        .application
+        .clone()
+        .unwrap();
+    let failing = counter::package(
+        "local.failing",
+        declaration,
+        Some(
+            "export function activate() { throw Error('unrelated initializer rejected'); }".into(),
+        ),
+    );
+    input
+        .instances
+        .insert("failing".into(), counter::node(&failing, 99));
+    packages.push(failing);
+    (input, packages)
+}
 pub fn host() -> (Input, Vec<Package>) {
     let service = host_package(
         "local.business",

@@ -33,14 +33,20 @@ activation or cleanup succeeded. `Client::snapshot` separates `desired` from
 `effective` (the last fully converged source), and reports current instance phases,
 startup failure and cleanup failure. `Application::source` is the original startup
 source. `ready` waits for convergence and returns an observed failure.
+`Client::ready_instance` observes one actual active instance without waiting for
+unrelated initializers; its activation still needs normal binding and admission.
 
 Unchanged activations retain their original source, native context and captured
 bindings. Prepared and later mutations from those consumers keep that original
 receipt reference. Changed instances revoke new admission; already accepted work
 settles under its original owner. Replacement waits for actual call resources,
 module/native close and final VM shutdown. A shared VM remains while any module
-owns it. Initialization failure during an update preserves unrelated healthy
-instances; a later committed revision can recover. Package storage does not imply
+owns it. Initial startup and update failures retire only the failed instance and
+its dependent consumers. Independent pending and loading instances continue.
+`initialization_failures` identifies failed initializers and blocked dependents for
+that desired source; their cleanup remains separately owned. The source cannot
+become effective, and only a later committed revision permits another attempt.
+Package storage does not imply
 activation. This owner API does not provide a remote management grant or migrate
 the server and presentation executors to live updates.
 

@@ -140,6 +140,7 @@ pub(super) struct Owner {
     updates: watch::Sender<Snapshot>,
     starting: bool,
     startup_error: Option<String>,
+    initialization_failures: BTreeSet<InstanceId>,
     cleanup_error: Option<String>,
     closing: bool,
     closing_vms: bool,
@@ -191,6 +192,7 @@ impl Owner {
             updates,
             starting: true,
             startup_error: None,
+            initialization_failures: BTreeSet::new(),
             cleanup_error: None,
             closing: false,
             closing_vms: false,
@@ -379,6 +381,7 @@ impl Owner {
         self._input = input;
         self.sources = sources;
         self.startup_error = None;
+        self.initialization_failures.clear();
         self.starting = true;
         Ok(())
     }
@@ -392,21 +395,13 @@ impl Owner {
                 .expect("activation belongs to this owner");
         }
     }
-    fn fail_startup(&mut self, error: String) {
+    fn fail_initialization(&mut self, id: InstanceId, error: String) {
         self.startup_error.get_or_insert(error);
-        if self.effective.is_none() {
-            self.stop();
-        } else {
-            self.starting = false;
-            self.pending.clear();
-            for activation in self.activations.values() {
-                if self
-                    .runtime
-                    .status(activation)
-                    .is_ok_and(|s| s.phase == Phase::Loading)
-                {
-                    self.runtime.retire(activation).expect("owned activation");
-                }
+        self.initialization_failures.insert(id.clone());
+        if let Some(activation) = self.activations.get(&id) {
+            for retired in self.runtime.retire(activation).expect("owned activation") {
+                self.initialization_failures
+                    .insert(retired.instance().clone());
             }
         }
     }
@@ -418,6 +413,26 @@ impl Owner {
                 for instance in std::mem::take(&mut self.pending) {
                     if self.closing || !self.starting {
                         break;
+                    }
+                    if self.initialization_failures.contains(&instance.identity) {
+                        continue;
+                    }
+                    // A failed provider may already have physically closed. Keep
+                    // its dependents out of this source's remaining attempts;
+                    // independent initializers retain their own original work.
+                    if instance
+                        .parent
+                        .as_ref()
+                        .is_some_and(|id| self.initialization_failures.contains(id))
+                        || instance.entry.is_some()
+                            && instance.bindings.values().flatten().any(|b| {
+                                matches!(&b.provider, Provider::Local { instance, .. }
+                                if self.initialization_failures.contains(instance))
+                            })
+                    {
+                        self.initialization_failures.insert(instance.identity);
+                        progressed = true;
+                        continue;
                     }
                     if self.activations.contains_key(&instance.identity) {
                         self.pending.push(instance);
@@ -444,12 +459,14 @@ impl Owner {
                         continue;
                     }
                     progressed = true;
+                    let id = instance.identity.clone();
                     if let Err(error) = self.initialize(instance) {
-                        self.fail_startup(error);
+                        self.fail_initialization(id, error);
                     }
                 }
             }
             if self.starting
+                && self.initialization_failures.is_empty()
                 && self
                     .runtime
                     .desired()
@@ -472,15 +489,28 @@ impl Owner {
             {
                 self.starting = false;
                 self.effective = self.persisted.as_ref().map(|(source, _)| source.clone());
+            } else if self.pending.is_empty()
+                && !self.owned.values().any(|owned| owned.initializing)
+                && !self.initialization_failures.is_empty()
+            {
+                // All attempts have ended; failed resource cleanup remains
+                // separately owned. This source has never fully converged.
+                self.starting = false;
             } else if !self.pending.is_empty()
-                && self.jobs.is_empty()
+                && !self.owned.values().any(|owned| owned.initializing)
                 && !self.activations.values().any(|a| {
                     self.runtime
                         .status(a)
                         .is_ok_and(|s| s.phase == Phase::Retiring)
                 })
             {
-                self.fail_startup("Host dependencies did not become ready".into());
+                for instance in std::mem::take(&mut self.pending) {
+                    self.fail_initialization(
+                        instance.identity,
+                        "Host dependencies did not become ready".into(),
+                    );
+                }
+                self.starting = false;
             }
         }
         for (id, activation) in &self.activations {
@@ -737,20 +767,25 @@ impl Owner {
         Ok(index)
     }
     fn retire_vm(&mut self, vm: usize, reason: String) {
-        let mut affected = false;
-        for (id, owned) in &self.owned {
-            if owned.vm == Some(vm) {
-                affected |= self
+        let affected = self
+            .owned
+            .iter()
+            .filter(|(_, owned)| owned.vm == Some(vm))
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        for id in affected {
+            if self.starting
+                && self
                     .runtime
-                    .status(&self.activations[id])
-                    .is_ok_and(|s| s.phase != Phase::Retiring);
+                    .status(&self.activations[&id])
+                    .is_ok_and(|status| status.phase != Phase::Retiring)
+            {
+                self.fail_initialization(id, reason.clone());
+            } else {
                 self.runtime
-                    .retire(&self.activations[id])
+                    .retire(&self.activations[&id])
                     .expect("VM activation belongs to owner");
             }
-        }
-        if affected && self.starting {
-            self.fail_startup(reason);
         }
     }
     fn check_vm(&mut self, provider: &Activation) -> Result<()> {
@@ -1353,7 +1388,7 @@ impl Owner {
                         // A late successful initializer must still close under
                         // its original resource; retirement is not startup failure.
                     } else {
-                        self.fail_startup(error);
+                        self.fail_initialization(activation.instance().clone(), error);
                     }
                 }
             }
@@ -1473,6 +1508,7 @@ impl Owner {
             effective: self.effective.clone(),
             starting: self.starting,
             startup_error: self.startup_error.clone(),
+            initialization_failures: self.initialization_failures.clone(),
             closing: self.closing,
             closed: self.closed,
             cleanup_error: self.cleanup_error.clone(),
