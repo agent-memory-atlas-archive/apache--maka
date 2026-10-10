@@ -266,7 +266,7 @@ pub(super) struct Edge {
     pub slot: String,
 }
 pub(super) struct Prepared<V: ?Sized> {
-    pub source: Option<maka_plugin_core::deployment::DeploymentRef>,
+    pub source: Option<maka_event_log::applications::SourceSnapshot>,
     pub(super) id: Uuid,
     pub consumer: Mount,
     pub key: String,
@@ -500,10 +500,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 "action and subscription method mode mismatch".into(),
             ));
         }
-        let source = self
-            .origins
-            .get(&provider.epoch())
-            .map(|origin| origin.reference.clone());
+        let source = self.origins.get(&provider.epoch()).cloned();
         if mode == MethodMode::Mutation && source.is_none() {
             return Err(Error::Invalid(
                 "mutation requires a persisted UI source".into(),
@@ -920,7 +917,7 @@ impl<V: ?Sized + 'static> Application<V> {
             let id = action.id;
             let request = ServiceRequest {
                 source: ServiceSource {
-                    deployment: action.source,
+                    deployment: action.source.map(|source| source.reference().clone()),
                     consumer: action.capability.consumer().clone(),
                     mount: action.consumer.clone(),
                     request: id,

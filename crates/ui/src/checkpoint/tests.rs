@@ -20,6 +20,7 @@
 use super::*;
 use crate::editor::{EditorTextRef, TextRange};
 use maka_event_log::root::{ROOT_DATABASE, RootNamespaces, RootOwner};
+use maka_plugin_core::deployment::DeploymentRef;
 use maka_plugin_core::{
     composition::{
         Configuration, Environment, ExecutionLocation, Input, Node, PackageUse, PresentationTarget,
@@ -54,13 +55,17 @@ fn policy() -> EditorPersistence {
         retry: 0,
     }
 }
-fn scope(store: &Arc<EventLog>, source: &DeploymentRef) -> Scope {
+async fn scope(store: &Arc<EventLog>, source: &DeploymentRef) -> Scope {
     Scope {
         store: Arc::downgrade(store),
-        source: source.clone(),
+        source: store
+            .load_application_at(source)
+            .await
+            .unwrap()
+            .unwrap()
+            .snapshot(),
         instance: instance(),
         scheduler: tokio::runtime::Handle::current(),
-        checked: Default::default(),
     }
 }
 fn snapshot(owner: &str, revision: u64, text: &str) -> EditorSnapshot {
@@ -136,7 +141,7 @@ async fn final_coalesced_snapshot_flushes_before_cleanup_and_restores_after_root
     let policy = policy();
     let resources = Arc::new(Resources::default());
     let budget = NativeBudget::default();
-    let recipe_scope = scope(&store, &source);
+    let recipe_scope = scope(&store, &source).await;
     let mut editor = EditorCheckpoint::new(
         Some(recipe_scope.clone()),
         &policy,
@@ -176,7 +181,6 @@ async fn final_coalesced_snapshot_flushes_before_cleanup_and_restores_after_root
     drop(blocker);
     resources.finish().await.unwrap();
     assert_eq!(budget.usage(), (0, 0, 0));
-    assert!(recipe_scope.checked.lock().await.upgrade().is_none());
     tokio::time::timeout(Duration::from_secs(5), async {
         while retained.upgrade().is_some() {
             tokio::task::yield_now().await;
@@ -187,9 +191,13 @@ async fn final_coalesced_snapshot_flushes_before_cleanup_and_restores_after_root
     let root =
         Arc::new(RootOwner::open(&dir.path().join("root"), &namespaces(dir.path())).unwrap());
     let store = Arc::new(EventLog::for_root(root).await.unwrap());
+    assert!(
+        recipe_scope.open(&store).is_err(),
+        "old evidence cannot cross a Root lease reopen"
+    );
     let resources = Arc::new(Resources::default());
     let mut editor = EditorCheckpoint::new(
-        Some(scope(&store, &source)),
+        Some(scope(&store, &source).await),
         &policy,
         &resources,
         budget.clone(),
@@ -247,7 +255,7 @@ async fn an_older_ack_cannot_hide_a_newer_capture_failure_and_retry_accounts_for
     let resources = Arc::new(Resources::default());
     let budget = NativeBudget::default();
     let mut editor = EditorCheckpoint::new(
-        Some(scope(&store, &source)),
+        Some(scope(&store, &source).await),
         &policy,
         &resources,
         budget.clone(),
@@ -279,13 +287,13 @@ async fn source_mismatch_and_conflicting_writers_cannot_overwrite_saved_content(
     let a = Arc::new(Resources::default());
     let b = Arc::new(Resources::default());
     let mut first = EditorCheckpoint::new(
-        Some(scope(&store, &source)),
+        Some(scope(&store, &source).await),
         &policy,
         &a,
         NativeBudget::default(),
     );
     let mut second = EditorCheckpoint::new(
-        Some(scope(&store, &source)),
+        Some(scope(&store, &source).await),
         &policy,
         &b,
         NativeBudget::default(),
@@ -310,7 +318,7 @@ async fn source_mismatch_and_conflicting_writers_cannot_overwrite_saved_content(
     foreign.data_source = json!({"host":"replacement"});
     let c = Arc::new(Resources::default());
     let mut replacement = EditorCheckpoint::new(
-        Some(scope(&store, &source)),
+        Some(scope(&store, &source).await),
         &foreign,
         &c,
         NativeBudget::default(),

@@ -124,12 +124,6 @@ struct Loaded {
     module: ForegroundModule,
     resource: Resource,
 }
-struct OriginalSource {
-    reference: maka_plugin_core::deployment::DeploymentRef,
-    checkpoints: std::sync::Arc<
-        tokio::sync::Mutex<std::sync::Weak<maka_event_log::applications::checkpoints::Checkpoints>>,
-    >,
-}
 
 pub struct Application<V: ?Sized = ()> {
     runtime: Runtime<Export<V>>,
@@ -145,9 +139,9 @@ pub struct Application<V: ?Sized = ()> {
     scene_compiler: Option<Rc<native::SceneCompiler<V>>>,
     render_depth_limit: Option<u16>,
     update_owner: Uuid,
-    source: Option<maka_plugin_core::deployment::DeploymentRef>,
+    source: Option<maka_event_log::applications::SourceSnapshot>,
     store: Option<std::sync::Arc<maka_event_log::EventLog>>,
-    origins: BTreeMap<Uuid, OriginalSource>,
+    origins: BTreeMap<Uuid, maka_event_log::applications::SourceSnapshot>,
     effective: Option<maka_plugin_core::deployment::DeploymentRef>,
     deployment_error: Option<String>,
     pending: Vec<maka_plugin_core::plan::Instance>,
@@ -196,6 +190,7 @@ impl<V: ?Sized + 'static> Application<V> {
         {
             return Err(Error::Invalid("stored presentation target mismatch".into()));
         }
+        let snapshot = loaded.snapshot();
         operations::provide(&mut native, loaded.source.reference.clone(), store.clone())?;
         let remotes = actions::RemoteServices {
             declarations: loaded
@@ -213,13 +208,13 @@ impl<V: ?Sized + 'static> Application<V> {
             limits,
             native,
             remotes,
-            Some((loaded.source.reference, store)),
+            Some((snapshot, store)),
         )
     }
 
     /// The committed source adopted by this executor; status reports convergence.
     pub fn source(&self) -> Option<&maka_plugin_core::deployment::DeploymentRef> {
-        self.source.as_ref()
+        self.source.as_ref().map(|source| source.reference())
     }
 
     fn new_owned(
@@ -230,7 +225,7 @@ impl<V: ?Sized + 'static> Application<V> {
         native: NativeRegistry<V>,
         remotes: actions::RemoteServices,
         persisted: Option<(
-            maka_plugin_core::deployment::DeploymentRef,
+            maka_event_log::applications::SourceSnapshot,
             std::sync::Arc<maka_event_log::EventLog>,
         )>,
     ) -> Result<Self> {
@@ -313,7 +308,7 @@ impl<V: ?Sized + 'static> Application<V> {
             }
         }
         if app.deployment_error.is_none() && !app.deployment_status().converging {
-            app.effective = app.source.clone();
+            app.effective = app.source().cloned();
         }
         Ok(app)
     }
@@ -323,13 +318,7 @@ impl<V: ?Sized + 'static> Application<V> {
         self.activations
             .insert(instance.identity.clone(), activation.clone());
         if let Some(source) = &self.source {
-            self.origins.insert(
-                activation.epoch(),
-                OriginalSource {
-                    reference: source.clone(),
-                    checkpoints: Default::default(),
-                },
-            );
+            self.origins.insert(activation.epoch(), source.clone());
         }
         if let Some(entry) = &instance.entry {
             self.capture_values(&activation, &entry.imports)?;

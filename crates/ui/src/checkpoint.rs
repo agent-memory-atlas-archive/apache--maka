@@ -30,7 +30,7 @@ use maka_event_log::{
     EventLog,
     applications::checkpoints::{Checkpoints, MAX_CONTENT, MAX_METADATA, MAX_SOURCE},
 };
-use maka_plugin_core::{composition::InstanceId, deployment::DeploymentRef, runtime::Mount};
+use maka_plugin_core::{composition::InstanceId, runtime::Mount};
 use maka_plugins::call::Resources;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -41,10 +41,9 @@ use std::sync::{Arc, Weak};
 #[derive(Clone)]
 pub struct Scope {
     store: Weak<EventLog>,
-    source: DeploymentRef,
+    source: maka_event_log::applications::SourceSnapshot,
     instance: InstanceId,
     scheduler: tokio::runtime::Handle,
-    checked: Arc<tokio::sync::Mutex<Weak<Checkpoints>>>,
 }
 impl<V: ?Sized + 'static> crate::Application<V> {
     pub fn checkpoint_scope(&self, mount: &Mount) -> crate::Result<Option<Scope>> {
@@ -55,29 +54,18 @@ impl<V: ?Sized + 'static> crate::Application<V> {
             .zip(self.origins.get(&provider.epoch()))
             .map(|(store, source)| Scope {
                 store: Arc::downgrade(store),
-                source: source.reference.clone(),
+                source: source.clone(),
                 instance: provider.instance().clone(),
                 scheduler: self.scheduler.clone(),
-                checked: source.checkpoints.clone(),
             }))
     }
 }
 impl Scope {
-    async fn open(&self, store: &Arc<EventLog>) -> Result<Arc<Checkpoints>, String> {
-        // All mounts of this original provider share validation, while the
-        // active workers alone retain the resulting Root capability.
-        let mut checked = self.checked.lock().await;
-        if let Some(checkpoints) = checked.upgrade() {
-            return Ok(checkpoints);
-        }
-        let checkpoints = Arc::new(
-            store
-                .ui_checkpoints(&self.source, &self.instance)
-                .await
-                .map_err(|error| error.to_string())?,
-        );
-        *checked = Arc::downgrade(&checkpoints);
-        Ok(checkpoints)
+    fn open(&self, store: &Arc<EventLog>) -> Result<Arc<Checkpoints>, String> {
+        store
+            .ui_checkpoints_from(&self.source, &self.instance)
+            .map(Arc::new)
+            .map_err(|error| error.to_string())
     }
 }
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]

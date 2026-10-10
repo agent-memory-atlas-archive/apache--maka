@@ -458,3 +458,171 @@ async fn recovery_metadata_bounds_encoded_bytes_and_rejects_oversized_stored_val
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn original_source_snapshot_keeps_its_checked_instances_without_reloading_package_bytes() {
+    let (_dir, store) = store().await;
+    let store = Arc::new(store);
+    let deployment = Uuid::new_v4();
+    let first = source(&store, deployment, 0).await;
+    let mut loaded = store.load_application_at(&first).await.unwrap().unwrap();
+    let snapshot = loaded.snapshot();
+    assert!(
+        store.ui_checkpoints_from(&snapshot, &consumer()).is_err(),
+        "Host origin cannot create UI checkpoint access"
+    );
+    // Public editable data is not the private captured caller proof.
+    loaded.source.reference.deployment = Uuid::new_v4();
+    loaded.source.input.instances.get_mut("caller").unwrap().key = Uuid::from_u128(43);
+    assert_eq!(loaded.snapshot().reference(), &first);
+    assert!(
+        store
+            .record_application_intent_from(
+                &snapshot,
+                InstanceId(vec![Uuid::from_u128(43)]),
+                reference(),
+                json!(null)
+            )
+            .await
+            .is_err()
+    );
+    let mut current = store.load_application_at(&first).await.unwrap().unwrap();
+    current
+        .source
+        .input
+        .instances
+        .get_mut("caller")
+        .unwrap()
+        .disabled = true;
+    let structure = Package::new(BTreeMap::from([(
+        MANIFEST_FILE.into(),
+        serde_json::to_vec(&json!({
+            "schemaVersion": 2, "id": "structure", "application": {"composition": {"children": {}}}
+        }))
+        .unwrap(),
+    )]))
+    .unwrap();
+    let mut node = current.source.input.instances["caller"].clone();
+    node.key = Uuid::from_u128(99);
+    node.disabled = false;
+    node.package = structure.application_ref().into();
+    node.use_package = PackageUse::Composition;
+    current
+        .source
+        .input
+        .instances
+        .insert("structure".into(), node);
+    current.packages.push(structure);
+    let second = store
+        .commit_application(
+            deployment,
+            1,
+            current.source.input,
+            vec![],
+            current.packages,
+        )
+        .await
+        .unwrap();
+    let disabled = store
+        .load_application_at(&second)
+        .await
+        .unwrap()
+        .unwrap()
+        .snapshot();
+    assert!(
+        store
+            .record_application_intent_from(&disabled, consumer(), reference(), json!(null))
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .record_application_intent_from(
+                &disabled,
+                InstanceId(vec![Uuid::from_u128(99)]),
+                reference(),
+                json!(null)
+            )
+            .await
+            .is_err(),
+        "structural instances cannot be callers"
+    );
+    let (_other_dir, other) = crate::applications::tests::store().await;
+    assert!(
+        other
+            .record_application_intent_from(&snapshot, consumer(), reference(), json!(null))
+            .await
+            .is_err()
+    );
+    // An already-running original executor retains the immutable bytes it
+    // validated. A new activation still refuses corrupted stored packages.
+    store
+        .connection
+        .run(|connection| {
+            Box::pin(async move {
+                sqlx::query("UPDATE application_package_files SET payload = X'00'")
+                    .execute(connection)
+                    .await?;
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+    assert!(store.load_application_at(&first).await.is_err());
+    let original = reference();
+    let recorded = store
+        .record_application_intent_from(&snapshot, consumer(), original.clone(), json!({"draft":1}))
+        .await
+        .unwrap();
+    assert_eq!(recorded.intent().caller, first);
+    assert_eq!(recorded.intent().reference, original);
+    assert!(matches!(
+        store
+            .record_application_intent_from(&snapshot, consumer(), original, json!({"draft":2}))
+            .await,
+        Err(StoreError::EventConflict)
+    ));
+}
+
+#[tokio::test]
+async fn source_snapshot_does_not_retain_or_authenticate_a_reopened_root_lease() {
+    use crate::root::{RootNamespaces, RootOwner};
+    let (dir, store) = store().await;
+    let first = source(&store, Uuid::new_v4(), 0).await;
+    let snapshot = store
+        .load_application_at(&first)
+        .await
+        .unwrap()
+        .unwrap()
+        .snapshot();
+    store.shutdown().await.unwrap();
+    drop(store);
+    let root = Arc::new(
+        RootOwner::open(
+            &dir.path().join("root"),
+            &RootNamespaces {
+                ownership: dir.path().join("owners"),
+                control: dir.path().join("control"),
+            },
+        )
+        .unwrap(),
+    );
+    let reopened = EventLog::for_root(root).await.unwrap();
+    assert!(
+        reopened
+            .record_application_intent_from(&snapshot, consumer(), reference(), json!(null))
+            .await
+            .is_err()
+    );
+    let fresh = reopened
+        .load_application_at(&first)
+        .await
+        .unwrap()
+        .unwrap()
+        .snapshot();
+    reopened
+        .record_application_intent_from(&fresh, consumer(), reference(), json!(null))
+        .await
+        .unwrap();
+    reopened.shutdown().await.unwrap();
+}

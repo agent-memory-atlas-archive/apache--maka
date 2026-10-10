@@ -39,6 +39,14 @@ Final adoption rechecks deployment identity and monotonic revision, validates
 packages, target and trusted endpoint shapes, then installs the plan in the same
 kernel. Remote observations do not create registrations or permission grants.
 
+Each validated storage load also captures a private `SourceSnapshot`: the original
+Root lease, deployment revision and executable instances. UI activations and queued
+actions retain that evidence, so recording an intent or opening a checkpoint does
+not reread all package bytes or rebuild the plan. It grants no service authority;
+actual admission, SQL confirmation and cleanup remain unchanged. The snapshot
+weakly binds its original Root and cannot authenticate a later reopened lease.
+New activations still validate complete stored bytes, including corruption checks.
+
 `advance_deployment` runs after original task settlement and renderer close
 acknowledgements. It keeps unchanged activation, frame, module and mount identity;
 changed instances wait for original calls, native mount cleanup and module close.
@@ -394,8 +402,8 @@ create a new native owner, without restoring undo or geometry. Editing and send
 stay gated until that new lineage has a durable checkpoint. `Ready.saved` reports
 whether the latest captured state has settled; abrupt process loss can still lose
 unacknowledged edits. A later `retry` retries a failure, or re-emits held Restore
-metadata when the product revisits that draft. Recipes and validation caches keep
-only weak database capabilities; live workers retain the original Root.
+metadata when the product revisits that draft. Recipes keep only weak database and
+Root references; live workers retain the original Root.
 
 The fixed `TextInput` and `SecretInput` exports from `maka.ui.input` use the
 shared `Editor*` command, observation and capture protocol. Single-line props

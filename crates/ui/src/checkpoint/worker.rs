@@ -127,7 +127,7 @@ async fn run(
             Request::Load => {
                 let result = async {
                     if checkpoints.is_none() {
-                        checkpoints = Some(scope.open(&store).await.map_err(diagnostic)?);
+                        checkpoints = Some(scope.open(&store).map_err(diagnostic)?);
                     }
                     let mut memory = budget
                         .reserve(Kind::Encoded, MAX_CONTENT + MAX_METADATA + MAX_SOURCE + 128)

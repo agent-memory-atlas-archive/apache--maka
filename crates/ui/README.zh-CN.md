@@ -195,6 +195,8 @@ resource 示例证明这条原生异步路径，不代表产品已完成。
 JSON/包供检查，并保存 Desktop 部署 `00000000-0000-0000-0000-000000000001`；
 `dual` 保存 TUI 部署 `00000000-0000-0000-0000-000000000002`。
 
+完整存储加载同时产生不可从JSON构造的 `SourceSnapshot`，捕获原Root租约、部署版本和可执行实例。UI激活及排队动作保留其原证据，记录intent和打开checkpoint时无需重读全部包及重建Plan。它不授予服务权限；实际admission、SQL确认和cleanup保持。快照弱绑定原Root，不延长占用，也不能用于重开后的新租约；新激活仍须校验完整存储字节并拒绝损坏。
+
 持久应用在激活前提供原生实现 `maka.operations.history`；产品必须显式选择 provider
 实例、`History` 导出及采用 `caller_history_contract()` 的 binding。提供实现不等于
 激活插件，未保存预览不提供它。factory configuration 是空对象。普通 `page` Query
@@ -257,7 +259,7 @@ GPUI 与 TUI 共用纯 `editor::reduce` 命令/回执协议，各自的原始原
 
 Textarea 可选 `persistence: {key, format, dataSource, metadata, restore, retry}`。真实挂载 provider 提供实际 UI Root 与稳定实例的弱 scope；props 不提供文件路径或存储授权。key、格式与业务来源在同一挂载内不可变。原生 worker 按 revision CAS 保存最多 1 MiB UTF-8 blob、原生 revision/选区和有界元数据，空记录保留为 tombstone；每个实例 namespace 限 40 MiB，快照计入原呈现器共享预算。worker 合并待写快照，在原生资源清理前写完最后一份；写入失败不能产生成功清理回执。
 
-`checkpoint` 事件仅提供 Loading、Restore、Ready、Failed 元数据，不含正文。产品先核对原业务回执，再向当前新 owner 和已加载版本发送恢复命令；两端验证精确 grapheme 边界，不恢复撤销或旧几何。新 owner 的初始快照持久化前禁止编辑和发送。`Ready.saved` 表示最近捕获是否写完，强制退出仍可能丢失未确认编辑。递增 `retry` 可重试失败，或在重新选择草稿时再次发布仍由原生持有的 Restore 元数据。recipe 和来源校验缓存只有数据库弱引用；活动 worker 保留原 Root。
+`checkpoint` 事件仅提供 Loading、Restore、Ready、Failed 元数据，不含正文。产品先核对原业务回执，再向当前新 owner 和已加载版本发送恢复命令；两端验证精确 grapheme 边界，不恢复撤销或旧几何。新 owner 的初始快照持久化前禁止编辑和发送。`Ready.saved` 表示最近捕获是否写完，强制退出仍可能丢失未确认编辑。递增 `retry` 可重试失败，或在重新选择草稿时再次发布仍由原生持有的 Restore 元数据。recipe 只保留数据库和 Root 的弱引用；活动 worker 保留原 Root。
 
 `maka.ui.input` 提供固定的 `TextInput` 与 `SecretInput` exports，共用 `Editor*`
 命令、观察与捕获协议。单行 props 提供完整 `InputAppearance`、标签、placeholder、

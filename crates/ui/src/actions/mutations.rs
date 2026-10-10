@@ -76,7 +76,7 @@ impl<V: ?Sized + 'static> Application<V> {
         let recovery = action.recovery.clone();
         let request = ServiceRequest {
             source: ServiceSource {
-                deployment: Some(source.clone()),
+                deployment: Some(source.reference().clone()),
                 consumer: action.capability.consumer().clone(),
                 mount: action.consumer.clone(),
                 request: id,
@@ -160,7 +160,7 @@ impl<V: ?Sized + 'static> Application<V> {
                         .set(original.clone())
                         .map_err(|_| "original operation already prepared")?;
                     store
-                        .record_application_intent(source, consumer, original, recovery)
+                        .record_application_intent_from(&source, consumer, original, recovery)
                         .await
                         .map_err(|e| e.to_string())
                 }

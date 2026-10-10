@@ -19,6 +19,8 @@
 
 //! Atomic durable application sources; no legacy composition translation.
 mod changes;
+mod source;
+pub use source::SourceSnapshot;
 pub mod checkpoints;
 pub mod intents;
 pub mod operations;
@@ -47,6 +49,12 @@ const MAX_BYTES: usize = 128 * 1024 * 1024;
 pub struct LoadedDeployment {
     pub source: Deployment,
     pub packages: Vec<Package>,
+    snapshot: SourceSnapshot,
+}
+impl LoadedDeployment {
+    pub fn snapshot(&self) -> SourceSnapshot {
+        self.snapshot.clone()
+    }
 }
 
 fn invalid(message: impl Into<String>) -> StoreError {
@@ -80,7 +88,7 @@ fn validate(
     input: &Input,
     observations: &[RemoteObservation],
     bytes: &[Package],
-) -> Result<(), StoreError> {
+) -> Result<Plan, StoreError> {
     if bytes.len() > MAX_PACKAGES {
         return Err(invalid("application package count exceeds 128"));
     }
@@ -116,8 +124,7 @@ fn validate(
             return Err(invalid("duplicate remote capability observation"));
         }
     }
-    Plan::prepare(input, &packages, &remote).map_err(|e| invalid(e.to_string()))?;
-    Ok(())
+    Plan::prepare(input, &packages, &remote).map_err(|e| invalid(e.to_string()))
 }
 /// Shared deterministic source checks, before any SQL effect. This validates
 /// metadata and immutable bytes; it grants no deployment management authority.
@@ -128,7 +135,7 @@ pub fn validate_application(
 ) -> Result<(), StoreError> {
     let encoded = encode(input, MAX_JSON)?;
     encode(observations, MAX_JSON - encoded.len())?;
-    validate(input, observations, bytes)
+    validate(input, observations, bytes).map(|_| ())
 }
 impl EventLog {
     fn application_domain(&self) -> Result<String, StoreError> {
@@ -267,6 +274,7 @@ impl EventLog {
         if deployment.is_nil() {
             return Err(invalid("invalid deployment"));
         }
+        let owner = std::sync::Arc::downgrade(self.root_owner.as_ref().expect("owned source Root"));
         self.connection
             .run(move |connection| {
                 Box::pin(async move {
@@ -286,13 +294,20 @@ impl EventLog {
                         }
                         packages.push(package);
                     }
-                    validate(
+                    let plan = validate(
                         &metadata.source.input,
                         &metadata.source.remote_exports,
                         &packages,
                     )?;
                     tx.commit().await?;
+                    let snapshot = SourceSnapshot::new(
+                        owner,
+                        metadata.source.reference.clone(),
+                        metadata.source.input.environment.location,
+                        &plan,
+                    );
                     Ok(Some(LoadedDeployment {
+                        snapshot,
                         source: metadata.source,
                         packages,
                     }))

@@ -145,7 +145,7 @@ impl ValueCheckpoint {
                             .reserve(Kind::Encoded, super::MAX_CONTENT + 32 * 1024)
                             .map_err(|e| e.to_string())?;
                         if checkpoints.is_none() {
-                            checkpoints = Some(scope.open(&store).await?);
+                            checkpoints = Some(scope.open(&store)?);
                         }
                         let checkpoints = checkpoints.as_ref().unwrap();
                         match command {

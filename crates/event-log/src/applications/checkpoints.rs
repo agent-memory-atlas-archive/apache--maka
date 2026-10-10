@@ -23,8 +23,6 @@ use crate::{EventLog, StoreError};
 use maka_plugin_core::{
     composition::{ExecutionLocation, InstanceId},
     deployment::DeploymentRef,
-    package::Packages,
-    plan::{Plan, RemoteExports},
 };
 use serde_json::Value;
 use sqlx::{Connection, Row};
@@ -68,42 +66,21 @@ impl EventLog {
             .load_application_at(source)
             .await?
             .ok_or_else(|| invalid("original UI checkpoint source missing"))?;
-        if loaded.source.input.environment.location != ExecutionLocation::Ui {
+        self.ui_checkpoints_from(&loaded.snapshot(), instance)
+    }
+
+    pub fn ui_checkpoints_from(
+        self: &Arc<Self>,
+        source: &super::SourceSnapshot,
+        instance: &InstanceId,
+    ) -> Result<Checkpoints, StoreError> {
+        source.check(self, instance)?;
+        if source.location() != ExecutionLocation::Ui {
             return Err(invalid("UI checkpoints require a UI deployment"));
-        }
-        let mut packages = Packages::default();
-        for package in loaded.packages {
-            packages
-                .insert(
-                    package.application_ref(),
-                    package
-                        .manifest()
-                        .application
-                        .clone()
-                        .ok_or_else(|| invalid("application declaration required"))?,
-                )
-                .map_err(|error| invalid(error.to_string()))?;
-        }
-        let remotes: RemoteExports = loaded
-            .source
-            .remote_exports
-            .into_iter()
-            .map(|remote| (remote.capability, remote.declaration))
-            .collect();
-        let plan = Plan::prepare(&loaded.source.input, &packages, &remotes)
-            .map_err(|error| invalid(error.to_string()))?;
-        if plan
-            .instances()
-            .get(instance)
-            .is_none_or(|entry| entry.disabled || entry.entry.is_none())
-        {
-            return Err(invalid(
-                "UI checkpoint owner must be an executable original instance",
-            ));
         }
         Ok(Checkpoints {
             store: self.clone(),
-            deployment: source.deployment.to_string(),
+            deployment: source.reference().deployment.to_string(),
             instance: encode(instance, 4096)?,
         })
     }

@@ -50,12 +50,12 @@ impl CommittedUpdate {
 /// not an editable plan, connection approval or convergence acknowledgement.
 pub struct PreparedUpdate {
     owner: Uuid,
-    source: DeploymentRef,
+    source: maka_event_log::applications::SourceSnapshot,
     candidate: Candidate,
 }
 impl PreparedUpdate {
     pub fn source(&self) -> &DeploymentRef {
-        &self.source
+        self.source.reference()
     }
 }
 
@@ -153,7 +153,7 @@ impl<V: ?Sized + 'static> Application<V> {
 
     pub fn deployment_status(&self) -> DeploymentStatus {
         DeploymentStatus {
-            desired: self.source.clone(),
+            desired: self.source().cloned(),
             effective: self.effective.clone(),
             converging: !self.plan_active()
                 || !self.pending.is_empty()
@@ -179,7 +179,7 @@ impl<V: ?Sized + 'static> Application<V> {
     pub fn live_source_revisions(&self) -> BTreeSet<u64> {
         let mut revisions = BTreeSet::new();
         if let Some(source) = &self.source {
-            revisions.insert(source.revision);
+            revisions.insert(source.reference().revision);
         }
         for activation in self.activations.values() {
             if self
@@ -188,7 +188,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 .is_ok_and(|instance| instance.entry.is_some())
                 && let Some(source) = self.origins.get(&activation.epoch())
             {
-                revisions.insert(source.reference.revision);
+                revisions.insert(source.reference().revision);
             }
         }
         revisions
@@ -229,8 +229,7 @@ impl<V: ?Sized + 'static> Application<V> {
             return Err(Error::Invalid("UI deployment is closing".into()));
         }
         let current = self
-            .source
-            .as_ref()
+            .source()
             .ok_or_else(|| Error::Invalid("persisted UI source required".into()))?;
         if source.state_domain != current.state_domain
             || source.deployment != current.deployment
@@ -247,7 +246,7 @@ impl<V: ?Sized + 'static> Application<V> {
     pub fn prepare_update(&self, update: CommittedUpdate) -> Result<PreparedUpdate> {
         self.check_update_source(update.source())?;
         let loaded = update.loaded;
-        let source = loaded.source.reference;
+        let source = loaded.snapshot();
         let declarations = loaded
             .source
             .remote_exports
@@ -498,7 +497,7 @@ impl<V: ?Sized + 'static> Application<V> {
             }
         }
         if self.deployment_error.is_none() && !self.deployment_status().converging {
-            self.effective = self.source.clone();
+            self.effective = self.source().cloned();
         }
         failure.map_or(Ok(()), Err)
     }

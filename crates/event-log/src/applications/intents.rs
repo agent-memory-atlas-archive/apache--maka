@@ -21,11 +21,7 @@
 use super::{encode, invalid};
 use crate::{EventLog, StoreError, root::RootOwner};
 use maka_plugin_core::{
-    composition::InstanceId,
-    deployment::DeploymentRef,
-    operation::RecoveryRef,
-    package::Packages,
-    plan::{Plan, RemoteExports},
+    composition::InstanceId, deployment::DeploymentRef, operation::RecoveryRef,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::{Connection, Row, SqliteConnection};
@@ -164,42 +160,31 @@ impl EventLog {
     ) -> Result<RecordedIntent, StoreError> {
         consumer_valid(&consumer)?;
         reference.validate().map_err(|e| invalid(e.to_string()))?;
-        let encoded = encode(&reference, MAX_REFERENCE)?;
-        let encoded_recovery = encode(&recovery, MAX_RECOVERY)?;
+        encode(&reference, MAX_REFERENCE)?;
+        encode(&recovery, MAX_RECOVERY)?;
         let loaded = self
             .load_application_at(&caller)
             .await?
             .ok_or_else(|| invalid("original caller source missing"))?;
-        let mut packages = Packages::default();
-        for package in loaded.packages {
-            packages
-                .insert(
-                    package.application_ref(),
-                    package
-                        .manifest()
-                        .application
-                        .clone()
-                        .ok_or_else(|| invalid("application declaration required"))?,
-                )
-                .map_err(|e| invalid(e.to_string()))?;
-        }
-        let remotes: RemoteExports = loaded
-            .source
-            .remote_exports
-            .into_iter()
-            .map(|r| (r.capability, r.declaration))
-            .collect();
-        let plan = Plan::prepare(&loaded.source.input, &packages, &remotes)
-            .map_err(|e| invalid(e.to_string()))?;
-        if plan
-            .instances()
-            .get(&consumer)
-            .is_none_or(|i| i.disabled || i.entry.is_none())
-        {
-            return Err(invalid(
-                "caller must belong to an executable original source instance",
-            ));
-        }
+        self.record_application_intent_from(&loaded.snapshot(), consumer, reference, recovery)
+            .await
+    }
+
+    /// Reuse the immutable original caller evidence retained by an executor.
+    /// Actual service admission and confirmed SQL persistence are still required.
+    pub async fn record_application_intent_from(
+        &self,
+        source: &super::SourceSnapshot,
+        consumer: InstanceId,
+        reference: RecoveryRef,
+        recovery: serde_json::Value,
+    ) -> Result<RecordedIntent, StoreError> {
+        consumer_valid(&consumer)?;
+        source.check(self, &consumer)?;
+        let caller = source.reference().clone();
+        reference.validate().map_err(|e| invalid(e.to_string()))?;
+        let encoded = encode(&reference, MAX_REFERENCE)?;
+        let encoded_recovery = encode(&recovery, MAX_RECOVERY)?;
         let domain = self.application_domain()?;
         let owner = self.root_owner.as_ref().expect("owned caller Root").clone();
         let commits = self.commits.clone();
