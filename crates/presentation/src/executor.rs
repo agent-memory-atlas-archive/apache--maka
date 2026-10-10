@@ -226,6 +226,7 @@ fn result(
         turn_id: event.invocation.turn_id.clone(),
         ts,
         content: Content::ToolResult {
+            settlement: None,
             tool_use_id,
             is_error,
             content: ToolContent::Text { text },

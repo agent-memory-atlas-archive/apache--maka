@@ -6308,9 +6308,14 @@ export const contracts = {
                       'This native Turn is still open at the history fence; not execution authority.',
                     type: 'boolean',
                   },
+                  dispatched: {
+                    description:
+                      'A unique original Host dispatch is recorded at this fence; not liveness.',
+                    type: 'boolean',
+                  },
                 },
                 additionalProperties: false,
-                required: ['sequence', 'name', 'title', 'pending'],
+                required: ['sequence', 'name', 'title', 'pending', 'dispatched'],
               },
               DisplayText: {
                 description:
@@ -6334,6 +6339,16 @@ export const contracts = {
               HistoryToolResult: {
                 type: 'object',
                 properties: {
+                  settlement: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ToolSettlement',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   sequence: {
                     type: 'integer',
                     format: 'uint64',
@@ -6351,7 +6366,13 @@ export const contracts = {
                   },
                 },
                 additionalProperties: false,
-                required: ['sequence', 'isError', 'image'],
+                required: ['settlement', 'sequence', 'isError', 'image'],
+              },
+              ToolSettlement: {
+                description:
+                  'Recorded Host settlement for presentation; returned is not business success.\nForeign/provider results do not establish this Host evidence.',
+                type: 'string',
+                enum: ['returned', 'failed', 'unknown', 'rejected'],
               },
               Cursor: {
                 description:
@@ -10358,9 +10379,14 @@ export const contracts = {
                       'This native Turn is still open at the history fence; not execution authority.',
                     type: 'boolean',
                   },
+                  dispatched: {
+                    description:
+                      'A unique original Host dispatch is recorded at this fence; not liveness.',
+                    type: 'boolean',
+                  },
                 },
                 additionalProperties: false,
-                required: ['sequence', 'name', 'title', 'pending'],
+                required: ['sequence', 'name', 'title', 'pending', 'dispatched'],
               },
               DisplayText: {
                 description:
@@ -10384,6 +10410,16 @@ export const contracts = {
               HistoryToolResult: {
                 type: 'object',
                 properties: {
+                  settlement: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ToolSettlement',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   sequence: {
                     type: 'integer',
                     format: 'uint64',
@@ -10401,7 +10437,13 @@ export const contracts = {
                   },
                 },
                 additionalProperties: false,
-                required: ['sequence', 'isError', 'image'],
+                required: ['settlement', 'sequence', 'isError', 'image'],
+              },
+              ToolSettlement: {
+                description:
+                  'Recorded Host settlement for presentation; returned is not business success.\nForeign/provider results do not establish this Host evidence.',
+                type: 'string',
+                enum: ['returned', 'failed', 'unknown', 'rejected'],
               },
             },
           },

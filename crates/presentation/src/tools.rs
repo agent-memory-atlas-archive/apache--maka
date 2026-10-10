@@ -234,7 +234,6 @@ impl Tools {
                     presentation,
                     ..
                 } = &event.fact
-                    && (title.is_some() || presentation.is_some())
                 {
                     if let Some(title) = title {
                         title.validate().map_err(ProjectionError::Invalid)?;
@@ -344,6 +343,23 @@ impl Tools {
             id,
             Content::ToolResult {
                 tool_use_id: tool_message_id(&event.invocation.invocation_id, operation),
+                settlement: match &event.fact {
+                    Fact::ToolRejected { .. } => {
+                        Some(maka_runtime::tool_call::ToolSettlement::Rejected)
+                    }
+                    Fact::ToolSettled { outcome, .. } => Some(match outcome {
+                        maka_runtime::event::ToolOutcome::Succeeded { .. } => {
+                            maka_runtime::tool_call::ToolSettlement::Returned
+                        }
+                        maka_runtime::event::ToolOutcome::Failed { .. } => {
+                            maka_runtime::tool_call::ToolSettlement::Failed
+                        }
+                        maka_runtime::event::ToolOutcome::Unknown { .. } => {
+                            maka_runtime::tool_call::ToolSettlement::Unknown
+                        }
+                    }),
+                    _ => None,
+                },
                 is_error,
                 content,
                 metadata: pending.metadata,

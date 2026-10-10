@@ -94,6 +94,7 @@ pub(super) fn project(
             output,
             is_error,
         } => Content::ToolResult {
+            settlement: None,
             tool_use_id: import::tool_call_id(&event.invocation.session_id, call_id),
             is_error: *is_error,
             content: ToolContent::Json {

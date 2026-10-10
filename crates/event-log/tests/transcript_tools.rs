@@ -222,14 +222,14 @@ async fn tool_boundaries_page_independently_and_rebuild_exact_ids_without_readin
     );
     let original = rows(&db);
     assert_eq!(&original[..3], first.as_slice());
-    assert_eq!(original.len(), 13);
+    assert_eq!(original.len(), 17);
     let values: Vec<Value> = original
         .iter()
         .map(|(_, bytes, digest)| {
             assert_eq!(digest, &format!("sha256:{:x}", Sha256::digest(bytes)));
             serde_json::from_slice(bytes).unwrap()
         })
-        .filter(|row: &Value| row["status"] != "running")
+        .filter(|row: &Value| row["status"] != "running" && row["type"] != "tool_activity")
         .collect();
     for index in 0..3 {
         let call = &values[2 + index * 2];

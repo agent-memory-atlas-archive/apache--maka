@@ -314,7 +314,7 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("tools.sqlite");
     let log = EventLog::open(&path).await.unwrap();
-    for session in ["numeric", "unknown", "image"] {
+    for session in ["numeric", "unknown", "image", "failed", "rejected", "spoof"] {
         log.create_session(session, session, &serde_json::json!({}), 1)
             .await
             .unwrap();
@@ -355,18 +355,34 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
         let call_fence = log
             .append(&event(
                 session,
-                Fact::ToolDispatched {
-                    presentation: None,
-                    title: None,
-                    operation_id: operation.clone(),
-                    call: maka_runtime::tool_call::ToolCallIdentity::provider(step, "count".into()),
-                    name: "Count".into(),
-                    input: serde_json::json!({"count": 42}),
+                if session == "rejected" {
+                    Fact::ToolRejected {
+                        operation_id: operation.clone(),
+                        call: maka_runtime::tool_call::ToolCallIdentity::provider(
+                            step.clone(),
+                            "count".into(),
+                        ),
+                        name: "Count".into(),
+                        input: serde_json::json!({"count": 42}),
+                        reason: maka_runtime::tool_call::ToolRejection::Unavailable,
+                    }
+                } else {
+                    Fact::ToolDispatched {
+                        presentation: None,
+                        title: None,
+                        operation_id: operation.clone(),
+                        call: maka_runtime::tool_call::ToolCallIdentity::provider(
+                            step,
+                            "count".into(),
+                        ),
+                        name: "Count".into(),
+                        input: serde_json::json!({"count": 42}),
+                    }
                 },
             ))
             .await
             .unwrap();
-        if session != "unknown" {
+        if !matches!(session, "unknown" | "failed" | "rejected") {
             let template = event(
                 session,
                 Fact::InvocationEnded {
@@ -383,6 +399,8 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
                         },
                     },
                 )
+            } else if session == "spoof" {
+                serde_json::json!({"count": 42, "ready": true, "settlement": "failed"}).into()
             } else {
                 serde_json::json!({"count": 42, "ready": true}).into()
             };
@@ -395,14 +413,20 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
             )
             .unwrap();
             log.append(&result).await.unwrap();
-        } else {
+        } else if session != "rejected" {
             log.append(&event(
                 session,
                 Fact::ToolSettled {
                     operation_id: operation,
-                    outcome: maka_runtime::event::ToolOutcome::Unknown {
-                        message: "Result unknown; do not repeat".into(),
-                        operation: None,
+                    outcome: if session == "failed" {
+                        maka_runtime::event::ToolOutcome::Failed {
+                            message: "Recorded failure".into(),
+                        }
+                    } else {
+                        maka_runtime::event::ToolOutcome::Unknown {
+                            message: "Result unknown; do not repeat".into(),
+                            operation: None,
+                        }
                     },
                 },
             ))
@@ -429,10 +453,12 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
         assert!(chunks.iter().any(|chunk| chunk.role == Role::ToolCall
             && chunk.text.is_empty()
             && chunk.tool.as_ref().is_some_and(|tool| {
-                tool.call.as_ref().is_some_and(|call| call.name == "Count") && tool.result.is_none()
+                tool.call.as_ref().is_some_and(|call| {
+                    call.name == "Count" && call.dispatched == (session != "rejected")
+                }) && (tool.result.is_none() || session == "rejected")
             })));
         assert!(
-            chunks.iter().all(|chunk| chunk.role != Role::ToolResult),
+            session == "rejected" || chunks.iter().all(|chunk| chunk.role != Role::ToolResult),
             "old fence excludes settled result"
         );
         for reverse in [false, true] {
@@ -480,26 +506,49 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
                             .await
                             .unwrap();
                         assert_eq!(source.tool.as_ref().unwrap(), chunk.tool.as_ref().unwrap());
+                        assert_eq!(
+                            chunk
+                                .tool
+                                .as_ref()
+                                .unwrap()
+                                .result
+                                .as_ref()
+                                .unwrap()
+                                .settlement,
+                            Some(match session {
+                                "unknown" => maka_runtime::tool_call::ToolSettlement::Unknown,
+                                "failed" => maka_runtime::tool_call::ToolSettlement::Failed,
+                                "rejected" => maka_runtime::tool_call::ToolSettlement::Rejected,
+                                _ => maka_runtime::tool_call::ToolSettlement::Returned,
+                            })
+                        );
+
                         if chunk.role == Role::ToolResult {
                             assert!(
-                                log.history_source(
-                                    session,
-                                    call_fence,
-                                    chunk.sequence,
-                                    field,
-                                    None,
-                                    SourcePosition::Start,
-                                    8192,
-                                    64 * 1024
-                                )
-                                .await
-                                .is_err()
+                                session == "rejected"
+                                    || log
+                                        .history_source(
+                                            session,
+                                            call_fence,
+                                            chunk.sequence,
+                                            field,
+                                            None,
+                                            SourcePosition::Start,
+                                            8192,
+                                            64 * 1024
+                                        )
+                                        .await
+                                        .is_err()
                             );
-                            if session == "numeric" {
+                            if matches!(session, "numeric" | "spoof") {
                                 assert_eq!(source.format, SourceFormat::Json);
                                 assert_eq!(
                                     serde_json::from_str::<Value>(&source.text).unwrap(),
-                                    serde_json::json!({"count":42,"ready":true})
+                                    if session == "spoof" {
+                                        serde_json::json!({"count":42,"ready":true,"settlement":"failed"})
+                                    } else {
+                                        serde_json::json!({"count":42,"ready":true})
+                                    }
                                 );
                             } else if session == "image" {
                                 assert_eq!(source.format, SourceFormat::ImageDescriptor);
@@ -508,7 +557,7 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
                                 assert_eq!(descriptor["mimeType"], "image/png");
                                 assert!(source.text.contains("unread-image.png"));
                                 assert!(!temp.path().join("unread-image.png").exists());
-                            } else {
+                            } else if session == "unknown" {
                                 assert_eq!(source.format, SourceFormat::Text);
                                 assert_eq!(source.text, "Result unknown; do not repeat");
                             }
@@ -535,21 +584,47 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
             let call = tool.call.as_ref().unwrap();
             let result = tool.result.as_ref().unwrap();
             assert_eq!(call.name, "Count");
-            assert_eq!(result.is_error, session == "unknown");
+            assert_eq!(
+                result.is_error,
+                matches!(session, "unknown" | "failed" | "rejected")
+            );
             assert_eq!(result.image, session == "image");
-            assert_eq!(text.is_empty(), session != "unknown");
+            assert_eq!(text.is_empty(), matches!(session, "numeric" | "image"));
             let (_, call_tool) = &tools[&(Role::ToolCall as u8)];
             assert_eq!(tool, call_tool);
         }
     }
+    let original_events =
+        serde_json::to_vec(&log.prefix(1000, 1024 * 1024).await.unwrap()).unwrap();
     log.close().await.unwrap();
+    let db = Connection::open(&path).unwrap();
+    let canonical = rows(&db, "numeric");
+    db.execute_batch("DELETE FROM transcript_rows WHERE json_extract(payload, '$.type') = 'tool_activity';
+        UPDATE transcript_rows SET payload = json_remove(payload, '$.settlement') WHERE json_extract(payload, '$.type') = 'tool_result';
+        DELETE FROM _sqlx_migrations WHERE version = 15;").unwrap();
+    drop(db);
     let log = EventLog::open(&path).await.unwrap();
+    assert_eq!(
+        serde_json::to_vec(&log.prefix(1000, 1024 * 1024).await.unwrap()).unwrap(),
+        original_events
+    );
+    let db = Connection::open(&path).unwrap();
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM transcript_rows", [], |row| row
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    drop(db);
     let through = *log.subscribe_commits().borrow();
     assert!(
         log.prepare_transcript("numeric", through, 32)
             .await
             .unwrap()
     );
+    let db = Connection::open(&path).unwrap();
+    assert_eq!(rows(&db, "numeric"), canonical);
+    drop(db);
     let Page::Ready { chunks, .. } = log
         .history_text(
             "numeric",

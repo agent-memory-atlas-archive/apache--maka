@@ -3297,6 +3297,7 @@ test('prepending history preserves the streamed message presentation identity', 
     landing: { sequence: 0, edge: 'end' },
     toolContext: null,
     waitingTools: [],
+    liveTools: [],
     timings: [],
     live: true,
   };
@@ -3349,6 +3350,7 @@ test('desktop scroll-to-end uses native painted facts and preserves its accepted
     landing: { sequence: 0, edge: 'end' },
     toolContext: null,
     waitingTools: [],
+    liveTools: [],
     timings: [],
     live: true,
   };
@@ -9467,6 +9469,7 @@ async function conversationFinder() {
     landing: { sequence: 0, edge: 'end' },
     toolContext: null,
     waitingTools: [],
+    liveTools: [],
     timings: [],
     live: true,
   };
@@ -10623,7 +10626,7 @@ for (const target of ['tui', 'desktop']) {
       });
       const client = new Client(module.component).start({
         through: 100,
-        run: { invocationId: 'run', state: 'running' },
+        run: { invocationId: 'run', turnId: chunk.turnId, state: 'running' },
         chunks: [chunk],
       });
       let rendered = timeline.mount(client.timeline, {});
@@ -10716,6 +10719,49 @@ for (const target of ['tui', 'desktop']) {
         'No recorded result',
         'closed or imported call does not remain waiting',
       );
+      tool.call.pending = true;
+      tool.call.dispatched = true;
+      publish(105, [chunk]);
+      // Clear the pending list; it is an independent observation, not dispatch.
+      client.state.interactions = null;
+      client.raw('refresh');
+      rendered = timeline.update(rendered.frame.state, client.timeline, {});
+      assert.equal(status(), 'Dispatched · awaiting result');
+      client.state.run.turnId = 'other-turn';
+      client.raw('refresh');
+      rendered = timeline.update(rendered.frame.state, client.timeline, {});
+      assert.equal(status(), 'Dispatched · no recorded result');
+      client.state.run.turnId = chunk.turnId;
+      client.state.window.latest = false;
+      client.raw('refresh');
+      rendered = timeline.update(rendered.frame.state, client.timeline, {});
+      assert.equal(
+        status(),
+        'Dispatched · no recorded result',
+        'a frozen window cannot claim current work',
+      );
+      client.state.window.latest = true;
+      let settlementFence = 106;
+      for (const [settlement, label] of [
+        ['returned', 'Returned'],
+        ['failed', 'Tool execution failed'],
+        ['unknown', 'Tool outcome is unknown'],
+        ['rejected', 'Not executed'],
+      ]) {
+        tool.result = {
+          sequence: 41,
+          isError: settlement !== 'returned',
+          image: false,
+          settlement,
+        };
+        publish(settlementFence++, [
+          chunk,
+          historyChunk('Recorded evidence', { sequence: 41, role: 'tool_result', tool }),
+        ]);
+        assert.equal(status(), label);
+        assert.deepEqual(source(), original);
+        assert.ok(!rows()[0].children.some((node) => node.key === 'tool-error-' + uuid(901)));
+      }
       assert.equal(rendered.actions.length, 0, 'display facts never execute or retry a tool');
     },
   );

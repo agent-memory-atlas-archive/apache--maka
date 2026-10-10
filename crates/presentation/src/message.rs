@@ -165,6 +165,8 @@ pub enum Content {
     },
     ToolResult {
         tool_use_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        settlement: Option<maka_runtime::tool_call::ToolSettlement>,
         is_error: bool,
         content: ToolContent,
         #[serde(flatten)]

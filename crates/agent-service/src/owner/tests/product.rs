@@ -995,27 +995,27 @@ process.stdout.write(output.outputFiles[0].text);
         drafts::verify_restored(&mut presenter);
         server.abort();
     }
+    let capture = |presenter: &mut maka_tui::application::Presenter, name: &str| {
+        if let Some(directory) = std::env::var_os("MAKA_ATTACHMENT_EVIDENCE") {
+            let directory = PathBuf::from(directory);
+            std::fs::create_dir_all(&directory).unwrap();
+            let buffer = draw(presenter);
+            std::fs::write(directory.join(name), screen(&buffer)).unwrap();
+            let cells: Vec<_> = (0..buffer.area.height).flat_map(|y| {
+                let buffer = &buffer;
+                (0..buffer.area.width).map(move |x| {
+                    let cell = &buffer[(x, y)];
+                    json!({"x":x,"y":y,"text":cell.symbol(),"fg":format!("{:?}",cell.fg),"bg":format!("{:?}",cell.bg),"bold":cell.modifier.contains(ratatui::style::Modifier::BOLD)})
+                })
+            }).collect();
+            std::fs::write(
+                directory.join(name.replace(".txt", ".json")),
+                serde_json::to_vec(&cells).unwrap(),
+            )
+            .unwrap();
+        }
+    };
     if attachment {
-        let capture = |presenter: &mut maka_tui::application::Presenter, name: &str| {
-            if let Some(directory) = std::env::var_os("MAKA_ATTACHMENT_EVIDENCE") {
-                let directory = PathBuf::from(directory);
-                std::fs::create_dir_all(&directory).unwrap();
-                let buffer = draw(presenter);
-                std::fs::write(directory.join(name), screen(&buffer)).unwrap();
-                let cells: Vec<_> = (0..buffer.area.height).flat_map(|y| {
-                    let buffer = &buffer;
-                    (0..buffer.area.width).map(move |x| {
-                        let cell = &buffer[(x, y)];
-                        json!({"x":x,"y":y,"text":cell.symbol(),"fg":format!("{:?}",cell.fg),"bg":format!("{:?}",cell.bg),"bold":cell.modifier.contains(ratatui::style::Modifier::BOLD)})
-                    })
-                }).collect();
-                std::fs::write(
-                    directory.join(name.replace(".txt", ".json")),
-                    serde_json::to_vec(&cells).unwrap(),
-                )
-                .unwrap();
-            }
-        };
         wait_for_target(&mut presenter, "[ Attachments ]", 0);
         let deadline = std::time::Instant::now() + Duration::from_secs(20);
         while !screen(&draw(&mut presenter)).starts_with("New conversation") {
@@ -1381,7 +1381,8 @@ process.stdout.write(output.outputFiles[0].text);
         return;
     }
     // Closing navigation restores the retained native composer through its
-    // declared tab order. This command/draft path needs no mouse or forged input.
+    // declared tab order. Wait for its initial durable checkpoint before typing.
+    wait_for_target(&mut presenter, "[ Attachments ]", 0);
     presenter
         .input(Event::Paste("Hello product".into()))
         .unwrap();
@@ -1747,6 +1748,7 @@ process.stdout.write(output.outputFiles[0].text);
                 );
                 std::thread::yield_now();
             }
+            capture(&mut presenter, "native-tool-waiting.txt");
         }
         click(&mut presenter, "[ Ctrl G · Review request ]");
         await_screen(&mut presenter, "native-approved.txt");
@@ -1841,6 +1843,8 @@ process.stdout.write(output.outputFiles[0].text);
         // requested content, and retains its details component across disclosure.
         if !process_permissions {
             await_screen(&mut presenter, "Save workspace file");
+            await_screen(&mut presenter, "Returned");
+            capture(&mut presenter, "native-tool-returned.txt");
             assert_file_copy(
                 &mut presenter,
                 "[ Copy · native-approved.txt ]",
@@ -2018,7 +2022,19 @@ process.stdout.write(output.outputFiles[0].text);
         // The selected canonical tool row includes its name, body and arguments,
         // and uses the same retained disclosure as the ordinary timeline.
         await_screen(&mut presenter, "Message");
-        await_screen(&mut presenter, "[ Hide details ]");
+        await_screen(&mut presenter, "native file contents");
+        // The matching field is revealed after its source arrives. With a
+        // settlement line, the heading can sit above this short preview.
+        let (column, row) = wait_for_target(&mut presenter, "Message", 0);
+        presenter
+            .input(Event::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollUp,
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            }))
+            .unwrap();
+        draw(&mut presenter);
         click(&mut presenter, "[ Hide details ]");
         await_screen(&mut presenter, "[ Show details ]");
         assert!(!screen(&draw(&mut presenter)).contains("Message"));

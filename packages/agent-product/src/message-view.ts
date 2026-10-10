@@ -68,6 +68,7 @@ export function messageView<N extends Node>(
     expanded: boolean;
     structured?: boolean;
     waiting?: boolean;
+    live?: boolean;
     toggle: string | null;
     body: N;
     actions: N[];
@@ -105,14 +106,28 @@ export function messageView<N extends Node>(
           patch: text.toolPatchAction,
         }[kind]
       : tool && message.tool?.call?.name;
-  const status =
-    tool && !message.tool?.result
-      ? message.tool?.call?.pending
-        ? message.waiting
-          ? text.waiting
-          : text.toolPending
-        : text.toolMissing
-      : null;
+  const result = message.tool?.result;
+  const settlement = result?.settlement;
+  const status = !tool
+    ? null
+    : settlement
+      ? {
+          returned: text.toolReturned,
+          failed: text.toolFailed,
+          unknown: text.toolUnknown,
+          rejected: text.toolRejected,
+        }[settlement]
+      : result
+        ? null
+        : message.live && message.tool?.call?.pending
+          ? message.waiting
+            ? text.waiting
+            : message.tool.call.dispatched
+              ? text.toolDispatched
+              : text.toolPending
+          : message.tool?.call?.dispatched
+            ? text.toolDispatchedMissing
+            : text.toolMissing;
   const time =
     message.role === 'user' || message.role === 'assistant' ? timeLabel(message.timestamp) : null;
   const label = name
@@ -150,7 +165,7 @@ export function messageView<N extends Node>(
       ...(message.continued
         ? [ui.text('continued-' + message.id, text.partial, 12, theme.muted)]
         : []),
-      ...(tool && message.tool?.result?.isError
+      ...(tool && result?.isError && !settlement
         ? [ui.text('tool-error-' + message.id, text.toolReportedError, 13, theme.muted)]
         : []),
       ...(tool

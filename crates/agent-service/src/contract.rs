@@ -1014,7 +1014,7 @@ mod tests {
         page["chunks"] = json!([{
             "messageId":"result", "field":"body", "turnId":"turn", "timestamp":1, "role":"tool_result",
             "sequence":1, "offset":0, "totalBytes":0, "text":"",
-            "tool":{"toolUseId":"call", "call":null, "result":{"sequence":1,"isError":true, "image":false}}
+            "tool":{"toolUseId":"call", "call":null, "result":{"sequence":1,"isError":true, "image":false,"settlement":null}}
         }]);
         assert!(validator.is_valid(&page));
         let tool = page["chunks"][0]

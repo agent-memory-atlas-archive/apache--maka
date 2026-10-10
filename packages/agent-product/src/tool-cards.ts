@@ -66,7 +66,8 @@ export function toolCards(
       !sameValue(result.tool.call, metadata.call) ||
       result.tool.result?.sequence !== result.source ||
       result.tool.result.isError !== metadata.result.isError ||
-      result.tool.result.image !== metadata.result.image
+      result.tool.result.image !== metadata.result.image ||
+      result.tool.result.settlement !== metadata.result.settlement
     )
       continue;
     paired.set(call, result);

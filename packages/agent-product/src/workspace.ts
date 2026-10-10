@@ -1926,6 +1926,16 @@ function frame<N extends Node>(
         state.selected && state.window && state.window.page.through > 0
           ? { sessionId: state.selected.id, through: state.window.page.through }
           : null,
+      liveTools:
+        state.window?.latest && state.run
+          ? [
+              ...new Set(
+                state.window.page.chunks.flatMap((chunk) =>
+                  chunk.turnId === state.run!.turnId && chunk.tool ? [chunk.tool.toolUseId] : [],
+                ),
+              ),
+            ]
+          : [],
       waitingTools: state.window?.latest
         ? (state.interactions?.entries ?? [])
             .filter(

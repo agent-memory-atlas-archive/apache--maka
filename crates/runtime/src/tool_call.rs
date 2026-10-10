@@ -46,6 +46,17 @@ pub fn parse_provider_result_id(id: &str) -> Option<(&str, usize)> {
     (provider_result_id(event, index) == id).then_some((event, index))
 }
 
+/// Recorded Host settlement for presentation; returned is not business success.
+/// Foreign/provider results do not establish this Host evidence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolSettlement {
+    Returned,
+    Failed,
+    Unknown,
+    Rejected,
+}
+
 /// Refusal category without input-derived explanation text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

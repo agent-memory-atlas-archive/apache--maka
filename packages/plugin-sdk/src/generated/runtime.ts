@@ -2129,6 +2129,11 @@ export type HistoryTurnOutcome = 'completed' | 'failed' | 'aborted';
  * Tool body JSON contributes string values, never its keys.
  */
 export type Role = 'user' | 'assistant' | 'tool_call' | 'tool_result';
+/**
+ * Recorded Host settlement for presentation; returned is not business success.
+ * Foreign/provider results do not establish this Host evidence.
+ */
+export type ToolSettlement = 'returned' | 'failed' | 'unknown' | 'rejected';
 export type AgentHistoryPage =
   | {
       through: number;
@@ -4640,8 +4645,13 @@ export interface HistoryToolCall {
    * This native Turn is still open at the history fence; not execution authority.
    */
   pending: boolean;
+  /**
+   * A unique original Host dispatch is recorded at this fence; not liveness.
+   */
+  dispatched: boolean;
 }
 export interface HistoryToolResult {
+  settlement: ToolSettlement | null;
   sequence: number;
   /**
    * Does not distinguish failed from unknown effects.

@@ -548,6 +548,7 @@ export function components<N extends Node>(
       const messageNode = messageView(presentation, target, props.theme, props.locale, {
         ...message,
         waiting: !!message.tool && props.waitingTools.includes(message.tool.toolUseId),
+        live: !!message.tool && props.liveTools.includes(message.tool.toolUseId),
         expanded,
         structured,
         toggle: tool && (message.source !== null || message.text) ? 'toggle-' + message.id : null,

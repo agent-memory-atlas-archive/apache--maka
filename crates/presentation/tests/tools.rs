@@ -172,6 +172,22 @@ fn accepted_tools_replay_with_distinct_ids_parentage_rejections() {
         .filter(|message| message["type"] == "tool_result")
         .collect();
     assert_eq!(results.len(), 4, "unknown outcome produces no result");
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|row| row["type"] == "tool_activity")
+            .count(),
+        3,
+        "each original dispatch is visible even without display metadata; rejection is not dispatch"
+    );
+    assert_eq!(results[0]["settlement"], "returned");
+    assert_eq!(results[1]["settlement"], "returned");
+    assert_eq!(results[2]["settlement"], "rejected");
+    assert!(
+        results[3].get("settlement").is_none(),
+        "provider result is not a Host settlement"
+    );
+
     assert_eq!(results[0]["toolUseId"], calls[1]["id"]);
     assert_eq!(
         results[0]["content"],

@@ -28,6 +28,7 @@ const METADATA_SQL: &str = "WITH owner AS (
                 CASE json_extract(payload, '$.type') WHEN 'tool_call' THEN message_id
                     ELSE json_extract(payload, '$.toolUseId') END AS tool_id,
                 json_extract(payload, '$.toolName') AS name,
+                json_extract(payload, '$.settlement') AS settlement,
                 json_extract(payload, '$.isError') AS error,
                 json_extract(payload, '$.content.kind') IS 'image' AS image
             FROM transcript_rows WHERE session_id = ?1 AND sequence = ?2 AND sequence <= ?3
@@ -50,6 +51,9 @@ const METADATA_SQL: &str = "WITH owner AS (
             ORDER BY row.sequence LIMIT 2
         ), call AS (
             SELECT call_row.*, json_object('sequence', call_row.sequence, 'name', call_row.name,
+                'dispatched', json(CASE WHEN (SELECT count(*) FROM activity) = 1
+                    AND EXISTS(SELECT 1 FROM activity WHERE activity.sequence > call_row.sequence AND activity.name = call_row.name)
+                    THEN 'true' ELSE 'false' END),
                 'presentation', (SELECT presentation FROM activity WHERE (SELECT count(*) FROM activity) = 1
                     AND activity.sequence > call_row.sequence AND activity.name = call_row.name),
                 'title', json((SELECT title FROM activity WHERE (SELECT count(*) FROM activity) = 1
@@ -65,6 +69,7 @@ const METADATA_SQL: &str = "WITH owner AS (
                 json_extract(row.payload, '$.parentToolCallId') AS parent_call,
                 json_extract(row.payload, '$.parentOperationId') AS parent_operation,
                 json_type(row.payload, '$.isError') IN ('true', 'false') AND json_type(row.payload, '$.content') = 'object' AS valid,
+                json_extract(row.payload, '$.settlement') AS settlement,
                 json_extract(row.payload, '$.isError') AS error,
                 json_extract(row.payload, '$.content.kind') IS 'image' AS image
             FROM transcript_rows row JOIN owner ON row.session_id = owner.session_id
@@ -73,7 +78,7 @@ const METADATA_SQL: &str = "WITH owner AS (
             ORDER BY row.sequence LIMIT 2
         ), pair AS (
             SELECT call.reference AS call_ref,
-                json_object('sequence', results.sequence,
+                json_object('sequence', results.sequence, 'settlement', results.settlement,
                     'isError', json(CASE results.error WHEN 1 THEN 'true' ELSE 'false' END),
                     'image', json(CASE results.image WHEN 1 THEN 'true' ELSE 'false' END)) AS result_ref
             FROM call, results WHERE (SELECT count(*) FROM results) = 1
@@ -86,9 +91,9 @@ const METADATA_SQL: &str = "WITH owner AS (
         ), metadata AS (
             SELECT json_object('toolUseId', tool_id,
                 'call', json(CASE kind WHEN 'tool_call' THEN COALESCE((SELECT reference FROM call),
-                    json_object('sequence', sequence, 'name', name, 'title', NULL, 'presentation', NULL, 'pending', json('false')))
+                    json_object('sequence', sequence, 'name', name, 'title', NULL, 'presentation', NULL, 'pending', json('false'), 'dispatched', json('false')))
                     ELSE (SELECT call_ref FROM pair) END),
-                'result', json(CASE kind WHEN 'tool_result' THEN json_object('sequence', sequence,
+                'result', json(CASE kind WHEN 'tool_result' THEN json_object('sequence', sequence, 'settlement', settlement,
                     'isError', json(CASE error WHEN 1 THEN 'true' ELSE 'false' END),
                     'image', json(CASE image WHEN 1 THEN 'true' ELSE 'false' END))
                     ELSE (SELECT result_ref FROM pair) END)) AS value FROM owner
@@ -348,10 +353,12 @@ mod tests {
         .await;
         let before = read(&mut db, "a", 2, 2, 65536).await.unwrap().unwrap();
         assert!(before.call.as_ref().unwrap().pending);
+        assert!(!before.call.as_ref().unwrap().dispatched);
         assert!(before.call.as_ref().unwrap().presentation.is_none());
         assert!(before.call.unwrap().title.is_none());
         let open = read(&mut db, "a", 2, 3, 65536).await.unwrap().unwrap();
         assert!(open.call.as_ref().unwrap().pending && open.result.is_none());
+        assert!(open.call.as_ref().unwrap().dispatched);
         assert_eq!(
             open.call.as_ref().unwrap().presentation.as_deref(),
             Some("maka.workspace.Files@1/readText")
@@ -391,6 +398,16 @@ mod tests {
             read(&mut db, "a", 4, 6, 65536).await.unwrap().unwrap()
         );
         insert(&mut db, "a", "turn", 7, "duplicate", activity).await;
+        assert!(
+            !read(&mut db, "a", 2, 7, 65536)
+                .await
+                .unwrap()
+                .unwrap()
+                .call
+                .unwrap()
+                .dispatched
+        );
+
         assert!(
             read(&mut db, "a", 2, 7, 65536)
                 .await

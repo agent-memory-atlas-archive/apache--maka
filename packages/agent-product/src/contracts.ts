@@ -185,6 +185,7 @@ export interface TimelineProps {
   markReadEnabled: boolean;
   toolContext: ToolDetailsProps['context'] | null;
   waitingTools: string[];
+  liveTools: string[];
   theme: Theme;
   locale: string;
   messages: Message[];
@@ -445,6 +446,7 @@ export const timelineContract = component(
       ],
     },
     waitingTools: { type: 'array', maxItems: 16, items: string },
+    liveTools: { type: 'array', maxItems: 8, uniqueItems: true, items: string },
     theme: { $ref: '#/$defs/Theme' },
     locale,
     messages: { type: 'array', maxItems: 32, items: { $ref: '#/$defs/Message' } },

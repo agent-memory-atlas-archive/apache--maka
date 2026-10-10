@@ -230,11 +230,17 @@ pub struct ToolCall {
     pub title: Option<Box<maka_runtime::display::Text>>,
     /// This native Turn is still open at the history fence; not execution authority.
     pub pending: bool,
+    /// A unique original Host dispatch is recorded at this fence; not liveness.
+    pub dispatched: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "HistoryToolResult")]
 pub struct ToolResult {
+    #[schemars(
+        with = "maka_runtime::schema::RequiredNullable<maka_runtime::tool_call::ToolSettlement>"
+    )]
+    pub settlement: Option<maka_runtime::tool_call::ToolSettlement>,
     #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
     pub sequence: u64,
     /// Does not distinguish failed from unknown effects.
