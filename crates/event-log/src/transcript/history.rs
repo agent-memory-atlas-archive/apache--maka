@@ -206,7 +206,8 @@ impl EventLog {
                         };
                         Some(tool)
                     } else { None };
-                    chunks.push(Chunk { field,
+                    let timing = super::timing::read(&mut tx, &session, &row.turn, through_sql).await?;
+                    chunks.push(Chunk { field, timing,
                         message_id: row.message, turn_id: row.turn, timestamp: row.timestamp, role,
                         sequence, offset: start, total_bytes: row.total, text: text.to_owned(), attachments, tool,
                     });

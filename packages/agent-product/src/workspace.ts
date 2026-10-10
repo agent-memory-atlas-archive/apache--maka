@@ -75,6 +75,7 @@ import type {
   QuestionEditorProps,
   ServiceApprovalProps,
   SelectedModel,
+  TimelineProps,
 } from './contracts.js';
 import { sameValue } from './value.js';
 import { copy, type Copy } from './locale.js';
@@ -381,6 +382,34 @@ function messages(state: State): Message[] {
     message.text += fragment.text;
   }
   return [...canonical, ...live.values()];
+}
+function turnTimings(state: State, displayed: Message[]): TimelineProps['timings'] {
+  const turns = new Map<string, TimelineProps['timings'][number]>();
+  for (const chunk of state.window?.page.chunks ?? []) {
+    if (!chunk.timing) continue;
+    if (!chunk.timing.finished && (!state.window?.latest || state.run?.turnId !== chunk.turnId))
+      continue;
+    turns.set(chunk.turnId, {
+      ...chunk.timing,
+      turnId: chunk.turnId,
+      afterMessageId: chunk.field === 'thinking' ? 'thinking-' + chunk.messageId : chunk.messageId,
+    });
+  }
+  if (state.window?.latest && state.run) {
+    const timing = turns.get(state.run.turnId);
+    if (timing && !timing.finished) {
+      for (const fragment of state.live) {
+        const id =
+          'live-' + fragment.messageId + (fragment.field === 'thinking' ? '-thinking' : '');
+        if (
+          fragment.invocationId === state.run.invocationId &&
+          displayed.some((message) => message.id === id)
+        )
+          timing.afterMessageId = id;
+      }
+    }
+  }
+  return [...turns.values()];
 }
 function intent(
   state: State,
@@ -1664,7 +1693,7 @@ function delivery(state: State, page: AgentDeliveryPage, actions: Action[]) {
       canonicalChanged = true;
     if (fact.kind === 'opened') {
       if (event.sequence > state.runThrough) {
-        state.run = { invocationId: event.invocationId, state: 'running' };
+        state.run = { invocationId: event.invocationId, turnId: event.turnId, state: 'running' };
         state.runThrough = event.sequence;
       }
     } else if (fact.kind === 'part_started') {
@@ -1842,13 +1871,15 @@ function frame<N extends Node>(
       terminal: { grow: 1 },
     },
   );
+  const timelineMessages = messages(state);
   const timeline = presentation.slot(
     'timeline',
     'timeline',
     {
       theme,
       locale,
-      messages: messages(state),
+      messages: timelineMessages,
+      timings: turnTimings(state, timelineMessages),
       markReadEnabled:
         !!state.selected?.hasUnread &&
         !state.selected.archived &&

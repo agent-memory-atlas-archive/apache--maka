@@ -271,6 +271,7 @@ mod tests {
                     message_id: id.into(),
                     turn_id: turn.into(),
                     timestamp: 1,
+                    timing: None,
                     role,
                     sequence: 1,
                     offset: 0,

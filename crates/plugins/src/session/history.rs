@@ -331,6 +331,8 @@ pub struct HistorySource {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Chunk {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timing: Option<TurnTiming>,
     pub field: HistoryField,
     pub message_id: String,
     pub turn_id: String,
@@ -344,6 +346,34 @@ pub struct Chunk {
     pub tool: Option<Tool>,
     /// User attachment descriptors, present only on the first chunk of a message.
     pub attachments: Vec<AttachmentRef>,
+}
+
+/// Recorded logical Turn boundaries at the same history fence. An unfinished
+/// historical boundary alone does not establish that execution is still live.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "HistoryTurnTiming")]
+pub struct TurnTiming {
+    #[schemars(range(max = 9_007_199_254_740_991u64))]
+    pub started_at: u64,
+    #[schemars(with = "maka_runtime::schema::RequiredNullable<TurnFinished>")]
+    pub finished: Option<TurnFinished>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "HistoryTurnFinished")]
+pub struct TurnFinished {
+    #[schemars(range(max = 9_007_199_254_740_991u64))]
+    pub at: u64,
+    pub outcome: TurnOutcome,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename = "HistoryTurnOutcome")]
+pub enum TurnOutcome {
+    Completed,
+    Failed,
+    Aborted,
 }
 
 /// Index preparation is bounded too. Repeat with the returned fence and the

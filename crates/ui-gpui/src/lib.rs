@@ -200,25 +200,106 @@ impl Slots {
 }
 
 struct Label {
-    text: String,
-    appearance: maka_ui::appearance::TextAppearance,
+    props: LabelProps,
+}
+struct LabelOwner {
+    props: LabelProps,
+    visible: bool,
+    tick: Option<gpui_kit::Task<()>>,
+}
+impl LabelOwner {
+    fn sync(&mut self, window: &mut Window, cx: &mut gpui_kit::Context<Self>) {
+        if !self.visible
+            || !self
+                .props
+                .elapsed
+                .as_ref()
+                .is_some_and(|time| time.to.is_none())
+        {
+            self.tick = None;
+        } else if self.tick.is_none() {
+            // The task owns only weak entity/window handles. Hiding, retirement
+            // and native destruction cancel this presentation-only timer.
+            self.tick = Some(cx.spawn_in(window, async move |this, cx| {
+                loop {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_secs(1))
+                        .await;
+                    if !this
+                        .update_in(cx, |this, _, cx| {
+                            if !this.visible {
+                                return false;
+                            }
+                            cx.notify();
+                            true
+                        })
+                        .unwrap_or(false)
+                    {
+                        break;
+                    }
+                }
+            }));
+        }
+    }
+}
+impl gpui_kit::Render for LabelOwner {
+    fn render(&mut self, _: &mut Window, _: &mut gpui_kit::Context<Self>) -> impl IntoElement {
+        let appearance = &self.props.appearance;
+        div()
+            .font(appearance::font(&appearance.font))
+            .text_color(appearance::color(appearance.foreground))
+            .text_size(px(appearance.font.size))
+            .line_height(gpui_kit::relative(appearance.font.line_height))
+            .child(SharedString::from(self.props.rendered().into_owned()))
+    }
 }
 impl Widget for Label {
+    fn create(&self, _: LiveInput, _: &mut Window, cx: &mut App) -> Box<dyn Any> {
+        use gpui_kit::AppContext as _;
+        Box::new(cx.new(|_| LabelOwner {
+            props: self.props.clone(),
+            visible: false,
+            tick: None,
+        }))
+    }
+    fn commit(&self, state: &mut dyn Any, window: &mut Window, cx: &mut App) {
+        state
+            .downcast_ref::<gpui_kit::Entity<LabelOwner>>()
+            .unwrap()
+            .update(cx, |owner, cx| {
+                if owner.props != self.props {
+                    owner.props = self.props.clone();
+                    owner.sync(window, cx);
+                    cx.notify();
+                }
+            });
+    }
+    fn presentation(&self, state: &mut dyn Any, visible: bool, window: &mut Window, cx: &mut App) {
+        state
+            .downcast_ref::<gpui_kit::Entity<LabelOwner>>()
+            .unwrap()
+            .update(cx, |owner, cx| {
+                if owner.visible != visible {
+                    owner.visible = visible;
+                    owner.sync(window, cx);
+                    cx.notify();
+                }
+            });
+    }
+    fn deactivate(&self, state: &mut dyn Any, window: &mut Window, cx: &mut App) {
+        self.presentation(state, false, window, cx);
+    }
     fn render(
         &self,
-        _: &dyn Any,
+        state: &dyn Any,
         _: &Slots,
         _: &mut Window,
         _: &mut App,
     ) -> maka_ui::Result<AnyElement> {
-        // Opaque native payload: GPUI styling is not constrained to the JSON
-        // Node primitives. Product placement remains in the importing component.
-        Ok(div()
-            .font(appearance::font(&self.appearance.font))
-            .text_color(appearance::color(self.appearance.foreground))
-            .text_size(px(self.appearance.font.size))
-            .line_height(gpui_kit::relative(self.appearance.font.line_height))
-            .child(SharedString::from(self.text.clone()))
+        Ok(state
+            .downcast_ref::<gpui_kit::Entity<LabelOwner>>()
+            .unwrap()
+            .clone()
             .into_any_element())
     }
 }
@@ -241,18 +322,12 @@ impl NativeComponent<dyn Widget> for LabelComponent {
         };
         let props: LabelProps = serde_json::from_value(props.clone())
             .map_err(|error| maka_ui::Error::Invalid(error.to_string()))?;
+        props.validate()?;
         Ok(Frame {
             revision,
             state: json!({"revision":revision}),
             surface: None,
-            view: NativeView::<dyn Widget>::new(
-                Rc::new(Label {
-                    text: props.text,
-                    appearance: props.appearance,
-                }),
-                BTreeMap::new(),
-                vec![],
-            )?,
+            view: NativeView::<dyn Widget>::new(Rc::new(Label { props }), BTreeMap::new(), vec![])?,
         }
         .output(Vec::new()))
     }
@@ -294,6 +369,89 @@ mod tests {
         TestAppContext, point,
     };
     use std::cell::Cell;
+
+    #[gpui::test]
+    fn elapsed_label_ticks_only_while_visible_and_releases_its_native_owner(
+        cx: &mut TestAppContext,
+    ) {
+        let props: LabelProps = serde_json::from_value(json!({
+            "text":"· ","elapsed":{"from":1000,"to":null},
+            "appearance":{"font":{"family":"Menlo","fallbacks":[],"size":14,"lineHeight":1,"weight":400},"foreground":4294967295u32}
+        })).unwrap();
+        let initial = props.clone();
+        let (owner, _) = cx.add_window_view(move |_, _| LabelOwner {
+            props: initial,
+            visible: false,
+            tick: None,
+        });
+        let handle = cx.windows()[0];
+        let mut state: Box<dyn Any> = Box::new(owner.clone());
+        let recipe = Label { props };
+        let seen = Rc::new(Cell::new(0));
+        let count = seen.clone();
+        let _observation =
+            cx.update(|cx| cx.observe(&owner, move |_, _| count.set(count.get() + 1)));
+        cx.update_window(handle, |_, window, cx| {
+            recipe.presentation(state.as_mut(), true, window, cx);
+            recipe.commit(state.as_mut(), window, cx);
+            assert!(owner.read(cx).tick.is_some());
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let before = seen.get();
+        cx.update_window(handle, |_, window, cx| {
+            recipe.presentation(state.as_mut(), true, window, cx);
+            recipe.commit(state.as_mut(), window, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            seen.get(),
+            before,
+            "unchanged paint must not schedule another paint"
+        );
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(seen.get(), before + 1);
+        cx.update_window(handle, |_, window, cx| {
+            recipe.presentation(state.as_mut(), false, window, cx);
+            assert!(owner.read(cx).tick.is_none());
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let hidden = seen.get();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(5));
+        cx.run_until_parked();
+        assert_eq!(seen.get(), hidden);
+        let mut finished = recipe.props.clone();
+        finished.elapsed.as_mut().unwrap().to = Some(69000);
+        let finished = Label { props: finished };
+        cx.update_window(handle, |_, window, cx| {
+            finished.commit(state.as_mut(), window, cx);
+            finished.presentation(state.as_mut(), true, window, cx);
+            assert!(owner.read(cx).tick.is_none());
+            assert_eq!(owner.read(cx).props.rendered(), "· 1m 08s");
+            finished.deactivate(state.as_mut(), window, cx);
+            recipe.commit(state.as_mut(), window, cx);
+            recipe.presentation(state.as_mut(), true, window, cx);
+            assert!(owner.read(cx).tick.is_some());
+        })
+        .unwrap();
+        let weak = owner.downgrade();
+        drop(state);
+        drop(owner);
+        cx.update_window(handle, |_, window, _| window.remove_window())
+            .unwrap();
+        cx.run_until_parked();
+        cx.update(|_| {
+            assert!(
+                weak.upgrade().is_none(),
+                "timer must not retain the native owner"
+            )
+        });
+    }
 
     struct DecisionSurface {
         input: Input,

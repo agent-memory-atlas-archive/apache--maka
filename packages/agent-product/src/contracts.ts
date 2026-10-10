@@ -38,6 +38,7 @@ import {
   type FilePastePolicy,
   type Role,
   type AgentHistoryChunk,
+  type HistoryTurnTiming,
   type SourceField,
   type SourceFormat,
 } from '../../plugin-sdk/src/index.js';
@@ -180,6 +181,7 @@ export interface ToolDetailsProps {
   focusOnPointer: boolean;
 }
 export interface TimelineProps {
+  timings: (HistoryTurnTiming & { turnId: string; afterMessageId: string })[];
   markReadEnabled: boolean;
   toolContext: ToolDetailsProps['context'] | null;
   waitingTools: string[];
@@ -425,6 +427,16 @@ export const toolDetailsContract = component(
 export const timelineContract = component(
   'maka.agent.Timeline',
   object({
+    timings: {
+      type: 'array',
+      maxItems: 8,
+      items: object({
+        turnId: string,
+        afterMessageId: string,
+        startedAt: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        finished: { anyOf: [{ $ref: '#/$defs/HistoryTurnFinished' }, { type: 'null' }] },
+      }),
+    },
     markReadEnabled: { type: 'boolean' },
     toolContext: {
       anyOf: [

@@ -2123,6 +2123,7 @@ export type AgentQueueRejection =
   | 'invalid_edit'
   | 'execution_changed'
   | 'not_running';
+export type HistoryTurnOutcome = 'completed' | 'failed' | 'aborted';
 /**
  * Canonical message author/kind; the field identifies body versus thinking.
  * Tool body JSON contributes string values, never its keys.
@@ -3040,6 +3041,11 @@ export interface CallerIntent {
 export interface LabelProps {
   text: string;
   appearance: TextAppearance;
+  elapsed?: Elapsed | null;
+}
+export interface Elapsed {
+  from: number;
+  to: number | null;
 }
 export interface TextareaProps {
   appearance: TextareaAppearance;
@@ -4527,6 +4533,7 @@ export interface AgentStopped {
 export interface AgentDelivery {
   sequence: number;
   invocationId: string;
+  turnId: string;
   fact: AgentDeliveryFact;
 }
 export interface AgentObservation {
@@ -4537,6 +4544,7 @@ export interface AgentObservation {
 }
 export interface AgentRun {
   invocationId: string;
+  turnId: string;
   state: AgentRunState;
 }
 export interface AgentPart {
@@ -4586,6 +4594,7 @@ export interface AgentQueueMutation {
   edit: AgentQueueAction;
 }
 export interface AgentHistoryChunk {
+  timing?: HistoryTurnTiming | null;
   field: HistoryField;
   messageId: string;
   turnId: string;
@@ -4596,6 +4605,18 @@ export interface AgentHistoryChunk {
   totalBytes: number;
   text: string;
   tool: HistoryTool | null;
+}
+/**
+ * Recorded logical Turn boundaries at the same history fence. An unfinished
+ * historical boundary alone does not establish that execution is still live.
+ */
+export interface HistoryTurnTiming {
+  startedAt: number;
+  finished: HistoryTurnFinished | null;
+}
+export interface HistoryTurnFinished {
+  at: number;
+  outcome: HistoryTurnOutcome;
 }
 /**
  * Canonical references at the requested fence, never execution authority.

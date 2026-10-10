@@ -33,7 +33,7 @@ struct Label {
 }
 impl Widget for Label {
     fn measure(&self, _: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u32)> {
-        Ok(paint::text_size(&self.props.text, width))
+        Ok(paint::text_size(&self.props.rendered(), width))
     }
     fn paint(
         &self,
@@ -50,7 +50,7 @@ impl Widget for Label {
         if self.props.appearance.font.weight >= 600 {
             style = style.add_modifier(Modifier::BOLD);
         }
-        paint::text(&self.props.text, area, buffer, style);
+        paint::text(&self.props.rendered(), area, buffer, style);
         Ok(())
     }
 }
@@ -71,8 +71,9 @@ impl NativeComponent<dyn Widget> for LabelComponent {
                 return Err(maka_ui::Error::Invalid("label has no inputs".into()));
             }
         };
-        let props = serde_json::from_value(props.clone())
+        let props: LabelProps = serde_json::from_value(props.clone())
             .map_err(|e| maka_ui::Error::Invalid(e.to_string()))?;
+        props.validate()?;
         Ok(Frame {
             revision,
             state: json!({"revision":revision}),

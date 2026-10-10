@@ -355,6 +355,12 @@ do not replace the text, selections, composition or undo history. Label also tak
 explicit text appearance. The example brand is an ordinary JavaScript Value
 provider selected by composition; native rendering reads no global brand palette.
 
+Label optionally appends elapsed wall time using `elapsed: {from, to}` in epoch
+milliseconds. A null end advances locally; a recorded end freezes the display.
+Invalid boundaries are rejected. GPUI owns one timer only while the label is
+visible and active; hiding, completion and retirement cancel it. TUI uses its
+existing paint loop. This display has no execution or timeout authority.
+
 Textarea exposes its actual focus, label, value and editability to AccessKit, and
 supports Focus and editable SetValue requests. Headless platform-channel tests
 cover those requests and focus navigation. The ordinary editing context menu and

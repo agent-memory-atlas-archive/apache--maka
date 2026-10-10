@@ -231,6 +231,10 @@ props 要求完整 `appearance`，以及 `accessibilityLabel`、`readOnly`、`di
 投影到原有原生 owner；换肤不重置文本、选区、组合输入或撤销历史。Label 也使用
 明确的文字外观。示例品牌是 composition 选择的普通 JS Value 插件，原生层不读全局品牌。
 
+Label 可通过 `elapsed: {from, to}`（epoch 毫秒）追加墙钟耗时。空结束值在本地递增，
+已记录结束值固定显示；无效边界拒绝。GPUI 仅在可见且活动时保留一个原生计时任务，
+隐藏、完成及退休即取消；TUI 使用原绘制循环。显示不承担执行状态或超时权威。
+
 Textarea 向 AccessKit 暴露真实焦点、label、value 与可编辑状态，支持 Focus 和可编辑时
 SetValue。headless 测试经过平台回调验证请求与焦点导航；普通编辑右键菜单和 OS
 无障碍/IME 验收仍待完成。TUI Label 将颜色/字重投影到 RGB/bold；桌面字体与透明合成

@@ -140,6 +140,7 @@ export function serviceApproval<N extends Node>(
       markReadEnabled: false,
       toolContext: null,
       waitingTools: [],
+      timings: [],
       theme: props.theme,
       locale: props.locale,
       messages: [],

@@ -491,7 +491,7 @@ export function components<N extends Node>(
           (message.source !== null || message.text.length > 0),
       );
     state.expanded = state.expanded.filter((id) => tools.some((message) => message.id === id));
-    const messages: N[] = rows.map(({ message, result }) => {
+    const messages: N[] = rows.flatMap(({ message, result }) => {
       const tool = message.role === 'tool_call' || message.role === 'tool_result';
       const expanded = state.expanded.includes(message.id);
       const structured =
@@ -545,7 +545,7 @@ export function components<N extends Node>(
               },
               {},
             );
-      return messageView(presentation, target, props.theme, props.locale, {
+      const messageNode = messageView(presentation, target, props.theme, props.locale, {
         ...message,
         waiting: !!message.tool && props.waitingTools.includes(message.tool.toolUseId),
         expanded,
@@ -659,6 +659,29 @@ export function components<N extends Node>(
               ]
             : [],
       });
+      const timing = props.timings.find(
+        (timing) => timing.afterMessageId === message.id || timing.afterMessageId === result?.id,
+      );
+      if (!timing) return [messageNode];
+      const mark = timing.finished
+        ? { completed: '✓', failed: '!', aborted: '■' }[timing.finished.outcome]
+        : '·';
+      return [
+        messageNode,
+        presentation.slot(
+          'time-' + message.contentKey,
+          'label',
+          {
+            text: mark + ' ',
+            elapsed: { from: timing.startedAt, to: timing.finished?.at ?? null },
+            appearance: {
+              font: { ...props.theme.markdown.body.font, size: 12 },
+              foreground: timing.finished ? props.theme.muted : props.theme.accent,
+            },
+          },
+          {},
+        ),
+      ];
     });
     const content = ui.box(
       'timeline',

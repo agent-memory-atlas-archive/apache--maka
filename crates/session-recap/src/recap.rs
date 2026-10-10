@@ -507,6 +507,7 @@ mod tests {
                         message_id: "m".into(),
                         turn_id: "t".into(),
                         timestamp: 1,
+                        timing: None,
                         role: history::Role::Assistant,
                         sequence: if second { 7 } else { 1 },
                         offset: 0,

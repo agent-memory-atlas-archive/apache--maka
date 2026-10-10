@@ -27,6 +27,7 @@ pub mod navigation;
 mod read;
 pub mod search;
 mod source;
+mod timing;
 mod tool_metadata;
 mod tools;
 use crate::{EventLog, StoreError};

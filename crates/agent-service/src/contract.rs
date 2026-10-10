@@ -442,6 +442,7 @@ pub struct Stopped {
 pub struct Delivery {
     pub sequence: u64,
     pub invocation_id: String,
+    pub turn_id: String,
     pub fact: DeliveryFact,
 }
 #[derive(Serialize, JsonSchema)]
@@ -514,6 +515,7 @@ pub struct Observation {
 #[schemars(rename = "AgentRun")]
 pub struct Run {
     pub invocation_id: String,
+    pub turn_id: String,
     pub state: RunState,
 }
 #[derive(Serialize, JsonSchema)]
@@ -675,6 +677,8 @@ pub enum QueueRejection {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentHistoryChunk")]
 pub struct HistoryChunk {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timing: Option<maka_plugins::session::history::TurnTiming>,
     pub field: maka_plugins::session::history::HistoryField,
     pub message_id: String,
     pub turn_id: String,

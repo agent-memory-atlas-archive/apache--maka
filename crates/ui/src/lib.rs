@@ -28,6 +28,7 @@ mod deployment;
 pub mod diff;
 pub mod dismiss;
 pub mod editor;
+pub mod elapsed;
 pub mod file;
 pub mod focus;
 mod frame;

@@ -373,12 +373,31 @@ impl<V: ?Sized + 'static> NativeRegistry<V> {
     }
 }
 
-#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[derive(Clone, PartialEq, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LabelProps {
     #[schemars(length(max = 4096))]
     pub text: String,
     pub appearance: crate::appearance::TextAppearance,
+    #[serde(default)]
+    pub elapsed: Option<crate::elapsed::Elapsed>,
+}
+impl LabelProps {
+    pub fn validate(&self) -> crate::Result<()> {
+        if let Some(elapsed) = &self.elapsed {
+            elapsed.validate()?;
+        }
+        Ok(())
+    }
+    pub fn rendered(&self) -> std::borrow::Cow<'_, str> {
+        match &self.elapsed {
+            Some(elapsed) => elapsed
+                .text(crate::elapsed::now())
+                .map(|text| format!("{}{text}", self.text).into())
+                .unwrap_or_default(),
+            None => self.text.as_str().into(),
+        }
+    }
 }
 pub fn label_contract() -> Contract {
     Contract {

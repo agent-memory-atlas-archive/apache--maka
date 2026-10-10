@@ -462,6 +462,7 @@ const mechanical = {
           tools: { contract: own.toolDetailsContract, cardinality: { kind: 'optional' } },
           markdown: { contract: sdk.contracts.markdown, cardinality: { kind: 'optional' } },
           source: { contract: sdk.contracts.sourceText, cardinality: { kind: 'optional' } },
+          label: { contract: sdk.contracts.label, cardinality: { kind: 'optional' } },
         },
       },
       tui: {
@@ -470,9 +471,18 @@ const mechanical = {
           tools: { contract: own.toolDetailsContract, cardinality: { kind: 'optional' } },
           markdown: { contract: sdk.contracts.markdown, cardinality: { kind: 'optional' } },
           source: { contract: sdk.contracts.sourceText, cardinality: { kind: 'optional' } },
+          label: { contract: sdk.contracts.label, cardinality: { kind: 'optional' } },
         },
       },
     },
+  },
+  label: {
+    entries: Object.fromEntries(
+      ['desktop', 'tui'].map((target) => [
+        target,
+        native('maka.ui.label', { Label: required(sdk.contracts.label) }),
+      ]),
+    ),
   },
   diff: { entries: { tui: native('maka.ui.diff', { Diff: required(sdk.contracts.diff) }) } },
   'source-text': {

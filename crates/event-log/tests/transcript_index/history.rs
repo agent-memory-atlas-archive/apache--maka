@@ -135,6 +135,13 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
             panic!("prepared")
         };
         for chunk in chunks {
+            let timing = chunk.timing.as_ref().expect("original turn timing");
+            let finished = timing.finished.as_ref().unwrap();
+            assert!(finished.at >= timing.started_at);
+            assert_eq!(
+                finished.outcome,
+                maka_plugins::session::history::TurnOutcome::Aborted
+            );
             if let Some(tool) = &chunk.tool {
                 assert_eq!(
                     tool.call.as_ref().map(|call| call.name.as_str()),
@@ -197,6 +204,13 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
         panic!("prepared")
     };
     assert!(after.is_none());
+    assert!(
+        chunks.iter().all(|chunk| chunk
+            .timing
+            .as_ref()
+            .is_some_and(|time| time.finished.is_none())),
+        "old fence excludes the later terminal event"
+    );
     assert!(
         chunks.iter().all(|chunk| chunk.role == Role::User),
         "old fence excludes unfinished answer"

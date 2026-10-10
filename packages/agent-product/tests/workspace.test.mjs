@@ -3297,6 +3297,7 @@ test('prepending history preserves the streamed message presentation identity', 
     landing: { sequence: 0, edge: 'end' },
     toolContext: null,
     waitingTools: [],
+    timings: [],
     live: true,
   };
   const initial = timeline.mount(props, {});
@@ -3348,6 +3349,7 @@ test('desktop scroll-to-end uses native painted facts and preserves its accepted
     landing: { sequence: 0, edge: 'end' },
     toolContext: null,
     waitingTools: [],
+    timings: [],
     live: true,
   };
   let result = timeline.mount(props, {});
@@ -9465,6 +9467,7 @@ async function conversationFinder() {
     landing: { sequence: 0, edge: 'end' },
     toolContext: null,
     waitingTools: [],
+    timings: [],
     live: true,
   };
   const finder = {
@@ -10447,6 +10450,23 @@ for (const target of ['tui', 'desktop']) {
         .content.children;
       assert.equal(rawRows.length, 3, 'contradictory references cannot hide a row');
       assert.equal(new Set(rawRows.map((row) => row.key)).size, 3);
+      const ended = new Client().start({
+        through: 101,
+        chunks: [
+          call,
+          {
+            ...result,
+            timing: { startedAt: 1000, finished: { at: 69000, outcome: 'aborted' } },
+          },
+        ],
+      });
+      out = timeline.update(out.frame.state, ended.timeline, {});
+      const timedRows = modelSlots(out.frame.view).find((node) => node.key === 'reading').props
+        .content.children;
+      assert.equal(timedRows.length, 2, 'paired result footer follows its visible call card');
+      assert.equal(timedRows[1].binding, 'label');
+      assert.equal(timedRows[1].props.text, '■ ');
+      assert.deepEqual(timedRows[1].props.elapsed, { from: 1000, to: 69000 });
     },
   );
   test(
@@ -12809,3 +12829,96 @@ test('late file-paste progress cannot move an original draft to a replacement bu
   client.raw('file-paste-cancel');
   assert.equal(client.state.attachments.paste.command.action, 'cancel');
 });
+
+for (const target of ['tui', 'desktop']) {
+  test(
+    target + ' elapsed footer follows the original turn, visible fragment and frozen history',
+    async () => {
+      const module = await import(
+        pathToFileURL(resolve(root, `dist/packages/workspace/${target}.js`))
+      );
+      module.activate({ locale: 'en' });
+      const timing = { startedAt: 1000, finished: null };
+      const chunk = historyChunk('canonical', { timing });
+      const run = { invocationId: 'run', turnId: chunk.turnId, state: 'running' };
+      const client = new Client(module.component).start({ through: 8, chunks: [chunk], run });
+      assert.deepEqual(client.timeline.timings, [
+        { ...timing, turnId: chunk.turnId, afterMessageId: chunk.messageId },
+      ]);
+      client.page(
+        [
+          fact(9, {
+            kind: 'part_started',
+            messageId: 'stream',
+            stepId: 'step',
+            partId: 'part',
+            textKind: 'text',
+          }),
+          fact(10, { kind: 'delta', stepId: 'step', partId: 'part', text: 'live suffix' }),
+        ],
+        10,
+      );
+      assert.equal(client.timeline.timings[0].afterMessageId, 'live-stream');
+      assert.equal(client.timeline.timings[0].startedAt, 1000);
+      // A physical handoff keeps the recorded logical origin; stale invocation
+      // fragments cannot position a new run's live footer.
+      client.state.run = { ...run, invocationId: 'handoff' };
+      client.raw('refresh');
+      assert.equal(client.timeline.timings[0].afterMessageId, chunk.messageId);
+      client.state.run = { ...run, turnId: 'another-turn' };
+      client.raw('refresh');
+      assert.deepEqual(client.timeline.timings, []);
+      client.state.run = run;
+      client.state.window.latest = false;
+      client.raw('refresh');
+      assert.deepEqual(client.timeline.timings, []);
+      const finished = { at: 69000, outcome: 'completed' };
+      client.state.window.page.chunks[0].timing.finished = finished;
+      client.raw('refresh');
+      assert.deepEqual(client.timeline.timings, [
+        { ...timing, finished, turnId: chunk.turnId, afterMessageId: chunk.messageId },
+      ]);
+      const { component: timeline } = await import(
+        pathToFileURL(resolve(root, `dist/packages/timeline/${target}.js`))
+      );
+      let rendered = timeline.mount(client.timeline, {});
+      const labels = () =>
+        modelSlots(rendered.frame.view).filter((node) => node.binding === 'label');
+      assert.equal(labels().length, 1);
+      assert.equal(labels()[0].props.text, '✓ ');
+      assert.deepEqual(labels()[0].props.elapsed, { from: 1000, to: 69000 });
+      client.state.window.page.chunks[0].timing.finished.outcome = 'failed';
+      client.raw('refresh');
+      rendered = timeline.update(rendered.frame.state, client.timeline, {});
+      assert.equal(labels()[0].props.text, '! ');
+      // Opening the source reader must not mix presentation time into source text.
+      rendered = timeline.update(
+        rendered.frame.state,
+        {
+          ...client.timeline,
+          source: {
+            kind: 'body',
+            fields: [],
+            format: 'plain',
+            ready: true,
+            key: 'source',
+            text: 'canonical',
+            atStart: true,
+            atEnd: true,
+            loading: false,
+            failed: false,
+            navigation: 1,
+            landing: 'start',
+          },
+        },
+        {},
+      );
+      assert.equal(labels().length, 1, 'the hidden conversation retains native identity');
+      const sourceText = modelSlots(rendered.frame.view).find(
+        (node) => node.key === 'source-text-source',
+      );
+      assert.equal(sourceText.props.source, 'canonical');
+      assert.equal(Object.hasOwn(sourceText.props, 'elapsed'), false);
+    },
+  );
+}

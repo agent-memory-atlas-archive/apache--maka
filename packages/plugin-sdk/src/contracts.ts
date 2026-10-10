@@ -2498,6 +2498,17 @@ export const contracts = {
           appearance: {
             $ref: '#/$defs/TextAppearance',
           },
+          elapsed: {
+            anyOf: [
+              {
+                $ref: '#/$defs/Elapsed',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            default: null,
+          },
         },
         additionalProperties: false,
         required: ['text', 'appearance'],
@@ -2561,6 +2572,24 @@ export const contracts = {
             type: 'integer',
             format: 'uint32',
             minimum: 0,
+          },
+          Elapsed: {
+            type: 'object',
+            properties: {
+              from: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+              to: {
+                type: ['integer', 'null'],
+                format: 'uint64',
+                minimum: 0,
+              },
+            },
+            additionalProperties: false,
+            required: ['from', 'to'],
           },
         },
       },
@@ -6088,6 +6117,16 @@ export const contracts = {
               AgentHistoryChunk: {
                 type: 'object',
                 properties: {
+                  timing: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/HistoryTurnTiming',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   field: {
                     $ref: '#/$defs/HistoryField',
                   },
@@ -6147,6 +6186,51 @@ export const contracts = {
                   'text',
                   'tool',
                 ],
+              },
+              HistoryTurnTiming: {
+                description:
+                  'Recorded logical Turn boundaries at the same history fence. An unfinished\nhistorical boundary alone does not establish that execution is still live.',
+                type: 'object',
+                properties: {
+                  startedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  finished: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/HistoryTurnFinished',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
+                required: ['startedAt', 'finished'],
+              },
+              HistoryTurnFinished: {
+                type: 'object',
+                properties: {
+                  at: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  outcome: {
+                    $ref: '#/$defs/HistoryTurnOutcome',
+                  },
+                },
+                additionalProperties: false,
+                required: ['at', 'outcome'],
+              },
+              HistoryTurnOutcome: {
+                type: 'string',
+                enum: ['completed', 'failed', 'aborted'],
               },
               HistoryField: {
                 description: 'A readable field in a conversation window, in presentation order.',
@@ -8113,12 +8197,15 @@ export const contracts = {
                   invocationId: {
                     type: 'string',
                   },
+                  turnId: {
+                    type: 'string',
+                  },
                   state: {
                     $ref: '#/$defs/AgentRunState',
                   },
                 },
                 additionalProperties: false,
-                required: ['invocationId', 'state'],
+                required: ['invocationId', 'turnId', 'state'],
               },
               AgentRunState: {
                 type: 'string',
@@ -10664,12 +10751,15 @@ export const contracts = {
                   invocationId: {
                     type: 'string',
                   },
+                  turnId: {
+                    type: 'string',
+                  },
                   fact: {
                     $ref: '#/$defs/AgentDeliveryFact',
                   },
                 },
                 additionalProperties: false,
-                required: ['sequence', 'invocationId', 'fact'],
+                required: ['sequence', 'invocationId', 'turnId', 'fact'],
               },
               AgentDeliveryFact: {
                 oneOf: [

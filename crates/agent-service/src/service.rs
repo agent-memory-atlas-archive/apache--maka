@@ -117,6 +117,7 @@ impl Handler for Agent {
                         };
                         Some(Run {
                             invocation_id: turn.invocation.invocation_id,
+                            turn_id: turn.invocation.turn_id,
                             state,
                         })
                     });
@@ -197,6 +198,7 @@ impl Handler for Agent {
                             chunks: chunks
                                 .into_iter()
                                 .map(|chunk| HistoryChunk {
+                                    timing: chunk.timing,
                                     field: chunk.field,
                                     message_id: chunk.message_id,
                                     turn_id: chunk.turn_id,
@@ -632,6 +634,7 @@ fn delivery(event: StoreStreamEvent) -> Option<Delivery> {
     Some(Delivery {
         sequence: event.sequence,
         invocation_id: event.invocation.invocation_id,
+        turn_id: event.invocation.turn_id,
         fact,
     })
 }

@@ -576,6 +576,7 @@ fn packaged_product(case: ProductCase) {
         "tool-details",
         "diff",
         "reading-area",
+        "label",
         "rows",
         "source-text",
         "markdown",
@@ -1210,6 +1211,42 @@ process.stdout.write(output.outputFiles[0].text);
         await_models_closed(&mut presenter);
         click(&mut presenter, "[ Send ]");
         await_screen(&mut presenter, "[ Attachments ]");
+        let elapsed_line = |presenter: &mut maka_tui::application::Presenter, mark: &str| {
+            screen(&draw(presenter))
+                .lines()
+                .map(str::trim)
+                .find(|line| {
+                    line.strip_prefix(mark).is_some_and(|time| {
+                        time.starts_with(' ')
+                            && time.trim_start().starts_with(|c: char| c.is_ascii_digit())
+                            && time.ends_with('s')
+                    })
+                })
+                .map(str::to_owned)
+        };
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let first = loop {
+            if let Some(line) = elapsed_line(&mut presenter, "·") {
+                break line;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "active elapsed footer absent: {}",
+                screen(&draw(&mut presenter))
+            );
+            std::thread::yield_now();
+        };
+        loop {
+            if elapsed_line(&mut presenter, "·").is_some_and(|line| line != first) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "active elapsed footer did not advance"
+            );
+            std::thread::yield_now();
+        }
+        capture(&mut presenter, "native-timing-active.txt");
         respond
             .take()
             .unwrap()
@@ -1218,6 +1255,18 @@ process.stdout.write(output.outputFiles[0].text);
         await_screen(&mut presenter, "Elegant response");
         runtime.block_on(&mut server).unwrap();
         runtime.block_on(fixture.drained());
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let finished = loop {
+            if let Some(line) = elapsed_line(&mut presenter, "✓") {
+                break line;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "finished elapsed footer absent: {}",
+                screen(&draw(&mut presenter))
+            );
+            std::thread::yield_now();
+        };
         capture(&mut presenter, "native-sent.txt");
         let intents = runtime
             .block_on(caller.application_deployment_intents(deployment.deployment, 0, 128))
@@ -1264,6 +1313,11 @@ process.stdout.write(output.outputFiles[0].text);
         await_screen(&mut presenter, "Elegant response");
         wait_for_target(&mut presenter, "[ Attachments ]", 0);
         assert!(!screen(&draw(&mut presenter)).contains("[ Attachments (3) ]"));
+        assert_eq!(
+            elapsed_line(&mut presenter, "✓"),
+            Some(finished),
+            "original terminal duration survives native restart"
+        );
         capture(&mut presenter, "native-reconciled-send.txt");
         // A new unsent draft remains removable after canonical archival, even
         // though the retained native composer is deliberately hidden.
