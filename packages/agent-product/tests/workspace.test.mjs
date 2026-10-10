@@ -301,7 +301,13 @@ const workspaceFact = {
   directoryIdentity: 'sha256:' + 'a'.repeat(64),
   identity: 'workspace:v1:' + uuid(99),
 };
+const dataSource = {
+  stateDomain: reference.source.stateDomain,
+  deployment: reference.source.deployment,
+  namespace: reference.namespace,
+};
 const session = {
+  dataSource,
   id: 'session',
   title: 'A thoughtful conversation',
   labels: [],
@@ -336,7 +342,8 @@ const returned = (value) => ({
   },
 });
 class Client {
-  constructor(definition = product.component) {
+  constructor(definition = product.component, initializeDrafts = true) {
+    this.initializeDrafts = initializeDrafts;
     this.definition = definition;
     this.actions = new Map();
     this.output = this.definition.mount({}, values);
@@ -368,9 +375,35 @@ class Client {
     return this.input({ kind: 'action', key: action.key, event: value });
   }
   query(method, value) {
-    return this.complete(this.find(method), {
+    const result = this.complete(this.find(method), {
       status: method === 'catalog' ? 'updated' : 'succeeded',
       value,
+    });
+    if (
+      method === 'observe' &&
+      this.initializeDrafts &&
+      value.session &&
+      !this.state.drafts.some((record) => record.context === value.session.id)
+    ) {
+      this.checkpoint(value.session, { kind: 'ready', initialized: true, saved: true });
+      return this.output;
+    }
+    return result;
+  }
+  checkpoint(session, state, owner = `fixture-editor-${session.id}`) {
+    return this.input({
+      kind: 'component',
+      key: 'checkpoint',
+      child: 'composer',
+      name: 'checkpoint',
+      event: {
+        context: session.id,
+        dataSource: session.dataSource,
+        observation: { owner, state },
+        owners: [
+          ...new Set([...this.state.drafts.map((record) => record.observation.owner), owner]),
+        ],
+      },
     });
   }
   component(name, event = {}) {
@@ -5096,6 +5129,9 @@ test('editor-local submission uses latest observation and the original send gate
     );
     const props = {
       context: 'session',
+      dataSource,
+      attachments: [],
+      drafts: [],
       theme: values.appearance[0],
       locale: 'en',
       enabled: true,
@@ -5109,10 +5145,11 @@ test('editor-local submission uses latest observation and the original send gate
       { min: 1, max: 8, maxViewportFraction: 1 / 3 },
     );
     if (target === 'tui') {
-      const controls = result.frame.view.children.find((node) => node.key === 'composer-controls');
+      const main = result.frame.view.children.find((node) => node.key === 'composer-main');
+      const controls = main.children.find((node) => node.key === 'composer-controls');
       assert.equal(controls.layout.wrap, true);
-      assert.equal(result.frame.view.direction, 'row');
-      assert.equal(result.frame.view.border.style, 'rounded');
+      assert.equal(main.direction, 'row');
+      assert.equal(main.border.style, 'rounded');
       assert.equal(
         modelSlots(result.frame.view).find((node) => node.key === 'draft').props.appearance
           .borderWidth,
@@ -5123,6 +5160,20 @@ test('editor-local submission uses latest observation and the original send gate
       modelSlots(result.frame.view).find((n) => n.key === 'draft').props.submit,
       target === 'desktop' ? 'primary_enter' : 'enter',
       'the first native edit can submit before a changed observation is published',
+    );
+    result = composer.event(
+      result.frame.state,
+      {
+        kind: 'component',
+        child: 'draft',
+        name: 'checkpoint',
+        event: {
+          owner: draft.snapshot.text.owner,
+          state: { kind: 'ready', initialized: true, saved: true },
+        },
+      },
+      props,
+      {},
     );
     const submit = (observation, configuration = props) =>
       composer.event(
@@ -11853,7 +11904,7 @@ for (const target of ['desktop', 'tui']) {
     client.query('read', uploadReply({ kind: 'uploaded', attachment }).reply);
     assert.equal(client.state.uncertain, null);
     assert.equal(client.state.dialog, null);
-    assert.deepEqual(client.state.attachments.files, [attachment]);
+    assert.deepEqual(client.state.attachments.files, [{ ...attachment, dataSource }]);
     client.raw('attachments-open');
     observeFile(client, child);
     assert.equal(client.state.attachments.selection.file, null);
@@ -11863,8 +11914,9 @@ for (const target of ['desktop', 'tui']) {
   });
   test(`${target} attachment-only send retains exact IDs until original admission and preserves other session drafts`, () => {
     const client = new Client(component).start();
-    const other = { ...attachment, sessionId: 'other', id: 'other-file' };
-    client.state.attachments.files = [attachment, other];
+    const local = { ...attachment, dataSource };
+    const other = { ...attachment, dataSource, sessionId: 'other', id: 'other-file' };
+    client.state.attachments.files = [local, other];
     const empty = structuredClone(draft);
     empty.snapshot.text.bytes = 0;
     empty.snapshot.selection = { start: 0, end: 0 };
@@ -11884,7 +11936,7 @@ for (const target of ['desktop', 'tui']) {
       status: 'operation',
       reply: { reference, receipt: { kind: 'unknown' } },
     });
-    assert.deepEqual(client.state.attachments.files, [attachment, other]);
+    assert.deepEqual(client.state.attachments.files, [local, other]);
     assert.equal(client.state.command, null);
     client.raw('check');
     client.query(
@@ -11892,7 +11944,7 @@ for (const target of ['desktop', 'tui']) {
       returned({ kind: 'started', sessionId: 'foreign', invocationId: 'run' }).reply,
     );
     assert.deepEqual(client.state.uncertain.reference, reference);
-    assert.deepEqual(client.state.attachments.files, [attachment, other]);
+    assert.deepEqual(client.state.attachments.files, [local, other]);
     client.raw('check');
     client.query(
       'read',
@@ -11908,6 +11960,7 @@ for (const target of ['desktop', 'tui']) {
     observeFile(client, child);
     client.state.attachments.files = Array.from({ length: 8 }, (_, i) => ({
       ...attachment,
+      dataSource,
       id: `full-${i}`,
     }));
     client.raw('attachment-upload');
@@ -11918,6 +11971,7 @@ for (const target of ['desktop', 'tui']) {
     client.raw('attachment-close');
     // A later selected session must not acquire the original operation's result.
     client.state.selected = { ...session, id: 'other' };
+    client.checkpoint(client.state.selected, { kind: 'ready', initialized: true, saved: true });
     client.complete(upload, uploadReply({ kind: 'uploaded', attachment }));
     assert.equal(client.state.selected.id, 'other');
     assert.equal(client.state.attachments.files.length, 8);
@@ -12010,7 +12064,7 @@ test('tui file paste advances exact captures only after the original upload rece
       kind: 'component',
       child: 'composer',
       name: 'files',
-      event: { context, selection, remaining, retryable: true },
+      event: { context, dataSource, selection, remaining, retryable: true },
     });
   const identity = { owner: file.owner, revision: file.revision };
   observe();
@@ -12045,6 +12099,7 @@ test('tui file paste advances exact captures only after the original upload rece
   );
   assert.equal(client.output.actions.length, 0);
   client.state.selected = { ...session, id: 'other' };
+  client.checkpoint(client.state.selected, { kind: 'ready', initialized: true, saved: true });
   client.raw('check');
   assert.deepEqual(client.find('read').input, original);
   const attachment = {
@@ -12062,7 +12117,7 @@ test('tui file paste advances exact captures only after the original upload rece
       cleanup: { kind: 'confirmed' },
     },
   });
-  assert.deepEqual(client.state.attachments.files, [attachment]);
+  assert.deepEqual(client.state.attachments.files, [{ ...attachment, dataSource }]);
   assert.deepEqual(client.state.attachments.paste.command, { selection: identity, action: 'next' });
   observe();
   assert.deepEqual(
@@ -12106,7 +12161,7 @@ test('tui file paste retries reads, skips failed items, cancels, and observes dr
       kind: 'component',
       child: 'composer',
       name: 'files',
-      event: { context: session.id, selection, remaining, retryable: true },
+      event: { context: session.id, dataSource, selection, remaining, retryable: true },
     });
   observe(file);
   assert.equal(client.output.actions.length, 0);
@@ -12128,6 +12183,7 @@ test('tui file paste retries reads, skips failed items, cancels, and observes dr
   assert.equal(client.state.attachments.paste, null);
   client.state.attachments.files = Array.from({ length: 8 }, (_, i) => ({
     id: `full-${i}`,
+    dataSource,
     sessionId: session.id,
     name: 'prior',
     bytes: 1,
@@ -12166,7 +12222,7 @@ test('tui clipboard pending retains original insertion context and failure requi
       kind: 'component',
       child: 'composer',
       name: 'files',
-      event: { context: session.id, selection: file, remaining, retryable: false },
+      event: { context: session.id, dataSource, selection: file, remaining, retryable: false },
     });
   observe(selection);
   const composer = () =>
@@ -12175,6 +12231,7 @@ test('tui clipboard pending retains original insertion context and failure requi
   assert.equal(composer().filePaste.context, session.id);
   assert.equal(client.output.actions.length, 0);
   client.state.selected = { ...session, id: 'another' };
+  client.checkpoint(client.state.selected, { kind: 'ready', initialized: true, saved: true });
   client.raw('ignored');
   assert.equal(composer().filePaste, null, 'a late text result cannot target another conversation');
   observe({ ...selection, revision: 2, phase: 'failed', error: 'paste_rejected' });
@@ -12203,6 +12260,9 @@ for (const target of ['desktop', 'tui']) {
       command: null,
       autoFocus: true,
       hasAttachments: false,
+      dataSource,
+      attachments: [],
+      drafts: [],
       filePaste: null,
       fileCommand: null,
     };
@@ -12231,6 +12291,10 @@ for (const target of ['desktop', 'tui']) {
     const slots = () => modelSlots(result.frame.view);
     update({ context: 'a', filePaste: { context: 'a', maxFiles: 8 } });
     const first = slots()[0].key;
+    event(first, 'checkpoint', {
+      owner: draft.snapshot.text.owner,
+      state: { kind: 'ready', initialized: true, saved: true },
+    });
     event(first, 'changed', draft);
     update({ context: 'b', filePaste: { context: 'b', maxFiles: 8 } });
     const second = slots().find((slot) => slot.key !== first).key;
@@ -12253,6 +12317,10 @@ for (const target of ['desktop', 'tui']) {
       ...draft,
       snapshot: { ...draft.snapshot, text: { ...draft.snapshot.text, owner: 'second-editor' } },
     };
+    event(second, 'checkpoint', {
+      owner: other.snapshot.text.owner,
+      state: { kind: 'ready', initialized: true, saved: true },
+    });
     event(second, 'changed', other);
     raw();
     assert.deepEqual(result.events, [{ name: 'send', value: other }]);
@@ -12272,7 +12340,7 @@ for (const target of ['desktop', 'tui']) {
       retryable: true,
     };
     event(first, 'files', files);
-    assert.deepEqual(result.events, [{ name: 'files', value: files }]);
+    assert.deepEqual(result.events, [{ name: 'files', value: { ...files, dataSource } }]);
     const file = { owner: files.selection.owner, revision: files.selection.revision };
     assert.deepEqual(composer.capture(result.frame.state, props, 'file', file).source.child, first);
     const command = {
@@ -12328,6 +12396,9 @@ for (const target of ['desktop', 'tui']) {
       command: null,
       autoFocus: true,
       hasAttachments: false,
+      dataSource,
+      attachments: [],
+      drafts: [],
       filePaste: null,
       fileCommand: null,
     };
@@ -12337,6 +12408,20 @@ for (const target of ['desktop', 'tui']) {
       result = composer.update(result.frame.state, props, {});
     };
     const observe = (child, observation) => {
+      result = composer.event(
+        result.frame.state,
+        {
+          kind: 'component',
+          child,
+          name: 'checkpoint',
+          event: {
+            owner: observation.snapshot.text.owner,
+            state: { kind: 'ready', initialized: true, saved: true },
+          },
+        },
+        props,
+        {},
+      );
       result = composer.event(
         result.frame.state,
         { kind: 'component', child, name: 'changed', event: observation },
@@ -12429,3 +12514,298 @@ for (const target of ['desktop', 'tui']) {
     assert.ok(Buffer.byteLength(JSON.stringify(result)) < 1024 * 1024);
   });
 }
+
+for (const target of ['desktop', 'tui']) {
+  test(`${target} restart reconciles exact original sends before restoring text and attachment references`, async () => {
+    const { component } = await import(
+      pathToFileURL(resolve(root, `dist/packages/workspace/${target}.js`))
+    );
+    for (const sentRevision of [3, 4, 5]) {
+      const client = new Client(component, false).start();
+      client.component('send', draft);
+      assert.equal(client.output.actions.length, 0, 'no new send before native lineage is durable');
+      const files = ['sent', 'kept'].map((id) => ({
+        id,
+        sessionId: session.id,
+        name: `${id}.txt`,
+        bytes: 1,
+        mimeType: 'text/plain',
+      }));
+      const saved = {
+        kind: 'restore',
+        version: 12,
+        snapshot: draft.snapshot,
+        metadata: { attachments: files },
+      };
+      client.checkpoint(session, saved, 'new-editor');
+      const original = {
+        cursor: 1,
+        caller: reference.source,
+        consumer: [uuid(80)],
+        reference,
+        recovery: {
+          format: 'maka.agent.draft-send@1',
+          sessionId: session.id,
+          editor: { owner: draft.snapshot.text.owner, revision: sentRevision },
+          attachments: ['sent'],
+        },
+      };
+      assert.deepEqual(client.find('page').input, { after: 0, limit: 1 });
+      client.query('page', [original]);
+      assert.deepEqual(client.find('read').input, reference);
+      client.query(
+        'read',
+        returned({ kind: 'started', sessionId: session.id, invocationId: 'original-run' }).reply,
+      );
+      assert.deepEqual(client.find('page').input, { after: 1, limit: 1 });
+      client.query('page', []);
+      const composer = modelSlots(client.output.frame.view).find(
+        (node) => node.key === 'composer',
+      ).props;
+      assert.deepEqual(composer.drafts[0].restore, {
+        owner: 'new-editor',
+        version: 12,
+        clearText: sentRevision >= 4,
+      });
+      assert.deepEqual(client.state.attachments.files, [{ ...files[1], dataSource }]);
+      client.checkpoint(session, { kind: 'ready', saved: false, initialized: false }, 'new-editor');
+      client.component('send', draft);
+      assert.equal(
+        client.output.actions.length,
+        0,
+        'applied native restore alone is not a durable new lineage',
+      );
+      client.checkpoint(session, { kind: 'ready', saved: true, initialized: true }, 'new-editor');
+      client.input({
+        kind: 'component',
+        child: 'models',
+        name: 'selected',
+        event: selectedModel({
+          selection: { connectionId: 'fixture', revision: 2, modelId: 'fixture-model' },
+          connectionName: 'Fixture',
+          thinkingLevels: [],
+          defaultThinkingLevel: null,
+          label: 'Fixture model',
+        }),
+      });
+      client.component('send', {
+        ...draft,
+        snapshot: { ...draft.snapshot, text: { ...draft.snapshot.text, owner: 'new-editor' } },
+      });
+      assert.equal(client.find('read').binding, 'reader');
+      assert.equal(
+        [...client.actions.values()].some((action) => action.method === 'send'),
+        false,
+        'recovery never replays send',
+      );
+    }
+  });
+  test(`${target} unknown restart result checks the original reference and leaves draft contents held`, async () => {
+    const { component } = await import(
+      pathToFileURL(resolve(root, `dist/packages/workspace/${target}.js`))
+    );
+    const client = new Client(component, false).start();
+    client.checkpoint(
+      session,
+      { kind: 'restore', version: 2, snapshot: draft.snapshot, metadata: { attachments: [] } },
+      'new-editor',
+    );
+    const original = {
+      cursor: 1,
+      caller: reference.source,
+      consumer: [uuid(80)],
+      reference,
+      recovery: {
+        format: 'maka.agent.draft-send@1',
+        sessionId: session.id,
+        editor: { owner: draft.snapshot.text.owner, revision: 4 },
+        attachments: [],
+      },
+    };
+    client.query('page', [original]);
+    client.query('read', { reference, receipt: { kind: 'unknown' } });
+    assert.equal(client.state.drafts[0].work.status, 'unknown');
+    assert.equal(client.state.drafts[0].work.restore, null);
+    client.component('send', draft);
+    assert.equal(client.output.actions.length, 0);
+    client.input({
+      kind: 'component',
+      child: 'composer',
+      name: 'draftCheck',
+      event: { owner: 'new-editor' },
+    });
+    assert.deepEqual(client.find('read').input, reference);
+    client.query('read', returned({ kind: 'started', sessionId: session.id }).reply);
+    assert.equal(
+      client.state.drafts[0].work.status,
+      'unknown',
+      'malformed success cannot discard a draft',
+    );
+    client.input({
+      kind: 'component',
+      child: 'composer',
+      name: 'draftCheck',
+      event: { owner: 'new-editor' },
+    });
+    assert.deepEqual(client.find('read').input, reference);
+    client.query('read', {
+      ...returned({ kind: 'started', sessionId: session.id, invocationId: 'run' }).reply,
+      reference: { ...reference, operation: uuid(89) },
+    });
+    assert.equal(client.state.drafts[0].work.status, 'unknown');
+    assert.equal(client.state.drafts[0].work.restore, null);
+  });
+  test(`${target} restart ignores a different business source and rejects corrupt attachment metadata`, async () => {
+    const { component } = await import(
+      pathToFileURL(resolve(root, `dist/packages/workspace/${target}.js`))
+    );
+    const client = new Client(component, false).start();
+    client.checkpoint(
+      session,
+      { kind: 'restore', version: 2, snapshot: draft.snapshot, metadata: { attachments: [] } },
+      'new-editor',
+    );
+    client.query('page', [
+      {
+        cursor: 1,
+        caller: reference.source,
+        consumer: [uuid(80)],
+        reference: { ...reference, namespace: [uuid(88)] },
+        recovery: {
+          format: 'maka.agent.draft-send@1',
+          sessionId: session.id,
+          editor: { owner: draft.snapshot.text.owner, revision: 4 },
+          attachments: [],
+        },
+      },
+    ]);
+    assert.equal(
+      client.output.actions.some((action) => action.method === 'read'),
+      false,
+    );
+    client.query('page', []);
+    assert.equal(client.state.drafts[0].work.restore.clearText, false);
+    const corrupt = new Client(component, false).start();
+    corrupt.checkpoint(
+      session,
+      {
+        kind: 'restore',
+        version: 2,
+        snapshot: draft.snapshot,
+        metadata: { attachments: [{ sessionId: 'foreign' }] },
+      },
+      'new-editor',
+    );
+    assert.equal(corrupt.state.drafts[0].work.status, 'failed');
+    corrupt.input({
+      kind: 'component',
+      child: 'composer',
+      name: 'draftCheck',
+      event: { owner: 'new-editor' },
+    });
+    assert.equal(corrupt.state.drafts[0].work.status, 'failed');
+    assert.equal(corrupt.state.drafts[0].work.restore, null);
+  });
+}
+
+test('restoration retains one active receipt scan while 32 native drafts hold their own metadata', () => {
+  const client = new Client(product.component, false).start();
+  const maxFiles = (id) =>
+    Array.from({ length: 8 }, (_, index) => ({
+      id: `file-${index}`,
+      sessionId: id,
+      name: '界'.repeat(512),
+      bytes: 1,
+      mimeType: 'text/plain',
+    }));
+  for (let index = 0; index < 32; index++) {
+    const selected = { ...session, id: `draft-${index}` };
+    client.state.selected = selected;
+    client.checkpoint(
+      selected,
+      {
+        kind: 'restore',
+        version: 1,
+        snapshot: draft.snapshot,
+        metadata: { attachments: maxFiles(selected.id) },
+      },
+      `new-${index}`,
+    );
+    const page = client.find('page');
+    assert.equal(page.input.limit, 1);
+    client.complete(page, {
+      status: 'succeeded',
+      value: [
+        {
+          cursor: 1,
+          caller: reference.source,
+          consumer: [uuid(80)],
+          reference,
+          recovery: {
+            format: 'maka.agent.draft-send@1',
+            sessionId: selected.id,
+            editor: { owner: draft.snapshot.text.owner, revision: 4 },
+            attachments: [],
+          },
+        },
+      ],
+    });
+    client.query('read', { reference, receipt: { kind: 'unknown' } });
+    assert.equal(client.state.drafts.filter((record) => record.work).length, 1);
+    assert.ok(client.state.drafts.every((record) => record.observation.state.metadata === null));
+    assert.ok(Buffer.byteLength(JSON.stringify(client.state)) < 256 * 1024);
+  }
+  const original = { ...session, id: 'draft-0' };
+  client.state.selected = original;
+  client.checkpoint(
+    original,
+    {
+      kind: 'restore',
+      version: 1,
+      snapshot: draft.snapshot,
+      metadata: { attachments: maxFiles(original.id) },
+    },
+    'new-0',
+  );
+  assert.deepEqual(client.find('page').input, { after: 0, limit: 1 });
+  assert.equal(client.state.drafts[0].work.attachments.length, 8);
+});
+
+test('late file-paste progress cannot move an original draft to a replacement business source', async () => {
+  const { component } = await import(
+    pathToFileURL(resolve(root, 'dist/packages/workspace/tui.js'))
+  );
+  const client = new Client(component).start();
+  client.state.selected = { ...session, dataSource: { ...dataSource, namespace: [uuid(81)] } };
+  client.checkpoint(
+    client.state.selected,
+    { kind: 'ready', saved: true, initialized: true },
+    'replacement-editor',
+  );
+  client.input({
+    kind: 'component',
+    child: 'composer',
+    name: 'files',
+    event: {
+      context: session.id,
+      dataSource,
+      remaining: 1,
+      retryable: true,
+      selection: {
+        owner: uuid(91),
+        revision: 1,
+        phase: 'ready',
+        error: null,
+        file: { name: 'original.txt', bytes: 5, digest: 'sha256:' + 'c'.repeat(64) },
+      },
+    },
+  });
+  assert.equal(client.output.actions.length, 0);
+  assert.deepEqual(client.state.attachments.paste.observed.dataSource, dataSource);
+  assert.equal(
+    modelSlots(client.output.frame.view).find((node) => node.key === 'composer').props.filePaste,
+    null,
+  );
+  client.raw('file-paste-cancel');
+  assert.equal(client.state.attachments.paste.command.action, 'cancel');
+});

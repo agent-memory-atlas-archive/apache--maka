@@ -52,6 +52,8 @@ import { toolCards } from './tool-cards.js';
 import { toolPresentation } from './tool-details.js';
 import { messageView, sourceFieldLabel } from './message-view.js';
 import { output, fill, pixels, compactLabel, type Presentation, type Node } from './view.js';
+import { sameValue } from './value.js';
+import type { AgentDataSource, EditorCheckpointObservation } from '../../plugin-sdk/src/index.js';
 interface Revision {
   revision: number;
 }
@@ -92,12 +94,16 @@ function groupOpen(state: Navigation, key: string) {
   return (key !== 'archived') !== state.toggled.includes(key);
 }
 interface DraftEntry {
+  dataSource: AgentDataSource;
+  checkpoint: EditorCheckpointObservation | null;
+  retry: number;
   context: string;
   key: string;
   observation: EditorObservation | null;
   files: FilePasteObservation | null;
 }
 interface Draft extends Revision {
+  active: string | null;
   serial: number;
   entries: DraftEntry[];
 }
@@ -125,10 +131,18 @@ export function components<N extends Node>(
       text = copy(props.locale);
     // Each session retains its original native mount, including selection and
     // undo. Only observed empty, idle editors can make room at the original limit.
-    if (props.context && !state.entries.some((entry) => entry.context === props.context)) {
+    if (
+      props.context &&
+      props.dataSource &&
+      !state.entries.some(
+        (entry) => entry.context === props.context && sameValue(entry.dataSource, props.dataSource),
+      )
+    ) {
       if (state.entries.length === 32 && !props.busy && !props.command) {
         const empty = state.entries.findIndex(
           (entry) =>
+            entry.checkpoint?.state.kind === 'ready' &&
+            entry.checkpoint.state.saved &&
             entry.observation?.snapshot.text.bytes === 0 &&
             !entry.observation.snapshot.marked &&
             (!entry.files || entry.files.selection.phase === 'empty'),
@@ -138,13 +152,22 @@ export function components<N extends Node>(
       if (state.entries.length < 32)
         state.entries.push({
           context: props.context,
+          dataSource: props.dataSource,
+          checkpoint: null,
+          retry: 0,
           key: state.serial++ === 0 ? 'draft' : `draft-${state.serial}`,
           observation: null,
           files: null,
         });
     }
-    const current = state.entries.find((entry) => entry.context === props.context);
+    const current = state.entries.find(
+      (entry) => entry.context === props.context && sameValue(entry.dataSource, props.dataSource),
+    );
     const observation = current?.observation;
+    if (state.active !== (current?.key ?? null)) {
+      state.active = current?.key ?? null;
+      if (current?.checkpoint?.state.kind === 'restore') current.retry++;
+    }
     const pending =
       props.command !== null &&
       !state.entries.some(
@@ -153,6 +176,8 @@ export function components<N extends Node>(
           entry.observation?.receipt?.sequence === props.command!.sequence,
       );
     const available =
+      current?.checkpoint?.state.kind === 'ready' &&
+      current.checkpoint.state.initialized &&
       props.enabled &&
       !props.busy &&
       (target === 'tui' || !props.running) &&
@@ -193,6 +218,7 @@ export function components<N extends Node>(
       command: null,
       filePaste: null,
       fileCommand: null,
+      persistence: null,
     };
     const editor = ui.box(
       'editor-area',
@@ -205,6 +231,24 @@ export function components<N extends Node>(
               'editor',
               {
                 ...textarea,
+                persistence: {
+                  key: entry.context,
+                  format: 'maka.agent.draft@1',
+                  dataSource: entry.dataSource,
+                  metadata: {
+                    attachments: props.attachments
+                      .filter(
+                        (file) =>
+                          file.sessionId === entry.context &&
+                          sameValue(file.dataSource, entry.dataSource),
+                      )
+                      .map(({ dataSource: _, ...file }) => file),
+                  },
+                  restore:
+                    props.drafts.find((draft) => draft.owner === entry.checkpoint?.owner)
+                      ?.restore ?? null,
+                  retry: entry.retry,
+                },
                 autoFocus: entry === current && props.autoFocus,
                 command:
                   props.command?.owner === entry.observation?.snapshot.text.owner
@@ -221,7 +265,12 @@ export function components<N extends Node>(
                     ? props.fileCommand
                     : null,
               },
-              { changed: 'changed', submitted: 'submitted', files: 'files' },
+              {
+                changed: 'changed',
+                submitted: 'submitted',
+                files: 'files',
+                checkpoint: 'checkpoint',
+              },
             ),
           ],
           {
@@ -253,24 +302,61 @@ export function components<N extends Node>(
         style: { justify: 'between', align: 'center', width: fill },
       },
     );
+    const recovering = props.drafts.find((draft) => draft.owner === current?.checkpoint?.owner);
+    const failed = current?.checkpoint?.state.kind === 'failed' || recovering?.status === 'failed';
+    const unknown = recovering?.status === 'unknown';
+    const loading =
+      !!current &&
+      (!current.checkpoint ||
+        current.checkpoint.state.kind === 'loading' ||
+        current.checkpoint.state.kind === 'restore' ||
+        (current.checkpoint.state.kind === 'ready' && !current.checkpoint.state.initialized));
+    const status = failed
+      ? text.draftPersistenceFailed
+      : unknown
+        ? text.draftUncertain
+        : loading
+          ? text.draftRestoring
+          : null;
+    const body = ui.box(
+      'composer-main',
+      [
+        ...(props.context && !current
+          ? [ui.text('draft-capacity', text.draftCapacity, 13, props.theme.muted)]
+          : []),
+        editor,
+        controls,
+      ],
+      {
+        row: target === 'tui',
+        border: target === 'tui',
+        gap: target === 'tui' ? 0 : 12,
+        terminal: { shrink: true },
+        style: { width: fill },
+      },
+    );
     return output(
       state,
       ui.box(
         'composer',
         [
-          ...(props.context && !current
-            ? [ui.text('draft-capacity', text.draftCapacity, 13, props.theme.muted)]
+          ...(status
+            ? [
+                ui.box(
+                  'draft-status-row',
+                  [
+                    ui.text('draft-status', status, 13, props.theme.muted),
+                    ...(failed || unknown
+                      ? [ui.button('draft-retry', text.sourceRetry, false)]
+                      : []),
+                  ],
+                  { row: true, terminal: { wrap: true }, style: { width: fill, wrap: true } },
+                ),
+              ]
             : []),
-          editor,
-          controls,
+          body,
         ],
-        {
-          row: target === 'tui',
-          border: target === 'tui',
-          gap: target === 'tui' ? 0 : 12,
-          terminal: { shrink: true },
-          style: { width: fill },
-        },
+        { style: { width: fill }, terminal: { shrink: true } },
       ),
       events,
     );
@@ -869,7 +955,7 @@ export function components<N extends Node>(
   };
   return {
     composer: {
-      mount: (props) => composerFrame({ revision: 0, serial: 0, entries: [] }, props),
+      mount: (props) => composerFrame({ revision: 0, serial: 0, active: null, entries: [] }, props),
       update: (state, props) =>
         composerFrame(
           { ...state, entries: [...state.entries], revision: state.revision + 1 },
@@ -886,9 +972,35 @@ export function components<N extends Node>(
             ? next.entries.find((entry) => entry.key === input.child)
             : null;
         if (input.kind === 'component' && !source) return composerFrame(next, props);
+        if (input.kind === 'component' && source && input.name === 'checkpoint') {
+          const observation = input.event as EditorCheckpointObservation;
+          source.checkpoint =
+            observation.state.kind === 'restore'
+              ? { ...observation, state: { ...observation.state, metadata: null } }
+              : observation;
+          return composerFrame(next, props, [
+            {
+              name: 'checkpoint',
+              value: {
+                context: source.context,
+                dataSource: source.dataSource,
+                observation,
+                owners: next.entries.flatMap((entry) =>
+                  entry.observation
+                    ? [entry.observation.snapshot.text.owner]
+                    : entry.checkpoint
+                      ? [entry.checkpoint.owner]
+                      : [],
+                ),
+              },
+            },
+          ]);
+        }
         if (input.kind === 'component' && source && input.name === 'files') {
           source.files = input.event as FilePasteObservation;
-          return composerFrame(next, props, [{ name: 'files', value: input.event }]);
+          return composerFrame(next, props, [
+            { name: 'files', value: { ...source.files, dataSource: source.dataSource } },
+          ]);
         }
         if (
           input.kind === 'component' &&
@@ -899,11 +1011,26 @@ export function components<N extends Node>(
           if (input.name === 'changed')
             return composerFrame(next, props, [{ name: 'changed', value: source.observation }]);
         }
-        const current = next.entries.find((entry) => entry.context === props.context);
+        const current = next.entries.find(
+          (entry) =>
+            entry.context === props.context && sameValue(entry.dataSource, props.dataSource),
+        );
         const observation = current?.observation;
+        if (input.kind === 'raw' && input.key === 'draft-retry' && current?.checkpoint) {
+          if (current.checkpoint.state.kind === 'failed') {
+            current.retry++;
+            return composerFrame(next, props);
+          }
+          return composerFrame(next, props, [
+            { name: 'draftCheck', value: { owner: current.checkpoint.owner } },
+          ]);
+        }
+
         if (
           ((input.kind === 'raw' && input.key === 'send') ||
             (input.kind === 'component' && source === current && input.name === 'submitted')) &&
+          current?.checkpoint?.state.kind === 'ready' &&
+          current.checkpoint.state.initialized &&
           props.enabled &&
           !props.busy &&
           (target === 'tui' || !props.running) &&

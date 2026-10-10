@@ -2688,6 +2688,17 @@ export const contracts = {
             ],
             default: null,
           },
+          persistence: {
+            anyOf: [
+              {
+                $ref: '#/$defs/EditorPersistence',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            default: null,
+          },
         },
         additionalProperties: false,
         required: [
@@ -3275,6 +3286,64 @@ export const contracts = {
               },
             ],
           },
+          EditorPersistence: {
+            type: 'object',
+            properties: {
+              key: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              format: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 96,
+              },
+              dataSource: true,
+              metadata: true,
+              restore: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/EditorRestoration',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                default: null,
+              },
+              retry: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 9007199254740991,
+                default: 0,
+              },
+            },
+            additionalProperties: false,
+            required: ['key', 'format', 'dataSource', 'metadata'],
+          },
+          EditorRestoration: {
+            type: 'object',
+            properties: {
+              owner: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              version: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 1,
+                maximum: 9007199254740991,
+              },
+              clearText: {
+                type: 'boolean',
+              },
+            },
+            additionalProperties: false,
+            required: ['owner', 'version', 'clearText'],
+          },
         },
       },
       events: {
@@ -3422,7 +3491,160 @@ export const contracts = {
             },
             EditorConflict: {
               type: 'string',
-              enum: ['owner', 'representation', 'revision', 'composition', 'sequence'],
+              enum: [
+                'persistence',
+                'owner',
+                'representation',
+                'revision',
+                'composition',
+                'sequence',
+              ],
+            },
+          },
+        },
+        checkpoint: {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          title: 'EditorCheckpointObservation',
+          type: 'object',
+          properties: {
+            owner: {
+              type: 'string',
+            },
+            state: {
+              $ref: '#/$defs/EditorCheckpointState',
+            },
+          },
+          additionalProperties: false,
+          required: ['owner', 'state'],
+          $defs: {
+            EditorCheckpointState: {
+              oneOf: [
+                {
+                  type: 'object',
+                  properties: {
+                    kind: {
+                      type: 'string',
+                      const: 'loading',
+                    },
+                  },
+                  required: ['kind'],
+                  additionalProperties: false,
+                },
+                {
+                  type: 'object',
+                  properties: {
+                    version: {
+                      type: 'integer',
+                      format: 'uint64',
+                      minimum: 0,
+                    },
+                    snapshot: {
+                      $ref: '#/$defs/EditorSnapshot',
+                    },
+                    metadata: true,
+                    kind: {
+                      type: 'string',
+                      const: 'restore',
+                    },
+                  },
+                  additionalProperties: false,
+                  required: ['kind', 'version', 'snapshot', 'metadata'],
+                },
+                {
+                  type: 'object',
+                  properties: {
+                    saved: {
+                      type: 'boolean',
+                    },
+                    initialized: {
+                      type: 'boolean',
+                    },
+                    kind: {
+                      type: 'string',
+                      const: 'ready',
+                    },
+                  },
+                  additionalProperties: false,
+                  required: ['kind', 'saved', 'initialized'],
+                },
+                {
+                  type: 'object',
+                  properties: {
+                    diagnostic: {
+                      type: 'string',
+                    },
+                    kind: {
+                      type: 'string',
+                      const: 'failed',
+                    },
+                  },
+                  additionalProperties: false,
+                  required: ['kind', 'diagnostic'],
+                },
+              ],
+            },
+            EditorSnapshot: {
+              type: 'object',
+              properties: {
+                text: {
+                  $ref: '#/$defs/EditorTextRef',
+                },
+                selection: {
+                  $ref: '#/$defs/TextRange',
+                },
+                reversed: {
+                  type: 'boolean',
+                },
+                marked: {
+                  anyOf: [
+                    {
+                      $ref: '#/$defs/TextRange',
+                    },
+                    {
+                      type: 'null',
+                    },
+                  ],
+                },
+              },
+              additionalProperties: false,
+              required: ['text', 'selection', 'reversed', 'marked'],
+            },
+            EditorTextRef: {
+              type: 'object',
+              properties: {
+                owner: {
+                  type: 'string',
+                },
+                revision: {
+                  type: 'integer',
+                  format: 'uint64',
+                  minimum: 0,
+                },
+                bytes: {
+                  type: 'integer',
+                  format: 'uint',
+                  minimum: 0,
+                },
+              },
+              additionalProperties: false,
+              required: ['owner', 'revision', 'bytes'],
+            },
+            TextRange: {
+              type: 'object',
+              properties: {
+                start: {
+                  type: 'integer',
+                  format: 'uint',
+                  minimum: 0,
+                },
+                end: {
+                  type: 'integer',
+                  format: 'uint',
+                  minimum: 0,
+                },
+              },
+              additionalProperties: false,
+              required: ['start', 'end'],
             },
           },
         },
@@ -3678,7 +3900,14 @@ export const contracts = {
             },
             EditorConflict: {
               type: 'string',
-              enum: ['owner', 'representation', 'revision', 'composition', 'sequence'],
+              enum: [
+                'persistence',
+                'owner',
+                'representation',
+                'revision',
+                'composition',
+                'sequence',
+              ],
             },
           },
         },
@@ -4209,7 +4438,14 @@ export const contracts = {
             },
             EditorConflict: {
               type: 'string',
-              enum: ['owner', 'representation', 'revision', 'composition', 'sequence'],
+              enum: [
+                'persistence',
+                'owner',
+                'representation',
+                'revision',
+                'composition',
+                'sequence',
+              ],
             },
           },
         },
@@ -4717,7 +4953,14 @@ export const contracts = {
             },
             EditorConflict: {
               type: 'string',
-              enum: ['owner', 'representation', 'revision', 'composition', 'sequence'],
+              enum: [
+                'persistence',
+                'owner',
+                'representation',
+                'revision',
+                'composition',
+                'sequence',
+              ],
             },
           },
         },
@@ -4910,6 +5153,9 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  dataSource: {
+                    $ref: '#/$defs/AgentDataSource',
+                  },
                   permissions: {
                     $ref: '#/$defs/AgentWorkspacePermissions',
                   },
@@ -4955,6 +5201,7 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: [
+                  'dataSource',
                   'permissions',
                   'boundaryRevision',
                   'id',
@@ -4967,6 +5214,34 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentDataSource: {
+                description:
+                  'Stable business-data origin, independent of package or activation revisions.',
+                type: 'object',
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  namespace: {
+                    $ref: '#/$defs/InstanceId',
+                  },
+                },
+                additionalProperties: false,
+                required: ['stateDomain', 'deployment', 'namespace'],
+              },
+              InstanceId: {
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
               },
               AgentWorkspacePermissions: {
                 type: 'object',
@@ -5137,6 +5412,9 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  dataSource: {
+                    $ref: '#/$defs/AgentDataSource',
+                  },
                   permissions: {
                     $ref: '#/$defs/AgentWorkspacePermissions',
                   },
@@ -5182,6 +5460,7 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: [
+                  'dataSource',
                   'permissions',
                   'boundaryRevision',
                   'id',
@@ -5194,6 +5473,34 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentDataSource: {
+                description:
+                  'Stable business-data origin, independent of package or activation revisions.',
+                type: 'object',
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  namespace: {
+                    $ref: '#/$defs/InstanceId',
+                  },
+                },
+                additionalProperties: false,
+                required: ['stateDomain', 'deployment', 'namespace'],
+              },
+              InstanceId: {
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
               },
               AgentWorkspacePermissions: {
                 type: 'object',
@@ -6987,6 +7294,9 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  dataSource: {
+                    $ref: '#/$defs/AgentDataSource',
+                  },
                   permissions: {
                     $ref: '#/$defs/AgentWorkspacePermissions',
                   },
@@ -7032,6 +7342,7 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: [
+                  'dataSource',
                   'permissions',
                   'boundaryRevision',
                   'id',
@@ -7044,6 +7355,34 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentDataSource: {
+                description:
+                  'Stable business-data origin, independent of package or activation revisions.',
+                type: 'object',
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  namespace: {
+                    $ref: '#/$defs/InstanceId',
+                  },
+                },
+                additionalProperties: false,
+                required: ['stateDomain', 'deployment', 'namespace'],
+              },
+              InstanceId: {
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
               },
               AgentWorkspacePermissions: {
                 type: 'object',
@@ -7150,6 +7489,9 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  dataSource: {
+                    $ref: '#/$defs/AgentDataSource',
+                  },
                   permissions: {
                     $ref: '#/$defs/AgentWorkspacePermissions',
                   },
@@ -7195,6 +7537,7 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: [
+                  'dataSource',
                   'permissions',
                   'boundaryRevision',
                   'id',
@@ -7207,6 +7550,34 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentDataSource: {
+                description:
+                  'Stable business-data origin, independent of package or activation revisions.',
+                type: 'object',
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  namespace: {
+                    $ref: '#/$defs/InstanceId',
+                  },
+                },
+                additionalProperties: false,
+                required: ['stateDomain', 'deployment', 'namespace'],
+              },
+              InstanceId: {
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
               },
               AgentWorkspacePermissions: {
                 type: 'object',
@@ -7404,6 +7775,9 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  dataSource: {
+                    $ref: '#/$defs/AgentDataSource',
+                  },
                   permissions: {
                     $ref: '#/$defs/AgentWorkspacePermissions',
                   },
@@ -7449,6 +7823,7 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: [
+                  'dataSource',
                   'permissions',
                   'boundaryRevision',
                   'id',
@@ -7461,6 +7836,34 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentDataSource: {
+                description:
+                  'Stable business-data origin, independent of package or activation revisions.',
+                type: 'object',
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  namespace: {
+                    $ref: '#/$defs/InstanceId',
+                  },
+                },
+                additionalProperties: false,
+                required: ['stateDomain', 'deployment', 'namespace'],
+              },
+              InstanceId: {
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
               },
               AgentWorkspacePermissions: {
                 type: 'object',
@@ -7571,6 +7974,9 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  dataSource: {
+                    $ref: '#/$defs/AgentDataSource',
+                  },
                   permissions: {
                     $ref: '#/$defs/AgentWorkspacePermissions',
                   },
@@ -7616,6 +8022,7 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: [
+                  'dataSource',
                   'permissions',
                   'boundaryRevision',
                   'id',
@@ -7628,6 +8035,34 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentDataSource: {
+                description:
+                  'Stable business-data origin, independent of package or activation revisions.',
+                type: 'object',
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  namespace: {
+                    $ref: '#/$defs/InstanceId',
+                  },
+                },
+                additionalProperties: false,
+                required: ['stateDomain', 'deployment', 'namespace'],
+              },
+              InstanceId: {
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
               },
               AgentWorkspacePermissions: {
                 type: 'object',

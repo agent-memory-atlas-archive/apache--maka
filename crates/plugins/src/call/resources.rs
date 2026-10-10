@@ -46,6 +46,12 @@ impl Resources {
             ..Default::default()
         }
     }
+    /// Publish a native observation wake, without asserting cleanup completion.
+    pub fn notify(&self) {
+        if let Some(wake) = &self.wake {
+            wake();
+        }
+    }
     pub fn reserve(self: &Arc<Self>) -> Result<Ticket, ToolError> {
         let state = self.state.lock().unwrap();
         if state.closed || self.tasks.len() >= 16 {

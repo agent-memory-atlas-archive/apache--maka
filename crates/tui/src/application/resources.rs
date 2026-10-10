@@ -91,6 +91,7 @@ impl Resources {
             {
                 let resources = std::sync::Arc::new(maka_plugins::call::Resources::default());
                 let context = NativeContext {
+                    checkpoint: app.checkpoint_scope(&mount)?,
                     resources: resources.clone(),
                     budget: self.budget.clone(),
                 };

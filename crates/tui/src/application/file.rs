@@ -510,6 +510,7 @@ mod tests {
             request: Some("forged".into()),
         })
         .create(NativeContext {
+            checkpoint: None,
             resources: resources.clone(),
             budget: Default::default(),
         });

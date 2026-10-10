@@ -182,7 +182,6 @@ impl Editor {
             .anchor
             .is_some_and(|anchor| anchor > self.selection.cursor)
     }
-    #[cfg(test)]
     pub(crate) fn selected_text(&self) -> &str {
         &self.text[self.selection.range()]
     }
@@ -190,6 +189,33 @@ impl Editor {
         self.selection.anchor = Some(0);
         self.selection.cursor = self.text.len();
         self.reveal_cursor();
+    }
+    /// Initialization from validated native UTF-8/grapheme selection, without
+    /// restoring undo, pointer state or old presentation geometry.
+    pub(crate) fn restore(&mut self, text: &str, anchor: usize, focus: usize) -> bool {
+        if !self.accepts_text(text)
+            || ![anchor, focus].into_iter().all(|byte| {
+                byte == text.len() || text.grapheme_indices(true).any(|(index, _)| index == byte)
+            })
+        {
+            return false;
+        }
+        self.text = text.to_owned();
+        self.revision = self.revision.wrapping_add(1);
+        self.selection = Selection {
+            cursor: focus,
+            anchor: (anchor != focus).then_some(anchor),
+            upstream: false,
+        };
+        self.clear_history();
+        self.dragging = false;
+        self.preferred_column = None;
+        self.top = 0;
+        self.left = 0;
+        self.error = None;
+        self.reflow();
+        self.invalidate_geometry();
+        true
     }
     pub fn clear_history(&mut self) {
         self.undo.clear();

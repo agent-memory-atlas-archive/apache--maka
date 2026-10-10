@@ -73,6 +73,18 @@ impl maka_application_bridge::transport::native::Connector for Physical {
         })
     }
 }
+fn close_presenter(presenter: &mut maka_tui::application::Presenter) {
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !presenter.can_shutdown() {
+        presenter.pump().unwrap();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    presenter.shutdown().unwrap();
+}
 fn draw(presenter: &mut maka_tui::application::Presenter) -> Buffer {
     draw_at(presenter, Rect::new(0, 0, 80, 24))
 }
@@ -976,6 +988,10 @@ process.stdout.write(output.outputFiles[0].text);
     await_screen(&mut presenter, "What would you like to work on?");
     if matches!(case, ProductCase::Drafts) {
         drafts::exercise(&mut presenter, &fixture, &runtime);
+        close_presenter(&mut presenter);
+        drop(presenter);
+        presenter = start();
+        drafts::verify_restored(&mut presenter);
         server.abort();
     }
     if attachment {
@@ -1157,6 +1173,36 @@ process.stdout.write(output.outputFiles[0].text);
         std::fs::remove_file(&later).unwrap();
         // Removing the path proves send consumes the admitted immutable artifact.
         std::fs::remove_file(&path).unwrap();
+        close_presenter(&mut presenter);
+        drop(presenter);
+        presenter = start();
+        wait_for_target(&mut presenter, "[ Attachments (3) ]", 0);
+        await_screen(&mut presenter, "What would you like to work on?");
+        capture(&mut presenter, "native-restarted-attachments.txt");
+        let before_send =
+            {
+                let connection =
+                    rusqlite::Connection::open(fixture._dir.path().join("ui/runtime-rust.sqlite"))
+                        .unwrap();
+                let deadline = std::time::Instant::now() + Duration::from_secs(10);
+                loop {
+                    draw(&mut presenter);
+                    let (metadata, content): (String, Vec<u8>) = connection.query_row(
+                    "SELECT metadata_json, content FROM application_ui_checkpoints WHERE key=?",
+                    [&session], |row| Ok((row.get(0)?, row.get(1)?))
+                ).unwrap();
+                    if serde_json::from_str::<Value>(&metadata).unwrap()["metadata"]["attachments"]
+                        .as_array()
+                        .unwrap()
+                        .len()
+                        == 3
+                    {
+                        break (metadata, content);
+                    }
+                    assert!(std::time::Instant::now() < deadline);
+                    std::thread::yield_now();
+                }
+            };
         click(&mut presenter, "[ Choose model ]");
         await_screen(&mut presenter, "fixture-model-00");
         click(&mut presenter, "fixture-model-00");
@@ -1198,6 +1244,27 @@ process.stdout.write(output.outputFiles[0].text);
             artifacts.iter().map(|item| item.id.as_str()).collect()
         );
         assert!(sent.recovery.get("message").is_none());
+        close_presenter(&mut presenter);
+        drop(presenter);
+        // Model process loss after durable admission but before native clearing:
+        // retain the exact pre-send native owner/revision and attachment metadata.
+        let connection =
+            rusqlite::Connection::open(fixture._dir.path().join("ui/runtime-rust.sqlite")).unwrap();
+        assert_eq!(
+            connection
+                .execute(
+                    "UPDATE application_ui_checkpoints SET metadata_json=?, content=? WHERE key=?",
+                    rusqlite::params![before_send.0, before_send.1, session]
+                )
+                .unwrap(),
+            1
+        );
+        drop(connection);
+        presenter = start();
+        await_screen(&mut presenter, "Elegant response");
+        wait_for_target(&mut presenter, "[ Attachments ]", 0);
+        assert!(!screen(&draw(&mut presenter)).contains("[ Attachments (3) ]"));
+        capture(&mut presenter, "native-reconciled-send.txt");
         // A new unsent draft remains removable after canonical archival, even
         // though the retained native composer is deliberately hidden.
         std::fs::write(&path, "unsent local draft").unwrap();

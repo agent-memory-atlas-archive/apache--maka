@@ -364,10 +364,20 @@ pub struct Watch {
     #[schemars(range(max = 9_007_199_254_740_991u64))]
     pub after: u64,
 }
+/// Stable business-data origin, independent of package or activation revisions.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentDataSource")]
+pub struct DataSource {
+    pub state_domain: String,
+    pub deployment: uuid::Uuid,
+    pub namespace: maka_plugin_core::composition::InstanceId,
+}
 #[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentSession")]
 pub struct Session {
+    pub data_source: Box<DataSource>,
     pub permissions: WorkspacePermissions,
     pub boundary_revision: u64,
     pub id: String,

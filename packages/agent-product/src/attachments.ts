@@ -19,20 +19,28 @@
 
 import type {
   AgentAttachment,
+  AgentDataSource,
   FileCapture,
   FileObservation,
   FilePasteCommand,
   FilePasteObservation,
 } from '../../plugin-sdk/src/index.js';
+import { sameValue } from './value.js';
 import type { Theme } from './contracts.js';
 import { copy } from './locale.js';
 import { fill, type Node, type Presentation } from './view.js';
+export type DraftFilePaste = FilePasteObservation & { dataSource: AgentDataSource };
 
 export interface AttachmentDrafts {
-  files: AgentAttachment[];
-  selection: { attempt: number; sessionId: string; file: FileObservation | null } | null;
+  files: (AgentAttachment & { dataSource: AgentDataSource })[];
+  selection: {
+    attempt: number;
+    sessionId: string;
+    dataSource: AgentDataSource;
+    file: FileObservation | null;
+  } | null;
   paste: {
-    observed: FilePasteObservation;
+    observed: DraftFilePaste;
     attempted: FileCapture | null;
     command: FilePasteCommand | null;
   } | null;
@@ -43,8 +51,13 @@ export const selectedFile = (file: FileObservation): FileCapture => ({
 });
 export const sameFile = (a: FileCapture | null, b: FileCapture) =>
   a?.owner === b.owner && a.revision === b.revision;
-export function pastedFiles(drafts: AttachmentDrafts, observed: FilePasteObservation) {
+export function pastedFiles(drafts: AttachmentDrafts, observed: DraftFilePaste) {
   const prior = drafts.paste;
+  if (
+    prior?.observed.selection.owner === observed.selection.owner &&
+    !sameValue(prior.observed.dataSource, observed.dataSource)
+  )
+    return;
   if (
     prior &&
     prior.observed.selection.owner === observed.selection.owner &&
@@ -104,11 +117,20 @@ export function pasteView<N extends Node>(
     { row: true, terminal: { wrap: true }, style: { width: fill, wrap: true } },
   );
 }
-export const attachmentFiles = (drafts: AttachmentDrafts, sessionId: string | undefined) =>
-  drafts.files.filter((file) => file.sessionId === sessionId);
+export const attachmentFiles = (
+  drafts: AttachmentDrafts,
+  sessionId: string | undefined,
+  dataSource: AgentDataSource | undefined,
+) =>
+  drafts.files.filter(
+    (file) => file.sessionId === sessionId && sameValue(file.dataSource, dataSource),
+  );
 // Bound retained descriptors across navigation; never silently evict another draft.
-export const attachmentCapacity = (drafts: AttachmentDrafts, sessionId: string) =>
-  drafts.files.length < 64 && attachmentFiles(drafts, sessionId).length < 8;
+export const attachmentCapacity = (
+  drafts: AttachmentDrafts,
+  sessionId: string,
+  dataSource: AgentDataSource,
+) => drafts.files.length < 64 && attachmentFiles(drafts, sessionId, dataSource).length < 8;
 export const attachmentChild = (drafts: AttachmentDrafts) =>
   'attachment-file-' + drafts.selection?.attempt;
 export function attachmentView<N extends Node>(
@@ -126,8 +148,8 @@ export function attachmentView<N extends Node>(
     text = copy(locale),
     selection = drafts.selection!;
   const observed = selection.file;
-  const files = attachmentFiles(drafts, selection.sessionId);
-  const capacity = attachmentCapacity(drafts, selection.sessionId);
+  const files = attachmentFiles(drafts, selection.sessionId, selection.dataSource);
+  const capacity = attachmentCapacity(drafts, selection.sessionId, selection.dataSource);
   return ui.box(
     'attachment-panel',
     [

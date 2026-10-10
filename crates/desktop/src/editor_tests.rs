@@ -17,6 +17,7 @@
  * under the License.
  */
 
+mod checkpoint;
 mod cohost;
 mod continuations;
 mod handoff;

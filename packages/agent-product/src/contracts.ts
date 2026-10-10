@@ -21,6 +21,7 @@ import {
   contracts as native,
   type Contract,
   type AgentSession,
+  type AgentDataSource,
   type InteractionRecord,
   type SettingsModelChoice,
   type ThinkingLevel,
@@ -40,6 +41,8 @@ import {
   type SourceField,
   type SourceFormat,
 } from '../../plugin-sdk/src/index.js';
+import type { AttachmentDrafts } from './attachments.js';
+import type { DraftStatus } from './drafts.js';
 export type Schema = Record<string, unknown>;
 export const object = (properties: Schema, required = Object.keys(properties)): Schema => ({
   type: 'object',
@@ -214,6 +217,9 @@ export interface QueueEditorProps {
   command: EditorCommand | null;
 }
 export interface ComposerProps {
+  dataSource: AgentDataSource | null;
+  attachments: AttachmentDrafts['files'];
+  drafts: DraftStatus[];
   context: string | null;
   filePaste: FilePastePolicy | null;
   fileCommand: FilePasteCommand | null;
@@ -235,6 +241,8 @@ const defs = {
   ...editor.props.$defs,
   ...editor.events.changed.$defs,
   ...editor.events.files.$defs,
+  ...editor.events.checkpoint.$defs,
+  ...native.agent.interface.methods.uploadAttachment.output.$defs,
   ...native.markdown.interface.props.$defs,
   ...native.secretInput.interface.props.$defs,
   ...session.$defs,
@@ -635,6 +643,24 @@ export const composerContract = component(
   'maka.agent.Composer',
   object({
     context: { anyOf: [{ type: 'string', minLength: 1, maxLength: 512 }, { type: 'null' }] },
+    dataSource: { anyOf: [{ $ref: '#/$defs/AgentDataSource' }, { type: 'null' }] },
+    attachments: {
+      type: 'array',
+      maxItems: 64,
+      items: object({
+        ...native.agent.interface.methods.uploadAttachment.output.$defs.AgentAttachment.properties,
+        dataSource: { $ref: '#/$defs/AgentDataSource' },
+      }),
+    },
+    drafts: {
+      type: 'array',
+      maxItems: 32,
+      items: object({
+        owner: string,
+        status: { enum: ['checking', 'unknown', 'failed', 'applying'] },
+        restore: { anyOf: [{ $ref: '#/$defs/EditorRestoration' }, { type: 'null' }] },
+      }),
+    },
     filePaste: editor.props.properties.filePaste,
     fileCommand: editor.props.properties.fileCommand,
     autoFocus: { type: 'boolean' },
@@ -649,7 +675,21 @@ export const composerContract = component(
   {
     send: editor.events.changed,
     changed: editor.events.changed,
-    files: editor.events.files,
+    files: withDefs(
+      object({
+        ...editor.events.files.properties,
+        dataSource: { $ref: '#/$defs/AgentDataSource' },
+      }),
+    ),
+    checkpoint: withDefs(
+      object({
+        context: string,
+        dataSource: { $ref: '#/$defs/AgentDataSource' },
+        observation: editor.events.checkpoint,
+        owners: { type: 'array', maxItems: 32, items: string },
+      }),
+    ),
+    draftCheck: object({ owner: string }),
     stop: object({}),
   },
   editor.captures,

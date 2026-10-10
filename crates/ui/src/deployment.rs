@@ -188,7 +188,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 .is_ok_and(|instance| instance.entry.is_some())
                 && let Some(source) = self.origins.get(&activation.epoch())
             {
-                revisions.insert(source.revision);
+                revisions.insert(source.reference.revision);
             }
         }
         revisions

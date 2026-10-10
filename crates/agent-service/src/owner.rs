@@ -86,6 +86,7 @@ pub(crate) struct Owner {
     pub store: Arc<EventLog>,
     pub settings: Configuration,
     pub prefix: String,
+    pub data_source: DataSource,
     configuration: Arc<ConfigurationStore>,
     revision: SourceRevision,
     pub workspace_roots: Vec<workspace::Root>,
@@ -116,6 +117,11 @@ impl Owner {
             .store()
             .owned_root()
             .map_err(|_| "agent_root_unavailable")?;
+        let data_source = DataSource {
+            state_domain: persistence.source().state_domain.clone(),
+            deployment: persistence.source().deployment,
+            namespace: context.activation().instance().clone(),
+        };
         let prefix = namespace(
             &persistence.source().state_domain,
             persistence.source().deployment,
@@ -147,6 +153,7 @@ impl Owner {
         Ok(Arc::new(Self {
             store: persistence.store().clone(),
             prefix,
+            data_source,
             workspace_roots,
             managed_worktrees,
             revision,
@@ -271,7 +278,7 @@ impl Owner {
             .await
             .map_err(|_| "agent_creation_failed")?;
         Ok(Created::Created {
-            session: crate::service::summary(record),
+            session: crate::service::summary(self, record),
         })
     }
     pub async fn mark_read(&self, input: MarkRead) -> Result<MarkReadResult, String> {
@@ -304,7 +311,7 @@ impl Owner {
             .await
             .map_err(|_| "agent_read_marker_failed")?;
         Ok(MarkReadResult::Observed {
-            session: crate::service::summary(record),
+            session: crate::service::summary(self, record),
         })
     }
     pub async fn metadata(&self, input: Metadata) -> Result<MetadataResult, String> {
@@ -375,7 +382,7 @@ impl Owner {
         .map_err(|_| "agent_metadata_failed")?;
         match changed {
             SessionMutation::Committed(record) => Ok(MetadataResult::Committed {
-                session: crate::service::summary(record),
+                session: crate::service::summary(self, record),
             }),
             SessionMutation::RevisionConflict { expected, actual } => {
                 Ok(MetadataResult::RevisionConflict { expected, actual })

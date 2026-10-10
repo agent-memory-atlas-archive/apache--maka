@@ -185,12 +185,14 @@ impl Surface {
                 resources.owners.remove(&id);
             }
             let budget = resources.budget.clone();
+            let checkpoint = application.checkpoint_scope(&mount)?;
             let owner = resources.owners.entry(id).or_insert_with(|| {
                 let input = widgets::LiveInput::new(
                     Rc::new(RefCell::new(Some(input.clone()))),
                     budget,
                     lease.resources(),
-                );
+                )
+                .with_checkpoint(checkpoint);
                 resources::NativeInstance {
                     kind,
                     identity: Rc::new(()),

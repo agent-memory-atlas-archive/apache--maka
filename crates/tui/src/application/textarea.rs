@@ -25,6 +25,54 @@ struct Owner {
     edit: EditorOwner,
     files: paste::Paste,
     visible: bool,
+    checkpoint: Option<maka_ui::checkpoint::EditorCheckpoint>,
+}
+impl Owner {
+    fn checkpoint(&mut self, props: &TextareaProps) {
+        let Some(policy) = &props.persistence else {
+            if let Some(checkpoint) = &mut self.checkpoint {
+                checkpoint
+                    .reject_restore("editor persistence cannot be removed from its original mount");
+            }
+            return;
+        };
+        self.edit.refresh();
+        let Some(checkpoint) = &mut self.checkpoint else {
+            return;
+        };
+        checkpoint.poll(policy);
+        let snapshot = self.edit.snapshot();
+        if let Some(restore) = checkpoint.restoration(&snapshot.text.owner, policy) {
+            let restored = maka_ui::checkpoint::selection_bytes(restore.text(), restore.snapshot())
+                .is_some_and(|(anchor, focus)| {
+                    self.edit.editor.restore(restore.text(), anchor, focus)
+                });
+            if restored {
+                checkpoint.restored();
+                self.edit.refresh();
+            } else {
+                checkpoint
+                    .reject_restore("saved text or selection cannot be represented by this editor");
+            }
+        }
+        let snapshot = self.edit.snapshot();
+        checkpoint.save(&snapshot, self.edit.editor.text(), &policy.metadata);
+    }
+    fn checkpoint_observation(&mut self) -> Option<NativeInput> {
+        let owner = self.edit.snapshot().text.owner;
+        self.checkpoint
+            .as_mut()?
+            .observe(&owner)
+            .map(|value| NativeInput {
+                key: "checkpoint".into(),
+                value: serde_json::to_value(value).expect("native checkpoint observation"),
+            })
+    }
+    fn persistence_ready(&self) -> bool {
+        self.checkpoint
+            .as_ref()
+            .is_none_or(|checkpoint| checkpoint.accepts_input())
+    }
 }
 #[cfg(test)]
 pub(super) fn editor_owner(state: &dyn std::any::Any) -> &EditorOwner {
@@ -75,7 +123,16 @@ impl Widget for Recipe {
             .cancel_pointer();
     }
     fn create(&self, context: super::NativeContext) -> Box<dyn Any> {
+        let checkpoint = self.props.persistence.as_ref().map(|policy| {
+            maka_ui::checkpoint::EditorCheckpoint::new(
+                context.checkpoint.clone(),
+                policy,
+                &context.resources,
+                context.budget.clone(),
+            )
+        });
         Box::new(Owner {
+            checkpoint,
             edit: EditorOwner::new(
                 Editor::bounded(maka_ui::textarea::MAX_BUFFER_BYTES, "composer-too-large"),
                 &self.props.initial_text,
@@ -102,7 +159,14 @@ impl Widget for Recipe {
             .as_ref()
             .is_some_and(|command| owner.edit.last_request.as_ref() != Some(command));
         if changed {
-            owner.edit.apply(self.props.command.as_ref().unwrap());
+            if owner.persistence_ready() {
+                owner.edit.apply(self.props.command.as_ref().unwrap());
+            } else {
+                owner.edit.reject(
+                    self.props.command.as_ref().unwrap(),
+                    EditorConflict::Persistence,
+                );
+            }
         }
         owner.files.poll(
             &mut owner.edit.editor,
@@ -111,12 +175,16 @@ impl Widget for Recipe {
                 .as_ref()
                 .map(|policy| policy.context.as_str()),
         );
-        let edited = owner.edit.refresh();
+        let previous = owner.edit.snapshot();
+        owner.checkpoint(&self.props);
+        let edited = owner.edit.refresh() || previous != owner.edit.snapshot();
         if changed || edited || !owner.edit.announced {
             owner.edit.announced = true;
             Ok(Some(owner.edit.observation()))
         } else {
-            Ok(owner.files.observe())
+            Ok(owner
+                .checkpoint_observation()
+                .or_else(|| owner.files.observe()))
         }
     }
     fn observe(&self, state: &mut dyn Any) -> Option<NativeInput> {
@@ -128,10 +196,15 @@ impl Widget for Recipe {
                 .as_ref()
                 .map(|policy| policy.context.as_str()),
         );
-        if owner.edit.refresh() {
+        let previous = owner.edit.snapshot();
+        let edited = owner.edit.refresh();
+        owner.checkpoint(&self.props);
+        if edited || previous != owner.edit.snapshot() {
             Some(owner.edit.observation())
         } else {
-            owner.files.observe()
+            owner
+                .checkpoint_observation()
+                .or_else(|| owner.files.observe())
         }
     }
     fn present_focus(&self, state: &mut dyn Any) -> bool {
@@ -154,6 +227,7 @@ impl Widget for Recipe {
         let owner = state
             .downcast_mut::<Owner>()
             .expect("terminal editor owner");
+        let read_only = self.props.read_only || !owner.persistence_ready();
         if self.props.disabled {
             return Ok(if matches!(event, Event::Key(_)) {
                 WidgetInput::Unhandled
@@ -161,7 +235,7 @@ impl Widget for Recipe {
                 WidgetInput::Consumed(None)
             });
         }
-        if !self.props.read_only
+        if !read_only
             && owner.visible
             && let Event::Key(key) = event
             && key.code == KeyCode::Char('v')
@@ -184,7 +258,7 @@ impl Widget for Recipe {
         {
             return Ok(WidgetInput::Navigate);
         }
-        if !self.props.read_only
+        if !read_only
             && let Event::Key(key) = event
             && key.code == KeyCode::Enter
             && match self.props.submit {
@@ -215,13 +289,13 @@ impl Widget for Recipe {
                         | KeyCode::End
                 ) || key.code == KeyCode::Char('a')
                     && key.modifiers.contains(KeyModifiers::CONTROL);
-                if self.props.read_only && !navigation {
+                if read_only && !navigation {
                     false
                 } else {
                     owner.edit.editor.key(*key)
                 }
             }
-            Event::Paste(text) if !self.props.read_only => {
+            Event::Paste(text) if !read_only => {
                 if owner.visible
                     && let Some(policy) = &self.props.file_paste
                     && let Some(input) = owner.files.stage(text, policy)
@@ -238,6 +312,7 @@ impl Widget for Recipe {
             _ => false,
         };
         let observed = handled && owner.edit.refresh();
+        owner.checkpoint(&self.props);
         Ok(if handled {
             WidgetInput::Consumed(observed.then(|| owner.edit.observation()))
         } else {
@@ -370,7 +445,27 @@ impl Widget for Recipe {
         owner.edit.presented = Some(geometry);
         None
     }
+    fn copy(&self, state: &dyn Any) -> maka_ui::Result<Option<String>> {
+        let owner = state.downcast_ref::<Owner>().unwrap();
+        if !owner.visible || self.props.disabled {
+            return Ok(None);
+        }
+        let text = owner.edit.editor.selected_text();
+        Ok((!text.is_empty()).then(|| text.to_owned()))
+    }
     fn deactivate(&self, state: &mut dyn Any) {
+        let owner = state.downcast_mut::<Owner>().unwrap();
+        owner.edit.refresh();
+        if let Some(checkpoint) = &mut owner.checkpoint {
+            if let Some(policy) = &self.props.persistence {
+                checkpoint.save(
+                    &owner.edit.snapshot(),
+                    owner.edit.editor.text(),
+                    &policy.metadata,
+                );
+            }
+            checkpoint.close();
+        }
         self.presentation(state, false);
     }
     fn presentation(&self, state: &mut dyn Any, visible: bool) {
@@ -415,6 +510,10 @@ impl NativeComponent<dyn Widget> for Component {
             }),
             BTreeMap::from([
                 ("observe".into(), observation_schema()),
+                (
+                    "checkpoint".into(),
+                    maka_ui::checkpoint::observation_schema(),
+                ),
                 ("submit".into(), observation_schema()),
                 ("file_choose".into(), maka_ui::file::choose_schema()),
                 ("file_observe".into(), file_paste_schema()),

@@ -189,6 +189,7 @@ pub trait Widget: std::any::Any {
 /// settle; every owner shares its presenter's aggregate native budget.
 #[derive(Clone)]
 pub struct NativeContext {
+    pub checkpoint: Option<maka_ui::checkpoint::Scope>,
     pub resources: std::sync::Arc<maka_plugins::call::Resources>,
     pub budget: maka_ui::budget::NativeBudget,
 }

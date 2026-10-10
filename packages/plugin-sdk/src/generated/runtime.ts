@@ -75,6 +75,7 @@ export type RuntimeProtocol =
   | RowActivated
   | InputProps
   | EditorObservation
+  | EditorCheckpointObservation
   | EditorCapture
   | ReadText
   | TextChunk
@@ -943,7 +944,32 @@ export type EditorOutcome =
       reason: EditorConflict;
       status: 'conflict';
     };
-export type EditorConflict = 'owner' | 'representation' | 'revision' | 'composition' | 'sequence';
+export type EditorConflict =
+  | 'persistence'
+  | 'owner'
+  | 'representation'
+  | 'revision'
+  | 'composition'
+  | 'sequence';
+export type EditorCheckpointState =
+  | {
+      kind: 'loading';
+    }
+  | {
+      version: number;
+      snapshot: EditorSnapshot;
+      metadata: unknown;
+      kind: 'restore';
+    }
+  | {
+      saved: boolean;
+      initialized: boolean;
+      kind: 'ready';
+    }
+  | {
+      diagnostic: string;
+      kind: 'failed';
+    };
 export type EditorCapture =
   | {
       kind: 'current';
@@ -3050,6 +3076,7 @@ export interface TextareaProps {
    */
   filePaste?: FilePastePolicy | null;
   fileCommand?: FilePasteCommand | null;
+  persistence?: EditorPersistence | null;
 }
 export interface TextareaAppearance {
   text: TextAppearance;
@@ -3152,6 +3179,19 @@ export interface FilePasteCommand {
 export interface FileCapture {
   owner: string;
   revision: number;
+}
+export interface EditorPersistence {
+  key: string;
+  format: string;
+  dataSource: unknown;
+  metadata: unknown;
+  restore?: EditorRestoration | null;
+  retry?: number;
+}
+export interface EditorRestoration {
+  owner: string;
+  version: number;
+  clearText: boolean;
 }
 export interface FilePasteObservation {
   context: string;
@@ -3560,6 +3600,10 @@ export interface EditorReceipt {
   sequence: number;
   revision: number;
   outcome: EditorOutcome;
+}
+export interface EditorCheckpointObservation {
+  owner: string;
+  state: EditorCheckpointState;
 }
 export interface ReadText {
   start: number;
@@ -3976,6 +4020,7 @@ export interface AgentDirectorySelection {
   directoryIdentity: string;
 }
 export interface AgentSession {
+  dataSource: AgentDataSource;
   permissions: AgentWorkspacePermissions;
   boundaryRevision: number;
   id: string;
@@ -3987,6 +4032,14 @@ export interface AgentSession {
   archived: boolean;
   hasUnread: boolean;
   activity: AgentSessionActivity;
+}
+/**
+ * Stable business-data origin, independent of package or activation revisions.
+ */
+export interface AgentDataSource {
+  stateDomain: string;
+  deployment: string;
+  namespace: InstanceId;
 }
 export interface AgentWorkspace {
   path: string;

@@ -52,6 +52,10 @@ pub struct TextareaOwner {
     _menu_input: Option<Subscription>,
     submit: Option<SubmitKey>,
     _keyboard: Option<Subscription>,
+    checkpoint: Option<maka_ui::checkpoint::EditorCheckpoint>,
+    persistence: Option<maka_ui::checkpoint::EditorPersistence>,
+    checkpoint_observation: Option<maka_ui::checkpoint::EditorCheckpointObservation>,
+    read_only: bool,
 }
 impl TextareaOwner {
     /// Original editor correlation, including across application processes.
@@ -76,7 +80,7 @@ impl TextareaOwner {
         let state = cx.new(|cx| {
             let mut state = TextareaState::new(window, cx);
             projection.apply(&mut state);
-            state.set_readonly(props.read_only, cx);
+            state.set_readonly(props.read_only || props.persistence.is_some(), cx);
             if props.disabled && state.presentation().focus_handle().is_focused(window) {
                 window.blur(cx);
             }
@@ -98,6 +102,14 @@ impl TextareaOwner {
             // Keep the resource lease until Kit's actual release processing.
             cx.on_release(move |_, _| drop(keep)).detach();
             state
+        });
+        let checkpoint = props.persistence.as_ref().map(|policy| {
+            maka_ui::checkpoint::EditorCheckpoint::new(
+                input.3.clone(),
+                policy,
+                &input.2,
+                input.1.clone(),
+            )
         });
         let owner = cx.new(|cx: &mut Context<Self>| {
             let snapshot = Self::read_snapshot(&state, window, cx);
@@ -132,6 +144,10 @@ impl TextareaOwner {
                 _menu_input: None,
                 submit: props.submit,
                 _keyboard: None,
+                checkpoint,
+                persistence: props.persistence.clone(),
+                checkpoint_observation: None,
+                read_only: props.read_only,
             }
         });
         let subscription = Self::install_menu_input(&owner, cx);
@@ -274,60 +290,127 @@ impl TextareaOwner {
             .map(|slice| slice.to_string())
             .map_err(|_| EditorReadError::Range)
     }
+    fn sync_checkpoint(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(mut checkpoint), Some(policy)) =
+            (self.checkpoint.take(), self.persistence.as_ref())
+        else {
+            return;
+        };
+        checkpoint.poll(policy);
+        if let Some(restore) = checkpoint.restoration(&self.id, policy) {
+            let positions =
+                maka_ui::checkpoint::selection_bytes(restore.text(), restore.snapshot());
+            let restored = positions.is_some_and(|(anchor, focus)| {
+                self.state.update(cx, |state, cx| {
+                    let disabled = state.presentation().is_disabled();
+                    state.set_disabled(false, cx);
+                    state.set_value(restore.text().to_owned(), window, cx);
+                    let exact = state.text().len() == restore.text().len()
+                        && state.text().chars().eq(restore.text().chars());
+                    let selected =
+                        exact && state.set_selection_anchor_focus(anchor, focus, false, cx);
+                    state.set_disabled(disabled, cx);
+                    selected
+                })
+            });
+            if restored {
+                checkpoint.restored();
+                self.snapshot = Self::read_snapshot(&self.state, window, cx);
+                self.revision = self.revision.checked_add(1).expect("editor revision");
+                self.needs_publication = true;
+            } else {
+                checkpoint
+                    .reject_restore("saved text or selection cannot be represented by this editor");
+            }
+        }
+        let snapshot = self.observation_snapshot();
+        if checkpoint.needs_save(&snapshot, &policy.metadata) {
+            checkpoint.capture(&snapshot, &policy.metadata, || {
+                self.snapshot.text.to_string()
+            });
+        }
+        self.state.update(cx, |state, cx| {
+            state.set_readonly(self.read_only || !checkpoint.accepts_input(), cx)
+        });
+        if let Some(observation) = checkpoint.observe(&self.id) {
+            self.checkpoint_observation = Some(observation);
+        }
+        self.checkpoint = Some(checkpoint);
+    }
     fn refresh(&mut self, force: bool, window: &mut Window, cx: &mut Context<Self>) {
         let snapshot = Self::read_snapshot(&self.state, window, cx);
         if force || snapshot != self.snapshot {
             self.snapshot = snapshot;
             self.needs_publication = true;
             self.revision = self.revision.checked_add(1).expect("editor revision");
-            self.schedule(window, cx);
         }
+        self.sync_checkpoint(window, cx);
+        self.schedule(window, cx);
     }
     fn schedule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.pending || !self.needs_publication || self.input.0.borrow().is_none() {
+        if self.pending
+            || (!self.needs_publication && self.checkpoint_observation.is_none())
+            || self.input.0.borrow().is_none()
+        {
             return;
         }
         self.pending = true;
         let owner = cx.weak_entity();
-        // Leave the owner/entity borrow before component dispatch can sync it.
+        // Leave the native owner borrow before either observation can commit a
+        // new plugin frame. Keep both channels until their own publication succeeds.
         window.defer(cx, move |window, cx| {
-            let Ok(Some((input, observation))) = owner.update(cx, |owner, cx| {
+            let Ok(Some((input, observation, checkpoint))) = owner.update(cx, |owner, cx| {
                 owner.refresh(false, window, cx);
                 owner.pending = false;
-                if !owner.needs_publication {
-                    return None;
-                }
                 let input = owner.input.0.borrow().clone()?;
-                let value = EditorObservation {
+                let observation = owner.needs_publication.then(|| EditorObservation {
                     revision: owner.revision,
                     snapshot: owner.observation_snapshot(),
                     receipt: owner.receipt.clone(),
-                };
-                Some((input, value))
+                });
+                Some((input, observation, owner.checkpoint_observation.clone()))
             }) else {
                 return;
             };
-            if let Err(error) = (input.0)(
-                "observe",
-                serde_json::to_value(&observation).expect("editor observation"),
-                window,
-                cx,
-            ) {
-                // This observation follows native input. It cannot cancel an
-                // already completed event or affect a later event's defaults.
-                eprintln!("editor observation rejected: {error}");
-            } else {
-                let _ = owner.update(cx, |owner, _| {
-                    if owner.revision == observation.revision
-                        && owner.receipt == observation.receipt
-                    {
-                        owner.needs_publication = false;
-                    }
-                });
+            if let Some(observation) = observation {
+                if let Err(error) = (input.0)(
+                    "observe",
+                    serde_json::to_value(&observation).expect("editor observation"),
+                    window,
+                    cx,
+                ) {
+                    eprintln!("editor observation rejected: {error}");
+                } else {
+                    let _ = owner.update(cx, |owner, _| {
+                        if owner.revision == observation.revision
+                            && owner.receipt == observation.receipt
+                        {
+                            owner.needs_publication = false;
+                        }
+                    });
+                }
+            }
+            if let Some(checkpoint) = checkpoint {
+                if let Err(error) = (input.0)(
+                    "checkpoint",
+                    serde_json::to_value(&checkpoint).expect("checkpoint observation"),
+                    window,
+                    cx,
+                ) {
+                    eprintln!("editor checkpoint observation rejected: {error}");
+                } else {
+                    let _ = owner.update(cx, |owner, _| {
+                        if owner.checkpoint_observation.as_ref() == Some(&checkpoint) {
+                            owner.checkpoint_observation = None;
+                        }
+                    });
+                }
             }
         });
     }
     fn apply(&mut self, props: &TextareaProps, window: &mut Window, cx: &mut Context<Self>) {
+        self.persistence = props.persistence.clone();
+        self.read_only = props.read_only;
         self.focus
             .reconcile(props.auto_focus && self.visible && !props.disabled);
         // Notify observers may still be queued after keyboard/selection input.
@@ -355,7 +438,14 @@ impl TextareaOwner {
                 self.projection.apply(state);
                 cx.notify();
             }
-            state.set_readonly(props.read_only, cx);
+            state.set_readonly(
+                props.read_only
+                    || self
+                        .checkpoint
+                        .as_ref()
+                        .is_some_and(|checkpoint| !checkpoint.accepts_input()),
+                cx,
+            );
             let disabled = props.disabled || !self.visible;
             if disabled && state.presentation().focus_handle().is_focused(window) {
                 window.blur(cx);
@@ -386,6 +476,14 @@ impl TextareaOwner {
             if command.based_on != self.revision {
                 EditorOutcome::Conflict {
                     reason: EditorConflict::Revision,
+                }
+            } else if self
+                .checkpoint
+                .as_ref()
+                .is_some_and(|checkpoint| !checkpoint.accepts_input())
+            {
+                EditorOutcome::Conflict {
+                    reason: EditorConflict::Persistence,
                 }
             } else if self.snapshot.marked.is_some() {
                 EditorOutcome::Conflict {
@@ -816,7 +914,7 @@ impl Widget for TextareaRecipe {
         state
             .downcast_ref::<Entity<TextareaOwner>>()
             .expect("editor owner")
-            .update(cx, |owner, cx| owner.schedule(window, cx));
+            .update(cx, |owner, cx| owner.refresh(false, window, cx));
     }
     fn presentation(&self, state: &mut dyn Any, visible: bool, window: &mut Window, cx: &mut App) {
         state
@@ -854,6 +952,10 @@ impl Widget for TextareaRecipe {
             .downcast_ref::<Entity<TextareaOwner>>()
             .expect("editor owner");
         owner.update(cx, |owner, cx| {
+            owner.refresh(false, window, cx);
+            if let Some(checkpoint) = &mut owner.checkpoint {
+                checkpoint.close();
+            }
             // The original LiveInput has already been revoked. Closing the
             // menu clears its own focus without restoring the retired editor.
             owner.close_menu(true, window, cx);
@@ -915,6 +1017,10 @@ impl NativeComponent<dyn Widget> for TextareaComponent {
             }),
             BTreeMap::from([
                 ("observe".into(), observation_schema()),
+                (
+                    "checkpoint".into(),
+                    maka_ui::checkpoint::observation_schema(),
+                ),
                 ("submit".into(), observation_schema()),
             ]),
             vec![],

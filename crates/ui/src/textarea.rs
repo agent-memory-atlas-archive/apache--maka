@@ -75,6 +75,8 @@ pub struct TextareaProps {
     pub file_paste: Option<FilePastePolicy>,
     #[serde(default)]
     pub file_command: Option<FilePasteCommand>,
+    #[serde(default)]
+    pub persistence: Option<crate::checkpoint::EditorPersistence>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -189,6 +191,12 @@ pub enum SubmitKey {
 pub fn reduce(
     call: crate::ComponentCall<'_>,
 ) -> crate::Result<crate::ComponentOutput<TextareaView>> {
+    let previous_persistence = match &call {
+        crate::ComponentCall::Mount { .. } => None,
+        crate::ComponentCall::Update { state, .. } | crate::ComponentCall::Event { state, .. } => {
+            Some(state["persistence"].clone())
+        }
+    };
     let submitted = matches!(&call, crate::ComponentCall::Event { key, .. } if *key == "submit");
     let mut file_request: Option<String> = match &call {
         crate::ComponentCall::Mount { .. } => None,
@@ -197,6 +205,7 @@ pub fn reduce(
         }
     };
     let mut files = None;
+    let mut checkpoint = None;
     let call = match call {
         crate::ComponentCall::Event {
             state,
@@ -224,9 +233,43 @@ pub fn reduce(
             }
             crate::ComponentCall::Update { state, props }
         }
+        crate::ComponentCall::Event {
+            state,
+            props,
+            key: "checkpoint",
+            input,
+            origin,
+        } => {
+            if !matches!(origin, crate::EventOrigin::Raw) {
+                return Err(crate::Error::Invalid(
+                    "checkpoint observation requires native origin".into(),
+                ));
+            }
+            checkpoint = Some(input.clone());
+            crate::ComponentCall::Update { state, props }
+        }
         other => other,
     };
     let mut output = crate::editor::reduce::<TextareaProps>(call)?;
+    if let Some(policy) = &output.frame.view.persistence {
+        policy.validate()?;
+    }
+    let persistence = output
+        .frame
+        .view
+        .persistence
+        .as_ref()
+        .map(|policy| serde_json::json!([policy.key, policy.format, policy.data_source]));
+    let identity = serde_json::json!(persistence);
+    if previous_persistence
+        .as_ref()
+        .is_some_and(|previous| *previous != identity)
+    {
+        return Err(crate::Error::Invalid(
+            "editor persistence identity requires a new mount".into(),
+        ));
+    }
+    output.frame.state["persistence"] = identity;
     let rows = output.frame.view.terminal_rows;
     if rows.min == 0
         || rows.min > rows.max
@@ -250,6 +293,12 @@ pub fn reduce(
             value,
         });
     }
+    if let Some(value) = checkpoint {
+        output.events.push(crate::Emission {
+            name: "checkpoint".into(),
+            value,
+        });
+    }
     Ok(output.map_view(|props| TextareaView {
         props,
         file_request,
@@ -268,6 +317,7 @@ pub fn textarea_contract() -> Contract {
                 ("changed".into(), observation_schema()),
                 ("submitted".into(), observation_schema()),
                 ("files".into(), file_paste_schema()),
+                ("checkpoint".into(), crate::checkpoint::observation_schema()),
             ]),
             captures: BTreeMap::from([
                 (

@@ -500,7 +500,10 @@ impl<V: ?Sized + 'static> Application<V> {
                 "action and subscription method mode mismatch".into(),
             ));
         }
-        let source = self.origins.get(&provider.epoch()).cloned();
+        let source = self
+            .origins
+            .get(&provider.epoch())
+            .map(|origin| origin.reference.clone());
         if mode == MethodMode::Mutation && source.is_none() {
             return Err(Error::Invalid(
                 "mutation requires a persisted UI source".into(),

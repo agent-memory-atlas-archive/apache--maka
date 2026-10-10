@@ -19,6 +19,7 @@
 
 //! Atomic durable application sources; no legacy composition translation.
 mod changes;
+pub mod checkpoints;
 pub mod intents;
 pub mod operations;
 use crate::{EventLog, StoreError};

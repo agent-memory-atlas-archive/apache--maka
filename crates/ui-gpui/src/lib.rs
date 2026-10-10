@@ -114,14 +114,19 @@ pub struct LiveInput(
     pub Rc<RefCell<Option<Input>>>,
     pub NativeBudget,
     pub std::sync::Arc<maka_plugins::call::Resources>,
+    pub Option<maka_ui::checkpoint::Scope>,
 );
 impl LiveInput {
+    pub fn with_checkpoint(mut self, scope: Option<maka_ui::checkpoint::Scope>) -> Self {
+        self.3 = scope;
+        self
+    }
     pub fn new(
         input: Rc<RefCell<Option<Input>>>,
         budget: NativeBudget,
         resources: std::sync::Arc<maka_plugins::call::Resources>,
     ) -> Self {
-        Self(input, budget, resources)
+        Self(input, budget, resources, None)
     }
 }
 type Dispatch =

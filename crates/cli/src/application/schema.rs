@@ -96,6 +96,7 @@ pub(super) fn catalog() -> Value {
         root::<maka_ui::rows::RowActivated>(&mut g),
         root::<input::InputProps>(&mut g),
         root::<editor::EditorObservation>(&mut g),
+        root::<maka_ui::checkpoint::EditorCheckpointObservation>(&mut g),
         root::<editor::EditorCapture>(&mut g),
         root::<text::ReadText>(&mut g),
         root::<text::TextChunk>(&mut g),

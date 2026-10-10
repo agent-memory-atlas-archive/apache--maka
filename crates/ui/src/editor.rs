@@ -78,6 +78,7 @@ pub struct EditorSnapshot {
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EditorConflict {
+    Persistence,
     Owner,
     Representation,
     Revision,

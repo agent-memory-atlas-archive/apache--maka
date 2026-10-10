@@ -121,7 +121,7 @@ impl Handler for Agent {
                         })
                     });
                     let result = encode(Observation {
-                        session: summary(observed.session),
+                        session: summary(&owner, observed.session),
                         through: observed.through_sequence,
                         run,
                         parts: observed
@@ -533,7 +533,11 @@ async fn catalog_page(owner: &Owner, input: &List) -> Result<SessionPage, String
     let reverse = matches!(position, SessionPosition::Before(_));
     let mut result = SessionPage {
         revision: page.revision,
-        sessions: page.sessions.into_iter().map(summary).collect(),
+        sessions: page
+            .sessions
+            .into_iter()
+            .map(|session| summary(owner, session))
+            .collect(),
         needs_you_count: page.pending_session_count,
         before: page.previous_cursor,
         after: page.next_cursor,
@@ -558,7 +562,7 @@ fn decode<T: DeserializeOwned>(input: Value) -> Result<T, String> {
 fn encode<T: Serialize>(value: T) -> Result<Value, String> {
     serde_json::to_value(value).map_err(|_| "agent_output_unavailable".into())
 }
-pub(crate) fn summary(session: SessionRecord<SessionConfiguration>) -> Session {
+pub(crate) fn summary(owner: &Owner, session: SessionRecord<SessionConfiguration>) -> Session {
     use maka_event_log::sessions::SessionExecutionState;
     use maka_runtime::event::TerminalStatus;
     let activity = if session.pending_interaction_since.is_some() {
@@ -578,6 +582,7 @@ pub(crate) fn summary(session: SessionRecord<SessionConfiguration>) -> Session {
         SessionActivity::Idle
     };
     Session {
+        data_source: Box::new(owner.data_source.clone()),
         permissions: session.configuration.permissions,
         boundary_revision: session.configuration.boundary_revision,
         activity,

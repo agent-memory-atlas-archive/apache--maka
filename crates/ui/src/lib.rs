@@ -23,6 +23,7 @@ pub mod abi;
 pub mod actions;
 pub mod appearance;
 pub mod budget;
+pub mod checkpoint;
 mod deployment;
 pub mod diff;
 pub mod dismiss;
@@ -119,6 +120,12 @@ struct Loaded {
     module: ForegroundModule,
     resource: Resource,
 }
+struct OriginalSource {
+    reference: maka_plugin_core::deployment::DeploymentRef,
+    checkpoints: std::sync::Arc<
+        tokio::sync::Mutex<std::sync::Weak<maka_event_log::applications::checkpoints::Checkpoints>>,
+    >,
+}
 
 pub struct Application<V: ?Sized = ()> {
     runtime: Runtime<Export<V>>,
@@ -136,7 +143,7 @@ pub struct Application<V: ?Sized = ()> {
     update_owner: Uuid,
     source: Option<maka_plugin_core::deployment::DeploymentRef>,
     store: Option<std::sync::Arc<maka_event_log::EventLog>>,
-    origins: BTreeMap<Uuid, maka_plugin_core::deployment::DeploymentRef>,
+    origins: BTreeMap<Uuid, OriginalSource>,
     effective: Option<maka_plugin_core::deployment::DeploymentRef>,
     deployment_error: Option<String>,
     pending: Vec<maka_plugin_core::plan::Instance>,
@@ -312,7 +319,13 @@ impl<V: ?Sized + 'static> Application<V> {
         self.activations
             .insert(instance.identity.clone(), activation.clone());
         if let Some(source) = &self.source {
-            self.origins.insert(activation.epoch(), source.clone());
+            self.origins.insert(
+                activation.epoch(),
+                OriginalSource {
+                    reference: source.clone(),
+                    checkpoints: Default::default(),
+                },
+            );
         }
         if let Some(entry) = &instance.entry {
             self.capture_values(&activation, &entry.imports)?;

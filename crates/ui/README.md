@@ -367,6 +367,29 @@ Each presenter keeps its own original native editor as the sole buffer, selectio
 and undo owner. TUI prepares native owners, captures immutable resources, then
 applies staged commands. Successfully flushed geometry alone becomes interactive;
 unpublished observations retain their original receipt without replaying commands.
+TUI physical Copy reads the focused visible textarea's native selection through
+the bounded terminal writer; it does not expose a second JavaScript text buffer.
+
+Textarea optionally accepts `persistence: {key, format, dataSource, metadata,
+restore, retry}`. The actual mounted provider supplies a weak scope for its owned
+UI Root and stable instance; props supply no filesystem path or storage authority.
+Key, format and business source stay fixed for that mount. Native workers save a
+raw UTF-8 blob (up to 1 MiB), native revision/selection and bounded opaque metadata
+with revision CAS. Empty records remain tombstones. Each namespace has a 40 MiB
+limit, and snapshots share the presenter's allocation budget. The worker coalesces
+pending snapshots and drains its last write before native resource cleanup; a
+failed write never produces a successful cleanup receipt.
+
+The `checkpoint` event exposes Loading, Restore, Ready or Failed metadata without
+body text. Restore requires a command for the current native owner and loaded
+version; the product decides whether original business receipts supersede the
+saved body. Both presenters validate exact grapheme selection boundaries and
+create a new native owner, without restoring undo or geometry. Editing and send
+stay gated until that new lineage has a durable checkpoint. `Ready.saved` reports
+whether the latest captured state has settled; abrupt process loss can still lose
+unacknowledged edits. A later `retry` retries a failure, or re-emits held Restore
+metadata when the product revisits that draft. Recipes and validation caches keep
+only weak database capabilities; live workers retain the original Root.
 
 The fixed `TextInput` and `SecretInput` exports from `maka.ui.input` use the
 shared `Editor*` command, observation and capture protocol. Single-line props

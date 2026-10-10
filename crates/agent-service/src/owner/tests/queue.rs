@@ -262,7 +262,7 @@ async fn queue_controls_are_bounded_revisioned_and_observed_without_transcript_p
         assert_eq!(notice["queue"]["entries"][0]["preview"], "x".repeat(80));
         assert_eq!(fixture.query("observe", json!({"sessionId":session})).await.unwrap()["through"], through);
         let read = fixture.query("queueMessage", json!({"sessionId":session,"messageId":ids[0],"expectedRevision":changed["revision"]})).await.unwrap();
-        assert_eq!(read, json!({"kind":"ready","revision":changed["revision"],"message":message}));
+        assert_eq!(read, json!({"kind":"ready","revision":changed["revision"],"message":message,"hasAttachments":false}));
         assert_eq!(fixture.query("queueMessage", json!({"sessionId":session,"messageId":ids[0],"expectedRevision":queue["revision"]})).await.unwrap()["kind"], "revision_conflict");
         ids.reverse();
         let reordered = fixture.mutation(2, "editQueue", json!({"sessionId":session,"expectedRevision":changed["revision"],"edit":{"kind":"reorder","messageIds":ids}}), Uuid::new_v4()).await.unwrap();

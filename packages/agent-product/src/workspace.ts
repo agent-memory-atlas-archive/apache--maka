@@ -41,6 +41,7 @@ import type {
   AgentPart,
   AgentRun,
   AgentSession,
+  AgentDataSource,
   AgentSessionPage,
   AgentCreated,
   AgentMarkReadResult,
@@ -51,7 +52,6 @@ import type {
   AgentAttachmentUploadResult,
   FileObservation,
   FileCapture,
-  FilePasteObservation,
   AgentQueueMutationResult,
   AgentQueueAction,
   RowsProps,
@@ -86,14 +86,31 @@ import {
   attachmentChild,
   attachmentView,
   pastedFiles,
+  type DraftFilePaste,
   pasteView,
   sameFile,
   selectedFile,
   type AttachmentDrafts,
 } from './attachments.js';
 
+import {
+  observeDraft,
+  draftReady,
+  retainSelectedDraft,
+  draftStatuses,
+  nextDraftStep,
+  draftPage,
+  draftReceipt,
+  draftFailed,
+  retryDraft,
+  type DraftRecord,
+  type DraftStep,
+  type DraftCheckpoint,
+} from './drafts.js';
+
 type Notice = keyof Copy | null;
 type Request =
+  | DraftStep
   | { kind: 'observe'; epoch: number }
   | {
       kind: 'history';
@@ -106,6 +123,7 @@ type Request =
     }
   | {
       kind: 'read';
+      dataSource: AgentDataSource;
       attachments: string[];
       draft: EditorObservation;
       sessionId: string;
@@ -128,13 +146,20 @@ type Request =
   | { kind: 'createDirectory'; title: string }
   | {
       kind: 'send';
+      dataSource: AgentDataSource;
       attachments: string[];
       draft: EditorObservation;
       sessionId: string;
       model: ModelSelection;
       thinkingLevel: ThinkingLevel | null;
     }
-  | { kind: 'uploadAttachment'; sessionId: string; attempt: number; pasted?: FileCapture }
+  | {
+      kind: 'uploadAttachment';
+      sessionId: string;
+      dataSource: AgentDataSource;
+      attempt: number;
+      pasted?: FileCapture;
+    }
   | { kind: 'markRead'; sessionId: string }
   | { kind: 'stop'; sessionId: string }
   | { kind: 'queue'; sessionId: string; saved?: { attempt: number; draft: EditorObservation } }
@@ -165,6 +190,7 @@ interface QueueEdit {
   command: EditorCommand | null;
 }
 export interface State {
+  drafts: DraftRecord[];
   attachments: AttachmentDrafts;
   revision: number;
   serial: number;
@@ -564,8 +590,16 @@ function uploadPastedFile(state: State, actions: Action[]) {
     sameFile(paste.attempted, file)
   )
     return;
-  if (state.selected?.id === observed.context && state.selected.archived) return;
-  if (!attachmentCapacity(state.attachments, observed.context)) {
+  if (
+    state.selected?.id === observed.context &&
+    sameValue(state.selected.dataSource, observed.dataSource) &&
+    state.selected.archived
+  )
+    return;
+  const dataSource = observed.dataSource;
+  if (state.selected && !sameValue(state.selected.dataSource, dataSource)) return;
+  if (!dataSource || !draftReady(state.drafts, { id: observed.context, dataSource })) return;
+  if (!attachmentCapacity(state.attachments, observed.context, dataSource)) {
     state.notice = 'attachmentLimit';
     return;
   }
@@ -576,6 +610,7 @@ function uploadPastedFile(state: State, actions: Action[]) {
     actions,
     {
       kind: 'uploadAttachment',
+      dataSource,
       sessionId: observed.context,
       attempt: ++state.serial,
       pasted: paste.attempted,
@@ -1099,10 +1134,13 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
     if (result.kind === 'uploaded') {
       if (
         !state.attachments.files.some(
-          (file) => file.id === result.attachment.id && file.sessionId === request.sessionId,
+          (file) =>
+            file.id === result.attachment.id &&
+            file.sessionId === request.sessionId &&
+            sameValue(file.dataSource, request.dataSource),
         )
       )
-        state.attachments.files.push(result.attachment);
+        state.attachments.files.push({ ...result.attachment, dataSource: request.dataSource });
       if (
         request.pasted &&
         state.attachments.paste &&
@@ -1123,7 +1161,10 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
       return;
     }
     state.attachments.files = state.attachments.files.filter(
-      (file) => file.sessionId !== request.sessionId || !request.attachments.includes(file.id),
+      (file) =>
+        file.sessionId !== request.sessionId ||
+        !sameValue(file.dataSource, request.dataSource) ||
+        !request.attachments.includes(file.id),
     );
     // Clear only the exact captured draft after a durable returned admission.
     // The native editor rejects this command if a newer draft or IME composition exists.
@@ -1163,6 +1204,10 @@ function receipt(state: State, actions: Action[], request: Mutation, reply: Oper
   }
 }
 function queryFailed(state: State, request: Request) {
+  if (request.kind === 'draftPage' || request.kind === 'draftReceipt') {
+    draftFailed(state.drafts, request);
+    return;
+  }
   if (
     request.kind === 'interaction' ||
     request.kind === 'questionRead' ||
@@ -1505,6 +1550,7 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
         actions,
         {
           kind: 'send',
+          dataSource: request.dataSource,
           attachments: request.attachments,
           draft: request.draft,
           sessionId: request.sessionId,
@@ -1521,6 +1567,14 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
           thinkingLevel: request.thinkingLevel,
         },
       );
+      break;
+    }
+    case 'draftPage': {
+      draftPage(state.drafts, request, value as CallerIntent[]);
+      break;
+    }
+    case 'draftReceipt': {
+      draftReceipt(state.drafts, request, value as OperationReply);
       break;
     }
     case 'restorePage': {
@@ -1676,6 +1730,23 @@ function frame<N extends Node>(
   actions: Action[] = [],
 ) {
   const target = presentation.target;
+  retainSelectedDraft(state.drafts, state.selected);
+  if (
+    !Object.values(state.pending).some(
+      (request) => request.kind === 'draftPage' || request.kind === 'draftReceipt',
+    )
+  ) {
+    const step = nextDraftStep(state.drafts, state.attachments);
+    if (step)
+      intent(
+        state,
+        actions,
+        step,
+        step.kind === 'draftPage' ? 'history' : 'receipts',
+        step.kind === 'draftPage' ? 'page' : 'read',
+        step.kind === 'draftPage' ? { after: step.after, limit: 1 } : step.original.reference,
+      );
+  }
   uploadPastedFile(state, actions);
   if (!conversationRoute(state) || state.source || state.image || !state.selected)
     state.searchOpen = false;
@@ -1867,17 +1938,28 @@ function frame<N extends Node>(
     },
     { closed: 'image-closed' },
   );
-  const attached = attachmentFiles(state.attachments, state.selected?.id);
+  const attached = attachmentFiles(
+    state.attachments,
+    state.selected?.id,
+    state.selected?.dataSource,
+  );
   const attachmentsButton = ui.button(
     'attachments-open',
     `${text.attachmentTitle}${attached.length ? ` (${attached.length})` : ''}`,
-    !state.selected || busy || state.loading || !!state.attachments.paste,
+    !state.selected ||
+      !draftReady(state.drafts, state.selected) ||
+      busy ||
+      state.loading ||
+      !!state.attachments.paste,
   );
   const composer = presentation.slot(
     'composer',
     'composer',
     {
       context: state.selected?.id ?? null,
+      dataSource: state.selected?.dataSource ?? null,
+      attachments: state.attachments.files,
+      drafts: draftStatuses(state.drafts),
       theme,
       locale,
       busy:
@@ -1895,7 +1977,9 @@ function frame<N extends Node>(
         !state.image &&
         !state.loading &&
         (!busy || !!state.attachments.paste) &&
-        (!state.attachments.paste || state.attachments.paste.observed.context === state.selected.id)
+        (!state.attachments.paste ||
+          (state.attachments.paste.observed.context === state.selected.id &&
+            sameValue(state.attachments.paste.observed.dataSource, state.selected.dataSource)))
           ? {
               context: state.selected.id,
               maxFiles: Math.min(8 - attached.length, 64 - state.attachments.files.length),
@@ -1914,7 +1998,14 @@ function frame<N extends Node>(
       autoFocus: !state.searchOpen,
       hasAttachments: attached.length > 0,
     },
-    { send: 'send', stop: 'stop', changed: 'draft', files: 'files' },
+    {
+      send: 'send',
+      stop: 'stop',
+      changed: 'draft',
+      files: 'files',
+      checkpoint: 'checkpoint',
+      draftCheck: 'draft-check',
+    },
   );
   const queueProps: RowsProps = {
     entry: state.queue?.entries.at(-1)?.messageId ?? null,
@@ -2342,6 +2433,7 @@ function frame<N extends Node>(
                   state.attachments,
                   busy,
                   state.selected?.id === state.attachments.selection.sessionId &&
+                    sameValue(state.selected.dataSource, state.attachments.selection.dataSource) &&
                     !state.selected.archived,
                   state.notice
                     ? text[state.notice]
@@ -2579,6 +2671,7 @@ export function workspace<N extends Node>(
       const state: State = {
         revision: 0,
         attachments: { files: [], selection: null, paste: null },
+        drafts: [],
         serial: 0,
         epoch: 0,
         catalog: null,
@@ -2689,8 +2782,16 @@ export function workspace<N extends Node>(
           }
         }
       } else if (input.kind === 'component') {
+        if (input.child === 'composer' && input.name === 'checkpoint') {
+          state.drafts = observeDraft(state.drafts, input.event as DraftCheckpoint, state.selected);
+          return frame(presentation, locale, state, values, actions);
+        }
+        if (input.child === 'composer' && input.name === 'draftCheck') {
+          retryDraft(state.drafts, (input.event as { owner: string }).owner);
+          return frame(presentation, locale, state, values, actions);
+        }
         if (input.child === 'composer' && input.name === 'files' && target === 'tui') {
-          pastedFiles(state.attachments, input.event as FilePasteObservation);
+          pastedFiles(state.attachments, input.event as DraftFilePaste);
           return frame(presentation, locale, state, values, actions);
         }
         if (input.child === attachmentChild(state.attachments) && input.name === 'changed') {
@@ -2971,6 +3072,7 @@ export function workspace<N extends Node>(
         } else if (
           input.child === 'composer' &&
           input.name === 'send' &&
+          draftReady(state.drafts, state.selected) &&
           !state.attachments.paste &&
           conversationRoute(state) &&
           !state.dialog &&
@@ -2996,9 +3098,12 @@ export function workspace<N extends Node>(
               actions,
               {
                 kind: 'read',
-                attachments: attachmentFiles(state.attachments, state.selected.id).map(
-                  (file) => file.id,
-                ),
+                dataSource: state.selected.dataSource,
+                attachments: attachmentFiles(
+                  state.attachments,
+                  state.selected.id,
+                  state.selected.dataSource,
+                ).map((file) => file.id),
                 draft,
                 sessionId: state.selected.id,
                 model: state.model.choice.selection,
@@ -3207,6 +3312,7 @@ export function workspace<N extends Node>(
         }
         if (
           input.key === 'attachments-open' &&
+          draftReady(state.drafts, state.selected) &&
           !state.attachments.paste &&
           conversationRoute(state) &&
           !state.dialog &&
@@ -3219,6 +3325,7 @@ export function workspace<N extends Node>(
           state.attachments.selection = {
             attempt: ++state.serial,
             sessionId: state.selected.id,
+            dataSource: state.selected.dataSource,
             file: null,
           };
           state.dialog = 'attachments';
@@ -3240,19 +3347,24 @@ export function workspace<N extends Node>(
         } else if (
           state.dialog === 'attachments' &&
           state.attachments.selection &&
+          draftReady(state.drafts, state.selected) &&
           state.selected?.id === state.attachments.selection.sessionId &&
+          sameValue(state.selected.dataSource, state.attachments.selection.dataSource) &&
           !mutationPending(state)
         ) {
           const selection = state.attachments.selection;
           if (input.key.startsWith('attachment-remove-')) {
             const id = input.key.slice('attachment-remove-'.length);
             state.attachments.files = state.attachments.files.filter(
-              (file) => file.sessionId !== selection.sessionId || file.id !== id,
+              (file) =>
+                file.sessionId !== selection.sessionId ||
+                !sameValue(file.dataSource, selection.dataSource) ||
+                file.id !== id,
             );
           } else if (
             input.key === 'attachment-upload' &&
             !state.selected.archived &&
-            attachmentCapacity(state.attachments, selection.sessionId) &&
+            attachmentCapacity(state.attachments, selection.sessionId, selection.dataSource) &&
             selection.file?.phase === 'ready' &&
             selection.file.file
           ) {
@@ -3263,6 +3375,7 @@ export function workspace<N extends Node>(
               actions,
               {
                 kind: 'uploadAttachment',
+                dataSource: selection.dataSource,
                 sessionId: selection.sessionId,
                 attempt: selection.attempt,
               },

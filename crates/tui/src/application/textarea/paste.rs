@@ -401,6 +401,7 @@ mod tests {
             ..Default::default()
         });
         let mut paste = Paste::new(NativeContext {
+            checkpoint: None,
             resources: resources.clone(),
             budget: budget.clone(),
         });
@@ -493,6 +494,7 @@ mod tests {
         let resources = Arc::new(maka_plugins::call::Resources::default());
         let budget = NativeBudget::default();
         let mut paste = Paste::new(NativeContext {
+            checkpoint: None,
             resources: resources.clone(),
             budget: budget.clone(),
         });
@@ -547,6 +549,7 @@ mod tests {
             let resources = Arc::new(maka_plugins::call::Resources::default());
             let budget = maka_ui::budget::NativeBudget::default();
             let mut paste = Paste::new(NativeContext {
+                checkpoint: None,
                 resources: resources.clone(),
                 budget: budget.clone(),
             });
@@ -647,6 +650,7 @@ mod tests {
         let resources = Arc::new(maka_plugins::call::Resources::default());
         let budget = maka_ui::budget::NativeBudget::default();
         let mut paste = Paste::new(NativeContext {
+            checkpoint: None,
             resources: resources.clone(),
             budget: budget.clone(),
         });

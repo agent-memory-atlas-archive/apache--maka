@@ -73,30 +73,41 @@ impl Owner {
         }
         false
     }
-    pub fn observation(&self) -> NativeInput {
+    pub fn snapshot(&self) -> EditorSnapshot {
         let range = self.editor.selection_range();
-        let selection = TextRange {
-            start: self.editor.text()[..range.start].encode_utf16().count(),
-            end: self.editor.text()[..range.end].encode_utf16().count(),
-        };
+        EditorSnapshot {
+            text: EditorTextRef {
+                owner: self.id.clone(),
+                revision: self.revision,
+                bytes: self.editor.text().len(),
+            },
+            selection: TextRange {
+                start: self.editor.text()[..range.start].encode_utf16().count(),
+                end: self.editor.text()[..range.end].encode_utf16().count(),
+            },
+            reversed: self.editor.selection_reversed(),
+            marked: None,
+        }
+    }
+    pub fn observation(&self) -> NativeInput {
         let observation = EditorObservation {
             revision: self.revision,
-            snapshot: EditorSnapshot {
-                text: EditorTextRef {
-                    owner: self.id.clone(),
-                    revision: self.revision,
-                    bytes: self.editor.text().len(),
-                },
-                selection,
-                reversed: self.editor.selection_reversed(),
-                marked: None,
-            },
+            snapshot: self.snapshot(),
             receipt: self.receipt.clone(),
         };
         NativeInput {
             key: "observe".into(),
             value: serde_json::to_value(observation).expect("native editor observation"),
         }
+    }
+    pub fn reject(&mut self, command: &EditorCommand, reason: EditorConflict) {
+        self.last_request = Some(command.clone());
+        self.receipt = Some(EditorReceipt {
+            owner: command.owner.clone(),
+            sequence: command.sequence,
+            revision: self.revision,
+            outcome: EditorOutcome::Conflict { reason },
+        });
     }
     pub fn apply(&mut self, command: &EditorCommand) {
         self.last_request = Some(command.clone());
