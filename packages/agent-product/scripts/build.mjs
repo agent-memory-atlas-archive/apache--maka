@@ -514,6 +514,7 @@ for (const [name, spec] of Object.entries(specifications)) {
   packages.push(name);
 }
 const agentImports = {
+  executors: { contract: sdk.contracts.executor, cardinality: { kind: 'many', min: 0, max: 8 } },
   skills: { contract: sdk.contracts.skillLibrary, cardinality: { kind: 'optional' } },
   forms: { contract: sdk.contracts.forms, cardinality: { kind: 'optional' } },
   questions: { contract: sdk.contracts.questions, cardinality: { kind: 'optional' } },
@@ -754,6 +755,31 @@ const mechanical = {
         },
         sdk.configurations.workspaceProcesses,
       ),
+    },
+  },
+  'protocol-processes': {
+    entries: {
+      host: native(
+        'maka.workspace.protocol-processes',
+        { protocol: required(sdk.contracts.protocolProcesses) },
+        sdk.configurations.workspaceProcesses,
+      ),
+    },
+  },
+  'acp-executor': {
+    entries: {
+      host: {
+        ...native(
+          'maka.agent.acp',
+          { executor: required(sdk.contracts.executor) },
+          sdk.configurations.acpExecutor,
+        ),
+        imports: {
+          processes: one(sdk.contracts.protocolProcesses),
+          files: one(sdk.contracts.workspaceFiles),
+          forms: one(sdk.contracts.forms),
+        },
+      },
     },
   },
   skills: {

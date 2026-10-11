@@ -43,6 +43,35 @@ execution. Setup recovery queries original receipts; an unknown result never cre
 replacement coordinator. External executors, notifications after the coordinator's turn,
 and progress across changed native bindings remain unfinished.
 
+## ACP backends
+
+`acpExecutors` explicitly installs up to eight `{name, configuration}` entries. The
+configuration is the SDK's `AcpExecutorConfiguration` (`{agent, permissions?}`);
+`agent` supplies the backend id, display name, executable, arguments and ordinary
+environment settings. The authoring code includes `acp-NAME` and
+`coordinator-acp-NAME` in `installationNames(configuration)`. The CLI generates the
+installation’s `keys` map once and saves it in the exported installation. Preserve
+those keys when reauthoring the same backends.
+The standard recipe builds `agent.executors` and its exact import members from this
+list; custom Executor packages remain available through ordinary source composition.
+
+Supply `executorProcesses` with an explicit filesystem/network installation ceiling
+and optional sandbox helper. It is independent of the model's `processes`/Terminal
+configuration. The recipe adds ordinary ACP, ProtocolProcesses, Files and Forms
+instances with separate Agent→Executor and Executor→callback grants. Requested
+launch access still requires the Session's permission policy and user consent.
+No backend credentials are copied from model connections or embedded in this source.
+
+WorkHub accepts separate `coordinatorAcpExecutors` and
+`coordinatorExecutorProcesses`. Worker and coordinator backends keep distinct keys,
+process owners and callback grants, even when their display names match. Shared
+Files/Forms services retain their own identities. Composing only exports checked
+sources; it does not launch or authenticate an external program.
+
+The product's interactive backend selector, setup/authentication workflow and
+attachment forwarding are still being integrated. Existing explicit Agent callers
+can use `executors` and `execute` with these sources.
+
 ## Configuration Studio
 
 An independent ordinary `maka.studio.workbench` package provides desktop and terminal
@@ -106,7 +135,7 @@ The TUI Appearance page provides Maka, Dusk, Paper, Terminal and custom palettes
 
 `installation.json` supplies `presentation` (`desktop` or `tui`), the full `locale` tag (or `auto`), `scheme` (`light` or `dark`), `hostRoot` and `agent`. Stable `hostDeployment`, `managementDeployment` and `keys` may be supplied for an existing installation. `agent` is the SDK's generated `AgentConfiguration`: explicit `workspaceRoots` (`[{ label, path }]`, absolute directories), finite `maxActiveRuns`/`maxSteps`, initial `permissions` (`{ "access": "read_only", "requestPermissions": true }` or `workspace_write`) and explicit `tools` (use `[]` for a text-only composition). Credentials and endpoint settings belong to that Host Root; they do not belong in the product source.
 
-`keys` maps every name in `instanceNames` exported by `src/composition.ts` to a nonnil UUID. Omitted identities are generated once and saved in the output `installation.json`; use that file for subsequent authoring to preserve namespaces. Explicit identity maps are preserved without filling missing keys. `managementDeployment` is a stable Host UUID in the UI Root, distinct from the UI and business Host deployment. New package revisions do not imply new data namespaces.
+`keys` maps every name in `installationNames(configuration)` exported by `src/composition.ts` to a nonnil UUID. Omitted identities are generated once and saved in the output `installation.json`; use that file for subsequent authoring to preserve namespaces. Explicit identity maps are preserved without filling missing keys. `managementDeployment` is a stable Host UUID in the UI Root, distinct from the UI and business Host deployment. New package revisions do not imply new data namespaces.
 
 The authoring command validates the embedded package bytes and computes their pinned references using the runtime package implementation. A pure JS VM evaluates the original composition; the Rust source validator checks all three deployments. It writes `host.json`, `management-host.json`, `ui.json`, `remote-exports.json`, `connections.json`, `packages.json`, the resolved `installation.json` and the exact installable bundles under `packages/`. It does not initialize a Root, commit a deployment or start execution. `connections.json` is trusted launcher configuration; inspect its explicit method and recovery grants before use.
 

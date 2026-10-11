@@ -20,6 +20,7 @@
 import {
   contracts,
   type AgentConfiguration,
+  type AcpExecutorConfiguration,
   type SkillLibraryConfiguration,
   type WorkspaceProcessConfiguration,
   type CompositionInput,
@@ -49,6 +50,8 @@ export const packageNames = [
   'questions',
   'workspace-files',
   'workspace-processes',
+  'protocol-processes',
+  'acp-executor',
   'help',
   'studio',
   'studio-gateway',
@@ -99,7 +102,12 @@ export const instanceNames = [
   ...baseInstanceNames.map((name): `coordinator-${typeof name}` => `coordinator-${name}`),
 ] as const;
 export type InstanceName = (typeof instanceNames)[number];
+type ExecutorInstanceName = `acp-${string}` | `coordinator-acp-${string}`;
 import type { AppearanceConfiguration } from './terminal-theme.js';
+export interface AcpExecutor {
+  name: string;
+  configuration: AcpExecutorConfiguration;
+}
 export interface CompositionConfiguration {
   presentation: 'desktop' | 'tui';
   locale: string;
@@ -108,15 +116,31 @@ export interface CompositionConfiguration {
   /** Fixed local custom-theme import/export file; absent disables file operations. */
   themeFile?: string;
   packages: Record<PackageName, PackageRef>;
-  keys: Record<InstanceName, string>;
+  keys: Record<InstanceName, string> & Partial<Record<ExecutorInstanceName, string>>;
   agent: AgentConfiguration;
   processes?: WorkspaceProcessConfiguration;
   coordinator?: AgentConfiguration;
   coordinatorProcesses?: WorkspaceProcessConfiguration;
+  acpExecutors?: AcpExecutor[];
+  executorProcesses?: WorkspaceProcessConfiguration;
+  coordinatorAcpExecutors?: AcpExecutor[];
+  coordinatorExecutorProcesses?: WorkspaceProcessConfiguration;
   skills?: SkillLibraryConfiguration;
   hostRoot: string;
   hostDeployment: string;
   managementDeployment: string;
+}
+/** The launcher assigns identities without knowing the product's instance structure. */
+export function installationNames(
+  configuration: Pick<CompositionConfiguration, 'acpExecutors' | 'coordinatorAcpExecutors'>,
+): string[] {
+  return [
+    ...new Set([
+      ...instanceNames,
+      ...(configuration.acpExecutors ?? []).map((e) => `acp-${e.name}`),
+      ...(configuration.coordinatorAcpExecutors ?? []).map((e) => `coordinator-acp-${e.name}`),
+    ]),
+  ];
 }
 interface ApplicationSources {
   host: CompositionInput;
@@ -393,6 +417,18 @@ export function composition(configuration: CompositionConfiguration): Applicatio
   const { keys } = configuration;
   const { host, managementHost, ui, remoteExports, connections, local, remote, node, expose } =
     settingsComposition(configuration, 'gateway');
+  const executors = configuration.acpExecutors ?? [];
+  if (
+    executors.length > 8 ||
+    new Set(executors.map((e) => e.name)).size !== executors.length ||
+    executors.some((e) => !/^[a-zA-Z][a-zA-Z0-9._:-]{0,127}$/.test(e.name))
+  )
+    throw new Error('ACP backends require at most eight distinct executor names');
+  if (configuration.agent.executors?.length)
+    throw new Error('The standard composition selects executor imports through acpExecutors');
+  if (executors.length && !configuration.executorProcesses)
+    throw new Error('ACP backends require an explicit executorProcesses installation ceiling');
+  const executorPath = (name: string): ExecutorInstanceName => `acp-${name}`;
   const asksForms = configuration.agent.tools.some((tool) => tool.import === 'forms');
   const asksQuestions = configuration.agent.tools.some((tool) => tool.import === 'questions');
   const fileMethods = [
@@ -431,6 +467,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
     'agent',
     {
       ...configuration.agent,
+      executors: executors.map((e, member) => ({ name: e.name, import: 'executors', member })),
       // These imports bind known native v1 contracts. Freeze presentation in
       // the configuration; tool names and response shapes cannot opt into it.
       tools: configuration.agent.tools.map((tool) => {
@@ -448,6 +485,15 @@ export function composition(configuration: CompositionConfiguration): Applicatio
       }),
     },
     {
+      ...(executors.length
+        ? {
+            executors: executors.map((e) => ({
+              kind: 'instance' as const,
+              path: [executorPath(e.name)],
+              export: 'executor',
+            })),
+          }
+        : {}),
       ...(skillCalls.length ? { skills: [local('skills', 'skills')] } : {}),
       ...(asksForms ? { forms: [local('forms', 'forms')] } : {}),
       ...(asksQuestions ? { questions: [local('questions', 'questions')] } : {}),
@@ -455,9 +501,31 @@ export function composition(configuration: CompositionConfiguration): Applicatio
       ...(processMethods.length ? { processes: [local('workspace-processes', 'processes')] } : {}),
     },
   );
-  if (asksForms) host.instances.forms = node('forms');
+  if (asksForms || executors.length) host.instances.forms = node('forms');
   if (asksQuestions) host.instances.questions = node('questions');
-  if (fileMethods.length) host.instances['workspace-files'] = node('workspace-files');
+  if (fileMethods.length || executors.length)
+    host.instances['workspace-files'] = node('workspace-files');
+  if (executors.length) {
+    host.instances['protocol-processes'] = node('protocol-processes', {
+      ...configuration.executorProcesses!,
+      sessionOwner: [keys.agent],
+      sessionKind: 'agent',
+    });
+    for (const executor of executors) {
+      host.instances[executorPath(executor.name)] = {
+        ...node(
+          'acp-executor',
+          { ...executor.configuration },
+          {
+            processes: [local('protocol-processes', 'protocol')],
+            files: [local('workspace-files', 'files')],
+            forms: [local('forms', 'forms')],
+          },
+        ),
+        key: keys[executorPath(executor.name)]!,
+      };
+    }
+  }
   if (configuration.processes)
     host.instances['workspace-processes'] = node('workspace-processes', {
       ...configuration.processes,
@@ -712,10 +780,32 @@ export function composition(configuration: CompositionConfiguration): Applicatio
     asksQuestions ||
     fileMethods.length ||
     processMethods.length ||
-    skillCalls.length
+    skillCalls.length ||
+    executors.length
   )
     Object.assign(connections.hosts.find((host) => host.name === 'local')!, {
       native: [
+        ...executors.flatMap((executor) => [
+          {
+            origin: [keys.agent],
+            consumer: [keys.agent],
+            provider: [keys[executorPath(executor.name)]!],
+            export: 'executor',
+            methods: ['execute'],
+            recovery: true,
+          },
+          ...[
+            { provider: keys['protocol-processes'], export: 'protocol', methods: ['run', 'input'] },
+            { provider: keys['workspace-files'], export: 'files', methods: ['readText', 'write'] },
+            { provider: keys.forms, export: 'forms', methods: ['ask'] },
+          ].map((grant) => ({
+            ...grant,
+            origin: [keys[executorPath(executor.name)]!],
+            consumer: [keys[executorPath(executor.name)]!],
+            provider: [grant.provider],
+            recovery: true,
+          })),
+        ]),
         ...(skillCalls.length
           ? [
               {
@@ -814,6 +904,17 @@ export function workhubComposition(configuration: CompositionConfiguration): App
     ...configuration,
     agent: configuration.coordinator,
     processes: configuration.coordinatorProcesses,
+    acpExecutors: configuration.coordinatorAcpExecutors,
+    executorProcesses: configuration.coordinatorExecutorProcesses,
+    keys: {
+      ...keys,
+      ...Object.fromEntries(
+        (configuration.coordinatorAcpExecutors ?? []).map((e) => [
+          `acp-${e.name}`,
+          keys[`coordinator-acp-${e.name}`],
+        ]),
+      ),
+    },
   });
   const local = (name: string, exportName: string): BindingTarget => ({
     kind: 'instance',
@@ -821,17 +922,25 @@ export function workhubComposition(configuration: CompositionConfiguration): App
     export: exportName,
   });
   const processName = 'coordinator-workspace-processes';
+  const protocolName = 'coordinator-protocol-processes';
+  const coordinatorExecutors = new Set(
+    (configuration.coordinatorAcpExecutors ?? []).map((e) => `acp-${e.name}`),
+  );
+  const hostName = (name: string) =>
+    name === 'agent'
+      ? 'workhub'
+      : name === 'workspace-processes'
+        ? processName
+        : name === 'protocol-processes'
+          ? protocolName
+          : coordinatorExecutors.has(name)
+            ? `coordinator-${name}`
+            : name;
   const remapHost = (target: BindingTarget): BindingTarget =>
     target.kind === 'instance' && target.path.length === 1
       ? {
           ...target,
-          path: [
-            target.path[0] === 'agent'
-              ? 'workhub'
-              : target.path[0] === 'workspace-processes'
-                ? processName
-                : target.path[0],
-          ],
+          path: [hostName(target.path[0])],
         }
       : target;
   const remapBindings = (node: CompositionNode, map: (target: BindingTarget) => BindingTarget) =>
@@ -839,8 +948,26 @@ export function workhubComposition(configuration: CompositionConfiguration): App
       Object.entries(node.bindings ?? {}).map(([name, targets]) => [name, targets?.map(map)]),
     );
   for (const [name, node] of Object.entries(coordinator.host.instances)) {
+    if (!node) continue;
     if (name === 'agent' || name === 'gateway' || name === 'workspace-processes') continue;
-    if (!worker.host.instances[name]) worker.host.instances[name] = node;
+    const mapped = hostName(name);
+    if (!worker.host.instances[mapped])
+      worker.host.instances[mapped] = {
+        ...node,
+        ...(name === 'protocol-processes'
+          ? {
+              key: keys[protocolName],
+              configuration: {
+                values: {
+                  ...node.configuration!.values,
+                  sessionOwner: [keys.workhub],
+                  sessionKind: 'workhub',
+                },
+              },
+            }
+          : {}),
+        bindings: remapBindings(node, remapHost),
+      };
   }
   const agent = coordinator.host.instances.agent!;
   worker.host.instances.workhub = {
@@ -967,6 +1094,14 @@ export function workhubComposition(configuration: CompositionConfiguration): App
   const coordinatorHost = (coordinator.connections as Connections).hosts.find(
     (host) => host.name === 'local',
   )!;
+  const hostIdentity = (identity: string[]) =>
+    identity[0] === keys.agent
+      ? [keys.workhub]
+      : identity[0] === keys['workspace-processes']
+        ? [keys[processName]]
+        : identity[0] === keys['protocol-processes']
+          ? [keys[protocolName]]
+          : identity;
   const endpoint = (name: string, methods: string[]) => ({
     consumer: [keys.gateway],
     import: name,
@@ -989,10 +1124,9 @@ export function workhubComposition(configuration: CompositionConfiguration): App
     ...(host.native ?? []),
     ...(coordinatorHost.native ?? []).map((grant) => ({
       ...grant,
-      origin: [keys.workhub],
-      consumer: [keys.workhub],
-      provider:
-        grant.provider[0] === keys['workspace-processes'] ? [keys[processName]] : grant.provider,
+      origin: hostIdentity(grant.origin),
+      consumer: hostIdentity(grant.consumer),
+      provider: hostIdentity(grant.provider),
     })),
     {
       origin: [keys.workhub],

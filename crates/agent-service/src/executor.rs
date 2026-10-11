@@ -45,6 +45,9 @@ pub struct ServiceExecutor {
     pub name: String,
     #[schemars(length(min = 1, max = 256))]
     pub import: String,
+    /// Exact member of the explicitly bound import, never a discovery index.
+    #[serde(default)]
+    pub member: usize,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -96,6 +99,8 @@ pub fn contract() -> Contract {
 pub(crate) struct Accepted {
     pub selection: Selection,
     import: String,
+    #[serde(default)]
+    member: usize,
     basis: String,
 }
 #[derive(Clone)]
@@ -121,9 +126,9 @@ impl Executors {
                 .find(|(name, _)| *name == selection.import)
                 .map(|(_, bindings)| bindings)
                 .ok_or("agent_executor_import_missing")?;
-            let [binding] = bindings else {
-                return Err("agent_executor_import_ambiguous".into());
-            };
+            let binding = bindings
+                .get(selection.member)
+                .ok_or("agent_executor_member_unavailable")?;
             if binding.contract() != &contract() {
                 return Err("agent_executor_contract_invalid".into());
             }
@@ -136,6 +141,7 @@ impl Executors {
                         settings: Default::default(),
                     },
                     import: selection.import.clone(),
+                    member: selection.member,
                     basis: binding.execution_basis().into(),
                 },
                 services: services.clone(),
@@ -297,7 +303,7 @@ impl executor::Execution for Call {
                         let mut mutation = request
                             .begin_mutation(
                                 &self.backend.accepted.import,
-                                0,
+                                self.backend.accepted.member,
                                 "execute".into(),
                                 self.input,
                                 self.operation,

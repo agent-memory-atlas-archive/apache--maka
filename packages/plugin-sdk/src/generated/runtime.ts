@@ -4524,6 +4524,10 @@ export interface AgentConfiguration {
 export interface AgentServiceExecutor {
   name: string;
   import: string;
+  /**
+   * Exact member of the explicitly bound import, never a discovery index.
+   */
+  member?: number;
 }
 export interface AgentWorkspacePermissions {
   access: AgentWorkspaceAccess;

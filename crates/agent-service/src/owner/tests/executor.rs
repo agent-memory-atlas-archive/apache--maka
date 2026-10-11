@@ -136,6 +136,7 @@ async fn activate_backend(
         settings.executors = vec![executor::ServiceExecutor {
             name: "external".into(),
             import: "executor".into(),
+            member: 0,
         }];
         let (mut input, mut packages) = input(&settings);
         let mut manifest = packages[0].manifest().clone();
@@ -409,6 +410,114 @@ fn input_for(session: &str, message: &str) -> Value {
 }
 async fn work(fixture: &Fixture, session: &str, accepted: &Value) -> Value {
     fixture.query("work",json!({"sessionId":session,"target":{"kind":"invocation","invocationId":accepted["invocationId"]}})).await.unwrap()
+}
+
+#[tokio::test]
+async fn executor_service_selects_the_exact_authorized_import_member() {
+    tokio::time::timeout(Duration::from_secs(40), async {
+        let mut f = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+        activate(&mut f, true, None, true).await;
+        let loaded = f
+            .store
+            .load_application(f.app.source().unwrap().deployment)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut input = loaded.source.input;
+        let mut packages = loaded.packages;
+        let mut manifest = packages
+            .iter()
+            .find(|p| p.manifest().id == "agent")
+            .unwrap()
+            .manifest()
+            .clone();
+        manifest
+            .application
+            .as_mut()
+            .unwrap()
+            .entries
+            .get_mut(&EntryTarget::Host)
+            .unwrap()
+            .imports
+            .get_mut("executor")
+            .unwrap()
+            .cardinality = Cardinality::Many { min: 0, max: 8 };
+        let package = Package::new(BTreeMap::from([(
+            MANIFEST_FILE.into(),
+            serde_json::to_vec(&manifest).unwrap(),
+        )]))
+        .unwrap();
+        let mut decoy = input.instances["executor"].clone();
+        decoy.key = Uuid::from_u128(25);
+        input.instances.insert("decoy".into(), decoy);
+        let agent = input.instances.get_mut("provider").unwrap();
+        agent.package = package.application_ref().into();
+        agent.configuration.values.get_mut("executors").unwrap()[0]["member"] = json!(1);
+        agent.bindings.get_mut("executor").unwrap().insert(
+            0,
+            Target::Instance {
+                path: vec!["decoy".into()],
+                export: "executor".into(),
+            },
+        );
+        packages.push(package);
+        let source = f
+            .store
+            .commit_application(
+                loaded.source.reference.deployment,
+                loaded.source.reference.revision,
+                input,
+                vec![],
+                packages,
+            )
+            .await
+            .unwrap();
+        f.app.adopt_committed(source).await.unwrap();
+        f.app.ready().await.unwrap();
+        let session = f.create("Selected member").await;
+        let mut changes = f.store.subscribe_commits();
+        let accepted = f
+            .mutation(
+                2,
+                "execute",
+                input_for(&session, "second binding"),
+                Uuid::new_v4(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(accepted["kind"], "started", "{accepted}");
+        loop {
+            let observed = work(&f, &session, &accepted).await;
+            match observed["execution"]["state"].as_str() {
+                Some("running") | Some("admitted") | Some("waiting_for_user") | None => {
+                    changes.changed().await.unwrap();
+                }
+                _ => {
+                    assert_eq!(observed["execution"]["state"], "completed", "{observed}");
+                    assert_eq!(
+                        observed["answer"]["text"],
+                        "second binding / backend-model / high"
+                    );
+                    break;
+                }
+            }
+        }
+        let records = f
+            .store
+            .application_intents(f.app.source().unwrap().deployment, id(1), 0, 128)
+            .await
+            .unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].reference.namespace,
+            id(21),
+            "member zero has no grant and must never be invoked"
+        );
+        f.app.shutdown().await.unwrap();
+        f.config.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
 }
 
 #[tokio::test]

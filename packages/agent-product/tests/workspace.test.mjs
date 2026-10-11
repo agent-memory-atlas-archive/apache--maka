@@ -13710,3 +13710,159 @@ for (const target of ['desktop', 'tui']) {
     assert.equal(client.state.pageAfter, 'exact-list-cursor');
   });
 }
+
+test('ACP product sources bind multiple exact backends and preserve coordinator callback ownership', {
+  skip: !process.env.MAKA_PRODUCT_CLI_CHECK,
+}, async () => {
+  const binary = resolve(root, '../..', process.env.CARGO_TARGET_DIR ?? 'target', 'debug/maka');
+  const directory = mkdtempSync(resolve(tmpdir(), 'maka-acp-composition-'));
+  const backend = (name) => ({
+    name,
+    configuration: { agent: { id: name, displayName: name, executable: '/usr/bin/true' } },
+  });
+  const agent = {
+    workspaceRoots: [{ label: 'Project', path: '/private/product-workspace' }],
+    maxActiveRuns: 1,
+    maxSteps: 2,
+    tools: [],
+    permissions: { access: 'workspace_write', requestPermissions: true },
+  };
+  const ceiling = {
+    filesystem: { default: 'read', rules: [], denyGlobs: [] },
+    network: 'denied',
+    helper: null,
+  };
+  const invoke = (configuration, product, name) => {
+    const path = resolve(directory, `${name}.json`);
+    writeFileSync(path, JSON.stringify(configuration));
+    const output = resolve(directory, name);
+    execFileSync(
+      binary,
+      ['application', 'compose', '--configuration', path, '--output', output, '--product', product],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, PATH: directory, NODE_PATH: '' },
+      },
+    );
+    return (file) => JSON.parse(readFileSync(resolve(output, `${file}.json`), 'utf8'));
+  };
+  try {
+    for (const product of ['agent', 'workhub']) {
+      const configuration = {
+        presentation: 'tui',
+        locale: 'en',
+        scheme: 'light',
+        agent,
+        acpExecutors: [backend('First'), backend('Second')],
+        executorProcesses: ceiling,
+        ...(product === 'workhub'
+          ? {
+              coordinator: agent,
+              coordinatorAcpExecutors: [backend('First')],
+              coordinatorExecutorProcesses: ceiling,
+            }
+          : {}),
+        hostRoot: resolve(directory, 'unopened-host'),
+      };
+      const read = invoke(configuration, product, product);
+      const installation = read('installation'),
+        host = read('host');
+      const { keys } = installation;
+      const grants = read('connections').hosts.find((h) => h.name === 'local').native;
+      assert.equal(existsSync(configuration.hostRoot), false);
+      assert.deepEqual(host.instances.agent.configuration.values.executors, [
+        { name: 'First', import: 'executors', member: 0 },
+        { name: 'Second', import: 'executors', member: 1 },
+      ]);
+      for (const [member, entry] of installation.acpExecutors.entries()) {
+        const instance = host.instances[`acp-${entry.name}`];
+        const entryKey = keys[`acp-${entry.name}`];
+        assert.equal(instance.key, entryKey);
+        assert.deepEqual(host.instances.agent.bindings.executors[member], {
+          kind: 'instance',
+          path: [`acp-${entry.name}`],
+          export: 'executor',
+        });
+        assert.deepEqual(instance.bindings.processes, [
+          { kind: 'instance', path: ['protocol-processes'], export: 'protocol' },
+        ]);
+        assert.ok(
+          grants.some(
+            (g) =>
+              g.origin[0] === keys.agent &&
+              g.consumer[0] === keys.agent &&
+              g.provider[0] === entryKey &&
+              g.methods.join() === 'execute',
+          ),
+        );
+        const callbacks = grants.filter((g) => g.origin[0] === entryKey);
+        assert.equal(callbacks.length, 3);
+        assert.ok(callbacks.every((g) => g.consumer[0] === entryKey && g.recovery));
+        assert.deepEqual(
+          callbacks.map((g) => [g.export, g.methods]),
+          [
+            ['protocol', ['run', 'input']],
+            ['files', ['readText', 'write']],
+            ['forms', ['ask']],
+          ],
+        );
+      }
+      if (product === 'workhub') {
+        const entry = installation.coordinatorAcpExecutors[0];
+        const entryKey = keys[`coordinator-acp-${entry.name}`];
+        assert.notEqual(entryKey, keys[`acp-${installation.acpExecutors[0].name}`]);
+        assert.equal(host.instances['coordinator-acp-First'].key, entryKey);
+        assert.deepEqual(host.instances.workhub.bindings.executors, [
+          { kind: 'instance', path: ['coordinator-acp-First'], export: 'executor' },
+        ]);
+        assert.deepEqual(host.instances['coordinator-acp-First'].bindings.processes, [
+          { kind: 'instance', path: ['coordinator-protocol-processes'], export: 'protocol' },
+        ]);
+        assert.deepEqual(
+          host.instances['coordinator-protocol-processes'].configuration.values.sessionOwner,
+          [keys.workhub],
+        );
+        assert.equal(
+          host.instances['coordinator-protocol-processes'].configuration.values.sessionKind,
+          'workhub',
+        );
+        assert.ok(
+          grants.some(
+            (g) =>
+              g.origin[0] === keys.workhub &&
+              g.provider[0] === entryKey &&
+              g.methods.join() === 'execute',
+          ),
+        );
+        const callbacks = grants.filter((g) => g.origin[0] === entryKey);
+        assert.equal(callbacks.length, 3);
+        assert.ok(callbacks.every((g) => g.consumer[0] === entryKey));
+        assert.ok(callbacks.some((g) => g.provider[0] === keys['coordinator-protocol-processes']));
+        assert.equal(
+          grants.some((g) => g.origin[0] === keys.workhub && g.export === 'protocol'),
+          false,
+        );
+      }
+      // Reauthoring the saved installation preserves each backend identity.
+      assert.deepEqual(invoke(installation, product, `${product}-again`)('host'), host);
+      assert.throws(() =>
+        invoke(
+          { ...configuration, executorProcesses: undefined },
+          product,
+          `${product}-no-ceiling`,
+        ),
+      );
+      assert.equal(existsSync(resolve(directory, `${product}-no-ceiling`)), false);
+      assert.throws(() =>
+        invoke(
+          { ...configuration, acpExecutors: [backend('First'), backend('First')] },
+          product,
+          `${product}-duplicates`,
+        ),
+      );
+      assert.equal(existsSync(resolve(directory, `${product}-duplicates`)), false);
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

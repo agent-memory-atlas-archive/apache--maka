@@ -165,3 +165,10 @@ namespace, and reuses the shared ACP v1/v2 journal and projection. Its native
 owner retains and finishes independent process requests across prompts; accepted
 stdin writes settle even when the SDK stops polling its transport after a reply.
 The ordinary product's backend selector and attachment transport remain pending.
+
+
+Executor configuration may select an exact zero-based `member` of its named import
+(default `0`). This permits an explicitly bounded multi-binding import
+without adding a discovery registry. Admission captures that member's actual binding
+and grants. The member joins the original queued execution basis; a later reorder
+cannot redirect an already accepted message.

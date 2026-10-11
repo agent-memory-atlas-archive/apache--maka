@@ -170,3 +170,25 @@ TUI 命令面板提供“复制消息”和“复制消息原文”，沿原生�
 TUI 的常用操作保留在页面内，命令面板作为备用入口。新建会话、会话行、消息与工具卡片提供右击菜单及可见的「⋯」按钮；新建菜单可选择其他工作目录，会话详情就地打开，完整文本消息可直接复制原文，有原生选区时提供复制选区。未完整加载的消息保留原文查看入口。菜单复用现有操作条件和原生弹层焦点管理。
 
 恢复页使用独立的普通 ReadingArea 实例与 Host 恢复消费者。其依赖不包含 Agent、Skills Library 或 Settings；业务初始化失败时，仍可在同一 Host 查询原回执和技能发布结果。
+
+
+## ACP 后端组合
+
+`acpExecutors` 显式安装最多八个 `{name, configuration}`。configuration 为 SDK 的
+`AcpExecutorConfiguration`（`{agent, permissions?}`），agent 指定后端 id、显示名称、
+程序、参数和普通环境设置。产品编写代码通过 `installationNames(configuration)` 提供
+`acp-NAME`／`coordinator-acp-NAME` 身份名称；CLI 首次生成完整 `keys` 映射并保存到
+导出的 installation，重新编写同一后端时应保留。标准配方从这份列表生成 `agent.executors` 和确切 import member；
+自定义 Executor 包仍可通过普通 source composition 接入。
+
+必须另给 `executorProcesses` 指定文件／网络安装上限和可选沙箱 helper。它独立于模型的
+`processes`／Terminal 配置。生成的 ACP、ProtocolProcesses、Files、Forms 均是普通实例，
+Agent→Executor 和 Executor→各回调分别授权。启动访问仍受 Session 权限与用户同意约束；
+不复制模型连接凭据，也不把后端凭据存入这些公开配置。
+
+WorkHub 可另给 `coordinatorAcpExecutors` 和 `coordinatorExecutorProcesses`。worker 与
+coordinator 的后端即使同名，也保持独立 key、进程 owner 和 callback grant；Files／Forms
+继续共享原实例。compose 只导出已验证的 source，不启动或认证外部程序。
+
+产品后端选择器、设置／认证流程和附件转交仍在接入。已有显式 Agent 调用方可通过
+`executors`、`execute` 使用这些来源。

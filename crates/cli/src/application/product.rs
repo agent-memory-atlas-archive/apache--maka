@@ -113,11 +113,14 @@ async fn author(
             Ok(module) => {
                 let result = async {
                     if !values.contains_key("keys") {
-                        // Read the original exported array through its ordinary slice
-                        // method; no second instance-name list lives in the launcher.
+                        // The ordinary authoring code supplies every installation
+                        // identity, including configuration-dependent instances.
                         let names: Vec<String> = serde_json::from_value(
                             module
-                                .call(vec!["instanceNames".into(), "slice".into()], vec![])
+                                .call(
+                                    vec!["installationNames".into()],
+                                    vec![Value::Object(values.clone())],
+                                )
                                 .await?,
                         )?;
                         let keys: BTreeMap<_, _> = names
