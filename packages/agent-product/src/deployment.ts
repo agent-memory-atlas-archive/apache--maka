@@ -53,6 +53,7 @@ import {
   type InstanceSettings,
 } from './instance-settings.js';
 import { deploymentContract, type DeploymentProps } from './contracts.js';
+import { pageHeader, withPageShell, type PageState } from './page-shell.js';
 import { copy, type Copy } from './locale.js';
 import { sameValue } from './value.js';
 import {
@@ -150,7 +151,7 @@ function validSettingsBookmark(value: unknown): SettingsBookmark {
     : null;
 }
 
-interface State {
+interface State extends PageState {
   bookmark: Bookmark<SettingsBookmark>;
   restoreSettings: boolean;
   restoreFailed: boolean;
@@ -486,19 +487,20 @@ function frame<N extends Node>(
   const header = ui.box(
     'deployment-header',
     [
-      ui.box(
-        'deployment-title-row',
-        [
-          ui.button(
-            'deployment-back',
-            text.back,
-            false,
-            false,
-            target === 'tui' ? { background: 0, align: 'start' } : {},
-          ),
-          ui.text('deployment-title', text.deploymentTitle, 22, props.theme.text, 600),
-        ],
-        { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
+      ...pageHeader(
+        presentation,
+        state,
+        props,
+        events,
+        state.settings?.open
+          ? text.instanceConfiguration
+          : state.importer.open
+            ? text.deploymentInstall
+            : state.documentOpen
+              ? text.deploymentEdit
+              : text.deploymentTitle,
+        'deployment-back',
+        !!state.settings?.open && busy,
       ),
       ...(target === 'tui' || (!current && !history)
         ? [ui.text('deployment-help', text.deploymentHelp, 13, props.theme.muted)]
@@ -708,7 +710,7 @@ function frame<N extends Node>(
     ],
     {
       gap: 0,
-      padding: target === 'desktop' ? 24 : 1,
+      padding: target === 'desktop' ? 24 : props.shell ? 0 : 1,
       style: { width: fill, height: fill, maxWidth: 808, minWidth: 0 },
       terminal: { grow: 1 },
     },
@@ -744,378 +746,598 @@ function frame<N extends Node>(
 export function deployment<N extends Node>(
   presentation: Presentation<N>,
 ): Component<State, DeploymentProps, N> {
-  return {
-    mount(props) {
-      const state: State = {
-        revision: 0,
-        bookmark: bookmark<SettingsBookmark>(null),
-        restoreSettings: false,
-        restoreFailed: false,
-        restoreOriginal: null,
-        serial: 0,
-        pending: null,
-        page: null,
-        selected: null,
-        focus: null,
-        after: null,
-        previous: [],
-        confirmation: null,
-        current: null,
-        notice: null,
-        conflict: false,
-        earlier: [],
-        historyOpen: false,
-        historyNext: null,
-        settings: null,
-        importer: packageImport(),
-        document: null,
-        documentOpen: false,
-        diagnostic: null,
-      };
-      const actions: Action[] = [];
-      page(state, actions, { kind: 'start' });
-      return frame(presentation, state, props, actions);
-    },
-    update(state, props) {
-      state.revision++;
-      return frame(presentation, state, props);
-    },
-    event(state, input, props) {
-      state.revision++;
-      if (input.kind === 'component' && input.child === 'deployment-list' && input.name === 'input')
-        input = input.event as ComponentInput;
-      const actions: Action[] = [],
-        events: Emission[] = [];
-      if (presentation.target === 'tui') {
-        const restored = observeBookmark(
-          state.bookmark,
-          input,
-          'settings-checkpoint',
-          settingsBookmark(state),
-          validSettingsBookmark,
-        );
-        if (restored) {
-          state.settings = {
-            ...instanceSettings(restored.source, restored.instance),
-            path: restored.path,
-            changes: restored.changes,
-            open: restored.open,
-          };
-          state.notice = restored.saved ? 'deploymentSaved' : null;
-          state.restoreSettings = true;
-        }
-        if (input.kind === 'raw' && input.key === 'settings-checkpoint-retry') {
-          if (state.bookmark.observed?.state.kind === 'failed') retryBookmark(state.bookmark);
-          if (state.restoreFailed) {
-            state.restoreFailed = false;
+  return withPageShell<State, DeploymentProps, N>(
+    {
+      mount(props) {
+        const state: State = {
+          revision: 0,
+          bookmark: bookmark<SettingsBookmark>(null),
+          restoreSettings: false,
+          restoreFailed: false,
+          restoreOriginal: null,
+          serial: 0,
+          pending: null,
+          page: null,
+          selected: null,
+          focus: null,
+          after: null,
+          previous: [],
+          confirmation: null,
+          current: null,
+          notice: null,
+          conflict: false,
+          earlier: [],
+          historyOpen: false,
+          historyNext: null,
+          settings: null,
+          importer: packageImport(),
+          document: null,
+          documentOpen: false,
+          diagnostic: null,
+        };
+        const actions: Action[] = [];
+        page(state, actions, { kind: 'start' });
+        return frame(presentation, state, props, actions);
+      },
+      update(state, props) {
+        state.revision++;
+        return frame(presentation, state, props);
+      },
+      event(state, input, props) {
+        state.revision++;
+        if (
+          input.kind === 'component' &&
+          input.child === 'deployment-list' &&
+          input.name === 'input'
+        )
+          input = input.event as ComponentInput;
+        const actions: Action[] = [],
+          events: Emission[] = [];
+        if (presentation.target === 'tui') {
+          const restored = observeBookmark(
+            state.bookmark,
+            input,
+            'settings-checkpoint',
+            settingsBookmark(state),
+            validSettingsBookmark,
+          );
+          if (restored) {
+            state.settings = {
+              ...instanceSettings(restored.source, restored.instance),
+              path: restored.path,
+              changes: restored.changes,
+              open: restored.open,
+            };
+            state.notice = restored.saved ? 'deploymentSaved' : null;
             state.restoreSettings = true;
           }
-        }
-      }
-      if (
-        input.kind === 'component' &&
-        input.child === 'instance-setting-editor' &&
-        state.settings
-      ) {
-        observeSetting(state.settings, input.event as EditorObservation);
-      } else if (
-        input.kind === 'component' &&
-        input.child === 'deployment-import-file' &&
-        input.name === 'changed'
-      ) {
-        if (!sameValue(state.importer.observation, input.event)) {
-          state.importer.installed = null;
-          if (
-            !state.current &&
-            (state.notice === 'deploymentInstalled' || state.notice === 'deploymentInstallRejected')
-          )
-            state.notice = null;
-        }
-        state.importer.observation = input.event as FileObservation;
-        if (
-          state.importer.confirmation &&
-          !sameValue(state.importer.confirmation.file, input.event)
-        )
-          state.importer.confirmation = null;
-      } else if (
-        input.kind === 'component' &&
-        input.child === 'deployment-document-editor' &&
-        input.name === 'changed' &&
-        state.document
-      ) {
-        const next = observeDocument(state.document, input.event as EditorObservation);
-        if (next !== null) readDocument(state, actions, next);
-      } else if (input.kind === 'action') {
-        const pending = state.pending;
-        if (!pending || pending.key !== input.key) return frame(presentation, state, props);
-        state.pending = null;
-        const outcome = input.event as ActionOutcome,
-          r = pending.request;
-        if (r.kind === 'restoreSettings') {
-          if (outcome.status !== 'succeeded') {
-            state.restoreFailed = true;
-            state.notice = 'historyUnavailable';
-            if (state.settings) readSettings(state, actions);
-          } else {
-            const items = outcome.value as CallerIntent[];
-            for (const entry of items) {
-              const recovery = entry.recovery as {
-                kind?: string;
-                bookmarkKey?: string;
-                form?: SettingsBookmark;
-              } | null;
-              if (
-                entry.reference.contract.name === 'maka.application.DeploymentManager' &&
-                entry.reference.method === 'configure' &&
-                recovery?.kind === 'settings/v1' &&
-                recovery.bookmarkKey === (props.bookmarkKey ?? 'deployment') &&
-                sameValue(recovery.form, settingsBookmark(state))
-              )
-                state.restoreOriginal = entry.reference;
+          if (input.kind === 'raw' && input.key === 'settings-checkpoint-retry') {
+            if (state.bookmark.observed?.state.kind === 'failed') retryBookmark(state.bookmark);
+            if (state.restoreFailed) {
+              state.restoreFailed = false;
+              state.restoreSettings = true;
             }
-            const entry = items.at(-1);
-            if (entry) {
-              if (entry.cursor > r.after)
+          }
+        }
+        if (
+          input.kind === 'component' &&
+          input.child === 'instance-setting-editor' &&
+          state.settings
+        ) {
+          observeSetting(state.settings, input.event as EditorObservation);
+        } else if (
+          input.kind === 'component' &&
+          input.child === 'deployment-import-file' &&
+          input.name === 'changed'
+        ) {
+          if (!sameValue(state.importer.observation, input.event)) {
+            state.importer.installed = null;
+            if (
+              !state.current &&
+              (state.notice === 'deploymentInstalled' ||
+                state.notice === 'deploymentInstallRejected')
+            )
+              state.notice = null;
+          }
+          state.importer.observation = input.event as FileObservation;
+          if (
+            state.importer.confirmation &&
+            !sameValue(state.importer.confirmation.file, input.event)
+          )
+            state.importer.confirmation = null;
+        } else if (
+          input.kind === 'component' &&
+          input.child === 'deployment-document-editor' &&
+          input.name === 'changed' &&
+          state.document
+        ) {
+          const next = observeDocument(state.document, input.event as EditorObservation);
+          if (next !== null) readDocument(state, actions, next);
+        } else if (input.kind === 'action') {
+          const pending = state.pending;
+          if (!pending || pending.key !== input.key) return frame(presentation, state, props);
+          state.pending = null;
+          const outcome = input.event as ActionOutcome,
+            r = pending.request;
+          if (r.kind === 'restoreSettings') {
+            if (outcome.status !== 'succeeded') {
+              state.restoreFailed = true;
+              state.notice = 'historyUnavailable';
+              if (state.settings) readSettings(state, actions);
+            } else {
+              const items = outcome.value as CallerIntent[];
+              for (const entry of items) {
+                const recovery = entry.recovery as {
+                  kind?: string;
+                  bookmarkKey?: string;
+                  form?: SettingsBookmark;
+                } | null;
+                if (
+                  entry.reference.contract.name === 'maka.application.DeploymentManager' &&
+                  entry.reference.method === 'configure' &&
+                  recovery?.kind === 'settings/v1' &&
+                  recovery.bookmarkKey === (props.bookmarkKey ?? 'deployment') &&
+                  sameValue(recovery.form, settingsBookmark(state))
+                )
+                  state.restoreOriginal = entry.reference;
+              }
+              const entry = items.at(-1);
+              if (entry) {
+                if (entry.cursor > r.after)
+                  request(
+                    state,
+                    actions,
+                    { kind: 'restoreSettings', after: entry.cursor },
+                    'history',
+                    'page',
+                    { after: entry.cursor, limit: 16 },
+                  );
+                else {
+                  state.restoreFailed = true;
+                  state.notice = 'historyUnavailable';
+                }
+              } else if (state.settings && state.restoreOriginal) {
+                const reference = state.restoreOriginal;
+                state.current = {
+                  intent: {
+                    source: state.settings.source,
+                    configuration: {
+                      expectedRevision: state.settings.source.revision,
+                      instance: state.settings.instance.instance,
+                      changes: state.settings.changes as InstanceConfigure['changes'],
+                    },
+                  },
+                  reference,
+                };
                 request(
                   state,
                   actions,
-                  { kind: 'restoreSettings', after: entry.cursor },
-                  'history',
-                  'page',
-                  { after: entry.cursor, limit: 16 },
+                  { kind: 'receipt', reference },
+                  'receipts',
+                  'read',
+                  reference,
                 );
-              else {
-                state.restoreFailed = true;
-                state.notice = 'historyUnavailable';
-              }
-            } else if (state.settings && state.restoreOriginal) {
-              const reference = state.restoreOriginal;
-              state.current = {
-                intent: {
-                  source: state.settings.source,
-                  configuration: {
-                    expectedRevision: state.settings.source.revision,
-                    instance: state.settings.instance.instance,
-                    changes: state.settings.changes as InstanceConfigure['changes'],
-                  },
-                },
-                reference,
-              };
-              request(
-                state,
-                actions,
-                { kind: 'receipt', reference },
-                'receipts',
-                'read',
-                reference,
-              );
-            } else if (state.settings) readSettings(state, actions);
-          }
-        } else if (r.kind === 'settings') {
-          const settings = state.settings;
-          if (
-            settings &&
-            sameValue(r.input.source, settings.source) &&
-            sameValue(r.input.path, settings.path) &&
-            r.input.after === settings.after
-          ) {
-            const page =
-              outcome.status === 'succeeded' ? (outcome.value as InstanceSettingsPage) : null;
-            if (
-              page &&
-              sameValue(page.source, r.input.source) &&
-              sameValue(page.instance, r.input.instance) &&
-              sameValue(page.path, r.input.path)
-            )
-              settings.page = page;
-            else settings.notice = 'deploymentUnavailable';
-          }
-        } else if (r.kind === 'settingText') {
-          if (state.settings)
-            acceptSettingText(
-              state.settings,
-              r.captured,
-              outcome.status === 'succeeded' ? (outcome.value as TextChunk) : null,
-              r.path,
-            );
-        } else if (r.kind === 'settingsReload') {
-          if (outcome.status === 'succeeded' && state.settings) {
-            const next = outcome.value as ManagedInstancesPage;
-            state.page = next;
-            state.settings = instanceSettings(next.source, state.settings.instance);
-            state.notice = null;
-            state.diagnostic = null;
-            state.conflict = false;
-            readSettings(state, actions);
-          } else if (state.settings) state.settings.notice = 'deploymentUnavailable';
-        } else if (r.kind === 'document') {
-          const editor = state.document;
-          if (editor && sameValue(editor.source, r.source) && editor.offset === r.offset) {
-            if (outcome.status === 'succeeded')
-              acceptDocumentChunk(editor, outcome.value as DeploymentDocumentChunk);
-            else editor.phase = 'failed';
-          }
-        } else if (r.kind === 'documentReload') {
-          if (outcome.status === 'succeeded' && state.document) {
-            const value = outcome.value as ManagedInstancesPage,
-              old = state.document;
-            state.document = documentEditor(value.source);
-            state.document.observation = old.observation;
-            state.document.sequence = old.sequence;
-            state.page = value;
-            state.previous = [];
-            state.after = null;
-            state.conflict = false;
-            state.notice = null;
-            state.diagnostic = null;
-            readDocument(state, actions, 0);
-          } else state.notice = 'deploymentUnavailable';
-        } else if (r.kind === 'page') {
-          if (outcome.status === 'succeeded') {
-            const value = outcome.value as ManagedInstancesPage;
-            if (r.input.kind === 'continue' && !sameValue(value.source, r.input.source))
-              state.notice = 'deploymentUnavailable';
-            else {
-              if (r.movement === 'reset') {
-                state.previous = [];
-                state.after = null;
-                state.conflict = false;
-              } else if (r.movement === 'next') {
-                state.previous.push(state.after);
-                state.after = r.input.kind === 'continue' ? r.input.after : null;
-              } else {
-                state.after = state.previous.pop()!;
-              }
-              state.page = value;
-              if (!value.instances.some((entry) => sameValue(entry.instance, state.selected)))
-                state.selected = value.instances[0]?.instance ?? null;
-              if (presentation.target === 'tui' && state.selected)
-                state.focus = {
-                  sequence: (state.focus?.sequence ?? 0) + 1,
-                  target: {
-                    kind: 'focus_item',
-                    key:
-                      'deployment-select-' +
-                      value.instances.findIndex((entry) =>
-                        sameValue(entry.instance, state.selected),
-                      ),
-                  },
-                };
-              if (
-                state.importer.confirmation &&
-                !sameValue(state.importer.confirmation.source, value.source)
-              )
-                state.importer.confirmation = null;
+              } else if (state.settings) readSettings(state, actions);
             }
-          } else state.notice = 'deploymentUnavailable';
-        } else if (r.kind === 'mutate') {
-          if (outcome.status === 'operation') settle(state, outcome.reply, actions);
-          else if (outcome.status === 'not_accepted') {
-            state.current = null;
-            state.notice = 'deploymentRejected';
-          } else state.notice = 'deploymentUnknown';
-        } else if (r.kind === 'receipt') {
+          } else if (r.kind === 'settings') {
+            const settings = state.settings;
+            if (
+              settings &&
+              sameValue(r.input.source, settings.source) &&
+              sameValue(r.input.path, settings.path) &&
+              r.input.after === settings.after
+            ) {
+              const page =
+                outcome.status === 'succeeded' ? (outcome.value as InstanceSettingsPage) : null;
+              if (
+                page &&
+                sameValue(page.source, r.input.source) &&
+                sameValue(page.instance, r.input.instance) &&
+                sameValue(page.path, r.input.path)
+              )
+                settings.page = page;
+              else settings.notice = 'deploymentUnavailable';
+            }
+          } else if (r.kind === 'settingText') {
+            if (state.settings)
+              acceptSettingText(
+                state.settings,
+                r.captured,
+                outcome.status === 'succeeded' ? (outcome.value as TextChunk) : null,
+                r.path,
+              );
+          } else if (r.kind === 'settingsReload') {
+            if (outcome.status === 'succeeded' && state.settings) {
+              const next = outcome.value as ManagedInstancesPage;
+              state.page = next;
+              state.settings = instanceSettings(next.source, state.settings.instance);
+              state.notice = null;
+              state.diagnostic = null;
+              state.conflict = false;
+              readSettings(state, actions);
+            } else if (state.settings) state.settings.notice = 'deploymentUnavailable';
+          } else if (r.kind === 'document') {
+            const editor = state.document;
+            if (editor && sameValue(editor.source, r.source) && editor.offset === r.offset) {
+              if (outcome.status === 'succeeded')
+                acceptDocumentChunk(editor, outcome.value as DeploymentDocumentChunk);
+              else editor.phase = 'failed';
+            }
+          } else if (r.kind === 'documentReload') {
+            if (outcome.status === 'succeeded' && state.document) {
+              const value = outcome.value as ManagedInstancesPage,
+                old = state.document;
+              state.document = documentEditor(value.source);
+              state.document.observation = old.observation;
+              state.document.sequence = old.sequence;
+              state.page = value;
+              state.previous = [];
+              state.after = null;
+              state.conflict = false;
+              state.notice = null;
+              state.diagnostic = null;
+              readDocument(state, actions, 0);
+            } else state.notice = 'deploymentUnavailable';
+          } else if (r.kind === 'page') {
+            if (outcome.status === 'succeeded') {
+              const value = outcome.value as ManagedInstancesPage;
+              if (r.input.kind === 'continue' && !sameValue(value.source, r.input.source))
+                state.notice = 'deploymentUnavailable';
+              else {
+                if (r.movement === 'reset') {
+                  state.previous = [];
+                  state.after = null;
+                  state.conflict = false;
+                } else if (r.movement === 'next') {
+                  state.previous.push(state.after);
+                  state.after = r.input.kind === 'continue' ? r.input.after : null;
+                } else {
+                  state.after = state.previous.pop()!;
+                }
+                state.page = value;
+                if (!value.instances.some((entry) => sameValue(entry.instance, state.selected)))
+                  state.selected = value.instances[0]?.instance ?? null;
+                if (presentation.target === 'tui' && state.selected)
+                  state.focus = {
+                    sequence: (state.focus?.sequence ?? 0) + 1,
+                    target: {
+                      kind: 'focus_item',
+                      key:
+                        'deployment-select-' +
+                        value.instances.findIndex((entry) =>
+                          sameValue(entry.instance, state.selected),
+                        ),
+                    },
+                  };
+                if (
+                  state.importer.confirmation &&
+                  !sameValue(state.importer.confirmation.source, value.source)
+                )
+                  state.importer.confirmation = null;
+              }
+            } else state.notice = 'deploymentUnavailable';
+          } else if (r.kind === 'mutate') {
+            if (outcome.status === 'operation') settle(state, outcome.reply, actions);
+            else if (outcome.status === 'not_accepted') {
+              state.current = null;
+              state.notice = 'deploymentRejected';
+            } else state.notice = 'deploymentUnknown';
+          } else if (r.kind === 'receipt') {
+            if (
+              outcome.status === 'succeeded' &&
+              sameValue((outcome.value as OperationReply).reference, r.reference)
+            ) {
+              const reply = outcome.value as OperationReply;
+              if (state.current?.reference && sameValue(state.current.reference, r.reference))
+                settle(state, reply, actions);
+              const entry = state.earlier.find((entry) => sameValue(entry.reference, r.reference));
+              if (entry) entry.reply = reply;
+            } else state.notice = 'deploymentUnknown';
+          } else if (outcome.status === 'succeeded') {
+            const items = outcome.value as CallerIntent[];
+            state.historyNext = items.length === 2 ? items[items.length - 1].cursor : null;
+            state.earlier = items
+              .filter(
+                (entry) =>
+                  entry.reference.contract.name === 'maka.application.DeploymentManager' &&
+                  (entry.reference.method === 'setEnabled' ||
+                    entry.reference.method === 'replace' ||
+                    entry.reference.method === 'configure' ||
+                    entry.reference.method === 'install'),
+              )
+              .map((entry) => ({ cursor: entry.cursor, reference: entry.reference, reply: null }));
+          } else state.notice = 'historyUnavailable';
+        } else if (input.kind === 'raw') {
+          // Until the original draft/intent has been reconciled, editing it would
+          // break the correlation needed to query an accepted save after reload.
+          if (state.restoreFailed || (presentation.target === 'tui' && !state.bookmark.restored))
+            return frame(presentation, state, props);
           if (
-            outcome.status === 'succeeded' &&
-            sameValue((outcome.value as OperationReply).reference, r.reference)
-          ) {
-            const reply = outcome.value as OperationReply;
-            if (state.current?.reference && sameValue(state.current.reference, r.reference))
-              settle(state, reply, actions);
-            const entry = state.earlier.find((entry) => sameValue(entry.reference, r.reference));
-            if (entry) entry.reply = reply;
-          } else state.notice = 'deploymentUnknown';
-        } else if (outcome.status === 'succeeded') {
-          const items = outcome.value as CallerIntent[];
-          state.historyNext = items.length === 2 ? items[items.length - 1].cursor : null;
-          state.earlier = items
-            .filter(
-              (entry) =>
-                entry.reference.contract.name === 'maka.application.DeploymentManager' &&
-                (entry.reference.method === 'setEnabled' ||
-                  entry.reference.method === 'replace' ||
-                  entry.reference.method === 'configure' ||
-                  entry.reference.method === 'install'),
-            )
-            .map((entry) => ({ cursor: entry.cursor, reference: entry.reference, reply: null }));
-        } else state.notice = 'historyUnavailable';
-      } else if (input.kind === 'raw') {
-        // Until the original draft/intent has been reconciled, editing it would
-        // break the correlation needed to query an accepted save after reload.
-        if (state.restoreFailed || (presentation.target === 'tui' && !state.bookmark.restored))
-          return frame(presentation, state, props);
-        if (
-          state.document?.phase === 'loading' &&
-          input.key !== 'deployment-document-back' &&
-          input.key !== 'deployment-back'
-        )
-          return frame(presentation, state, props);
-        const settings = state.settings;
-        if (settings?.open && input.key.startsWith('instance-')) {
-          if (state.pending || state.current) return frame(presentation, state, props);
-          const key = input.key;
-          if (key === 'instance-setting-cancel' || key === 'instance-setting-dialog') {
-            settings.field = null;
-            settings.discard = null;
-          } else if (key === 'instance-settings-back' && settings.changes.length) {
-            settings.discard = 'close';
-          } else if (key === 'instance-settings-back') {
-            settings.open = false;
-            settings.field = null;
-            page(state, actions, { kind: 'start' });
-          } else if (key === 'instance-settings-reload') {
-            if (settings.changes.length) settings.discard = 'reload';
-            else
-              request(state, actions, { kind: 'settingsReload' }, 'management', 'instances', {
-                kind: 'start',
-              });
-          } else if (key === 'instance-settings-discard' && settings.discard) {
-            const target = settings.discard;
-            settings.discard = null;
-            settings.changes = [];
-            if (target === 'reload')
-              request(state, actions, { kind: 'settingsReload' }, 'management', 'instances', {
-                kind: 'start',
-              });
-            else if (target === 'close') {
+            state.document?.phase === 'loading' &&
+            input.key !== 'deployment-document-back' &&
+            input.key !== 'deployment-back'
+          )
+            return frame(presentation, state, props);
+          const settings = state.settings;
+          if (settings?.open && input.key.startsWith('instance-')) {
+            if (state.pending || state.current) return frame(presentation, state, props);
+            const key = input.key;
+            if (key === 'instance-setting-cancel' || key === 'instance-setting-dialog') {
+              settings.field = null;
+              settings.discard = null;
+            } else if (key === 'instance-settings-back' && settings.changes.length) {
+              settings.discard = 'close';
+            } else if (key === 'instance-settings-back') {
               settings.open = false;
               settings.field = null;
               page(state, actions, { kind: 'start' });
-            } else {
-              state.settings = null;
-              openSettings(state, actions, target);
+            } else if (key === 'instance-settings-reload') {
+              if (settings.changes.length) settings.discard = 'reload';
+              else
+                request(state, actions, { kind: 'settingsReload' }, 'management', 'instances', {
+                  kind: 'start',
+                });
+            } else if (key === 'instance-settings-discard' && settings.discard) {
+              const target = settings.discard;
+              settings.discard = null;
+              settings.changes = [];
+              if (target === 'reload')
+                request(state, actions, { kind: 'settingsReload' }, 'management', 'instances', {
+                  kind: 'start',
+                });
+              else if (target === 'close') {
+                settings.open = false;
+                settings.field = null;
+                page(state, actions, { kind: 'start' });
+              } else {
+                state.settings = null;
+                openSettings(state, actions, target);
+              }
+            } else if (key === 'instance-settings-up' && settings.path.length) {
+              settings.path.pop();
+              settings.after = null;
+              settings.previous = [];
+              settings.page = null;
+              readSettings(state, actions);
+            } else if (key === 'instance-settings-next' && settings.page?.next) {
+              settings.previous.push(settings.after);
+              settings.after = settings.page.next;
+              settings.page = null;
+              readSettings(state, actions);
+            } else if (key === 'instance-settings-previous' && settings.previous.length) {
+              settings.after = settings.previous.pop()!;
+              settings.page = null;
+              readSettings(state, actions);
+            } else if (
+              key === 'instance-settings-save' &&
+              settings.changes.length &&
+              !settings.conflict &&
+              !settings.field &&
+              !state.restoreFailed &&
+              (presentation.target !== 'tui' ||
+                (props.navigationReady !== false &&
+                  bookmarkReady(state.bookmark, settingsBookmark(state))))
+            ) {
+              const configuration: InstanceConfigure = {
+                expectedRevision: settings.source.revision,
+                instance: settings.instance.instance,
+                changes: JSON.parse(
+                  JSON.stringify(settings.changes),
+                ) as InstanceConfigure['changes'],
+              };
+              state.current = {
+                intent: { source: settings.source, configuration },
+                reference: null,
+              };
+              state.notice = null;
+              state.diagnostic = null;
+              request(
+                state,
+                actions,
+                { kind: 'mutate' },
+                'management',
+                'configure',
+                configuration,
+                {},
+                {
+                  kind: 'settings/v1',
+                  bookmarkKey: props.bookmarkKey ?? 'deployment',
+                  form: settingsBookmark(state),
+                },
+              );
+            } else if (
+              key === 'instance-setting-apply' &&
+              settings.field &&
+              settings.initialized &&
+              !settings.command &&
+              settings.observation &&
+              !settings.observation.snapshot.marked
+            ) {
+              const captured = settings.observation;
+              if (captured.snapshot.text.bytes > 16384) settings.notice = 'settingsReadFailed';
+              else
+                request(
+                  state,
+                  actions,
+                  { kind: 'settingText', captured, path: settings.field.path },
+                  'reader',
+                  'read',
+                  { start: 0, end: captured.snapshot.text.bytes },
+                  {
+                    text: {
+                      child: 'instance-setting-editor',
+                      method: 'snapshot',
+                      input: {
+                        kind: 'at_revision',
+                        owner: captured.snapshot.text.owner,
+                        revision: captured.revision,
+                      },
+                    },
+                  },
+                );
+            } else if (!settings.conflict && !settings.field && !settings.discard) {
+              const match = /^instance-setting-(?:(choice|clear|null)-)?(0|[1-9][0-9]*)$/.exec(key);
+              const field = match && settings.page?.fields[Number(match[2])];
+              if (field?.editable) {
+                const path = [...settings.path, field.key];
+                if (
+                  match![1] === 'clear' &&
+                  !field.required &&
+                  (settings.path.length > 0 || settings.instance.path.length === 1)
+                )
+                  editSetting(settings, path, null);
+                else if (match![1] === 'null' && field.nullable)
+                  editSetting(settings, path, { kind: 'null' });
+                else if (match![1] === 'choice') {
+                  const at = (input.event as { key: string }).key;
+                  const options = settingOptions(field);
+                  if (/^(0|[1-9][0-9]*)$/.test(at) && options[Number(at)])
+                    editSetting(settings, path, options[Number(at)]!);
+                } else if (field.kind === 'object' || field.kind === 'array') {
+                  if (field.present && path.length < 16) {
+                    settings.path = path;
+                    settings.after = null;
+                    settings.previous = [];
+                    settings.page = null;
+                    readSettings(state, actions);
+                  }
+                } else if (field.kind === 'boolean') {
+                  const value = settingValue(settings, field);
+                  editSetting(settings, path, {
+                    kind: 'boolean',
+                    value: !(value?.kind === 'boolean' && value.value),
+                  });
+                } else if (field.kind === 'null') editSetting(settings, path, { kind: 'null' });
+                else openSetting(settings, field);
+              }
             }
-          } else if (key === 'instance-settings-up' && settings.path.length) {
-            settings.path.pop();
-            settings.after = null;
-            settings.previous = [];
-            settings.page = null;
-            readSettings(state, actions);
-          } else if (key === 'instance-settings-next' && settings.page?.next) {
-            settings.previous.push(settings.after);
-            settings.after = settings.page.next;
-            settings.page = null;
-            readSettings(state, actions);
-          } else if (key === 'instance-settings-previous' && settings.previous.length) {
-            settings.after = settings.previous.pop()!;
-            settings.page = null;
-            readSettings(state, actions);
+            return frame(presentation, state, props, actions, events);
+          }
+          let key = input.key;
+          if (key === 'deployment-dialog')
+            key = state.confirmation ? 'deployment-cancel' : 'deployment-history-back';
+          if (key === 'deployment-document-dialog') key = 'deployment-document-cancel';
+          if (key === 'deployment-import-dialog') key = 'deployment-import-cancel';
+          if (/^deployment-select-(0|[1-9][0-9]*)$/.test(key) && !state.pending && !state.current) {
+            const at = Number(key.slice('deployment-select-'.length));
+            const entry = state.page?.instances[at];
+            if (entry) {
+              state.selected = entry.instance;
+              if ((input.event as { kind?: string } | null)?.kind === 'submit')
+                key = entry.structural ? 'deployment-toggle-' + at : 'deployment-configure-' + at;
+            }
+          }
+          if (key === 'deployment-import-check') key = 'deployment-check';
+          if (key === 'deployment-import-refresh') key = 'deployment-refresh';
+          if (key === 'deployment-import-advanced') key = 'deployment-advanced';
+          const importer = state.importer;
+          if (key === 'deployment-import-history') {
+            importer.open = false;
+            key = 'deployment-history';
+          }
+          if (key === 'deployment-import-back') {
+            importer.open = false;
+            importer.confirmation = null;
           } else if (
-            key === 'instance-settings-save' &&
-            settings.changes.length &&
-            !settings.conflict &&
-            !settings.field &&
-            !state.restoreFailed &&
-            (presentation.target !== 'tui' ||
-              (props.navigationReady !== false &&
-                bookmarkReady(state.bookmark, settingsBookmark(state))))
+            key === 'deployment-import' &&
+            !state.pending &&
+            !state.current &&
+            state.page
           ) {
-            const configuration: InstanceConfigure = {
-              expectedRevision: settings.source.revision,
-              instance: settings.instance.instance,
-              changes: JSON.parse(JSON.stringify(settings.changes)) as InstanceConfigure['changes'],
-            };
-            state.current = { intent: { source: settings.source, configuration }, reference: null };
+            importer.open = true;
+            importer.confirmation = null;
+            state.documentOpen = false;
+            state.historyOpen = false;
+          } else if (key === 'deployment-import-cancel' && !state.pending && !state.current) {
+            importer.confirmation = null;
+          } else if (
+            key === 'deployment-import-install' &&
+            state.page &&
+            canInstall(importer, !!state.pending || !!state.current, state.conflict)
+          ) {
+            importer.confirmation = JSON.parse(
+              JSON.stringify({ source: state.page.source, file: importer.observation }),
+            ) as InstallIntent;
+          } else if (
+            key === 'deployment-import-confirm' &&
+            importer.confirmation &&
+            state.page &&
+            canInstall(importer, !!state.pending || !!state.current, state.conflict) &&
+            sameValue(importer.confirmation.file, importer.observation) &&
+            sameValue(importer.confirmation.source, state.page.source)
+          ) {
+            const intent = importer.confirmation;
+            importer.confirmation = null;
+            state.current = { intent, reference: null };
+            state.notice = null;
+            request(
+              state,
+              actions,
+              { kind: 'mutate' },
+              'management',
+              'install',
+              { expectedRevision: intent.source.revision },
+              {
+                package: {
+                  child: 'deployment-import-file',
+                  method: 'snapshot',
+                  input: { owner: intent.file.owner, revision: intent.file.revision },
+                },
+              },
+            );
+          }
+          if (key === 'deployment-document-check') key = 'deployment-check';
+          if (key === 'deployment-document-history') {
+            state.documentOpen = false;
+            key = 'deployment-history';
+          }
+          const editor = state.document;
+          if (key === 'deployment-document-back') {
+            state.documentOpen = false;
+            if (editor) {
+              editor.confirmation = null;
+              editor.reloadConfirmation = false;
+            }
+          } else if (
+            key === 'deployment-advanced' &&
+            !state.pending &&
+            !state.current &&
+            state.page
+          ) {
+            state.historyOpen = false;
+            importer.open = false;
+            importer.confirmation = null;
+            state.documentOpen = true;
+            if (!editor) {
+              state.notice = null;
+              state.diagnostic = null;
+              state.document = documentEditor(state.page.source);
+              readDocument(state, actions, 0);
+            }
+          } else if (
+            key === 'deployment-document-cancel' &&
+            editor &&
+            !state.pending &&
+            !state.current
+          ) {
+            editor.confirmation = null;
+            editor.reloadConfirmation = false;
+          } else if (
+            key === 'deployment-document-save' &&
+            editor &&
+            canSaveDocument(editor, !!state.pending || !!state.current)
+          ) {
+            editor.confirmation = JSON.parse(
+              JSON.stringify(editor.observation),
+            ) as EditorObservation;
+          } else if (
+            key === 'deployment-document-confirm' &&
+            editor?.confirmation &&
+            canSaveDocument(editor, !!state.pending || !!state.current)
+          ) {
+            const frozen = editor.confirmation;
+            editor.confirmation = null;
+            state.current = { intent: { source: editor.source, editor: frozen }, reference: null };
             state.notice = null;
             state.diagnostic = null;
             request(
@@ -1123,343 +1345,158 @@ export function deployment<N extends Node>(
               actions,
               { kind: 'mutate' },
               'management',
-              'configure',
-              configuration,
-              {},
+              'replace',
+              { expectedRevision: editor.source.revision },
               {
-                kind: 'settings/v1',
-                bookmarkKey: props.bookmarkKey ?? 'deployment',
-                form: settingsBookmark(state),
+                document: {
+                  child: 'deployment-document-editor',
+                  method: 'snapshot',
+                  input: {
+                    kind: 'at_revision',
+                    owner: frozen.snapshot.text.owner,
+                    revision: frozen.revision,
+                  },
+                },
               },
             );
           } else if (
-            key === 'instance-setting-apply' &&
-            settings.field &&
-            settings.initialized &&
-            !settings.command &&
-            settings.observation &&
-            !settings.observation.snapshot.marked
+            key === 'deployment-document-reload' &&
+            editor &&
+            !state.pending &&
+            !state.current &&
+            editor.phase !== 'loading'
           ) {
-            const captured = settings.observation;
-            if (captured.snapshot.text.bytes > 16384) settings.notice = 'settingsReadFailed';
-            else
-              request(
-                state,
-                actions,
-                { kind: 'settingText', captured, path: settings.field.path },
-                'reader',
-                'read',
-                { start: 0, end: captured.snapshot.text.bytes },
-                {
-                  text: {
-                    child: 'instance-setting-editor',
-                    method: 'snapshot',
-                    input: {
-                      kind: 'at_revision',
-                      owner: captured.snapshot.text.owner,
-                      revision: captured.revision,
-                    },
-                  },
-                },
-              );
-          } else if (!settings.conflict && !settings.field && !settings.discard) {
-            const match = /^instance-setting-(?:(choice|clear|null)-)?(0|[1-9][0-9]*)$/.exec(key);
-            const field = match && settings.page?.fields[Number(match[2])];
-            if (field?.editable) {
-              const path = [...settings.path, field.key];
-              if (
-                match![1] === 'clear' &&
-                !field.required &&
-                (settings.path.length > 0 || settings.instance.path.length === 1)
-              )
-                editSetting(settings, path, null);
-              else if (match![1] === 'null' && field.nullable)
-                editSetting(settings, path, { kind: 'null' });
-              else if (match![1] === 'choice') {
-                const at = (input.event as { key: string }).key;
-                const options = settingOptions(field);
-                if (/^(0|[1-9][0-9]*)$/.test(at) && options[Number(at)])
-                  editSetting(settings, path, options[Number(at)]!);
-              } else if (field.kind === 'object' || field.kind === 'array') {
-                if (field.present && path.length < 16) {
-                  settings.path = path;
-                  settings.after = null;
-                  settings.previous = [];
-                  settings.page = null;
-                  readSettings(state, actions);
-                }
-              } else if (field.kind === 'boolean') {
-                const value = settingValue(settings, field);
-                editSetting(settings, path, {
-                  kind: 'boolean',
-                  value: !(value?.kind === 'boolean' && value.value),
-                });
-              } else if (field.kind === 'null') editSetting(settings, path, { kind: 'null' });
-              else openSetting(settings, field);
-            }
-          }
-          return frame(presentation, state, props, actions, events);
-        }
-        let key = input.key;
-        if (key === 'deployment-dialog')
-          key = state.confirmation ? 'deployment-cancel' : 'deployment-history-back';
-        if (key === 'deployment-document-dialog') key = 'deployment-document-cancel';
-        if (key === 'deployment-import-dialog') key = 'deployment-import-cancel';
-        if (/^deployment-select-(0|[1-9][0-9]*)$/.test(key) && !state.pending && !state.current) {
-          const at = Number(key.slice('deployment-select-'.length));
-          const entry = state.page?.instances[at];
-          if (entry) {
-            state.selected = entry.instance;
-            if ((input.event as { kind?: string } | null)?.kind === 'submit')
-              key = entry.structural ? 'deployment-toggle-' + at : 'deployment-configure-' + at;
-          }
-        }
-        if (key === 'deployment-import-check') key = 'deployment-check';
-        if (key === 'deployment-import-refresh') key = 'deployment-refresh';
-        if (key === 'deployment-import-advanced') key = 'deployment-advanced';
-        const importer = state.importer;
-        if (key === 'deployment-import-history') {
-          importer.open = false;
-          key = 'deployment-history';
-        }
-        if (key === 'deployment-import-back') {
-          importer.open = false;
-          importer.confirmation = null;
-        } else if (key === 'deployment-import' && !state.pending && !state.current && state.page) {
-          importer.open = true;
-          importer.confirmation = null;
-          state.documentOpen = false;
-          state.historyOpen = false;
-        } else if (key === 'deployment-import-cancel' && !state.pending && !state.current) {
-          importer.confirmation = null;
-        } else if (
-          key === 'deployment-import-install' &&
-          state.page &&
-          canInstall(importer, !!state.pending || !!state.current, state.conflict)
-        ) {
-          importer.confirmation = JSON.parse(
-            JSON.stringify({ source: state.page.source, file: importer.observation }),
-          ) as InstallIntent;
-        } else if (
-          key === 'deployment-import-confirm' &&
-          importer.confirmation &&
-          state.page &&
-          canInstall(importer, !!state.pending || !!state.current, state.conflict) &&
-          sameValue(importer.confirmation.file, importer.observation) &&
-          sameValue(importer.confirmation.source, state.page.source)
-        ) {
-          const intent = importer.confirmation;
-          importer.confirmation = null;
-          state.current = { intent, reference: null };
-          state.notice = null;
-          request(
-            state,
-            actions,
-            { kind: 'mutate' },
-            'management',
-            'install',
-            { expectedRevision: intent.source.revision },
-            {
-              package: {
-                child: 'deployment-import-file',
-                method: 'snapshot',
-                input: { owner: intent.file.owner, revision: intent.file.revision },
-              },
-            },
-          );
-        }
-        if (key === 'deployment-document-check') key = 'deployment-check';
-        if (key === 'deployment-document-history') {
-          state.documentOpen = false;
-          key = 'deployment-history';
-        }
-        const editor = state.document;
-        if (key === 'deployment-document-back') {
-          state.documentOpen = false;
-          if (editor) {
-            editor.confirmation = null;
+            editor.reloadConfirmation = true;
+          } else if (
+            key === 'deployment-document-reload-confirm' &&
+            editor?.reloadConfirmation &&
+            !state.pending &&
+            !state.current
+          ) {
             editor.reloadConfirmation = false;
+            request(state, actions, { kind: 'documentReload' }, 'management', 'instances', {
+              kind: 'start',
+            });
           }
-        } else if (
-          key === 'deployment-advanced' &&
-          !state.pending &&
-          !state.current &&
-          state.page
-        ) {
-          state.historyOpen = false;
-          importer.open = false;
-          importer.confirmation = null;
-          state.documentOpen = true;
-          if (!editor) {
-            state.notice = null;
-            state.diagnostic = null;
-            state.document = documentEditor(state.page.source);
-            readDocument(state, actions, 0);
-          }
-        } else if (
-          key === 'deployment-document-cancel' &&
-          editor &&
-          !state.pending &&
-          !state.current
-        ) {
-          editor.confirmation = null;
-          editor.reloadConfirmation = false;
-        } else if (
-          key === 'deployment-document-save' &&
-          editor &&
-          canSaveDocument(editor, !!state.pending || !!state.current)
-        ) {
-          editor.confirmation = JSON.parse(JSON.stringify(editor.observation)) as EditorObservation;
-        } else if (
-          key === 'deployment-document-confirm' &&
-          editor?.confirmation &&
-          canSaveDocument(editor, !!state.pending || !!state.current)
-        ) {
-          const frozen = editor.confirmation;
-          editor.confirmation = null;
-          state.current = { intent: { source: editor.source, editor: frozen }, reference: null };
-          state.notice = null;
-          state.diagnostic = null;
-          request(
-            state,
-            actions,
-            { kind: 'mutate' },
-            'management',
-            'replace',
-            { expectedRevision: editor.source.revision },
-            {
-              document: {
-                child: 'deployment-document-editor',
-                method: 'snapshot',
-                input: {
-                  kind: 'at_revision',
-                  owner: frozen.snapshot.text.owner,
-                  revision: frozen.revision,
-                },
-              },
-            },
-          );
-        } else if (
-          key === 'deployment-document-reload' &&
-          editor &&
-          !state.pending &&
-          !state.current &&
-          editor.phase !== 'loading'
-        ) {
-          editor.reloadConfirmation = true;
-        } else if (
-          key === 'deployment-document-reload-confirm' &&
-          editor?.reloadConfirmation &&
-          !state.pending &&
-          !state.current
-        ) {
-          editor.reloadConfirmation = false;
-          request(state, actions, { kind: 'documentReload' }, 'management', 'instances', {
-            kind: 'start',
-          });
-        }
-        if (
-          key === 'deployment-back' &&
-          !state.settings?.open &&
-          !(state.current && 'configuration' in state.current.intent)
-        )
-          events.push({ name: 'closed', value: {} });
-        else if (key === 'deployment-cancel' && !state.current) state.confirmation = null;
-        else if (key === 'deployment-history-back') state.historyOpen = false;
-        else if (key === 'deployment-history' && !state.pending) {
-          state.historyOpen = true;
-          request(state, actions, { kind: 'history', after: 0 }, 'history', 'page', {
-            after: 0,
-            limit: 2,
-          });
-        } else if (key === 'deployment-history-refresh' && !state.pending)
-          request(state, actions, { kind: 'history', after: 0 }, 'history', 'page', {
-            after: 0,
-            limit: 2,
-          });
-        else if (key === 'deployment-history-more' && !state.pending && state.historyNext !== null)
-          request(
-            state,
-            actions,
-            { kind: 'history', after: state.historyNext },
-            'history',
-            'page',
-            { after: state.historyNext, limit: 2 },
-          );
-        else if (/^deployment-earlier-check-(0|[1-9][0-9]*)$/.test(key) && !state.pending) {
-          const entry = state.earlier[Number(key.slice('deployment-earlier-check-'.length))];
-          if (entry)
+          if (
+            key === 'deployment-back' &&
+            !state.settings?.open &&
+            !(state.current && 'configuration' in state.current.intent)
+          )
+            events.push({ name: 'closed', value: {} });
+          else if (key === 'deployment-cancel' && !state.current) state.confirmation = null;
+          else if (key === 'deployment-history-back') state.historyOpen = false;
+          else if (key === 'deployment-history' && !state.pending) {
+            state.historyOpen = true;
+            request(state, actions, { kind: 'history', after: 0 }, 'history', 'page', {
+              after: 0,
+              limit: 2,
+            });
+          } else if (key === 'deployment-history-refresh' && !state.pending)
+            request(state, actions, { kind: 'history', after: 0 }, 'history', 'page', {
+              after: 0,
+              limit: 2,
+            });
+          else if (
+            key === 'deployment-history-more' &&
+            !state.pending &&
+            state.historyNext !== null
+          )
             request(
               state,
               actions,
-              { kind: 'receipt', reference: entry.reference },
+              { kind: 'history', after: state.historyNext },
+              'history',
+              'page',
+              { after: state.historyNext, limit: 2 },
+            );
+          else if (/^deployment-earlier-check-(0|[1-9][0-9]*)$/.test(key) && !state.pending) {
+            const entry = state.earlier[Number(key.slice('deployment-earlier-check-'.length))];
+            if (entry)
+              request(
+                state,
+                actions,
+                { kind: 'receipt', reference: entry.reference },
+                'receipts',
+                'read',
+                entry.reference,
+              );
+          } else if (key === 'deployment-check' && !state.pending && state.current?.reference)
+            request(
+              state,
+              actions,
+              { kind: 'receipt', reference: state.current.reference },
               'receipts',
               'read',
-              entry.reference,
+              state.current.reference,
             );
-        } else if (key === 'deployment-check' && !state.pending && state.current?.reference)
-          request(
-            state,
-            actions,
-            { kind: 'receipt', reference: state.current.reference },
-            'receipts',
-            'read',
-            state.current.reference,
-          );
-        else if (!state.pending && !state.current) {
-          if (/^deployment-configure-(0|[1-9][0-9]*)$/.test(key) && state.page && !state.conflict) {
-            const instance =
-              state.page.instances[Number(key.slice('deployment-configure-'.length))];
-            if (instance) openSettings(state, actions, instance);
-          } else if (key === 'deployment-refresh') {
-            state.confirmation = null;
-            page(state, actions, { kind: 'start' });
-          } else if (key === 'deployment-confirm' && state.confirmation) {
-            const intent = state.confirmation;
-            state.confirmation = null;
-            state.current = { intent, reference: null };
-            state.notice = null;
-            request(state, actions, { kind: 'mutate' }, 'management', 'setEnabled', {
-              expectedRevision: intent.source.revision,
-              instance: intent.instance.instance,
-              enabled: intent.enabled,
-            });
-          } else if (key === 'deployment-next' && state.page?.next) {
-            page(
-              state,
-              actions,
-              { kind: 'continue', source: state.page.source, after: state.page.next },
-              'next',
-            );
-          } else if (key === 'deployment-previous' && state.page && state.previous.length) {
-            page(
-              state,
-              actions,
-              {
-                kind: 'continue',
-                source: state.page.source,
-                after: state.previous[state.previous.length - 1],
-              },
-              'previous',
-            );
-          } else if (
-            /^deployment-toggle-(0|[1-9][0-9]*)$/.test(key) &&
-            state.page &&
-            !state.conflict
-          ) {
-            const instance = state.page.instances[Number(key.slice('deployment-toggle-'.length))];
-            if (instance && !(instance.disabled && instance.parentDisabled))
-              state.confirmation = {
-                source: state.page.source,
-                instance,
-                enabled: instance.disabled,
-              };
+          else if (!state.pending && !state.current) {
+            if (
+              /^deployment-configure-(0|[1-9][0-9]*)$/.test(key) &&
+              state.page &&
+              !state.conflict
+            ) {
+              const instance =
+                state.page.instances[Number(key.slice('deployment-configure-'.length))];
+              if (instance) openSettings(state, actions, instance);
+            } else if (key === 'deployment-refresh') {
+              state.confirmation = null;
+              page(state, actions, { kind: 'start' });
+            } else if (key === 'deployment-confirm' && state.confirmation) {
+              const intent = state.confirmation;
+              state.confirmation = null;
+              state.current = { intent, reference: null };
+              state.notice = null;
+              request(state, actions, { kind: 'mutate' }, 'management', 'setEnabled', {
+                expectedRevision: intent.source.revision,
+                instance: intent.instance.instance,
+                enabled: intent.enabled,
+              });
+            } else if (key === 'deployment-next' && state.page?.next) {
+              page(
+                state,
+                actions,
+                { kind: 'continue', source: state.page.source, after: state.page.next },
+                'next',
+              );
+            } else if (key === 'deployment-previous' && state.page && state.previous.length) {
+              page(
+                state,
+                actions,
+                {
+                  kind: 'continue',
+                  source: state.page.source,
+                  after: state.previous[state.previous.length - 1],
+                },
+                'previous',
+              );
+            } else if (
+              /^deployment-toggle-(0|[1-9][0-9]*)$/.test(key) &&
+              state.page &&
+              !state.conflict
+            ) {
+              const instance = state.page.instances[Number(key.slice('deployment-toggle-'.length))];
+              if (instance && !(instance.disabled && instance.parentDisabled))
+                state.confirmation = {
+                  source: state.page.source,
+                  instance,
+                  enabled: instance.disabled,
+                };
+            }
           }
         }
-      }
-      return frame(presentation, state, props, actions, events);
+        return frame(presentation, state, props, actions, events);
+      },
     },
-  };
+    (state) =>
+      state.settings?.open
+        ? 'instance-settings-back'
+        : state.importer.open
+          ? 'deployment-import-back'
+          : state.documentOpen
+            ? 'deployment-document-back'
+            : 'deployment-back',
+  );
 }
 export function activate() {
   return {

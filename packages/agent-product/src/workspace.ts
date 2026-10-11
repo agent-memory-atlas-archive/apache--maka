@@ -82,6 +82,7 @@ import type {
 } from '../../plugin-sdk/src/index.js';
 import type {
   WorkspaceProps,
+  PageChrome,
   PaletteCommand,
   Message,
   Theme,
@@ -220,6 +221,7 @@ interface QueueEdit {
   body: string | null;
   command: EditorCommand | null;
 }
+type Page = 'settings' | 'connections' | 'deployment' | 'projects' | 'imports' | 'apps' | 'recall';
 type Navigation = { pages: State['pages']; category: SettingsCategory };
 function navigationBookmark(state: State): Navigation {
   return { pages: state.pages, category: state.settingsCategory };
@@ -255,12 +257,11 @@ export interface State {
   modelRefreshing: boolean;
   searchOpen: boolean;
   browse: number | null;
-  pages: ('settings' | 'connections' | 'deployment' | 'projects' | 'imports' | 'apps' | 'recall')[];
-  projectsOpened: boolean;
-  importsOpened: boolean;
-  recallOpened: boolean;
+  pages: Page[];
+  openedPages: Page[];
+  pageChrome: Partial<Record<Page, PageChrome>>;
+  pageBack: Partial<Record<Page, number>>;
   recallAnchor: number | null;
-  appsOpened: boolean;
   settingsCategory: SettingsCategory;
   sidebar: { open: boolean } | { command: TerminalPaneCommand | null };
   terminals: boolean;
@@ -850,7 +851,8 @@ function rootCommands(
   target: 'tui' | 'desktop',
 ): (PaletteCommand & { kind: RootCommand })[] {
   const text = copy(locale);
-  const route = conversationRoute(state) && (state.dialog === null || state.dialog === 'palette');
+  const shellRoute = state.dialog === null || state.dialog === 'palette';
+  const route = conversationRoute(state) && shellRoute;
   const review = reviewTarget(state);
   const file = state.fileContext;
   const filePath =
@@ -979,14 +981,14 @@ function rootCommands(
       id: 'create',
       label: text.new,
       hint: 'Ctrl/⌘ N',
-      disabled: !route || mutationPending(state) || catalogPending(state),
+      disabled: !shellRoute || mutationPending(state) || catalogPending(state),
     },
     {
       kind: 'create-workspace',
       id: 'create-workspace',
       label: text.newWorkspace,
       hint: '',
-      disabled: !route || mutationPending(state) || catalogPending(state),
+      disabled: !shellRoute || mutationPending(state) || catalogPending(state),
     },
     ...(state.skills
       ? [
@@ -1024,7 +1026,7 @@ function rootCommands(
       id: 'navigation-toggle',
       label: sidebarLabel(state, text),
       hint: 'Ctrl/⌘ B',
-      disabled: !route,
+      disabled: !shellRoute,
     },
     ...(target === 'tui'
       ? [
@@ -1033,7 +1035,7 @@ function rootCommands(
             id: 'appearance-open',
             label: tuiText(locale, 'settings-appearance'),
             hint: '',
-            disabled: !route,
+            disabled: !shellRoute,
           },
         ]
       : []),
@@ -1042,49 +1044,49 @@ function rootCommands(
       id: 'apps-open',
       label: text.appsTitle,
       hint: '',
-      disabled: !route || !!state.embedding.fixed,
+      disabled: !shellRoute || !!state.embedding.fixed,
     },
     {
       kind: 'recall-open',
       id: 'recall-open',
       label: text.recallTitle,
       hint: '',
-      disabled: !route || !!state.embedding.fixed,
+      disabled: !shellRoute || !!state.embedding.fixed,
     },
     {
       kind: 'imports-open',
       id: 'imports-open',
       label: text.importsTitle,
       hint: '',
-      disabled: !route || !!state.embedding.fixed,
+      disabled: !shellRoute || !!state.embedding.fixed,
     },
     {
       kind: 'projects-open',
       id: 'projects-open',
       label: text.projectsTitle,
       hint: '',
-      disabled: !route || !!state.embedding.fixed,
+      disabled: !shellRoute || !!state.embedding.fixed,
     },
     {
       kind: 'settings',
       id: 'settings',
       label: target === 'tui' ? tuiText(locale, 'route-settings') : text.settings,
       hint: '',
-      disabled: !route,
+      disabled: !shellRoute,
     },
     {
       kind: 'deployment-open',
       id: 'deployment-open',
       label: text.deploymentTitle,
       hint: '',
-      disabled: !route,
+      disabled: !shellRoute,
     },
     {
       kind: 'reload',
       id: `reload:${state.epoch}`,
       label: text.refreshSessions,
       hint: '',
-      disabled: !route || state.loading,
+      disabled: !shellRoute || state.loading,
     },
   ];
   if (state.run)
@@ -1148,10 +1150,13 @@ function rootCommand(
   else if (kind === 'interaction-open') {
     const review = reviewTarget(state)!;
     openInteraction(state, actions, review.requestId, review.kind);
-  } else if (kind === 'create') createSession(state, actions, locale);
-  else if (kind === 'appearance-open') state.preferences.open = true;
+  } else if (kind === 'create') {
+    state.pages = [];
+    createSession(state, actions, locale);
+  } else if (kind === 'appearance-open') state.preferences.open = true;
   else if (kind === 'model-setup') openModelSetup(state);
   else if (kind === 'create-workspace') {
+    state.pages = [];
     if (!canExecute(state)) openModelSetup(state);
     else state.dialog = 'directories';
     if (target === 'tui') controlSidebar(state, 'dismiss_transient');
@@ -1161,23 +1166,22 @@ function rootCommand(
   else if (kind === 'navigation-toggle') controlSidebar(state, 'toggle');
   else if (kind === 'settings') {
     state.pages = [target === 'tui' ? 'settings' : 'connections'];
+    if (target === 'tui') controlSidebar(state, 'dismiss_transient');
   } else if (kind === 'apps-open') {
     state.pages = ['apps'];
-    state.appsOpened = true;
     if (target === 'tui') controlSidebar(state, 'dismiss_transient');
   } else if (kind === 'recall-open') {
     state.pages = ['recall'];
-    state.recallOpened = true;
     if (target === 'tui') controlSidebar(state, 'dismiss_transient');
   } else if (kind === 'imports-open') {
     state.pages = ['imports'];
-    state.importsOpened = true;
+    if (target === 'tui') controlSidebar(state, 'dismiss_transient');
   } else if (kind === 'projects-open') {
     state.pages = ['projects'];
-    state.projectsOpened = true;
     if (target === 'tui') controlSidebar(state, 'dismiss_transient');
   } else if (kind === 'deployment-open') {
     state.pages = ['deployment'];
+    if (target === 'tui') controlSidebar(state, 'dismiss_transient');
   } else if (kind === 'stop' && state.selected && state.run)
     intent(state, actions, { kind: 'stop', sessionId: state.selected.id }, 'agent', 'stop', {
       sessionId: state.selected.id,
@@ -2165,6 +2169,10 @@ function frame<N extends Node>(
   actions: Action[] = [],
 ) {
   const target = presentation.target;
+  const currentPage = state.pages.at(-1);
+  if (currentPage && !state.openedPages.includes(currentPage)) state.openedPages.push(currentPage);
+  const pageShell = (page: Page) =>
+    target === 'tui' ? { shell: { back: state.pageBack[page] ?? 0 } } : {};
   const requested = state.embedding.session;
   if (requested && !sameValue(requested, state.externalSelection) && !mutationPending(state)) {
     state.externalSelection = requested;
@@ -2224,7 +2232,7 @@ function frame<N extends Node>(
     'create',
     target === 'tui' ? '+ ' + tuiText(locale, 'sidebar-new-session') : text.new,
     !commands.some((command) => command.kind === 'create' && !command.disabled),
-    false,
+    target === 'tui',
     target === 'tui' ? { background: 0, align: 'start' } : {},
   );
   const createEntry = ui.contextMenu
@@ -2267,7 +2275,9 @@ function frame<N extends Node>(
           ...(['all', 'needs_you'] as const).map((filter) => {
             const label =
               filter === 'all'
-                ? text.allSessions
+                ? target === 'tui'
+                  ? tuiText(locale, 'sidebar-all')
+                  : text.allSessions
                 : state.catalog
                   ? `${text.needsYou} (${state.catalog.needsYouCount})`
                   : text.needsYou;
@@ -2289,36 +2299,35 @@ function frame<N extends Node>(
           }),
           ...(target === 'tui'
             ? [
-                ui.box('catalog-filter-space', [], { terminal: { grow: 1 } }),
-                ui.box(
-                  'catalog-refresh-cell',
-                  [
-                    ui.button(
-                      'catalog-refresh',
-                      theme.ascii ? 'r' : '↻',
-                      catalogBusy,
-                      false,
-                      { background: 0 },
-                      undefined,
-                      text.refreshSessions,
-                    ),
-                  ],
-                  { terminal: { basis: 3 } },
+                ui.button(
+                  'catalog-search',
+                  tuiText(locale, 'sidebar-search'),
+                  false,
+                  false,
+                  { background: 0, align: 'start' },
+                  undefined,
+                  tuiText(locale, 'sidebar-search-sessions'),
                 ),
               ]
             : []),
         ],
-        { row: true, focusGroup: target === 'tui', gap: 1 },
+        { row: true, focusGroup: target === 'tui', gap: target === 'tui' ? 2 : 1 },
       ),
       ...(!state.catalogFailed && !catalogPending(state) && state.catalog?.sessions.length === 0
         ? [
-            ui.text(
-              'catalog-empty',
-              state.catalogFilter === 'needs_you'
-                ? text.noneNeedsYou
-                : tuiText(locale, 'sidebar-empty'),
-              12,
-              theme.muted,
+            ui.box(
+              'catalog-empty-inset',
+              [
+                ui.text(
+                  'catalog-empty',
+                  state.catalogFilter === 'needs_you'
+                    ? text.noneNeedsYou
+                    : tuiText(locale, 'sidebar-empty'),
+                  12,
+                  theme.muted,
+                ),
+              ],
+              { padding: 1 },
             ),
           ]
         : []),
@@ -2340,7 +2349,7 @@ function frame<N extends Node>(
           ...(state.catalog?.after
             ? [ui.button('catalog-more', text.moreSessions, catalogBusy || state.catalogFailed)]
             : []),
-          ...(target === 'desktop'
+          ...(target === 'desktop' || state.catalogFailed
             ? [ui.button('catalog-refresh', text.refreshSessions, catalogBusy)]
             : []),
         ],
@@ -2667,21 +2676,22 @@ function frame<N extends Node>(
         : '';
   const title = ui.text(
     'title',
-    state.pages.at(-1) === 'recall'
-      ? text.recallTitle
-      : state.pages.at(-1) === 'apps'
-        ? text.appsTitle
-        : state.pages.at(-1) === 'imports'
-          ? text.importsTitle
-          : state.pages.at(-1) === 'projects'
-            ? text.projectsTitle
-            : state.pages.at(-1) === 'settings'
-              ? tuiText(locale, 'route-settings')
-              : state.pages.at(-1) === 'connections'
-                ? text.settings
-                : state.pages.at(-1) === 'deployment'
-                  ? text.deploymentTitle
-                  : (state.selected?.title ?? tuiText(locale, 'route-workspace')),
+    (currentPage && state.pageChrome[currentPage]?.title) ||
+      (state.pages.at(-1) === 'recall'
+        ? text.recallTitle
+        : state.pages.at(-1) === 'apps'
+          ? text.appsTitle
+          : state.pages.at(-1) === 'imports'
+            ? text.importsTitle
+            : state.pages.at(-1) === 'projects'
+              ? text.projectsTitle
+              : state.pages.at(-1) === 'settings'
+                ? tuiText(locale, 'route-settings')
+                : state.pages.at(-1) === 'connections'
+                  ? text.settings
+                  : state.pages.at(-1) === 'deployment'
+                    ? text.deploymentTitle
+                    : (state.selected?.title ?? tuiText(locale, 'route-workspace'))),
     17,
     theme.text,
     650,
@@ -2765,21 +2775,51 @@ function frame<N extends Node>(
             ui.box(
               'header-left',
               [
-                ui.button(
-                  conversationRoute(state) ? 'navigation-toggle' : 'page-back',
-                  conversationRoute(state) ? (theme.ascii ? '=' : '≡') : theme.ascii ? '<' : '‹',
-                  false,
-                  false,
-                  { background: 0 },
-                  undefined,
-                  conversationRoute(state) ? text.toggleSidebar + ' · Ctrl+B' : text.back,
-                ),
+                ...(!state.embedding.fixed
+                  ? [
+                      ui.box(
+                        'navigation-cell',
+                        [
+                          ui.button(
+                            'navigation-toggle',
+                            theme.ascii ? '=' : '≡',
+                            false,
+                            false,
+                            { background: 0 },
+                            undefined,
+                            text.toggleSidebar + ' · Ctrl+B',
+                          ),
+                        ],
+                        { terminal: { basis: 3 } },
+                      ),
+                    ]
+                  : []),
+                ...(currentPage
+                  ? [
+                      ui.box(
+                        'back-cell',
+                        [
+                          ui.button(
+                            'page-back',
+                            theme.ascii ? '<' : '‹',
+                            currentPage !== 'settings' &&
+                              state.pageChrome[currentPage]?.backEnabled !== true,
+                            false,
+                            { background: 0 },
+                            undefined,
+                            text.back,
+                          ),
+                        ],
+                        { terminal: { basis: 3 } },
+                      ),
+                    ]
+                  : []),
               ],
               {
                 visible: !state.embedding.fixed || !conversationRoute(state),
                 row: true,
                 gap: 0,
-                terminal: { basis: 3 },
+                terminal: { basis: (state.embedding.fixed ? 0 : 3) + (currentPage ? 3 : 0) },
               },
             ),
             ui.box(
@@ -2807,7 +2847,7 @@ function frame<N extends Node>(
                       ui.button(
                         key,
                         [theme.ascii ? 'i' : 'ⓘ', '>_', theme.ascii ? ':' : '⌘'][at]!,
-                        key !== 'palette-open' && !state.selected,
+                        key !== 'palette-open' && (!conversationRoute(state) || !state.selected),
                         false,
                         { background: 0 },
                         undefined,
@@ -2963,6 +3003,12 @@ function frame<N extends Node>(
                           true,
                           { background: 0 },
                         ),
+                        ui.button('home-projects', text.projectsTitle, false, false, {
+                          background: 0,
+                        }),
+                        ui.button('home-imports', text.importsTitle, false, false, {
+                          background: 0,
+                        }),
                       ],
                       { gap: 0, terminal: { basis: 52, shrink: true } },
                     ),
@@ -3149,6 +3195,7 @@ function frame<N extends Node>(
           ]),
     ],
     {
+      visible: conversationRoute(state),
       gap: target === 'tui' ? 0 : undefined,
       terminal: { grow: 1 },
       style: {
@@ -3160,17 +3207,197 @@ function frame<N extends Node>(
       },
     },
   );
+  const pageContent = ui.box(
+    'page-content',
+    [
+      main,
+      ...(state.pages.at(-1) === 'settings'
+        ? [settingsView(presentation, state.preferences, theme, locale, state.settingsCategory)]
+        : []),
+      ...(state.openedPages.includes('deployment')
+        ? [
+            ui.box(
+              'retained-deployment',
+              [
+                presentation.slot(
+                  'deployment',
+                  'deployment',
+                  {
+                    theme,
+                    locale,
+                    ...pageShell('deployment'),
+                    ...(target === 'tui'
+                      ? {
+                          bookmarkKey: navigationKey(state) + '/deployment',
+                          navigationReady: bookmarkReady(state.bookmark, navigationBookmark(state)),
+                        }
+                      : {}),
+                  },
+                  { chrome: 'page-chrome', closed: 'deployment-closed' },
+                ),
+              ],
+              {
+                visible: currentPage === 'deployment',
+                gap: 0,
+                terminal: { grow: 1 },
+                style: { width: fill, height: fill },
+              },
+            ),
+          ]
+        : []),
+      ...(state.openedPages.includes('apps')
+        ? [
+            ui.box(
+              'retained-apps',
+              [
+                presentation.slot(
+                  'apps',
+                  'apps',
+                  {
+                    theme,
+                    locale,
+                    ...pageShell('apps'),
+                    open: state.pages.at(-1) === 'apps',
+                    busy: mutationPending(state) || catalogPending(state),
+                  },
+                  { chrome: 'page-chrome', closed: 'apps-closed', manage: 'apps-manage' },
+                ),
+              ],
+              {
+                visible: currentPage === 'apps',
+                gap: 0,
+                terminal: { grow: 1 },
+                style: { width: fill, height: fill },
+              },
+            ),
+          ]
+        : []),
+      ...(state.openedPages.includes('recall')
+        ? [
+            ui.box(
+              'retained-recall',
+              [
+                presentation.slot(
+                  'recall',
+                  'recall',
+                  {
+                    theme,
+                    locale,
+                    ...pageShell('recall'),
+                    open: state.pages.at(-1) === 'recall',
+                    busy: mutationPending(state) || catalogPending(state),
+                  },
+                  { chrome: 'page-chrome', closed: 'recall-closed', selected: 'recall-selected' },
+                ),
+              ],
+              {
+                visible: currentPage === 'recall',
+                gap: 0,
+                terminal: { grow: 1 },
+                style: { width: fill, height: fill },
+              },
+            ),
+          ]
+        : []),
+      ...(state.openedPages.includes('imports')
+        ? [
+            ui.box(
+              'retained-imports',
+              [
+                presentation.slot(
+                  'imports',
+                  'imports',
+                  {
+                    theme,
+                    locale,
+                    ...pageShell('imports'),
+                    open: state.pages.at(-1) === 'imports',
+                    busy: mutationPending(state) || catalogPending(state),
+                  },
+                  {
+                    chrome: 'page-chrome',
+                    closed: 'imports-closed',
+                    selected: 'import-selected',
+                    changed: 'imports-changed',
+                  },
+                ),
+              ],
+              {
+                visible: currentPage === 'imports',
+                gap: 0,
+                terminal: { grow: 1 },
+                style: { width: fill, height: fill },
+              },
+            ),
+          ]
+        : []),
+      ...(state.openedPages.includes('projects')
+        ? [
+            ui.box(
+              'retained-projects',
+              [
+                presentation.slot(
+                  'projects',
+                  'projects',
+                  {
+                    theme,
+                    locale,
+                    ...pageShell('projects'),
+                    open: state.pages.at(-1) === 'projects',
+                    busy: mutationPending(state) || catalogPending(state),
+                  },
+                  {
+                    chrome: 'page-chrome',
+                    closed: 'projects-closed',
+                    selected: 'project-selected',
+                    changed: 'projects-changed',
+                  },
+                ),
+              ],
+              {
+                visible: currentPage === 'projects',
+                gap: 0,
+                terminal: { grow: 1 },
+                style: { width: fill, height: fill },
+              },
+            ),
+          ]
+        : []),
+      ...(state.openedPages.includes('connections')
+        ? [
+            ui.box(
+              'retained-connections',
+              [
+                presentation.slot(
+                  'connections',
+                  'connections',
+                  { theme, locale, ...pageShell('connections') },
+                  { chrome: 'page-chrome', closed: 'settings-closed', changed: 'settings-changed' },
+                ),
+              ],
+              {
+                visible: currentPage === 'connections',
+                gap: 0,
+                terminal: { grow: 1 },
+                style: { width: fill, height: fill },
+              },
+            ),
+          ]
+        : []),
+    ],
+    { gap: 0, terminal: { grow: 1 }, style: { width: fill, height: fill, minWidth: 0 } },
+  );
   const conversation = ui.box(
     'workspace',
     state.embedding.fixed
-      ? [main]
+      ? [pageContent]
       : target === 'desktop'
         ? [
             ui.box('sidebar', [navigation], {
               visible: 'open' in state.sidebar && state.sidebar.open,
               style: { width: pixels(240), height: fill, shrink: 0 },
             }),
-            main,
+            pageContent,
           ]
         : [
             ui.adaptivePane!(
@@ -3180,7 +3407,7 @@ function frame<N extends Node>(
                 'page',
                 [
                   ui.box('page-inset-start', [], { terminal: { basis: 1 } }),
-                  main,
+                  pageContent,
                   ui.box('page-inset-end', [], { terminal: { basis: 1 } }),
                 ],
                 { row: true, gap: 0, terminal: { grow: 1 } },
@@ -3195,7 +3422,6 @@ function frame<N extends Node>(
     {
       row: target === 'desktop',
       gap: 0,
-      visible: conversationRoute(state),
       terminal: { grow: 1 },
       style: { width: fill, height: fill },
     },
@@ -3203,9 +3429,7 @@ function frame<N extends Node>(
   const background = ui.box(
     'product',
     [
-      ...(target === 'tui' && (conversationRoute(state) || state.pages.at(-1) === 'settings')
-        ? [header]
-        : []),
+      ...(target === 'tui' ? [header] : []),
       conversation,
       ...(target === 'tui' && (!state.embedding.fixed || state.embedding.session)
         ? [
@@ -3219,102 +3443,6 @@ function frame<N extends Node>(
             ...(state.bookmark.observed?.state.kind === 'failed'
               ? [ui.button('navigation-checkpoint-retry', copy(locale).sourceRetry)]
               : []),
-          ]
-        : []),
-      ...(state.pages.at(-1) === 'settings'
-        ? [settingsView(presentation, state.preferences, theme, locale, state.settingsCategory)]
-        : []),
-      ...(state.pages.at(-1) === 'deployment'
-        ? [
-            presentation.slot(
-              'deployment',
-              'deployment',
-              {
-                theme,
-                locale,
-                ...(target === 'tui'
-                  ? {
-                      bookmarkKey: navigationKey(state) + '/deployment',
-                      navigationReady: bookmarkReady(state.bookmark, navigationBookmark(state)),
-                    }
-                  : {}),
-              },
-              { closed: 'deployment-closed' },
-            ),
-          ]
-        : []),
-      ...(state.appsOpened
-        ? [
-            presentation.slot(
-              'apps',
-              'apps',
-              {
-                theme,
-                locale,
-                open: state.pages.at(-1) === 'apps',
-                busy: mutationPending(state) || catalogPending(state),
-              },
-              { closed: 'apps-closed', manage: 'apps-manage' },
-            ),
-          ]
-        : []),
-      ...(state.recallOpened
-        ? [
-            presentation.slot(
-              'recall',
-              'recall',
-              {
-                theme,
-                locale,
-                open: state.pages.at(-1) === 'recall',
-                busy: mutationPending(state) || catalogPending(state),
-              },
-              { closed: 'recall-closed', selected: 'recall-selected' },
-            ),
-          ]
-        : []),
-      ...(state.importsOpened
-        ? [
-            presentation.slot(
-              'imports',
-              'imports',
-              {
-                theme,
-                locale,
-                open: state.pages.at(-1) === 'imports',
-                busy: mutationPending(state) || catalogPending(state),
-              },
-              { closed: 'imports-closed', selected: 'import-selected', changed: 'imports-changed' },
-            ),
-          ]
-        : []),
-      ...(state.projectsOpened
-        ? [
-            presentation.slot(
-              'projects',
-              'projects',
-              {
-                theme,
-                locale,
-                open: state.pages.at(-1) === 'projects',
-                busy: mutationPending(state) || catalogPending(state),
-              },
-              {
-                closed: 'projects-closed',
-                selected: 'project-selected',
-                changed: 'projects-changed',
-              },
-            ),
-          ]
-        : []),
-      ...(state.pages.at(-1) === 'connections'
-        ? [
-            presentation.slot(
-              'connections',
-              'connections',
-              { theme, locale },
-              { closed: 'settings-closed', changed: 'settings-changed' },
-            ),
           ]
         : []),
     ],
@@ -3348,23 +3476,19 @@ function frame<N extends Node>(
           key: 'k',
           modifiers: ['primary'],
           input: 'palette-open',
-          enabled: conversationRoute(state),
+          enabled: true,
         },
         {
           key: 'b',
           modifiers: ['primary'],
           input: 'navigation-toggle',
-          enabled: !state.embedding.fixed && conversationRoute(state),
+          enabled: !state.embedding.fixed,
         },
         {
           key: 'n',
           modifiers: ['primary'],
           input: 'create',
-          enabled:
-            !state.embedding.fixed &&
-            conversationRoute(state) &&
-            !mutationPending(state) &&
-            !catalogPending(state),
+          enabled: !state.embedding.fixed && !mutationPending(state) && !catalogPending(state),
         },
       ],
     },
@@ -3602,10 +3726,7 @@ function frame<N extends Node>(
               open: state.dialog === 'palette',
               busy: false,
               selectionDisabled:
-                !!state.embedding.fixed ||
-                !conversationRoute(state) ||
-                mutationPending(state) ||
-                catalogPending(state),
+                !!state.embedding.fixed || mutationPending(state) || catalogPending(state),
               commands: rootCommands(state, locale, target).map(
                 ({ kind: _kind, ...command }) => command,
               ),
@@ -3710,11 +3831,10 @@ export function workspace<N extends Node>(
         catalogEpoch: 0,
         modelRefreshing: false,
         pages: [],
-        projectsOpened: false,
-        importsOpened: false,
-        recallOpened: false,
+        openedPages: [],
+        pageChrome: {},
+        pageBack: {},
         recallAnchor: null,
-        appsOpened: false,
         settingsCategory: 'appearance',
         searchOpen: false,
         browse: null,
@@ -3807,11 +3927,6 @@ export function workspace<N extends Node>(
         );
         if (restored) {
           state.pages = restored.pages;
-          if (state.pages.includes('apps') && !state.embedding.fixed) state.appsOpened = true;
-          if (state.pages.includes('recall') && !state.embedding.fixed) state.recallOpened = true;
-          if (state.pages.includes('imports') && !state.embedding.fixed) state.importsOpened = true;
-          if (state.pages.includes('projects') && !state.embedding.fixed)
-            state.projectsOpened = true;
           state.settingsCategory = restored.category;
         }
       }
@@ -3896,6 +4011,11 @@ export function workspace<N extends Node>(
           }
         }
       } else if (input.kind === 'component') {
+        if (input.name === 'chrome' && state.openedPages.includes(input.child as Page)) {
+          state.pageChrome[input.child as Page] = input.event as PageChrome;
+          return frame(presentation, configuredLocale, state, values, actions);
+        }
+
         if (input.child === 'composer' && input.name === 'checkpoint') {
           state.drafts = observeDraft(state.drafts, input.event as DraftCheckpoint, state.selected);
           return frame(presentation, configuredLocale, state, values, actions);
@@ -4156,7 +4276,7 @@ export function workspace<N extends Node>(
           return frame(presentation, configuredLocale, state, values, actions);
         }
         if (input.child === 'command-palette') {
-          if (state.dialog === 'palette' && conversationRoute(state)) {
+          if (state.dialog === 'palette') {
             if (input.name === 'closed') state.dialog = null;
             else if (input.name === 'invoked') {
               const command = rootCommands(state, locale, target).find(
@@ -4175,6 +4295,7 @@ export function workspace<N extends Node>(
               !catalogPending(state)
             ) {
               select(state, actions, input.event as AgentSession);
+              state.pages = [];
               state.dialog = null;
             }
           }
@@ -4367,6 +4488,7 @@ export function workspace<N extends Node>(
           const { sessionId, details } = input.event as { sessionId: string; details?: boolean };
           const session = state.catalog?.sessions.find((item) => item.id === sessionId);
           if (session) {
+            state.pages = [];
             if (state.selected?.id !== session.id) select(state, actions, session);
             if (details && !executionPending(state)) state.dialog = 'details';
             if (target === 'tui') controlSidebar(state, 'dismiss_transient');
@@ -4544,7 +4666,12 @@ export function workspace<N extends Node>(
             history(state, actions, { kind: 'tail' }, state.latestKnown, true);
         }
       } else if (input.kind === 'raw') {
-        if (input.key === 'home-new') rootCommand(state, actions, locale, 'create', target);
+        if (input.key === 'catalog-search') input = { ...input, key: 'palette-open' };
+        if (input.key === 'home-projects')
+          rootCommand(state, actions, locale, 'projects-open', target);
+        else if (input.key === 'home-imports')
+          rootCommand(state, actions, locale, 'imports-open', target);
+        else if (input.key === 'home-new') rootCommand(state, actions, locale, 'create', target);
         if (
           input.key.startsWith('file-paste-') &&
           state.attachments.paste &&
@@ -4745,11 +4872,7 @@ export function workspace<N extends Node>(
                 });
             }
           }
-        } else if (
-          input.key === 'palette-open' &&
-          conversationRoute(state) &&
-          state.dialog === null
-        ) {
+        } else if (input.key === 'palette-open' && state.dialog === null) {
           state.dialog = 'palette';
           state.copyRequest = ++state.serial;
           state.messageCopy = null;
@@ -4766,12 +4889,10 @@ export function workspace<N extends Node>(
             selection.browse = false;
             focusAttachments(state);
           } else closeDialog(state);
-        } else if (
-          input.key === 'page-back' &&
-          state.pages.at(-1) === 'settings' &&
-          !state.dialog
-        ) {
-          state.pages.pop();
+        } else if (input.key === 'page-back' && state.pages.length > 0 && !state.dialog) {
+          const page = state.pages.at(-1)!;
+          if (page === 'settings') state.pages.pop();
+          else if (state.pageChrome[page]?.backEnabled) state.pageBack[page] = ++state.serial;
         } else if (
           state.pages.at(-1) === 'settings' &&
           settingsEvent(state, input, values.appearance?.[0] as Theme)

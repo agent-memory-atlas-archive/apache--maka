@@ -6182,7 +6182,7 @@ for (const target of ['desktop', 'tui']) {
       status: 'succeeded',
       value: { text, metadata: modelObservation(text, 1).snapshot.text },
     });
-  test(`${target} Root Dialog preserves original product and routes only conversation commands`, () => {
+  test(`${target} Root Dialog preserves original product and separates shell navigation from conversation commands`, () => {
     const client = new Client(rootModule.component).start();
     const background = structuredClone(workspaceView(client).background);
     const modalBackground = structuredClone(background);
@@ -6213,25 +6213,20 @@ for (const target of ['desktop', 'tui']) {
     assert.deepEqual(workspaceView(client).background, background);
     client.raw('settings');
     client.raw('palette-open');
+    assert.equal(client.state.dialog, 'palette');
+    for (const id of [
+      'terminal-open',
+      'details-open',
+      ...(target === 'tui' ? ['search-open'] : []),
+    ])
+      assert.equal(props(client).commands.find((command) => command.id === id)?.disabled, true);
+    for (const id of ['help-open', 'deployment-open', 'navigation-toggle'])
+      assert.equal(props(client).commands.find((command) => command.id === id)?.disabled, false);
+    choose(client, 'invoked', { id: 'deployment-open' });
     assert.equal(client.state.dialog, null);
-    assert.ok(
-      props(client)
-        .commands.filter((command) => command.id !== 'help-open')
-        .every((command) => command.disabled),
-    );
-    assert.equal(
-      props(client).commands.find((command) => command.id === 'help-open').disabled,
-      false,
-    );
-    client.raw('deployment-open');
-    assert.equal(
-      client.state.pages.at(-1),
-      target === 'tui' ? 'settings' : 'connections',
-      'management route cannot bypass its guarded Back',
-    );
-    assert.equal(client.state.pages.at(-1) === 'deployment', false);
-    choose(client, 'invoked', { id: 'create' });
-    assert.deepEqual(client.output.actions, []);
+    assert.deepEqual(client.state.pages, ['deployment']);
+    assert.equal(client.state.selected.id, session.id);
+    assert.deepEqual(client.output.subscriptions, watch);
   });
   test(`${target} Unknown permits original Check while independently disabling session choice`, () => {
     const client = new Client(rootModule.component).start();
@@ -14262,6 +14257,21 @@ test('TUI settings preserve the conversation, return to the parent category, and
     ['settings', 'connections'],
     'outer navigation cannot dismiss an owned editor',
   );
+  client.input({
+    kind: 'component',
+    child: 'connections',
+    name: 'chrome',
+    event: { title: 'Edit connection', backEnabled: true },
+  });
+  client.raw('page-back');
+  const back = client.state.pageBack.connections;
+  assert.ok(back > 0);
+  assert.deepEqual(client.state.pages, ['settings', 'connections']);
+  assert.equal(
+    modelSlots(client.output.frame.view).find((node) => node.key === 'connections').props.shell
+      .back,
+    back,
+  );
   client.input({ kind: 'component', child: 'connections', name: 'closed', event: {} });
   assert.deepEqual(client.state.pages, ['settings']);
   assert.equal(client.state.settingsCategory, 'models');
@@ -14629,6 +14639,53 @@ test('TUI settings navigation checkpoints coalesce changes and restore the page 
   assert.equal(late.state.settingsCategory, 'models', 'a late read cannot replace user navigation');
 });
 
+test('embedded plugin target forwards chrome and Back only to its selected retained editor', async () => {
+  const { component } = await import(
+    pathToFileURL(resolve(root, 'dist/packages/deployment-settings/tui.js'))
+  );
+  const props = { theme: values.appearance[0], locale: 'en', shell: { back: 0 } };
+  let out = component.mount(props, {});
+  const send = (input) => (out = component.event(out.frame.state, input, props, {}));
+  const chrome = (place, title) =>
+    send({
+      kind: 'component',
+      child: 'deployment-editor-' + place,
+      name: 'chrome',
+      event: { title, backEnabled: true },
+    });
+  chrome('interface', 'Interface draft');
+  send({ kind: 'raw', key: 'deployment-services', event: {} });
+  chrome('services', 'Plugin settings');
+  assert.equal(out.events.find((event) => event.name === 'chrome').value.title, 'Plugin settings');
+  props.shell.back = 1;
+  out = component.update(out.frame.state, props, {});
+  const slots = () =>
+    modelSlots(out.frame.view).filter((node) => node.key.startsWith('deployment-editor-'));
+  assert.equal(slots().find((node) => node.key.endsWith('services')).props.shell.back, 1);
+  assert.equal(slots().find((node) => node.key.endsWith('interface')).props.shell.back, 0);
+  chrome('interface', 'Background update');
+  assert.equal(
+    out.events.some((event) => event.name === 'chrome'),
+    false,
+  );
+  send({ kind: 'component', child: 'deployment-editor-interface', name: 'closed', event: {} });
+  assert.equal(
+    out.events.some((event) => event.name === 'closed'),
+    false,
+  );
+  send({ kind: 'raw', key: 'deployment-interface', event: {} });
+  assert.equal(
+    out.events.find((event) => event.name === 'chrome').value.title,
+    'Background update',
+  );
+  out = component.update(out.frame.state, props, {});
+  assert.equal(slots().find((node) => node.key.endsWith('interface')).props.shell.back, 0);
+  props.shell.back = 2;
+  out = component.update(out.frame.state, props, {});
+  assert.equal(slots().find((node) => node.key.endsWith('interface')).props.shell.back, 1);
+  assert.equal(slots().find((node) => node.key.endsWith('services')).props.shell.back, 1);
+});
+
 test('TUI plugin target selection restores independently and gates save until acknowledged', async () => {
   const { component } = await import(
     pathToFileURL(resolve(root, 'dist/packages/deployment-settings/tui.js'))
@@ -14680,7 +14737,7 @@ for (const target of ['tui', 'desktop']) {
     const client = new Client(rootModule.component).start();
     client.raw('projects-open');
     assert.deepEqual(client.state.pages, ['projects']);
-    assert.equal(client.state.projectsOpened, true);
+    assert.equal(client.state.openedPages.includes('projects'), true);
     const selected = {
       project: { id: '00000000-0000-0000-0000-000000000033', revision: 'a'.repeat(64) },
       selection: {
@@ -14693,7 +14750,7 @@ for (const target of ['tui', 'desktop']) {
     const action = client.find('create');
     assert.deepEqual(action.input.workspace, { kind: 'project', ...selected });
     assert.deepEqual(client.state.pages, []);
-    assert.equal(client.state.projectsOpened, true);
+    assert.equal(client.state.openedPages.includes('projects'), true);
     client.input({ kind: 'component', child: 'projects', name: 'selected', event: selected });
     assert.deepEqual(client.output.actions, [], 'a hidden project page never repeats creation');
     client.complete(action, returned({ kind: 'rejected', reason: 'workspace_unavailable' }));
@@ -14716,7 +14773,7 @@ for (const target of ['tui', 'desktop']) {
     const client = new Client(rootModule.component).start();
     client.raw('imports-open');
     assert.deepEqual(client.state.pages, ['imports']);
-    assert.equal(client.state.importsOpened, true);
+    assert.equal(client.state.openedPages.includes('imports'), true);
     const imported = { ...session, id: 'imported', title: 'Imported history' };
     client.input({
       kind: 'component',

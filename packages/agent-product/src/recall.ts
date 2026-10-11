@@ -32,13 +32,14 @@ import type {
   TextChunk,
 } from '../../plugin-sdk/src/index.js';
 import { recallContract, type RecallProps } from './contracts.js';
+import { pageHeader, withPageShell, type PageState } from './page-shell.js';
 import { copy, type Copy } from './locale.js';
 import { sameValue } from './value.js';
 import { compactLabel, fill, output, type Node, type Presentation } from './view.js';
 
 const fields = ['query', 'since', 'until'] as const;
 type Field = (typeof fields)[number];
-interface State {
+interface State extends PageState {
   revision: number;
   serial: number;
   observations: Partial<Record<Field, EditorObservation>>;
@@ -277,19 +278,14 @@ export function recall<N extends Node>(
     const view = ui.box(
       'recall-page',
       [
-        ui.box(
-          'recall-heading',
-          [
-            ui.button('back', text.back),
-            ui.text(
-              'recall-title',
-              state.picker ? text.recallChoose : text.recallTitle,
-              20,
-              props.theme.text,
-              600,
-            ),
-          ],
-          { row: true },
+        ...pageHeader(
+          presentation,
+          state,
+          props,
+          events,
+          state.picker ? text.recallChoose : text.recallTitle,
+          'back',
+          false,
         ),
         ...(state.notice
           ? [ui.text('recall-notice', text[state.notice], 13, props.theme.error)]
@@ -319,7 +315,7 @@ export function recall<N extends Node>(
       ],
       {
         visible: props.open,
-        padding: 1,
+        padding: props.shell ? 0 : 1,
         gap: 1,
         autoFocus: true,
         shortcuts: [{ key: 'escape', modifiers: [], input: 'back', enabled: true }],
@@ -331,120 +327,127 @@ export function recall<N extends Node>(
     result.actions = actions;
     return result;
   }
-  return {
-    mount(props) {
-      return frame(
-        {
-          revision: 0,
-          serial: 0,
-          observations: {},
-          capture: null,
-          pending: null,
-          page: null,
-          session: null,
-          picker: false,
-          catalog: null,
-          notice: null,
-          focus: null,
-        },
-        props,
-      );
-    },
-    update(state, props) {
-      state.revision++;
-      return frame(state, props);
-    },
-    event(state, input, props) {
-      state.revision++;
-      const actions: Action[] = [],
-        events: Emission[] = [];
-      if (input.kind === 'component' && input.child === 'recall-reading' && input.name === 'input')
-        input = input.event as ComponentInput;
-      if (input.kind === 'action' && input.key === state.pending?.key) {
-        const pending = state.pending,
-          result = input.event as ActionOutcome;
-        state.pending = null;
-        if (result.status !== 'succeeded') {
-          state.capture = null;
-          state.notice = 'recallUnavailable';
-        } else if (pending.kind === 'search') {
-          state.page = result.value as AgentRecallPage;
-          state.focus = {
-            sequence: (state.focus?.sequence ?? 0) + 1,
-            target: {
-              kind: 'reveal_child',
-              key: state.page.titles.length ? 'title-0' : 'passage-0',
-            },
-          };
-        } else if (pending.kind === 'catalog') state.catalog = result.value as AgentSessionPage;
-        else if (state.capture) {
-          const form = state.capture,
-            name = fields[form.values.length]!,
-            basis = form.observations[name].snapshot.text,
-            chunk = result.value as TextChunk;
-          if (
-            !sameValue(chunk.metadata, basis) ||
-            !sameValue(state.observations[name]?.snapshot.text, basis) ||
-            new TextEncoder().encode(chunk.text).length !== basis.bytes
-          ) {
+  return withPageShell<State, RecallProps, N>(
+    {
+      mount(props) {
+        return frame(
+          {
+            revision: 0,
+            serial: 0,
+            observations: {},
+            capture: null,
+            pending: null,
+            page: null,
+            session: null,
+            picker: false,
+            catalog: null,
+            notice: null,
+            focus: null,
+          },
+          props,
+        );
+      },
+      update(state, props) {
+        state.revision++;
+        return frame(state, props);
+      },
+      event(state, input, props) {
+        state.revision++;
+        const actions: Action[] = [],
+          events: Emission[] = [];
+        if (
+          input.kind === 'component' &&
+          input.child === 'recall-reading' &&
+          input.name === 'input'
+        )
+          input = input.event as ComponentInput;
+        if (input.kind === 'action' && input.key === state.pending?.key) {
+          const pending = state.pending,
+            result = input.event as ActionOutcome;
+          state.pending = null;
+          if (result.status !== 'succeeded') {
             state.capture = null;
             state.notice = 'recallUnavailable';
-          } else {
-            form.values.push(chunk.text);
-            capture(state, actions);
-          }
-        }
-      } else if (input.kind === 'component') {
-        const name = fields.find(
-          (name) => input.kind === 'component' && input.child === 'recall-' + name,
-        );
-        if (name && input.name === 'changed')
-          state.observations[name] = input.event as EditorObservation;
-        else if (name && input.name === 'submitted' && props.open && !props.busy && !state.picker)
-          find(state, actions);
-      } else if (input.kind === 'raw' && props.open) {
-        if (input.key === 'back') {
-          if (state.picker) state.picker = false;
-          else events.push({ name: 'closed', value: {} });
-        } else if (!props.busy && !state.pending) {
-          if (input.key === 'find' && !state.picker) find(state, actions);
-          else if (input.key === 'scope') {
-            state.picker = true;
-            state.notice = null;
-            catalog(state, actions);
-          } else if (state.picker && ['refresh', 'previous', 'next'].includes(input.key))
-            catalog(
-              state,
-              actions,
-              input.key === 'previous' ? 'before' : input.key === 'next' ? 'after' : 'start',
-            );
-          else if (state.picker && input.key === 'all') {
-            state.session = null;
-            state.picker = false;
-          } else if (state.picker && input.key.startsWith('session-')) {
-            const session = state.catalog?.sessions.find(
-              (session) => input.kind === 'raw' && 'session-' + session.id === input.key,
-            );
-            if (session) {
-              state.session = session;
-              state.picker = false;
+          } else if (pending.kind === 'search') {
+            state.page = result.value as AgentRecallPage;
+            state.focus = {
+              sequence: (state.focus?.sequence ?? 0) + 1,
+              target: {
+                kind: 'reveal_child',
+                key: state.page.titles.length ? 'title-0' : 'passage-0',
+              },
+            };
+          } else if (pending.kind === 'catalog') state.catalog = result.value as AgentSessionPage;
+          else if (state.capture) {
+            const form = state.capture,
+              name = fields[form.values.length]!,
+              basis = form.observations[name].snapshot.text,
+              chunk = result.value as TextChunk;
+            if (
+              !sameValue(chunk.metadata, basis) ||
+              !sameValue(state.observations[name]?.snapshot.text, basis) ||
+              new TextEncoder().encode(chunk.text).length !== basis.bytes
+            ) {
+              state.capture = null;
+              state.notice = 'recallUnavailable';
+            } else {
+              form.values.push(chunk.text);
+              capture(state, actions);
             }
-          } else if (!state.picker && input.key.startsWith('title-')) {
-            const session = state.page?.titles[Number(input.key.slice(6))];
-            if (session) events.push({ name: 'selected', value: { session, anchor: null } });
-          } else if (!state.picker && input.key.startsWith('open-')) {
-            const passage = state.page?.passages[Number(input.key.slice(5))];
-            if (passage)
-              events.push({
-                name: 'selected',
-                value: { session: passage.session, anchor: passage.anchorSequence },
-              });
+          }
+        } else if (input.kind === 'component') {
+          const name = fields.find(
+            (name) => input.kind === 'component' && input.child === 'recall-' + name,
+          );
+          if (name && input.name === 'changed')
+            state.observations[name] = input.event as EditorObservation;
+          else if (name && input.name === 'submitted' && props.open && !props.busy && !state.picker)
+            find(state, actions);
+        } else if (input.kind === 'raw' && props.open) {
+          if (input.key === 'back') {
+            if (state.picker) state.picker = false;
+            else events.push({ name: 'closed', value: {} });
+          } else if (!props.busy && !state.pending) {
+            if (input.key === 'find' && !state.picker) find(state, actions);
+            else if (input.key === 'scope') {
+              state.picker = true;
+              state.notice = null;
+              catalog(state, actions);
+            } else if (state.picker && ['refresh', 'previous', 'next'].includes(input.key))
+              catalog(
+                state,
+                actions,
+                input.key === 'previous' ? 'before' : input.key === 'next' ? 'after' : 'start',
+              );
+            else if (state.picker && input.key === 'all') {
+              state.session = null;
+              state.picker = false;
+            } else if (state.picker && input.key.startsWith('session-')) {
+              const session = state.catalog?.sessions.find(
+                (session) => input.kind === 'raw' && 'session-' + session.id === input.key,
+              );
+              if (session) {
+                state.session = session;
+                state.picker = false;
+              }
+            } else if (!state.picker && input.key.startsWith('title-')) {
+              const session = state.page?.titles[Number(input.key.slice(6))];
+              if (session) events.push({ name: 'selected', value: { session, anchor: null } });
+            } else if (!state.picker && input.key.startsWith('open-')) {
+              const passage = state.page?.passages[Number(input.key.slice(5))];
+              if (passage)
+                events.push({
+                  name: 'selected',
+                  value: { session: passage.session, anchor: passage.anchorSequence },
+                });
+            }
           }
         }
-      }
-      return frame(state, props, actions, events);
+        return frame(state, props, actions, events);
+      },
     },
-  };
+    () => 'back',
+  );
 }
 export function activate() {
   return { Recall: { kind: 'component', contract: recallContract, component: ['component'] } };

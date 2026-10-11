@@ -558,7 +558,10 @@ fn standard_product_settings_save_restores_page_and_original_result() {
             });
             let has_agent = |screen: &str| {
                 screen.lines().any(|line| {
-                    line.trim_start()
+                    line.rsplit('│')
+                        .next()
+                        .unwrap_or(line)
+                        .trim_start()
                         .trim_start_matches("› ")
                         .starts_with("agent ")
                 })
@@ -846,7 +849,7 @@ fn standard_product_import_sources_preview_publish_remove_and_original_receipt_r
             click_text(&mut tui, "Conversation sources");
             tui.wait_for(".codex");
             click_text(&mut tui, ".codex");
-            tui.wait_for("sessions");
+            tui.wait_for("› sessions");
             click_text(&mut tui, "Use this directory");
             tui.wait_for(
                 home.join(".codex")
@@ -892,7 +895,7 @@ fn standard_product_import_sources_preview_publish_remove_and_original_receipt_r
             });
             click_text(&mut tui, "Import conversations");
             tui.wait_for("Imported conversations");
-            click_text(&mut tui, "Back");
+            click_text(&mut tui, "‹");
             tui.wait_for("Remove source");
             click_text(&mut tui, "Remove source");
             tui.wait_for("Imported conversations remain in Maka.");

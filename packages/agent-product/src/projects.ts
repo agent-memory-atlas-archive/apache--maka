@@ -41,6 +41,7 @@ import type {
   TextChunk,
 } from '../../plugin-sdk/src/index.js';
 import { projectsContract, type ProjectsProps } from './contracts.js';
+import { pageHeader, withPageShell, type PageState } from './page-shell.js';
 import { copy, type Copy } from './locale.js';
 import { sameValue } from './value.js';
 import { compactLabel, fill, output, type Node, type Presentation } from './view.js';
@@ -48,7 +49,7 @@ import { compactLabel, fill, output, type Node, type Presentation } from './view
 type Request =
   | { kind: 'page' | 'directory' | 'name' | 'mutate' | 'receipt' }
   | { kind: 'history'; after: number };
-interface State {
+interface State extends PageState {
   revision: number;
   open: boolean;
   focus: ReadingCommand | null;
@@ -216,14 +217,7 @@ export function projects<N extends Node>(
     const body = ui.box(
       'projects-body',
       [
-        ui.box(
-          'projects-header',
-          [
-            ui.button('back', text.back),
-            ui.text('projects-title', text.projectsTitle, 20, props.theme.text, 600),
-          ],
-          { row: true },
-        ),
+        ...pageHeader(presentation, state, props, events, text.projectsTitle, 'back', false),
         ...(state.restoring
           ? [ui.text('checking', text.projectsChecking, 13, props.theme.muted)]
           : []),
@@ -437,304 +431,314 @@ export function projects<N extends Node>(
     result.actions = actions;
     return result;
   }
-  return {
-    mount(props) {
-      const state: State = {
-        revision: 0,
-        open: props.open,
-        focus: null,
-        serial: 0,
-        projects: [],
-        next: null,
-        selected: null,
-        pending: null,
-        restoring: true,
-        historyFailed: false,
-        original: null,
-        current: null,
-        picker: false,
-        source: null,
-        location: null,
-        confirm: null,
-        rename: null,
-        observation: null,
-        command: null,
-        sequence: 0,
-        nameReady: false,
-        captured: null,
-        notice: null,
-      };
-      const actions: Action[] = [];
-      history(state, actions);
-      return frame(state, props, actions);
-    },
-    update(state, props) {
-      state.revision++;
-      const actions: Action[] = [];
-      if (
-        !state.open &&
-        props.open &&
-        !state.pending &&
-        !state.current &&
-        !state.restoring &&
-        !state.rename &&
-        !state.confirm
-      )
-        page(state, actions);
-      state.open = props.open;
-      return frame(state, props, actions);
-    },
-    event(state, input, props) {
-      state.revision++;
-      const actions: Action[] = [],
-        events: Emission[] = [];
-      if (input.kind === 'component' && input.child === 'project-list' && input.name === 'input')
-        input = input.event as ComponentInput;
-      if (input.kind === 'component' && input.child === 'project-name') {
-        if (input.name === 'changed') {
-          state.observation = input.event as EditorObservation;
-          const receipt = state.observation.receipt;
-          if (
-            state.command &&
-            receipt?.owner === state.command.owner &&
-            receipt.sequence === state.command.sequence
-          ) {
-            state.nameReady = receipt.outcome.status === 'applied';
-            state.command = null;
-            if (!state.nameReady) state.notice = 'projectsFailed';
-          } else initialize(state);
-        } else if (input.name === 'submitted')
-          input = { kind: 'raw', key: 'rename-save', event: {} } as ComponentInput;
-      }
-      if (
-        input.kind === 'component' &&
-        input.child === 'project-directory' &&
-        props.open &&
-        state.picker
-      ) {
-        if (input.name === 'closed') state.picker = false;
-        else if (input.name === 'selected' && !locked(state, props)) {
-          state.picker = false;
-          request(state, actions, { kind: 'directory' }, 'agent', 'projects', {
-            kind: 'directory',
-            selection: input.event as AgentDirectorySelection,
-          });
+  return withPageShell<State, ProjectsProps, N>(
+    {
+      mount(props) {
+        const state: State = {
+          revision: 0,
+          open: props.open,
+          focus: null,
+          serial: 0,
+          projects: [],
+          next: null,
+          selected: null,
+          pending: null,
+          restoring: true,
+          historyFailed: false,
+          original: null,
+          current: null,
+          picker: false,
+          source: null,
+          location: null,
+          confirm: null,
+          rename: null,
+          observation: null,
+          command: null,
+          sequence: 0,
+          nameReady: false,
+          captured: null,
+          notice: null,
+        };
+        const actions: Action[] = [];
+        history(state, actions);
+        return frame(state, props, actions);
+      },
+      update(state, props) {
+        state.revision++;
+        const actions: Action[] = [];
+        if (
+          !state.open &&
+          props.open &&
+          !state.pending &&
+          !state.current &&
+          !state.restoring &&
+          !state.rename &&
+          !state.confirm
+        )
+          page(state, actions);
+        state.open = props.open;
+        return frame(state, props, actions);
+      },
+      event(state, input, props) {
+        state.revision++;
+        const actions: Action[] = [],
+          events: Emission[] = [];
+        if (input.kind === 'component' && input.child === 'project-list' && input.name === 'input')
+          input = input.event as ComponentInput;
+        if (input.kind === 'component' && input.child === 'project-name') {
+          if (input.name === 'changed') {
+            state.observation = input.event as EditorObservation;
+            const receipt = state.observation.receipt;
+            if (
+              state.command &&
+              receipt?.owner === state.command.owner &&
+              receipt.sequence === state.command.sequence
+            ) {
+              state.nameReady = receipt.outcome.status === 'applied';
+              state.command = null;
+              if (!state.nameReady) state.notice = 'projectsFailed';
+            } else initialize(state);
+          } else if (input.name === 'submitted')
+            input = { kind: 'raw', key: 'rename-save', event: {} } as ComponentInput;
         }
-      } else if (input.kind === 'action' && input.key === state.pending?.key) {
-        const r = state.pending.request,
-          result = input.event as ActionOutcome;
-        state.pending = null;
-        if (r.kind === 'history') {
-          if (result.status !== 'succeeded') {
-            state.historyFailed = true;
-            state.notice = 'historyUnavailable';
-          } else {
-            const items = result.value as CallerIntent[];
-            for (const item of items) {
-              const recovery = item.recovery as {
-                kind?: string;
-                input?: AgentProjectChange;
-              } | null;
-              if (
-                item.reference.method === 'project' &&
-                item.reference.contract.name === 'maka.agent.Agent' &&
-                recovery?.kind === 'projects/v1' &&
-                recovery.input
-              ) {
-                state.original = item.reference;
-                state.current = { input: recovery.input, reference: item.reference };
-              }
-            }
-            const last = items.at(-1);
-            if (last && last.cursor > r.after) history(state, actions, last.cursor);
-            else if (last) {
+        if (
+          input.kind === 'component' &&
+          input.child === 'project-directory' &&
+          props.open &&
+          state.picker
+        ) {
+          if (input.name === 'closed') state.picker = false;
+          else if (input.name === 'selected' && !locked(state, props)) {
+            state.picker = false;
+            request(state, actions, { kind: 'directory' }, 'agent', 'projects', {
+              kind: 'directory',
+              selection: input.event as AgentDirectorySelection,
+            });
+          }
+        } else if (input.kind === 'action' && input.key === state.pending?.key) {
+          const r = state.pending.request,
+            result = input.event as ActionOutcome;
+          state.pending = null;
+          if (r.kind === 'history') {
+            if (result.status !== 'succeeded') {
               state.historyFailed = true;
               state.notice = 'historyUnavailable';
             } else {
-              state.restoring = false;
-              if (state.original)
-                request(state, actions, { kind: 'receipt' }, 'receipts', 'read', state.original);
-              else page(state, actions);
-            }
-          }
-        } else if (r.kind === 'mutate') {
-          if (result.status === 'operation') settle(state, result.reply, actions, events);
-          else if (result.status === 'not_accepted') {
-            state.current = null;
-            state.notice = 'projectsFailed';
-          } else state.notice = 'projectsUnknown';
-        } else if (r.kind === 'receipt') {
-          if (result.status === 'succeeded')
-            settle(state, result.value as OperationReply, actions, events);
-          else state.notice = 'projectsUnknown';
-        } else if (r.kind === 'name') {
-          const chunk = result.status === 'succeeded' ? (result.value as TextChunk) : null;
-          if (
-            !chunk ||
-            !state.rename ||
-            !sameValue(chunk.metadata, state.captured?.snapshot.text) ||
-            new TextEncoder().encode(chunk.text).length !== state.captured?.snapshot.text.bytes
-          )
-            state.notice = 'projectsFailed';
-          else if (
-            !chunk.text.trim() ||
-            [...chunk.text].length > 256 ||
-            /[\u0000-\u001f\u007f-\u009f]/u.test(chunk.text)
-          )
-            state.notice = 'projectsInvalid';
-          else
-            mutate(state, actions, {
-              kind: 'rename',
-              project: state.rename.reference,
-              name: chunk.text,
-            });
-        } else if (result.status !== 'succeeded') state.notice = 'projectsFailed';
-        else {
-          const value = result.value as AgentProjectsPage;
-          if (value.kind === 'projects' && r.kind === 'page') {
-            state.projects = value.projects;
-            state.next = value.next;
-            state.selected = value.projects.some((p) => p.reference.id === state.selected)
-              ? state.selected
-              : (value.projects[0]?.reference.id ?? null);
-            if (presentation.target === 'tui' && state.selected)
-              state.focus = {
-                sequence: (state.focus?.sequence ?? 0) + 1,
-                target: { kind: 'focus_item', key: 'select-' + state.selected },
-              };
-          } else if (value.kind === 'directory' && r.kind === 'directory') {
-            state.location = value.location;
-            state.confirm = state.source
-              ? {
-                  kind: 'relocate',
-                  project: state.source.reference,
-                  selection: value.location.selection,
-                  destination: value.location.project?.reference ?? null,
+              const items = result.value as CallerIntent[];
+              for (const item of items) {
+                const recovery = item.recovery as {
+                  kind?: string;
+                  input?: AgentProjectChange;
+                } | null;
+                if (
+                  item.reference.method === 'project' &&
+                  item.reference.contract.name === 'maka.agent.Agent' &&
+                  recovery?.kind === 'projects/v1' &&
+                  recovery.input
+                ) {
+                  state.original = item.reference;
+                  state.current = { input: recovery.input, reference: item.reference };
                 }
-              : {
-                  kind: 'register',
-                  selection: value.location.selection,
-                  expected: value.location.project?.reference ?? null,
+              }
+              const last = items.at(-1);
+              if (last && last.cursor > r.after) history(state, actions, last.cursor);
+              else if (last) {
+                state.historyFailed = true;
+                state.notice = 'historyUnavailable';
+              } else {
+                state.restoring = false;
+                if (state.original)
+                  request(state, actions, { kind: 'receipt' }, 'receipts', 'read', state.original);
+                else page(state, actions);
+              }
+            }
+          } else if (r.kind === 'mutate') {
+            if (result.status === 'operation') settle(state, result.reply, actions, events);
+            else if (result.status === 'not_accepted') {
+              state.current = null;
+              state.notice = 'projectsFailed';
+            } else state.notice = 'projectsUnknown';
+          } else if (r.kind === 'receipt') {
+            if (result.status === 'succeeded')
+              settle(state, result.value as OperationReply, actions, events);
+            else state.notice = 'projectsUnknown';
+          } else if (r.kind === 'name') {
+            const chunk = result.status === 'succeeded' ? (result.value as TextChunk) : null;
+            if (
+              !chunk ||
+              !state.rename ||
+              !sameValue(chunk.metadata, state.captured?.snapshot.text) ||
+              new TextEncoder().encode(chunk.text).length !== state.captured?.snapshot.text.bytes
+            )
+              state.notice = 'projectsFailed';
+            else if (
+              !chunk.text.trim() ||
+              [...chunk.text].length > 256 ||
+              /[\u0000-\u001f\u007f-\u009f]/u.test(chunk.text)
+            )
+              state.notice = 'projectsInvalid';
+            else
+              mutate(state, actions, {
+                kind: 'rename',
+                project: state.rename.reference,
+                name: chunk.text,
+              });
+          } else if (result.status !== 'succeeded') state.notice = 'projectsFailed';
+          else {
+            const value = result.value as AgentProjectsPage;
+            if (value.kind === 'projects' && r.kind === 'page') {
+              state.projects = value.projects;
+              state.next = value.next;
+              state.selected = value.projects.some((p) => p.reference.id === state.selected)
+                ? state.selected
+                : (value.projects[0]?.reference.id ?? null);
+              if (presentation.target === 'tui' && state.selected)
+                state.focus = {
+                  sequence: (state.focus?.sequence ?? 0) + 1,
+                  target: { kind: 'focus_item', key: 'select-' + state.selected },
                 };
-          } else
-            state.notice = value.kind === 'changed' ? 'projectsChanged' : 'projectsUnavailable';
-        }
-      } else if (input.kind === 'raw' && props.open) {
-        const key = input.key.startsWith('footer-') ? input.key.slice(7) : input.key;
-        if (key === 'back') events.push({ name: 'closed', value: {} });
-        else if (key === 'history-retry' && state.historyFailed && !state.pending)
-          history(state, actions);
-        else if (
-          ['receipt', 'rename-receipt', 'confirm-receipt'].includes(key) &&
-          state.current?.reference &&
-          !state.pending
-        )
-          request(state, actions, { kind: 'receipt' }, 'receipts', 'read', state.current.reference);
-        else if (
-          ['rename-cancel', 'confirm-cancel'].includes(key) &&
-          !state.current &&
-          !state.pending
-        ) {
-          state.confirm = null;
-          state.rename = null;
-          state.location = null;
-          state.source = null;
-        } else if (
-          !locked(state, props) &&
-          !state.picker &&
-          (!state.rename || key === 'rename-save') &&
-          (!state.confirm || key === 'confirm')
-        ) {
-          if (key === 'add') {
-            state.notice = null;
-            state.source = null;
-            state.location = null;
-            state.picker = true;
-          } else if (key === 'refresh') {
-            state.notice = null;
-            page(state, actions);
-          } else if (key === 'more' && state.next) page(state, actions, state.next);
-          else if (key === 'confirm' && state.confirm) mutate(state, actions, state.confirm);
+            } else if (value.kind === 'directory' && r.kind === 'directory') {
+              state.location = value.location;
+              state.confirm = state.source
+                ? {
+                    kind: 'relocate',
+                    project: state.source.reference,
+                    selection: value.location.selection,
+                    destination: value.location.project?.reference ?? null,
+                  }
+                : {
+                    kind: 'register',
+                    selection: value.location.selection,
+                    expected: value.location.project?.reference ?? null,
+                  };
+            } else
+              state.notice = value.kind === 'changed' ? 'projectsChanged' : 'projectsUnavailable';
+          }
+        } else if (input.kind === 'raw' && props.open) {
+          const key = input.key.startsWith('footer-') ? input.key.slice(7) : input.key;
+          if (key === 'back') events.push({ name: 'closed', value: {} });
+          else if (key === 'history-retry' && state.historyFailed && !state.pending)
+            history(state, actions);
           else if (
-            key === 'rename-save' &&
-            state.rename &&
-            state.nameReady &&
-            !state.command &&
-            state.observation &&
-            !state.observation.snapshot.marked
+            ['receipt', 'rename-receipt', 'confirm-receipt'].includes(key) &&
+            state.current?.reference &&
+            !state.pending
+          )
+            request(
+              state,
+              actions,
+              { kind: 'receipt' },
+              'receipts',
+              'read',
+              state.current.reference,
+            );
+          else if (
+            ['rename-cancel', 'confirm-cancel'].includes(key) &&
+            !state.current &&
+            !state.pending
           ) {
-            const observation = state.observation;
-            if (observation.snapshot.text.bytes > 1024) state.notice = 'projectsInvalid';
-            else {
-              state.captured = observation;
-              request(
-                state,
-                actions,
-                { kind: 'name' },
-                'reader',
-                'read',
-                { start: 0, end: observation.snapshot.text.bytes },
-                {
-                  text: {
-                    child: 'project-name',
-                    method: 'snapshot',
-                    input: {
-                      kind: 'at_revision',
-                      owner: observation.snapshot.text.owner,
-                      revision: observation.snapshot.text.revision,
+            state.confirm = null;
+            state.rename = null;
+            state.location = null;
+            state.source = null;
+          } else if (
+            !locked(state, props) &&
+            !state.picker &&
+            (!state.rename || key === 'rename-save') &&
+            (!state.confirm || key === 'confirm')
+          ) {
+            if (key === 'add') {
+              state.notice = null;
+              state.source = null;
+              state.location = null;
+              state.picker = true;
+            } else if (key === 'refresh') {
+              state.notice = null;
+              page(state, actions);
+            } else if (key === 'more' && state.next) page(state, actions, state.next);
+            else if (key === 'confirm' && state.confirm) mutate(state, actions, state.confirm);
+            else if (
+              key === 'rename-save' &&
+              state.rename &&
+              state.nameReady &&
+              !state.command &&
+              state.observation &&
+              !state.observation.snapshot.marked
+            ) {
+              const observation = state.observation;
+              if (observation.snapshot.text.bytes > 1024) state.notice = 'projectsInvalid';
+              else {
+                state.captured = observation;
+                request(
+                  state,
+                  actions,
+                  { kind: 'name' },
+                  'reader',
+                  'read',
+                  { start: 0, end: observation.snapshot.text.bytes },
+                  {
+                    text: {
+                      child: 'project-name',
+                      method: 'snapshot',
+                      input: {
+                        kind: 'at_revision',
+                        owner: observation.snapshot.text.owner,
+                        revision: observation.snapshot.text.revision,
+                      },
                     },
                   },
-                },
-              );
-            }
-          } else {
-            for (const project of state.projects) {
-              const id = project.reference.id;
-              if (key === 'select-' + id) {
-                state.selected = id;
-                if (
-                  (input.event as { kind?: string }).kind === 'submit' &&
-                  !project.archived &&
-                  project.selection
-                )
+                );
+              }
+            } else {
+              for (const project of state.projects) {
+                const id = project.reference.id;
+                if (key === 'select-' + id) {
+                  state.selected = id;
+                  if (
+                    (input.event as { kind?: string }).kind === 'submit' &&
+                    !project.archived &&
+                    project.selection
+                  )
+                    events.push({
+                      name: 'selected',
+                      value: { project: project.reference, selection: project.selection },
+                    });
+                } else if (key === 'create-' + id && !project.archived && project.selection)
                   events.push({
                     name: 'selected',
-                    value: { project: project.reference, selection: project.selection },
+                    value: {
+                      project: project.reference as AgentProjectRef,
+                      selection: project.selection,
+                    },
                   });
-              } else if (key === 'create-' + id && !project.archived && project.selection)
-                events.push({
-                  name: 'selected',
-                  value: {
-                    project: project.reference as AgentProjectRef,
-                    selection: project.selection,
-                  },
-                });
-              else if (key === 'rename-' + id) {
-                state.rename = project;
-                state.nameReady = false;
-                state.notice = null;
-                initialize(state);
-              } else if (key === 'archive-' + id) {
-                state.notice = null;
-                state.source = project;
-                state.location = null;
-                state.confirm = {
-                  kind: project.archived ? 'restore' : 'archive',
-                  project: project.reference,
-                };
-              } else if (key === 'relocate-' + id) {
-                state.notice = null;
-                state.source = project;
-                state.location = null;
-                state.picker = true;
+                else if (key === 'rename-' + id) {
+                  state.rename = project;
+                  state.nameReady = false;
+                  state.notice = null;
+                  initialize(state);
+                } else if (key === 'archive-' + id) {
+                  state.notice = null;
+                  state.source = project;
+                  state.location = null;
+                  state.confirm = {
+                    kind: project.archived ? 'restore' : 'archive',
+                    project: project.reference,
+                  };
+                } else if (key === 'relocate-' + id) {
+                  state.notice = null;
+                  state.source = project;
+                  state.location = null;
+                  state.picker = true;
+                }
               }
             }
           }
         }
-      }
-      return frame(state, props, actions, events);
+        return frame(state, props, actions, events);
+      },
     },
-  };
+    () => 'back',
+  );
 }
 export function activate() {
   return { Projects: { kind: 'component', contract: projectsContract, component: ['component'] } };

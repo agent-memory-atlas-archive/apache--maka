@@ -32,10 +32,11 @@ import type {
 } from '../../plugin-sdk/src/index.js';
 import { connectionsContract, type ConnectionsProps } from './contracts.js';
 import { compactLabel } from './view.js';
+import { pageHeader, withPageShell, type PageState } from './page-shell.js';
 import { copy } from './locale.js';
 import { tuiText } from './tui-locale.js';
 import { fill, output, type Presentation, type Node } from './view.js';
-interface State {
+interface State extends PageState {
   revision: number;
   serial: number;
   pending: { key: string; kind: 'page' | 'detail'; basis: ConnectionVersionBasis | null } | null;
@@ -159,20 +160,9 @@ function frame<N extends Node>(
   const catalog = ui.box(
     'connections',
     [
-      ui.box(
-        'header',
-        [
-          ui.button(
-            'back',
-            text.back,
-            false,
-            false,
-            target === 'tui' ? { background: 0, align: 'start' } : {},
-          ),
-          ui.text('heading', text.settings, 22, props.theme.text, 600),
-        ],
-        { row: true, gap: target === 'desktop' ? 8 : 1 },
-      ),
+      ...(state.route === 'catalog'
+        ? pageHeader(presentation, state, props, events, text.settings, 'back', false)
+        : []),
       ...(state.pending ? [ui.text('loading', text.connecting, 13, props.theme.muted)] : []),
       ...(state.failed
         ? [ui.text('failed', text.connectionsUnavailable, 13, props.theme.muted)]
@@ -223,7 +213,7 @@ function frame<N extends Node>(
       visible: state.route === 'catalog',
       autoFocus: true,
       gap: target === 'desktop' ? 16 : 1,
-      padding: target === 'desktop' ? 24 : 1,
+      padding: target === 'desktop' ? 24 : props.shell ? 0 : 1,
       terminal: { grow: 1 },
       style: { width: fill, height: fill, maxWidth: 760, minWidth: 0, minHeight: 0 },
       shortcuts:
@@ -242,7 +232,7 @@ function frame<N extends Node>(
               'form-' + state.mount,
               'form',
               { ...props, catalogRevision: state.catalogRevision!, connection: state.detail },
-              { closed: 'closed', changed: 'changed' },
+              { closed: 'closed', changed: 'changed', chrome: 'chrome' },
             ),
           ]
         : state.route === 'credential' && state.detail
@@ -251,7 +241,7 @@ function frame<N extends Node>(
                 'credential-' + state.mount,
                 'credential',
                 { ...props, target: state.detail.target },
-                { closed: 'closed', changed: 'changed' },
+                { closed: 'closed', changed: 'changed', chrome: 'chrome' },
               ),
             ]
           : []),
@@ -265,122 +255,132 @@ function frame<N extends Node>(
 export function connections<N extends Node>(
   presentation: Presentation<N>,
 ): Component<State, ConnectionsProps, N> {
-  return {
-    mount(props) {
-      const state: State = {
-        revision: 0,
-        serial: 0,
-        pending: null,
-        detailRoute: 'credential',
-        route: 'catalog',
-        detail: null,
-        connections: [],
-        catalogRevision: null,
-        next: null,
-        selected: null,
-        focus: null,
-        defaultTarget: null,
-        failed: false,
-        mount: 0,
-      };
-      return frame(presentation, state, props, page(state));
-    },
-    update(state, props) {
-      state.revision++;
-      return frame(presentation, state, props);
-    },
-    event(state, input, props) {
-      state.revision++;
-      if (input.kind === 'component' && input.child === 'connection-list' && input.name === 'input')
-        input = input.event as ComponentInput;
-      const actions: Action[] = [],
-        events: Emission[] = [];
-      if (input.kind === 'action' && input.key === state.pending?.key) {
-        const pending = state.pending;
-        state.pending = null;
-        const result = input.event as ActionOutcome;
-        if (result.status !== 'succeeded') state.failed = true;
-        else if (pending.kind === 'page') {
-          const resultPage = result.value as SettingsConnectionsPage;
-          if (resultPage.kind === 'changed') {
-            state.connections = [];
-            state.next = null;
-            state.catalogRevision = null;
-            actions.push(...page(state));
-          } else {
-            state.connections = resultPage.connections;
-            state.catalogRevision = resultPage.revision;
-            state.next = resultPage.next;
-            state.defaultTarget = resultPage.defaultTarget;
-            if (
-              !state.connections.some(
-                (connection) => connection.basis.connectionId === state.selected,
+  return withPageShell<State, ConnectionsProps, N>(
+    {
+      mount(props) {
+        const state: State = {
+          revision: 0,
+          serial: 0,
+          pending: null,
+          detailRoute: 'credential',
+          route: 'catalog',
+          detail: null,
+          connections: [],
+          catalogRevision: null,
+          next: null,
+          selected: null,
+          focus: null,
+          defaultTarget: null,
+          failed: false,
+          mount: 0,
+        };
+        return frame(presentation, state, props, page(state));
+      },
+      update(state, props) {
+        state.revision++;
+        return frame(presentation, state, props);
+      },
+      event(state, input, props) {
+        state.revision++;
+        if (
+          input.kind === 'component' &&
+          input.child === 'connection-list' &&
+          input.name === 'input'
+        )
+          input = input.event as ComponentInput;
+        const actions: Action[] = [],
+          events: Emission[] = [];
+        if (input.kind === 'action' && input.key === state.pending?.key) {
+          const pending = state.pending;
+          state.pending = null;
+          const result = input.event as ActionOutcome;
+          if (result.status !== 'succeeded') state.failed = true;
+          else if (pending.kind === 'page') {
+            const resultPage = result.value as SettingsConnectionsPage;
+            if (resultPage.kind === 'changed') {
+              state.connections = [];
+              state.next = null;
+              state.catalogRevision = null;
+              actions.push(...page(state));
+            } else {
+              state.connections = resultPage.connections;
+              state.catalogRevision = resultPage.revision;
+              state.next = resultPage.next;
+              state.defaultTarget = resultPage.defaultTarget;
+              if (
+                !state.connections.some(
+                  (connection) => connection.basis.connectionId === state.selected,
+                )
               )
-            )
-              state.selected = state.connections[0]?.basis.connectionId ?? null;
-            if (presentation.target === 'tui' && state.selected)
-              state.focus = {
-                sequence: (state.focus?.sequence ?? 0) + 1,
-                target: { kind: 'focus_item', key: 'select-' + state.selected },
-              };
-          }
-        } else {
-          const detail = result.value as SettingsConnectionDetail;
-          if (
-            detail.kind === 'ready' &&
-            detail.target.connectionId === pending.basis?.connectionId &&
-            detail.target.revision === pending.basis.revision
-          ) {
-            state.detail = detail;
-            state.route = state.detailRoute;
-            state.mount++;
+                state.selected = state.connections[0]?.basis.connectionId ?? null;
+              if (presentation.target === 'tui' && state.selected)
+                state.focus = {
+                  sequence: (state.focus?.sequence ?? 0) + 1,
+                  target: { kind: 'focus_item', key: 'select-' + state.selected },
+                };
+            }
           } else {
-            state.failed = true;
+            const detail = result.value as SettingsConnectionDetail;
+            if (
+              detail.kind === 'ready' &&
+              detail.target.connectionId === pending.basis?.connectionId &&
+              detail.target.revision === pending.basis.revision
+            ) {
+              state.detail = detail;
+              state.route = state.detailRoute;
+              state.mount++;
+            } else {
+              state.failed = true;
+              actions.push(...page(state));
+            }
+          }
+        } else if (
+          input.kind === 'component' &&
+          (input.child === 'credential-' + state.mount || input.child === 'form-' + state.mount) &&
+          state.route !== 'catalog'
+        ) {
+          if (input.name === 'chrome') {
+            state.pageChrome = input.event as NonNullable<State['pageChrome']>;
+            events.push({ name: 'chrome', value: input.event });
+          } else if (input.name === 'changed') events.push({ name: 'changed', value: {} });
+          else if (input.name === 'closed') {
+            state.detail = null;
+            state.route = 'catalog';
             actions.push(...page(state));
           }
-        }
-      } else if (
-        input.kind === 'component' &&
-        (input.child === 'credential-' + state.mount || input.child === 'form-' + state.mount) &&
-        state.route !== 'catalog'
-      ) {
-        if (input.name === 'changed') events.push({ name: 'changed', value: {} });
-        else if (input.name === 'closed') {
-          state.detail = null;
-          state.route = 'catalog';
-          actions.push(...page(state));
-        }
-      } else if (input.kind === 'raw' && state.route === 'catalog') {
-        if (input.key === 'back') events.push({ name: 'closed', value: {} });
-        else if (input.key === 'refresh') actions.push(...page(state));
-        else if (input.key === 'create' && !state.pending && state.catalogRevision !== null) {
-          state.detail = null;
-          state.route = 'form';
-          state.mount++;
-        } else if (input.key === 'more' && !state.pending && state.next !== null) {
-          actions.push(...page(state, true));
-        } else if (!state.pending && input.key.startsWith('select-')) {
-          const connection = state.connections.find(
-            (connection) => connection.basis.connectionId === input.key.slice(7),
-          );
-          if (connection) {
-            state.selected = connection.basis.connectionId;
-            if ((input.event as { kind?: string }).kind === 'submit' && connection.editable) {
-              state.detailRoute = 'form';
+        } else if (input.kind === 'raw' && state.route === 'catalog') {
+          if (input.key === 'back') events.push({ name: 'closed', value: {} });
+          else if (input.key === 'refresh') actions.push(...page(state));
+          else if (input.key === 'create' && !state.pending && state.catalogRevision !== null) {
+            state.detail = null;
+            state.route = 'form';
+            state.mount++;
+          } else if (input.key === 'more' && !state.pending && state.next !== null) {
+            actions.push(...page(state, true));
+          } else if (!state.pending && input.key.startsWith('select-')) {
+            const connection = state.connections.find(
+              (connection) => connection.basis.connectionId === input.key.slice(7),
+            );
+            if (connection) {
+              state.selected = connection.basis.connectionId;
+              if ((input.event as { kind?: string }).kind === 'submit' && connection.editable) {
+                state.detailRoute = 'form';
+                actions.push(...request(state, 'detail', connection.basis, connection.basis));
+              }
+            }
+          } else if (!state.pending && /^(open|edit)-(0|[1-9][0-9]*)$/.test(input.key)) {
+            const connection = state.connections[Number(input.key.slice(5))];
+            if (connection?.editable) {
+              state.detailRoute = input.key.startsWith('edit-') ? 'form' : 'credential';
               actions.push(...request(state, 'detail', connection.basis, connection.basis));
             }
           }
-        } else if (!state.pending && /^(open|edit)-(0|[1-9][0-9]*)$/.test(input.key)) {
-          const connection = state.connections[Number(input.key.slice(5))];
-          if (connection?.editable) {
-            state.detailRoute = input.key.startsWith('edit-') ? 'form' : 'credential';
-            actions.push(...request(state, 'detail', connection.basis, connection.basis));
-          }
         }
-      }
-      return frame(presentation, state, props, actions, events);
+        return frame(presentation, state, props, actions, events);
+      },
     },
-  };
+    (state) => (state.route === 'catalog' ? 'back' : null),
+  );
 }
 export function activate() {
   return {

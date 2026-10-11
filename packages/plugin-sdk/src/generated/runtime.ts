@@ -531,6 +531,13 @@ export type Surface =
 export type TerminalScene =
   | {
       key: string;
+      direction: TerminalDirection;
+      color: TerminalColor;
+      ascii: boolean;
+      kind: 'rule';
+    }
+  | {
+      key: string;
       label: string;
       /**
        * @maxItems 64
@@ -721,6 +728,7 @@ export type TerminalScene =
       };
       kind: 'component';
     };
+export type TerminalDirection = 'row' | 'column';
 /**
  * Terminal colors retain the user's ANSI palette and default background.
  * Numeric values are RGB; named values are emitted as terminal attributes.
@@ -745,13 +753,12 @@ export type TerminalNamedColor =
   | 'light_cyan'
   | 'white';
 export type TerminalPaneOperation = 'toggle' | 'dismiss_transient';
-export type TerminalDirection = 'row' | 'column';
-export type TerminalBorderStyle = 'rounded' | 'square' | 'ascii';
-export type Modifier = 'control' | 'primary' | 'alt' | 'shift' | 'super';
 /**
  * Native scroll policy; offsets and accepted viewport geometry remain native.
  */
 export type TerminalScrollPolicy = 'none' | 'manual' | 'anchor' | 'follow_end';
+export type TerminalBorderStyle = 'rounded' | 'square' | 'ascii';
+export type Modifier = 'control' | 'primary' | 'alt' | 'shift' | 'super';
 export type TerminalAlign = 'start' | 'center' | 'end';
 export type DesktopScene =
   | {
@@ -4718,6 +4725,10 @@ export interface TerminalPaneCommand {
 export interface TerminalResponsiveStack {
   min_width: number;
   direction: TerminalDirection;
+  /**
+   * Scrolling can follow the same allocated-width breakpoint as the layout.
+   */
+  scroll?: TerminalScrollPolicy | null;
   children?: {
     [k: string]: TerminalLayout | undefined;
   };

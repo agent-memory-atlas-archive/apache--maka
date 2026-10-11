@@ -174,35 +174,60 @@ export function settingsView<N extends Node>(
                 ui.text('settings-category-label-' + key, title(key), 14, theme.text),
                 category === key,
                 false,
+                { followFocus: true },
               ),
             ),
-            { gap: 0, terminal: { basis: 0 } },
+            { gap: 1, focusGroup: true, terminal: { basis: 0 } },
           ),
-          ...settingsCategories.map((key) =>
+          ui.box('settings-gap-before', [], { terminal: { basis: 0 } }),
+          ui.box('settings-divider', [ui.rule!('settings-rule', 'column')], {
+            row: true,
+            gap: 0,
+            terminal: { basis: 0 },
+          }),
+          ui.box('settings-gap-after', [], { terminal: { basis: 0 } }),
+          ...settingsCategories.flatMap((key) => [
+            ui.box(
+              'settings-heading-' + key,
+              [ui.text('settings-heading-label-' + key, title(key), 14, theme.text, 650)],
+              { terminal: { basis: 1 } },
+            ),
             ui.box(
               'settings-section-' + key,
               [
-                ui.text('settings-heading-' + key, title(key), 14, theme.muted, 550),
-                ...sections[key],
+                ui.box('settings-rows-' + key, sections[key], {
+                  gap: 1,
+                  terminal: { basis: 64, shrink: true },
+                }),
               ],
-              { gap: 1, padding: 1 },
+              { row: true, gap: 0 },
             ),
-          ),
+            ui.box('settings-section-gap-' + key, [], { terminal: { basis: 1 } }),
+          ]),
         ],
         {
           gap: 0,
           terminal: { grow: 1 },
+          scroll: 'manual',
           wide: {
             min_width: 56,
             direction: 'row',
+            scroll: 'none',
             children: {
               'settings-categories': {
                 basis_fraction: { numerator: 1, denominator: 3, min: 0, max: 22 },
               },
+              'settings-gap-before': { basis: 2 },
+              'settings-divider': { basis: 1 },
+              'settings-gap-after': { basis: 2 },
               ...Object.fromEntries(
-                settingsCategories.map((key) => [
-                  'settings-section-' + key,
-                  key === category ? { grow: 1, basis: 0 } : { basis: 0 },
+                settingsCategories.flatMap((key) => [
+                  ['settings-heading-' + key, { basis: 0 }],
+                  ['settings-section-gap-' + key, { basis: 0 }],
+                  [
+                    'settings-section-' + key,
+                    key === category ? { grow: 1, basis: 0 } : { basis: 0 },
+                  ],
                 ]),
               ),
             },
@@ -212,8 +237,7 @@ export function settingsView<N extends Node>(
     ],
     {
       gap: 0,
-      padding: 1,
-      scroll: 'manual',
+      padding: 0,
       terminal: { grow: 1 },
     },
   );

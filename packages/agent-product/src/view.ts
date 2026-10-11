@@ -111,6 +111,7 @@ interface Painter<N extends Node> {
     },
   ): N;
   focusButton?(key: string, label: string, child: string): N;
+  rule?(key: string, direction: 'row' | 'column'): N;
   adaptivePane?(
     key: string,
     label: string,
@@ -260,6 +261,8 @@ function terminalPaint(theme: Theme): Painter<TerminalNode> {
         truncate: true,
       });
     },
+    rule: (key, direction) =>
+      ui.terminal.rule({ key, direction, color: color(theme.border), ascii: theme.ascii }),
     adaptivePane: (key, label, background, content, command) =>
       ui.terminal.adaptivePane({
         key,

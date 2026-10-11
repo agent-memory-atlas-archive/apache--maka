@@ -17,7 +17,7 @@
  * under the License.
  */
 
-use super::scene::Node;
+use super::scene::{Direction, Node};
 use super::{CellRect, Placement, Presenter};
 use maka_plugin_core::runtime::Mount;
 use ratatui::{
@@ -1026,6 +1026,10 @@ impl Presenter {
                             self.measure(mount, background, width.saturating_sub(3), measurements)?;
                         (w.saturating_add(3).min(width), h.max(1))
                     }
+                    Node::Rule { direction, .. } => match direction {
+                        Direction::Row => (width, u32::from(width > 0)),
+                        Direction::Column => (1.min(width), 1),
+                    },
                     Node::Choice(choice) => super::choice::size(choice, width),
                     Node::Item { content, .. } => {
                         self.measure(mount, content, width, measurements)?
@@ -1339,6 +1343,30 @@ impl Presenter {
                     }
                 }
             }
+            Node::Rule {
+                direction,
+                color: foreground,
+                ascii,
+                ..
+            } => {
+                let visible = area.visible();
+                let style = Style::default().fg(color(*foreground));
+                match direction {
+                    Direction::Row if visible.height > 0 => {
+                        let glyph = if *ascii { "-" } else { "─" };
+                        for x in visible.x..visible.right() {
+                            buffer.set_stringn(x, visible.y, glyph, 1, style);
+                        }
+                    }
+                    Direction::Column if visible.width > 0 => {
+                        let glyph = if *ascii { "|" } else { "│" };
+                        for y in visible.y..visible.bottom() {
+                            buffer.set_stringn(visible.x, y, glyph, 1, style);
+                        }
+                    }
+                    _ => {}
+                }
+            }
             Node::Text {
                 text: content,
                 color: foreground,
@@ -1545,6 +1573,8 @@ impl Presenter {
                 };
                 let children = self.visible_children(mount, children)?;
                 let wide = wide.as_ref().filter(|wide| inner.width >= wide.min_width);
+                let effective_scroll = wide.and_then(|wide| wide.scroll).unwrap_or(*scroll);
+                let scroll = &effective_scroll;
                 let layouts: Vec<_> = children
                     .iter()
                     .map(|child| {

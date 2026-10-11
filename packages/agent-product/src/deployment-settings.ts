@@ -18,7 +18,7 @@
  */
 
 import type { Component, Emission } from '../../plugin-sdk/src/index.js';
-import { deploymentContract, type DeploymentProps } from './contracts.js';
+import { deploymentContract, type DeploymentProps, type PageChrome } from './contracts.js';
 import {
   bookmark,
   bookmarkReady,
@@ -28,11 +28,14 @@ import {
   type Bookmark,
 } from './bookmark.js';
 import { copy } from './locale.js';
+import { pageHeader, withPageShell, type PageState } from './page-shell.js';
 import { fill, output, type Presentation, type Node } from './view.js';
 
 type Place = 'interface' | 'services';
-interface State {
+interface State extends PageState {
   revision: number;
+  backs: Partial<Record<Place, number>>;
+  chrome: Partial<Record<Place, PageChrome>>;
   bookmark: Bookmark<Place>;
   selected: Place;
   opened: Place[];
@@ -44,6 +47,18 @@ export function deploymentSettings<N extends Node>(
   function frame(state: State, props: DeploymentProps, events: Emission[] = []) {
     const ui = presentation.paint(props.theme),
       text = copy(props.locale);
+    if (props.shell) {
+      const chrome = state.chrome[state.selected];
+      pageHeader(
+        presentation,
+        state,
+        props,
+        events,
+        chrome?.title ?? text.deploymentTitle,
+        'deployment-settings-back',
+        chrome?.backEnabled !== true,
+      );
+    }
     return output(
       state,
       ui.box(
@@ -98,13 +113,14 @@ export function deploymentSettings<N extends Node>(
                   place,
                   {
                     ...props,
+                    ...(props.shell ? { shell: { back: state.backs[place] ?? 0 } } : {}),
                     bookmarkKey: (props.bookmarkKey ?? 'deployment') + '/' + place,
                     navigationReady:
                       props.navigationReady !== false &&
                       (presentation.target !== 'tui' ||
                         bookmarkReady(state.bookmark, state.selected)),
                   },
-                  { closed: 'closed' },
+                  { closed: 'closed', chrome: 'chrome' },
                 ),
               ],
               {
@@ -128,61 +144,77 @@ export function deploymentSettings<N extends Node>(
       events,
     );
   }
-  return {
-    mount(props) {
-      return frame(
-        {
-          revision: 0,
-          selected: 'interface',
-          opened: ['interface'],
-          bookmark: bookmark<Place>('interface'),
-        },
-        props,
-      );
-    },
-    update(state, props) {
-      state.revision++;
-      return frame(state, props);
-    },
-    event(state, input, props) {
-      state.revision++;
-      const events: Emission[] = [];
-      if (input.kind === 'raw' && input.key === 'deployment-place-retry')
-        retryBookmark(state.bookmark);
-      const restored = observeBookmark(
-        state.bookmark,
-        input,
-        'deployment-place-checkpoint',
-        state.selected,
-        (value) => (value === 'interface' || value === 'services' ? value : null),
-      );
-      if (restored) {
-        state.selected = restored;
-        if (!state.opened.includes(restored)) state.opened.push(restored);
-      }
-      if (input.kind === 'raw') {
-        if (input.key === 'deployment-settings-back') events.push({ name: 'closed', value: {} });
-        const place =
-          input.key === 'deployment-interface'
-            ? 'interface'
-            : input.key === 'deployment-services'
-              ? 'services'
-              : null;
-        if (place) {
-          state.selected = place;
-          // A hidden editor keeps its native draft, original operation and receipt.
-          if (!state.opened.includes(place)) state.opened.push(place);
+  return withPageShell<State, DeploymentProps, N>(
+    {
+      mount(props) {
+        return frame(
+          {
+            revision: 0,
+            backs: {},
+            chrome: {},
+            selected: 'interface',
+            opened: ['interface'],
+            bookmark: bookmark<Place>('interface'),
+          },
+          props,
+        );
+      },
+      update(state, props) {
+        state.revision++;
+        return frame(state, props);
+      },
+      event(state, input, props) {
+        state.revision++;
+        const events: Emission[] = [];
+        if (input.kind === 'raw' && input.key === 'deployment-place-retry')
+          retryBookmark(state.bookmark);
+        const restored = observeBookmark(
+          state.bookmark,
+          input,
+          'deployment-place-checkpoint',
+          state.selected,
+          (value) => (value === 'interface' || value === 'services' ? value : null),
+        );
+        if (restored) {
+          state.selected = restored;
+          if (!state.opened.includes(restored)) state.opened.push(restored);
         }
-      } else if (
-        input.kind === 'component' &&
-        input.name === 'closed' &&
-        input.child === 'deployment-editor-' + state.selected
-      ) {
-        events.push({ name: 'closed', value: {} });
-      }
-      return frame(state, props, events);
+        if (input.kind === 'raw') {
+          if (input.key === 'deployment-settings-back') {
+            if (!props.shell) events.push({ name: 'closed', value: {} });
+            else if (state.chrome[state.selected]?.backEnabled)
+              state.backs[state.selected] = (state.backs[state.selected] ?? 0) + 1;
+          }
+          const place =
+            input.key === 'deployment-interface'
+              ? 'interface'
+              : input.key === 'deployment-services'
+                ? 'services'
+                : null;
+          if (place) {
+            state.selected = place;
+            // A hidden editor keeps its native draft, original operation and receipt.
+            if (!state.opened.includes(place)) state.opened.push(place);
+          }
+        } else if (
+          input.kind === 'component' &&
+          input.name === 'chrome' &&
+          state.opened.some((place) => input.child === 'deployment-editor-' + place)
+        ) {
+          const place = input.child.slice('deployment-editor-'.length) as Place;
+          state.chrome[place] = input.event as PageChrome;
+        } else if (
+          input.kind === 'component' &&
+          input.name === 'closed' &&
+          input.child === 'deployment-editor-' + state.selected
+        ) {
+          events.push({ name: 'closed', value: {} });
+        }
+        return frame(state, props, events);
+      },
     },
-  };
+    () => 'deployment-settings-back',
+  );
 }
 export function activate() {
   return {

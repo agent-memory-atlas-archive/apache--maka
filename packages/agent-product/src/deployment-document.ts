@@ -178,7 +178,12 @@ export function documentView<N extends Node>(
               ui.button('deployment-document-back', text.back),
               ui.text('deployment-document-title', text.deploymentEdit, 22, props.theme.text, 600),
             ],
-            { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
+            {
+              visible: !props.shell,
+              row: true,
+              gap: target === 'desktop' ? 8 : 1,
+              terminal: { wrap: true },
+            },
           ),
           ui.text('deployment-document-help', text.deploymentEditHelp, 13, props.theme.muted),
           ...(editor.phase === 'loading'

@@ -137,3 +137,46 @@ for (const target of ['tui', 'desktop'])
     assert.equal(out.actions.length, 0);
     assert.equal(out.frame.state.notice, 'recallUnavailable');
   });
+
+test('embedded Recall back closes its picker before leaving and consumes each request once', async () => {
+  const { component } = await import('../dist/packages/recall/tui.js');
+  const props = { theme, locale: 'en', open: true, busy: false, shell: { back: 0 } };
+  let out = component.mount(props, {});
+  assert.deepEqual(out.events.find((event) => event.name === 'chrome').value, {
+    title: 'Recall',
+    backEnabled: true,
+  });
+  out = component.event(out.frame.state, { kind: 'raw', key: 'scope', event: {} }, props, {});
+  assert.equal(out.frame.state.picker, true);
+  props.shell.back = 1;
+  out = component.update(out.frame.state, props, {});
+  assert.equal(out.frame.state.picker, false);
+  assert.equal(
+    out.events.some((event) => event.name === 'closed'),
+    false,
+  );
+  out = component.update(out.frame.state, props, {});
+  assert.equal(
+    out.events.some((event) => event.name === 'closed'),
+    false,
+  );
+  props.shell.back = 2;
+  out = component.update(out.frame.state, props, {});
+  assert.equal(
+    out.events.some((event) => event.name === 'closed'),
+    true,
+  );
+  props.open = false;
+  props.shell.back = 3;
+  out = component.update(out.frame.state, props, {});
+  assert.equal(
+    out.events.some((event) => event.name === 'closed'),
+    false,
+  );
+  props.open = true;
+  out = component.update(out.frame.state, props, {});
+  assert.equal(
+    out.events.some((event) => event.name === 'closed'),
+    false,
+  );
+});

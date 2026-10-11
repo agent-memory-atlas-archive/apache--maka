@@ -86,7 +86,12 @@ export function importView<N extends Node>(
               ),
               ui.text('deployment-import-title', text.deploymentInstall, 22, props.theme.text, 600),
             ],
-            { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
+            {
+              visible: !props.shell,
+              row: true,
+              gap: target === 'desktop' ? 8 : 1,
+              terminal: { wrap: true },
+            },
           ),
           ui.text('deployment-import-help', text.deploymentInstallHelp, 13, props.theme.muted),
           ...(notice ? [ui.text('deployment-import-notice', notice, 13, props.theme.muted)] : []),

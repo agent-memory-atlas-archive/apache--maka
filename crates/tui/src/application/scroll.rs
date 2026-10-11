@@ -169,11 +169,17 @@ impl SceneState {
             if let Node::Stack {
                 key,
                 scroll,
+                wide,
                 children,
                 ..
             } = node
             {
-                if *scroll != ScrollPolicy::None {
+                if *scroll != ScrollPolicy::None
+                    || wide
+                        .as_ref()
+                        .and_then(|wide| wide.scroll)
+                        .is_some_and(|policy| policy != ScrollPolicy::None)
+                {
                     keys.push(key.clone());
                 }
                 for child in children {

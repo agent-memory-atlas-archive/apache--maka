@@ -209,6 +209,44 @@ fn responsive_reading_uses_inner_width_and_preserves_source_owners_and_scroll() 
     close(&mut presenter);
 }
 #[test]
+fn responsive_scroll_keeps_offset_across_rule_separated_wide_layout() {
+    let content = json!({"kind":"stack","key":"reading","direction":"column","gap":0,"padding":0,"background":0,"scroll":"manual",
+        "wide":{"min_width":40,"direction":"row","scroll":"none","children":{"divider":{"basis":1},"document":{"grow":1,"basis":0}}},
+        "children":[
+            {"kind":"stack","key":"divider","direction":"row","gap":0,"padding":0,"background":0,"layout":{"basis":0},"children":[
+                {"kind":"rule","key":"rule","direction":"column","color":16777215,"ascii":false}]},
+            source("document", &(0..30).map(|i| format!("row {i}")).collect::<Vec<_>>().join("\n"))]});
+    let (_runtime, mut presenter) = layout::native(
+        layout::View::SourceScene(Rc::new(RefCell::new(content))),
+        Rc::new(Cell::new(true)),
+    );
+    draw(&mut presenter, 30, 8);
+    let document = presenter
+        .application
+        .child_mount(&presenter.root, "document")
+        .unwrap()
+        .clone();
+    mouse(&mut presenter, MouseEventKind::ScrollDown, 3, 3);
+    draw(&mut presenter, 30, 8);
+    let offset = state(&presenter).scrolls["reading"].offset;
+    assert!(offset > 0);
+    let wide = draw(&mut presenter, 40, 8);
+    for y in 0..8 {
+        assert_eq!(wide[(0, y)].symbol(), "│");
+    }
+    mouse(&mut presenter, MouseEventKind::ScrollDown, 3, 3);
+    draw(&mut presenter, 30, 8);
+    assert_eq!(state(&presenter).scrolls["reading"].offset, offset);
+    assert_eq!(
+        presenter
+            .application
+            .child_mount(&presenter.root, "document")
+            .unwrap(),
+        &document
+    );
+    close(&mut presenter);
+}
+#[test]
 fn wheel_commands_bubble_once_preserve_focus_and_require_presented_bindings() {
     let (_runtime, mut presenter, props) = native(vec![source("one", "one\ntwo\nthree\nfour")]);
     props.borrow_mut()["content"]["wheel"] = json!({"up":"previous","down":"next"});

@@ -154,6 +154,9 @@ pub struct ResponsiveStack {
     #[schemars(range(min = 1))]
     pub min_width: u16,
     pub direction: Direction,
+    /// Scrolling can follow the same allocated-width breakpoint as the layout.
+    #[serde(default)]
+    pub scroll: Option<ScrollPolicy>,
     #[serde(default)]
     pub children: BTreeMap<String, Layout>,
 }
@@ -328,6 +331,13 @@ pub enum PaneOperation {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "TerminalScene")]
 pub enum Node {
+    /// A one-cell separator spanning its allocated axis.
+    Rule {
+        key: String,
+        direction: Direction,
+        color: Color,
+        ascii: bool,
+    },
     Choice(Choice),
     /// An interactive rich-content item, using the original Surface semantics.
     Item {
@@ -479,6 +489,7 @@ impl Node {
     pub fn key(&self) -> &str {
         match self {
             Self::Stack { key, .. }
+            | Self::Rule { key, .. }
             | Self::Text { key, .. }
             | Self::Button { key, .. }
             | Self::Dialog { key, .. }
@@ -516,6 +527,7 @@ impl Node {
         }
         let key = match self {
             Self::Stack { key, .. }
+            | Self::Rule { key, .. }
             | Self::Text { key, .. }
             | Self::Button { key, .. }
             | Self::Dialog { key, .. }
@@ -550,6 +562,11 @@ impl Node {
             crate::shortcut::validate_focus(shortcuts, focus_shortcuts)?;
         }
         match self {
+            Self::Rule { color, .. } => {
+                if !color.valid() {
+                    return Err("invalid separator color".into());
+                }
+            }
             Self::Choice(choice) => choice.validate()?,
             Self::Item {
                 content,
@@ -617,7 +634,11 @@ impl Node {
                 ..
             } => {
                 if wheel.as_ref().is_some_and(|wheel| {
-                    *scroll == ScrollPolicy::None
+                    (*scroll == ScrollPolicy::None
+                        && wide
+                            .as_ref()
+                            .and_then(|wide| wide.scroll)
+                            .is_none_or(|policy| policy == ScrollPolicy::None))
                         || [wheel.up.as_str(), wheel.down.as_str()]
                             .iter()
                             .any(|key| key.is_empty() || key.len() > 128)
@@ -632,7 +653,7 @@ impl Node {
                     || wide.as_ref().is_some_and(|wide| {
                         wide.min_width == 0
                             || (layout.wrap && wide.direction != Direction::Row)
-                            || (*scroll != ScrollPolicy::None
+                            || (wide.scroll.unwrap_or(*scroll) != ScrollPolicy::None
                                 && wide.direction != Direction::Column)
                             || wide.children.iter().any(|(key, layout)| {
                                 !children.iter().any(|child| child.key() == key)

@@ -146,6 +146,9 @@ export const ui = {
     item(value: Props<TerminalKind<'item'>>): TerminalKind<'item'> {
       return node('tui', { ...value, kind: 'item' });
     },
+    rule(value: Props<TerminalKind<'rule'>>): TerminalKind<'rule'> {
+      return node('tui', { ...value, kind: 'rule' });
+    },
     choice(value: Props<TerminalKind<'choice'>>): TerminalKind<'choice'> {
       return node('tui', { ...value, kind: 'choice' });
     },

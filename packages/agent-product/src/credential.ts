@@ -37,6 +37,7 @@ import type {
   EditorCommand,
 } from '../../plugin-sdk/src/index.js';
 import { credentialContract, type CredentialProps } from './contracts.js';
+import { pageHeader, withPageShell, type PageState } from './page-shell.js';
 import { copy, type Copy } from './locale.js';
 import { sameValue } from './value.js';
 import { compactLabel, fill, output, pixels, type Presentation, type Node } from './view.js';
@@ -59,7 +60,7 @@ interface Earlier {
   reference: RecoveryRef;
   result: OperationReply | null;
 }
-interface State {
+interface State extends PageState {
   revision: number;
   serial: number;
   target: ConnectionCredentialTarget;
@@ -290,14 +291,7 @@ function frame<N extends Node>(
   const form = ui.box(
     'credential-form',
     [
-      ui.button(
-        'back',
-        text.back,
-        false,
-        false,
-        target === 'tui' ? { background: 0, align: 'start' } : {},
-      ),
-      ui.text('heading', text.credentials, 22, props.theme.text, 600),
+      ...pageHeader(presentation, state, props, events, text.credentials),
       ui.text(
         'connection',
         compactLabel(
@@ -547,7 +541,7 @@ function frame<N extends Node>(
             ]
           : [],
       gap: 0,
-      padding: target === 'desktop' ? 24 : 1,
+      padding: target === 'desktop' ? 24 : props.shell ? 0 : 1,
       scroll: target === 'tui' ? 'none' : 'anchor',
       terminal: { grow: 1 },
       style: { width: fill, height: fill, maxWidth: 680, minWidth: 0, minHeight: 0 },
@@ -562,242 +556,250 @@ export function credential<N extends Node>(
   presentation: Presentation<N>,
 ): Component<State, CredentialProps, N> {
   const target = presentation.target;
-  return {
-    mount(props) {
-      const state: State = {
-        revision: 0,
-        serial: 0,
-        target: props.target,
-        openedTarget: props.target,
-        reviewed: null,
-        status: null,
-        statusFailed: false,
-        observation: null,
-        command: null,
-        commandSequence: 0,
-        reviewPage: 0,
-        pending: {},
-        current: null,
-        finished: false,
-        notice: null,
-        confirmation: null,
-        historyOpen: false,
-        historyFailed: false,
-        earlier: [],
-        historyAfter: 0,
-        historyNext: null,
-      };
-      const actions: Action[] = [];
-      readStatus(state, actions);
-      return frame(presentation, state, props, actions);
-    },
-    update(state, props) {
-      state.revision++;
-      return frame(presentation, state, props);
-    },
-    event(state, input, props) {
-      if (input.kind === 'raw' && input.key === 'credential-auxiliary')
-        input = { ...input, key: state.historyOpen ? 'history-back' : 'review-cancel' };
-      state.revision++;
-      const actions: Action[] = [],
-        events: Emission[] = [];
-      if (input.kind === 'action') {
-        const r = state.pending[input.key];
-        if (!r) return frame(presentation, state, props);
-        delete state.pending[input.key];
-        const result = input.event as ActionOutcome;
-        if (r.kind === 'mutate') {
-          if (result.status === 'operation') receipt(state, result.reply, events);
-          else if (result.status === 'not_accepted') {
-            state.current = null;
-            state.notice = 'keyRejected';
-          } else state.notice = 'keyUnknown';
-        } else if (r.kind === 'receipt') {
-          if (
-            result.status === 'succeeded' &&
-            sameValue((result.value as OperationReply).reference, r.reference)
-          )
-            receipt(state, result.value as OperationReply, events);
-          else state.notice = 'keyUnknown';
-        } else if (r.kind === 'reviewConnection') {
-          const detail =
-            result.status === 'succeeded' ? (result.value as SettingsConnectionDetail) : null;
-          if (
-            detail?.kind === 'stale' &&
-            detail.actual &&
-            detail.actual.connectionId === state.target.connectionId &&
-            !r.retried
-          )
-            request(
-              state,
-              actions,
-              { kind: 'reviewConnection', basis: detail.actual, retried: true },
-              'settings',
-              'connection',
-              detail.actual,
-            );
-          else if (
-            detail?.kind === 'ready' &&
-            detail.target.connectionId === r.basis.connectionId &&
-            detail.target.revision === r.basis.revision
-          )
-            request(
-              state,
-              actions,
-              { kind: 'reviewStatus', target: detail.target },
-              'settings',
-              'credentialStatus',
-              { locator: locator(state) },
-            );
-          else state.notice = 'keyConflict';
-        } else if (r.kind === 'reviewStatus') {
-          const value =
-            result.status === 'succeeded' ? (result.value as CredentialVaultQueryResult) : null;
-          if (value?.kind === 'status' && sameValue(value.status.locator, locator(state))) {
-            state.reviewed = { target: r.target, status: value.status };
-            state.reviewPage = 0;
-            state.confirmation = 'rebase';
-          } else state.notice = 'keyUnavailable';
-        } else if (r.kind === 'status') {
-          const value =
-            result.status === 'succeeded' ? (result.value as CredentialVaultQueryResult) : null;
-          if (value?.kind === 'status' && sameValue(value.status.locator, locator(state)))
-            state.status = value.status;
-          else state.statusFailed = true;
-        } else if (r.kind === 'history') {
-          if (result.status !== 'succeeded') state.historyFailed = true;
-          else {
-            const page = result.value as CallerIntent[];
-            state.historyAfter = r.after;
-            state.historyNext = page.length === 4 ? page[page.length - 1].cursor : null;
-            state.earlier = page
-              .filter(
-                (entry) =>
-                  entry.reference.contract.name === 'maka.settings.Settings' &&
-                  ['saveCredential', 'deleteCredential'].includes(entry.reference.method),
-              )
-              .map((entry) => ({ cursor: entry.cursor, reference: entry.reference, result: null }));
-          }
-        } else if (r.kind === 'earlier') {
-          const entry = state.earlier.find(
-            (entry) => entry.cursor === r.cursor && sameValue(entry.reference, r.reference),
-          );
-          if (
-            entry &&
-            result.status === 'succeeded' &&
-            sameValue((result.value as OperationReply).reference, r.reference)
-          )
-            entry.result = result.value as OperationReply;
-          // Earlier operation facts never become current intent/target/status or reset commands.
-        }
-      } else if (input.kind === 'component' && input.child === 'secret') {
-        if (input.name === 'changed') {
-          state.observation = input.event as EditorObservation;
-          const r = state.observation.receipt;
-          if (
-            state.command &&
-            r?.owner === state.command.owner &&
-            r.sequence === state.command.sequence
-          ) {
-            if (r.outcome.status === 'conflict') state.notice = 'draftKept';
-            state.command = null;
-          }
-        } else if (input.name === 'submitted') save(state, props, actions);
-      } else if (input.kind === 'raw') {
-        if (input.key === 'save') save(state, props, actions);
-        else if (input.key === 'refresh-status') readStatus(state, actions);
-        else if (input.key === 'review') review(state, props, actions);
-        else if (input.key === 'review-next' && state.confirmation === 'rebase') state.reviewPage++;
-        else if (input.key === 'review-previous' && state.confirmation === 'rebase')
-          state.reviewPage = Math.max(0, state.reviewPage - 1);
-        else if (input.key === 'back') {
-          if (
-            state.observation?.snapshot.text.bytes ||
-            state.observation?.snapshot.marked ||
-            state.command ||
-            state.current
-          )
-            state.confirmation = 'leave';
-          else events.push({ name: 'closed', value: {} });
-        } else if (input.key === 'cancel' || input.key === 'review-cancel') {
-          state.confirmation = null;
-          state.reviewed = null;
-        } else if (
-          input.key === 'remove' &&
-          !busy(state) &&
-          fresh(state, props) &&
-          basis(state.status)
-        )
-          state.confirmation = 'remove';
-        else if (input.key === 'review-confirm' && state.confirmation === 'rebase') {
-          if (
-            state.reviewed &&
-            !busy(state) &&
-            props.target.connectionId === state.target.connectionId
-          ) {
-            state.target = state.reviewed.target;
-            state.openedTarget = props.target;
-            state.status = state.reviewed.status;
-            state.finished = false;
-            state.notice = null;
-          }
-          state.reviewed = null;
-          state.confirmation = null;
-        } else if (input.key === 'confirm' && state.confirmation === 'leave')
-          events.push({ name: 'closed', value: {} });
-        else if (input.key === 'confirm' && state.confirmation === 'remove') {
-          state.confirmation = null;
-          const expected = basis(state.status);
-          if (expected && !busy(state) && fresh(state, props)) {
-            state.current = { kind: 'delete', captured: null, reference: null };
-            state.notice = null;
-            request(state, actions, { kind: 'mutate' }, 'settings', 'deleteCredential', {
-              expected,
-              expectedConnection: state.target,
-            });
-          }
-        } else if (
-          input.key === 'check' &&
-          state.current?.reference &&
-          !Object.values(state.pending).some((r) => r.kind === 'mutate' || r.kind === 'receipt')
-        )
-          request(
-            state,
-            actions,
-            { kind: 'receipt', reference: state.current.reference },
-            'receipts',
-            'read',
-            state.current.reference,
-          );
-        else if (input.key === 'history') {
-          state.historyOpen = !state.historyOpen;
-          if (state.historyOpen) history(state, actions, state.historyAfter);
-        } else if (input.key === 'history-back') state.historyOpen = false;
-        else if (state.historyOpen && input.key === 'history-refresh')
-          history(state, actions, state.historyAfter);
-        else if (state.historyOpen && input.key === 'history-more' && state.historyNext !== null)
-          history(state, actions, state.historyNext);
-        else if (state.historyOpen && /^earlier-(0|[1-9][0-9]*)$/.test(input.key)) {
-          const entry = state.earlier[Number(input.key.slice(8))];
-          if (
-            entry &&
-            !Object.values(state.pending).some(
-              (r) => r.kind === 'earlier' && r.cursor === entry.cursor,
+  return withPageShell<State, CredentialProps, N>(
+    {
+      mount(props) {
+        const state: State = {
+          revision: 0,
+          serial: 0,
+          target: props.target,
+          openedTarget: props.target,
+          reviewed: null,
+          status: null,
+          statusFailed: false,
+          observation: null,
+          command: null,
+          commandSequence: 0,
+          reviewPage: 0,
+          pending: {},
+          current: null,
+          finished: false,
+          notice: null,
+          confirmation: null,
+          historyOpen: false,
+          historyFailed: false,
+          earlier: [],
+          historyAfter: 0,
+          historyNext: null,
+        };
+        const actions: Action[] = [];
+        readStatus(state, actions);
+        return frame(presentation, state, props, actions);
+      },
+      update(state, props) {
+        state.revision++;
+        return frame(presentation, state, props);
+      },
+      event(state, input, props) {
+        if (input.kind === 'raw' && input.key === 'credential-auxiliary')
+          input = { ...input, key: state.historyOpen ? 'history-back' : 'review-cancel' };
+        state.revision++;
+        const actions: Action[] = [],
+          events: Emission[] = [];
+        if (input.kind === 'action') {
+          const r = state.pending[input.key];
+          if (!r) return frame(presentation, state, props);
+          delete state.pending[input.key];
+          const result = input.event as ActionOutcome;
+          if (r.kind === 'mutate') {
+            if (result.status === 'operation') receipt(state, result.reply, events);
+            else if (result.status === 'not_accepted') {
+              state.current = null;
+              state.notice = 'keyRejected';
+            } else state.notice = 'keyUnknown';
+          } else if (r.kind === 'receipt') {
+            if (
+              result.status === 'succeeded' &&
+              sameValue((result.value as OperationReply).reference, r.reference)
             )
+              receipt(state, result.value as OperationReply, events);
+            else state.notice = 'keyUnknown';
+          } else if (r.kind === 'reviewConnection') {
+            const detail =
+              result.status === 'succeeded' ? (result.value as SettingsConnectionDetail) : null;
+            if (
+              detail?.kind === 'stale' &&
+              detail.actual &&
+              detail.actual.connectionId === state.target.connectionId &&
+              !r.retried
+            )
+              request(
+                state,
+                actions,
+                { kind: 'reviewConnection', basis: detail.actual, retried: true },
+                'settings',
+                'connection',
+                detail.actual,
+              );
+            else if (
+              detail?.kind === 'ready' &&
+              detail.target.connectionId === r.basis.connectionId &&
+              detail.target.revision === r.basis.revision
+            )
+              request(
+                state,
+                actions,
+                { kind: 'reviewStatus', target: detail.target },
+                'settings',
+                'credentialStatus',
+                { locator: locator(state) },
+              );
+            else state.notice = 'keyConflict';
+          } else if (r.kind === 'reviewStatus') {
+            const value =
+              result.status === 'succeeded' ? (result.value as CredentialVaultQueryResult) : null;
+            if (value?.kind === 'status' && sameValue(value.status.locator, locator(state))) {
+              state.reviewed = { target: r.target, status: value.status };
+              state.reviewPage = 0;
+              state.confirmation = 'rebase';
+            } else state.notice = 'keyUnavailable';
+          } else if (r.kind === 'status') {
+            const value =
+              result.status === 'succeeded' ? (result.value as CredentialVaultQueryResult) : null;
+            if (value?.kind === 'status' && sameValue(value.status.locator, locator(state)))
+              state.status = value.status;
+            else state.statusFailed = true;
+          } else if (r.kind === 'history') {
+            if (result.status !== 'succeeded') state.historyFailed = true;
+            else {
+              const page = result.value as CallerIntent[];
+              state.historyAfter = r.after;
+              state.historyNext = page.length === 4 ? page[page.length - 1].cursor : null;
+              state.earlier = page
+                .filter(
+                  (entry) =>
+                    entry.reference.contract.name === 'maka.settings.Settings' &&
+                    ['saveCredential', 'deleteCredential'].includes(entry.reference.method),
+                )
+                .map((entry) => ({
+                  cursor: entry.cursor,
+                  reference: entry.reference,
+                  result: null,
+                }));
+            }
+          } else if (r.kind === 'earlier') {
+            const entry = state.earlier.find(
+              (entry) => entry.cursor === r.cursor && sameValue(entry.reference, r.reference),
+            );
+            if (
+              entry &&
+              result.status === 'succeeded' &&
+              sameValue((result.value as OperationReply).reference, r.reference)
+            )
+              entry.result = result.value as OperationReply;
+            // Earlier operation facts never become current intent/target/status or reset commands.
+          }
+        } else if (input.kind === 'component' && input.child === 'secret') {
+          if (input.name === 'changed') {
+            state.observation = input.event as EditorObservation;
+            const r = state.observation.receipt;
+            if (
+              state.command &&
+              r?.owner === state.command.owner &&
+              r.sequence === state.command.sequence
+            ) {
+              if (r.outcome.status === 'conflict') state.notice = 'draftKept';
+              state.command = null;
+            }
+          } else if (input.name === 'submitted') save(state, props, actions);
+        } else if (input.kind === 'raw') {
+          if (input.key === 'save') save(state, props, actions);
+          else if (input.key === 'refresh-status') readStatus(state, actions);
+          else if (input.key === 'review') review(state, props, actions);
+          else if (input.key === 'review-next' && state.confirmation === 'rebase')
+            state.reviewPage++;
+          else if (input.key === 'review-previous' && state.confirmation === 'rebase')
+            state.reviewPage = Math.max(0, state.reviewPage - 1);
+          else if (input.key === 'back') {
+            if (
+              state.observation?.snapshot.text.bytes ||
+              state.observation?.snapshot.marked ||
+              state.command ||
+              state.current
+            )
+              state.confirmation = 'leave';
+            else events.push({ name: 'closed', value: {} });
+          } else if (input.key === 'cancel' || input.key === 'review-cancel') {
+            state.confirmation = null;
+            state.reviewed = null;
+          } else if (
+            input.key === 'remove' &&
+            !busy(state) &&
+            fresh(state, props) &&
+            basis(state.status)
+          )
+            state.confirmation = 'remove';
+          else if (input.key === 'review-confirm' && state.confirmation === 'rebase') {
+            if (
+              state.reviewed &&
+              !busy(state) &&
+              props.target.connectionId === state.target.connectionId
+            ) {
+              state.target = state.reviewed.target;
+              state.openedTarget = props.target;
+              state.status = state.reviewed.status;
+              state.finished = false;
+              state.notice = null;
+            }
+            state.reviewed = null;
+            state.confirmation = null;
+          } else if (input.key === 'confirm' && state.confirmation === 'leave')
+            events.push({ name: 'closed', value: {} });
+          else if (input.key === 'confirm' && state.confirmation === 'remove') {
+            state.confirmation = null;
+            const expected = basis(state.status);
+            if (expected && !busy(state) && fresh(state, props)) {
+              state.current = { kind: 'delete', captured: null, reference: null };
+              state.notice = null;
+              request(state, actions, { kind: 'mutate' }, 'settings', 'deleteCredential', {
+                expected,
+                expectedConnection: state.target,
+              });
+            }
+          } else if (
+            input.key === 'check' &&
+            state.current?.reference &&
+            !Object.values(state.pending).some((r) => r.kind === 'mutate' || r.kind === 'receipt')
           )
             request(
               state,
               actions,
-              { kind: 'earlier', reference: entry.reference, cursor: entry.cursor },
+              { kind: 'receipt', reference: state.current.reference },
               'receipts',
               'read',
-              entry.reference,
+              state.current.reference,
             );
+          else if (input.key === 'history') {
+            state.historyOpen = !state.historyOpen;
+            if (state.historyOpen) history(state, actions, state.historyAfter);
+          } else if (input.key === 'history-back') state.historyOpen = false;
+          else if (state.historyOpen && input.key === 'history-refresh')
+            history(state, actions, state.historyAfter);
+          else if (state.historyOpen && input.key === 'history-more' && state.historyNext !== null)
+            history(state, actions, state.historyNext);
+          else if (state.historyOpen && /^earlier-(0|[1-9][0-9]*)$/.test(input.key)) {
+            const entry = state.earlier[Number(input.key.slice(8))];
+            if (
+              entry &&
+              !Object.values(state.pending).some(
+                (r) => r.kind === 'earlier' && r.cursor === entry.cursor,
+              )
+            )
+              request(
+                state,
+                actions,
+                { kind: 'earlier', reference: entry.reference, cursor: entry.cursor },
+                'receipts',
+                'read',
+                entry.reference,
+              );
+          }
         }
-      }
-      return frame(presentation, state, props, actions, events);
+        return frame(presentation, state, props, actions, events);
+      },
     },
-  };
+    () => 'back',
+  );
 }
 export function activate() {
   return {

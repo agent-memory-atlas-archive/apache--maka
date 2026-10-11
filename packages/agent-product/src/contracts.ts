@@ -169,7 +169,14 @@ export interface HelpProps {
 export interface SkillLibraryProps extends HelpProps {
   workspace?: AgentWorkspace | null;
 }
-export interface ProjectsProps {
+export interface PageShellProps {
+  shell?: { back: number };
+}
+export interface PageChrome {
+  title: string;
+  backEnabled: boolean;
+}
+export interface ProjectsProps extends PageShellProps {
   theme: Theme;
   locale: string;
   open: boolean;
@@ -467,9 +474,22 @@ export const skillLibraryContract = component(
   ),
   { closed: object({}) },
 );
+const pageProps = (properties: Schema, required = Object.keys(properties)): Schema =>
+  object(
+    {
+      ...properties,
+      shell: object({ back: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER } }),
+    },
+    required,
+  );
+const pageChrome = object({
+  title: { type: 'string', maxLength: 512 },
+  backEnabled: { type: 'boolean' },
+});
+
 export const projectsContract = component(
   'maka.agent.Projects',
-  object({
+  pageProps({
     theme: { $ref: '#/$defs/Theme' },
     locale,
     open: { type: 'boolean' },
@@ -483,6 +503,7 @@ export const projectsContract = component(
       }),
     ),
     changed: object({}),
+    chrome: pageChrome,
     closed: object({}),
   },
 );
@@ -507,13 +528,13 @@ export const appEntrySchema = object({
 });
 export const appsContract = component(
   'maka.product.Apps',
-  object({
+  pageProps({
     theme: { $ref: '#/$defs/Theme' },
     locale,
     open: { type: 'boolean' },
     busy: { type: 'boolean' },
   }),
-  { closed: object({}), manage: object({}) },
+  { chrome: pageChrome, closed: object({}), manage: object({}) },
 );
 // An ordinary product extension point. The kernel has no application-page role.
 export const applicationPageContract = component(
@@ -527,7 +548,7 @@ export const applicationPageContract = component(
 );
 export const recallContract = component(
   'maka.agent.Recall',
-  object({
+  pageProps({
     theme: { $ref: '#/$defs/Theme' },
     locale,
     open: { type: 'boolean' },
@@ -540,12 +561,13 @@ export const recallContract = component(
         anchor: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
       }),
     ),
+    chrome: pageChrome,
     closed: object({}),
   },
 );
 export const importsContract = component(
   'maka.agent.Imports',
-  object({
+  pageProps({
     theme: { $ref: '#/$defs/Theme' },
     locale,
     open: { type: 'boolean' },
@@ -554,6 +576,7 @@ export const importsContract = component(
   {
     selected: withDefs(object({ session: { $ref: '#/$defs/AgentSession' } })),
     changed: object({}),
+    chrome: pageChrome,
     closed: object({}),
   },
 );
@@ -1066,7 +1089,7 @@ export const modelDefaultContract: Contract = {
     captures: {},
   },
 };
-export interface ConnectionsProps {
+export interface ConnectionsProps extends PageShellProps {
   theme: Theme;
   locale: string;
 }
@@ -1088,7 +1111,7 @@ export const connectionFormContract: Contract = {
   interface: {
     kind: 'component',
     props: {
-      ...object({
+      ...pageProps({
         theme: { $ref: '#/$defs/Theme' },
         locale,
         catalogRevision: { type: 'integer', minimum: 0 },
@@ -1102,7 +1125,7 @@ export const connectionFormContract: Contract = {
         Theme: themeSchema,
       },
     },
-    events: { closed: object({}), changed: object({}) },
+    events: { chrome: pageChrome, closed: object({}), changed: object({}) },
     captures: {},
   },
 };
@@ -1113,7 +1136,7 @@ export const credentialContract: Contract = {
   interface: {
     kind: 'component',
     props: {
-      ...object({
+      ...pageProps({
         theme: { $ref: '#/$defs/Theme' },
         locale,
         target: { $ref: '#/$defs/ConnectionCredentialTarget' },
@@ -1124,19 +1147,19 @@ export const credentialContract: Contract = {
         Theme: themeSchema,
       },
     },
-    events: { closed: object({}), changed: object({}) },
+    events: { chrome: pageChrome, closed: object({}), changed: object({}) },
     captures: {},
   },
 };
 export const connectionsContract = component(
   'maka.agent.Connections',
-  object({ theme: { $ref: '#/$defs/Theme' }, locale }),
-  { closed: object({}), changed: object({}) },
+  pageProps({ theme: { $ref: '#/$defs/Theme' }, locale }),
+  { chrome: pageChrome, closed: object({}), changed: object({}) },
 );
 
 export const deploymentContract = component(
   'maka.agent.Deployment',
-  object(
+  pageProps(
     {
       theme: { $ref: '#/$defs/Theme' },
       locale,
@@ -1145,7 +1168,7 @@ export const deploymentContract = component(
     },
     ['theme', 'locale'],
   ),
-  { closed: object({}) },
+  { chrome: pageChrome, closed: object({}) },
 );
 
 export { appearanceConfigurationSchema } from './terminal-theme.js';

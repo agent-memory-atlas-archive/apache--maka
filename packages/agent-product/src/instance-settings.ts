@@ -304,11 +304,21 @@ export function instanceSettingsView<N extends Node>(
       ui.box(
         'instance-settings-header',
         [
-          ui.button('instance-settings-back', text.settingsBack, busy, false, {
-            background: 0,
-            align: 'start',
-          }),
-          ui.text('instance-settings-title', text.instanceConfiguration, 20, props.theme.text, 600),
+          ...(!props.shell
+            ? [
+                ui.button('instance-settings-back', text.settingsBack, busy, false, {
+                  background: 0,
+                  align: 'start',
+                }),
+                ui.text(
+                  'instance-settings-title',
+                  text.instanceConfiguration,
+                  20,
+                  props.theme.text,
+                  600,
+                ),
+              ]
+            : []),
           ui.text(
             'instance-settings-path',
             [...state.instance.path, ...state.path].join(' / '),
