@@ -52,6 +52,10 @@ pub struct Configuration {
     pub network: Network,
     /// Trusted CLI supporting the original platform sandbox bootstrap.
     pub helper: Option<PathBuf>,
+    /// Explicit directory for application setup processes. Launch still needs
+    /// its own grant and uses only the installation filesystem/network ceiling.
+    #[serde(default)]
+    pub setup_directory: Option<PathBuf>,
     /// Trusted Agent Session owner in this Root/deployment. This selects a data
     /// namespace only; Terminal endpoints still require their own explicit grants.
     #[serde(default)]
@@ -175,6 +179,7 @@ struct Processes {
     resources: ShellResources,
     drain: CancellationToken,
     protocol: protocol::Controls,
+    setup: Option<maka_process::ShellExecutor>,
 }
 impl Processes {
     async fn open(context: NativeContext, input: Value) -> Result<Arc<Self>, String> {
@@ -220,9 +225,47 @@ impl Processes {
             .store()
             .owned_root()
             .map_err(|_| "workspace_process_root_unavailable")?;
-        let state_root = maka_fs_tools::workspace::project::host_path(root.canonical_path())
-            .map_err(|_| "workspace_process_root_unavailable")?
-            .into();
+        let state_root: PathBuf =
+            maka_fs_tools::workspace::project::host_path(root.canonical_path())
+                .map_err(|_| "workspace_process_root_unavailable")?
+                .into();
+        let setup = settings
+            .setup_directory
+            .as_ref()
+            .map(|path| {
+                if !path.is_absolute() {
+                    return Err("protocol_setup_directory_invalid".to_owned());
+                }
+                let (path, identity) =
+                    maka_fs_tools::directory::capture(path).map_err(|e| e.to_string())?;
+                let directory =
+                    maka_fs_tools::directory::open(&path, &identity).map_err(|e| e.to_string())?;
+                let private = Sandbox::Managed {
+                    filesystem: Policy {
+                        default: maka_sandbox::filesystem::Access::Write,
+                        rules: vec![maka_sandbox::filesystem::Rule::subtree(
+                            &state_root,
+                            maka_sandbox::filesystem::Access::Deny,
+                        )],
+                        deny_globs: vec![],
+                    },
+                    network: Network::Allowed,
+                };
+                let sandbox = Sandbox::Managed {
+                    filesystem: settings.filesystem.clone(),
+                    network: settings.network.clone(),
+                }
+                .intersect(&private)
+                .map_err(|e| e.to_string())?;
+                let executor = maka_process::ShellExecutor::from_directory(
+                    path,
+                    directory.into_std_file(),
+                    sandbox,
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(execute::platform(executor, &settings, &state_root))
+            })
+            .transpose()?;
         let prefix = crate::owner::namespace(
             &persistence.source().state_domain,
             persistence.source().deployment,
@@ -254,6 +297,7 @@ impl Processes {
             resources,
             drain,
             protocol: Default::default(),
+            setup,
         }))
     }
 }

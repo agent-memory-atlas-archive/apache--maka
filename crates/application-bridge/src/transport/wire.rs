@@ -87,6 +87,9 @@ pub enum Reply {
         result: Result<Value>,
         cleanup: Result<()>,
     },
+    Progress {
+        value: Value,
+    },
     Mutation {
         reply: Box<OperationReply>,
         cleanup: Result<()>,

@@ -18,6 +18,8 @@
  */
 
 use super::*;
+#[path = "acp/setup_tests.rs"]
+mod setup_tests;
 
 async fn setup(
     protocol: u8,

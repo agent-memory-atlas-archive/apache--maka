@@ -36,10 +36,12 @@ use uuid::Uuid;
 
 mod calls;
 mod processes;
+mod setup;
 mod storage;
 
 pub const IMPLEMENTATION: &str = "maka.agent.acp";
 pub const EXPORT: &str = "executor";
+pub const SETUP: &str = "setup";
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AcpExecutorConfiguration")]
@@ -57,13 +59,22 @@ pub(crate) fn provide(registry: &mut NativeRegistry) -> Result<(), String> {
                     Ok(owner) => {
                         let service = Arc::new(Service(Arc::new(owner)));
                         NativeActivation {
-                            exports: Ok(BTreeMap::from([(
-                                EXPORT.into(),
-                                Published {
-                                    contract: crate::executor::contract(),
-                                    value: service.clone() as Arc<dyn Handler>,
-                                },
-                            )])),
+                            exports: Ok(BTreeMap::from([
+                                (
+                                    EXPORT.into(),
+                                    Published {
+                                        contract: crate::executor::contract(),
+                                        value: service.clone() as Arc<dyn Handler>,
+                                    },
+                                ),
+                                (
+                                    SETUP.into(),
+                                    Published {
+                                        contract: crate::executor::setup::contract(),
+                                        value: service.clone() as Arc<dyn Handler>,
+                                    },
+                                ),
+                            ])),
                             owner: service,
                         }
                     }
@@ -78,6 +89,7 @@ pub(crate) fn provide(registry: &mut NativeRegistry) -> Result<(), String> {
 }
 struct Owner {
     provider: maka_external_agent::Provider,
+    agent: maka_external_agent::Agent,
     calls: Arc<calls::Calls>,
     processes: Arc<processes::Processes>,
     storage: Arc<storage::Storage>,
@@ -127,7 +139,7 @@ impl Owner {
         ));
         let storage = Arc::new(storage::Storage::new(store.clone(), namespace.clone()));
         let provider = maka_external_agent::Provider::new(
-            configuration.agent,
+            configuration.agent.clone(),
             maka_external_agent::ports::Ports {
                 processes: processes.clone(),
                 storage: storage.clone(),
@@ -136,6 +148,7 @@ impl Owner {
         );
         Ok(Self {
             provider,
+            agent: configuration.agent,
             calls,
             processes,
             storage,
@@ -155,6 +168,9 @@ impl Handler for Service {
         let owner = self.0.clone();
         let context = Arc::new(context);
         Box::pin(async move {
+            if method == "setup" {
+                return setup::run(owner, input, context).await;
+            }
             if method != "execute" {
                 return Err("ACP method unavailable".into());
             }

@@ -28,9 +28,9 @@ pub(crate) struct Demand {
 }
 pub(super) struct Flow {
     pub stop: CancellationToken,
-    ack: Arc<Semaphore>,
-    failure: Option<String>,
-    pending_feedback: bool,
+    pub(super) ack: Arc<Semaphore>,
+    pub(super) failure: Option<String>,
+    pub(super) pending_feedback: bool,
 }
 impl Flow {
     pub fn new() -> Self {
@@ -56,6 +56,14 @@ impl<V: ?Sized + 'static> Application<V> {
                 .and_then(|view| view.subscriptions.get(key))
                 .is_some_and(|demand| demand.request == request)
     }
+    pub(super) fn update_wanted(&self, consumer: &Mount, key: &str, id: Uuid) -> bool {
+        !self.is_retiring(consumer)
+            && self.actions.running.get(&id).is_some_and(|running| {
+                &running.consumer == consumer
+                    && running.key == key
+                    && (running.mutation.is_some() || self.subscription_wanted(consumer, key, id))
+            })
+    }
     pub(crate) fn sync_subscription_demand(&self) {
         for (id, running) in &self.actions.running {
             if let Some(flow) = &running.stream
@@ -63,28 +71,31 @@ impl<V: ?Sized + 'static> Application<V> {
             {
                 flow.stop.cancel();
             }
+            if let Some(session) = &running.mutation
+                && self.is_retiring(&running.consumer)
+            {
+                session.progress.stop.cancel();
+            }
         }
     }
-    pub(super) fn acknowledge_subscription(&mut self, id: Uuid) {
-        if let Some(flow) = self
-            .actions
-            .running
-            .get_mut(&id)
-            .and_then(|r| r.stream.as_mut())
-            && flow.pending_feedback
+    pub(super) fn acknowledge_update(&mut self, id: Uuid) {
+        if let Some(flow) = self.actions.running.get_mut(&id).and_then(|r| {
+            r.stream
+                .as_mut()
+                .or_else(|| r.mutation.as_mut().map(|s| &mut s.progress))
+        }) && flow.pending_feedback
             && !flow.stop.is_cancelled()
         {
             flow.pending_feedback = false;
             flow.ack.add_permits(1);
         }
     }
-    pub(super) fn fail_subscription(&mut self, id: Uuid, reason: String) {
-        if let Some(flow) = self
-            .actions
-            .running
-            .get_mut(&id)
-            .and_then(|r| r.stream.as_mut())
-        {
+    pub(super) fn fail_update(&mut self, id: Uuid, reason: String) {
+        if let Some(flow) = self.actions.running.get_mut(&id).and_then(|r| {
+            r.stream
+                .as_mut()
+                .or_else(|| r.mutation.as_mut().map(|s| &mut s.progress))
+        }) {
             flow.failure.get_or_insert(reason);
             flow.stop.cancel();
         }
@@ -142,7 +153,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 let consumer = running.consumer.clone();
                 let key = running.key.clone();
                 if let Err(error) = valid {
-                    self.fail_subscription(id, bounded_reason(error.to_string()));
+                    self.fail_update(id, bounded_reason(error.to_string()));
                 }
                 let flow = self
                     .actions

@@ -90,6 +90,11 @@ export type RuntimeProtocol =
   | AgentExecutorsRead
   | AgentExecutors
   | ExecutorExecute
+  | AgentExecutorSetup
+  | ExecutorSetupAction
+  | ExecutorSetupResult
+  | ExecutorSetupProgress
+  | ProtocolProcessLaunch
   | AcpExecutorConfiguration
   | ExecutorOutcome
   | ExecutorOutput
@@ -1205,6 +1210,34 @@ export type ThinkingLevel =
   | 'xhigh'
   | 'max'
   | 'ultra';
+export type ExecutorSetupAction =
+  | {
+      kind: 'check';
+    }
+  | {
+      methodId: string;
+      kind: 'authenticate';
+    };
+export type ExecutorSetupResult =
+  | {
+      info?: ExecutorSetupInfo | null;
+      /**
+       * @maxItems 32
+       */
+      methods: ExecutorAuthenticationMethod[];
+      kind: 'checked';
+    }
+  | {
+      kind: 'authenticated';
+    }
+  | {
+      diagnostic: string;
+      kind: 'unresolved';
+    };
+export type ExecutorSetupProgress = {
+  url: string;
+  kind: 'authorization_url';
+};
 export type Scope = 'subtree' | 'exact';
 /**
  * Equal-path conflict priority is different from authority breadth: deny wins.
@@ -3421,6 +3454,11 @@ export interface ComponentOutput {
   events: Emission[];
   actions: Action[];
   /**
+   * Request cancellation of this component's original mutation keys.
+   * This does not acknowledge business completion or physical cleanup.
+   */
+  cancel?: string[];
+  /**
    * Complete current subscription demand. Empty removes previous demand.
    */
   subscriptions?: Action[];
@@ -4535,6 +4573,11 @@ export interface AgentServiceExecutor {
    * Exact member of the explicitly bound import, never a discovery index.
    */
   member?: number;
+  setup?: ExecutorSetupBinding | null;
+}
+export interface ExecutorSetupBinding {
+  import: string;
+  member?: number;
 }
 export interface AgentWorkspacePermissions {
   access: AgentWorkspaceAccess;
@@ -4614,6 +4657,7 @@ export interface ExecutorSettings {
 export interface AgentExecutorsRead {}
 export interface AgentExecutors {
   executors: string[];
+  setup: string[];
 }
 /**
  * Observations and text; immutable attachments travel in the actual request resources.
@@ -4637,6 +4681,31 @@ export interface Invocation {
   run_id: string;
   invocation_id: string;
   [k: string]: unknown | undefined;
+}
+export interface AgentExecutorSetup {
+  executor: string;
+  action: ExecutorSetupAction;
+}
+export interface ExecutorSetupInfo {
+  title?: string | null;
+  name: string;
+  version: string;
+}
+export interface ExecutorAuthenticationMethod {
+  id: string;
+  name: string;
+  description?: string | null;
+  supported: boolean;
+}
+export interface ProtocolProcessLaunch {
+  executable: string;
+  /**
+   * @maxItems 256
+   */
+  args?: string[];
+  env?: {
+    [k: string]: string | undefined;
+  };
 }
 export interface AcpExecutorConfiguration {
   agent: AcpAgent;
@@ -6070,6 +6139,11 @@ export interface WorkspaceProcessConfiguration {
    * Trusted CLI supporting the original platform sandbox bootstrap.
    */
   helper?: string | null;
+  /**
+   * Explicit directory for application setup processes. Launch still needs
+   * its own grant and uses only the installation filesystem/network ceiling.
+   */
+  setupDirectory?: string | null;
   /**
    * Trusted Agent Session owner in this Root/deployment. This selects a data
    * namespace only; Terminal endpoints still require their own explicit grants.

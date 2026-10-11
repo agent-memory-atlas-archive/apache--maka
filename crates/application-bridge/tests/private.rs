@@ -387,6 +387,9 @@ async fn dropping_partial_commit_keeps_real_sql_token_and_cannot_append_cancel()
 
 #[derive(Default)]
 struct Gate {
+    progress: bool,
+    cancelled: Arc<tokio::sync::Notify>,
+    release: Option<Arc<tokio::sync::Semaphore>>,
     callers: std::sync::Mutex<Vec<Option<maka_runtime_host::application::Caller>>>,
     entered: tokio::sync::Notify,
 }
@@ -399,12 +402,22 @@ impl maka_runtime_host::application::Handler for Gate {
     ) -> futures_util::future::BoxFuture<'static, Result<serde_json::Value, String>> {
         self.callers.lock().unwrap().push(context.caller().cloned());
         let stop = context.scope().cancellation.clone();
+        let progress = self.progress;
+        let cancelled = self.cancelled.clone();
+        let release = self.release.clone();
         if method == "write" {
             self.entered.notify_one();
         }
         Box::pin(async move {
             if method == "write" {
+                if progress {
+                    context.emit(serde_json::json!({"step":1})).await?;
+                }
                 stop.cancelled().await;
+                cancelled.notify_one();
+                if let Some(release) = release {
+                    release.acquire().await.unwrap().forget();
+                }
                 Ok(serde_json::json!({"cancelled":true}))
             } else {
                 Ok(serde_json::json!({"effects":0}))
@@ -666,7 +679,11 @@ async fn concurrent_native_dispatch_and_close_cancel_the_original_host_without_a
         )
         .await
         .unwrap();
-    let dispatched = tokio::spawn(session.clone().dispatch(recorded));
+    let dispatched = tokio::spawn(
+        session
+            .clone()
+            .dispatch(recorded, tokio::sync::mpsc::channel(1).0),
+    );
     tokio::time::timeout(std::time::Duration::from_secs(5), gate.entered.notified())
         .await
         .unwrap();
@@ -1332,7 +1349,9 @@ async fn lost_close_before_dispatch_poll_keeps_the_actual_confirmed_sql_token() 
         )
         .await
         .unwrap();
-    let dispatch = session.clone().dispatch(token);
+    let dispatch = session
+        .clone()
+        .dispatch(token, tokio::sync::mpsc::channel(1).0);
     // Actual caller SQL is confirmed, but its dispatch observer has not run.
     broken.store(true, Ordering::SeqCst);
     assert!(session.clone().close().await.is_err());
@@ -1796,4 +1815,100 @@ async fn native_caller_uses_actual_peer_approval_and_consumer_not_claimed_json_i
     }
     f.server.close().await.unwrap();
     f.cleanup().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn checked_ui_mutation_progress_cancel_waits_for_original_completion_and_receipt() {
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        let release = Arc::new(tokio::sync::Semaphore::new(0));
+        let gate = Arc::new(Gate {
+            progress: true,
+            release: Some(release.clone()),
+            ..Default::default()
+        });
+        let f = Fixture::with_gate(Some(gate.clone())).await;
+        let (mut ui, connection, _, _) = native_ui(
+            &f,
+            Arc::new(Physical {
+                server: f.server.clone(),
+                peer: f.peer.clone(),
+            }),
+        )
+        .await;
+        let root = ui.mount_launch(serde_json::json!({})).unwrap();
+        ui.dispatch(
+            &root,
+            ui.frame(&root).unwrap().revision,
+            "write",
+            serde_json::Value::Null,
+        )
+        .unwrap();
+        ui.capture_actions(&root, |_| unreachable!()).unwrap();
+        let mut task = ui.start_task(&root).unwrap().unwrap();
+        loop {
+            let completed = task.future.await;
+            task = ui
+                .finish_task(task.id, completed)
+                .unwrap()
+                .expect("operation still running");
+            ui.deliver_action_results(&root, |_, _, _| Ok(false))
+                .unwrap();
+            if ui.frame(&root).unwrap().state["outcome"]["status"] == "updated" {
+                break;
+            }
+        }
+        assert_eq!(
+            ui.frame(&root).unwrap().state["outcome"]["value"],
+            serde_json::json!({"step":1})
+        );
+        assert_eq!(ui.accepted_action_count(), 1);
+        let id = task.id;
+        let running = tokio::spawn(task.future);
+        ui.dispatch(
+            &root,
+            ui.frame(&root).unwrap().revision,
+            "cancel",
+            serde_json::Value::Null,
+        )
+        .unwrap();
+        gate.cancelled.notified().await;
+        assert!(
+            !running.is_finished(),
+            "cancellation must not confirm actual completion"
+        );
+        assert_eq!(ui.accepted_action_count(), 1);
+        release.add_permits(1);
+        assert!(
+            ui.finish_task(id, running.await.unwrap())
+                .unwrap()
+                .is_none()
+        );
+        ui.deliver_action_results(&root, |_, _, _| Ok(false))
+            .unwrap();
+        let original = ui.frame(&root).unwrap().state["outcome"].clone();
+        assert_eq!(original["status"], "operation");
+        assert_eq!(
+            original["reply"]["receipt"]["outcome"]["value"],
+            serde_json::json!({"cancelled":true})
+        );
+        assert_eq!(original["reply"]["receipt"]["cleanup"]["kind"], "confirmed");
+        assert_eq!(
+            ui_action(&mut ui, &root, "recover").await["value"],
+            original["reply"]
+        );
+        assert_eq!(
+            f.caller
+                .application_intents(f.source.deployment, support::identity(2), 0, 10)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        stop_ui(ui, &root);
+        connection.close().await.unwrap();
+        f.server.close().await.unwrap();
+        f.cleanup().await;
+    })
+    .await
+    .unwrap();
 }

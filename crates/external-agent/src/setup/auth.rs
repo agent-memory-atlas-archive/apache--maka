@@ -17,14 +17,13 @@
  * under the License.
  */
 
-use super::{Connection, Duration, Error, Value, emit, mpsc, provider};
+use super::{Connection, Duration, Error, Output, Progress, provider};
 use crate::transport::Event;
 use agent_client_protocol as sdk;
-use serde_json::json;
 
 pub(super) async fn initialize(
     connection: &mut Connection,
-    send: &mpsc::Sender<Result<Value, Error>>,
+    send: &dyn Output,
     stderr: &mut Urls,
 ) -> Result<(), Error> {
     tokio::time::timeout(Duration::from_secs(30), async {
@@ -44,7 +43,7 @@ pub(super) async fn initialize(
 pub(super) async fn rpc<R: sdk::JsonRpcRequest>(
     connection: &mut Connection,
     request: R,
-    send: &mpsc::Sender<Result<Value, Error>>,
+    send: &dyn Output,
     stderr: &mut Urls,
 ) -> Result<R::Response, Error> {
     let response = connection.request(request).block_task();
@@ -61,15 +60,11 @@ pub(super) async fn rpc<R: sdk::JsonRpcRequest>(
     }).await.map_err(|_| provider("External agent setup timed out"))?
 }
 
-async fn observe(
-    event: Event,
-    send: &mpsc::Sender<Result<Value, Error>>,
-    stderr: &mut Urls,
-) -> Result<(), Error> {
+async fn observe(event: Event, send: &dyn Output, stderr: &mut Urls) -> Result<(), Error> {
     match event {
         Event::Stderr(bytes) => {
             for url in stderr.feed(&bytes)? {
-                emit(send, json!({"kind":"authorization_url", "url":url})).await?;
+                send.emit(Progress::AuthorizationUrl { url }).await?;
             }
         }
         event => event.reject().map_err(provider)?,

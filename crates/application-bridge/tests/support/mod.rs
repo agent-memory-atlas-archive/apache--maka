@@ -59,7 +59,9 @@ pub fn business() -> Contract {
                 (
                     "write".into(),
                     Method {
-                        progress: None,
+                        progress: Some(
+                            json!({"type":"object","properties":{"step":{"type":"integer"}},"required":["step"],"additionalProperties":false}),
+                        ),
                         mode: MethodMode::Mutation,
                         input: json!({}),
                         output: json!({}),
@@ -261,8 +263,9 @@ pub fn ui(target: PresentationTarget) -> (Input, Vec<Package>, Vec<RemoteObserva
         };
         files.insert(module.into(),format!(r#"
             const contract={}; export function activate(){{return {{App:{{contract,kind:'component',component:['app']}}}};}}
-            function frame(state,actions=[]){{return {{actions,events:[],frame:{{revision:state.revision,state,surface:{surface},view:{{kind:'stack',key:'root',direction:'column',padding:1,gap:1,background:1513239,children:[{{kind:'text',key:'value',text:state.outcome?.value?.receipt?'Original receipt '+state.outcome.value.receipt.kind:JSON.stringify(state.outcome?.reply?.receipt??state.outcome??'Ready'),color:16777215}},{{kind:'button',key:'read',label:'Read Host'}},{{kind:'button',key:'write',label:'Write Host'}},{{kind:'button',key:'recover',label:'Read original receipt'}}]}}}}}};}}
+            function frame(state,actions=[]){{return {{actions,events:[],frame:{{revision:state.revision,state,surface:{surface},view:{{kind:'stack',key:'root',direction:'column',padding:1,gap:1,background:1513239,children:[{{kind:'text',key:'value',text:state.outcome?.value?.receipt?'Original receipt '+state.outcome.value.receipt.kind:JSON.stringify(state.outcome?.reply?.receipt??state.outcome??'Ready'),color:16777215}},{{kind:'button',key:'read',label:'Read Host'}},{{kind:'button',key:'write',label:'Write Host'}},{{kind:'button',key:'recover',label:'Read original receipt'}},{{kind:'button',key:'cancel',label:'Cancel operation'}}]}}}}}};}}
             export const app={{mount(){{return frame({{revision:0,outcome:null,reference:null}});}},event(state,input){{
+                if(input.kind==='raw' && input.key==='cancel'){{const out=frame({{...state,revision:state.revision+1}});out.cancel=['result'];return out;}}
                 if(input.kind==='action'){{ const outcome=input.event;return frame({{...state,revision:state.revision+1,outcome,reference:outcome.status==='operation'?outcome.reply.reference:state.reference}}); }}
                 const key=input.key;const recovery=key==='recover';
                 return frame({{...state,revision:state.revision+1,outcome:null}},[{{key:'result',binding:recovery?'receipts':'business',member:0,method:recovery?'read':key,input:recovery?state.reference:null,resources:{{}}}}]);

@@ -37,9 +37,18 @@ pub(super) struct Processes {
 }
 struct Entry {
     id: Uuid,
-    consumer: InstanceId,
-    session: String,
+    principal: Principal,
     running: Arc<Running>,
+}
+enum Principal {
+    Session {
+        consumer: InstanceId,
+        session: String,
+    },
+    Application {
+        consumer: maka_plugin_core::runtime::Activation,
+        request: Uuid,
+    },
 }
 struct Running {
     request: Arc<NativeRequest>,
@@ -82,9 +91,16 @@ impl Processes {
         // The admitted caller's stable instance owns the conversation. The ACP
         // activation, not that caller's activation, owns the protocol process.
         // Each new prompt still supplies fresh Context evidence and input grants.
-        if origin.requester().instance() != &entry.consumer
-            || origin.scope().identity.agent().map(|i| &i.session_id) != Some(&entry.session)
-        {
+        let matches = match (&entry.principal, &origin.scope().identity) {
+            (Principal::Session { consumer, session }, Identity::Agent { invocation, .. }) => {
+                origin.requester().instance() == consumer && &invocation.session_id == session
+            }
+            (Principal::Application { consumer, request }, Identity::Remote { request_id }) => {
+                origin.requester() == consumer && request_id == request
+            }
+            _ => false,
+        };
+        if !matches {
             return Err(Error::Denied);
         }
         Ok(Handle {
@@ -99,7 +115,7 @@ impl Processes {
     }
 }
 fn identity(scope: &Scope) -> String {
-    format!("acp-process-{}", calls::digest(&scope.identity.agent()))
+    format!("acp-process-{}", calls::digest(&scope.identity))
 }
 impl process::Processes for Processes {
     fn spawn(&self, scope: Scope, command: Command) -> BoxFuture<'_, Result<Handle, Error>> {
@@ -123,30 +139,48 @@ impl process::Processes for Processes {
                     return Err(Error::Invalid("ACP process capacity reached".into()));
                 }
             }
-            let consumer = origin.requester().instance().clone();
-            let session = origin
-                .scope()
-                .identity
-                .agent()
-                .ok_or(Error::Denied)?
-                .session_id
-                .clone();
+            let principal = match &origin.scope().identity {
+                Identity::Agent { invocation, .. } => Principal::Session {
+                    consumer: origin.requester().instance().clone(),
+                    session: invocation.session_id.clone(),
+                },
+                Identity::Remote { request_id } => Principal::Application {
+                    consumer: origin.requester().clone(),
+                    request: *request_id,
+                },
+                _ => return Err(Error::Denied),
+            };
             let request = Arc::new(
                 self.calls
                     .request(&scope, identity(&scope), self.drain.clone())
                     .map_err(Error::Invalid)?,
             );
-            let input = protocol::Run {
-                executable: command.executable,
-                args: command.args,
-                env: command.env,
-                additional_permissions: self.configuration.permissions.clone(),
-                justification: self
-                    .configuration
-                    .permissions
-                    .as_ref()
-                    .map(|_| format!("Run {}", self.configuration.agent.display_name)),
+            let (method, input) = if matches!(principal, Principal::Application { .. }) {
+                (
+                    "launch",
+                    serde_json::to_value(protocol::Launch {
+                        executable: command.executable,
+                        args: command.args,
+                        env: command.env,
+                    }),
+                )
+            } else {
+                (
+                    "run",
+                    serde_json::to_value(protocol::Run {
+                        executable: command.executable,
+                        args: command.args,
+                        env: command.env,
+                        additional_permissions: self.configuration.permissions.clone(),
+                        justification: self
+                            .configuration
+                            .permissions
+                            .as_ref()
+                            .map(|_| format!("Run {}", self.configuration.agent.display_name)),
+                    }),
+                )
             };
+            let input = input.map_err(|e| Error::Invalid(e.to_string()))?;
             let (chunks, received) = mpsc::channel(8);
             let (done, completed) = watch::channel(None);
             let (started, waiting) = oneshot::channel();
@@ -161,7 +195,7 @@ impl process::Processes for Processes {
                 .map_err(|e| Error::Failed(e.to_string()))?;
             tokio::spawn(async move {
                 ticket.start();
-                let exit = pump(&request, input, chunks, started).await;
+                let exit = pump(&request, method, input, chunks, started).await;
                 let cleanup = request.finish().await;
                 ticket.complete(cleanup.clone());
                 done.send_replace(Some(Arc::new(Done { exit, cleanup })));
@@ -177,8 +211,7 @@ impl process::Processes for Processes {
             };
             let entry = Arc::new(Entry {
                 id,
-                consumer,
-                session,
+                principal,
                 running,
             });
             let handle = match self.bind(scope, entry.clone()) {
@@ -223,7 +256,8 @@ impl process::Processes for Processes {
 }
 async fn pump(
     request: &NativeRequest,
-    input: protocol::Run,
+    method: &str,
+    input: serde_json::Value,
     chunks: mpsc::Sender<Chunk>,
     started: oneshot::Sender<Uuid>,
 ) -> Result<Exit, String> {
@@ -231,8 +265,8 @@ async fn pump(
         .begin_mutation(
             "processes",
             0,
-            "run".into(),
-            serde_json::to_value(input).map_err(|e| e.to_string())?,
+            method.into(),
+            input,
             Uuid::new_v4(),
             Attachments::default(),
         )?
@@ -312,13 +346,16 @@ struct Bound {
 }
 impl Bound {
     async fn input(&self, bytes: Option<Vec<u8>>) -> Result<(), Error> {
+        let permissions = if matches!(self.entry.principal, Principal::Session { .. }) {
+            self.configuration.permissions.clone()
+        } else {
+            None
+        };
         let value = serde_json::to_value(protocol::Input {
             id: self.entry.id,
             bytes,
-            additional_permissions: self.configuration.permissions.clone(),
-            justification: self
-                .configuration
-                .permissions
+            additional_permissions: permissions.clone(),
+            justification: permissions
                 .as_ref()
                 .map(|_| format!("Continue {}", self.configuration.agent.display_name)),
         })

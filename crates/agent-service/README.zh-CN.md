@@ -70,7 +70,7 @@ worker 会话路由原用户正文和有界说明，并查询或推进该原任�
 
 worker 重新激活后仍可恢复原接纳/控制回执，但新 binding 不读取旧任务进度。
 取消沿原 native 清理时限处理，未确认清理继续持有 Host 工作及 Root fence。
-跨会话附件转移、新 worker 创建、协调会话结束后的结果通知及 WorkHub 产品界面仍待完成。
+跨会话附件转移、新 worker 创建与普通 WorkHub 产品界面已接入；协调会话结束后的结果通知仍待完成。
 
 `maka.workspace.protocol-processes` 是独立显式原生实现，导出 `protocol`
 （`maka.workspace.ProtocolProcesses` v1），复用 workspace Processes 的安装配置、
@@ -81,7 +81,7 @@ worker 重新激活后仍可恢复原接纳/控制回执，但新 binding 不读
 operation、当前权限及独立 method grant，句柄本身不授权。原生调用方可持有独立
 NativeRequest 跨轮次复用，但卸载时必须取消并等待 finish。权限变化或会话退休也会
 停止空闲进程；实际终止/reap 后才清理原 Session 资源记录。未知结果查询原 operation。
-该传输尚未提供 ACP 后端或文件／表单回调。
+下述 ACP 后端通过此传输调用独立授权的文件／表单服务。
 
 原生实现 `maka.agent.acp` 通过普通 Executor 契约导出 `executor`，配置包含 ACP
 `agent` 启动描述和可选请求权限 `permissions`。`processes`、`files`、`forms`
@@ -92,9 +92,21 @@ NativeRequest 跨轮次复用，但卸载时必须取消并等待 finish。权�
 适配器核对真实入站 invocation 与工作区，以实际调用方、Session 和原生部署命名空间
 确定会话归属，复用共享 ACP v1/v2 journal 和投影。原生 owner 跨 prompt 持有并清理
 独立进程请求；SDK 收到回复后暂停传输轮询也不阻止已接纳 stdin 写入结算。
-普通产品后端选择器与附件传输仍待接入。
+普通产品后端选择器与不可变附件传输已接入。
 
 
 Executor 配置可用零起始 `member` 选择命名 import 的确切成员（默认 `0`），
 允许显式有界多绑定，不增加全局发现目录。准入捕获该成员的实际 binding 并独立授权。
 member 随原排队执行依据冻结，后续重排不能把已接纳消息改派到其它后端。
+
+
+Executor 配置可另给 `setup: {import, member}`，绑定确切的 `maka.agent.ExecutorSetup` v1。
+Agent 以 `executors.setup` 返回已配置名称，`executorSetup {executor, action}` 代理原 mutation、
+有界进度、回执和清理。ACP 同时导出 `executor` 与 `setup`；设置动作是 `check` 和
+`authenticate {methodId}`，共享 ACP v1/v2 实现。检查返回方法，登录返回确认或未确认结果，
+`authorization_url` 进度仅携带经验证的原始 HTTPS 链接；需要尚未支持终端的登录方法只展示，不执行。
+
+ProtocolProcesses 的 `launch` 须独立授权并显式配置 `setupDirectory`。它使用已持有目录、
+安装文件／网络上限和当前 Host 网络路由，始终排除 Host 私有 Root。stdin 只接纳原调用方 activation
+及应用请求；不构造 Agent invocation 或 Session 进程记录。原 mutation 持有进程至实际退出，
+取消或进度不证明登录或清理完成，恢复查询不会重新认证。

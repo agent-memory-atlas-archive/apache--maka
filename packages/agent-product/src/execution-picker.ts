@@ -30,6 +30,11 @@ import type {
   Emission,
   TextChunk,
   ThinkingLevel,
+  ExecutorSetupAction,
+  ExecutorSetupResult,
+  ExecutorSetupProgress,
+  OperationReply,
+  RecoveryRef,
 } from '../../plugin-sdk/src/index.js';
 import { executionPickerContract, type ExecutionPickerProps } from './contracts.js';
 import { copy, type Copy } from './locale.js';
@@ -41,6 +46,18 @@ interface State {
   modelRequest: number | null;
   open: boolean;
   names: string[];
+  setups: string[];
+  setup: {
+    executor: string;
+    key: string | null;
+    receiptKey: string | null;
+    reference: RecoveryRef | null;
+    result: ExecutorSetupResult | null;
+    url: string | null;
+    cancelling: boolean;
+    unresolved: boolean;
+    settled: boolean;
+  } | null;
   listing: string | null;
   failed: boolean;
   draft: AgentExecutorSelection | null;
@@ -91,7 +108,8 @@ function draft(state: State, selection: AgentExecutorSelection | null) {
 }
 function open(state: State, props: ExecutionPickerProps) {
   state.open = true;
-  draft(state, props.executor);
+  if (!state.setup?.key && !state.setup?.receiptKey && !state.setup?.unresolved)
+    draft(state, props.executor);
 }
 function utf8Bytes(text: string) {
   let bytes = 0;
@@ -133,6 +151,61 @@ function capture(state: State): Action[] {
     },
   ];
 }
+function setupAction(state: State, action: ExecutorSetupAction): Action[] {
+  const executor = state.draft?.executor;
+  if (
+    !executor ||
+    !state.setups.includes(executor) ||
+    state.setup?.key ||
+    state.setup?.receiptKey ||
+    (state.setup?.unresolved && !(action.kind === 'check' && state.setup.settled))
+  )
+    return [];
+  const key = `setup-${++state.serial}`;
+  state.setup = {
+    executor,
+    key,
+    receiptKey: null,
+    reference: null,
+    result: null,
+    url: null,
+    cancelling: false,
+    unresolved: false,
+    settled: false,
+  };
+  return [
+    {
+      key,
+      binding: 'agent',
+      member: 0,
+      method: 'executorSetup',
+      input: { executor, action },
+      resources: {},
+      recovery: { executor, action },
+    },
+  ];
+}
+function setupReceipt(state: State, reply: OperationReply) {
+  const setup = state.setup;
+  if (!setup) return;
+  if (setup.reference && JSON.stringify(setup.reference) !== JSON.stringify(reply.reference))
+    return;
+  setup.reference = reply.reference;
+  const receipt = reply.receipt;
+  setup.settled =
+    receipt.kind === 'recorded' &&
+    receipt.cleanup.kind === 'confirmed' &&
+    receipt.outcome.kind !== 'unresolved';
+  setup.result =
+    receipt.kind === 'recorded' && receipt.outcome.kind === 'returned'
+      ? (receipt.outcome.value as ExecutorSetupResult)
+      : null;
+  setup.unresolved =
+    !setup.result ||
+    setup.result.kind === 'unresolved' ||
+    receipt.kind !== 'recorded' ||
+    receipt.cleanup.kind !== 'confirmed';
+}
 function frame<N extends Node>(
   presentation: Presentation<N>,
   state: State,
@@ -142,7 +215,12 @@ function frame<N extends Node>(
 ) {
   const ui = presentation.paint(props.theme),
     text = copy(props.locale);
-  const disabled = props.busy || !!state.capture;
+  const disabled =
+    props.busy ||
+    !!state.capture ||
+    !!state.setup?.key ||
+    !!state.setup?.receiptKey ||
+    (!!state.setup?.unresolved && !state.setup.settled);
   const model = presentation.slot(
     'models',
     'models',
@@ -161,7 +239,13 @@ function frame<N extends Node>(
     [
       ui.box('connected-model', [model], { visible: props.executor === null, gap: 0 }),
       ...(state.names.length || state.failed || props.executor
-        ? [ui.button('backends', props.executor?.executor ?? text.executionBackend, props.busy)]
+        ? [
+            ui.button(
+              'backends',
+              props.executor?.executor ?? text.executionBackend,
+              props.busy && !state.setup?.key && !state.setup?.unresolved,
+            ),
+          ]
         : []),
     ],
     { row: true, gap: presentation.target === 'tui' ? 1 : 8 },
@@ -171,8 +255,8 @@ function frame<N extends Node>(
     ...Object.entries(levels).map(([key, value]) => ({ key, label: text[value] })),
   ];
   const current = state.draft?.settings.thinkingLevel ?? 'default';
-  const content = ui.box(
-    'backend-content',
+  const fields = ui.box(
+    'backend-fields',
     [
       ui.button('connected', text.executionModel, disabled),
       ...state.names.map((name, i) =>
@@ -187,6 +271,118 @@ function frame<N extends Node>(
         : []),
       ...(state.draft
         ? [
+            ...(state.setups.includes(state.draft.executor)
+              ? [
+                  ui.button(
+                    'setup-check',
+                    text.executionCheck,
+                    disabled || (!!state.setup?.unresolved && !state.setup.settled),
+                  ),
+                  ...(state.setup?.executor === state.draft.executor
+                    ? [
+                        ...(state.setup.result?.kind === 'checked'
+                          ? [
+                              ...(state.setup.result.info
+                                ? [
+                                    ui.text(
+                                      'setup-info',
+                                      `${state.setup.result.info.title ?? state.setup.result.info.name} ${state.setup.result.info.version}`,
+                                    ),
+                                  ]
+                                : []),
+                              ...(state.setup.result.methods.length
+                                ? state.setup.result.methods.flatMap((method, index) => [
+                                    ui.button(
+                                      `setup-auth-${index}`,
+                                      `${text.executionAuthenticate}: ${method.name}`,
+                                      disabled || !method.supported || !!state.setup?.unresolved,
+                                    ),
+                                    ...(method.description
+                                      ? [
+                                          ui.text(
+                                            `setup-description-${index}`,
+                                            method.description,
+                                            13,
+                                            props.theme.muted,
+                                          ),
+                                        ]
+                                      : []),
+                                    ...(!method.supported
+                                      ? [
+                                          ui.text(
+                                            `setup-unsupported-${index}`,
+                                            text.executionUnsupported,
+                                            13,
+                                            props.theme.muted,
+                                          ),
+                                        ]
+                                      : []),
+                                  ])
+                                : [ui.text('setup-none', text.executionNoAuth)]),
+                            ]
+                          : []),
+                        ...(state.setup.key
+                          ? [
+                              ui.text(
+                                'setup-pending',
+                                state.setup.cancelling
+                                  ? text.executionCancelling
+                                  : text.executionChecking,
+                              ),
+                            ]
+                          : []),
+                        ...(state.setup.key && !state.setup.cancelling
+                          ? [ui.button('setup-cancel', text.executionCancel)]
+                          : []),
+                        ...(state.setup.url
+                          ? [
+                              ui.text('setup-url', state.setup.url),
+                              ui.button(
+                                'setup-copy',
+                                text.executionCopyUrl,
+                                false,
+                                false,
+                                undefined,
+                                state.setup.url,
+                              ),
+                            ]
+                          : []),
+                        ...(state.setup.result?.kind === 'authenticated'
+                          ? [ui.text('setup-authenticated', text.executionAuthenticated)]
+                          : []),
+                        ...(state.setup.unresolved
+                          ? [
+                              ui.text(
+                                'setup-unresolved',
+                                text.executionUnresolved,
+                                13,
+                                props.theme.error,
+                              ),
+                            ]
+                          : []),
+                        ...(state.setup.result?.kind === 'unresolved'
+                          ? [
+                              ui.text(
+                                'setup-diagnostic',
+                                state.setup.result.diagnostic,
+                                13,
+                                props.theme.error,
+                              ),
+                            ]
+                          : []),
+                        ...(state.setup.reference
+                          ? [
+                              ui.button(
+                                'setup-receipt',
+                                text.executionReceipt,
+                                !!state.setup.key || !!state.setup.receiptKey,
+                              ),
+                            ]
+                          : []),
+                      ]
+                    : []),
+                ]
+              : []),
             ui.text('backend-model-label', text.executionModelName, 13, props.theme.text),
             presentation.slot<InputProps>(
               state.editor,
@@ -231,6 +427,19 @@ function frame<N extends Node>(
       ...(state.error
         ? [ui.text('settings-error', text.executionSettingsFailed, 13, props.theme.error)]
         : []),
+    ],
+    {
+      gap: presentation.target === 'tui' ? 0 : 8,
+      scroll: 'manual',
+      autoFocus: true,
+      terminal: { grow: 1, basis: 0 },
+      style: { maxHeight: 480, minHeight: 0, shrink: 1 },
+    },
+  );
+  const content = ui.box(
+    'backend-content',
+    [
+      fields,
       ui.box(
         'backend-actions',
         [
@@ -240,12 +449,7 @@ function frame<N extends Node>(
         { row: true, gap: 1 },
       ),
     ],
-    {
-      gap: presentation.target === 'tui' ? 0 : 8,
-      scroll: 'manual',
-      autoFocus: true,
-      terminal: { grow: 1 },
-    },
+    { gap: presentation.target === 'tui' ? 0 : 8, terminal: { grow: 1 } },
   );
   const view = ui.dialog(
     'backend-popup',
@@ -272,6 +476,8 @@ export function executionPicker<N extends Node>(
         modelRequest: null,
         open: false,
         names: [],
+        setups: [],
+        setup: null,
         listing: null,
         failed: false,
         draft: null,
@@ -300,11 +506,32 @@ export function executionPicker<N extends Node>(
       state.revision++;
       const actions: Action[] = [],
         events: Emission[] = [];
-      if (input.kind === 'action' && input.key === state.listing) {
+      const cancel: string[] = [];
+      if (input.kind === 'action' && input.key === state.setup?.key) {
+        const result = input.event as ActionOutcome;
+        if (result.status === 'updated') {
+          const progress = result.value as ExecutorSetupProgress;
+          if (progress.kind === 'authorization_url') state.setup.url = progress.url;
+        } else {
+          state.setup.key = null;
+          state.setup.url = null;
+          if (result.status === 'operation') setupReceipt(state, result.reply);
+          else state.setup.unresolved = result.status !== 'not_accepted';
+          if (result.status === 'not_accepted') {
+            state.setup.result = { kind: 'unresolved', diagnostic: result.reason };
+            state.setup.settled = true;
+          }
+        }
+      } else if (input.kind === 'action' && input.key === state.setup?.receiptKey) {
+        state.setup.receiptKey = null;
+        const result = input.event as ActionOutcome;
+        if (result.status === 'succeeded') setupReceipt(state, result.value as OperationReply);
+      } else if (input.kind === 'action' && input.key === state.listing) {
         state.listing = null;
         const result = input.event as ActionOutcome;
         if (result.status === 'succeeded') {
           state.names = (result.value as AgentExecutors).executors;
+          state.setups = (result.value as AgentExecutors).setup;
           events.push({ name: 'backends', value: { available: state.names.length > 0 } });
         } else state.failed = true;
       } else if (input.kind === 'action' && input.key === state.capture?.key) {
@@ -356,11 +583,47 @@ export function executionPicker<N extends Node>(
           }
         } else if (input.name === 'submitted' && !props.busy) actions.push(...capture(state));
       } else if (input.kind === 'raw') {
-        if (input.key === 'close' || input.key === 'backend-popup') close(state);
+        if (input.key === 'setup-cancel' && state.setup?.key && !state.setup.cancelling) {
+          cancel.push(state.setup.key);
+          state.setup.cancelling = true;
+        } else if (
+          input.key === 'setup-receipt' &&
+          state.setup?.reference &&
+          !state.setup.key &&
+          !state.setup.receiptKey
+        ) {
+          state.setup.receiptKey = `receipt-${++state.serial}`;
+          actions.push({
+            key: state.setup.receiptKey,
+            binding: 'receipts',
+            member: 0,
+            method: 'read',
+            input: state.setup.reference,
+            resources: {},
+          });
+        } else if (!props.busy && state.open && input.key === 'setup-check')
+          actions.push(...setupAction(state, { kind: 'check' }));
+        else if (
+          !props.busy &&
+          state.open &&
+          /^setup-auth-(0|[1-9][0-9]*)$/.test(input.key) &&
+          state.setup?.executor === state.draft?.executor &&
+          state.setup?.result?.kind === 'checked'
+        ) {
+          const method = state.setup.result.methods[Number(input.key.slice(11))];
+          if (method?.supported)
+            actions.push(...setupAction(state, { kind: 'authenticate', methodId: method.id }));
+        } else if (input.key === 'close' || input.key === 'backend-popup') close(state);
         else if (!props.busy && input.key === 'backends') {
           open(state, props);
           actions.push(...list(state));
-        } else if (state.open && !props.busy && !state.capture) {
+        } else if (
+          state.open &&
+          !props.busy &&
+          !state.capture &&
+          !state.setup?.key &&
+          !state.setup?.receiptKey
+        ) {
           if (input.key === 'connected') {
             events.push({ name: 'executor', value: null });
             close(state);
@@ -389,6 +652,7 @@ export function executionPicker<N extends Node>(
         }
       }
       const out = frame(presentation, state, props, actions, events);
+      out.cancel = cancel;
       if (input.kind === 'raw' && input.key === 'backend-popup')
         out.decision = { preventDefault: true, stopPropagation: true };
       return out;

@@ -220,9 +220,38 @@ export const configurations = {
             minimum: 0,
             default: 0,
           },
+          setup: {
+            anyOf: [
+              {
+                $ref: '#/$defs/ExecutorSetupBinding',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            default: null,
+          },
         },
         additionalProperties: false,
         required: ['name', 'import'],
+      },
+      ExecutorSetupBinding: {
+        type: 'object',
+        properties: {
+          import: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 256,
+          },
+          member: {
+            type: 'integer',
+            format: 'uint',
+            minimum: 0,
+            default: 0,
+          },
+        },
+        additionalProperties: false,
+        required: ['import'],
       },
       AgentWorkspacePermissions: {
         type: 'object',
@@ -602,8 +631,37 @@ export const configurations = {
             description: 'Exact member of the explicitly bound import, never a discovery index.',
             default: 0,
           },
+          setup: {
+            anyOf: [
+              {
+                $ref: '#/$defs/ExecutorSetupBinding',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            default: null,
+          },
         },
         required: ['name', 'import'],
+      },
+      ExecutorSetupBinding: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          import: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 256,
+          },
+          member: {
+            type: 'integer',
+            format: 'uint',
+            minimum: 0,
+            default: 0,
+          },
+        },
+        required: ['import'],
       },
       AgentWorkspacePermissions: {
         type: 'object',
@@ -834,6 +892,12 @@ export const configurations = {
         type: ['string', 'null'],
         description: 'Trusted CLI supporting the original platform sandbox bootstrap.',
       },
+      setupDirectory: {
+        type: ['string', 'null'],
+        description:
+          'Explicit directory for application setup processes. Launch still needs\nits own grant and uses only the installation filesystem/network ceiling.',
+        default: null,
+      },
       sessionOwner: {
         anyOf: [
           {
@@ -989,6 +1053,12 @@ export const configurations = {
       helper: {
         type: ['string', 'null'],
         description: 'Trusted CLI supporting the original platform sandbox bootstrap.',
+      },
+      setupDirectory: {
+        type: ['string', 'null'],
+        description:
+          'Explicit directory for application setup processes. Launch still needs\nits own grant and uses only the installation filesystem/network ceiling.',
+        default: null,
       },
       sessionOwner: {
         anyOf: [

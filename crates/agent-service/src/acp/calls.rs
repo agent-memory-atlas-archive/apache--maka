@@ -65,19 +65,17 @@ impl Calls {
         cancellation: CancellationToken,
     ) -> Result<NativeRequest, String> {
         let origin = self.origin(scope)?;
-        let invocation = origin
-            .scope()
-            .identity
-            .agent()
-            .ok_or("ACP requires an invocation")?
-            .clone();
-        self.services.request(
-            Identity::Agent {
-                invocation,
+        let identity = match &origin.scope().identity {
+            Identity::Agent { invocation, .. } => Identity::Agent {
+                invocation: invocation.clone(),
                 operation_id: Some(identity),
             },
-            cancellation,
-        )
+            Identity::Remote { request_id } => Identity::Remote {
+                request_id: *request_id,
+            },
+            _ => return Err("ACP requires an admitted execution or setup request".into()),
+        };
+        self.services.request(identity, cancellation)
     }
     pub async fn invoke(
         &self,

@@ -30,6 +30,10 @@ pub struct ComponentOutput<V = Value> {
     pub frame: Frame<V>,
     pub events: Vec<Emission>,
     pub actions: Vec<super::actions::Action>,
+    /// Request cancellation of this component's original mutation keys.
+    /// This does not acknowledge business completion or physical cleanup.
+    #[serde(default)]
+    pub cancel: Vec<String>,
     /// Complete current subscription demand. Empty removes previous demand.
     #[serde(default)]
     pub subscriptions: Vec<super::actions::Action>,
@@ -56,6 +60,7 @@ impl<V> ComponentOutput<V> {
             frame: self.frame.map_view(map),
             events: self.events,
             actions: self.actions,
+            cancel: self.cancel,
             subscriptions: self.subscriptions,
             decision: self.decision,
         }
@@ -156,6 +161,7 @@ impl<V> Frame<V> {
             frame: self,
             events,
             actions: Vec::new(),
+            cancel: Vec::new(),
             subscriptions: Vec::new(),
             decision: None,
         }

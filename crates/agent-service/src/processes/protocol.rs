@@ -33,6 +33,19 @@ const CHUNK_BYTES: usize = 8192;
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "ProtocolProcessLaunch")]
+pub struct Launch {
+    #[schemars(length(min = 1, max = 4096))]
+    pub executable: String,
+    #[serde(default)]
+    #[schemars(length(max = 256))]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "ProtocolProcessRun")]
 pub struct Run {
     #[schemars(length(min = 1, max = 4096))]
@@ -108,6 +121,16 @@ pub fn contract() -> Contract {
         interface: Interface::Service {
             methods: BTreeMap::from([
                 (
+                    "launch".into(),
+                    Method {
+                        mode: MethodMode::Mutation,
+                        input: schemars::schema_for!(Launch).into(),
+                        output: schemars::schema_for!(Completion).into(),
+                        progress: Some(schemars::schema_for!(Progress).into()),
+                        resources: BTreeMap::new(),
+                    },
+                ),
+                (
                     "run".into(),
                     Method {
                         mode: MethodMode::Mutation,
@@ -162,10 +185,18 @@ struct Write {
 }
 struct Control {
     consumer: Activation,
-    session: String,
-    configuration: SessionConfiguration,
-    sandbox: Sandbox,
+    boundary: Boundary,
     input: mpsc::Sender<Write>,
+}
+enum Boundary {
+    Session {
+        session: String,
+        configuration: Box<SessionConfiguration>,
+        sandbox: Sandbox,
+    },
+    Application {
+        request: Uuid,
+    },
 }
 #[derive(Default)]
 pub(super) struct Controls(Mutex<BTreeMap<Uuid, Arc<Control>>>);
@@ -179,23 +210,7 @@ impl Handler for Service {
     ) -> BoxFuture<'static, Result<Value, String>> {
         let owner = self.0.clone();
         Box::pin(async move {
-            let invocation = context
-                .scope()
-                .identity
-                .agent()
-                .ok_or("protocol_requires_agent")?
-                .clone();
-            let operation_id = context
-                .scope()
-                .identity
-                .operation_id()
-                .ok_or("protocol_requires_operation")?
-                .into();
             context.operation().ok_or("protocol_requires_mutation")?;
-            let tool = ToolCallContext {
-                invocation,
-                operation_id,
-            };
             let mut ticket = context
                 .scope()
                 .resources
@@ -203,16 +218,24 @@ impl Handler for Service {
                 .map_err(|e| e.to_string())?;
             ticket.start();
             let result = match method.as_str() {
-                "run" => match serde_json::from_value(value) {
-                    Ok(input) => owner
+                "run" => match (serde_json::from_value(value), tool(&context)) {
+                    (Ok(input), Ok(tool)) => owner
                         .run(input, &tool, &context)
+                        .await
+                        .and_then(|v| serde_json::to_value(v).map_err(failed)),
+                    (Err(error), _) => Err(failed(error)),
+                    (_, Err(error)) => Err(error),
+                },
+                "launch" => match serde_json::from_value(value) {
+                    Ok(input) => owner
+                        .launch(input, &context)
                         .await
                         .and_then(|v| serde_json::to_value(v).map_err(failed)),
                     Err(error) => Err(failed(error)),
                 },
                 "input" => match serde_json::from_value(value) {
                     Ok(input) => owner
-                        .protocol_input(input, &tool, &context)
+                        .protocol_input(input, &context)
                         .await
                         .and_then(|v| serde_json::to_value(v).map_err(failed)),
                     Err(error) => Err(failed(error)),
@@ -230,6 +253,22 @@ impl Handler for Service {
             result.map_err(|e| e.to_string())
         })
     }
+}
+fn tool(context: &Context) -> Result<ToolCallContext, ToolError> {
+    Ok(ToolCallContext {
+        invocation: context
+            .scope()
+            .identity
+            .agent()
+            .ok_or_else(|| failed("protocol_requires_agent"))?
+            .clone(),
+        operation_id: context
+            .scope()
+            .identity
+            .operation_id()
+            .ok_or_else(|| failed("protocol_requires_operation"))?
+            .into(),
+    })
 }
 impl Processes {
     async fn run(
@@ -291,9 +330,11 @@ impl Processes {
         let (input, receive) = mpsc::channel(8);
         let control = Arc::new(Control {
             consumer: context.requester().clone(),
-            session: tool.invocation.session_id.clone(),
-            configuration: configuration.clone(),
-            sandbox,
+            boundary: Boundary::Session {
+                session: tool.invocation.session_id.clone(),
+                configuration: Box::new(configuration.clone()),
+                sandbox,
+            },
             input,
         });
         {
@@ -310,7 +351,7 @@ impl Processes {
                 .admit_session_process_for(&tool.invocation, id, &configuration)
                 .await
                 .map_err(persistence)?;
-            let result = worker::run(self, context, id, plan, receive, &configuration).await;
+            let result = worker::run(self, context, id, plan, receive, Some(&configuration)).await;
             if !matches!(&result, Err(ToolError::CleanupUnconfirmed(_))) {
                 self.store
                     .clean_session_process(id)
@@ -323,12 +364,62 @@ impl Processes {
         self.protocol.0.lock().unwrap().remove(&id);
         result
     }
-    async fn protocol_input(
-        &self,
-        input: Input,
-        tool: &ToolCallContext,
-        context: &Context,
-    ) -> Result<Written, ToolError> {
+    async fn launch(&self, input: Launch, context: &Context) -> Result<Completion, ToolError> {
+        cancelled(&context.scope().cancellation)?;
+        if self.drain.is_cancelled() {
+            return Err(failed("Process owner is draining"));
+        }
+        let maka_plugins::call::Identity::Remote { request_id } = context.scope().identity else {
+            return Err(failed("protocol_launch_requires_application_request"));
+        };
+        let executor = self
+            .setup
+            .clone()
+            .ok_or_else(|| failed("protocol_setup_directory_unavailable"))?;
+        let network = self
+            .configuration
+            .network_configuration()
+            .await
+            .map_err(|_| failed("Process network configuration unavailable"))?;
+        let route =
+            maka_network::Policy::from_host_settings(&network.proxy, network.password.as_deref())
+                .map_err(|_| failed("Process network route unavailable"))?;
+        let executor = executor.with_network_route(route);
+        let command = maka_plugins::process::Command {
+            executable: input.executable,
+            args: input.args,
+            env: input.env,
+            lifetime: maka_plugins::process::Lifetime::Invocation,
+        };
+        command.validate().map_err(failed)?;
+        let plan = tokio::task::spawn_blocking(move || {
+            executor.command_program(command.executable, &command.args, &command.env)
+        })
+        .await
+        .map_err(failed)??;
+        let id = Uuid::new_v4();
+        let (input, receive) = mpsc::channel(8);
+        let control = Arc::new(Control {
+            consumer: context.requester().clone(),
+            boundary: Boundary::Application {
+                request: request_id,
+            },
+            input,
+        });
+        {
+            let mut controls = self.protocol.0.lock().unwrap();
+            if controls.len() >= 32 {
+                return Err(failed("Protocol process capacity exhausted"));
+            }
+            controls.insert(id, control);
+        }
+        // The original mutation owns this application process through physical
+        // exit. It is not an Agent invocation and creates no Session process row.
+        let result = worker::run(self, context, id, plan, receive, None).await;
+        self.protocol.0.lock().unwrap().remove(&id);
+        result
+    }
+    async fn protocol_input(&self, input: Input, context: &Context) -> Result<Written, ToolError> {
         if input.bytes.as_ref().is_some_and(|b| b.len() > CHUNK_BYTES) {
             return Err(failed("Protocol input exceeds 8 KiB"));
         }
@@ -340,10 +431,16 @@ impl Processes {
             .get(&input.id)
             .cloned()
             .ok_or_else(|| failed("Protocol process unavailable"))?;
-        if &control.consumer != context.requester() || control.session != tool.invocation.session_id
+        if &control.consumer != context.requester() {
+            return Err(failed("Protocol process belongs to another caller"));
+        }
+        if let Boundary::Application { request } = &control.boundary
+            && (!matches!(context.scope().identity, maka_plugins::call::Identity::Remote { request_id } if request_id == *request)
+                || input.additional_permissions.is_some()
+                || input.justification.is_some())
         {
             return Err(failed(
-                "Protocol process belongs to another caller or Session",
+                "Protocol setup input belongs to another application request",
             ));
         }
         let capacity = tokio::select! {
@@ -351,48 +448,61 @@ impl Processes {
             () = context.scope().cancellation.cancelled() => return Err(failed("Protocol input cancelled")),
             capacity = control.input.clone().reserve_owned() => capacity.map_err(failed)?,
         };
-        let current = crate::permissions::live(&self.store, &tool.invocation).await?;
-        if current.boundary_revision != control.configuration.boundary_revision
-            || current.workspace != control.configuration.workspace
-        {
-            return Err(failed("Protocol process permissions changed"));
-        }
-        let requested = match input.additional_permissions {
-            Some(permissions) => {
-                let reason = input
-                    .justification
-                    .filter(|s| !s.trim().is_empty() && s.len() <= 2048)
-                    .ok_or_else(|| {
-                        failed("Protocol process permissions require a justification")
-                    })?;
-                Some(PermissionRequest {
-                    reason,
-                    command: None,
-                    permissions,
-                })
+        match &control.boundary {
+            Boundary::Application { .. } => {}
+            Boundary::Session {
+                session,
+                configuration,
+                sandbox,
+            } => {
+                let tool = tool(context)?;
+                if session != &tool.invocation.session_id {
+                    return Err(failed("Protocol process belongs to another Session"));
+                }
+                let current = crate::permissions::live(&self.store, &tool.invocation).await?;
+                if current.boundary_revision != configuration.boundary_revision
+                    || current.workspace != configuration.workspace
+                {
+                    return Err(failed("Protocol process permissions changed"));
+                }
+                let requested = match input.additional_permissions {
+                    Some(permissions) => {
+                        let reason = input
+                            .justification
+                            .filter(|s| !s.trim().is_empty() && s.len() <= 2048)
+                            .ok_or_else(|| {
+                                failed("Protocol process permissions require a justification")
+                            })?;
+                        Some(PermissionRequest {
+                            reason,
+                            command: None,
+                            permissions,
+                        })
+                    }
+                    None => None,
+                };
+                let captured = self
+                    .prepare(&tool, &current, requested, &context.scope().cancellation)
+                    .await?;
+                if !captured
+                    .executor
+                    .sandbox()
+                    .contains(sandbox)
+                    .map_err(failed)?
+                {
+                    return Err(failed(
+                        "Protocol process launch permissions are no longer available",
+                    ));
+                }
+                let latest = crate::permissions::live(&self.store, &tool.invocation).await?;
+                if latest.boundary_revision != current.boundary_revision
+                    || latest.workspace != current.workspace
+                {
+                    return Err(failed(
+                        "Protocol process permissions changed during input admission",
+                    ));
+                }
             }
-            None => None,
-        };
-        let captured = self
-            .prepare(tool, &current, requested, &context.scope().cancellation)
-            .await?;
-        if !captured
-            .executor
-            .sandbox()
-            .contains(&control.sandbox)
-            .map_err(failed)?
-        {
-            return Err(failed(
-                "Protocol process launch permissions are no longer available",
-            ));
-        }
-        let latest = crate::permissions::live(&self.store, &tool.invocation).await?;
-        if latest.boundary_revision != current.boundary_revision
-            || latest.workspace != current.workspace
-        {
-            return Err(failed(
-                "Protocol process permissions changed during input admission",
-            ));
         }
         cancelled(&context.scope().cancellation)?;
         let (reply, result) = oneshot::channel();

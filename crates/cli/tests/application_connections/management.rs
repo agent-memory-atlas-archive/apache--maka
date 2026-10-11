@@ -244,7 +244,11 @@ fn actual_child_manager_install_uses_original_grants_dual_roots_and_journaled_im
                     serde_json::Value::Null,
                 ))
                 .unwrap();
-            let completion = f.timer.block_on(session.clone().dispatch(intent));
+            let completion = f.timer.block_on(
+                session
+                    .clone()
+                    .dispatch(intent, tokio::sync::mpsc::channel(1).0),
+            );
             completion.cleanup.unwrap();
             let Receipt::Recorded {
                 outcome: maka_plugin_core::operation::OperationOutcome::Returned { value },
@@ -447,7 +451,11 @@ fn cohost_manager_installs_ui_bytes_and_adopts_without_reopening_root_or_replaci
                     serde_json::Value::Null,
                 ))
                 .unwrap();
-            let completion = f.timer.block_on(session.clone().dispatch(intent));
+            let completion = f.timer.block_on(
+                session
+                    .clone()
+                    .dispatch(intent, tokio::sync::mpsc::channel(1).0),
+            );
             completion.cleanup.unwrap();
             let Receipt::Recorded {
                 outcome: maka_plugin_core::operation::OperationOutcome::Returned { value },
@@ -544,7 +552,11 @@ fn cohost_manager_installs_ui_bytes_and_adopts_without_reopening_root_or_replaci
                     serde_json::Value::Null,
                 ))
                 .unwrap();
-            let completion = f.timer.block_on(replace.clone().dispatch(intent));
+            let completion = f.timer.block_on(
+                replace
+                    .clone()
+                    .dispatch(intent, tokio::sync::mpsc::channel(1).0),
+            );
             completion.cleanup.unwrap();
             let Receipt::Recorded {
                 outcome: maka_plugin_core::operation::OperationOutcome::Returned { value },

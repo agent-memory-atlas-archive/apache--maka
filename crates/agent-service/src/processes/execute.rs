@@ -80,6 +80,16 @@ pub(super) fn capture(
     maka_fs_tools::directory::open(&path, &workspace.directory_identity).map_err(failed)?;
     let executor =
         maka_process::ShellExecutor::from_directory(path, directory.into_std_file(), base)?;
+    let executor = platform(executor, settings, state_root);
+    Ok(Captured { executor, ceiling })
+}
+/// Platform bootstrap shared by Session and explicitly installed setup launches.
+pub(super) fn platform(
+    executor: maka_process::ShellExecutor,
+    settings: &Configuration,
+    state_root: &std::path::Path,
+) -> maka_process::ShellExecutor {
+    let _ = (settings, state_root);
     #[cfg(target_os = "linux")]
     let executor = match &settings.helper {
         Some(helper) => executor.with_network_helper(helper.clone()),
@@ -91,8 +101,9 @@ pub(super) fn capture(
             state_root,
             settings.helper.as_ref().expect("validated helper"),
         )));
-    Ok(Captured { executor, ceiling })
+    executor
 }
+
 impl Processes {
     pub(super) async fn execute(
         &self,

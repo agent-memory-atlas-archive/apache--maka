@@ -442,7 +442,11 @@ impl NativeMutation for Session {
             result
         })
     }
-    fn dispatch(self: Arc<Self>, recorded: RecordedIntent) -> MutationFuture {
+    fn dispatch(
+        self: Arc<Self>,
+        recorded: RecordedIntent,
+        progress: tokio::sync::mpsc::Sender<serde_json::Value>,
+    ) -> MutationFuture {
         let reference = recorded.intent().reference.clone();
         let stored = {
             let mut slot = self.recorded.lock().unwrap();
@@ -468,10 +472,26 @@ impl NativeMutation for Session {
                     .ok_or("native preparation already closed")?;
                 // Call takes the actual token synchronously before this observer
                 // can be selected away by concurrent native close.
-                match observe(call.commit(recorded), &self.stop).await? {
-                    Reply::Mutation { reply, .. } => Ok(*reply),
-                    Reply::Aborted { reason, .. } => Err(reason),
-                    _ => Err("unexpected native mutation reply".into()),
+                let mut reply = observe(call.commit(recorded), &self.stop).await?;
+                loop {
+                    match reply {
+                        Reply::Progress { value } => {
+                            observe(
+                                async {
+                                    progress
+                                        .send(value)
+                                        .await
+                                        .map_err(|_| "mutation progress observer closed".to_owned())
+                                },
+                                &self.stop,
+                            )
+                            .await?;
+                            reply = observe(call.receive(), &self.stop).await?;
+                        }
+                        Reply::Mutation { reply, .. } => break Ok(*reply),
+                        Reply::Aborted { reason, .. } => break Err(reason),
+                        _ => break Err("unexpected native mutation reply".into()),
+                    }
                 }
             }
             .await;
@@ -488,6 +508,9 @@ impl NativeMutation for Session {
                 cleanup: settlement.cleanup,
             }
         })
+    }
+    fn cancel(&self) {
+        self.stop.cancel();
     }
     fn close(self: Arc<Self>) -> CleanupFuture {
         self.stop.cancel();

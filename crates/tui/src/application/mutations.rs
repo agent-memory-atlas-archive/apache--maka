@@ -54,8 +54,15 @@ impl NativeMutation for Owner {
             self.request.reference().map_err(|e| e.to_string())
         })
     }
-    fn dispatch(self: Arc<Self>, _: RecordedIntent) -> MutationFuture {
+    fn dispatch(
+        self: Arc<Self>,
+        _: RecordedIntent,
+        _progress: tokio::sync::mpsc::Sender<serde_json::Value>,
+    ) -> MutationFuture {
         Box::pin(async { panic!("retired terminal must not dispatch a mutation") })
+    }
+    fn cancel(&self) {
+        self.prepare.add_permits(1);
     }
     fn close(self: Arc<Self>) -> CleanupFuture {
         Box::pin(async move {

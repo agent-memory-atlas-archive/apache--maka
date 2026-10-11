@@ -18,6 +18,7 @@
  */
 
 mod executor;
+mod executor_setup;
 
 use super::*;
 use alacritty_terminal::{
@@ -175,10 +176,10 @@ fn authored(
     refs: &BTreeMap<String, maka_plugin_core::package::PackageRef>,
 ) -> (Value, Value, [Color; 2]) {
     let output = Command::new("node").args(["--input-type=module", "-e", r#"
-        const {composition,studioComposition,instanceNames}=await import(process.argv[1]);
+        const {composition,studioComposition,installationNames}=await import(process.argv[1]);
         const configuration=JSON.parse(process.argv[2]);
         const packages=JSON.parse(process.argv[3]);
-        const keys=Object.fromEntries(instanceNames.map((name,i)=>[name,
+        const keys=Object.fromEntries(installationNames(configuration).map((name,i)=>[name,
             '00000000-0000-0000-0000-'+String(i+20).padStart(12,'0')]));
         const common={...configuration,packages,keys};
         const {activate}=await import(process.argv[4]);

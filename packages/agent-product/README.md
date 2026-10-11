@@ -59,8 +59,19 @@ Supply `executorProcesses` with an explicit filesystem/network installation ceil
 and optional sandbox helper. It is independent of the model's `processes`/Terminal
 configuration. The recipe adds ordinary ACP, ProtocolProcesses, Files and Forms
 instances with separate Agent→Executor and Executor→callback grants. Requested
-launch access still requires the Session's permission policy and user consent.
+execution access still requires the Session's permission policy and user consent.
 No backend credentials are copied from model connections or embedded in this source.
+
+Set `executorProcesses.setupDirectory` to an absolute directory to enable backend
+checks and agent-provided sign-in methods in ExecutionPicker. The recipe then adds
+an exact `executorSetups` binding, an Agent→Setup grant and the separate
+ProtocolProcesses `launch` grant. These application operations use the held setup
+directory and installation filesystem/network ceiling, with the Host private Root
+excluded; they create no chat Session. The picker shows the original HTTPS login
+URL and offers cancellation and original-receipt lookup. Cancellation waits for
+physical process cleanup. An unconfirmed authentication is never retried
+automatically; a settled attempt can be followed by a new explicit check.
+
 
 WorkHub accepts separate `coordinatorAcpExecutors` and
 `coordinatorExecutorProcesses`. Worker and coordinator backends keep distinct keys,

@@ -481,7 +481,14 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Session<R, W> {
                         let reference = prepared.reference().clone();
                         let admission = server.client.mutate_from_peer(prepared, *intent);
                         let completion = match self.observe(admission).await {
-                            Ok(accepted) => self.observe(accepted.completion()).await,
+                            Ok(mut accepted) => {
+                                while let Some(value) = self.observe(accepted.recv()).await {
+                                    // A disconnected observer still drains the original owner.
+                                    // Progress never substitutes for its final receipt or cleanup.
+                                    let _ = self.send(&Reply::Progress { value }).await;
+                                }
+                                self.observe(accepted.completion()).await
+                            }
                             Err(diagnostic) => maka_runtime_host::application::MutationCompletion {
                                 reply: maka_plugin_core::operation::OperationReply {
                                     reference,

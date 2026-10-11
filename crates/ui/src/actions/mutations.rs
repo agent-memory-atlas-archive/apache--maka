@@ -25,6 +25,8 @@ use std::{panic::AssertUnwindSafe, sync::OnceLock};
 pub(super) struct Session {
     owner: Arc<dyn NativeMutation>,
     reference: Arc<OnceLock<RecoveryRef>>,
+    pub(super) progress: subscriptions::Flow,
+    cancelled: bool,
 }
 enum Phase {
     Preparing,
@@ -47,6 +49,15 @@ impl<V: ?Sized> Preparing<V> {
 }
 
 impl Session {
+    fn cancel(&mut self) {
+        self.cancelled = true;
+        self.progress.stop.cancel();
+        if std::panic::catch_unwind(AssertUnwindSafe(|| self.owner.cancel())).is_err() {
+            self.progress.failure.get_or_insert_with(|| {
+                "native cancellation panicked; read original receipt".into()
+            });
+        }
+    }
     fn failure(&self, reason: String) -> ActionOutcome {
         match self.reference.get() {
             Some(reference) => unavailable(reference.clone(), reason),
@@ -58,6 +69,32 @@ impl Session {
 }
 
 impl<V: ?Sized + 'static> Application<V> {
+    pub(crate) fn cancel_mutation(&mut self, consumer: &Mount, key: &str) {
+        let queued = std::mem::take(&mut self.actions.queue);
+        for action in queued {
+            if !action.subscription && action.consumer == *consumer && action.key == key {
+                self.reject_action(action, "action cancelled before admission".into());
+            } else {
+                self.actions.queue.push_back(action);
+            }
+        }
+        for preparing in self.actions.preparing.values_mut() {
+            if preparing.action.consumer == *consumer
+                && preparing.action.key == key
+                && let Some(session) = &mut preparing.session
+            {
+                session.cancel();
+            }
+        }
+        for running in self.actions.running.values_mut() {
+            if running.consumer == *consumer
+                && running.key == key
+                && let Some(session) = &mut running.mutation
+            {
+                session.cancel();
+            }
+        }
+    }
     pub(super) fn start_mutation(&mut self, action: Prepared<V>) -> Result<Option<ActionTask>> {
         let (Some(source), Some(store)) = (action.source.clone(), self.store.clone()) else {
             self.reject_action(action, "mutation requires a persisted UI source".into());
@@ -131,6 +168,8 @@ impl<V: ?Sized + 'static> Application<V> {
                 session: Some(Session {
                     owner: owner.clone(),
                     reference: reference.clone(),
+                    progress: subscriptions::Flow::new(),
+                    cancelled: false,
                 }),
                 recorded: None,
                 phase: Phase::Preparing,
@@ -194,6 +233,9 @@ impl<V: ?Sized + 'static> Application<V> {
                 Ok(None)
             }
             TaskCompletion::Prepared(recorded) => self.finish_preparation(id, recorded),
+            TaskCompletion::MutationProgress { value, next } => {
+                self.finish_mutation_progress(id, value, next)
+            }
             TaskCompletion::Mutation(completion) => {
                 self.finish_mutation(id, completion)?;
                 Ok(None)
@@ -235,7 +277,8 @@ impl<V: ?Sized + 'static> Application<V> {
             Ok(recorded) => recorded,
             Err(reason) => return self.close_preparation(id, reason, None),
         };
-        if self.is_retiring(&preparing.action.consumer)
+        if session.cancelled
+            || self.is_retiring(&preparing.action.consumer)
             || preparing.action.invalidated
             || preparing
                 .action
@@ -245,7 +288,7 @@ impl<V: ?Sized + 'static> Application<V> {
         {
             return self.close_preparation(
                 id,
-                "consumer retired before mutation admission".into(),
+                "mutation cancelled or consumer retired before admission".into(),
                 Some(recorded),
             );
         }
@@ -273,11 +316,10 @@ impl<V: ?Sized + 'static> Application<V> {
         // Accepted Work protects the provider before its preparation fence ends.
         self.runtime
             .complete_resource(&preparing.resource, Ok(()))?;
+        let (send, receive) = tokio::sync::mpsc::channel(1);
         Ok(Some(ActionTask {
             id,
-            future: Box::pin(
-                async move { TaskCompletion::Mutation(owner.dispatch(recorded).await) },
-            ),
+            future: mutation_progress(owner.dispatch(recorded, send), receive),
         }))
     }
 
@@ -350,6 +392,83 @@ impl<V: ?Sized + 'static> Application<V> {
         self.finish_preparation_close(id, cleanup)
     }
 
+    fn finish_mutation_progress(
+        &mut self,
+        id: Uuid,
+        value: Value,
+        next: TaskFuture,
+    ) -> Result<Option<ActionTask>> {
+        let running = self
+            .actions
+            .running
+            .get(&id)
+            .ok_or_else(|| Error::Invalid("unknown mutation progress".into()))?;
+        let session = running
+            .mutation
+            .as_ref()
+            .filter(|_| !running.completed)
+            .ok_or_else(|| Error::Invalid("progress requires an active mutation".into()))?;
+        let valid = tree::call_bytes(&value).and_then(|bytes| {
+            if bytes > 64 * 1024 {
+                return Err(Error::Invalid("mutation progress exceeds 64 KiB".into()));
+            }
+            let Export::Service { methods, .. } = running.execution.value() else {
+                unreachable!()
+            };
+            methods[&running.method]
+                .progress
+                .as_ref()
+                .ok_or_else(|| Error::Invalid("mutation has no progress declaration".into()))?
+                .validate(&value)
+                .map_err(|e| Error::Invalid(e.to_string()))
+        });
+        let consumer = running.consumer.clone();
+        let key = running.key.clone();
+        let wanted = self.update_wanted(&consumer, &key, id);
+        if session.progress.pending_feedback && !session.progress.stop.is_cancelled() {
+            return Err(Error::Invalid(
+                "mutation progress feedback has not committed".into(),
+            ));
+        }
+        if let Err(error) = valid {
+            self.fail_update(id, bounded_reason(error.to_string()));
+        }
+        let flow = &mut self
+            .actions
+            .running
+            .get_mut(&id)
+            .expect("running")
+            .mutation
+            .as_mut()
+            .expect("mutation")
+            .progress;
+        if wanted && !flow.stop.is_cancelled() {
+            flow.pending_feedback = true;
+            self.actions.outcomes.push_back(Outcome {
+                continuations: Vec::new(),
+                consumer,
+                key,
+                outcome: ActionOutcome::Updated { value },
+                request: Some(id),
+            });
+        } else {
+            // Closing only the presentation drains the original mutation. It is
+            // neither cancellation of accepted effects nor physical cleanup.
+            flow.stop.cancel();
+        }
+        let stop = flow.stop.clone();
+        let ack = flow.ack.clone();
+        Ok(Some(ActionTask {
+            id,
+            future: Box::pin(async move {
+                tokio::select! { biased;
+                    () = stop.cancelled() => {},
+                    permit = ack.acquire_owned() => { if let Ok(permit) = permit { permit.forget(); } },
+                }
+                next.await
+            }),
+        }))
+    }
     fn finish_mutation(&mut self, id: Uuid, completion: MutationCompletion) -> Result<()> {
         let running = self
             .actions
@@ -364,7 +483,11 @@ impl<V: ?Sized + 'static> Application<V> {
             .as_ref()
             .ok_or_else(|| Error::Invalid("query has no operation receipt".into()))?;
         let original = session.reference.get().expect("prepared reference");
-        let output = if completion.reply.reference != *original {
+        let output = if let Some(reason) = &session.progress.failure {
+            session.failure(format!(
+                "mutation progress failed: {reason}; read original receipt"
+            ))
+        } else if completion.reply.reference != *original {
             session.failure(
                 "native completion changed the original reference; read original receipt".into(),
             )
@@ -480,4 +603,22 @@ impl<V: ?Sized + 'static> Application<V> {
             )
         }
     }
+}
+
+// Keep the same completion future and resource owner across each bounded item.
+fn mutation_progress(
+    mut completion: MutationFuture,
+    mut receive: tokio::sync::mpsc::Receiver<Value>,
+) -> TaskFuture {
+    Box::pin(async move {
+        tokio::select! { biased;
+            value = receive.recv() => match value {
+                Some(value) => TaskCompletion::MutationProgress {
+                    value, next: mutation_progress(completion, receive),
+                },
+                None => TaskCompletion::Mutation(completion.await),
+            },
+            completed = &mut completion => TaskCompletion::Mutation(completed),
+        }
+    })
 }

@@ -105,7 +105,13 @@ pub type CleanupFuture = Pin<Box<dyn Future<Output = std::result::Result<(), Str
 /// cancellation. The kernel retains this owner across every asynchronous stage.
 pub trait NativeMutation: Send + Sync + 'static {
     fn prepare(self: Arc<Self>) -> ReferenceFuture;
-    fn dispatch(self: Arc<Self>, recorded: RecordedIntent) -> MutationFuture;
+    fn dispatch(
+        self: Arc<Self>,
+        recorded: RecordedIntent,
+        progress: tokio::sync::mpsc::Sender<Value>,
+    ) -> MutationFuture;
+    /// Request cancellation only. The original dispatch/close still owns cleanup.
+    fn cancel(&self);
     fn close(self: Arc<Self>) -> CleanupFuture;
 }
 pub struct MutationCompletion {
@@ -256,6 +262,7 @@ pub enum TaskCompletion {
     Subscription(StreamCompletion),
     Prepared(std::result::Result<RecordedIntent, String>),
     Mutation(MutationCompletion),
+    MutationProgress { value: Value, next: TaskFuture },
     Closed(std::result::Result<(), String>),
     Interrupted(String),
 }
@@ -1102,9 +1109,9 @@ impl<V: ?Sized + 'static> Application<V> {
         for _ in 0..self.actions.outcomes.len() {
             let outcome = self.actions.outcomes.pop_front().expect("bounded outcomes");
             if self.is_retiring(&outcome.consumer)
-                || outcome.request.is_some_and(|id| {
-                    !self.subscription_wanted(&outcome.consumer, &outcome.key, id)
-                })
+                || outcome
+                    .request
+                    .is_some_and(|id| !self.update_wanted(&outcome.consumer, &outcome.key, id))
             {
                 continue;
             }
@@ -1144,7 +1151,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 && !matches!(&feedback, ActionOutcome::Updated { .. })
                 && let Some(id) = outcome.request
             {
-                self.fail_subscription(id, "subscription item delivery failed".into());
+                self.fail_update(id, "progress delivery failed".into());
             }
             match self.dispatch_action_result(
                 &outcome.consumer,
@@ -1154,7 +1161,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 Ok(()) => {
                     count += 1;
                     if item && let Some(id) = outcome.request {
-                        self.acknowledge_subscription(id);
+                        self.acknowledge_update(id);
                     }
                 }
                 Err(error) => {

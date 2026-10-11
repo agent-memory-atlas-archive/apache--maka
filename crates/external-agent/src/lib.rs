@@ -27,7 +27,7 @@ pub mod ports;
 mod projection;
 pub use conversation::Provider;
 mod settings;
-mod setup;
+pub mod setup;
 mod transport;
 
 use maka_plugins::process::{Command, Lifetime};

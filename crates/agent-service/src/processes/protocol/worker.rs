@@ -27,7 +27,7 @@ pub(super) async fn run(
     id: Uuid,
     command: maka_process::Command,
     input: mpsc::Receiver<Write>,
-    configuration: &SessionConfiguration,
+    configuration: Option<&SessionConfiguration>,
 ) -> Result<Completion, ToolError> {
     if context.scope().cancellation.is_cancelled() || owner.drain.is_cancelled() {
         return Ok(Completion::Failed {
@@ -91,6 +91,10 @@ pub(super) async fn run(
         Ok(())
     };
     let monitor = async {
+        let Some(configuration) = configuration else {
+            finished.cancelled().await;
+            return Ok(());
+        };
         let mut changes = owner.store.subscribe_catalog_changes();
         loop {
             changes.borrow_and_update();

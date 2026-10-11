@@ -17,14 +17,10 @@
  * under the License.
  */
 
-use crate::{
-    settings::Manager,
-    transport::{Connection, Peer},
-};
-use agent_client_protocol::schema::{v1 as acp, v2};
+use crate::{settings::Manager, transport::Connection};
 use futures_util::future::BoxFuture;
 use maka_plugins::{
-    authorization, fiber, process,
+    authorization, fiber,
     remote::{self, Error},
 };
 use serde::Deserialize;
@@ -35,6 +31,8 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 mod auth;
+mod protocol;
+pub use protocol::{Action, Info, Method, Outcome, Output, Progress, execute};
 
 pub(crate) struct Provider {
     pub manager: Arc<Manager>,
@@ -262,104 +260,38 @@ async fn work(
             .map_err(|_| Error::CleanupUnconfirmed)?;
         return emit(send, json!({"kind":"installed", "agent":result?})).await;
     }
-    let mut process_owner = None;
-    let result = tokio::select! {
-        biased;
-        _ = cancellation.cancelled() => Err(Error::Cancelled),
-        _ = stopping.cancelled() => { cancellation.cancel(); Err(Error::Cancelled) },
-        result = async {
-            let mut command = agent.expect("process setup has an agent").command();
-            command.lifetime = process::Lifetime::Invocation;
-            let handle = manager.host.processes.spawn(scope.clone(), command.clone()).await.map_err(provider)?;
-            let mut connection = Connection::new(manager.host.clone().into(), scope, command, handle, false);
-            process_owner = Some(connection.owner.clone());
-            run(&mut connection, input, send).await
-        } => result,
+    let action = match input {
+        Input::Check { .. } => Action::Check,
+        Input::Authenticate { method_id, .. } => Action::Authenticate { method_id },
+        Input::InstallAntigravity { .. } => unreachable!(),
     };
-    // Both cleanup paths run, even when process close fails. The Owned scope
-    // also settles an admitted spawn whose reply was lost during cancellation.
-    let cleanup = tokio::time::timeout(Duration::from_secs(4), async {
-        let close_process = async {
-            match process_owner {
-                Some(owner) => owner.close().await.map_err(|_| Error::CleanupUnconfirmed),
-                None => Ok(()),
-            }
-        };
-        let (process_result, scope_result) = tokio::join!(close_process, owned.finish());
-        process_result.and(scope_result.map_err(|_| Error::CleanupUnconfirmed))
-    })
-    .await
-    .map_err(|_| Error::CleanupUnconfirmed)?;
-    cleanup?;
-    result
+    let output = LegacyOutput(send);
+    let agent = agent.expect("process setup has an agent");
+    let setup = execute(&agent, manager.host.clone().into(), scope, action, &output);
+    tokio::pin!(setup);
+    let result = tokio::select! { biased;
+        () = cancellation.cancelled() => { owned.scope().cancellation.cancel(); setup.await },
+        () = stopping.cancelled() => { owned.scope().cancellation.cancel(); setup.await },
+        result = &mut setup => result,
+    };
+    owned
+        .finish()
+        .await
+        .map_err(|_| Error::CleanupUnconfirmed)?;
+    let event = match result? {
+        Outcome::Checked { info, methods } => json!({"kind":"initialized", "agentInfo":info,
+            "authMethods":methods.into_iter().map(|m| json!({"id":m.id,"name":m.name,"description":m.description,"type":if m.supported {"agent"} else {"unsupported"}})).collect::<Vec<_>>() }),
+        Outcome::Authenticated => json!({"kind":"authenticated"}),
+        Outcome::Unresolved { diagnostic } => return Err(Error::OutcomeUnknown(diagnostic)),
+    };
+    emit(send, event).await
 }
-
-async fn run(
-    connection: &mut Connection,
-    action: Input,
-    send: &mpsc::Sender<Result<Value, Error>>,
-) -> Result<(), Error> {
-    let mut stderr = auth::Urls::default();
-    auth::initialize(connection, send, &mut stderr).await?;
-    match action {
-        Input::Check { .. } => {
-            let event = match connection.peer.as_ref().unwrap() {
-                Peer::V1(_, initialized) => {
-                    json!({"kind":"initialized", "agentInfo":initialized.agent_info, "authMethods": initialized.auth_methods})
-                }
-                Peer::V2(_, initialized) => {
-                    // Host setup's method selector has a protocol-independent ID;
-                    // authentication itself uses the negotiated typed SDK request.
-                    let methods: Vec<_> = initialized.auth_methods.iter().map(|method| json!({
-                        "id": method.method_id(), "name": method.name(), "description": method.description(),
-                        "type": if matches!(method, v2::AuthMethod::Agent(_)) { "agent" } else { "unsupported" },
-                    })).collect();
-                    json!({"kind":"initialized", "agentInfo":initialized.info, "authMethods": methods})
-                }
-            };
-            emit(send, event).await
-        }
-        Input::Authenticate { method_id, .. } => {
-            let is_v2 = match connection.peer.as_ref().unwrap() {
-                Peer::V1(_, initialized) => {
-                    if !initialized.auth_methods.iter().any(|method| {
-                        matches!(method, acp::AuthMethod::Agent(_))
-                            && method.id().0.as_ref() == method_id
-                    }) {
-                        return Err(Error::Invalid("Authentication method is not offered or requires an unsupported terminal".into()));
-                    }
-                    false
-                }
-                Peer::V2(_, initialized) => {
-                    if !initialized.auth_methods.iter().any(|method| {
-                        matches!(method, v2::AuthMethod::Agent(_))
-                            && method.method_id().0.as_ref() == method_id
-                    }) {
-                        return Err(Error::Invalid("Authentication method is not offered or requires an unsupported terminal".into()));
-                    }
-                    true
-                }
-            };
-            if is_v2 {
-                auth::rpc(
-                    connection,
-                    v2::LoginAuthRequest::new(method_id),
-                    send,
-                    &mut stderr,
-                )
-                .await?;
-            } else {
-                auth::rpc(
-                    connection,
-                    acp::AuthenticateRequest::new(method_id),
-                    send,
-                    &mut stderr,
-                )
-                .await?;
-            }
-            emit(send, json!({"kind":"authenticated"})).await
-        }
-        Input::InstallAntigravity { .. } => unreachable!("installation does not run an agent"),
+struct LegacyOutput<'a>(&'a mpsc::Sender<Result<Value, Error>>);
+impl Output for LegacyOutput<'_> {
+    fn emit(&self, progress: Progress) -> BoxFuture<'_, Result<(), Error>> {
+        Box::pin(
+            async move { emit(self.0, serde_json::to_value(progress).map_err(provider)?).await },
+        )
     }
 }
 

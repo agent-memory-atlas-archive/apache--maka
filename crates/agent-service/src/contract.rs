@@ -326,6 +326,7 @@ pub struct ExecutorsRead {}
 #[schemars(rename = "AgentExecutors")]
 pub struct Executors {
     pub executors: Vec<String>,
+    pub setup: Vec<String>,
 }
 #[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1008,6 +1009,18 @@ pub fn contract() -> Contract {
                 (
                     "execute".into(),
                     method::<Execute, SendResult>(MethodMode::Mutation),
+                ),
+                (
+                    "executorSetup".into(),
+                    Method {
+                        mode: MethodMode::Mutation,
+                        input: schemars::schema_for!(crate::executor::setup::Input).into(),
+                        output: schemars::schema_for!(crate::executor::setup::Outcome).into(),
+                        progress: Some(
+                            schemars::schema_for!(crate::executor::setup::Progress).into(),
+                        ),
+                        resources: BTreeMap::new(),
+                    },
                 ),
                 (
                     "executors".into(),

@@ -335,7 +335,11 @@ impl NativeMutation for Session {
             Ok(reference)
         })
     }
-    fn dispatch(self: Arc<Self>, recorded: RecordedIntent) -> MutationFuture {
+    fn dispatch(
+        self: Arc<Self>,
+        recorded: RecordedIntent,
+        _progress: tokio::sync::mpsc::Sender<serde_json::Value>,
+    ) -> MutationFuture {
         Box::pin(async move {
             assert_eq!(
                 recorded.intent().caller,
@@ -371,6 +375,9 @@ impl NativeMutation for Session {
             }
             completion
         })
+    }
+    fn cancel(&self) {
+        self.scope.cancellation.cancel();
     }
     fn close(self: Arc<Self>) -> CleanupFuture {
         Box::pin(async move {

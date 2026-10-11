@@ -13748,18 +13748,23 @@ test('ACP product sources bind multiple exact backends and preserve coordinator 
   };
   try {
     for (const product of ['agent', 'workhub']) {
+      const setup = product === 'workhub';
+      const processes = {
+        ...ceiling,
+        ...(setup ? { setupDirectory: '/private/product-workspace' } : {}),
+      };
       const configuration = {
         presentation: 'tui',
         locale: 'en',
         scheme: 'light',
         agent,
         acpExecutors: [backend('First'), backend('Second')],
-        executorProcesses: ceiling,
+        executorProcesses: processes,
         ...(product === 'workhub'
           ? {
               coordinator: agent,
               coordinatorAcpExecutors: [backend('First')],
-              coordinatorExecutorProcesses: ceiling,
+              coordinatorExecutorProcesses: processes,
             }
           : {}),
         hostRoot: resolve(directory, 'unopened-host'),
@@ -13771,8 +13776,18 @@ test('ACP product sources bind multiple exact backends and preserve coordinator 
       const grants = read('connections').hosts.find((h) => h.name === 'local').native;
       assert.equal(existsSync(configuration.hostRoot), false);
       assert.deepEqual(host.instances.agent.configuration.values.executors, [
-        { name: 'First', import: 'executors', member: 0 },
-        { name: 'Second', import: 'executors', member: 1 },
+        {
+          name: 'First',
+          import: 'executors',
+          member: 0,
+          ...(setup ? { setup: { import: 'executorSetups', member: 0 } } : {}),
+        },
+        {
+          name: 'Second',
+          import: 'executors',
+          member: 1,
+          ...(setup ? { setup: { import: 'executorSetups', member: 1 } } : {}),
+        },
       ]);
       for (const [member, entry] of installation.acpExecutors.entries()) {
         const instance = host.instances[`acp-${entry.name}`];
@@ -13795,13 +13810,29 @@ test('ACP product sources bind multiple exact backends and preserve coordinator 
               g.methods.join() === 'execute',
           ),
         );
+        assert.equal(
+          grants.some(
+            (g) =>
+              g.consumer[0] === keys.agent &&
+              g.provider[0] === entryKey &&
+              g.export === 'setup' &&
+              g.methods.join() === 'setup',
+          ),
+          setup,
+        );
+        if (setup)
+          assert.deepEqual(host.instances.agent.bindings.executorSetups[member], {
+            kind: 'instance',
+            path: [`acp-${entry.name}`],
+            export: 'setup',
+          });
         const callbacks = grants.filter((g) => g.origin[0] === entryKey);
         assert.equal(callbacks.length, 3);
         assert.ok(callbacks.every((g) => g.consumer[0] === entryKey && g.recovery));
         assert.deepEqual(
           callbacks.map((g) => [g.export, g.methods]),
           [
-            ['protocol', ['run', 'input']],
+            ['protocol', ['run', 'input', ...(setup ? ['launch'] : [])]],
             ['files', ['readText', 'write']],
             ['forms', ['ask']],
           ],
@@ -13815,6 +13846,18 @@ test('ACP product sources bind multiple exact backends and preserve coordinator 
         assert.deepEqual(host.instances.workhub.bindings.executors, [
           { kind: 'instance', path: ['coordinator-acp-First'], export: 'executor' },
         ]);
+        assert.deepEqual(host.instances.workhub.bindings.executorSetups, [
+          { kind: 'instance', path: ['coordinator-acp-First'], export: 'setup' },
+        ]);
+        assert.ok(
+          grants.some(
+            (g) =>
+              g.consumer[0] === keys.workhub &&
+              g.provider[0] === entryKey &&
+              g.export === 'setup' &&
+              g.methods.join() === 'setup',
+          ),
+        );
         assert.deepEqual(host.instances['coordinator-acp-First'].bindings.processes, [
           { kind: 'instance', path: ['coordinator-protocol-processes'], export: 'protocol' },
         ]);
@@ -13889,10 +13932,10 @@ for (const target of ['desktop', 'tui']) {
     });
   const ready = () => {
     const form = new FormClient(picker, { ...modelProps, busy: false, executor: null });
-    form.query('executors', { executors: ['External', 'Other'] });
+    form.query('executors', { executors: ['External', 'Other'], setup: ['External'] });
     assert.deepEqual(form.output.events, [{ name: 'backends', value: { available: true } }]);
     form.raw('backends');
-    form.query('executors', { executors: ['External', 'Other'] });
+    form.query('executors', { executors: ['External', 'Other'], setup: ['External'] });
     form.raw('backend-0');
     return form;
   };

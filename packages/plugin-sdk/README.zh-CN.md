@@ -312,3 +312,8 @@ WorkHub 可发现后端，并在 `route` 中以 executor 选择替代 model/thin
 `attachments` 都接收当前 Session 的不可变上传 ID；有附件时正文可以为空。
 WorkHub 先将原上传转交到 worker Session，再提交原 execute。未知执行只读取原回执，
 不重新捕获附件或重发执行。
+
+Mutation 方法可声明 `progress` schema。普通 UI Action 在原操作持有期间收到
+`ActionOutcome {status: "updated", value}`；有界交付在组件提交反馈后继续。
+组件返回 `cancel: [actionKey]` 可请求取消自己的原 mutation。最终 `operation` 反馈
+仍携带原回执；进度和取消均不证明业务完成或资源清理。

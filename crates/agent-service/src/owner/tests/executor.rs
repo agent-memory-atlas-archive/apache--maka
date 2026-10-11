@@ -161,6 +161,10 @@ async fn activate_backend(
             name: "external".into(),
             import: "executor".into(),
             member: 0,
+            setup: acp.as_ref().map(|_| executor::setup::Binding {
+                import: "setup".into(),
+                member: 0,
+            }),
         }];
         let (mut input, mut packages) = input(&settings);
         let mut manifest = packages[0].manifest().clone();
@@ -197,6 +201,41 @@ async fn activate_backend(
                     export: "executor".into(),
                 }],
             );
+        let provider = if acp.is_some() {
+            let mut manifest = provider.manifest().clone();
+            manifest
+                .application
+                .as_mut()
+                .unwrap()
+                .entries
+                .get_mut(&EntryTarget::Host)
+                .unwrap()
+                .imports
+                .insert(
+                    "setup".into(),
+                    Import {
+                        contract: executor::setup::contract(),
+                        cardinality: Cardinality::One,
+                    },
+                );
+            let provider = Package::new(BTreeMap::from([(
+                MANIFEST_FILE.into(),
+                serde_json::to_vec(&manifest).unwrap(),
+            )]))
+            .unwrap();
+            let node = input.instances.get_mut("provider").unwrap();
+            node.package = provider.application_ref().into();
+            node.bindings.insert(
+                "setup".into(),
+                vec![Target::Instance {
+                    path: vec!["executor".into()],
+                    export: "setup".into(),
+                }],
+            );
+            provider
+        } else {
+            provider
+        };
         packages[0] = provider;
         let implementation = if acp.is_some() {
             json!({"kind":"native","implementation":crate::acp::IMPLEMENTATION})
@@ -216,7 +255,7 @@ async fn activate_backend(
                     crate::processes::protocol::contract(),
                     serde_json::to_value(schemars::schema_for!(crate::processes::Configuration))
                         .unwrap(),
-                    json!({"filesystem":{"default":"write","rules":[],"denyGlobs":[]},"network":"allowed","helper":null,"sessionOwner":id(1)}),
+                    json!({"filesystem":{"default":"write","rules":[],"denyGlobs":[]},"network":"allowed","helper":null,"sessionOwner":id(1),"setupDirectory":if denied.contains(&"directory") { Value::Null } else { json!(fixture.workspace) }}),
                 ),
                 (
                     "files",
@@ -281,9 +320,19 @@ async fn activate_backend(
         } else {
             json!({"type":"object","additionalProperties":false})
         };
+        let mut exports = serde_json::Map::from_iter([(
+            "executor".into(),
+            json!({"contract":executor::contract(),"availability":"required"}),
+        )]);
+        if acp.is_some() {
+            exports.insert(
+                "setup".into(),
+                json!({"contract":executor::setup::contract(),"availability":"required"}),
+            );
+        }
         let mut files=BTreeMap::from([(MANIFEST_FILE.into(),serde_json::to_vec(&json!({"schemaVersion":2,"id":"fixture-executor","application":{"entries":{"host":{
             "implementation":implementation,"configuration":configuration_schema,"imports":imports,
-            "exports":{"executor":{"contract":executor::contract(),"availability":"required"}}
+            "exports":exports
         }}}})).unwrap())]);
         if probe.is_none() && acp.is_none() {
             files.insert("executor.mjs".into(),format!(r#"export function activate(){{return {{executor:{{contract:{},service:['backend']}}}};}} export const backend={{async execute(input, observation, context){{
@@ -393,8 +442,18 @@ async fn activate_backend(
         vec![]
     };
     if acp.is_some() {
+        if granted && !denied.contains(&"setup") {
+            grants.push(maka_application_bridge::transport::NativeGrant {
+                origin: id(1),
+                consumer: id(1),
+                provider: id(21),
+                export: "setup".into(),
+                methods: ["setup".into()].into_iter().collect(),
+                recovery: true,
+            });
+        }
         for (provider, export, methods) in [
-            (22, "protocol", vec!["run", "input"]),
+            (22, "protocol", vec!["run", "input", "launch"]),
             (23, "files", vec!["readText", "write"]),
             (24, "forms", vec!["ask"]),
         ] {

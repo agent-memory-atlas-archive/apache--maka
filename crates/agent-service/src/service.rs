@@ -401,9 +401,17 @@ impl Handler for Agent {
                     let operation = context.operation().ok_or("agent_mutation_required")?;
                     encode(owner.send(input, operation, context.scope()).await?)
                 }
+                "executorSetup" => owner.executor_setup(decode(input)?, context).await,
                 "executors" => {
                     let _: ExecutorsRead = decode(input)?;
                     encode(Executors {
+                        setup: owner
+                            .settings
+                            .executors
+                            .iter()
+                            .filter(|choice| choice.setup.is_some())
+                            .map(|choice| choice.name.clone())
+                            .collect(),
                         executors: owner
                             .settings
                             .executors

@@ -3036,7 +3036,7 @@ function frame<N extends Node>(
                     ]
                   : []),
               ],
-              { row: true, gap: 1, visible: !!state.selected },
+              { row: true, gap: 1 },
             ),
           ]),
     ],

@@ -468,7 +468,14 @@ export function composition(configuration: CompositionConfiguration): Applicatio
     'agent',
     {
       ...configuration.agent,
-      executors: executors.map((e, member) => ({ name: e.name, import: 'executors', member })),
+      executors: executors.map((e, member) => ({
+        name: e.name,
+        import: 'executors',
+        member,
+        ...(configuration.executorProcesses?.setupDirectory
+          ? { setup: { import: 'executorSetups', member } }
+          : {}),
+      })),
       // These imports bind known native v1 contracts. Freeze presentation in
       // the configuration; tool names and response shapes cannot opt into it.
       tools: configuration.agent.tools.map((tool) => {
@@ -488,6 +495,15 @@ export function composition(configuration: CompositionConfiguration): Applicatio
     {
       ...(executors.length
         ? {
+            ...(configuration.executorProcesses?.setupDirectory
+              ? {
+                  executorSetups: executors.map((e) => ({
+                    kind: 'instance' as const,
+                    path: [executorPath(e.name)],
+                    export: 'setup',
+                  })),
+                }
+              : {}),
             executors: executors.map((e) => ({
               kind: 'instance' as const,
               path: [executorPath(e.name)],
@@ -627,6 +643,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
       {
         models: [local('models', 'Models')],
         agent: [remote('agent', 'agent')],
+        receipts: [remote('receipts', 'Receipts')],
         input: [local('input', 'TextInput')],
         reader: [local('reader', 'Reader')],
       },
@@ -797,6 +814,18 @@ export function composition(configuration: CompositionConfiguration): Applicatio
     Object.assign(connections.hosts.find((host) => host.name === 'local')!, {
       native: [
         ...executors.flatMap((executor) => [
+          ...(configuration.executorProcesses?.setupDirectory
+            ? [
+                {
+                  origin: [keys.agent],
+                  consumer: [keys.agent],
+                  provider: [keys[executorPath(executor.name)]!],
+                  export: 'setup',
+                  methods: ['setup'],
+                  recovery: true,
+                },
+              ]
+            : []),
           {
             origin: [keys.agent],
             consumer: [keys.agent],
@@ -806,7 +835,15 @@ export function composition(configuration: CompositionConfiguration): Applicatio
             recovery: true,
           },
           ...[
-            { provider: keys['protocol-processes'], export: 'protocol', methods: ['run', 'input'] },
+            {
+              provider: keys['protocol-processes'],
+              export: 'protocol',
+              methods: [
+                'run',
+                'input',
+                ...(configuration.executorProcesses?.setupDirectory ? ['launch'] : []),
+              ],
+            },
             { provider: keys['workspace-files'], export: 'files', methods: ['readText', 'write'] },
             { provider: keys.forms, export: 'forms', methods: ['ask'] },
           ].map((grant) => ({

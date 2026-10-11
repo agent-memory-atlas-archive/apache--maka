@@ -132,6 +132,14 @@ pub(crate) struct Owner {
     stop: CancellationToken,
 }
 impl Owner {
+    pub(crate) async fn executor_setup(
+        &self,
+        input: crate::executor::setup::Input,
+        context: maka_runtime_host::application::Context,
+    ) -> Result<Value, String> {
+        self.executors.setup(input, context).await
+    }
+
     pub async fn open(context: NativeContext, input: Value) -> Result<Arc<Self>, String> {
         Self::open_behavior(
             context,

@@ -99,6 +99,7 @@ pub(super) struct Update<V: ?Sized> {
     bytes: usize,
     touched: usize,
     actions: Vec<actions::Prepared<V>>,
+    cancellations: Vec<(Mount, String)>,
     decision: InputDecision,
 }
 impl<V: ?Sized> Update<V> {
@@ -113,6 +114,7 @@ impl<V: ?Sized> Update<V> {
             bytes: 0,
             touched: 0,
             actions: Vec::new(),
+            cancellations: Vec::new(),
             decision: InputDecision::default(),
         }
     }
@@ -598,6 +600,13 @@ impl<V: ?Sized + 'static> Application<V> {
             .unwrap_or_default();
         let declarations = output.subscriptions;
         update.charge_intent(&output.actions)?;
+        update.charge_intent(&output.cancel)?;
+        for key in output.cancel {
+            if key.is_empty() || key.len() > 128 || output.actions.iter().any(|a| a.key == key) {
+                return Err(Error::Invalid("invalid mutation cancellation key".into()));
+            }
+            update.cancellations.push((mount.clone(), key));
+        }
         update.charge_intent(&output.decision)?;
         let actions = output.actions;
         // No one-shot feedback can be confused with a second request or a
@@ -965,6 +974,9 @@ impl<V: ?Sized + 'static> Application<V> {
                     .is_some_and(|demand| demand.request == action.id)
         });
         self.actions.queue.extend(update.actions.drain(..));
+        for (consumer, key) in update.cancellations.drain(..) {
+            self.cancel_mutation(&consumer, &key);
+        }
         self.sync_subscription_demand();
         Ok(())
     }

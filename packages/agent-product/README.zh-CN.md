@@ -182,8 +182,15 @@ TUI 的常用操作保留在页面内，命令面板作为备用入口。新建�
 
 必须另给 `executorProcesses` 指定文件／网络安装上限和可选沙箱 helper。它独立于模型的
 `processes`／Terminal 配置。生成的 ACP、ProtocolProcesses、Files、Forms 均是普通实例，
-Agent→Executor 和 Executor→各回调分别授权。启动访问仍受 Session 权限与用户同意约束；
+Agent→Executor 和 Executor→各回调分别授权。执行访问仍受 Session 权限与用户同意约束；
 不复制模型连接凭据，也不把后端凭据存入这些公开配置。
+
+显式设置绝对路径 `executorProcesses.setupDirectory` 后，执行后端控件提供检查和后端声明的登录方法。
+配方增加确切 `executorSetups` 绑定、Agent→Setup 授权和独立的 ProtocolProcesses `launch` 授权。
+这些应用操作使用已持有的设置目录及安装文件／网络上限，排除 Host 私有 Root，不创建聊天 Session。
+界面显示原始 HTTPS 授权链接，支持取消与原回执查询；取消须等待进程实际清理。
+未确认的登录不会自动重试；已结算的尝试可由用户重新发起检查。
+
 
 WorkHub 可另给 `coordinatorAcpExecutors` 和 `coordinatorExecutorProcesses`。worker 与
 coordinator 的后端即使同名，也保持独立 key、进程 owner 和 callback grant；Files／Forms

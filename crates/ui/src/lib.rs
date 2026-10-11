@@ -103,6 +103,7 @@ struct ServiceMethod {
     mode: maka_plugin_core::contract::MethodMode,
     input: jsonschema::Validator,
     output: jsonschema::Validator,
+    progress: Option<jsonschema::Validator>,
     resources: BTreeMap<String, maka_plugin_core::contract::ResourceSlot>,
 }
 enum Export<V: ?Sized> {
@@ -615,6 +616,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 &output.frame.surface,
                 &output.events,
                 &output.actions,
+                &output.cancel,
                 &output.subscriptions,
                 &output.decision,
             );
@@ -623,7 +625,10 @@ impl<V: ?Sized + 'static> Application<V> {
                 return Err(Error::Invalid("component emission limit".into()));
             }
             tree::check_call_bytes(&output.events)?;
-            if output.actions.len() > 16 || output.subscriptions.len() > 16 {
+            if output.actions.len() > 16
+                || output.subscriptions.len() > 16
+                || output.cancel.len() > 16
+            {
                 return Err(Error::Invalid("component action limit".into()));
             }
             tree::check_call_bytes(&output.actions)?;
@@ -836,6 +841,12 @@ fn service_export<V: ?Sized>(
                 input: jsonschema::validator_for(&method.input)
                     .map_err(|e| Error::Invalid(e.to_string()))?,
                 output: jsonschema::validator_for(&method.output)
+                    .map_err(|e| Error::Invalid(e.to_string()))?,
+                progress: method
+                    .progress
+                    .as_ref()
+                    .map(jsonschema::validator_for)
+                    .transpose()
                     .map_err(|e| Error::Invalid(e.to_string()))?,
                 resources: method.resources.clone(),
             },

@@ -131,8 +131,7 @@ artifact IDs. The concrete Session and attachment IDs are committed before send;
 reads never create, upload or commit delivery. Unknown receipts are observed only.
 Even `NotRecorded` for a journaled resource call requires its original capture:
 `advance` does not recapture bytes or manufacture a replacement operation. That
-state does not prove the original call is finished. Feedback after the coordinator
-ends, external executors and the WorkHub product UI remain unfinished.
+state does not prove the original call is finished. Feedback after the coordinator ends remains unfinished.
 
 `maka.workspace.protocol-processes` is a separate explicit native implementation
 exporting `protocol` (`maka.workspace.ProtocolProcesses` v1). It uses the same
@@ -164,7 +163,7 @@ conversation ownership from the actual caller/Session and native deployment
 namespace, and reuses the shared ACP v1/v2 journal and projection. Its native
 owner retains and finishes independent process requests across prompts; accepted
 stdin writes settle even when the SDK stops polling its transport after a reply.
-The ordinary product's backend selector and attachment transport remain pending.
+The ordinary product picker selects backends and forwards immutable attachments.
 
 
 Executor configuration may select an exact zero-based `member` of its named import
@@ -172,3 +171,21 @@ Executor configuration may select an exact zero-based `member` of its named impo
 without adding a discovery registry. Admission captures that member's actual binding
 and grants. The member joins the original queued execution basis; a later reorder
 cannot redirect an already accepted message.
+
+
+Executor configuration optionally supplies `setup: {import, member}` naming an
+exact `maka.agent.ExecutorSetup` v1 binding. Agent exposes configured names in
+`executors.setup` and forwards `executorSetup {executor, action}` through the
+original mutation, bounded progress, receipt and cleanup. ACP exports `setup`
+alongside `executor`; actions are `check` and `authenticate {methodId}`. The
+shared ACP v1/v2 implementation returns offered methods or a confirmed login,
+with `authorization_url` progress for validated original HTTPS links. Unsupported
+terminal login methods remain visible but cannot execute.
+
+ProtocolProcesses `launch` is separately authorized for application requests and
+requires explicit `setupDirectory`. It uses a held directory, the installation
+filesystem/network ceiling and current Host network route, always excluding the
+Host private Root. Its stdin accepts only the original caller activation and
+application request. Setup creates no Agent invocation or Session process row.
+Its original mutation owns physical exit; cancellation or a progress frame does
+not confirm cleanup or login, and recovery never repeats authentication.

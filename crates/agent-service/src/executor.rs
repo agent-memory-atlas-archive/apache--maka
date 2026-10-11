@@ -38,6 +38,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub(crate) mod attachments;
+pub mod setup;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -50,6 +51,8 @@ pub struct ServiceExecutor {
     /// Exact member of the explicitly bound import, never a discovery index.
     #[serde(default)]
     pub member: usize,
+    #[serde(default)]
+    pub setup: Option<setup::Binding>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -124,6 +127,7 @@ pub(crate) struct Backend {
     consumer: maka_plugin_core::composition::InstanceId,
     binding: Binding,
     pub accepted: Accepted,
+    setup: Option<setup::Binding>,
 }
 #[derive(Default)]
 pub(crate) struct Executors(BTreeMap<String, Backend>);
@@ -145,9 +149,20 @@ impl Executors {
             if binding.contract() != &contract() {
                 return Err("agent_executor_contract_invalid".into());
             }
+            if let Some(setup) = &selection.setup {
+                let target = services
+                    .imports()
+                    .find(|(name, _)| *name == setup.import)
+                    .and_then(|(_, bindings)| bindings.get(setup.member))
+                    .ok_or("agent_executor_setup_unavailable")?;
+                if target.contract() != &setup::contract() {
+                    return Err("agent_executor_setup_contract_invalid".into());
+                }
+            }
             let persistence = context.persistence().ok_or("agent_requires_persistence")?;
             let backend = Backend {
                 binding: binding.clone(),
+                setup: selection.setup.clone(),
                 accepted: Accepted {
                     selection: Selection {
                         executor: selection.name.clone(),

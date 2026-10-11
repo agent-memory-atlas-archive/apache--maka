@@ -1529,7 +1529,7 @@ async fn workhub_routes_external_executor_through_original_worker_and_recovers_a
         let ready=resolve(&fixture,selection(&fixture).await,Uuid::new_v4()).await;
         let coordinator=ready["session"]["id"].as_str().unwrap().to_owned();
         let choices=control_turn(&fixture,&listener,&coordinator,json!({"operation":"executors","worker":"worker"})).await;
-        assert_eq!(choices,json!({"executors":["external"]}));
+        assert_eq!(choices,json!({"executors":["external"],"setup":[]}));
         let uploaded=attachments::upload(&fixture,&coordinator,"worker-note.txt",b"original upload bytes",Uuid::new_v4()).await.unwrap();
         fixture.mutation(2,"send",json!({"sessionId":coordinator,"message":"Use the original upload","attachments":[uploaded["attachment"]["id"]],"model":fixture.selection().await}),Uuid::new_v4()).await.unwrap();
         let (mut socket,_)=listener.accept().await.unwrap();request(&mut socket).await;

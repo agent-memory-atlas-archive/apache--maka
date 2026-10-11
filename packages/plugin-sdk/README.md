@@ -405,3 +405,10 @@ from that same Session; an empty message is valid when attachments are present.
 WorkHub transfers uploads into the worker's Session before its original execute
 operation. Unknown execution reads the original receipt without recapturing or
 redispatching attachments.
+
+Mutation methods may declare a `progress` schema. Ordinary UI actions receive
+`ActionOutcome {status: "updated", value}` while the original mutation remains
+owned; bounded delivery advances after the component commits the update. Return
+`cancel: [actionKey]` to request cancellation of this component's original
+mutation. The final `operation` feedback still carries its original receipt;
+neither progress nor cancellation acknowledges business completion or cleanup.

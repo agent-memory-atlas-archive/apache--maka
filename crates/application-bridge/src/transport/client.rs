@@ -379,6 +379,9 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Call<R, W> {
             Reply::Finished { .. } if !matches!(self.phase, Phase::Open | Phase::Streaming) => {
                 return Err("unexpected query completion".into());
             }
+            Reply::Progress { .. } if self.phase != Phase::Dispatched => {
+                return Err("unexpected mutation progress".into());
+            }
             Reply::Mutation { .. } if self.phase != Phase::Dispatched => {
                 return Err("unexpected mutation completion".into());
             }

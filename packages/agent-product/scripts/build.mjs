@@ -277,6 +277,7 @@ specifications['execution-picker'] = {
   imports: {
     models: one(own.modelsContract),
     agent: one(sdk.contracts.agent),
+    receipts: one(sdk.contracts.receiptReader),
     input: one(sdk.contracts.textInput),
     reader: one(sdk.contracts.textReader),
   },
@@ -525,6 +526,10 @@ for (const [name, spec] of Object.entries(specifications)) {
   packages.push(name);
 }
 const agentImports = {
+  executorSetups: {
+    contract: sdk.contracts.executorSetup,
+    cardinality: { kind: 'many', min: 0, max: 8 },
+  },
   executors: { contract: sdk.contracts.executor, cardinality: { kind: 'many', min: 0, max: 8 } },
   skills: { contract: sdk.contracts.skillLibrary, cardinality: { kind: 'optional' } },
   forms: { contract: sdk.contracts.forms, cardinality: { kind: 'optional' } },
@@ -782,7 +787,10 @@ const mechanical = {
       host: {
         ...native(
           'maka.agent.acp',
-          { executor: required(sdk.contracts.executor) },
+          {
+            executor: required(sdk.contracts.executor),
+            setup: required(sdk.contracts.executorSetup),
+          },
           sdk.configurations.acpExecutor,
         ),
         imports: {

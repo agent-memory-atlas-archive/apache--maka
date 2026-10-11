@@ -8205,6 +8205,188 @@ export const contracts = {
           },
           resources: {},
         },
+        executorSetup: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              executor: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              action: {
+                $ref: '#/$defs/ExecutorSetupAction',
+              },
+            },
+            required: ['executor', 'action'],
+            title: 'AgentExecutorSetup',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              ExecutorSetupAction: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'check',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      methodId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 1024,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'authenticate',
+                      },
+                    },
+                    required: ['kind', 'methodId'],
+                  },
+                ],
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  info: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ExecutorSetupInfo',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  methods: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/ExecutorAuthenticationMethod',
+                    },
+                    maxItems: 32,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'checked',
+                  },
+                },
+                required: ['kind', 'methods'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'authenticated',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  diagnostic: {
+                    type: 'string',
+                    maxLength: 2048,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'unresolved',
+                  },
+                },
+                required: ['kind', 'diagnostic'],
+                description:
+                  'No authentication confirmation was observed; never automatically replay it.',
+              },
+            ],
+            title: 'ExecutorSetupResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              ExecutorSetupInfo: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  title: {
+                    type: ['string', 'null'],
+                    maxLength: 256,
+                  },
+                  name: {
+                    type: 'string',
+                    maxLength: 256,
+                  },
+                  version: {
+                    type: 'string',
+                    maxLength: 256,
+                  },
+                },
+                required: ['name', 'version'],
+              },
+              ExecutorAuthenticationMethod: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 1024,
+                  },
+                  name: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 256,
+                  },
+                  description: {
+                    type: ['string', 'null'],
+                    maxLength: 2048,
+                  },
+                  supported: {
+                    type: 'boolean',
+                  },
+                },
+                required: ['id', 'name', 'supported'],
+              },
+            },
+          },
+          progress: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  url: {
+                    type: 'string',
+                    maxLength: 8192,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'authorization_url',
+                  },
+                },
+                required: ['kind', 'url'],
+              },
+            ],
+            title: 'ExecutorSetupProgress',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          resources: {},
+        },
         executors: {
           mode: 'query',
           input: {
@@ -8224,9 +8406,15 @@ export const contracts = {
                   type: 'string',
                 },
               },
+              setup: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                },
+              },
             },
             additionalProperties: false,
-            required: ['executors'],
+            required: ['executors', 'setup'],
           },
           resources: {},
         },
@@ -20164,6 +20352,134 @@ export const contracts = {
           },
           resources: {},
         },
+        launch: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              executable: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 4096,
+              },
+              args: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                },
+                maxItems: 256,
+                default: [],
+              },
+              env: {
+                type: 'object',
+                additionalProperties: {
+                  type: 'string',
+                },
+                default: {},
+              },
+            },
+            required: ['executable'],
+            title: 'ProtocolProcessLaunch',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  code: {
+                    type: ['integer', 'null'],
+                    format: 'int32',
+                  },
+                  success: {
+                    type: 'boolean',
+                  },
+                  stopped: {
+                    type: 'boolean',
+                  },
+                  error: {
+                    type: ['string', 'null'],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'exited',
+                  },
+                },
+                required: ['kind', 'success', 'stopped'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+              },
+            ],
+            title: 'ProtocolProcessCompletion',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          progress: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'started',
+                  },
+                },
+                required: ['kind', 'id'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  stream: {
+                    $ref: '#/$defs/ProtocolProcessStream',
+                  },
+                  bytes: {
+                    type: 'array',
+                    items: {
+                      type: 'integer',
+                      format: 'uint8',
+                      minimum: 0,
+                      maximum: 255,
+                    },
+                    maxItems: 8192,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'output',
+                  },
+                },
+                required: ['kind', 'stream', 'bytes'],
+              },
+            ],
+            title: 'ProtocolProcessProgress',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              ProtocolProcessStream: {
+                type: 'string',
+                enum: ['stdout', 'stderr'],
+              },
+            },
+          },
+          resources: {},
+        },
         run: {
           mode: 'mutation',
           input: {
@@ -20401,6 +20717,181 @@ export const contracts = {
                 enum: ['stdout', 'stderr'],
               },
             },
+          },
+          resources: {},
+        },
+      },
+    },
+  },
+  executorSetup: {
+    name: 'maka.agent.ExecutorSetup',
+    version: 1,
+    transport: 'remote',
+    interface: {
+      kind: 'service',
+      methods: {
+        setup: {
+          mode: 'mutation',
+          input: {
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'check',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  methodId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 1024,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'authenticate',
+                  },
+                },
+                required: ['kind', 'methodId'],
+              },
+            ],
+            title: 'ExecutorSetupAction',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  info: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ExecutorSetupInfo',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  methods: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/ExecutorAuthenticationMethod',
+                    },
+                    maxItems: 32,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'checked',
+                  },
+                },
+                required: ['kind', 'methods'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'authenticated',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  diagnostic: {
+                    type: 'string',
+                    maxLength: 2048,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'unresolved',
+                  },
+                },
+                required: ['kind', 'diagnostic'],
+                description:
+                  'No authentication confirmation was observed; never automatically replay it.',
+              },
+            ],
+            title: 'ExecutorSetupResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              ExecutorSetupInfo: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  title: {
+                    type: ['string', 'null'],
+                    maxLength: 256,
+                  },
+                  name: {
+                    type: 'string',
+                    maxLength: 256,
+                  },
+                  version: {
+                    type: 'string',
+                    maxLength: 256,
+                  },
+                },
+                required: ['name', 'version'],
+              },
+              ExecutorAuthenticationMethod: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 1024,
+                  },
+                  name: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 256,
+                  },
+                  description: {
+                    type: ['string', 'null'],
+                    maxLength: 2048,
+                  },
+                  supported: {
+                    type: 'boolean',
+                  },
+                },
+                required: ['id', 'name', 'supported'],
+              },
+            },
+          },
+          progress: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  url: {
+                    type: 'string',
+                    maxLength: 8192,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'authorization_url',
+                  },
+                },
+                required: ['kind', 'url'],
+              },
+            ],
+            title: 'ExecutorSetupProgress',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
           },
           resources: {},
         },
