@@ -57,6 +57,13 @@ impl PreparedUpdate {
     pub fn source(&self) -> &DeploymentRef {
         self.source.reference()
     }
+    /// Immutable projection already checked by this foreground owner.
+    pub fn plan(&self) -> &Plan {
+        &self.candidate.plan
+    }
+    pub fn target(&self) -> PresentationTarget {
+        self.candidate.target
+    }
 }
 
 pub(super) struct Candidate {
@@ -240,6 +247,33 @@ impl<V: ?Sized + 'static> Application<V> {
             ));
         }
         Ok(())
+    }
+
+    /// Refresh external registrations against the already adopted source. No
+    /// source edit, package reload, or change to native availability occurs.
+    pub fn prepare_current_update(&self) -> Result<PreparedUpdate> {
+        let source = self
+            .source
+            .as_ref()
+            .ok_or_else(|| Error::Invalid("persisted UI source required".into()))?;
+        self.check_update_source(source.reference())?;
+        let plan = self.runtime.desired().clone();
+        let instances = plan
+            .instances()
+            .values()
+            .filter(|i| !i.disabled)
+            .cloned()
+            .collect();
+        Ok(PreparedUpdate {
+            owner: self.update_owner,
+            source: source.clone(),
+            candidate: Candidate {
+                plan,
+                sources: self.sources.clone(),
+                instances,
+                target: self.target,
+            },
+        })
     }
 
     /// Preflight before the trusted launcher publishes any new connection grant.

@@ -844,6 +844,8 @@ test('bundled products author without Node and export exact checked sources for 
             assert.equal(name in ui.instances, false);
           assert.deepEqual(Object.keys(host.instances).sort(), [
             'gateway',
+            'host-deployment-gateway',
+            'host-deployment-manager',
             'receipts',
             'recovery-gateway',
             'settings',
@@ -888,6 +890,24 @@ test('bundled products author without Node and export exact checked sources for 
           'install',
         ]);
         assert.equal(manager.endpoints.receipts.grant.recovery, true);
+        assert.deepEqual(ui.instances.deployment.bindings, {
+          interface: [{ kind: 'instance', path: ['interface-deployment'], export: 'Deployment' }],
+          services: [{ kind: 'instance', path: ['service-deployment'], export: 'Deployment' }],
+        });
+        assert.deepEqual(ui.instances['service-deployment'].bindings.management, [
+          {
+            kind: 'remote',
+            deployment: 'local',
+            instance: [keys['host-deployment-manager']],
+            export: 'Management',
+          },
+        ]);
+        assert.deepEqual(business.endpoints.management, {
+          consumer: [keys['host-deployment-gateway']],
+          import: 'management',
+          grant: { methods: manager.endpoints.management.grant.methods, recovery: false },
+        });
+
         assert.deepEqual(business.location, {
           kind: 'process',
           root: configuration.hostRoot,
@@ -900,7 +920,7 @@ test('bundled products author without Node and export exact checked sources for 
           { kind: 'instance', path: ['recovery-reading'], export: 'ReadingArea' },
         ]);
         assert.deepEqual(
-          ui.instances.deployment.bindings.reading,
+          ui.instances['interface-deployment'].bindings.reading,
           ui.instances.recovery.bindings.reading,
         );
         assert.equal(ui.instances['recovery-reading'].key, keys['recovery-reading']);

@@ -25,6 +25,17 @@ This is an ordinary plugin composition for a text agent, with separate desktop a
 
 The initial product supports conversation creation, selection, canonical transcript pages, streaming replies, exact-run stop and recovery of original mutation receipts. It uses typed English, Simplified Chinese and Traditional Chinese catalogs. The desktop design uses scoped light/dark appearance, system typography, quiet navigation and a native multiline composer. Connection browsing, creation, public field editing and native API-key saving/removal are ordinary plugins. Default model setting and clearing are ordinary plugins with explicit confirmation and receipt recovery. Tool workflows, attachments, history virtualization and platform visual/IME/accessibility acceptance remain unfinished.
 
+The Plugins page selects **Interface** or **Services**. Each target uses its own
+original deployment editor, immutable draft snapshot and operation receipt; switching
+targets retains the draft. Services edits the connected Host's actual committed
+source, so existing ACP commands, Agent backend configuration and process ceilings
+can be changed without rebuilding. Saving validates the whole source and may retire
+active services. The launcher refreshes the existing connection grants after Host
+registrations change; affected UI components reopen after their old resources close.
+Accepted operations remain with their original owners and are never replayed.
+Package installation does not add bindings or grant capabilities;
+new permissions still require explicit changes to the installation's trusted grants.
+
 ## WorkHub
 
 Use `--product workhub` with `application compose` or on the first `application launch`.

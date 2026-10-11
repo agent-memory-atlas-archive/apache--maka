@@ -23,11 +23,16 @@ use futures_util::{FutureExt, future::BoxFuture};
 use maka_event_log::{EventLog, applications::DeploymentChanges};
 use maka_plugin_core::deployment::DeploymentRef;
 use maka_ui::{Application, CommittedUpdate, PreparedUpdate, actions::RemoteService};
-use std::{collections::BTreeSet, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::{runtime::Handle, sync::Mutex, task::JoinHandle};
 
 type Watch = BoxFuture<'static, (DeploymentChanges, Result<DeploymentRef>)>;
 enum Work {
+    Probe(JoinHandle<Result<bool>>),
     Load(JoinHandle<maka_ui::Result<CommittedUpdate>>),
     Approve {
         prepared: Box<PreparedUpdate>,
@@ -39,12 +44,12 @@ enum Work {
 /// launcher explicitly delegates its original connection configuration only
 /// after that frontend accepts the exact candidate's native availability.
 pub struct Updates {
-    store: Arc<EventLog>,
     connections: Arc<Mutex<Connections>>,
     scheduler: Handle,
     cursor: Option<DeploymentChanges>,
     watch: Option<Watch>,
     work: Option<Work>,
+    next_probe: Instant,
     retained: BTreeSet<u64>,
     stopped: bool,
     unconfirmed: bool,
@@ -65,12 +70,12 @@ impl Updates {
             .subscribe_application(source.clone())
             .map_err(|e| e.to_string())?;
         Ok(Self {
-            store,
             connections,
             scheduler,
             cursor: Some(cursor),
             watch: None,
             work: None,
+            next_probe: Instant::now() + Duration::from_secs(1),
             retained: BTreeSet::from([source.revision]),
             stopped: false,
             unconfirmed: false,
@@ -91,6 +96,27 @@ impl Updates {
         }
         if let Some(work) = self.work.as_mut() {
             match work {
+                Work::Probe(task) => {
+                    let Some(result) = task.now_or_never() else {
+                        return Ok(None);
+                    };
+                    self.work.take();
+                    self.next_probe = Instant::now() + Duration::from_secs(1);
+                    let changed = match result {
+                        Ok(result) => result?,
+                        Err(error) => {
+                            self.unconfirmed = true;
+                            return Err(error.to_string());
+                        }
+                    };
+                    if changed {
+                        let prepared = application
+                            .prepare_current_update()
+                            .map_err(|e| e.to_string())?;
+                        self.approve(prepared, application.live_source_revisions());
+                        return Ok(None);
+                    }
+                }
                 Work::Load(task) => {
                     let Some(result) = task.now_or_never() else {
                         return Ok(None);
@@ -102,22 +128,7 @@ impl Updates {
                     let prepared = application
                         .prepare_update(update)
                         .map_err(|e| e.to_string())?;
-                    let source = prepared.source().clone();
-                    let mut retain = application.live_source_revisions();
-                    retain.insert(source.revision);
-                    let connections = self.connections.clone();
-                    let store = self.store.clone();
-                    let task = self.scheduler.spawn(async move {
-                        connections
-                            .lock()
-                            .await
-                            .approve_source(&store, source, retain)
-                            .await
-                    });
-                    self.work = Some(Work::Approve {
-                        prepared: Box::new(prepared),
-                        task,
-                    });
+                    self.approve(prepared, application.live_source_revisions());
                     return Ok(None);
                 }
                 Work::Approve { task, .. } => {
@@ -188,6 +199,12 @@ impl Updates {
             );
         }
         let Some((cursor, source)) = self.watch.as_mut().expect("watch").now_or_never() else {
+            if Instant::now() >= self.next_probe {
+                let connections = self.connections.clone();
+                self.work = Some(Work::Probe(self.scheduler.spawn(async move {
+                    connections.lock().await.registrations_changed().await
+                })));
+            }
             return Ok(None);
         };
         self.watch.take();
@@ -197,6 +214,24 @@ impl Updates {
             .map_err(|e| e.to_string())?;
         self.work = Some(Work::Load(self.scheduler.spawn(future)));
         Ok(None)
+    }
+    fn approve(&mut self, prepared: PreparedUpdate, mut retain: BTreeSet<u64>) {
+        let source = prepared.source().clone();
+        retain.insert(source.revision);
+        let plan = prepared.plan().clone();
+        let target = prepared.target();
+        let connections = self.connections.clone();
+        let task = self.scheduler.spawn(async move {
+            connections
+                .lock()
+                .await
+                .approve_plan(source, target, plan, retain)
+                .await
+        });
+        self.work = Some(Work::Approve {
+            prepared: Box::new(prepared),
+            task,
+        });
     }
     /// No new candidate work. Never abort an already started controller exchange.
     pub fn stop(&mut self) {
@@ -211,6 +246,7 @@ impl Updates {
         if let Some(work) = self.work.take() {
             let physical = !matches!(work, Work::Load(_));
             let result = match work {
+                Work::Probe(task) => task.await.map(|_| ()),
                 Work::Load(task) => task.await.map(|_| ()),
                 Work::Approve { task, .. } => task.await.map(|_| ()),
                 Work::Retain(task) => task.await.map(|_| ()),

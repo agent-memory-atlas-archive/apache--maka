@@ -58,6 +58,8 @@ export const packageNames = [
   'studio-gateway',
   'recovery-gateway',
   'deployment',
+  'deployment-settings',
+  'host-deployment-manager',
   'deployment-manager',
   'deployment-gateway',
   'image-viewer',
@@ -97,7 +99,13 @@ export const packageNames = [
   'gateway',
 ] as const;
 export type PackageName = (typeof packageNames)[number];
-const baseInstanceNames = [...packageNames, 'recovery-reading'] as const;
+const baseInstanceNames = [
+  ...packageNames,
+  'recovery-reading',
+  'interface-deployment',
+  'service-deployment',
+  'host-deployment-gateway',
+] as const;
 export const instanceNames = [
   ...baseInstanceNames,
   ...baseInstanceNames.map((name): `coordinator-${typeof name}` => `coordinator-${name}`),
@@ -162,7 +170,14 @@ function settingsComposition(
     export: exportName,
   });
   const remote = (
-    name: 'agent' | 'settings' | 'receipts' | 'workspace-processes' | 'skills' | 'skill-outcomes',
+    name:
+      | 'agent'
+      | 'settings'
+      | 'receipts'
+      | 'workspace-processes'
+      | 'skills'
+      | 'skill-outcomes'
+      | 'host-deployment-manager',
     exportName: string,
   ): BindingTarget => ({
     kind: 'remote',
@@ -185,6 +200,16 @@ function settingsComposition(
   const host: CompositionInput = {
     environment: { location: 'host' },
     instances: {
+      'host-deployment-manager': node('host-deployment-manager'),
+      'host-deployment-gateway': node(
+        'deployment-gateway',
+        {},
+        {
+          management: [local('host-deployment-manager', 'Management')],
+          receipts: [local('receipts', 'Receipts')],
+        },
+        'host-deployment-gateway',
+      ),
       settings: node('settings'),
       'skill-outcomes': node('skill-outcomes'),
       receipts: node('receipts'),
@@ -247,6 +272,28 @@ function settingsComposition(
       ),
       'source-text': node('source-text'),
       deployment: node(
+        'deployment-settings',
+        {},
+        {
+          interface: [local('interface-deployment', 'Deployment')],
+          services: [local('service-deployment', 'Deployment')],
+        },
+        'deployment',
+      ),
+      'service-deployment': node(
+        'deployment',
+        {},
+        {
+          reading: [local('recovery-reading', 'ReadingArea')],
+          editor: [local('editor', 'Textarea')],
+          file: [local('file', 'FilePicker')],
+          management: [remote('host-deployment-manager', 'Management')],
+          receipts: [remote('receipts', 'Receipts')],
+          history: [local('history', 'History')],
+        },
+        'service-deployment',
+      ),
+      'interface-deployment': node(
         'deployment',
         {},
         {
@@ -271,6 +318,7 @@ function settingsComposition(
           ],
           history: [local('history', 'History')],
         },
+        'interface-deployment',
       ),
       connections: node(
         'connections',
@@ -354,6 +402,14 @@ function settingsComposition(
     },
   ];
   remoteExports.push({
+    capability: {
+      deployment: 'local',
+      instance: [keys['host-deployment-manager']],
+      export: 'Management',
+    },
+    declaration: { contract: contracts.deploymentManager, availability: 'required' },
+  });
+  remoteExports.push({
     capability: { deployment: 'local', instance: [keys.settings], export: 'Settings' },
     declaration: { contract: contracts.settings, availability: 'required' },
   });
@@ -371,7 +427,7 @@ function settingsComposition(
       declaration: { contract: contracts.receiptReader, availability: 'required' },
     },
   );
-  const expose = (consumer: PackageName, name: string, methods: string[], recovery: boolean) => ({
+  const expose = (consumer: InstanceName, name: string, methods: string[], recovery: boolean) => ({
     consumer: [keys[consumer]],
     import: name,
     grant: { methods, recovery },
@@ -397,6 +453,12 @@ function settingsComposition(
         location: { kind: 'process', root: configuration.hostRoot },
         deployment: configuration.hostDeployment,
         endpoints: {
+          management: expose(
+            'host-deployment-gateway',
+            'management',
+            ['instances', 'setEnabled', 'readDocument', 'replace', 'install'],
+            false,
+          ),
           receipts: expose('recovery-gateway', 'receipts', ['read'], true),
           settings: expose(
             gateway,

@@ -1108,10 +1108,17 @@ impl<V: ?Sized + 'static> Application<V> {
         let mut first_error = None;
         for _ in 0..self.actions.outcomes.len() {
             let outcome = self.actions.outcomes.pop_front().expect("bounded outcomes");
+            let item = matches!(&outcome.outcome, ActionOutcome::Updated { .. });
             if self.is_retiring(&outcome.consumer)
-                || outcome
-                    .request
-                    .is_some_and(|id| !self.update_wanted(&outcome.consumer, &outcome.key, id))
+                || outcome.request.is_some_and(|id| {
+                    if item {
+                        !self.update_wanted(&outcome.consumer, &outcome.key, id)
+                    } else {
+                        // A subscription's settled execution is already gone;
+                        // its original demand still decides terminal delivery.
+                        !self.subscription_wanted(&outcome.consumer, &outcome.key, id)
+                    }
+                })
             {
                 continue;
             }
@@ -1123,7 +1130,6 @@ impl<V: ?Sized + 'static> Application<V> {
                 self.actions.outcomes.push_back(outcome);
                 continue;
             }
-            let item = matches!(&outcome.outcome, ActionOutcome::Updated { .. });
             // Check before invoking any callback: the callback can replace the
             // entire scene and retire the very source these witnesses protect.
             let mut stale = false;

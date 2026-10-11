@@ -58,11 +58,20 @@ pub(super) fn same_path(a: &[Scope], b: &[Scope]) -> bool {
 }
 
 #[derive(Clone)]
+struct WeakAncestor {
+    mount: maka_plugin_core::runtime::Mount,
+    key: String,
+    owner: Weak<()>,
+    scope: Option<Scope>,
+}
+
+#[derive(Clone)]
 pub(super) struct WeakTarget {
     mount: maka_plugin_core::runtime::Mount,
     key: String,
     owner: Weak<()>,
     role: (std::mem::Discriminant<TargetKind>, bool),
+    ancestor: Option<Box<WeakAncestor>>,
 }
 impl WeakTarget {
     pub(super) fn new(target: &Target) -> Self {
@@ -71,6 +80,19 @@ impl WeakTarget {
             key: target.key.clone(),
             owner: Rc::downgrade(&target.owner),
             role: target.role(),
+            ancestor: target
+                .ancestors
+                .iter()
+                .rev()
+                .find(|ancestor| !ancestor.shortcuts.is_empty() || ancestor.focus_group.is_some())
+                .map(|ancestor| {
+                    Box::new(WeakAncestor {
+                        mount: ancestor.mount.clone(),
+                        key: ancestor.key.clone(),
+                        owner: Rc::downgrade(&ancestor.owner),
+                        scope: ancestor.scope.clone(),
+                    })
+                }),
         }
     }
     pub(super) fn matches(&self, target: &Target) -> bool {
@@ -92,6 +114,30 @@ impl WeakTarget {
     }
     pub fn resolve(&self, targets: &[Target]) -> Option<Target> {
         targets.iter().find(|target| self.matches(target)).cloned()
+    }
+    /// The original trigger may be disabled while its operation is settling.
+    /// Keep keyboard input inside its surviving original scope, never a new
+    /// owner or another modal. Explicit native focus exits bypass this fallback.
+    fn resolve_ancestor(&self, targets: &[Target]) -> Option<Target> {
+        let ancestor = self.ancestor.as_ref()?;
+        if self.owner.strong_count() == 0 {
+            return None;
+        }
+        targets
+            .iter()
+            .filter(|target| {
+                target.tab_index >= 0
+                    && !target.area.is_empty()
+                    && same_scope(&target.scope, &ancestor.scope)
+                    && target.ancestors.iter().any(|current| {
+                        current.mount == ancestor.mount
+                            && current.key == ancestor.key
+                            && ancestor.owner.ptr_eq(&Rc::downgrade(&current.owner))
+                            && same_scope(&current.scope, &ancestor.scope)
+                    })
+            })
+            .min_by_key(|target| (target.tab_index == 0, target.tab_index))
+            .cloned()
     }
 }
 pub(super) struct FocusReturn {
@@ -287,7 +333,15 @@ impl Presenter {
             memory
                 .target
                 .as_ref()
-                .and_then(|target| target.resolve(targets))
+                .and_then(|target| {
+                    target.resolve(targets).or_else(|| {
+                        if memory.native_return.is_none() {
+                            target.resolve_ancestor(targets)
+                        } else {
+                            None
+                        }
+                    })
+                })
                 .map(|target| (Some(target), memory.native_return.clone()))
         };
         let exited = self.modal_focus.iter().any(|memory| {

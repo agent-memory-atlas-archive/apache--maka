@@ -173,8 +173,58 @@ fn executor_setup_shows_live_login_url_cancels_and_reads_original_receipt() {
             String::from_utf8_lossy(&tui.output)
         );
     }
+    // Edit the actual service source through the ordinary UI, then exercise the
+    // reactivated Agent's newly configured backend. No out-of-band Host write.
+    let mut host_document = graph["host"].clone();
+    host_document["instances"]["agent"]["configuration"]["values"]["executors"][0]["name"] =
+        json!("configured-login");
+    let document = json!({
+        "input":host_document, "remoteExports":[],
+        "packages":packages.values().map(Package::application_ref).collect::<Vec<_>>()
+    });
+    click(&mut tui, "[ Plugins ]", accent);
+    click(&mut tui, "[ Services ]", accent);
+    tui.wait_for("host-deployment-manager");
+    let services = tui.screen.snapshot().unwrap().screen;
+    click(&mut tui, "[ Edit product composition ]", accent);
+    editable(&mut tui, accent);
+    click(&mut tui, "{", accent);
+    tui.send(b"\x01");
+    paste(&mut tui, &serde_json::to_string(&document).unwrap());
+    // Switching targets preserves this exact native buffer and its source CAS.
+    click(&mut tui, "[ Interface ]", accent);
+    tui.wait_for("Edit the interface installed in this application.");
+    click(&mut tui, "[ Services ]", accent);
+    editable(&mut tui, accent);
+    let configured = tui.screen.snapshot().unwrap().screen;
+    let screen_entries = |bytes: &[u8]| {
+        bytes
+            .windows(8)
+            .filter(|part| *part == b"\x1b[?1049h")
+            .count()
+    };
+    let original_screen = screen_entries(&tui.output);
+    click(&mut tui, "[ Save composition ]", accent);
+    click(&mut tui, "[ Confirm ]", accent);
+    // The old screen can still show the picker while the Host retires. Wait for
+    // actual terminal replacement and the fresh product's backend observation.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        tui.read();
+        let screen = tui.screen.snapshot().unwrap().screen;
+        if tui.frames.ready()
+            && screen_entries(&tui.output) > original_screen
+            && screen.contains("Execution backend")
+        {
+            break;
+        }
+        assert!(
+            tui.child.try_wait().unwrap().is_none() && Instant::now() < deadline,
+            "updated Host did not restore the product: {screen}"
+        );
+    }
     click(&mut tui, "[ Execution backend ]", accent);
-    click(&mut tui, "[ fixture-login ]", accent);
+    click(&mut tui, "[ configured-login ]", accent);
     click(&mut tui, "[ Check backend ]", accent);
     let (_, pid) = process(&mut tui, &listener);
     tui.wait_for("fixture-v2 1");
@@ -245,6 +295,8 @@ fn executor_setup_shows_live_login_url_cancels_and_reads_original_receipt() {
     if let Ok(path) = std::env::var("MAKA_EXECUTOR_SETUP_EVIDENCE") {
         std::fs::create_dir_all(&path).unwrap();
         for (name, value) in [
+            ("services.txt", services),
+            ("configured.txt", configured),
             ("checked.txt", checked),
             ("live.txt", live),
             ("reopened.txt", reopened),
@@ -257,5 +309,31 @@ fn executor_setup_shows_live_login_url_cancels_and_reads_original_receipt() {
     }
     tui.send(b"\x03");
     tui.finish();
-    drop(RootOwner::open(&agent_root, &ns).unwrap());
+    runtime.block_on(async {
+        let store = EventLog::for_root(Arc::new(RootOwner::open(&agent_root, &ns).unwrap()))
+            .await
+            .unwrap();
+        let saved = store.load_application(agent_id).await.unwrap().unwrap();
+        assert_eq!(saved.source.reference.revision, 2);
+        assert_eq!(
+            saved.source.input,
+            serde_json::from_value(document["input"].clone()).unwrap()
+        );
+        store.shutdown().await.unwrap();
+        let store = EventLog::for_root(Arc::new(RootOwner::open(&root, &ns).unwrap()))
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .load_application(deployment)
+                .await
+                .unwrap()
+                .unwrap()
+                .source
+                .reference
+                .revision,
+            1
+        );
+        store.shutdown().await.unwrap();
+    });
 }

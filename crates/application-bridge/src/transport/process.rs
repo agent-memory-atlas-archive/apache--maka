@@ -95,6 +95,10 @@ impl Bootstrap {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum Event {
+    Epochs {
+        nonce: Uuid,
+        result: Result<BTreeMap<String, Option<Uuid>>>,
+    },
     Ready {
         nonce: Uuid,
         catalogue: Catalogue,
@@ -115,6 +119,9 @@ enum Event {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum Command {
+    Epochs {
+        nonce: Uuid,
+    },
     Close {
         nonce: Uuid,
     },
@@ -176,6 +183,26 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Control<R, W> {
                 Err("Host closed before publishing its original registrations".into())
             }
             _ => Err("Host control did not publish its original registrations".into()),
+        }
+    }
+    /// Bounded observation only. The original captured bindings and approval
+    /// exchange still own every subsequent publication.
+    pub(crate) async fn epochs(&mut self) -> Result<BTreeMap<String, Option<Uuid>>> {
+        if self.phase != Phase::Started {
+            return Err("Host control is not ready for observation".into());
+        }
+        self.phase = Phase::Lost;
+        wire::write(
+            self.writer.as_mut().unwrap(),
+            &Command::Epochs { nonce: self.nonce },
+        )
+        .await?;
+        match self.reader.read().await? {
+            Event::Epochs { nonce, result } if nonce == self.nonce => {
+                self.phase = Phase::Started;
+                result
+            }
+            _ => Err("Host observation differs from its original incarnation".into()),
         }
     }
     /// Capture actual registrations without publishing endpoints or approvals.
@@ -303,6 +330,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Control<R, W> {
                     return Ok(());
                 }
                 Event::Ready { nonce, .. }
+                | Event::Epochs { nonce, .. }
                 | Event::Captured { nonce, .. }
                 | Event::Approved { nonce, .. }
                     if nonce == self.nonce && self.phase == Phase::Lost => {}
@@ -412,6 +440,12 @@ pub async fn serve(native: NativeRegistry) -> Result<()> {
                             biased;
                             command = input.read_bounded::<Command>(BOOTSTRAP_LIMIT) => {
                                 match command {
+                                    Ok(Command::Epochs { nonce }) if nonce == bootstrap.nonce => {
+                                        let result = capture_endpoints(&client, &bootstrap.endpoints).await.map(|endpoints| endpoints.epochs());
+                                        if let Err(error) = wire::write(&mut output, &Event::Epochs { nonce, result }).await {
+                                            control_error = Some(error); break;
+                                        }
+                                    }
                                     Ok(Command::Capture { nonce }) if nonce == bootstrap.nonce => {
                                         let result = capture_endpoints(&client, &bootstrap.endpoints).await;
                                         let result = match result {
@@ -582,6 +616,54 @@ async fn drain_application(application: &Application) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn abandoned_observation_keeps_the_original_close_acknowledgement() {
+        let nonce = Uuid::new_v4();
+        // Separate pipes match ChildStdin/ChildStdout: dropping only the
+        // original writer must deliver EOF while its reader remains owned.
+        let (writer, child_reader) = tokio::io::duplex(4096);
+        let (mut child_writer, reader) = tokio::io::duplex(4096);
+        let mut control = Control::new(reader, writer, nonce).unwrap();
+        control.phase = Phase::Started;
+        let received = std::sync::Arc::new(tokio::sync::Notify::new());
+        let observed = received.clone();
+        let peer = tokio::spawn(async move {
+            let mut reader = wire::Reader::new(child_reader);
+            assert!(
+                matches!(reader.read::<Command>().await.unwrap(), Command::Epochs { nonce: actual } if actual == nonce)
+            );
+            observed.notify_one();
+            // An abandoned exchange closes its original writer. It must not
+            // append another command behind a potentially partial observation.
+            assert!(reader.read::<Command>().await.is_err());
+            wire::write(
+                &mut child_writer,
+                &Event::Epochs {
+                    nonce,
+                    result: Ok(BTreeMap::new()),
+                },
+            )
+            .await
+            .unwrap();
+            wire::write(&mut child_writer, &Event::Closed { nonce })
+                .await
+                .unwrap();
+        });
+        {
+            let observation = control.epochs();
+            tokio::pin!(observation);
+            tokio::select! {
+                _ = &mut observation => panic!("peer has not acknowledged observation"),
+                _ = received.notified() => {}
+            }
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(5), control.close())
+            .await
+            .unwrap()
+            .unwrap();
+        peer.await.unwrap();
+    }
+
     #[test]
     fn oversized_capture_is_a_bounded_error_acknowledgement() {
         let contract = serde_json::json!({

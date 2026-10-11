@@ -42,6 +42,49 @@ pub(super) fn root_count(presenter: &Presenter) -> u64 {
 }
 
 #[test]
+fn dialog_disabled_return_keeps_the_original_editing_scope_and_escape() {
+    let mut editor = column(
+        "editor-page",
+        vec![
+            json!({"kind":"button","key":"back","label":"Back"}),
+            json!({"kind":"button","key":"save","label":"Save"}),
+        ],
+    );
+    editor["shortcuts"] = json!([{"key":"escape","modifiers":[],"input":"back","enabled":true}]);
+    let background = column(
+        "page",
+        vec![
+            json!({"kind":"button","key":"outside","label":"Navigation"}),
+            editor,
+        ],
+    );
+    let (_runtime, mut presenter, props) = native(vec![dialog(
+        "modal",
+        false,
+        background,
+        json!({"kind":"button","key":"confirm","label":"Confirm"}),
+    )]);
+    draw(&mut presenter, 40, 12);
+    presenter.input(key(KeyCode::Tab)).unwrap();
+    presenter.input(key(KeyCode::Tab)).unwrap();
+    assert_eq!(presenter.focus.as_ref().unwrap().key, "save");
+    open(&props, &mut presenter, true);
+    draw(&mut presenter, 40, 12);
+    assert_eq!(presenter.focus.as_ref().unwrap().key, "confirm");
+    // The accepted mutation closes confirmation while its post-save read is
+    // still pending, so the original trigger is temporarily disabled.
+    props.borrow_mut()["content"]["children"][0]["background"]["children"][1]["children"][1]["disabled"] =
+        json!(true);
+    open(&props, &mut presenter, false);
+    draw(&mut presenter, 40, 12);
+    assert_eq!(presenter.focus.as_ref().unwrap().key, "back");
+    let count = root_count(&presenter);
+    presenter.input(key(KeyCode::Esc)).unwrap();
+    assert_eq!(root_count(&presenter), count + 1);
+    close(&mut presenter);
+}
+
+#[test]
 fn dialog_tab_reveals_controls_beyond_its_scroll_viewport() {
     let mut body = column(
         "body",

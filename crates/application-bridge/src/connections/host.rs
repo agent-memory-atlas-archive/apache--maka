@@ -60,6 +60,8 @@ pub(super) struct OwnedHost {
     // Publication is distinct from bootstrap readiness: an unused controller
     // must keep custody without obstructing healthy UI-source retention.
     pub(super) published: bool,
+    // Last approved endpoint observations, never executable registrations.
+    pub(super) epochs: BTreeMap<String, Option<Uuid>>,
     pub(super) configuration: Host,
     pub(super) peers: Arc<crate::transport::Peers>,
 }
@@ -76,6 +78,24 @@ pub(super) enum HostOwner {
     },
 }
 impl OwnedHost {
+    pub(super) async fn registrations_changed(&mut self) -> Result<bool> {
+        let current = match &mut self.owner {
+            HostOwner::Process { control, .. } => control.epochs().await?,
+            HostOwner::Cohost { application, .. } => crate::transport::process::capture_endpoints(
+                &application
+                    .as_ref()
+                    .ok_or("cohost is not initialized")?
+                    .client(),
+                &self.configuration.endpoints,
+            )
+            .await?
+            .epochs(),
+        };
+        if !current.keys().eq(self.configuration.endpoints.keys()) {
+            return Err("Host observed endpoints differ from configured selections".into());
+        }
+        Ok(current != self.epochs)
+    }
     pub(super) async fn capture(&mut self) -> Result<crate::transport::Catalogue> {
         match &mut self.owner {
             HostOwner::Process { control, .. } => control.capture().await,

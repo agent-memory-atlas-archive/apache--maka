@@ -354,6 +354,7 @@ impl Connections {
                 .await?;
             let owned = self.hosts.last_mut().unwrap();
             catalogue.check_names(host.endpoints.keys())?;
+            owned.epochs = catalogue.epochs();
             for import in host.endpoints.keys() {
                 let description = catalogue.describe(import)?;
                 let target = RemoteCapability {
@@ -457,6 +458,7 @@ impl Connections {
             connection: Some(connection),
             ready: false,
             published: false,
+            epochs: BTreeMap::new(),
             configuration,
             peers: crate::transport::Peers::new(crate::transport::Peer::new(
                 bootstrap.source.clone(),
@@ -487,6 +489,7 @@ impl Connections {
             connection: None,
             ready: false,
             published: false,
+            epochs: BTreeMap::new(),
             configuration: configuration.clone(),
             peers: peers.clone(),
         });
@@ -532,6 +535,20 @@ impl Connections {
     }
     pub fn registrations(&self) -> Vec<RemoteService> {
         self.registrations.clone()
+    }
+    /// Probe only already owned, published Hosts. Observations cannot start an
+    /// executor, replace a binding, delegate a grant or replay a business call.
+    pub(crate) async fn registrations_changed(&mut self) -> Result<bool> {
+        if self.phase != Phase::Started {
+            return Err("Host connections are not ready for observation".into());
+        }
+        let mut changed = false;
+        for owned in &mut self.hosts {
+            if owned.ready && owned.published && !owned.epochs.is_empty() {
+                changed |= owned.registrations_changed().await?;
+            }
+        }
+        Ok(changed)
     }
     /// Trusted same-Root manager operation, not a head-watcher grant. The caller
     /// delegates the original configuration's grants to this exact committed
@@ -582,6 +599,40 @@ impl Connections {
             .collect();
         let plan =
             Plan::prepare(&loaded.source.input, &packages, &remote).map_err(|e| e.to_string())?;
+        self.approve_plan(source, self.target, plan, retain).await
+    }
+
+    /// The foreground's preflighted source supplies the projection. Trusted
+    /// launcher configuration still bounds every Host, endpoint and grant.
+    pub(crate) async fn approve_plan(
+        &mut self,
+        source: DeploymentRef,
+        target: PresentationTarget,
+        plan: Plan,
+        retain: BTreeSet<u64>,
+    ) -> Result<Vec<RemoteService>> {
+        if self.phase != Phase::Started {
+            return Err("Host connections are not ready for approval".into());
+        }
+        if source.state_domain != self.source.state_domain
+            || source.deployment != self.source.deployment
+        {
+            return Err("foreign UI deployment approval".into());
+        }
+        if target != self.target {
+            return Err("stored presentation target mismatch".into());
+        }
+        let remote: RemoteExports = plan
+            .instances()
+            .values()
+            .flat_map(|i| i.bindings.values().flatten())
+            .filter_map(|b| match &b.provider {
+                Provider::Remote { capability } => {
+                    Some((capability.clone(), b.declaration.clone()))
+                }
+                Provider::Local { .. } => None,
+            })
+            .collect();
         let required: BTreeSet<_> = plan
             .instances()
             .values()
@@ -714,10 +765,12 @@ impl Connections {
                 owned.peers.update(None, &BTreeSet::new())?;
                 continue;
             };
+            let epochs = catalogue.as_ref().map(crate::transport::Catalogue::epochs);
             owned
                 .approve(source.clone(), consumers, retain.clone(), catalogue)
                 .await?;
             owned.peers.update(approved, &retain)?;
+            owned.epochs = epochs.unwrap_or_default();
         }
         for owned in &mut self.hosts {
             if !consumers(&plan, &owned.configuration.name).is_empty() {

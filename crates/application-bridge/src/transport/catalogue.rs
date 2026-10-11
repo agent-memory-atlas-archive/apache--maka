@@ -61,6 +61,12 @@ impl Catalogue {
             endpoints: endpoints.descriptions(),
         }
     }
+    pub(crate) fn epochs(&self) -> BTreeMap<String, Option<Uuid>> {
+        self.endpoints
+            .iter()
+            .map(|(name, description)| (name.clone(), description.registration_epoch))
+            .collect()
+    }
     pub(crate) fn check_names<'a>(&self, names: impl Iterator<Item = &'a String>) -> Result<()> {
         if !self.endpoints.keys().eq(names) {
             return Err("Host endpoint catalogue differs from configured selections".into());

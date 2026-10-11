@@ -87,6 +87,20 @@ impl Endpoints {
             Entry::Unavailable(_) => None,
         }
     }
+    pub(crate) fn epochs(&self) -> BTreeMap<String, Option<uuid::Uuid>> {
+        self.0
+            .iter()
+            .map(|(name, entry)| {
+                (
+                    name.clone(),
+                    match entry {
+                        Entry::Ready(endpoint) => Some(endpoint.binding.registration_epoch()),
+                        Entry::Unavailable(_) => None,
+                    },
+                )
+            })
+            .collect()
+    }
     pub(super) fn descriptions(&self) -> BTreeMap<String, Description> {
         self.0
             .iter()

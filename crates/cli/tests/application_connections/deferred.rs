@@ -83,6 +83,86 @@ fn next(
 }
 
 #[test]
+fn host_registration_change_refreshes_the_original_ui_source_after_old_surface_cleanup() {
+    let f = Fixture::new();
+    let (mut input, mut packages) = support::host();
+    f.timer
+        .block_on(
+            f.caller
+                .commit_application(f.host, 0, input.clone(), vec![], packages.clone()),
+        )
+        .unwrap();
+    let mut configuration = f.configuration(true, true);
+    configuration.hosts[0].location = HostLocation::Cohost {};
+    let mut connections = f.connect(configuration);
+    let mut app = f.ui(&mut connections);
+    let mount = app.mount_launch(json!({})).unwrap();
+    assert_eq!(action(&f, &mut app, &mount, "read")["value"]["effects"], 0);
+    let connections = Arc::new(tokio::sync::Mutex::new(connections));
+    let mut updates = maka_application_bridge::Updates::new(
+        f.caller.clone(),
+        f.source.clone(),
+        connections.clone(),
+        f.timer.handle().clone(),
+    )
+    .unwrap();
+    // Observe a real unavailable generation before the repaired provider appears.
+    // This exercises recovery without a new UI source or fabricated registration.
+    let (failed_input, failed_packages) = support::host_with_unavailable_business();
+    f.timer
+        .block_on(
+            f.caller
+                .commit_application(f.host, 1, failed_input, vec![], failed_packages),
+        )
+        .unwrap();
+    let unavailable = next(&mut updates, &app).unwrap();
+    assert_eq!(unavailable.prepared.source(), &f.source);
+    app.adopt_prepared(unavailable.prepared, unavailable.registrations)
+        .unwrap();
+    assert!(app.is_retiring(&mount));
+    app.close(&mount, Ok(())).unwrap();
+    assert!(app.advance_deployment().is_err());
+    assert!(app.deployment_status().error.is_some());
+    let package = packages
+        .iter_mut()
+        .find(|p| p.manifest().id == "local.business")
+        .unwrap();
+    let mut files = package.files().clone();
+    let code = String::from_utf8(files["index.mjs"].clone())
+        .unwrap()
+        .replace("let effects=0", "let effects=42");
+    files.insert("index.mjs".into(), code.into_bytes());
+    *package = maka_plugins::package::Package::new(files).unwrap();
+    input.instances.get_mut("business").unwrap().package = package.application_ref().into();
+    f.timer
+        .block_on(
+            f.caller
+                .commit_application(f.host, 2, input, vec![], packages),
+        )
+        .unwrap();
+    let update = next(&mut updates, &app).unwrap();
+    assert_eq!(update.prepared.source(), &f.source);
+    app.adopt_prepared(update.prepared, update.registrations)
+        .unwrap();
+    app.advance_deployment().unwrap();
+    assert!(!app.deployment_status().converging);
+    assert_eq!(app.source(), Some(&f.source));
+    let fresh = app.mount_launch(json!({})).unwrap();
+    assert_eq!(action(&f, &mut app, &fresh, "read")["value"]["effects"], 42);
+    updates.stop();
+    f.timer.block_on(updates.drain());
+    app.retire(&fresh).unwrap();
+    app.close(&fresh, Ok(())).unwrap();
+    app.shutdown().unwrap();
+    drop(app);
+    f.timer
+        .block_on(async { connections.lock().await.close().await })
+        .unwrap();
+    drop(connections);
+    f.timer.block_on(f.caller.shutdown()).unwrap();
+}
+
+#[test]
 fn unselected_host_opens_only_when_the_original_updates_pipeline_selects_it() {
     let f = Fixture::new();
     let mut configuration = f.configuration(true, true);

@@ -123,6 +123,15 @@ const specifications = {
     },
     configuration: own.object({ locale: own.locale }),
   },
+  'deployment-settings': {
+    contract: own.deploymentContract,
+    export: 'Deployment',
+    module: 'deployment-settings',
+    imports: {
+      interface: one(own.deploymentContract),
+      services: one(own.deploymentContract),
+    },
+  },
   deployment: {
     contract: own.deploymentContract,
     export: 'Deployment',
@@ -601,6 +610,13 @@ const mechanical = {
           settings: one(sdk.contracts.settings),
         },
       },
+    },
+  },
+  'host-deployment-manager': {
+    entries: {
+      host: native('maka.application.management', {
+        Management: required(sdk.contracts.deploymentManager),
+      }),
     },
   },
   'deployment-manager': {
