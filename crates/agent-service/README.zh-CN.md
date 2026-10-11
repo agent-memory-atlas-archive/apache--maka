@@ -55,9 +55,19 @@ worker 会话路由原用户正文和有界说明，并查询或推进该原任�
 只读 `workhub.tasks` 返回有界页，`workhub.task` 读取原接纳回执及可用的规范进度；
 已接纳不代表已完成。排队的协调消息也冻结 worker binding，变化后准备失败。
 
-`agent.messageExecution({sessionId, messageId})` 从消息的规范所有者及延续谱系
-读取 pending/cancelled/delivered，标记共享 Run，不跟随无关的会话最新活动或授予
-控制权限。直接启动的任务读取准确 invocation；worker 重新激活后仍可恢复原接纳
-回执，但新 binding 不读取旧任务进度。取消沿原 native 清理时限处理，未确认清理
-继续持有 Host 工作及 Root fence。跨会话附件转移、新 worker 创建与控制、结果回流
-及 WorkHub 产品界面仍待完成。
+`agent.work({sessionId, target, cursor})` 从原 invocation 或排队消息沿规范延续谱系
+读取准确执行、待处理交互及有界终态答案，三者来自同一快照。答案游标绑定 invocation
+和 UTF-8 字节偏移；延续变化返回 `changed`。无关会话活动不替换结果；共享 Run 明确
+标记且不授予整轮控制。`execution` 仍只表示精确物理执行。
+
+私有 `wait` 观察已接纳任务，直到完成、需要输入、暂停或进度不可用，然后把原任务
+交回本轮模型。取消只关闭观察，并等待实际清理，worker 独立执行继续。会话发现每轮
+从上个 ID 刷新，属于实时浏览，不承诺跨轮次目录快照。
+
+`control` 派发前冻结停止、恢复或队列撤回；`controls`、`inspect_control` 和
+`advance_control` 沿原命令恢复。公共 `workhub.controls` / `workhub.control` 只读。
+队列竞态不会将撤回升级为停止后来的 Run；请求停止不代表物理结束，Unknown 不重发。
+
+worker 重新激活后仍可恢复原接纳/控制回执，但新 binding 不读取旧任务进度。
+取消沿原 native 清理时限处理，未确认清理继续持有 Host 工作及 Root fence。
+跨会话附件转移、新 worker 创建、协调会话结束后的结果通知及 WorkHub 产品界面仍待完成。

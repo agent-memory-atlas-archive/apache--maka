@@ -32,11 +32,11 @@ async fn queued_followup_uses_original_worker_capacity_and_a_new_invocation() {
         request(&mut first_socket).await;
         let next = fixture.mutation(2, "send", json!({"sessionId":session,"message":"original followup","model":fixture.selection().await}), Uuid::new_v4()).await.unwrap();
         assert_eq!(next["kind"], "queued");
-        assert_eq!(fixture.query("messageExecution",json!({"sessionId":session,"messageId":next["messageId"]})).await.unwrap(),json!({"kind":"pending"}));
-        assert_eq!(fixture.query("messageExecution",json!({"sessionId":session,"messageId":"absent_message"})).await.unwrap(),json!({"kind":"missing"}));
+        assert_eq!(fixture.query("work",json!({"sessionId":session,"target":{"kind":"message","messageId":next["messageId"]}})).await.unwrap(),json!({"kind":"pending"}));
+        assert_eq!(fixture.query("work",json!({"sessionId":session,"target":{"kind":"message","messageId":"absent_message"}})).await.unwrap(),json!({"kind":"missing"}));
         let other = fixture.create("Other message owner").await;
-        assert_eq!(fixture.query("messageExecution",json!({"sessionId":other,"messageId":next["messageId"]})).await.unwrap(),json!({"kind":"missing"}));
-        assert!(fixture.query("messageExecution",json!({"sessionId":"foreign_session","messageId":next["messageId"]})).await.is_err());
+        assert_eq!(fixture.query("work",json!({"sessionId":other,"target":{"kind":"message","messageId":next["messageId"]}})).await.unwrap(),json!({"kind":"missing"}));
+        assert!(fixture.query("work",json!({"sessionId":"foreign_session","target":{"kind":"message","messageId":next["messageId"]}})).await.is_err());
 
         assert_eq!(fixture.owner.permits.available_permits(), 0);
         assert_eq!(fixture.owner.runs.lock().await.controls.len(), 1);
@@ -172,8 +172,8 @@ async fn stopping_original_run_retracts_queue_and_fences_tail_admission() {
         assert_eq!(
             fixture
                 .query(
-                    "messageExecution",
-                    json!({"sessionId":session,"messageId":queued["messageId"]})
+                    "work",
+                    json!({"sessionId":session,"target":{"kind":"message","messageId":queued["messageId"]}})
                 )
                 .await
                 .unwrap(),

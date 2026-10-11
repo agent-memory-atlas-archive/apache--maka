@@ -104,10 +104,15 @@ async fn exact_receipt_resumes_original_input_and_deduplicates_after_prerequisit
         let accepted = serde_json::to_value(accepted).unwrap();
         assert_eq!(accepted["execution"]["invocationId"], execution["invocationId"]);
         assert_eq!(accepted["execution"]["state"], "completed");
-        let delivery = fixture.query("messageExecution",json!({"sessionId":session,"messageId":message})).await.unwrap();
+        let delivery = fixture.query("work",json!({"sessionId":session,"target":{"kind":"message","messageId":message}})).await.unwrap();
         assert_eq!(delivery["kind"],"delivered");
         assert_eq!(delivery["shared"],false);
         assert_eq!(delivery["execution"],accepted["execution"],"message follows canonical continuation, never later unrelated work");
+        let original_work = fixture.query("work",json!({"sessionId":session,"target":{"kind":"invocation","invocationId":source["invocationId"]}})).await.unwrap();
+        assert_eq!(original_work,delivery,"direct admission follows the same explicit continuation");
+        assert_eq!(original_work["answer"]["text"],"Elegant response");
+        assert_eq!(fixture.query("work",json!({"sessionId":session,"target":{"kind":"invocation","invocationId":source["invocationId"]},"cursor":{"invocationId":source["invocationId"],"offset":9000}})).await.unwrap(),json!({"kind":"changed"}),"old cursor must be rejected before applying its offset to a new answer");
+
 
         assert!(tokio::time::timeout(Duration::from_millis(30), listener.accept()).await.is_err(), "no second model request");
         fixture.app.shutdown().await.unwrap();
@@ -443,4 +448,36 @@ async fn resume_uses_live_workspace_permissions_instead_of_original_grants() {
     })
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn work_answer_pages_preserve_exact_unicode_nul_and_owner_after_later_work() {
+    tokio::time::timeout(Duration::from_secs(45), async {
+        let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+        let session=fixture.create("Original work answer").await;
+        let original=fixture.send(&session).await.unwrap();
+        let target=json!({"kind":"invocation","invocationId":original["invocationId"]});
+        let (mut socket,_)=listener.accept().await.unwrap();request(&mut socket).await;
+        let answer="中\0🦀\n".repeat(220);
+        response_with_thinking(&mut socket,&answer,Some("Hidden worker reasoning")).await;
+        fixture.drained().await;
+        fixture.send(&session).await.unwrap();
+        let (mut socket,_)=listener.accept().await.unwrap();request(&mut socket).await;
+        response_with_text(&mut socket,"Unrelated later answer").await;fixture.drained().await;
+        let mut cursor=Value::Null;let mut joined=String::new();let mut pages=0;
+        loop {
+            let page=fixture.query("work",json!({"sessionId":session,"target":target,"cursor":cursor})).await.unwrap();
+            assert_eq!(page["kind"],"delivered");assert_eq!(page["execution"]["invocationId"],original["invocationId"]);
+            assert_eq!(page["execution"]["state"],"completed");assert_eq!(page["pendingInteractions"],0);
+            let text=page["answer"]["text"].as_str().unwrap();assert!(text.len()<=768);joined.push_str(text);pages+=1;
+            cursor=page["answer"]["next"].clone();if cursor.is_null() {break;}
+            assert_eq!(cursor["offset"],joined.len());
+        }
+        assert!(pages>1);assert_eq!(joined,answer);assert!(!joined.contains("Hidden"));
+        assert!(fixture.query("work",json!({"sessionId":session,"target":target,"cursor":{"invocationId":original["invocationId"],"offset":1}})).await.is_err());
+        let other=fixture.create("Different owner").await;
+        assert_eq!(fixture.query("work",json!({"sessionId":other,"target":target})).await.unwrap(),json!({"kind":"missing"}));
+        fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
 }

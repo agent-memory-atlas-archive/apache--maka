@@ -278,6 +278,18 @@ impl Handler for Hub {
                     if scope.cancellation.is_cancelled() {
                         return Err("workhub_call_cancelled".into());
                     }
+                    if method == "controls" {
+                        let input: contract::ControlsRead =
+                            serde_json::from_value(input).map_err(|_| "workhub_input_invalid")?;
+                        return hub.controls(input.after).await;
+                    }
+                    if method == "control" {
+                        let input: contract::ControlRead =
+                            serde_json::from_value(input).map_err(|_| "workhub_input_invalid")?;
+                        return hub
+                            .control(&input.control_id, false, scope.cancellation.clone())
+                            .await;
+                    }
                     if method == "tasks" {
                         let input: contract::TasksRead =
                             serde_json::from_value(input).map_err(|_| "workhub_input_invalid")?;
@@ -287,7 +299,12 @@ impl Handler for Hub {
                         let input: contract::TaskRead =
                             serde_json::from_value(input).map_err(|_| "workhub_input_invalid")?;
                         return hub
-                            .task(&input.task_id, false, scope.cancellation.clone())
+                            .task(
+                                &input.task_id,
+                                false,
+                                input.cursor,
+                                scope.cancellation.clone(),
+                            )
                             .await;
                     }
                     let result = match method.as_str() {

@@ -27,8 +27,10 @@ import type {
   WorkHubResolve,
   WorkHubCoordinator,
   WorkHubTask,
+  WorkHubControl,
+  WorkHubControlRead,
   WorkHubConfiguration,
-  AgentMessageExecutionRead,
+  AgentWorkRead,
   AgentExecutionResult,
   AgentHistoryPage,
   AgentSessionPage,
@@ -545,13 +547,13 @@ function coordinatorSession(value: WorkHubCoordinator): string | null {
 void resolveCoordinator;
 void coordinatorSession;
 
-const messageExecution: AgentMessageExecutionRead = {
+const messageWork: AgentWorkRead = {
   sessionId: 'worker-session',
-  messageId: 'original-message',
+  target: { kind: 'message', messageId: 'original-message' },
 };
 function taskExecution(task: WorkHubTask): string | null {
   const status = task.status;
-  if (status.kind === 'started' && status.progress?.kind === 'found')
+  if (status.kind === 'started' && status.progress?.kind === 'delivered')
     return status.progress.execution.invocationId;
   if (status.kind === 'queued' && status.progress?.kind === 'delivered')
     return status.progress.shared ? null : status.progress.execution.invocationId;
@@ -560,4 +562,16 @@ function taskExecution(task: WorkHubTask): string | null {
 function coordinatorWorkers(configuration: WorkHubConfiguration): string[] {
   return configuration.workers;
 }
-void [messageExecution, taskExecution, coordinatorWorkers];
+const answerPage: AgentWorkRead = {
+  sessionId: 'worker-session',
+  target: { kind: 'invocation', invocationId: 'original-invocation' },
+  cursor: { invocationId: 'answer-invocation', offset: 768 },
+};
+const originalControl: WorkHubControlRead = { controlId: `wc_${'0'.repeat(64)}` };
+function controlStopped(control: WorkHubControl): boolean | null {
+  const status = control.status;
+  return status.kind === 'returned' && status.outcome.kind === 'stop'
+    ? status.outcome.result.requested
+    : null;
+}
+void [messageWork, answerPage, originalControl, controlStopped, taskExecution, coordinatorWorkers];

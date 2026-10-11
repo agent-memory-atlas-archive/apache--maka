@@ -62,8 +62,9 @@ pub struct TaskEntry {
 pub struct TaskRead {
     #[schemars(regex(pattern = "^wt_[a-f0-9]{64}$"))]
     pub task_id: String,
+    pub cursor: Option<crate::contract::AnswerCursor>,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "WorkHubTask")]
 pub struct Task {
@@ -72,7 +73,7 @@ pub struct Task {
     pub operation: uuid::Uuid,
     pub status: TaskStatus,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "kind",
     rename_all = "snake_case",
@@ -90,12 +91,73 @@ pub enum TaskStatus {
     Started {
         session_id: String,
         invocation_id: String,
-        progress: Option<crate::contract::ExecutionResult>,
+        progress: Option<crate::contract::Work>,
     },
     Queued {
         session_id: String,
         message_id: String,
-        progress: Option<crate::contract::MessageExecution>,
+        progress: Option<crate::contract::Work>,
+    },
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "WorkHubControlRead")]
+pub struct ControlRead {
+    #[schemars(regex(pattern = "^wc_[a-f0-9]{64}$"))]
+    pub control_id: String,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "WorkHubControlsRead")]
+pub struct ControlsRead {
+    pub after: Option<String>,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "WorkHubControls")]
+pub struct Controls {
+    #[schemars(length(max = 16))]
+    pub entries: Vec<ControlEntry>,
+    pub after: Option<String>,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "WorkHubControlEntry")]
+pub struct ControlEntry {
+    pub task_id: String,
+    pub control_id: String,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "WorkHubControl")]
+pub struct Control {
+    pub task_id: String,
+    pub control_id: String,
+    pub operation: uuid::Uuid,
+    pub status: ControlStatus,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "WorkHubControlStatus")]
+pub enum ControlStatus {
+    Pending,
+    Unavailable,
+    Uncertain,
+    Returned { outcome: ControlOutcome },
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "WorkHubControlOutcome")]
+pub enum ControlOutcome {
+    Stop {
+        result: crate::contract::Stopped,
+    },
+    Resume {
+        result: crate::contract::ResumeResult,
+    },
+    Retract {
+        result: crate::contract::QueueMutationResult,
     },
 }
 
@@ -122,6 +184,24 @@ pub fn contract() -> Contract {
         transport: Transport::Remote,
         interface: Interface::Service {
             methods: BTreeMap::from([
+                (
+                    "control".into(),
+                    Method {
+                        mode: MethodMode::Query,
+                        input: schemars::schema_for!(ControlRead).into(),
+                        output: schemars::schema_for!(Control).into(),
+                        resources: BTreeMap::new(),
+                    },
+                ),
+                (
+                    "controls".into(),
+                    Method {
+                        mode: MethodMode::Query,
+                        input: schemars::schema_for!(ControlsRead).into(),
+                        output: schemars::schema_for!(Controls).into(),
+                        resources: BTreeMap::new(),
+                    },
+                ),
                 (
                     "tasks".into(),
                     Method {

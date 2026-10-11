@@ -148,7 +148,7 @@ async fn read(
 
 /// Follow explicit continuation edges, never the Session's latest Run. Caller
 /// keeps one SQL snapshot through owner selection and any control admission.
-async fn lineage(
+pub(crate) async fn lineage(
     tx: &mut SqliteConnection,
     owner: &Invocation,
 ) -> Result<TurnBoundary, StoreError> {

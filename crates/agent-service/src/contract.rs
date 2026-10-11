@@ -464,7 +464,7 @@ pub enum SkillInputRejection {
     SkillsUnavailable,
     InputTooLarge,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentStopped")]
 pub struct Stopped {
@@ -687,7 +687,7 @@ pub enum QueueAction {
         message_ids: Vec<String>,
     },
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "AgentQueueMutationResult")]
 pub enum QueueMutationResult {
@@ -695,7 +695,7 @@ pub enum QueueMutationResult {
     RevisionConflict { expected: u64, actual: u64 },
     Rejected { reason: QueueRejection },
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[schemars(rename = "AgentQueueRejection")]
 pub enum QueueRejection {
@@ -986,10 +986,7 @@ pub fn contract() -> Contract {
                     "execution".into(),
                     method::<ExecutionRead, ExecutionResult>(MethodMode::Query),
                 ),
-                (
-                    "messageExecution".into(),
-                    method::<MessageExecutionRead, MessageExecution>(MethodMode::Query),
-                ),
+                ("work".into(), method::<WorkRead, Work>(MethodMode::Query)),
                 (
                     "resume".into(),
                     method::<Resume, ResumeResult>(MethodMode::Mutation),

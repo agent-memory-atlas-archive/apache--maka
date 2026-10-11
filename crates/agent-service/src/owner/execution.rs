@@ -51,33 +51,63 @@ fn parked(reason: ResumeParkReason) -> ResumeResult {
 }
 
 impl Owner {
-    pub async fn message_execution(
-        &self,
-        input: MessageExecutionRead,
-    ) -> Result<MessageExecution, String> {
+    pub async fn work(&self, input: WorkRead) -> Result<Work, String> {
         use maka_event_log::message_resolution::MessageExecution as Stored;
         self.session(&input.session_id).await?;
-        let receipt = self
+        let offset = input.cursor.as_ref().map_or(0, |cursor| cursor.offset);
+        let origin = match input.target {
+            WorkTarget::Message { message_id } => {
+                maka_event_log::observation::WorkOrigin::Message(message_id)
+            }
+            WorkTarget::Invocation { invocation_id } => {
+                maka_event_log::observation::WorkOrigin::Invocation(invocation_id)
+            }
+        };
+        let observed = self
             .store
-            .message_execution(&input.session_id, &input.message_id)
+            .work_observation(
+                &input.session_id,
+                origin,
+                offset,
+                input
+                    .cursor
+                    .as_ref()
+                    .map(|cursor| cursor.invocation_id.as_str()),
+            )
             .await
-            .map_err(|_| "agent_message_execution_unavailable")?;
-        let (shared, boundary) = match receipt {
-            Stored::Missing => return Ok(MessageExecution::Missing),
-            Stored::Pending => return Ok(MessageExecution::Pending),
-            Stored::Cancelled => return Ok(MessageExecution::Cancelled),
+            .map_err(|_| "agent_work_unavailable")?;
+        let (shared, boundary) = match observed.execution {
+            Stored::Missing => return Ok(Work::Missing),
+            Stored::Pending => return Ok(Work::Pending),
+            Stored::Cancelled => return Ok(Work::Cancelled),
             Stored::Owned(boundary) => (false, boundary),
             Stored::Shared(boundary) => (true, boundary),
         };
-        let exact = self
-            .store
-            .invocation_boundary(&input.session_id, &boundary.invocation.invocation_id)
-            .await
-            .map_err(|_| "agent_message_execution_unavailable")?
-            .ok_or("agent_message_execution_unavailable")?;
-        Ok(MessageExecution::Delivered {
+        if input
+            .cursor
+            .as_ref()
+            .is_some_and(|cursor| cursor.invocation_id != boundary.invocation.invocation_id)
+        {
+            return Ok(Work::Changed);
+        }
+        let answer = observed.answer.map(|answer| {
+            // A WorkHub tool response includes this page and its original receipt.
+            // Bound worst-case JSON escaping below the existing model text budget.
+            let end = answer.text.floor_char_boundary(answer.text.len().min(768));
+            let complete = answer.complete && end == answer.text.len();
+            AnswerPage {
+                text: answer.text[..end].into(),
+                next: (!complete).then(|| AnswerCursor {
+                    invocation_id: boundary.invocation.invocation_id.clone(),
+                    offset: offset + end as u64,
+                }),
+            }
+        });
+        Ok(Work::Delivered {
             shared,
-            execution: project(exact),
+            execution: project((*boundary, observed.high_water)),
+            answer,
+            pending_interactions: observed.interactions.len() as u32,
         })
     }
 

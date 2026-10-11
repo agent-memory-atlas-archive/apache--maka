@@ -93,11 +93,29 @@ Read-only `workhub.tasks` returns bounded pages and `workhub.task` reads origina
 admission and available canonical progress. Admission is not completion. Queued
 coordinator input also freezes worker bindings; changed bindings fail preparation.
 
-`agent.messageExecution({sessionId, messageId})` resolves pending/cancelled delivery
-or its canonical continuation, including whether delivery shares a Run. It does
-not follow unrelated Session activity or authorize control. Started assignments
-observe their exact invocation. After worker reactivation, original admission can
-still be recovered, but current bindings cannot supply that old task's progress.
+`agent.work({sessionId, target, cursor})` follows the original invocation or queued
+message through its canonical continuation. It returns exact execution, pending
+interactions and bounded terminal answer pages from one snapshot; answer cursors
+bind invocation and UTF-8 byte offset. A changed continuation returns `changed`.
+Unrelated Session activity never replaces the task result. Shared delivery is
+explicit and cannot authorize control of the whole Run. `execution` retains its
+separate meaning as the exact physical invocation receipt.
+
+The coordinator's `wait` tool observes an admitted task until completion, input,
+pause or unavailable progress, then returns that original task to the model in the
+same conversation. Cancellation closes the observation and joins its actual
+cleanup without stopping independent worker work. Session discovery refreshes
+from the last ID on each model turn; it is a live browse, not a catalog snapshot.
+
+`control` freezes stop, resume or queued-message retraction before dispatch.
+`controls`, `inspect_control` and `advance_control` recover that original command;
+public `workhub.controls` and `workhub.control` are read-only. A delivery race
+cannot turn retraction into stopping a newer Run. Requested stop does not mean
+physical termination, and unknown replies never authorize redispatch.
+
+After worker reactivation, original admission/control receipts can still be
+recovered, but current bindings cannot supply the old task's progress.
 Cancellation reaches the original native cleanup budget; unconfirmed cleanup
 retains Host work and the Root fence. Cross-Session attachment transfer, worker
-creation/control, result feedback and the WorkHub product UI remain unfinished.
+creation, feedback after the coordinator ends and the WorkHub product UI remain
+unfinished.

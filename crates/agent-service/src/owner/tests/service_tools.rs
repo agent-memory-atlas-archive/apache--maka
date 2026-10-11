@@ -1495,6 +1495,11 @@ async fn queue_promotion_steers_original_run_at_the_next_step_without_a_successo
         response(&mut second).await;
         fixture.drained().await;
         assert!(fixture.store.pending_messages(&session).await.unwrap().is_empty());
+        let work=fixture.query("work",json!({"sessionId":session,"target":{"kind":"message","messageId":queued["messageId"]}})).await.unwrap();
+        assert_eq!(work["kind"],"delivered");assert_eq!(work["shared"],true);
+        assert_eq!(work["execution"]["invocationId"],started["invocationId"]);
+        assert_eq!(work["answer"]["text"],"Elegant response");
+
         let recorded = facts(&fixture, &session).await;
         assert_eq!(recorded.iter().filter(|fact| matches!(fact, Fact::InvocationOpened { .. })).count(), 1);
         assert!(recorded.iter().any(|fact| matches!(fact, Fact::MessageSteered { .. })));

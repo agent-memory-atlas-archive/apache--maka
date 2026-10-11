@@ -23,21 +23,67 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[schemars(rename = "AgentMessageExecutionRead")]
-pub struct MessageExecutionRead {
+#[schemars(rename = "AgentWorkRead")]
+pub struct WorkRead {
     #[schemars(length(min = 1, max = 128))]
     pub session_id: String,
+    pub target: WorkTarget,
+    pub cursor: Option<AnswerCursor>,
+}
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[schemars(rename = "AgentWorkTarget")]
+pub enum WorkTarget {
+    Invocation {
+        #[schemars(length(min = 1, max = 128))]
+        invocation_id: String,
+    },
+    Message {
+        #[schemars(length(min = 1, max = 128))]
+        message_id: String,
+    },
+}
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentAnswerCursor")]
+pub struct AnswerCursor {
     #[schemars(length(min = 1, max = 128))]
-    pub message_id: String,
+    pub invocation_id: String,
+    #[schemars(range(max = 9_007_199_254_740_991u64))]
+    pub offset: u64,
 }
 #[derive(Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-#[schemars(rename = "AgentMessageExecution")]
-pub enum MessageExecution {
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "AgentAnswerPage")]
+pub struct AnswerPage {
+    pub text: String,
+    pub next: Option<AnswerCursor>,
+}
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[schemars(rename = "AgentWork")]
+pub enum Work {
     Missing,
     Pending,
     Cancelled,
-    Delivered { shared: bool, execution: Execution },
+    Changed,
+    Delivered {
+        shared: bool,
+        execution: Execution,
+        answer: Option<AnswerPage>,
+        /// Count for this exact Run; original Session interactions retain all authority.
+        pending_interactions: u32,
+    },
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -96,14 +142,14 @@ pub struct Resume {
     pub model: ModelSelection,
     pub thinking_level: Option<maka_runtime::execution::ThinkingLevel>,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "AgentResumeResult")]
 pub enum ResumeResult {
     Started { execution: Execution },
     Parked { reason: ResumeParkReason },
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[schemars(rename = "AgentResumeParkReason")]
 pub enum ResumeParkReason {

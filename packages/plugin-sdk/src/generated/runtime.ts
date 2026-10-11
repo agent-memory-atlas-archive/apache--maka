@@ -91,10 +91,14 @@ export type RuntimeProtocol =
   | WorkHubConfiguration
   | WorkHubTaskRead
   | WorkHubTask
+  | WorkHubControlRead
+  | WorkHubControl
+  | WorkHubControlsRead
+  | WorkHubControls
   | WorkHubTasksRead
   | WorkHubTasks
-  | AgentMessageExecutionRead
-  | AgentMessageExecution
+  | AgentWorkRead
+  | AgentWork
   | ModelSelection
   | SettingsModelsRead
   | SettingsModelsPage
@@ -1219,32 +1223,16 @@ export type WorkHubTaskStatus =
   | {
       sessionId: string;
       invocationId: string;
-      progress?: AgentExecutionResult | null;
+      progress?: AgentWork | null;
       kind: 'started';
     }
   | {
       sessionId: string;
       messageId: string;
-      progress?: AgentMessageExecution | null;
+      progress?: AgentWork | null;
       kind: 'queued';
     };
-export type AgentExecutionResult =
-  | {
-      kind: 'missing';
-    }
-  | {
-      execution: AgentExecution;
-      kind: 'found';
-    };
-export type AgentExecutionState =
-  | 'admitted'
-  | 'running'
-  | 'waiting'
-  | 'paused'
-  | 'completed'
-  | 'failed'
-  | 'cancelled';
-export type AgentMessageExecution =
+export type AgentWork =
   | {
       kind: 'missing';
     }
@@ -1255,9 +1243,103 @@ export type AgentMessageExecution =
       kind: 'cancelled';
     }
   | {
+      kind: 'changed';
+    }
+  | {
       shared: boolean;
       execution: AgentExecution;
+      answer?: AgentAnswerPage | null;
+      /**
+       * Count for this exact Run; original Session interactions retain all authority.
+       */
+      pendingInteractions: number;
       kind: 'delivered';
+    };
+export type AgentExecutionState =
+  | 'admitted'
+  | 'running'
+  | 'waiting'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+export type WorkHubControlStatus =
+  | {
+      kind: 'pending';
+    }
+  | {
+      kind: 'unavailable';
+    }
+  | {
+      kind: 'uncertain';
+    }
+  | {
+      outcome: WorkHubControlOutcome;
+      kind: 'returned';
+    };
+export type WorkHubControlOutcome =
+  | {
+      result: AgentStopped;
+      kind: 'stop';
+    }
+  | {
+      result: AgentResumeResult;
+      kind: 'resume';
+    }
+  | {
+      result: AgentQueueMutationResult;
+      kind: 'retract';
+    };
+export type AgentResumeResult =
+  | {
+      execution: AgentExecution;
+      kind: 'started';
+    }
+  | {
+      reason: AgentResumeParkReason;
+      kind: 'parked';
+    };
+export type AgentResumeParkReason =
+  | 'closed'
+  | 'archived'
+  | 'busy'
+  | 'capacity'
+  | 'source_missing'
+  | 'source_changed'
+  | 'source_not_resumable'
+  | 'source_unreadable'
+  | 'already_continued'
+  | 'workspace_changed'
+  | 'safety_check_failed';
+export type AgentQueueMutationResult =
+  | {
+      revision: number;
+      kind: 'committed';
+    }
+  | {
+      expected: number;
+      actual: number;
+      kind: 'revision_conflict';
+    }
+  | {
+      reason: AgentQueueRejection;
+      kind: 'rejected';
+    };
+export type AgentQueueRejection =
+  | 'closed'
+  | 'missing'
+  | 'in_flight'
+  | 'invalid_edit'
+  | 'execution_changed'
+  | 'not_running';
+export type AgentWorkTarget =
+  | {
+      invocationId: string;
+      kind: 'invocation';
+    }
+  | {
+      messageId: string;
+      kind: 'message';
     };
 export type SettingsModelsRead =
   | {
@@ -2047,27 +2129,14 @@ export type AgentMetadataResult =
       reason: AgentRejection;
       kind: 'rejected';
     };
-export type AgentResumeResult =
+export type AgentExecutionResult =
   | {
-      execution: AgentExecution;
-      kind: 'started';
+      kind: 'missing';
     }
   | {
-      reason: AgentResumeParkReason;
-      kind: 'parked';
+      execution: AgentExecution;
+      kind: 'found';
     };
-export type AgentResumeParkReason =
-  | 'closed'
-  | 'archived'
-  | 'busy'
-  | 'capacity'
-  | 'source_missing'
-  | 'source_changed'
-  | 'source_not_resumable'
-  | 'source_unreadable'
-  | 'already_continued'
-  | 'workspace_changed'
-  | 'safety_check_failed';
 export type AgentAttachmentUploadResult =
   | {
       attachment: AgentAttachment;
@@ -2573,27 +2642,6 @@ export type AgentQueueAction =
       messageIds: [string, ...string[]];
       kind: 'reorder';
     };
-export type AgentQueueMutationResult =
-  | {
-      revision: number;
-      kind: 'committed';
-    }
-  | {
-      expected: number;
-      actual: number;
-      kind: 'revision_conflict';
-    }
-  | {
-      reason: AgentQueueRejection;
-      kind: 'rejected';
-    };
-export type AgentQueueRejection =
-  | 'closed'
-  | 'missing'
-  | 'in_flight'
-  | 'invalid_edit'
-  | 'execution_changed'
-  | 'not_running';
 export type HistoryTurnOutcome = 'completed' | 'failed' | 'aborted';
 /**
  * Canonical message author/kind; the field identifies body versus thinking.
@@ -4402,6 +4450,11 @@ export interface WorkHubConfiguration {
 }
 export interface WorkHubTaskRead {
   taskId: string;
+  cursor?: AgentAnswerCursor | null;
+}
+export interface AgentAnswerCursor {
+  invocationId: string;
+  offset: number;
 }
 export interface WorkHubTask {
   taskId: string;
@@ -4422,6 +4475,191 @@ export interface AgentExecution {
    */
   highWater: number;
   state: AgentExecutionState;
+}
+export interface AgentAnswerPage {
+  text: string;
+  next?: AgentAnswerCursor | null;
+}
+export interface WorkHubControlRead {
+  controlId: string;
+}
+export interface WorkHubControl {
+  taskId: string;
+  controlId: string;
+  operation: string;
+  status: WorkHubControlStatus;
+}
+export interface AgentStopped {
+  requested: boolean;
+}
+export interface WorkHubControlsRead {
+  after?: string | null;
+}
+export interface WorkHubControls {
+  /**
+   * @maxItems 16
+   */
+  entries:
+    | []
+    | [WorkHubControlEntry]
+    | [WorkHubControlEntry, WorkHubControlEntry]
+    | [WorkHubControlEntry, WorkHubControlEntry, WorkHubControlEntry]
+    | [WorkHubControlEntry, WorkHubControlEntry, WorkHubControlEntry, WorkHubControlEntry]
+    | [
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+      ]
+    | [
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+      ]
+    | [
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+      ]
+    | [
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+      ]
+    | [
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+      ]
+    | [
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+      ]
+    | [
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+      ]
+    | [
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+      ]
+    | [
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+      ]
+    | [
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+      ]
+    | [
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+      ]
+    | [
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+        WorkHubControlEntry,
+      ];
+  after?: string | null;
+}
+export interface WorkHubControlEntry {
+  taskId: string;
+  controlId: string;
 }
 export interface WorkHubTasksRead {
   after?: string | null;
@@ -4586,9 +4824,10 @@ export interface WorkHubTaskEntry {
   taskId: string;
   worker: string;
 }
-export interface AgentMessageExecutionRead {
+export interface AgentWorkRead {
   sessionId: string;
-  messageId: string;
+  target: AgentWorkTarget;
+  cursor?: AgentAnswerCursor | null;
 }
 /**
  * Exact public selection observed by a caller, checked once at run admission.
@@ -5652,9 +5891,6 @@ export interface AgentSessionPage {
   sessions: AgentSession[];
   before: string | null;
   after: string | null;
-}
-export interface AgentStopped {
-  requested: boolean;
 }
 export interface AgentDelivery {
   sequence: number;

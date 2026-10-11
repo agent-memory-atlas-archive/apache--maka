@@ -69,6 +69,10 @@ async fn activate_worker_mode(
             let mut node = composition.instances["provider"].clone();
             node.key = Uuid::from_u128(21);
             node.package = worker.application_ref().into();
+            // Permit the next model step to consume a genuinely promoted message.
+            node.configuration
+                .values
+                .insert("maxSteps".into(), json!(2));
             composition.instances.insert("worker".into(), node);
         }
         for package in &mut packages {
@@ -129,7 +133,8 @@ async fn activate_worker_mode(
                                 let mut settings =
                                     serde_json::to_value(&fixture.owner.settings).unwrap();
                                 if workers {
-                                    settings["maxSteps"] = json!(2);
+                                    // Route, wait, then answer in this same invocation.
+                                    settings["maxSteps"] = json!(3);
                                 }
                                 settings
                             }),
@@ -223,10 +228,21 @@ async fn activate_worker_mode(
                         consumer: id(1),
                         provider: id(21),
                         export: EXPORT.into(),
-                        methods: ["list", "send", "execution", "messageExecution"]
-                            .into_iter()
-                            .map(str::to_owned)
-                            .collect(),
+                        methods: [
+                            "list",
+                            "send",
+                            "execution",
+                            "work",
+                            "observe",
+                            "watch",
+                            "stop",
+                            "resume",
+                            "queue",
+                            "editQueue",
+                        ]
+                        .into_iter()
+                        .map(str::to_owned)
+                        .collect(),
                         recovery: true,
                     }]
                 } else {
@@ -609,7 +625,7 @@ async fn worker_session(fixture: &Fixture) -> String {
     worker_mutation(fixture,"create",json!({"title":"Worker","labels":[],"workspace":{"kind":"directory","selection":roots["roots"][0]["selection"]}})).await["session"]["id"].as_str().unwrap().into()
 }
 async fn task_response(socket: &mut TcpStream, input: Value) {
-    let delta = json!({"id":"task-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"route-call","type":"function","function":{"name":"workhub_tasks","arguments":input.to_string()}}]},"finish_reason":null}]});
+    let delta = json!({"id":"task-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":Uuid::new_v4().to_string(),"type":"function","function":{"name":"workhub_tasks","arguments":input.to_string()}}]},"finish_reason":null}]});
     let body = format!(
         "data: {delta}\n\ndata: {{\"id\":\"task-model\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"tool_calls\"}}]}}\n\ndata: [DONE]\n\n"
     );
@@ -667,6 +683,7 @@ async fn workhub_real_model_routes_original_input_and_recovers_child_receipt_wit
         let task=query_import(&fixture,hub::EXPORT,"task",json!({"taskId":task_id})).await;
         assert_eq!(task["status"]["kind"],"started");
         assert_eq!(task["status"]["progress"]["execution"]["state"],"completed");
+        assert_eq!(task["status"]["progress"]["answer"]["text"],"Elegant response");
         let originals=fixture.store.application_intents(fixture.app.source().unwrap().deployment,id(1),0,128).await.unwrap();
         assert_eq!(originals.len(),1);
         assert_eq!(originals[0].reference.namespace,id(21));
@@ -759,7 +776,9 @@ async fn workhub_selected_worker_requires_independent_native_dispatch_grant() {
 #[derive(Clone)]
 enum WorkerBehavior {
     Returned,
-    Lost,
+    OneSessionPage,
+    Lost(&'static str),
+    Watched(Arc<tokio::sync::Semaphore>),
     Blocked(Arc<Blocked>),
 }
 struct Blocked {
@@ -779,6 +798,11 @@ impl Handler for Worker {
         let owner = self.0.0.clone();
         let behavior = self.1.clone();
         Box::pin(async move {
+            if let WorkerBehavior::Watched(entered) = &behavior
+                && method == "watch"
+            {
+                entered.add_permits(1);
+            }
             if let WorkerBehavior::Blocked(blocked) = &behavior
                 && method == blocked.method
             {
@@ -787,8 +811,16 @@ impl Handler for Worker {
                 blocked.cancelled.add_permits(1);
                 blocked.release.acquire().await.unwrap().forget();
             }
-            let value = Agent(owner).call(method.clone(), input, context).await?;
-            if matches!(behavior, WorkerBehavior::Lost) && method == "send" {
+            let mut value = Agent(owner).call(method.clone(), input, context).await?;
+            if matches!(behavior, WorkerBehavior::OneSessionPage) && method == "list" {
+                let rows = value["sessions"].as_array_mut().unwrap();
+                if rows.len() > 1 {
+                    rows.truncate(1);
+                    let cursor = rows[0]["id"].clone();
+                    value["after"] = cursor;
+                }
+            }
+            if matches!(&behavior, WorkerBehavior::Lost(lost) if method == *lost) {
                 Err("fixture lost reply after real worker admission".into())
             } else {
                 Ok(value)
@@ -810,7 +842,7 @@ async fn workhub_unknown_worker_admission_keeps_original_receipt_across_source_u
     tokio::time::timeout(Duration::from_secs(60), async {
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
         let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
-        activate_worker_mode(&mut fixture,true,true,true,WorkerBehavior::Lost).await;
+        activate_worker_mode(&mut fixture,true,true,true,WorkerBehavior::Lost("send")).await;
         let worker=worker_session(&fixture).await;
         let ready=resolve(&fixture,selection(&fixture).await,Uuid::new_v4()).await;
         let coordinator=ready["session"]["id"].as_str().unwrap().to_owned();
@@ -895,7 +927,7 @@ async fn workhub_queued_input_cannot_adopt_reactivated_worker_bindings() {
         assert_eq!(queued["kind"],"queued");
         activate_workers(&mut fixture,false,true,true).await;drop(socket);
         let resolved=loop {
-            let value=fixture.query("messageExecution",json!({"sessionId":session,"messageId":queued["messageId"]})).await.unwrap();
+            let value=fixture.query("work",json!({"sessionId":session,"target":{"kind":"message","messageId":queued["messageId"]}})).await.unwrap();
             if value["kind"] == "delivered" {break value;}
             tokio::task::yield_now().await;
         };
@@ -904,5 +936,269 @@ async fn workhub_queued_input_cannot_adopt_reactivated_worker_bindings() {
         assert!(facts.events.iter().any(|event| matches!(&event.event.fact,Fact::InvocationEnded {outcome:maka_runtime::event::InvocationOutcome::Failed {message:Some(message),..}} if message == "agent_tools_changed")));
         assert!(tokio::time::timeout(Duration::from_millis(30),listener.accept()).await.is_err());
         fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+
+fn is_coordinator(input: &Value) -> bool {
+    input["messages"].as_array().unwrap().iter().any(|message| {
+        message["role"] == "system"
+            && message["content"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("WorkHub coordinator")
+    })
+}
+fn tool_value(input: &Value) -> Value {
+    let message = input["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|message| message["role"] == "tool")
+        .unwrap();
+    serde_json::from_str(message["content"].as_str().unwrap())
+        .unwrap_or_else(|error| panic!("{error}: {}", message["content"]))
+}
+async fn control_turn(
+    fixture: &Fixture,
+    listener: &TcpListener,
+    coordinator: &str,
+    input: Value,
+) -> Value {
+    fixture.send(coordinator).await.unwrap();
+    let (mut socket, _) = listener.accept().await.unwrap();
+    assert!(is_coordinator(&request(&mut socket).await));
+    task_response(&mut socket, input).await;
+    let (mut socket, _) = listener.accept().await.unwrap();
+    let next = request(&mut socket).await;
+    assert!(is_coordinator(&next));
+    let result = tool_value(&next);
+    response(&mut socket).await;
+    idle(fixture, EXPORT, coordinator).await;
+    result
+}
+async fn active_task(
+    fixture: &Fixture,
+    listener: &TcpListener,
+    worker: &str,
+) -> (String, String, TcpStream) {
+    let ready = resolve(fixture, selection(fixture).await, Uuid::new_v4()).await;
+    let coordinator = ready["session"]["id"].as_str().unwrap().to_owned();
+    fixture.send(&coordinator).await.unwrap();
+    let (mut socket, _) = listener.accept().await.unwrap();
+    request(&mut socket).await;
+    task_response(&mut socket,json!({"operation":"route","worker":"worker","sessionId":worker,"note":"Original assigned work","model":fixture.selection().await})).await;
+    let mut running = None;
+    for _ in 0..2 {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let input = request(&mut socket).await;
+        if is_coordinator(&input) {
+            response(&mut socket).await;
+        } else {
+            running = Some(socket);
+        }
+    }
+    idle(fixture, EXPORT, &coordinator).await;
+    (coordinator, first_task(fixture).await, running.unwrap())
+}
+#[tokio::test]
+async fn workhub_control_preserves_stop_resume_and_unknown_originals_without_retargeting() {
+    for lost in [false, true] {
+        tokio::time::timeout(Duration::from_secs(60), async {
+            let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+            activate_worker_mode(&mut fixture,true,true,true,if lost {WorkerBehavior::Lost("resume")} else {WorkerBehavior::Returned}).await;
+            let worker=worker_session(&fixture).await;
+            let (coordinator,task_id,running)=active_task(&fixture,&listener,&worker).await;
+            let original=query_import(&fixture,hub::EXPORT,"task",json!({"taskId":task_id})).await;
+            let stopped=control_turn(&fixture,&listener,&coordinator,json!({"operation":"control","taskId":task_id,"action":{"kind":"stop"}})).await;
+            assert_eq!(stopped["status"]["kind"],"returned");
+            assert_eq!(stopped["status"]["outcome"]["kind"],"stop");
+            assert_eq!(stopped["status"]["outcome"]["result"]["requested"],true);
+            drop(running);idle(&fixture,"worker",&worker).await;
+            assert_eq!(query_import(&fixture,hub::EXPORT,"task",json!({"taskId":task_id})).await["status"]["progress"]["execution"]["state"],"cancelled");
+            fixture.send(&coordinator).await.unwrap();
+            let (mut socket,_)=listener.accept().await.unwrap();request(&mut socket).await;
+            task_response(&mut socket,json!({"operation":"control","taskId":task_id,"action":{"kind":"resume","model":fixture.selection().await}})).await;
+            let mut resumed=None;let mut worker_calls=0;
+            for _ in 0..2 {
+                let (mut socket,_)=listener.accept().await.unwrap();let input=request(&mut socket).await;
+                if is_coordinator(&input) {resumed=Some(tool_value(&input));response(&mut socket).await;}
+                else {assert!(input["messages"].to_string().contains("Original assigned work"));worker_calls+=1;response_with_text(&mut socket,"Resumed worker result").await;}
+            }
+            assert_eq!(worker_calls,1);idle(&fixture,EXPORT,&coordinator).await;idle(&fixture,"worker",&worker).await;
+            let resumed=resumed.unwrap();assert_eq!(resumed["status"]["kind"],if lost {"uncertain"} else {"returned"});
+            let completed=control_turn(&fixture,&listener,&coordinator,json!({"operation":"inspect","taskId":task_id})).await;
+            assert_eq!(completed["status"]["invocationId"],original["status"]["invocationId"]);
+            assert_ne!(completed["status"]["progress"]["execution"]["invocationId"],original["status"]["invocationId"]);
+            assert_eq!(completed["status"]["progress"]["answer"]["text"],"Resumed worker result");
+            let controls=query_import(&fixture,hub::EXPORT,"controls",json!({})).await;
+            assert_eq!(controls["entries"].as_array().unwrap().len(),2);
+            // New work must not become the target of an old stop's recovery.
+            let later=worker_mutation(&fixture,"send",json!({"sessionId":worker,"message":"Later unrelated work","model":fixture.selection().await})).await;
+            let (mut later_socket,_)=listener.accept().await.unwrap();request(&mut later_socket).await;
+            assert_eq!(control_turn(&fixture,&listener,&coordinator,json!({"operation":"advance_control","controlId":stopped["controlId"]})).await,stopped);
+            let view=query_import(&fixture,"worker","observe",json!({"sessionId":worker})).await;
+            assert_eq!(view["run"]["invocationId"],later["invocationId"]);
+            response(&mut later_socket).await;idle(&fixture,"worker",&worker).await;
+            activate_workers(&mut fixture,true,true,true).await;
+            assert_eq!(query_import(&fixture,hub::EXPORT,"control",json!({"controlId":resumed["controlId"]})).await,resumed);
+            assert_eq!(control_turn(&fixture,&listener,&coordinator,json!({"operation":"advance_control","controlId":resumed["controlId"]})).await,resumed);
+            assert!(tokio::time::timeout(Duration::from_millis(30),listener.accept()).await.is_err());
+            fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
+        }).await.unwrap();
+    }
+}
+#[tokio::test]
+async fn workhub_stop_retracts_only_its_pending_message_and_preserves_unrelated_running_work() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+        activate_workers(&mut fixture,true,true,true).await;
+        let worker=worker_session(&fixture).await;
+        let busy=worker_mutation(&fixture,"send",json!({"sessionId":worker,"message":"Unrelated current work","model":fixture.selection().await})).await;
+        let (mut running,_)=listener.accept().await.unwrap();request(&mut running).await;
+        let ready=resolve(&fixture,selection(&fixture).await,Uuid::new_v4()).await;
+        let coordinator=ready["session"]["id"].as_str().unwrap().to_owned();
+        let queued=control_turn(&fixture,&listener,&coordinator,json!({"operation":"route","worker":"worker","sessionId":worker,"note":"Pending task","model":fixture.selection().await})).await;
+        assert_eq!(queued["status"]["kind"],"queued");
+        let stopped=control_turn(&fixture,&listener,&coordinator,json!({"operation":"control","taskId":queued["taskId"],"action":{"kind":"stop"}})).await;
+        assert_eq!(stopped["status"]["outcome"]["kind"],"retract");assert_eq!(stopped["status"]["outcome"]["result"]["kind"],"committed");
+        assert_eq!(query_import(&fixture,hub::EXPORT,"task",json!({"taskId":queued["taskId"]})).await["status"]["progress"]["kind"],"cancelled");
+        assert_eq!(query_import(&fixture,"worker","observe",json!({"sessionId":worker})).await["run"]["invocationId"],busy["invocationId"]);
+        response(&mut running).await;idle(&fixture,"worker",&worker).await;
+        assert!(tokio::time::timeout(Duration::from_millis(30),listener.accept()).await.is_err());
+        fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn workhub_shared_delivery_never_authorizes_stop_of_the_original_worker_run() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+        activate_workers(&mut fixture,true,true,true).await;
+        let worker=worker_session(&fixture).await;
+        let busy=worker_mutation(&fixture,"send",json!({"sessionId":worker,"message":"Original worker owner","model":fixture.selection().await})).await;
+        let (mut running,_)=listener.accept().await.unwrap();request(&mut running).await;
+        let ready=resolve(&fixture,selection(&fixture).await,Uuid::new_v4()).await;
+        let coordinator=ready["session"]["id"].as_str().unwrap().to_owned();
+        let queued=control_turn(&fixture,&listener,&coordinator,json!({"operation":"route","worker":"worker","sessionId":worker,"note":"Shared steering input","model":fixture.selection().await})).await;
+        let queue=query_import(&fixture,"worker","queue",json!({"sessionId":worker})).await;
+        let promoted=worker_mutation(&fixture,"editQueue",json!({"sessionId":worker,"expectedRevision":queue["revision"],"edit":{"kind":"promote","messageId":queued["status"]["messageId"]}})).await;
+        assert_eq!(promoted["kind"],"committed");
+        // Even an unavailable tool produces a real next step, where steering is consumed.
+        task_response(&mut running,json!({"operation":"workers"})).await;
+        let (mut next,_)=listener.accept().await.unwrap();let input=request(&mut next).await;
+        assert!(!is_coordinator(&input));assert!(input["messages"].to_string().contains("Shared steering input"));
+        let task=query_import(&fixture,hub::EXPORT,"task",json!({"taskId":queued["taskId"]})).await;
+        assert_eq!(task["status"]["progress"]["shared"],true);
+        let stopped=control_turn(&fixture,&listener,&coordinator,json!({"operation":"control","taskId":queued["taskId"],"action":{"kind":"stop"}})).await;
+        assert_eq!(stopped,json!({"kind":"rejected","reason":"shared_work"}));
+        assert_eq!(query_import(&fixture,hub::EXPORT,"controls",json!({})).await["entries"],json!([]));
+        assert_eq!(query_import(&fixture,"worker","observe",json!({"sessionId":worker})).await["run"]["invocationId"],busy["invocationId"]);
+        response(&mut next).await;idle(&fixture,"worker",&worker).await;
+        fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+#[tokio::test]
+async fn workhub_session_tool_browses_live_catalog_across_coordinator_turns() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        for behavior in [WorkerBehavior::Returned, WorkerBehavior::OneSessionPage] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut fixture = Fixture::new(
+                &format!("http://{}/v1", listener.local_addr().unwrap()),
+                1,
+                None,
+            )
+            .await;
+            activate_worker_mode(&mut fixture, true, true, true, behavior).await;
+            let mut expected = std::collections::BTreeSet::new();
+            for _ in 0..6 {
+                expected.insert(worker_session(&fixture).await);
+            }
+            let ready = resolve(&fixture, selection(&fixture).await, Uuid::new_v4()).await;
+            let coordinator = ready["session"]["id"].as_str().unwrap().to_owned();
+            let mut position = Value::Null;
+            let mut found = std::collections::BTreeSet::new();
+            let mut pages = 0;
+            loop {
+                let page = control_turn(
+                    &fixture,
+                    &listener,
+                    &coordinator,
+                    json!({"operation":"sessions","worker":"worker","after":position}),
+                )
+                .await;
+                assert!(page.to_string().encode_utf16().count() < 7500);
+                assert!(page["sessions"].as_array().unwrap().len() <= 4);
+                for session in page["sessions"].as_array().unwrap() {
+                    assert!(found.insert(session["id"].as_str().unwrap().to_owned()));
+                }
+                pages += 1;
+                position = page["after"].clone();
+                if position.is_null() {
+                    break;
+                }
+                assert!(position.as_str().is_some());
+            }
+            assert_eq!(found, expected);
+            assert!(pages > 1);
+            fixture.app.shutdown().await.unwrap();
+            fixture.config.shutdown().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn workhub_wait_returns_worker_answer_in_the_routing_turn_and_cancels_only_observation() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        for cancel in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut fixture = Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+            let entered = Arc::new(tokio::sync::Semaphore::new(0));
+            activate_worker_mode(&mut fixture,true,true,true,WorkerBehavior::Watched(entered.clone())).await;
+            let worker = worker_session(&fixture).await;
+            let ready = resolve(&fixture,selection(&fixture).await,Uuid::new_v4()).await;
+            let coordinator = ready["session"]["id"].as_str().unwrap();
+            let accepted = fixture.send(coordinator).await.unwrap();
+            let (mut socket,_) = listener.accept().await.unwrap();request(&mut socket).await;
+            task_response(&mut socket,json!({"operation":"route","worker":"worker","sessionId":worker,"note":"Return the worker result","model":fixture.selection().await})).await;
+            let mut running = None;
+            let mut task = None;
+            for _ in 0..2 {
+                let (mut socket,_) = listener.accept().await.unwrap();
+                let input = request(&mut socket).await;
+                if is_coordinator(&input) {
+                    let routed = tool_value(&input);
+                    assert_eq!(routed["status"]["kind"],"started");
+                    task = Some(routed["taskId"].clone());
+                    task_response(&mut socket,json!({"operation":"wait","taskId":routed["taskId"]})).await;
+                } else {running=Some(socket);}
+            }
+            entered.acquire().await.unwrap().forget();
+            assert!(tokio::time::timeout(Duration::from_millis(30),listener.accept()).await.is_err());
+            if cancel {
+                fixture.mutation(2,"stop",json!({"sessionId":coordinator,"invocationId":accepted["invocationId"]}),Uuid::new_v4()).await.unwrap();
+                idle(&fixture,EXPORT,coordinator).await;
+                assert!(fixture.app.client().snapshot().instances.iter().filter(|instance| instance.activation.instance() == &id(21)).all(|instance| instance.calls == 0),"watch cleaned before independent worker completion");
+                assert_eq!(query_import(&fixture,"worker","observe",json!({"sessionId":worker})).await["run"]["state"],"running");
+            }
+            response(&mut running.unwrap()).await;
+            if !cancel {
+                let (mut socket,_) = listener.accept().await.unwrap();
+                let input=request(&mut socket).await;
+                let result=tool_value(&input);
+                assert_eq!(result["taskId"],task.unwrap());
+                assert_eq!(result["status"]["progress"]["execution"]["state"],"completed");
+                assert_eq!(result["status"]["progress"]["answer"]["text"],"Elegant response");
+                response(&mut socket).await;
+                idle(&fixture,EXPORT,coordinator).await;
+            }
+            idle(&fixture,"worker",&worker).await;
+            fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
+        }
     }).await.unwrap();
 }

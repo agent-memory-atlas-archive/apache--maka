@@ -26,7 +26,7 @@ use sqlx::{Connection, Row};
 
 mod delivery;
 mod message;
-pub use message::{AssistantExcerpt, MessageObservation};
+pub use message::{AssistantExcerpt, MessageObservation, WorkOrigin};
 mod streams;
 pub use delivery::{StoreStreamEvent, StreamEventPage, StreamFact, ToolSettlement};
 pub use streams::AssistantStreamSeed;

@@ -17,6 +17,7 @@
  * under the License.
  */
 
+mod controls;
 use super::*;
 use contract::{Task, TaskStatus};
 use futures_util::FutureExt;
@@ -81,6 +82,19 @@ impl Tasks {
     deny_unknown_fields
 )]
 enum Input {
+    Control {
+        task_id: String,
+        action: controls::Action,
+    },
+    Controls {
+        after: Option<String>,
+    },
+    InspectControl {
+        control_id: String,
+    },
+    AdvanceControl {
+        control_id: String,
+    },
     Workers,
     Assignments {
         after: Option<String>,
@@ -96,8 +110,12 @@ enum Input {
         model: crate::ModelSelection,
         thinking_level: Option<maka_runtime::execution::ThinkingLevel>,
     },
+    Wait {
+        task_id: String,
+    },
     Inspect {
         task_id: String,
+        cursor: Option<crate::contract::AnswerCursor>,
     },
     Advance {
         task_id: String,
@@ -112,6 +130,18 @@ struct Assignment {
     binding: String,
     operation: Uuid,
     input: Value,
+}
+struct Call<'a> {
+    worker: &'a str,
+    binding: &'a str,
+    operation: Uuid,
+    method: &'a str,
+    input: &'a Value,
+}
+enum DispatchObservation {
+    Pending,
+    Unavailable,
+    Reply(Box<OperationReply>),
 }
 pub(super) fn prepare(
     context: &NativeContext,
@@ -153,7 +183,7 @@ pub(super) fn prepare(
         vec![ToolRegistration {
         definition: ToolDefinition {
             provider: None, name: NAME.into(),
-            description: "Coordinate work using the explicitly selected Agent services. List workers and their sessions before routing. Route preserves the original user request and adds your note. Admission is not completion. Inspect the returned taskId after uncertain replies; advance only resumes that same frozen dispatch and never redirects it. Attachment transfer and new-worker creation are not yet available.".into(),
+            description: "Coordinate work using the explicitly selected Agent services. List workers and their sessions before routing. Sessions browses the live catalog in ID order, returning display excerpts and an after cursor; pass that cursor unchanged to continue. Changes before the cursor require a fresh browse. Route preserves the original user request and adds your note. Admission is not completion. Inspect the returned taskId after uncertain replies; advance only resumes that same frozen dispatch and never redirects it. Wait observes an admitted task until it completes, needs input, pauses, or becomes unavailable; use it to receive the result during this conversation. Inspect returns bounded original answer pages; continue with its exact cursor. Control freezes stop/resume on that task's observed work; shared delivery cannot control the whole Run. Use controls and inspect_control after a missing reply, or advance_control for the same original operation. A requested stop is not confirmed termination. Attachment transfer and new-worker creation are not yet available.".into(),
             input_schema: schemars::schema_for!(Input).into(), output_schema: None, freeform: None,
         },
         nesting: ToolNesting::DirectOnly, semantics: ToolSemantics::ExclusiveStep,
@@ -318,6 +348,17 @@ impl Hub {
             return Err("workhub_closed".into());
         }
         match input {
+            Input::Control { task_id, action } => {
+                self.control_start(&task_id, action, context, cancellation)
+                    .await
+            }
+            Input::Controls { after } => self.controls(after).await,
+            Input::InspectControl { control_id } => {
+                self.control(&control_id, false, cancellation).await
+            }
+            Input::AdvanceControl { control_id } => {
+                self.control(&control_id, true, cancellation).await
+            }
             Input::Assignments { after } => self.task_list(after).await,
             Input::Workers => Ok(
                 serde_json::json!({"workers":self.tasks.workers.iter().map(|(name,binding)| serde_json::json!({"name":name,"available":binding.is_some()})).collect::<Vec<_>>()}),
@@ -336,7 +377,20 @@ impl Hub {
                     cancellation,
                 )?;
                 self.observe_request(&request, async {
-                    request.call(&worker, 0, "list".into(), serde_json::json!({"filter":"all","position":after.map_or(serde_json::json!({"kind":"start"}), |cursor| serde_json::json!({"kind":"after","cursor":cursor}))}), Attachments::default())?.await
+                    // Each model turn changes the global catalog revision. Refresh at the
+                    // original anchor explicitly; do not reuse or silently relax a fence.
+                    let position = after.as_ref().map_or_else(||serde_json::json!({"kind":"start"}),|cursor|serde_json::json!({"kind":"at","cursor":cursor}));
+                    let mut page = request.call(&worker, 0, "list".into(), serde_json::json!({"filter":"all","position":position}), Attachments::default())?.await?;
+                    if let Some(anchor) = after.as_deref() {
+                        let rows = page["sessions"].as_array().ok_or("workhub_sessions_invalid")?;
+                        if !rows.iter().any(|row|row["id"].as_str().is_some_and(|id|id > anchor)) && !page["after"].is_null() {
+                            // A maximum-size summary can fill a native page on its own.
+                            // Continue that newly read page with its actual revision.
+                            page = request.call(&worker, 0, "list".into(), serde_json::json!({"filter":"all","position":{"kind":"after","cursor":page["after"],"revision":page["revision"]}}),Attachments::default())?.await?;
+                        }
+                    }
+                    session_page(page, after.as_deref())
+
                 }).await
             }
             Input::Route {
@@ -433,11 +487,51 @@ impl Hub {
                         Err(_) => return Err("workhub_route_commit_unknown".into()),
                     }
                 }
-                self.task(&id, true, cancellation).await
+                self.task(&id, true, None, cancellation).await
             }
-            Input::Inspect { task_id } => self.task(&task_id, false, cancellation).await,
-            Input::Advance { task_id } => self.task(&task_id, true, cancellation).await,
+            Input::Wait { task_id } => self.wait_task(&task_id, context, cancellation).await,
+            Input::Inspect { task_id, cursor } => {
+                self.task(&task_id, false, cursor, cancellation).await
+            }
+            Input::Advance { task_id } => self.task(&task_id, true, None, cancellation).await,
         }
+    }
+    async fn wait_task(
+        &self,
+        id: &str,
+        context: ToolCallContext,
+        cancellation: CancellationToken,
+    ) -> Result<Value, String> {
+        let current = self.task(id, false, None, cancellation.clone()).await?;
+        if !waiting(&current) {
+            return Ok(current);
+        }
+        let assignment = self.assignment(id).await?;
+        let request = self.tasks.services.request(
+            Identity::Agent {
+                invocation: context.invocation,
+                operation_id: Some(context.operation_id),
+            },
+            cancellation.clone(),
+        )?;
+        self.observe_request(&request, async {
+            let input = serde_json::json!({"sessionId":assignment.input["sessionId"]});
+            let observed = request.call(&assignment.worker, 0, "observe".into(), input, Attachments::default())?.await?;
+            let through = observed["through"].as_u64().ok_or("workhub_observation_invalid")?;
+            let mut subscription = request.subscribe(&assignment.worker, 0, "watch".into(), serde_json::json!({"sessionId":assignment.input["sessionId"],"after":through}), Attachments::default())?.await?;
+            loop {
+                // Re-read after admission to cover completion between observe and watch.
+                let current = self.task(id, false, None, cancellation.clone()).await?;
+                if !waiting(&current) { return Ok(current); }
+                tokio::select! {
+                    biased;
+                    () = cancellation.cancelled() => return Err("workhub_cancelled".into()),
+                    value = subscription.recv() => if value.is_none() {return Err("workhub_observation_closed".into());},
+                }
+            }
+            // Dropping demand cancels only watch. The original request finish joins
+            // the actual subscription executor, never the worker's independent Run.
+        }).await
     }
     async fn observe_request<T>(
         &self,
@@ -469,10 +563,67 @@ impl Hub {
         }
         Ok(())
     }
+    async fn dispatch(
+        &self,
+        request: &maka_runtime_host::application::NativeRequest,
+        call: Call<'_>,
+        advance: bool,
+    ) -> Result<DispatchObservation, String> {
+        let same_binding = self
+            .tasks
+            .workers
+            .get(call.worker)
+            .and_then(Option::as_ref)
+            .is_some_and(|binding| binding.execution_basis() == call.binding);
+        let recorded = self
+            .agent
+            .0
+            .store
+            .application_intent(
+                self.tasks.source.deployment,
+                self.agent.0.data_source.namespace.clone(),
+                call.operation,
+            )
+            .await
+            .map_err(|_| "workhub_original_operation_unavailable")?;
+        if let Some(recorded) = recorded {
+            let reference = recorded.reference;
+            let observed = request.recover(reference.clone())?.await?;
+            if observed.is_some() || !advance || !same_binding {
+                return Ok(DispatchObservation::Reply(Box::new(OperationReply {
+                    reference,
+                    receipt: observed.map_or(Receipt::NotRecorded, |observation| {
+                        Receipt::Recorded {
+                            outcome: observation.outcome,
+                            cleanup: observation.cleanup,
+                        }
+                    }),
+                })));
+            }
+        } else if !advance {
+            return Ok(DispatchObservation::Pending);
+        }
+        if !same_binding {
+            return Ok(DispatchObservation::Unavailable);
+        }
+        Ok(DispatchObservation::Reply(Box::new(
+            request
+                .mutate(
+                    call.worker,
+                    0,
+                    call.method.into(),
+                    call.input.clone(),
+                    call.operation,
+                    Attachments::default(),
+                )?
+                .await?,
+        )))
+    }
     pub(super) async fn task(
         &self,
         id: &str,
         advance: bool,
+        cursor: Option<crate::contract::AnswerCursor>,
         cancellation: CancellationToken,
     ) -> Result<Value, String> {
         if self.tasks.cleanup_failed() {
@@ -493,52 +644,13 @@ impl Hub {
             cancellation,
         )?;
         self.observe_request(&request, async {
-            let recorded = self
-                .agent
-                .0
-                .store
-                .application_intent(
-                    self.tasks.source.deployment,
-                    self.agent.0.data_source.namespace.clone(),
-                    assignment.operation,
-                )
-                .await
-                .map_err(|_| "workhub_original_operation_unavailable")?;
-            let reply = if let Some(recorded) = recorded {
-                // Always recover the exact original provider/source, even after rebinding.
-                let reference = recorded.reference;
-                let observed = request.recover(reference.clone())?.await?;
-                if observed.is_none() && advance && same_binding {
-                    Some(request.mutate(&assignment.worker, 0, "send".into(), assignment.input.clone(), assignment.operation, Attachments::default())?.await?)
-                } else {
-                    Some(OperationReply {
-                        reference,
-                        receipt: observed.map_or(Receipt::NotRecorded, |observation| {
-                            Receipt::Recorded {
-                                outcome: observation.outcome,
-                                cleanup: observation.cleanup,
-                            }
-                        }),
-                    })
-                }
-            } else if advance {
-                if !same_binding {
-                    return encode_task(id, &assignment, TaskStatus::Unavailable);
-                }
-                Some(
-                    request
-                        .mutate(
-                            &assignment.worker,
-                            0,
-                            "send".into(),
-                            assignment.input.clone(),
-                            assignment.operation,
-                            Attachments::default(),
-                        )?
-                        .await?,
-                )
-            } else {
-                None
+            let reply = match self.dispatch(&request, Call {
+                worker: &assignment.worker, binding: &assignment.binding,
+                operation: assignment.operation, method: "send", input: &assignment.input,
+            }, advance).await? {
+                DispatchObservation::Pending => None,
+                DispatchObservation::Unavailable => return encode_task(id, &assignment, TaskStatus::Unavailable),
+                DispatchObservation::Reply(reply) => Some(*reply),
             };
             let status = match reply {
                 None => TaskStatus::Pending,
@@ -562,8 +674,8 @@ impl Hub {
                             progress: if same_binding {
                                 async {
                                     request.call(
-                                        &assignment.worker, 0, "execution".into(),
-                                        serde_json::json!({"sessionId":session,"invocationId":value["invocationId"]}),
+                                        &assignment.worker, 0, "work".into(),
+                                        serde_json::json!({"sessionId":session,"target":{"kind":"invocation","invocationId":value["invocationId"]},"cursor":cursor}),
                                         Attachments::default(),
                                     )?.await
                                 }.await.ok().and_then(|value| serde_json::from_value(value).ok())
@@ -578,8 +690,8 @@ impl Hub {
                             progress: if same_binding {
                                 async {
                                     request.call(
-                                        &assignment.worker, 0, "messageExecution".into(),
-                                        serde_json::json!({"sessionId":session,"messageId":value["messageId"]}),
+                                        &assignment.worker, 0, "work".into(),
+                                        serde_json::json!({"sessionId":session,"target":{"kind":"message","messageId":value["messageId"]},"cursor":cursor}),
                                         Attachments::default(),
                                     )?.await
                                 }.await.ok().and_then(|value| serde_json::from_value(value).ok())
@@ -624,4 +736,47 @@ fn child_id(id: &str) -> Uuid {
     bytes[6] = (bytes[6] & 0x0f) | 0x80;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     Uuid::from_bytes(bytes)
+}
+
+fn session_page(page: Value, after: Option<&str>) -> Result<Value, String> {
+    let source = page["sessions"]
+        .as_array()
+        .ok_or("workhub_sessions_invalid")?;
+    let source = source
+        .iter()
+        .filter(|row| after.is_none_or(|cursor| row["id"].as_str().is_some_and(|id| id > cursor)))
+        .collect::<Vec<_>>();
+    let mut sessions = Vec::new();
+    for session in source.iter().take(4) {
+        sessions.push(serde_json::json!({
+            "id":session["id"], "titleExcerpt":excerpt(session["title"].as_str().ok_or("workhub_sessions_invalid")?,64),
+            "workspaceExcerpt":excerpt(session["workspace"]["path"].as_str().ok_or("workhub_sessions_invalid")?,96),
+            "activity":session["activity"], "archived":session["archived"],
+        }));
+    }
+    let after = if source.len() > sessions.len() || !page["after"].is_null() {
+        sessions.last().map(|last| last["id"].clone())
+    } else {
+        None
+    };
+    Ok(serde_json::json!({"sessions":sessions,"after":after}))
+}
+fn excerpt(text: &str, bytes: usize) -> String {
+    let end = text.floor_char_boundary(text.len().min(bytes));
+    if end == text.len() {
+        text.into()
+    } else {
+        format!("{}…", &text[..end])
+    }
+}
+
+fn waiting(task: &Value) -> bool {
+    let progress = &task["status"]["progress"];
+    progress["kind"] == "pending"
+        || (progress["kind"] == "delivered"
+            && progress["pendingInteractions"] == 0
+            && matches!(
+                progress["execution"]["state"].as_str(),
+                Some("admitted" | "running")
+            ))
 }
