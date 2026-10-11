@@ -24,7 +24,7 @@ use contract::{Task, TaskStatus};
 use futures_util::FutureExt;
 use maka_plugin_core::{
     deployment::DeploymentRef,
-    operation::{OperationCleanup, OperationOutcome, OperationReply, Receipt},
+    operation::{OperationCleanup, OperationOutcome, OperationReply, Receipt, RecoveryRef},
 };
 use maka_plugins::call::{Attachments, Identity};
 use maka_runtime::{
@@ -563,8 +563,11 @@ impl Hub {
             cancellation.clone(),
         )?;
         self.observe_request(&request, async {
-            let input = serde_json::json!({"sessionId":delivery.session_id});
-            let observed = request.call(&assignment.worker, 0, "observe".into(), input, Attachments::default())?.await?;
+            let original = self.agent.0.store.application_intent(
+                self.tasks.source.deployment, self.agent.0.data_source.namespace.clone(), assignment.operation,
+            ).await.map_err(|_| "workhub_original_operation_unavailable")?
+                .ok_or("workhub_original_operation_missing")?;
+            let observed = self.observe_original(&request, &assignment, &original.reference, &delivery.session_id).await?;
             let through = observed["through"].as_u64().ok_or("workhub_observation_invalid")?;
             let mut subscription = request.subscribe(&assignment.worker, 0, "watch".into(), serde_json::json!({"sessionId":delivery.session_id,"after":through}), Attachments::default())?.await?;
             loop {
@@ -580,6 +583,53 @@ impl Hub {
             // Dropping demand cancels only watch. The original request finish joins
             // the actual subscription executor, never the worker's independent Run.
         }).await
+    }
+    /// Source comparison permits only observation through a currently authorized
+    /// import. It never makes a replacement binding eligible for dispatch.
+    async fn observe_original(
+        &self,
+        request: &maka_runtime_host::application::NativeRequest,
+        assignment: &Assignment,
+        original: &RecoveryRef,
+        session: &str,
+    ) -> Result<Value, String> {
+        let binding = self
+            .tasks
+            .workers
+            .get(&assignment.worker)
+            .and_then(Option::as_ref)
+            .ok_or("workhub_worker_unavailable")?;
+        if original.source.state_domain != self.tasks.source.state_domain
+            || original.source.deployment != self.tasks.source.deployment
+            || binding.provider().instance() != &original.namespace
+            || binding.export() != original.export
+            || binding.contract() != &original.contract
+            || original.method != "send"
+            || original.operation != assignment.operation
+        {
+            return Err("workhub_original_source_changed".into());
+        }
+        let observed = request
+            .call(
+                &assignment.worker,
+                0,
+                "observe".into(),
+                serde_json::json!({"sessionId":session}),
+                Attachments::default(),
+            )?
+            .await?;
+        let expected = crate::contract::DataSource {
+            state_domain: original.source.state_domain.clone(),
+            deployment: original.source.deployment,
+            namespace: original.namespace.clone(),
+        };
+        let actual: crate::contract::DataSource =
+            serde_json::from_value(observed["session"]["dataSource"].clone())
+                .map_err(|_| "workhub_original_source_invalid")?;
+        if actual != expected || observed["session"]["id"] != session {
+            return Err("workhub_original_source_changed".into());
+        }
+        Ok(observed)
     }
     async fn observe_request<T>(
         &self,
@@ -720,15 +770,19 @@ impl Hub {
                             outcome: OperationOutcome::Returned { value },
                             cleanup: OperationCleanup::Confirmed,
                         },
-                    ..
+                    reference,
                 }) => {
                     if value["sessionId"] != delivery.session_id {
                         return Err("workhub_delivery_invalid".into());
                     }
                     let session = delivery.session_id;
+                    let readable = same_binding || (
+                        matches!(value["kind"].as_str(), Some("started" | "queued"))
+                        && self.observe_original(&request, &assignment, &reference, &session).await.is_ok()
+                    );
                     match value["kind"].as_str() {
                         Some("started") => TaskStatus::Started {
-                            progress: if same_binding {
+                            progress: if readable {
                                 async {
                                     request.call(
                                         &assignment.worker, 0, "work".into(),
@@ -744,7 +798,7 @@ impl Hub {
                                 .into(),
                         },
                         Some("queued") => TaskStatus::Queued {
-                            progress: if same_binding {
+                            progress: if readable {
                                 async {
                                     request.call(
                                         &assignment.worker, 0, "work".into(),

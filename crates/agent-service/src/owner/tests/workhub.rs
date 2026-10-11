@@ -35,6 +35,10 @@ async fn activate_worker_mode(
     granted: bool,
     behavior: WorkerBehavior,
 ) {
+    let denied_query = match &behavior {
+        WorkerBehavior::DeniedQuery(method) => Some(*method),
+        _ => None,
+    };
     let source = fixture.app.source().unwrap().clone();
     fixture.app.shutdown().await.unwrap();
     if install {
@@ -63,7 +67,10 @@ async fn activate_worker_mode(
             let base = package(true);
             let mut manifest = base.manifest().clone();
             manifest.id = "worker".into();
-            if !matches!(behavior, WorkerBehavior::Returned) {
+            if !matches!(
+                behavior,
+                WorkerBehavior::Returned | WorkerBehavior::DeniedQuery(_)
+            ) {
                 manifest
                     .application
                     .as_mut()
@@ -207,7 +214,10 @@ async fn activate_worker_mode(
     }
     let mut native = NativeRegistry::default();
     crate::provide(&mut native).unwrap();
-    if !matches!(behavior, WorkerBehavior::Returned) {
+    if !matches!(
+        behavior,
+        WorkerBehavior::Returned | WorkerBehavior::DeniedQuery(_)
+    ) {
         native
             .insert(
                 "fixture.lost-agent".into(),
@@ -264,6 +274,7 @@ async fn activate_worker_mode(
                             "editQueue",
                         ]
                         .into_iter()
+                        .filter(|method| Some(*method) != denied_query)
                         .map(str::to_owned)
                         .collect(),
                         recovery: true,
@@ -720,8 +731,23 @@ async fn workhub_real_model_routes_original_input_and_recovers_child_receipt_wit
         let restored=query_import(&fixture,hub::EXPORT,"task",json!({"taskId":task_id})).await;
         assert_eq!(restored["status"]["invocationId"],task["status"]["invocationId"]);
         assert_eq!(restored["operation"],task["operation"]);
-        // Opaque replacement bindings cannot reinterpret the original worker receipt.
-        assert!(restored["status"]["progress"].is_null());
+        // A new activation reads the original source without becoming the old executor.
+        assert_eq!(restored["status"]["progress"],task["status"]["progress"]);
+        for method in ["observe", "work"] {
+            activate_worker_mode(&mut fixture,false,true,true,WorkerBehavior::DeniedQuery(method)).await;
+            let denied=query_import(&fixture,hub::EXPORT,"task",json!({"taskId":task_id})).await;
+            assert_eq!(denied["status"]["invocationId"],task["status"]["invocationId"]);
+            assert!(denied["status"]["progress"].is_null(),"source identity is never a {method} grant");
+        }
+        for field in ["session", "stateDomain", "deployment", "namespace"] {
+            let calls=Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            activate_worker_mode(&mut fixture,true,true,true,WorkerBehavior::ChangedObservation(field,calls.clone())).await;
+            let changed=query_import(&fixture,hub::EXPORT,"task",json!({"taskId":task_id})).await;
+            assert_eq!(changed["status"]["invocationId"],task["status"]["invocationId"]);
+            assert!(changed["status"]["progress"].is_null(),"{field} must match the original receipt");
+            assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst),0,"mismatched observations cannot trigger work queries");
+        }
+        assert_eq!(fixture.store.application_intents(fixture.app.source().unwrap().deployment,id(1),0,128).await.unwrap().len(),1);
         assert!(tokio::time::timeout(Duration::from_millis(30),listener.accept()).await.is_err());
         fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
     }).await.unwrap();
@@ -759,6 +785,13 @@ async fn workhub_routing_to_busy_worker_follows_exact_queued_message_after_later
         idle(&fixture,"worker",&worker).await;
         let original=query_import(&fixture,hub::EXPORT,"task",json!({"taskId":task_id})).await;
         assert_eq!(original,delivered,"task follows its message, never the Session tip");
+        activate_workers(&mut fixture,false,true,true).await;
+        let restored=query_import(&fixture,hub::EXPORT,"task",json!({"taskId":task_id})).await;
+        assert_eq!(restored,original,"restarted observation still follows the original message");
+        let refused=control_turn(&fixture,&listener,&coordinator,json!({"operation":"control","taskId":task_id,"action":{"kind":"resume","model":fixture.selection().await}})).await;
+        assert_eq!(refused["status"]["kind"],"unavailable","readable history cannot authorize replacement execution");
+        assert_eq!(fixture.store.application_intents(fixture.app.source().unwrap().deployment,id(1),0,128).await.unwrap().len(),1);
+        assert!(tokio::time::timeout(Duration::from_millis(30),listener.accept()).await.is_err());
         fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
     }).await.unwrap();
 }
@@ -804,6 +837,8 @@ async fn workhub_selected_worker_requires_independent_native_dispatch_grant() {
 enum WorkerBehavior {
     Returned,
     OneSessionPage,
+    DeniedQuery(&'static str),
+    ChangedObservation(&'static str, Arc<std::sync::atomic::AtomicUsize>),
     Lost(&'static str),
     Watched(Arc<tokio::sync::Semaphore>),
     Blocked(Arc<Blocked>),
@@ -838,7 +873,25 @@ impl Handler for Worker {
                 blocked.cancelled.add_permits(1);
                 blocked.release.acquire().await.unwrap().forget();
             }
+            if let WorkerBehavior::ChangedObservation(_, calls) = &behavior
+                && method == "work"
+            {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
             let mut value = Agent(owner).call(method.clone(), input, context).await?;
+            if let WorkerBehavior::ChangedObservation(field, _) = &behavior
+                && method == "observe"
+            {
+                match *field {
+                    "session" => value["session"]["id"] = json!("different-session"),
+                    "stateDomain" => {
+                        value["session"]["dataSource"][field] = json!("different-root")
+                    }
+                    "deployment" => value["session"]["dataSource"][field] = json!(Uuid::new_v4()),
+                    "namespace" => value["session"]["dataSource"][field] = json!(id(99)),
+                    _ => panic!("unknown observation fixture field"),
+                }
+            }
             if matches!(behavior, WorkerBehavior::OneSessionPage) && method == "list" {
                 let rows = value["sessions"].as_array_mut().unwrap();
                 if rows.len() > 1 {
@@ -1281,7 +1334,7 @@ async fn workhub_creates_selected_worker_and_transfers_original_attachment_bytes
         activate_workers(&mut fixture,false,true,true).await;
         let restored=query_import(&fixture,hub::EXPORT,"task",json!({"taskId":task["taskId"]})).await;
         assert_eq!(restored["status"]["sessionId"],worker);assert_eq!(restored["status"]["invocationId"],task["status"]["invocationId"]);
-        assert!(restored["status"]["progress"].is_null());
+        assert_eq!(restored["status"]["progress"]["answer"]["text"],"Elegant response");
         assert_eq!(fixture.store.application_intents(fixture.app.source().unwrap().deployment,id(1),0,128).await.unwrap().len(),3);
         fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
     }).await.unwrap();
