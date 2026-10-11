@@ -80,7 +80,8 @@ impl OperationRequest {
             .get(&self.method)
             .ok_or_else(|| invalid("undeclared operation method"))?;
         if self.capture.is_some_and(|id| id.is_nil())
-            || self.capture.is_some() == method.resources.is_empty()
+            || (self.capture.is_some() && method.resources.is_empty())
+            || (self.capture.is_none() && method.resources.values().any(|slot| !slot.optional))
         {
             return Err(invalid(
                 "operation capture does not match declared resources",

@@ -14003,6 +14003,7 @@ for (const target of ['desktop', 'tui']) {
       sessionId: session.id,
       message: 'Hello',
       executor: external,
+      attachments: [],
     });
     assert.equal(execute.recovery.format, 'maka.agent.draft-send@1');
     const original = { ...reference, method: 'execute' };
@@ -14039,7 +14040,7 @@ for (const target of ['desktop', 'tui']) {
       false,
     );
   });
-  test(`${target} external composer preserves attachments and can create without a Host model`, () => {
+  test(`${target} external composer freezes attachments for execute and can create without a Host model`, () => {
     const client = new Client(workspace).start();
     client.state.model = null;
     client.state.modelRefreshing = true;
@@ -14063,10 +14064,27 @@ for (const target of ['desktop', 'tui']) {
     };
     client.state.attachments.files.push(file);
     client.component('send', draft);
-    assert.equal(client.state.notice, 'executionAttachments');
     assert.deepEqual(client.state.attachments.files, [file]);
     assert.equal(client.state.command, null);
-    assert.equal(client.output.actions.length, 0);
+    client.query('read', { text: 'Hello', metadata: draft.snapshot.text });
+    const execute = client.find('execute');
+    assert.deepEqual(execute.input, {
+      sessionId: session.id,
+      message: 'Hello',
+      executor: external,
+      attachments: ['attached'],
+    });
+    assert.deepEqual(execute.recovery.attachments, ['attached']);
+    const rejected = returned({
+      kind: 'rejected',
+      sessionId: session.id,
+      reason: 'skills_unavailable',
+      skills: [],
+    });
+    rejected.reply.reference = { ...reference, method: 'execute' };
+    client.complete(execute, rejected);
+    assert.deepEqual(client.state.attachments.files, [file]);
+    assert.equal(client.state.command, null);
     client.raw('home-new');
     assert.ok(client.find('create'));
   });

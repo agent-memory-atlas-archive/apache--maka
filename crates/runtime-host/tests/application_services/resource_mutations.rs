@@ -35,7 +35,14 @@ async fn application(
     issuer: &Issuer,
     handler: Arc<dyn Handler>,
 ) -> Application {
-    let declared = resource_contract();
+    application_contract(store, issuer, handler, resource_contract()).await
+}
+async fn application_contract(
+    store: Arc<EventLog>,
+    issuer: &Issuer,
+    handler: Arc<dyn Handler>,
+    declared: Contract,
+) -> Application {
     let (provider, consumer) = mutation_packages();
     let rewrite = |old: Package| {
         let mut declaration = old.manifest().application.clone().unwrap();
@@ -555,6 +562,105 @@ async fn received_original_payload_reservation_survives_prepare_and_real_caller_
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         app.shutdown().await.unwrap();
         store.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn optional_slots_keep_original_resource_capture_and_recovery() {
+    struct Probe;
+    impl Handler for Probe {
+        fn call(&self, _: String, _: Value, context: Context) -> BoxFuture<'static, Result<Value>> {
+            Box::pin(async move { Ok(json!(context.attachments().len().to_string())) })
+        }
+    }
+    tokio::time::timeout(Duration::from_secs(20), async {
+        let (_dir, _, store) = store().await;
+        let issuer = Issuer::default();
+        let mut contract = resource_contract();
+        let Interface::Service { methods } = &mut contract.interface else {
+            unreachable!()
+        };
+        methods
+            .get_mut("echo")
+            .unwrap()
+            .resources
+            .get_mut("text")
+            .unwrap()
+            .optional = true;
+        let app = application_contract(store.clone(), &issuer, Arc::new(Probe), contract).await;
+        let client = app.client();
+        let binding = binding(&client).await;
+        for present in [false, true] {
+            let resources = if present {
+                bytes(5).0
+            } else {
+                Attachments::default()
+            };
+            let prepared = client
+                .prepare_mutation(
+                    binding.clone(),
+                    "echo".into(),
+                    json!("public"),
+                    scope(&issuer, true),
+                    Uuid::new_v4(),
+                    resources.into(),
+                )
+                .await
+                .unwrap();
+            let reference = prepared.reference().clone();
+            let intent = store
+                .record_application_intent(
+                    reference.source.clone(),
+                    prepared.consumer().instance().clone(),
+                    reference.clone(),
+                    Value::Null,
+                )
+                .await
+                .unwrap();
+            let result = client
+                .mutate(prepared, intent)
+                .await
+                .unwrap()
+                .completion()
+                .await;
+            result.cleanup.unwrap();
+            assert_eq!(
+                returned(result.reply),
+                json!(usize::from(present).to_string())
+            );
+            let observed = client
+                .recover(
+                    client.activation(&id(2)).unwrap(),
+                    reference,
+                    scope(&issuer, true),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(matches!(
+                observed.outcome,
+                OperationOutcome::Returned { .. }
+            ));
+        }
+        let mut resources = bytes(5).0;
+        let value = resources.remove("text").unwrap();
+        resources.insert("unknown".into(), value);
+        assert!(
+            client
+                .prepare_mutation(
+                    binding,
+                    "echo".into(),
+                    json!("public"),
+                    scope(&issuer, true),
+                    Uuid::new_v4(),
+                    resources.into()
+                )
+                .await
+                .is_err()
+        );
+        app.shutdown().await.unwrap();
     })
     .await
     .unwrap();

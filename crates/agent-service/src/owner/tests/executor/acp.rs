@@ -382,7 +382,7 @@ async fn reject_changed_authority(f: &Fixture, session: &str) {
                 CancellationToken::new(),
             )
             .unwrap();
-        let mut input = json!({"invocation":invocation,"conversationKey":"untrusted shared key","message":"must not run","cwd":f.workspace,"settings":{}});
+        let mut input = json!({"invocation":invocation,"conversationKey":"untrusted shared key","attachmentCount":0,"message":"must not run","cwd":f.workspace,"settings":{}});
         if field == "invocation" {
             input["invocation"]["session_id"] = json!("another-session");
         } else {
@@ -493,4 +493,90 @@ async fn native_acp_stop_settles_the_actual_process_before_releasing_execution()
     })
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn native_acp_v1_forwards_actual_attachments_and_rejects_oversized_prompt_before_dispatch() {
+    attachment_prompt(1).await;
+}
+#[tokio::test]
+async fn native_acp_v2_forwards_actual_attachments_and_rejects_oversized_prompt_before_dispatch() {
+    attachment_prompt(2).await;
+}
+async fn attachment_prompt(protocol: u8) {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    tokio::time::timeout(Duration::from_secs(90), async {
+        let (mut f, control, trace, mut configuration) = setup(protocol).await;
+        configuration.agent.args.push("attachments".into());
+        activate_backend(&mut f, true, None, true, Some(configuration), &[]).await;
+        let session = f.create("ACP attachments").await;
+        let image = b"\x89PNG\r\n\x1a\nactual binary pixels";
+        let pdf = b"%PDF-1.7\n\0actual binary document";
+        let text = "User attachment 独立字节\n";
+        let mut ids = Vec::new();
+        for (name, bytes) in [("notes.md",text.as_bytes()), ("image.png",image.as_slice()), ("document.pdf",pdf.as_slice())] {
+            let uploaded = super::super::attachments::upload(&f, &session, name, bytes, Uuid::new_v4()).await.unwrap();
+            ids.push(uploaded["attachment"]["id"].clone());
+        }
+        let first = f.mutation(2,"execute",json!({"sessionId":session,"message":"","attachments":ids,"executor":{"executor":"external","settings":{}}}),Uuid::new_v4()).await.unwrap();
+        assert_eq!(first["kind"],"started");
+        let permission = super::super::files::pending(&f, &session).await;
+        super::super::files::answer(&f, &permission, Some("session")).await;
+        let _probe = if protocol != 2 { Some(control.accept().await.unwrap().0) } else { None };
+        let (_stream, _) = control.accept().await.unwrap();
+        f.drained().await;
+        let observed = work(&f,&session,&first).await;
+        assert_eq!(observed["execution"]["state"],"completed","{observed}");
+        let requests = std::fs::read_to_string(&trace).unwrap();
+        let requests: Vec<Value> = requests.lines().map(|line|serde_json::from_str(line).unwrap()).collect();
+        let prompt = &requests.iter().find(|v| v["method"] == "session/prompt").unwrap()["params"]["prompt"];
+        let blocks = prompt.as_array().unwrap();
+        assert!(blocks.iter().any(|v| v["type"]=="resource" && v["resource"]["text"]==text));
+        assert!(blocks.iter().any(|v| v["type"]=="image" && v["data"]==STANDARD.encode(image) && v["mimeType"]=="image/png"));
+        assert!(blocks.iter().any(|v| v["type"]=="resource" && v["resource"]["blob"]==STANDARD.encode(pdf) && v["resource"]["mimeType"]=="application/pdf"));
+        assert!(!prompt.to_string().contains(&f.workspace.to_string_lossy().to_string()));
+        for id in &ids { assert!(!prompt.to_string().contains(id.as_str().unwrap())); }
+        let mut large_image = vec![255;800_000];
+        large_image[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        let large = super::super::attachments::upload(&f, &session, "large.png", &large_image, Uuid::new_v4()).await.unwrap();
+        let rejected = f.mutation(2,"execute",json!({"sessionId":session,"message":"too large","attachments":[large["attachment"]["id"]],"executor":{"executor":"external","settings":{}}}),Uuid::new_v4()).await.unwrap();
+        f.drained().await;
+        let observed = work(&f,&session,&rejected).await;
+        assert_eq!(observed["execution"]["state"],"failed","{observed}");
+        let third = execute(&f, &session, "after attachment rejection").await;
+        f.drained().await;
+        assert_eq!(work(&f,&session,&third).await["execution"]["state"],"completed");
+        let requests=std::fs::read_to_string(&trace).unwrap();
+        let requests:Vec<Value>=requests.lines().map(|line|serde_json::from_str(line).unwrap()).collect();
+        assert_eq!(requests.iter().filter(|v|v["method"]=="session/prompt").count(),2,"invalid attachment prompt must never reach the peer");
+        f.app.shutdown().await.unwrap(); f.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn native_acp_rejects_unsupported_media_then_accepts_plain_text_attachment() {
+    tokio::time::timeout(Duration::from_secs(90), async {
+        let (mut f,control,trace,configuration)=setup(2).await;
+        activate_backend(&mut f,true,None,true,Some(configuration),&[]).await;
+        let session=f.create("Text-only peer").await;
+        let image=super::super::attachments::upload(&f,&session,"image.png",b"\x89PNG\r\n\x1a\nactual image",Uuid::new_v4()).await.unwrap();
+        let accepted=f.mutation(2,"execute",json!({"sessionId":session,"message":"inspect image","attachments":[image["attachment"]["id"]],"executor":{"executor":"external","settings":{}}}),Uuid::new_v4()).await.unwrap();
+        let permission=super::super::files::pending(&f,&session).await;
+        super::super::files::answer(&f,&permission,Some("session")).await;
+        let (_first,_)=control.accept().await.unwrap();
+        f.drained().await;
+        assert_eq!(work(&f,&session,&accepted).await["execution"]["state"],"failed");
+        let text=super::super::attachments::upload(&f,&session,"notes.txt",b"actual text attachment",Uuid::new_v4()).await.unwrap();
+        let accepted=f.mutation(2,"execute",json!({"sessionId":session,"message":"inspect text","attachments":[text["attachment"]["id"]],"executor":{"executor":"external","settings":{}}}),Uuid::new_v4()).await.unwrap();
+        let (_second,_)=control.accept().await.unwrap();
+        f.drained().await;
+        assert_eq!(work(&f,&session,&accepted).await["execution"]["state"],"completed");
+        let trace=std::fs::read_to_string(trace).unwrap();
+        let prompts:Vec<Value>=trace.lines().map(|line|serde_json::from_str::<Value>(line).unwrap()).filter(|v|v["method"]=="session/prompt").collect();
+        assert_eq!(prompts.len(),1,"unsupported image never reaches the peer");
+        let content=prompts[0]["params"]["prompt"].as_array().unwrap();
+        assert!(content.iter().all(|v|v["type"]=="text"));
+        assert!(content.iter().any(|v|v["text"]=="actual text attachment"));
+        f.app.shutdown().await.unwrap();f.config.shutdown().await.unwrap();
+    }).await.unwrap();
 }

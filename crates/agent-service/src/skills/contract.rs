@@ -333,11 +333,11 @@ pub fn contract() -> Contract {
                         resources: BTreeMap::from([
                             (
                                 "file".into(),
-                                maka_plugin_core::contract::binary_resource_type(),
+                                maka_plugin_core::contract::binary_resource_type().required(),
                             ),
                             (
                                 "id".into(),
-                                maka_plugin_core::contract::text_resource_type(),
+                                maka_plugin_core::contract::text_resource_type().required(),
                             ),
                         ]),
                     },

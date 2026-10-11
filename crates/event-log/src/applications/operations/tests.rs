@@ -327,7 +327,8 @@ async fn original_resource_capture_is_required_nullable_and_part_of_the_fingerpr
         maka_plugin_core::contract::ResourceType {
             name: "example.Secret".into(),
             version: 1,
-        },
+        }
+        .required(),
     );
     let captured = original.reference().unwrap();
     assert_ne!(captured.fingerprint, resource_free.fingerprint);

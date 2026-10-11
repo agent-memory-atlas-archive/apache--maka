@@ -25,7 +25,7 @@ use maka_plugin_core::{
     operation::{OperationCleanup, OperationOutcome, Receipt},
 };
 use maka_plugins::{
-    call::{Attachments, Identity},
+    call::Identity,
     executor::{self, Admitted, Error, Outcome, OutputSink, Request, Settlement},
 };
 use maka_runtime_host::application::{Binding, NativeContext, NativeServices};
@@ -36,6 +36,8 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, panic::AssertUnwindSafe, sync::Arc};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+
+pub(crate) mod attachments;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -57,7 +59,8 @@ pub struct Selection {
     pub executor: String,
     pub settings: maka_runtime::executor::Settings,
 }
-/// Observation and text only; no path, invocation or conversation key is authority.
+/// Observations and text; immutable attachments travel in the actual request resources.
+/// No path, invocation or conversation key is authority.
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "ExecutorExecute")]
@@ -67,6 +70,9 @@ pub struct Execute {
     pub conversation_key: String,
     #[schemars(length(max = 65536))]
     pub message: String,
+    /// Number of contiguous request slots attachment0..attachment7. Descriptors are read through the actual request.
+    #[schemars(range(max = 8))]
+    pub attachment_count: usize,
     #[schemars(length(min = 1, max = 4096))]
     pub cwd: String,
     #[schemars(length(max = 65536))]
@@ -88,7 +94,14 @@ pub fn contract() -> Contract {
                         .expect("executor input"),
                     output: serde_json::to_value(schemars::schema_for!(Outcome))
                         .expect("executor output"),
-                    resources: BTreeMap::new(),
+                    resources: (0..8)
+                        .map(|index| {
+                            (
+                                attachments::slot(index),
+                                maka_plugin_core::contract::binary_resource_type().optional(),
+                            )
+                        })
+                        .collect(),
                 },
             )]),
         },
@@ -185,11 +198,6 @@ impl executor::Backend for Backend {
         if input.settings != self.accepted.selection.settings
             || input
                 .content
-                .attachments
-                .as_ref()
-                .is_some_and(|items| !items.is_empty())
-            || input
-                .content
                 .quotes
                 .as_ref()
                 .is_some_and(|items| !items.is_empty())
@@ -200,7 +208,7 @@ impl executor::Backend for Backend {
                 .is_some_and(|items| !items.is_empty())
         {
             return Err(Error::Invalid(
-                "executor service requires owned text input".into(),
+                "executor service requires owned message input".into(),
             ));
         }
         let identity = maka_runtime::executor::Binding {
@@ -226,6 +234,7 @@ impl executor::Backend for Backend {
         let body = Execute {
             invocation: input.invocation.clone(),
             conversation_key: input.conversation_key,
+            attachment_count: input.content.attachments.as_ref().map_or(0, Vec::len),
             message: input.content.text,
             cwd: input.cwd,
             instructions: input.instructions,
@@ -248,6 +257,7 @@ impl executor::Backend for Backend {
                 input: value,
                 invocation: input.invocation,
                 operation,
+                attachments: input.content.attachments.unwrap_or_default(),
             }),
         })
     }
@@ -257,6 +267,7 @@ struct Call {
     input: Value,
     invocation: maka_runtime::event::Invocation,
     operation: Uuid,
+    attachments: Vec<maka_runtime::attachment::AttachmentRef>,
 }
 impl executor::Execution for Call {
     fn execute(
@@ -300,6 +311,14 @@ impl executor::Execution for Call {
                             })
                             .ok_or(Error::Unknown)?
                     } else {
+                        let resources = attachments::capture(
+                            self.backend.store.clone(),
+                            &request,
+                            &self.invocation.session_id,
+                            self.attachments,
+                        )
+                        .await
+                        .map_err(Error::Provider)?;
                         let mut mutation = request
                             .begin_mutation(
                                 &self.backend.accepted.import,
@@ -307,7 +326,7 @@ impl executor::Execution for Call {
                                 "execute".into(),
                                 self.input,
                                 self.operation,
-                                Attachments::default(),
+                                resources,
                             )
                             .map_err(Error::Provider)?
                             .await

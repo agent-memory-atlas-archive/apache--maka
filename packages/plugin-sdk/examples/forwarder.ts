@@ -30,7 +30,7 @@ const contract = {
         mode: 'query',
         input: { type: 'string' },
         output: { type: 'string' },
-        resources: { text: { name: 'example.Bytes', version: 1 } },
+        resources: { text: { type: { name: 'example.Bytes', version: 1 }, optional: false } },
       },
     },
   },

@@ -239,7 +239,15 @@ async fn activate_worker_mode(
                     "implementation":{"kind":"javascript","module":"executor.mjs","realm":"shared"},"configuration":{"type":"object","additionalProperties":false},"imports":{},
                     "exports":{"executor":{"contract":crate::executor::contract(),"availability":"required"}}
                 }}}})).unwrap()),
-                ("executor.mjs".into(),format!(r#"export function activate(){{return {{executor:{{contract:{},service:['backend']}}}};}} export const backend={{execute(input){{return {{status:'completed',text:input.message+' / '+input.settings.model}};}}}};"#,serde_json::to_string(&crate::executor::contract()).unwrap()).into_bytes())
+                ("executor.mjs".into(),format!(r#"export function activate(){{return {{executor:{{contract:{},service:['backend']}}}};}} export const backend={{async execute(input,observation,context){{
+                    let suffix='';
+                    if(input.message.includes('original upload')) {{
+                        const file=await context.invoke({{operation:'metadata',slot:'attachment0'}});
+                        const bytes=await context.invoke({{operation:'read',slot:'attachment0',start:0,end:file.bytes}});
+                        suffix=' / attachment: '+new TextDecoder().decode(new Uint8Array(bytes));
+                    }}
+                    return {{status:'completed',text:input.message+' / '+input.settings.model+suffix}};
+                }}}};"#,serde_json::to_string(&crate::executor::contract()).unwrap()).into_bytes())
             ])).unwrap();
             composition.instances.insert(
                 "executor".into(),
@@ -1522,7 +1530,8 @@ async fn workhub_routes_external_executor_through_original_worker_and_recovers_a
         let coordinator=ready["session"]["id"].as_str().unwrap().to_owned();
         let choices=control_turn(&fixture,&listener,&coordinator,json!({"operation":"executors","worker":"worker"})).await;
         assert_eq!(choices,json!({"executors":["external"]}));
-        fixture.send(&coordinator).await.unwrap();
+        let uploaded=attachments::upload(&fixture,&coordinator,"worker-note.txt",b"original upload bytes",Uuid::new_v4()).await.unwrap();
+        fixture.mutation(2,"send",json!({"sessionId":coordinator,"message":"Use the original upload","attachments":[uploaded["attachment"]["id"]],"model":fixture.selection().await}),Uuid::new_v4()).await.unwrap();
         let (mut socket,_)=listener.accept().await.unwrap();request(&mut socket).await;
         task_response(&mut socket,json!({"operation":"route","worker":"worker","target":{"kind":"existing","sessionId":worker},"note":"Use the explicit backend","executor":{"executor":"external","settings":{"model":"external-model"}}})).await;
         let (mut socket,_)=listener.accept().await.unwrap();let input=request(&mut socket).await;
@@ -1531,11 +1540,13 @@ async fn workhub_routes_external_executor_through_original_worker_and_recovers_a
         let (mut socket,_)=listener.accept().await.unwrap();let input=request(&mut socket).await;
         let task=tool_value(&input);assert_eq!(task["status"]["progress"]["execution"]["state"],"completed");
         let answer=task["status"]["progress"]["answer"]["text"].as_str().unwrap();
-        assert!(answer.contains("Original user request:\nHello"));assert!(answer.contains("Use the explicit backend"));assert!(answer.ends_with(" / external-model"));
+        assert!(answer.contains("Original user request:\nUse the original upload"));assert!(answer.contains("Use the explicit backend"));assert!(answer.ends_with(" / external-model / attachment: original upload bytes"));
         response(&mut socket).await;idle(&fixture,EXPORT,&coordinator).await;idle(&fixture,"worker",&worker).await;
         for (consumer,provider) in [(1,21),(21,22)] {
             let intents=fixture.store.application_intents(fixture.app.source().unwrap().deployment,id(consumer),0,128).await.unwrap();
-            assert_eq!(intents.len(),1);assert_eq!(intents[0].reference.namespace,id(provider));assert_eq!(intents[0].reference.method,"execute");
+            let executions:Vec<_>=intents.iter().filter(|v|v.reference.method=="execute").collect();
+            assert_eq!(executions.len(),1);assert_eq!(executions[0].reference.namespace,id(provider));
+
         }
         activate_worker_mode(&mut fixture,false,true,true,WorkerBehavior::External).await;
         let restored=query_import(&fixture,hub::EXPORT,"task",json!({"taskId":task["taskId"]})).await;

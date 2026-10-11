@@ -509,7 +509,14 @@ impl<V: ?Sized + 'static> Application<V> {
         if mode != MethodMode::Query && !action.continuations.is_empty() {
             return Err(Error::Invalid("continuations require a query".into()));
         }
-        if resources.keys().ne(action.resources.keys()) {
+        if action
+            .resources
+            .keys()
+            .any(|slot| !resources.contains_key(slot))
+            || resources.iter().any(|(slot, declaration)| {
+                !declaration.optional && !action.resources.contains_key(slot)
+            })
+        {
             return Err(Error::Invalid("action resource slots mismatch".into()));
         }
         let mut captures = BTreeMap::new();
@@ -520,7 +527,7 @@ impl<V: ?Sized + 'static> Application<V> {
                     consumer,
                     source,
                     &CaptureOutput::Resource {
-                        resource: resources[&slot].clone(),
+                        resource: resources[&slot].resource_type.clone(),
                     },
                     Vec::new(),
                     update,

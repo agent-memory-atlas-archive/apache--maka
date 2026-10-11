@@ -38,11 +38,10 @@ fn contract() -> Contract {
     let Interface::Service { methods } = &mut contract.interface else {
         unreachable!()
     };
-    methods
-        .get_mut("write")
-        .unwrap()
-        .resources
-        .insert("text".into(), maka_ui::text::text_resource_type());
+    methods.get_mut("write").unwrap().resources.insert(
+        "text".into(),
+        maka_ui::text::text_resource_type().required(),
+    );
     contract
 }
 fn fixture() -> Fixture {

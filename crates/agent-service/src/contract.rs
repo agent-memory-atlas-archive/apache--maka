@@ -331,9 +331,13 @@ pub struct Executors {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentExecute")]
 pub struct Execute {
+    /// IDs of immutable user uploads in this Session, resolved by the Agent owner.
+    #[serde(default)]
+    #[schemars(length(max = 8))]
+    pub attachments: Vec<String>,
     #[schemars(length(min = 1, max = 128))]
     pub session_id: String,
-    #[schemars(length(min = 1, max = 65536))]
+    #[schemars(length(max = 65536))]
     pub message: String,
     pub executor: crate::executor::Selection,
 }
@@ -1015,7 +1019,7 @@ pub fn contract() -> Contract {
                         progress: None,
                         resources: BTreeMap::from([(
                             "file".into(),
-                            maka_plugin_core::contract::binary_resource_type(),
+                            maka_plugin_core::contract::binary_resource_type().required(),
                         )]),
                         ..method::<UploadAttachment, AttachmentUploadResult>(MethodMode::Mutation)
                     },

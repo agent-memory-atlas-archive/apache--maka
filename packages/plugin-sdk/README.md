@@ -349,7 +349,17 @@ workspace path, instructions and executor-owned model/thinking settings. These
 values describe work; filesystem, process and other service access still require
 independent bindings and grants. Return `ExecutorOutcome` only after the actual
 work has settled. Its declared `progress` schema carries `ExecutorOutput` frames:
-text/thinking deltas and observed tool activity. Attachment resources remain unfinished.
+text/thinking deltas and observed tool activity.
+
+Each method resource slot declares `{ type: { name, version }, optional }`.
+Missing required slots, undeclared slots and mismatched types fail admission in both
+Host and UI. Executor declares optional `attachment0` through `attachment7` binary
+slots. `attachmentCount` describes the contiguous slots actually supplied; it grants
+no access. Use `context.invoke({ operation: 'metadata', slot: 'attachment0' })` for
+`{ type, bytes, metadata: { name, mimeType, bytes, digest } }`, then `read` with byte
+ranges of at most 64 KiB. Native handlers use `Context::attachments()`. Captures
+reserve the existing Host budget before allocation and retain it through physical
+cleanup. Filenames and digests never authorize a path lookup.
 
 Declare the service export in the package manifest, including the JavaScript
 realm, and publish it normally:
@@ -389,6 +399,9 @@ consume already queued input, and an uncertain external result is never resent o
 resumed as a native model invocation. WorkHub exposes executor discovery and accepts
 this selection in `route` instead of `model`/`thinkingLevel`.
 
-The stock composer still presents Host models. Executor selection is currently an
-explicit service/WorkHub operation; the ordinary product source must declare the
-additional provider, Agent import and backend grant.
+The product composer selects configured executors alongside Host models. Both
+`agent.execute` and `agent.send` accept `attachments` containing immutable upload IDs
+from that same Session; an empty message is valid when attachments are present.
+WorkHub transfers uploads into the worker's Session before its original execute
+operation. Unknown execution reads the original receipt without recapturing or
+redispatching attachments.

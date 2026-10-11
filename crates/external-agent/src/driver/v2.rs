@@ -113,10 +113,7 @@ impl Driver<'_> {
             live.session_id.clone(),
             self.request.invocation.invocation_id.clone(),
         ));
-        let content = super::prompt(&self.request.content, self.request.instructions.as_deref())?
-            .into_iter()
-            .map(|text| acp::ContentBlock::Text(acp::TextContent::new(text)))
-            .collect();
+        let content = self.prompt_content(&live.connection)?;
         journal
             .save(
                 self.host.storage.as_ref(),

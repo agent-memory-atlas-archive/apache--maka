@@ -1,0 +1,158 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use super::*;
+use base64::{Engine, engine::general_purpose::STANDARD};
+use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
+
+// Leave room for the SDK's RPC envelope and the bounded protocol Session ID.
+const MAX_CONTENT: usize = crate::transport::MAX_LINE - 4096;
+impl Driver<'_> {
+    pub(super) fn prompt_content<T: DeserializeOwned>(
+        &self,
+        connection: &Connection,
+    ) -> Result<Vec<T>, Error> {
+        let (image, embedded) = match connection.peer.as_ref() {
+            Some(Peer::V1(_, peer)) => (
+                peer.agent_capabilities.prompt_capabilities.image,
+                peer.agent_capabilities.prompt_capabilities.embedded_context,
+            ),
+            Some(Peer::V2(_, peer)) => peer
+                .capabilities
+                .session
+                .as_ref()
+                .and_then(|session| session.prompt.as_ref())
+                .map_or((false, false), |caps| {
+                    (caps.image.is_some(), caps.embedded_context.is_some())
+                }),
+            None => return Err(Error::Invalid("ACP peer has not initialized")),
+        };
+        let attachments = if let Some(scope) = &self.context.call {
+            self.host
+                .callbacks
+                .prompt_attachments(scope)
+                .map_err(|error| Error::Output(executor::Error::Provider(error)))?
+        } else {
+            vec![]
+        };
+        let text = prompt(&self.request.content, self.request.instructions.as_deref())?;
+        let content = blocks(
+            text,
+            attachments,
+            image,
+            embedded,
+            &self.context.cancellation,
+        )?;
+        content
+            .into_iter()
+            .map(|block| serde_json::from_value(block).map_err(Error::from))
+            .collect()
+    }
+}
+fn blocks(
+    text: Vec<String>,
+    attachments: Vec<crate::ports::PromptAttachment>,
+    image: bool,
+    embedded: bool,
+    cancellation: &tokio_util::sync::CancellationToken,
+) -> Result<Vec<Value>, Error> {
+    let mut blocks: Vec<_> = text
+        .into_iter()
+        .map(|text| json!({"type":"text","text":text}))
+        .collect();
+    let mut size = serde_json::to_vec(&blocks)?.len();
+    if size > MAX_CONTENT || attachments.len() > 8 {
+        return Err(Error::Invalid("ACP prompt exceeds its content limit"));
+    }
+    for (index, attachment) in attachments.into_iter().enumerate() {
+        if attachment.name.is_empty()
+            || attachment.name.len() > 512
+            || attachment.name.chars().any(char::is_control)
+            || attachment.mime_type.is_empty()
+            || attachment.mime_type.len() > 256
+            || attachment.mime_type.chars().any(char::is_control)
+        {
+            return Err(Error::Invalid("ACP attachment metadata is invalid"));
+        }
+        let is_image = attachment.mime_type.starts_with("image/");
+        if is_image && !image {
+            return Err(Error::Invalid(
+                "ACP peer does not support image attachments",
+            ));
+        }
+        let resource = attachment.resource;
+        if resource.bytes() > MAX_CONTENT.saturating_sub(size) {
+            return Err(Error::Invalid(
+                "ACP attachments exceed the prompt frame limit",
+            ));
+        }
+        let mut bytes = Vec::with_capacity(resource.bytes());
+        for start in (0..resource.bytes()).step_by(64 * 1024) {
+            if cancellation.is_cancelled() {
+                return Err(Error::Cancelled);
+            }
+            let end = (start + 64 * 1024).min(resource.bytes());
+            let chunk = resource
+                .read(start..end)
+                .map_err(|error| Error::Output(executor::Error::Provider(error)))?;
+            if chunk.len() != end - start {
+                return Err(Error::Invalid("ACP attachment read is incomplete"));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        let uri = format!("maka-attachment:{index}");
+        let block = if is_image {
+            json!({"type":"image","data":STANDARD.encode(&bytes),"mimeType":attachment.mime_type,"uri":uri})
+        } else if let Some(text) = std::str::from_utf8(&bytes).ok().filter(|text| {
+            !text.contains('\0')
+                && (attachment.mime_type.starts_with("text/")
+                    || attachment.mime_type == "application/json")
+        }) {
+            if embedded {
+                json!({"type":"resource","resource":{"uri":uri,"mimeType":attachment.mime_type,"text":text}})
+            } else {
+                json!({"type":"text","text":text})
+            }
+        } else if embedded {
+            json!({"type":"resource","resource":{"uri":uri,"mimeType":attachment.mime_type,"blob":STANDARD.encode(&bytes)}})
+        } else {
+            return Err(Error::Invalid(
+                "ACP peer does not support binary attachments",
+            ));
+        };
+        // Keep the filename as a separate ordinary text block for all protocol versions.
+        let name = json!({"type":"text","text":format!("Attachment: {}", attachment.name)});
+        size = size
+            .saturating_add(serde_json::to_vec(&block)?.len())
+            .saturating_add(serde_json::to_vec(&name)?.len())
+            .saturating_add(2);
+        if size > MAX_CONTENT {
+            return Err(Error::Invalid(
+                "ACP attachments exceed the prompt frame limit",
+            ));
+        }
+        blocks.push(name);
+        blocks.push(block);
+    }
+    if cancellation.is_cancelled() {
+        return Err(Error::Cancelled);
+    }
+    Ok(blocks)
+}

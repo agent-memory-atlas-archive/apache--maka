@@ -39,6 +39,8 @@ fn executor_selection_and_composer_reach_production_timeline_before_backend_comp
     let agent_root = directory.path().join("agent");
     let workspace = directory.path().join("workspace");
     std::fs::create_dir(&workspace).unwrap();
+    let upload = workspace.join("executor-note.txt");
+    std::fs::write(&upload, "Actual file bytes for external backend\n").unwrap();
     let deployment = Uuid::new_v4();
     let agent_id = Uuid::new_v4();
     let manager_id = Uuid::new_v4();
@@ -77,7 +79,10 @@ fn executor_selection_and_composer_reach_production_timeline_before_backend_comp
             let release;
             export function activate(){{ return {{executor:{{contract:{executor},service:['backend']}},control:{{contract:{control},service:['control']}}}}; }}
             export const backend={{async execute(input,observation,context){{
-                if(input.message !== 'Run real external backend' || input.settings.model !== 'backend-model') throw Error(JSON.stringify(input));
+                if(input.message !== 'Run real external backend' || input.settings.model !== 'backend-model' || input.attachmentCount !== 1) throw Error(JSON.stringify(input));
+                const file=await context.invoke({{operation:'metadata',slot:'attachment0'}});
+                const bytes=await context.invoke({{operation:'read',slot:'attachment0',start:0,end:file.bytes}});
+                if(file.metadata.name !== 'executor-note.txt' || new TextDecoder().decode(new Uint8Array(bytes)) !== 'Actual file bytes for external backend\n') throw Error('attachment was not delivered');
                 await context.invoke({{operation:'emit',value:{{type:'thinking_delta',text:'Inspecting external workspace'}}}});
                 await context.invoke({{operation:'emit',value:{{type:'output_delta',text:'Live external answer'}}}});
                 await new Promise(resolve=>{{release=resolve;}});
@@ -248,6 +253,10 @@ fn executor_selection_and_composer_reach_production_timeline_before_backend_comp
         screen.contains("Message…") && !screen.contains("Backend model (optional)")
     });
     click(&mut tui, "Message…", accent);
+    paste(&mut tui, upload.to_str().unwrap());
+    tui.wait_until(|screen| screen.contains("executor-note.txt") && screen.contains("Ready"));
+    let attached = tui.screen.snapshot().unwrap().screen;
+    click(&mut tui, "Message…", accent);
     paste(&mut tui, "Run real external backend");
     tui.wait_for("Run real external backend");
     tui.send(b"\r");
@@ -266,6 +275,7 @@ fn executor_selection_and_composer_reach_production_timeline_before_backend_comp
         std::fs::write(Path::new(&path).join("before.txt"), before).unwrap();
         std::fs::write(Path::new(&path).join("picker.txt"), picker).unwrap();
         std::fs::write(Path::new(&path).join("reopened.txt"), reopened).unwrap();
+        std::fs::write(Path::new(&path).join("attached.txt"), attached).unwrap();
         std::fs::write(Path::new(&path).join("live.txt"), live).unwrap();
         std::fs::write(
             Path::new(&path).join("completed.txt"),

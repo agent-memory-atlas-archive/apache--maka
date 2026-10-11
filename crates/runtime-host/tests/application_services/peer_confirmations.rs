@@ -168,7 +168,8 @@ impl Fixture {
                 ResourceType {
                     name: "example.Bytes".into(),
                     version: 1,
-                },
+                }
+                .required(),
             )]);
         }
         let rewrite = |old: Package| {

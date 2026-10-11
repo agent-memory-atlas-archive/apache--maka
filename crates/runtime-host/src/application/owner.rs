@@ -1039,12 +1039,16 @@ impl Owner {
                             let Interface::Service { methods } = &service.contract.interface else {
                                 unreachable!()
                             };
-                            let declared = &methods[&method].resources;
-                            if declared.len() != attachments.len()
+                            let definition = &methods[&method];
+                            let declared = &definition.resources;
+                            if attachments.keys().any(|slot| !declared.contains_key(slot))
                                 || declared.iter().any(|(slot, resource_type)| {
-                                    attachments.get(slot).is_none_or(|resource| {
-                                        resource.resource_type() != *resource_type
-                                    })
+                                    match attachments.get(slot) {
+                                        Some(resource) => {
+                                            resource.resource_type() != resource_type.resource_type
+                                        }
+                                        None => !resource_type.optional,
+                                    }
                                 })
                             {
                                 return Err("Host attachment slots or types mismatch".into());

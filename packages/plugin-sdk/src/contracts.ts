@@ -7767,6 +7767,16 @@ export const contracts = {
             title: 'AgentExecute',
             type: 'object',
             properties: {
+              attachments: {
+                description:
+                  'IDs of immutable user uploads in this Session, resolved by the Agent owner.',
+                type: 'array',
+                items: {
+                  type: 'string',
+                },
+                maxItems: 8,
+                default: [],
+              },
               sessionId: {
                 type: 'string',
                 minLength: 1,
@@ -7774,7 +7784,6 @@ export const contracts = {
               },
               message: {
                 type: 'string',
-                minLength: 1,
                 maxLength: 65536,
               },
               executor: {
@@ -13396,8 +13405,11 @@ export const contracts = {
           },
           resources: {
             file: {
-              name: 'maka.bytes',
-              version: 1,
+              type: {
+                name: 'maka.bytes',
+                version: 1,
+              },
+              optional: false,
             },
           },
         },
@@ -13993,7 +14005,7 @@ export const contracts = {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
             title: 'ExecutorExecute',
             description:
-              'Observation and text only; no path, invocation or conversation key is authority.',
+              'Observations and text; immutable attachments travel in the actual request resources.\nNo path, invocation or conversation key is authority.',
             type: 'object',
             properties: {
               invocation: {
@@ -14007,6 +14019,14 @@ export const contracts = {
               message: {
                 type: 'string',
                 maxLength: 65536,
+              },
+              attachmentCount: {
+                description:
+                  'Number of contiguous request slots attachment0..attachment7. Descriptors are read through the actual request.',
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+                maximum: 8,
               },
               cwd: {
                 type: 'string',
@@ -14022,7 +14042,14 @@ export const contracts = {
               },
             },
             additionalProperties: false,
-            required: ['invocation', 'conversationKey', 'message', 'cwd', 'settings'],
+            required: [
+              'invocation',
+              'conversationKey',
+              'message',
+              'attachmentCount',
+              'cwd',
+              'settings',
+            ],
             $defs: {
               Invocation: {
                 type: 'object',
@@ -14216,7 +14243,64 @@ export const contracts = {
             title: 'ExecutorOutput',
             $schema: 'https://json-schema.org/draft/2020-12/schema',
           },
-          resources: {},
+          resources: {
+            attachment0: {
+              type: {
+                name: 'maka.bytes',
+                version: 1,
+              },
+              optional: true,
+            },
+            attachment1: {
+              type: {
+                name: 'maka.bytes',
+                version: 1,
+              },
+              optional: true,
+            },
+            attachment2: {
+              type: {
+                name: 'maka.bytes',
+                version: 1,
+              },
+              optional: true,
+            },
+            attachment3: {
+              type: {
+                name: 'maka.bytes',
+                version: 1,
+              },
+              optional: true,
+            },
+            attachment4: {
+              type: {
+                name: 'maka.bytes',
+                version: 1,
+              },
+              optional: true,
+            },
+            attachment5: {
+              type: {
+                name: 'maka.bytes',
+                version: 1,
+              },
+              optional: true,
+            },
+            attachment6: {
+              type: {
+                name: 'maka.bytes',
+                version: 1,
+              },
+              optional: true,
+            },
+            attachment7: {
+              type: {
+                name: 'maka.bytes',
+                version: 1,
+              },
+              optional: true,
+            },
+          },
         },
       },
     },
@@ -16432,12 +16516,18 @@ export const contracts = {
           },
           resources: {
             file: {
-              name: 'maka.bytes',
-              version: 1,
+              type: {
+                name: 'maka.bytes',
+                version: 1,
+              },
+              optional: false,
             },
             id: {
-              name: 'maka.text.utf8',
-              version: 1,
+              type: {
+                name: 'maka.text.utf8',
+                version: 1,
+              },
+              optional: false,
             },
           },
         },
@@ -18435,7 +18525,7 @@ export const contracts = {
                   resources: {
                     type: 'object',
                     additionalProperties: {
-                      $ref: '#/$defs/ResourceType',
+                      $ref: '#/$defs/ResourceSlot',
                     },
                   },
                 },
@@ -18444,6 +18534,21 @@ export const contracts = {
               MethodMode: {
                 type: 'string',
                 enum: ['query', 'mutation', 'subscription'],
+              },
+              ResourceSlot: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  type: {
+                    $ref: '#/$defs/ResourceType',
+                  },
+                  optional: {
+                    type: 'boolean',
+                  },
+                },
+                required: ['type', 'optional'],
+                description:
+                  'One declared input slot: its nominal type and whether the caller may omit it.',
               },
               ResourceType: {
                 type: 'object',
@@ -18729,7 +18834,7 @@ export const contracts = {
                   resources: {
                     type: 'object',
                     additionalProperties: {
-                      $ref: '#/$defs/ResourceType',
+                      $ref: '#/$defs/ResourceSlot',
                     },
                   },
                 },
@@ -18738,6 +18843,21 @@ export const contracts = {
               MethodMode: {
                 type: 'string',
                 enum: ['query', 'mutation', 'subscription'],
+              },
+              ResourceSlot: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  type: {
+                    $ref: '#/$defs/ResourceType',
+                  },
+                  optional: {
+                    type: 'boolean',
+                  },
+                },
+                required: ['type', 'optional'],
+                description:
+                  'One declared input slot: its nominal type and whether the caller may omit it.',
               },
               ResourceType: {
                 type: 'object',
@@ -25174,8 +25294,11 @@ export const contracts = {
           },
           resources: {
             secret: {
-              name: 'maka.text.utf8',
-              version: 1,
+              type: {
+                name: 'maka.text.utf8',
+                version: 1,
+              },
+              optional: false,
             },
           },
         },
@@ -25789,8 +25912,11 @@ export const contracts = {
           },
           resources: {
             text: {
-              name: 'maka.text.utf8',
-              version: 1,
+              type: {
+                name: 'maka.text.utf8',
+                version: 1,
+              },
+              optional: false,
             },
           },
         },
@@ -26038,7 +26164,7 @@ export const contracts = {
                   resources: {
                     type: 'object',
                     additionalProperties: {
-                      $ref: '#/$defs/ResourceType',
+                      $ref: '#/$defs/ResourceSlot',
                     },
                   },
                 },
@@ -26048,6 +26174,21 @@ export const contracts = {
               MethodMode: {
                 type: 'string',
                 enum: ['query', 'mutation', 'subscription'],
+              },
+              ResourceSlot: {
+                description:
+                  'One declared input slot: its nominal type and whether the caller may omit it.',
+                type: 'object',
+                properties: {
+                  type: {
+                    $ref: '#/$defs/ResourceType',
+                  },
+                  optional: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['type', 'optional'],
               },
               ResourceType: {
                 description:
@@ -26260,8 +26401,11 @@ export const contracts = {
           },
           resources: {
             package: {
-              name: 'maka.bytes',
-              version: 1,
+              type: {
+                name: 'maka.bytes',
+                version: 1,
+              },
+              optional: false,
             },
           },
         },
@@ -26984,7 +27128,7 @@ export const contracts = {
                   resources: {
                     type: 'object',
                     additionalProperties: {
-                      $ref: '#/$defs/ResourceType',
+                      $ref: '#/$defs/ResourceSlot',
                     },
                   },
                 },
@@ -26994,6 +27138,21 @@ export const contracts = {
               MethodMode: {
                 type: 'string',
                 enum: ['query', 'mutation', 'subscription'],
+              },
+              ResourceSlot: {
+                description:
+                  'One declared input slot: its nominal type and whether the caller may omit it.',
+                type: 'object',
+                properties: {
+                  type: {
+                    $ref: '#/$defs/ResourceType',
+                  },
+                  optional: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['type', 'optional'],
               },
               ResourceType: {
                 description:
@@ -27265,8 +27424,11 @@ export const contracts = {
           },
           resources: {
             document: {
-              name: 'maka.text.utf8',
-              version: 1,
+              type: {
+                name: 'maka.text.utf8',
+                version: 1,
+              },
+              optional: false,
             },
           },
         },
@@ -27590,7 +27752,7 @@ export const contracts = {
                   resources: {
                     type: 'object',
                     additionalProperties: {
-                      $ref: '#/$defs/ResourceType',
+                      $ref: '#/$defs/ResourceSlot',
                     },
                   },
                 },
@@ -27600,6 +27762,21 @@ export const contracts = {
               MethodMode: {
                 type: 'string',
                 enum: ['query', 'mutation', 'subscription'],
+              },
+              ResourceSlot: {
+                description:
+                  'One declared input slot: its nominal type and whether the caller may omit it.',
+                type: 'object',
+                properties: {
+                  type: {
+                    $ref: '#/$defs/ResourceType',
+                  },
+                  optional: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['type', 'optional'],
               },
               ResourceType: {
                 description:
@@ -27862,7 +28039,7 @@ export const contracts = {
                   resources: {
                     type: 'object',
                     additionalProperties: {
-                      $ref: '#/$defs/ResourceType',
+                      $ref: '#/$defs/ResourceSlot',
                     },
                   },
                 },
@@ -27872,6 +28049,21 @@ export const contracts = {
               MethodMode: {
                 type: 'string',
                 enum: ['query', 'mutation', 'subscription'],
+              },
+              ResourceSlot: {
+                description:
+                  'One declared input slot: its nominal type and whether the caller may omit it.',
+                type: 'object',
+                properties: {
+                  type: {
+                    $ref: '#/$defs/ResourceType',
+                  },
+                  optional: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['type', 'optional'],
               },
               ResourceType: {
                 description:

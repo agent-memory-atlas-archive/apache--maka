@@ -307,7 +307,8 @@ pub fn contract() -> Contract {
                             maka_plugin_core::contract::ResourceType {
                                 name: "maka.text.utf8".into(),
                                 version: 1,
-                            },
+                            }
+                            .required(),
                         )]),
                         ..method::<SaveCredential, CredentialSaveResult>(MethodMode::Mutation)
                     },

@@ -103,7 +103,7 @@ struct ServiceMethod {
     mode: maka_plugin_core::contract::MethodMode,
     input: jsonschema::Validator,
     output: jsonschema::Validator,
-    resources: BTreeMap<String, maka_plugin_core::contract::ResourceType>,
+    resources: BTreeMap<String, maka_plugin_core::contract::ResourceSlot>,
 }
 enum Export<V: ?Sized> {
     Component {

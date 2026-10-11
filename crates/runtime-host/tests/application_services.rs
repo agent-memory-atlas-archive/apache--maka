@@ -777,7 +777,8 @@ async fn undeclared_exports_fail_startup_and_unsupported_modes_never_activate() 
                     ResourceType {
                         name: "example.Bytes".into(),
                         version: 1,
-                    },
+                    }
+                    .required(),
                 )
             })
             .collect();
@@ -1422,7 +1423,8 @@ fn attached_contract() -> Contract {
         ResourceType {
             name: "example.Bytes".into(),
             version: 1,
-        },
+        }
+        .required(),
     )]);
     contract
 }

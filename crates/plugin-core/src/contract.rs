@@ -89,7 +89,30 @@ pub struct Method {
     /// original final receipt. Only mutation methods may declare progress.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress: Option<Value>,
-    pub resources: BTreeMap<String, ResourceType>,
+    pub resources: BTreeMap<String, ResourceSlot>,
+}
+
+/// One declared input slot: its nominal type and whether the caller may omit it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceSlot {
+    #[serde(rename = "type")]
+    pub resource_type: ResourceType,
+    pub optional: bool,
+}
+impl ResourceType {
+    pub fn required(self) -> ResourceSlot {
+        ResourceSlot {
+            resource_type: self,
+            optional: false,
+        }
+    }
+    pub fn optional(self) -> ResourceSlot {
+        ResourceSlot {
+            resource_type: self,
+            optional: true,
+        }
+    }
 }
 
 /// Nominal read-only resource shape, not a resource id or authorization token.
@@ -186,7 +209,7 @@ impl Contract {
                     }
                     for (slot, resource) in &method.resources {
                         crate::name(slot)?;
-                        resource.validate()?;
+                        resource.resource_type.validate()?;
                     }
                 }
             }

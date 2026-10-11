@@ -95,11 +95,10 @@ impl Fixture {
             unreachable!()
         };
         for name in ["read", "write"] {
-            methods
-                .get_mut(name)
-                .unwrap()
-                .resources
-                .insert("text".into(), maka_ui::text::text_resource_type());
+            methods.get_mut(name).unwrap().resources.insert(
+                "text".into(),
+                maka_ui::text::text_resource_type().required(),
+            );
         }
         let mut feed = methods["read"].clone();
         feed.mode = MethodMode::Subscription;

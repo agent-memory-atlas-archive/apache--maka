@@ -32,7 +32,7 @@ use tokio::sync::{mpsc, watch};
 
 mod client;
 pub(crate) use client::{Event, Peer};
-const MAX_LINE: usize = 1024 * 1024;
+pub(crate) const MAX_LINE: usize = 1024 * 1024;
 
 pub struct Connection {
     pub(crate) owner: Arc<Owner>,

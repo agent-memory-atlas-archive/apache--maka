@@ -128,6 +128,39 @@ pub(super) fn returned(receipt: Receipt) -> Result<Value, String> {
     }
 }
 impl maka_external_agent::ports::Callbacks for Calls {
+    fn prompt_attachments(
+        &self,
+        scope: &Scope,
+    ) -> Result<Vec<maka_external_agent::ports::PromptAttachment>, String> {
+        let origin = self.origin(scope)?;
+        if origin.attachments().len() > 8 {
+            return Err("ACP attachment limit exceeded".into());
+        }
+        (0..origin.attachments().len())
+            .map(|index| {
+                let resource = origin
+                    .attachments()
+                    .get(&crate::executor::attachments::slot(index))
+                    .ok_or("ACP attachment slots are invalid")?
+                    .clone();
+                let metadata: crate::executor::attachments::Metadata =
+                    serde_json::from_value(resource.metadata())
+                        .map_err(|_| "ACP attachment metadata is invalid")?;
+                if resource.resource_type() != maka_plugin_core::contract::binary_resource_type()
+                    || resource.encoding() != maka_plugins::call::ResourceEncoding::Bytes
+                    || resource.bytes() as u64 != metadata.bytes
+                {
+                    return Err("ACP attachment descriptor is invalid".into());
+                }
+                Ok(maka_external_agent::ports::PromptAttachment {
+                    name: metadata.name,
+                    mime_type: metadata.mime_type,
+                    resource,
+                })
+            })
+            .collect()
+    }
+
     fn file(
         &self,
         scope: Scope,

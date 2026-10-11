@@ -278,7 +278,15 @@ Agent 图片工具使用生成的 `AgentToolImageFrame` 契约及 `result: "imag
 包含原 invocation、conversation key、正文、工作区路径、指令及后端自己的模型／思考设置。
 这些字段只描述工作，不授予文件、进程或其它服务权限；相应 import 和 grant 必须独立声明。
 实际工作与资源结算后才能返回 `ExecutorOutcome`。声明的 `progress` schema 接收
-`ExecutorOutput` 正文、思考增量及工具活动观察；附件资源仍待接入。
+`ExecutorOutput` 正文、思考增量及工具活动观察。
+
+方法资源槽直接声明 `{ type: { name, version }, optional }`。Host 与 UI 都拒绝缺少必填槽、
+未声明的槽及类型不匹配。Executor 声明可选的 `attachment0` 至 `attachment7` 二进制槽；
+`attachmentCount` 只描述本次实际提供的连续槽数，不授予权限。
+通过 `context.invoke({ operation: 'metadata', slot: 'attachment0' })` 读取
+`{ type, bytes, metadata: { name, mimeType, bytes, digest } }`，再用 `read` 读取最多 64 KiB 的字节区间。
+原生后端使用 `Context::attachments()`。捕获先保留原 Host 容量，实际清理完成后才释放；
+文件名和摘要不能用于打开文件路径。
 
 包 manifest 声明该 export（JavaScript 入口必须包含 realm），普通 `activate` 返回
 `{ executor: { contract: contracts.executor, service: ['backend'] } }`，导出的 `backend.execute`
@@ -300,5 +308,7 @@ Agent 通过原 executor recorder 记录每项进度后才发布完成；工具�
 替换执行 binding 不能消费原排队输入，不确定结果不重发，也不能当成原生模型 invocation 恢复。
 WorkHub 可发现后端，并在 `route` 中以 executor 选择替代 model/thinkingLevel。
 
-默认 composer 目前仍展示 Host 模型。Executor 选择通过显式服务或 WorkHub 操作完成；普通产品
-来源需要另行声明 provider、Agent import 和后端 grant。
+普通 Composer 已支持配置的执行后端和 Host 模型。`agent.execute` 与 `agent.send` 的
+`attachments` 都接收当前 Session 的不可变上传 ID；有附件时正文可以为空。
+WorkHub 先将原上传转交到 worker Session，再提交原 execute。未知执行只读取原回执，
+不重新捕获附件或重发执行。

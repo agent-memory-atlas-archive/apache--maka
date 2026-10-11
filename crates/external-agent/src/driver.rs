@@ -29,6 +29,7 @@ use maka_plugins::executor;
 
 use std::time::Duration;
 
+mod attachments;
 mod configure;
 mod events;
 mod v2;
@@ -166,10 +167,7 @@ impl<'a> Driver<'a> {
             self.request.invocation.invocation_id.clone(),
         ));
         self.configure(live, &journal.record.defaults).await?;
-        let content = prompt(&self.request.content, self.request.instructions.as_deref())?
-            .into_iter()
-            .map(|text| acp::ContentBlock::Text(acp::TextContent::new(text)))
-            .collect();
+        let content = self.prompt_content(&live.connection)?;
         journal
             .save(
                 self.host.storage.as_ref(),

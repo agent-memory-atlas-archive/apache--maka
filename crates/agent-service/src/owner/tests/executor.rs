@@ -31,6 +31,7 @@ enum Behavior {
     Unsettled,
     Streaming,
     InvalidProgress,
+    Attachments,
 }
 struct Probe {
     behavior: Behavior,
@@ -96,6 +97,29 @@ impl Handler for Probe {
                     context.scope().cancellation.cancelled().await;
                     cancelled.add_permits(1);
                     return Ok(json!({"status":"cancelled","reason":"output rejected"}));
+                }
+                Behavior::Attachments => {
+                    let mut files = Vec::new();
+                    for (slot, resource) in context.attachments() {
+                        assert_eq!(
+                            resource.encoding(),
+                            maka_plugins::call::ResourceEncoding::Bytes
+                        );
+                        let mut bytes = Vec::new();
+                        for start in (0..resource.bytes()).step_by(64 * 1024) {
+                            bytes.extend(
+                                resource.read(start..(start + 64 * 1024).min(resource.bytes()))?,
+                            );
+                        }
+                        assert_eq!(
+                            resource.metadata()["digest"],
+                            maka_runtime::artifact::content_digest(&bytes)
+                        );
+                        files.push(json!({"slot":slot,"metadata":resource.metadata(),"preview":String::from_utf8(bytes[..bytes.len().min(80)].to_vec()).unwrap()}));
+                    }
+                    return Ok(
+                        json!({"status":"completed","text":serde_json::to_string(&files).unwrap()}),
+                    );
                 }
                 Behavior::Returned => {}
                 Behavior::Lost => return Err("fixture lost executor reply".into()),
@@ -930,3 +954,58 @@ async fn executor_service_invalid_progress_stops_original_request_without_false_
 #[cfg(target_os = "macos")]
 #[path = "executor/acp.rs"]
 mod acp;
+
+#[tokio::test]
+async fn executor_attachments_use_only_owned_immutable_uploads_and_original_receipts() {
+    tokio::time::timeout(Duration::from_secs(45), async {
+        let mut f = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+        let probe = Probe::new(Behavior::Attachments);
+        activate(&mut f, true, Some(probe.clone()), true).await;
+        let session = f.create("Attachments").await;
+        let other = f.create("Other").await;
+        let bytes = "original immutable content\n".repeat(6000);
+        let uploaded =
+            super::attachments::upload(&f, &session, "notes.md", bytes.as_bytes(), Uuid::new_v4())
+                .await
+                .unwrap();
+        let id = uploaded["attachment"]["id"].clone();
+        for (target, ids) in [
+            (&other, json!([id])),
+            (&session, json!([id, id])),
+            (&session, json!(["missing"])),
+        ] {
+            let mut input = input_for(target, "");
+            input["attachments"] = ids;
+            assert!(
+                f.mutation(2, "execute", input, Uuid::new_v4())
+                    .await
+                    .is_err()
+            );
+        }
+        let mut input = input_for(&session, "");
+        input["attachments"] = json!([id]);
+        let operation = Uuid::new_v4();
+        let accepted = f
+            .mutation(2, "execute", input.clone(), operation)
+            .await
+            .unwrap();
+        assert_eq!(accepted["kind"], "started");
+        f.drained().await;
+        let observed = work(&f, &session, &accepted).await;
+        assert_eq!(observed["execution"]["state"], "completed", "{observed}");
+        let answer = observed["answer"]["text"].as_str().unwrap();
+        assert!(answer.contains("attachment0"));
+        assert!(answer.contains("notes.md"));
+        assert!(answer.contains(&maka_runtime::artifact::content_digest(bytes.as_bytes())));
+        assert!(answer.contains("original immutable content"));
+        assert_eq!(
+            f.mutation(2, "execute", input, operation).await.unwrap(),
+            accepted
+        );
+        assert_eq!(probe.calls.load(Ordering::SeqCst), 1);
+        f.app.shutdown().await.unwrap();
+        f.config.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
+}

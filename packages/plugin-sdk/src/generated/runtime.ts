@@ -3235,8 +3235,15 @@ export interface Method {
     [k: string]: unknown | undefined;
   };
   resources: {
-    [k: string]: ResourceType | undefined;
+    [k: string]: ResourceSlot | undefined;
   };
+}
+/**
+ * One declared input slot: its nominal type and whether the caller may omit it.
+ */
+export interface ResourceSlot {
+  type: ResourceType;
+  optional: boolean;
 }
 /**
  * Nominal read-only resource shape, not a resource id or authorization token.
@@ -4574,6 +4581,21 @@ export interface DisplayText {
   };
 }
 export interface AgentExecute {
+  /**
+   * IDs of immutable user uploads in this Session, resolved by the Agent owner.
+   *
+   * @maxItems 8
+   */
+  attachments?:
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string];
   sessionId: string;
   message: string;
   executor: AgentExecutorSelection;
@@ -4594,12 +4616,17 @@ export interface AgentExecutors {
   executors: string[];
 }
 /**
- * Observation and text only; no path, invocation or conversation key is authority.
+ * Observations and text; immutable attachments travel in the actual request resources.
+ * No path, invocation or conversation key is authority.
  */
 export interface ExecutorExecute {
   invocation: Invocation;
   conversationKey: string;
   message: string;
+  /**
+   * Number of contiguous request slots attachment0..attachment7. Descriptors are read through the actual request.
+   */
+  attachmentCount: number;
   cwd: string;
   instructions?: string | null;
   settings: ExecutorSettings;

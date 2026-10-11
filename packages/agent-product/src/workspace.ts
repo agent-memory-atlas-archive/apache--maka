@@ -1887,6 +1887,7 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
               sessionId: request.sessionId,
               message: chunk.text,
               executor: request.backend.selection,
+              attachments: request.attachments,
             }
           : {
               sessionId: request.sessionId,
@@ -3981,11 +3982,6 @@ export function workspace<N extends Node>(
           const draft = input.event as EditorObservation;
           if (draft.snapshot.marked) state.notice = 'draftKept';
           else if (draft.snapshot.text.bytes > 65536) state.notice = 'tooLarge';
-          else if (
-            state.executor &&
-            attachmentFiles(state.attachments, state.selected.id, state.selected.dataSource).length
-          )
-            state.notice = 'executionAttachments';
           else
             intent(
               state,

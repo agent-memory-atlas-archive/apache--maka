@@ -25,6 +25,7 @@ import { once } from 'node:events';
 const control = connect(Number(process.argv[3]), '127.0.0.1');
 await once(control, 'connect');
 const v2 = process.argv[4] === '2';
+const attachments = process.argv[5] === 'attachments';
 // Mode 3 reproduces legacy peers that echo the requested version with a v1 envelope.
 const record = (value) => appendFileSync(process.argv[2], `${JSON.stringify(value)}\n`);
 const send = (value) => process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', ...value })}\n`);
@@ -122,7 +123,9 @@ for await (const line of createInterface({ input: process.stdin })) {
           ? {
               protocolVersion: 2,
               info: { name: 'fixture-v2', version: '1' },
-              capabilities: { session: {} },
+              capabilities: {
+                session: attachments ? { prompt: { image: {}, embeddedContext: {} } } : {},
+              },
               authMethods: ['login', 'unsafe', 'cancel'].map((methodId) => ({
                 methodId,
                 name: methodId,
@@ -131,7 +134,12 @@ for await (const line of createInterface({ input: process.stdin })) {
             }
           : {
               protocolVersion: process.argv[4] === '3' ? params.protocolVersion : 1,
-              agentCapabilities: { loadSession: true },
+              agentCapabilities: {
+                loadSession: true,
+                ...(attachments
+                  ? { promptCapabilities: { image: true, embeddedContext: true } }
+                  : {}),
+              },
               authMethods: ['login', 'unsafe', 'cancel'].map((id) => ({ id, name: id })),
             },
       );

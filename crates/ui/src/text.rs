@@ -52,7 +52,7 @@ pub fn reader_contract() -> Contract {
                         .expect("read input schema"),
                     output: serde_json::to_value(schemars::schema_for!(TextChunk))
                         .expect("chunk schema"),
-                    resources: BTreeMap::from([("text".into(), text_resource_type())]),
+                    resources: BTreeMap::from([("text".into(), text_resource_type().required())]),
                 },
             )]),
         },

@@ -8487,6 +8487,7 @@ name = "maka-external-agent"
 version = "0.2.0"
 dependencies = [
  "agent-client-protocol",
+ "base64 0.22.1",
  "cap-fs-ext",
  "cap-std",
  "futures-util",

@@ -20,7 +20,7 @@
 //! Narrow host ports shared by ordinary service and legacy plugin embeddings.
 use futures_util::future::BoxFuture;
 use maka_plugins::{
-    call::Scope,
+    call::{ReadResource, Scope},
     execution::{Access, OfferInteraction},
     filesystem::{Files, Operation, Output},
     process::Processes,
@@ -36,9 +36,20 @@ pub struct Ports {
     pub storage: Arc<dyn Store>,
     pub callbacks: Arc<dyn Callbacks>,
 }
+/// An immutable attachment from the admitted request.
+pub struct PromptAttachment {
+    pub name: String,
+    pub mime_type: String,
+    pub resource: Arc<dyn ReadResource>,
+}
 /// Each callback identity belongs to one accepted protocol callback. Repeated
 /// pages retain it; separate identical requests are still separate operations.
 pub trait Callbacks: Send + Sync {
+    /// Actual immutable resources from this admitted call, never filesystem locators.
+    fn prompt_attachments(&self, _scope: &Scope) -> Result<Vec<PromptAttachment>, String> {
+        Ok(vec![])
+    }
+
     fn file(
         &self,
         scope: Scope,

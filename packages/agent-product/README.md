@@ -76,9 +76,13 @@ query the original receipt, and restart reconciles the original execute before
 restoring a persistent draft. A backend can create and use Sessions without a Host
 model connection.
 
-Setup/authentication and attachment forwarding remain unfinished. Sending attachments
-to an external backend currently preserves the draft and files with an explicit
-notice. Configuration Studio retains the existing model-only picker.
+External execution uses the original attachment uploads, queue and receipts. WorkHub
+transfers uploads into the worker's own Session. ACP v1/v2 send images or embedded
+files only when the peer advertises support; text files also work with text-only
+peers. The encoded prompt must fit the existing 1 MiB frame limit. Unsupported
+media and oversized input fail before prompt dispatch; their uploads remain in
+the original conversation history. Setup/authentication is still being integrated.
+Configuration Studio retains the existing model-only picker.
 
 ## Configuration Studio
 

@@ -505,7 +505,7 @@ impl Owner {
             Submission {
                 id: input.session_id,
                 text: input.message,
-                attachments: vec![],
+                attachments: input.attachments,
                 selection: Selection::Executor(input.executor),
             },
             operation,

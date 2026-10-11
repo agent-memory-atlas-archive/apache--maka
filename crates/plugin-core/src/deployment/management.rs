@@ -176,12 +176,13 @@ pub fn deployment_manager_contract() -> Contract {
         method::<PackageInstall, ManagementResult<PackageInstalled>>(MethodMode::Mutation);
     install
         .resources
-        .insert("package".into(), binary_resource_type());
+        .insert("package".into(), binary_resource_type().required());
     let mut replace =
         method::<DeploymentReplace, ManagementResult<DeploymentRef>>(MethodMode::Mutation);
-    replace
-        .resources
-        .insert("document".into(), crate::contract::text_resource_type());
+    replace.resources.insert(
+        "document".into(),
+        crate::contract::text_resource_type().required(),
+    );
     Contract {
         name: "maka.application.DeploymentManager".into(),
         version: 1,
