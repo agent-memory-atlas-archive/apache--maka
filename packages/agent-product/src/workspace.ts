@@ -61,6 +61,7 @@ import type {
   AgentDirectorySelection,
   AgentProjectRef,
   AgentList,
+  AgentScheduleAlerts,
   AgentSendResult,
   AgentAttachmentUploadResult,
   FileObservation,
@@ -221,7 +222,15 @@ interface QueueEdit {
   body: string | null;
   command: EditorCommand | null;
 }
-type Page = 'settings' | 'connections' | 'deployment' | 'projects' | 'imports' | 'apps' | 'recall';
+type Page =
+  | 'settings'
+  | 'connections'
+  | 'deployment'
+  | 'projects'
+  | 'imports'
+  | 'apps'
+  | 'recall'
+  | 'scheduler';
 type Navigation = { pages: State['pages']; category: SettingsCategory };
 function navigationBookmark(state: State): Navigation {
   return { pages: state.pages, category: state.settingsCategory };
@@ -262,6 +271,10 @@ export interface State {
   pageChrome: Partial<Record<Page, PageChrome>>;
   pageBack: Partial<Record<Page, number>>;
   recallAnchor: number | null;
+  scheduledTasks: boolean;
+  scheduleAlerts: AgentScheduleAlerts;
+  scheduleWatch: string | null;
+  scheduleRequested: { sequence: number; taskId: string } | null;
   settingsCategory: SettingsCategory;
   sidebar: { open: boolean } | { command: TerminalPaneCommand | null };
   terminals: boolean;
@@ -792,6 +805,7 @@ type RootCommand =
   | 'projects-open'
   | 'imports-open'
   | 'recall-open'
+  | 'scheduler-open'
   | 'apps-open'
   | 'deployment-open'
   | 'reload'
@@ -1047,6 +1061,13 @@ function rootCommands(
       disabled: !shellRoute || !!state.embedding.fixed,
     },
     {
+      kind: 'scheduler-open',
+      id: 'scheduler-open',
+      label: text.scheduleTitle,
+      hint: '',
+      disabled: !shellRoute || !!state.embedding.fixed || !state.scheduledTasks,
+    },
+    {
       kind: 'recall-open',
       id: 'recall-open',
       label: text.recallTitle,
@@ -1169,6 +1190,10 @@ function rootCommand(
     if (target === 'tui') controlSidebar(state, 'dismiss_transient');
   } else if (kind === 'apps-open') {
     state.pages = ['apps'];
+    if (target === 'tui') controlSidebar(state, 'dismiss_transient');
+  } else if (kind === 'scheduler-open') {
+    state.pages = ['scheduler'];
+    if (!state.scheduleWatch) state.scheduleWatch = 'schedule-alerts-' + ++state.serial;
     if (target === 'tui') controlSidebar(state, 'dismiss_transient');
   } else if (kind === 'recall-open') {
     state.pages = ['recall'];
@@ -2378,6 +2403,20 @@ function frame<N extends Node>(
                         background: 0,
                         align: 'start',
                       }),
+                      ...(state.scheduledTasks
+                        ? [
+                            ui.button(
+                              'scheduler-open',
+                              text.scheduleTitle +
+                                (state.scheduleAlerts.pending
+                                  ? ` (${state.scheduleAlerts.pending})`
+                                  : ''),
+                              false,
+                              false,
+                              { background: 0, align: 'start' },
+                            ),
+                          ]
+                        : []),
                       ui.button('recall-open', text.recallTitle, false, false, {
                         background: 0,
                         align: 'start',
@@ -2677,21 +2716,23 @@ function frame<N extends Node>(
   const title = ui.text(
     'title',
     (currentPage && state.pageChrome[currentPage]?.title) ||
-      (state.pages.at(-1) === 'recall'
-        ? text.recallTitle
-        : state.pages.at(-1) === 'apps'
-          ? text.appsTitle
-          : state.pages.at(-1) === 'imports'
-            ? text.importsTitle
-            : state.pages.at(-1) === 'projects'
-              ? text.projectsTitle
-              : state.pages.at(-1) === 'settings'
-                ? tuiText(locale, 'route-settings')
-                : state.pages.at(-1) === 'connections'
-                  ? text.settings
-                  : state.pages.at(-1) === 'deployment'
-                    ? text.deploymentTitle
-                    : (state.selected?.title ?? tuiText(locale, 'route-workspace'))),
+      (state.pages.at(-1) === 'scheduler'
+        ? text.scheduleTitle
+        : state.pages.at(-1) === 'recall'
+          ? text.recallTitle
+          : state.pages.at(-1) === 'apps'
+            ? text.appsTitle
+            : state.pages.at(-1) === 'imports'
+              ? text.importsTitle
+              : state.pages.at(-1) === 'projects'
+                ? text.projectsTitle
+                : state.pages.at(-1) === 'settings'
+                  ? tuiText(locale, 'route-settings')
+                  : state.pages.at(-1) === 'connections'
+                    ? text.settings
+                    : state.pages.at(-1) === 'deployment'
+                      ? text.deploymentTitle
+                      : (state.selected?.title ?? tuiText(locale, 'route-workspace'))),
     17,
     theme.text,
     650,
@@ -2763,6 +2804,9 @@ function frame<N extends Node>(
                       ui.button('projects-open', text.projectsTitle),
                       ui.button('apps-open', text.appsTitle),
                       ui.button('imports-open', text.importsTitle),
+                      ...(state.scheduledTasks
+                        ? [ui.button('scheduler-open', text.scheduleTitle)]
+                        : []),
                     ]
                   : []),
                 ui.button('settings', text.settings),
@@ -3272,6 +3316,40 @@ function frame<N extends Node>(
             ),
           ]
         : []),
+      ...(state.openedPages.includes('scheduler')
+        ? [
+            ui.box(
+              'retained-scheduler',
+              [
+                presentation.slot(
+                  'scheduler',
+                  'scheduler',
+                  {
+                    theme,
+                    locale,
+                    ...pageShell('scheduler'),
+                    open: currentPage === 'scheduler',
+                    busy: mutationPending(state) || catalogPending(state),
+                    catalogEpoch: state.catalogEpoch,
+                    requested: state.scheduleRequested,
+                  },
+                  {
+                    chrome: 'page-chrome',
+                    closed: 'scheduler-closed',
+                    selected: 'scheduler-selected',
+                    connections: 'scheduler-connections',
+                  },
+                ),
+              ],
+              {
+                visible: currentPage === 'scheduler',
+                gap: 0,
+                terminal: { grow: 1 },
+                style: { width: fill, height: fill },
+              },
+            ),
+          ]
+        : []),
       ...(state.openedPages.includes('recall')
         ? [
             ui.box(
@@ -3430,6 +3508,17 @@ function frame<N extends Node>(
     'product',
     [
       ...(target === 'tui' ? [header] : []),
+      ...(!state.embedding.fixed && state.scheduleAlerts.reminders.length
+        ? [
+            ui.button(
+              'schedule-reminder',
+              `${text.scheduleReminder}: ${compactLabel(state.scheduleAlerts.reminders[0]!.title, 100)}`,
+              !!state.dialog,
+              false,
+              { background: theme.surface, align: 'start', width: fill },
+            ),
+          ]
+        : []),
       conversation,
       ...(target === 'tui' && (!state.embedding.fixed || state.embedding.session)
         ? [
@@ -3768,6 +3857,18 @@ function frame<N extends Node>(
         : { kind: 'terminal', binding: 'surface' };
   out.actions = actions;
   out.subscriptions = [
+    ...(state.scheduleWatch && !state.embedding.fixed
+      ? [
+          {
+            key: state.scheduleWatch,
+            binding: 'agent',
+            member: 0,
+            method: 'scheduleAlerts',
+            input: {},
+            resources: {},
+          },
+        ]
+      : []),
     ...(state.catalogWatch
       ? [
           {
@@ -3801,6 +3902,7 @@ export function workspace<N extends Node>(
   terminals = false,
   place = '',
   skills = false,
+  scheduledTasks = false,
 ): Component<State, WorkspaceProps, N> {
   const target = presentation.target;
   const configuredLocale = locale;
@@ -3835,6 +3937,10 @@ export function workspace<N extends Node>(
         pageChrome: {},
         pageBack: {},
         recallAnchor: null,
+        scheduledTasks,
+        scheduleAlerts: { pending: 0, reminders: [] },
+        scheduleWatch: scheduledTasks ? 'schedule-alerts-initial' : null,
+        scheduleRequested: null,
         settingsCategory: 'appearance',
         searchOpen: false,
         browse: null,
@@ -3918,6 +4024,7 @@ export function workspace<N extends Node>(
                   'imports',
                   'apps',
                   'recall',
+                  'scheduler',
                 ].includes(page),
               ) &&
               ['appearance', 'interface', 'models', 'plugins'].includes(item.category)
@@ -3957,7 +4064,12 @@ export function workspace<N extends Node>(
         return frame(presentation, configuredLocale, state, values, actions);
       if (input.kind === 'action') {
         const outcome = input.event as ActionOutcome;
-        if (state.catalogWatch?.key === input.key) {
+        if (state.scheduleWatch === input.key) {
+          if (outcome.status === 'updated')
+            state.scheduleAlerts = outcome.value as AgentScheduleAlerts;
+          else if (outcome.status === 'failed' || outcome.status === 'not_accepted')
+            state.scheduleWatch = null;
+        } else if (state.catalogWatch?.key === input.key) {
           if (outcome.status === 'updated') {
             state.catalogWatch.loading = false;
             state.catalogFailed = false;
@@ -4196,6 +4308,23 @@ export function workspace<N extends Node>(
           if (input.name === 'closed' && state.pages.at(-1) === 'apps') state.pages.pop();
           if (input.name === 'manage' && state.pages.at(-1) === 'apps')
             state.pages.push('deployment');
+        }
+        if (input.child === 'scheduler') {
+          if (input.name === 'closed' && state.pages.at(-1) === 'scheduler') state.pages.pop();
+          else if (input.name === 'connections' && state.pages.at(-1) === 'scheduler')
+            state.pages.push('connections');
+          else if (
+            input.name === 'selected' &&
+            state.pages.at(-1) === 'scheduler' &&
+            !state.embedding.fixed &&
+            !mutationPending(state) &&
+            !catalogPending(state)
+          ) {
+            select(state, actions, input.event as AgentSession);
+            state.pages = [];
+            catalog(state);
+          }
+          return frame(presentation, configuredLocale, state, values, actions);
         }
         if (input.child === 'recall') {
           if (input.name === 'closed' && state.pages.at(-1) === 'recall') state.pages.pop();
@@ -4666,6 +4795,18 @@ export function workspace<N extends Node>(
             history(state, actions, { kind: 'tail' }, state.latestKnown, true);
         }
       } else if (input.kind === 'raw') {
+        if (
+          input.key === 'schedule-reminder' &&
+          !state.dialog &&
+          !state.embedding.fixed &&
+          state.scheduleAlerts.reminders[0]
+        ) {
+          state.scheduleRequested = {
+            sequence: ++state.serial,
+            taskId: state.scheduleAlerts.reminders[0].taskId,
+          };
+          rootCommand(state, actions, locale, 'scheduler-open', target);
+        }
         if (input.key === 'catalog-search') input = { ...input, key: 'palette-open' };
         if (input.key === 'home-projects')
           rootCommand(state, actions, locale, 'projects-open', target);

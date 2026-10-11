@@ -69,9 +69,36 @@ pub(crate) fn content_hash(value: &str) -> bool {
 }
 
 pub(crate) fn schema(value: &serde_json::Value) -> Result<(), Error> {
+    // Package imports repeat the same immutable public schemas. Cache only a
+    // successful schema check, keyed by the complete bytes, never by contract
+    // name/version. Configuration values are still validated separately.
+    // JSON Schema is built without external file/network resolution features.
+    #[derive(Default)]
+    struct Checked {
+        schemas: std::collections::HashSet<String>,
+        bytes: usize,
+    }
+    static CHECKED: std::sync::OnceLock<std::sync::Mutex<Checked>> = std::sync::OnceLock::new();
+    let checked = CHECKED.get_or_init(Default::default);
+    let key = serde_json::to_string(value).expect("JSON schema value");
+    if checked.lock().expect("schema cache").schemas.contains(&key) {
+        return Ok(());
+    }
     jsonschema::validator_for(value)
-        .map(|_| ())
-        .map_err(|error| Error::Declaration(format!("invalid schema: {error}")))
+        .map_err(|error| Error::Declaration(format!("invalid schema: {error}")))?;
+    const MAX_BYTES: usize = 4 * 1024 * 1024;
+    if key.len() <= MAX_BYTES {
+        let mut checked = checked.lock().expect("schema cache");
+        if checked.bytes + key.len() > MAX_BYTES || checked.schemas.len() >= 1024 {
+            checked.schemas.clear();
+            checked.bytes = 0;
+        }
+        let size = key.len();
+        if checked.schemas.insert(key) {
+            checked.bytes += size;
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_value(

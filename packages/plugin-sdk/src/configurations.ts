@@ -147,6 +147,11 @@ export const configurations = {
     title: 'AgentConfiguration',
     type: 'object',
     properties: {
+      scheduledTasks: {
+        description: 'Enable model proposals and approved scheduled work for this Agent.',
+        type: 'boolean',
+        default: false,
+      },
       recall: {
         description: 'Explicit access to this Agent’s earlier conversations for model tools.',
         type: 'boolean',
@@ -572,6 +577,11 @@ export const configurations = {
         type: 'object',
         additionalProperties: false,
         properties: {
+          scheduledTasks: {
+            type: 'boolean',
+            description: 'Enable model proposals and approved scheduled work for this Agent.',
+            default: false,
+          },
           recall: {
             type: 'boolean',
             description: 'Explicit access to this Agent’s earlier conversations for model tools.',

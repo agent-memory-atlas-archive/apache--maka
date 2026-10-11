@@ -88,6 +88,7 @@ impl Owner {
             return Ok(None);
         }
         let basis = MessageBasis {
+            background: None,
             model: Some(route.model.clone()),
             executor: None,
             workspace: route.workspace.clone(),
@@ -179,6 +180,8 @@ impl Owner {
             };
             let basis: MessageBasis = serde_json::from_value(admission.execution.basis.clone())
                 .map_err(|_| "agent_message_basis_invalid")?;
+            self.validate_background(&basis).await?;
+            basis.validate_background_target(&current)?;
             if current.archived || current.configuration.workspace != basis.workspace {
                 return Ok(false);
             }

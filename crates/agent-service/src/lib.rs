@@ -34,6 +34,7 @@ pub mod questions;
 mod service;
 pub mod skills;
 mod source_path;
+mod storage;
 mod tools;
 pub mod workhub;
 mod workspace;

@@ -284,6 +284,7 @@ impl Owner {
         .await
         .map_err(public_error)?;
         let basis = MessageBasis {
+            background: None,
             internal_tools: self.internal_tools.clone(),
             internal_bindings: self.internal_bindings.clone(),
             // Ordinary Agents retain their existing queue compatibility. A

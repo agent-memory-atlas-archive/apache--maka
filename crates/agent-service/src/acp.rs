@@ -37,7 +37,7 @@ use uuid::Uuid;
 mod calls;
 mod processes;
 mod setup;
-mod storage;
+use crate::storage;
 
 pub const IMPLEMENTATION: &str = "maka.agent.acp";
 pub const EXPORT: &str = "executor";
@@ -137,7 +137,15 @@ impl Owner {
             calls.clone(),
             configuration.clone(),
         ));
-        let storage = Arc::new(storage::Storage::new(store.clone(), namespace.clone()));
+        let storage = Arc::new(storage::Storage::new(
+            store.clone(),
+            namespace.clone(),
+            maka_plugins::storage::Namespace::new(
+                IMPLEMENTATION,
+                maka_runtime::scope::Scope::Profile,
+            )
+            .expect("ACP storage namespace"),
+        ));
         let provider = maka_external_agent::Provider::new(
             configuration.agent.clone(),
             maka_external_agent::ports::Ports {

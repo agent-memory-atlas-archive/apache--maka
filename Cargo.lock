@@ -8213,6 +8213,7 @@ dependencies = [
  "maka-runtime",
  "maka-runtime-host",
  "maka-sandbox",
+ "maka-scheduler",
  "maka-session-import",
  "maka-settings-service",
  "maka-skills",

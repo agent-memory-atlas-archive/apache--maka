@@ -1,0 +1,369 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use super::*;
+use maka_event_log::message_admissions::{PendingExecution, PendingMessageAdmission};
+impl MessageBasis {
+    pub(in crate::owner) fn validate_background_target(
+        &self,
+        session: &SessionRecord<SessionConfiguration>,
+    ) -> Result<(), String> {
+        if let Some(boundary) = &self.background
+            && (session.archived
+                || session.configuration.workspace != boundary.workspace
+                || session.configuration.permissions != boundary.permissions
+                || session.configuration.boundary_revision
+                    != if session.id == boundary.session_id {
+                        boundary.boundary_revision
+                    } else {
+                        0 // A scheduled new conversation freezes its creation boundary.
+                    })
+        {
+            return Err("scheduler_authorization_changed".into());
+        }
+        Ok(())
+    }
+}
+impl Owner {
+    pub(in crate::owner) async fn validate_background(
+        &self,
+        basis: &MessageBasis,
+    ) -> Result<(), String> {
+        let Some(boundary) = &basis.background else {
+            return Ok(());
+        };
+        if !self.settings.scheduled_tasks {
+            return Err("scheduler_disabled".into());
+        }
+        let source = self.session(&boundary.session_id).await?;
+        if source.archived
+            || source.configuration.workspace != boundary.workspace
+            || source.configuration.permissions != boundary.permissions
+            || source.configuration.boundary_revision != boundary.boundary_revision
+        {
+            return Err("scheduler_authorization_changed".into());
+        }
+        Ok(())
+    }
+    pub(super) async fn approve_schedule(&self, plan: &Plan) -> Result<Approval, String> {
+        let (target, model, thinking) = match &plan.task.effect {
+            ScheduledEffect::Reminder => return Ok(Approval::Reminder),
+            ScheduledEffect::Session {
+                target,
+                model,
+                thinking_level,
+            }
+            | ScheduledEffect::AgentRun {
+                target,
+                model,
+                thinking_level,
+            } => (target, model, thinking_level),
+        };
+        let runs = self.runs.lock().await;
+        if runs.closing {
+            return Err("agent_closed".into());
+        }
+        let id = &target.session_id;
+        let session = self.session(id).await?;
+        if session.configuration.workspace != target.workspace
+            || session.configuration.permissions != target.permissions
+            || session.configuration.boundary_revision != target.boundary_revision
+        {
+            return Err("scheduler_authorization_changed".into());
+        }
+        if session.archived {
+            return Err("agent_session_configuration_changed".into());
+        }
+        workspace::validate(
+            &self.workspace_roots,
+            &session.configuration.workspace,
+            &self.managed_worktrees,
+        )
+        .await?;
+        let (source, _) = crate::model::Source::select(
+            self.configuration.clone(),
+            self.credentials.clone(),
+            model.clone(),
+            *thinking,
+            id.clone(),
+            self.revision.clone(),
+        )
+        .await
+        .map_err(public_error)?;
+        Ok(Approval::Execution {
+            basis: Box::new(MessageBasis {
+                background: Some(target.clone()),
+                internal_tools: self.internal_tools.clone(),
+                internal_bindings: self.internal_bindings.clone(),
+                behavior: self.behavior.clone(),
+                model: Some(source.accepted),
+                executor: None,
+                workspace: session.configuration.workspace,
+                fingerprint: String::new(),
+                tools: self.tool_basis.clone(),
+                max_steps: self.settings.max_steps,
+            }),
+        })
+    }
+    pub(in crate::owner) fn start_schedules(self: &Arc<Self>) {
+        if !self.settings.scheduled_tasks {
+            return;
+        }
+        let owner = self.clone();
+        self.workers.spawn(async move {
+            let mut recover = true;
+            let mut previous_error = None;
+            let mut last_tick = now();
+            loop {
+                if owner.stop.is_cancelled() {
+                    return;
+                }
+                let at = now();
+                recover |= at.saturating_sub(last_tick) > 60_000;
+                last_tick = at;
+                let delay = match owner.tick_schedules(recover).await {
+                    Ok(delay) => {
+                        recover = false;
+                        previous_error = None;
+                        delay
+                    }
+                    Err(error) => {
+                        if previous_error.as_ref() != Some(&error) {
+                            eprintln!("Scheduled tasks: {error}");
+                        }
+                        previous_error = Some(error);
+                        Duration::from_secs(5)
+                    }
+                };
+                tokio::select! {
+                    () = owner.stop.cancelled() => return,
+                    () = owner.scheduler.wake.notified() => {},
+                    () = tokio::time::sleep(delay) => {},
+                }
+            }
+        });
+    }
+    async fn tick_schedules(self: &Arc<Self>, recover: bool) -> Result<Duration, String> {
+        let _gate = self.scheduler.gate.lock().await;
+        let mut catalog = self.scheduler.load().await?;
+        let mut delay = 30_000_i64;
+        let mut dispatch_error = None;
+        for id in catalog.plans.keys().cloned().collect::<Vec<_>>() {
+            if self.stop.is_cancelled() {
+                break;
+            }
+            let mut plan = catalog.plans[&id].plan.clone();
+            let before = serde_json::to_value(&plan).map_err(reason)?;
+            let at = now() as i64;
+            if recover {
+                plan.recover(at).map_err(reason)?;
+            }
+            if plan.authorization.is_some() {
+                plan.claim(at).map_err(reason)?;
+            }
+            if serde_json::to_value(&plan).map_err(reason)? != before {
+                self.scheduler
+                    .commit(&mut catalog, &id, Some(plan.clone()), None)
+                    .await?;
+            }
+            if let Some(fire) = plan.pending.clone() {
+                // A reminder remains durable until the user acknowledges it.
+                // No paint attempt or socket write is described as delivery.
+                if !matches!(fire.effect, ScheduledEffect::Reminder) {
+                    match self.dispatch_scheduled(&fire).await {
+                        Ok(Some(run)) => {
+                            plan.settle(run).map_err(reason)?;
+                            self.scheduler
+                                .commit(&mut catalog, &id, Some(plan.clone()), None)
+                                .await?;
+                        }
+                        Ok(None) => delay = delay.min(1000),
+                        Err(error) => {
+                            // Keep this original fire for reconciliation without
+                            // preventing independent tasks from making progress.
+                            dispatch_error.get_or_insert(error);
+                        }
+                    }
+                }
+            } else if plan.task.status == Status::Active
+                && let Some(next) = plan.task.next_fire_at
+            {
+                delay = delay.min(next.saturating_sub(at).max(100));
+            }
+        }
+        if let Some(error) = dispatch_error {
+            return Err(error);
+        }
+        Ok(Duration::from_millis(delay as u64))
+    }
+    async fn dispatch_scheduled(
+        self: &Arc<Self>,
+        fire: &maka_scheduler::plan::Fire<ScheduledEffect, Approval>,
+    ) -> Result<Option<Run>, String> {
+        let Some(Approval::Execution { basis }) = &fire.authorization else {
+            return Ok(Some(settlement(
+                fire,
+                Outcome::Blocked,
+                "Background approval unavailable",
+                None,
+                None,
+            )));
+        };
+        let (source_session, new_session) = match &fire.effect {
+            ScheduledEffect::Session { target, .. } => (&target.session_id, false),
+            ScheduledEffect::AgentRun { target, .. } => (&target.session_id, true),
+            ScheduledEffect::Reminder => unreachable!(),
+        };
+        let identity = format!("{:x}", Sha256::digest(fire.id.as_bytes()));
+        let session_id = if new_session {
+            format!("{}{}", self.prefix, &identity[..32])
+        } else {
+            source_session.clone()
+        };
+        let mut basis = (**basis).clone();
+        basis.fingerprint = format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(fire).map_err(reason)?)
+        );
+        let message: MessageInput = fire.intent.body().to_string().into();
+        let delivered = RootSourceMessage {
+            message: DeliveredMessage {
+                message_id: format!("m_{identity}"),
+                submitted_content_digest: message.content_digest().map_err(reason)?,
+                content: message.clone(),
+            },
+            unprepared_content: message,
+            submitted_placement: Placement::CurrentTurn,
+            disposition: MessageDisposition::TurnStarted,
+            submitted_intent: None,
+        };
+        let admission = PendingMessageAdmission {
+            execution: PendingExecution {
+                owner: self.prefix.clone(),
+                basis: serde_json::to_value(&basis).map_err(reason)?,
+            },
+            invocation: Invocation {
+                session_id: session_id.clone(),
+                turn_id: format!("t_{identity}"),
+                run_id: format!("r_{identity}"),
+                invocation_id: format!("i_{identity}"),
+            },
+            steering_invocation: None,
+            source: delivered,
+            required_tools: Default::default(),
+            admitted_at: fire.scheduled_at as u64,
+        };
+        // Before preparing a new session, observe the original message. A revoked
+        // approval cannot change the known result of an already admitted fire.
+        let accepted = self
+            .store
+            .root_message(&session_id, &admission.source.message.message_id)
+            .await
+            .map_err(reason)?
+            .is_some()
+            || self
+                .store
+                .message_admission(&session_id, &admission.source.message.message_id)
+                .await
+                .map_err(reason)?
+                .is_some()
+            || self
+                .store
+                .message_cancelled(&session_id, &admission.source.message.message_id)
+                .await
+                .map_err(reason)?;
+        if !accepted {
+            if let Err(error) = self.validate_background(&basis).await {
+                if matches!(
+                    error.as_str(),
+                    "scheduler_authorization_changed"
+                        | "scheduler_disabled"
+                        | "agent_session_unavailable"
+                ) {
+                    return Ok(Some(settlement(fire, Outcome::Blocked, &error, None, None)));
+                }
+                return Err(error);
+            }
+            if new_session {
+                let boundary = basis
+                    .background
+                    .as_ref()
+                    .ok_or("scheduler_approval_invalid")?;
+                if self
+                    .store
+                    .get_session::<SessionConfiguration>(&session_id)
+                    .await
+                    .map_err(reason)?
+                    .is_none()
+                {
+                    self.store
+                        .create_session(
+                            &session_id,
+                            &basis.fingerprint,
+                            &SessionConfiguration {
+                                title: fire.title.clone(),
+                                labels: vec![],
+                                workspace: boundary.workspace.clone(),
+                                permissions: boundary.permissions.clone(),
+                                boundary_revision: 0,
+                            },
+                            fire.scheduled_at as u64,
+                        )
+                        .await
+                        .map_err(reason)?;
+                }
+            }
+        }
+        match self.admit_notification(&admission).await {
+            Ok(true) => Ok(Some(settlement(
+                fire,
+                Outcome::Ok,
+                "Message admitted",
+                Some(session_id),
+                Some(admission.invocation.run_id),
+            ))),
+            Ok(false) => Ok(None),
+            Err(error)
+                if matches!(
+                    error.as_str(),
+                    "scheduler_authorization_changed" | "scheduler_disabled"
+                ) =>
+            {
+                Ok(Some(settlement(fire, Outcome::Blocked, &error, None, None)))
+            }
+            Err(error) => Err(error),
+        }
+    }
+}
+fn settlement(
+    fire: &maka_scheduler::plan::Fire<ScheduledEffect, Approval>,
+    outcome: Outcome,
+    message: &str,
+    session_id: Option<String>,
+    run_id: Option<String>,
+) -> Run {
+    Run {
+        id: fire.id.clone(),
+        at: (now() as i64).max(fire.scheduled_at),
+        outcome,
+        message: message.chars().take(1024).collect(),
+        session_id,
+        run_id,
+    }
+}

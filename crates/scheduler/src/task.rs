@@ -19,9 +19,25 @@
 
 use crate::{Error, MAX_DELAY_MS, invalid, schedule::Schedule};
 use maka_runtime::execution::{BehaviorId, CollaborationMode, SandboxMode, ThinkingLevel};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Timing policy only needs validation and notification delivery semantics.
+/// Each execution owner supplies its own effect and authority types.
+pub trait TaskEffect: Clone + Serialize {
+    fn validate(&self) -> Result<(), Error>;
+    fn is_notification(&self) -> bool;
+}
+impl TaskEffect for Effect {
+    fn validate(&self) -> Result<(), Error> {
+        Effect::validate(self)
+    }
+    fn is_notification(&self) -> bool {
+        matches!(self, Self::Notify(_))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
     Active,
@@ -30,7 +46,7 @@ pub enum Status {
     Expired,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Outcome {
     Ok,
@@ -127,7 +143,7 @@ impl Effect {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "kind",
     rename_all = "snake_case",
@@ -139,7 +155,7 @@ pub enum Creator {
     Agent { session_id: String },
     System,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Intent {
     Text { body: String },
@@ -152,7 +168,7 @@ impl Intent {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Run {
     pub id: String,
@@ -164,14 +180,14 @@ pub struct Run {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_id: Option<String>,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Task {
+pub struct Task<E = Effect> {
     pub id: String,
     pub title: String,
     pub intent: Intent,
     pub schedule: Schedule,
-    pub effect: Effect,
+    pub effect: E,
     pub status: Status,
     pub next_fire_at: Option<i64>,
     pub last_fire_at: Option<i64>,
@@ -184,7 +200,7 @@ pub struct Task {
     pub runs: Vec<Run>,
     pub last_error: Option<String>,
 }
-impl Task {
+impl<E: TaskEffect> Task<E> {
     pub(crate) fn bound_history(&mut self) -> Result<(), Error> {
         while serde_json::to_vec(self)
             .map_err(|error| invalid(error.to_string()))?
@@ -198,19 +214,19 @@ impl Task {
         Ok(())
     }
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Create {
+pub struct Create<E = Effect> {
     pub title: String,
     pub intent_body: String,
     pub schedule: Schedule,
-    pub effect: Effect,
+    pub effect: E,
     #[serde(default)]
     pub max_fires: Option<u32>,
     #[serde(default)]
     pub expires_at: Option<i64>,
 }
-impl Create {
+impl<E: TaskEffect> Create<E> {
     pub fn validate(&self, now: i64) -> Result<(), Error> {
         self.validate_fields()?;
         if self.expires_at.is_some_and(|expires| expires <= now) {
@@ -236,7 +252,7 @@ impl Create {
             return Err(invalid("task input exceeds 64 KiB encoded"));
         }
         text(&self.title, 120)?;
-        if !matches!(self.effect, Effect::Notify(_)) {
+        if !self.effect.is_notification() {
             text(&self.intent_body, 8000)?;
         } else if self.intent_body.chars().count() > 8000 {
             return Err(invalid("intent exceeds 8000 characters"));

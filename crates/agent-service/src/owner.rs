@@ -32,6 +32,7 @@ mod projects;
 pub(crate) use notifications::ReturnRoute;
 mod queue;
 mod recall;
+mod scheduler;
 mod skills;
 use maka_config::ConfigurationStore;
 use maka_event_log::{EventLog, sessions::SessionRecord};
@@ -70,6 +71,8 @@ pub(crate) struct SessionConfiguration {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MessageBasis {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    background: Option<ScheduledTarget>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     internal_tools: Vec<maka_runtime::tools::ToolDefinition>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -115,6 +118,7 @@ struct Runs {
 pub(crate) struct Owner {
     pub store: Arc<EventLog>,
     pub recall: Arc<recall::Recall>,
+    scheduler: Arc<scheduler::Scheduler>,
     pub settings: Configuration,
     pub prefix: String,
     pub data_source: DataSource,
@@ -214,6 +218,13 @@ impl Owner {
         if settings.recall {
             additional.extend(recall.tools());
         }
+        let scheduler = Arc::new(scheduler::Scheduler::new(
+            persistence.store().clone(),
+            prefix.clone(),
+        ));
+        if settings.scheduled_tasks {
+            additional.extend(scheduler.tools());
+        }
         let internal_tools = additional
             .iter()
             .map(|tool| tool.definition.clone())
@@ -258,7 +269,8 @@ impl Owner {
                 .await
                 .map_err(|_| "agent_configuration_unavailable")?,
         );
-        Ok(Arc::new(Self {
+        let owner = Arc::new(Self {
+            scheduler,
             recall,
             store: persistence.store().clone(),
             prefix,
@@ -284,7 +296,8 @@ impl Owner {
             runs: Mutex::default(),
             workers,
             stop,
-        }))
+        });
+        Ok(owner)
     }
     pub fn operation_id(&self, operation: &maka_plugin_core::operation::RecoveryRef) -> String {
         // Use the actual complete original reference. UUIDs alone do not name
@@ -619,6 +632,7 @@ impl Owner {
         .await?;
         let external = executor.is_some();
         let basis = MessageBasis {
+            background: None,
             internal_tools: if external {
                 vec![]
             } else {
@@ -795,11 +809,13 @@ impl Owner {
             }
             owner.workers.wait().await;
             owner.engine.drain().await;
+            let scheduler = owner.scheduler.finish().await;
             let configuration = owner.configuration.shutdown().await;
             let runs = owner.runs.lock().await;
             if !runs.quarantined.is_empty() {
                 return Err("agent_cleanup_unconfirmed".into());
             }
+            scheduler?;
             configuration.map_err(|_| "agent_configuration_cleanup_unconfirmed".into())
         })
     }

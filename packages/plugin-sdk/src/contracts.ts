@@ -14580,6 +14580,1569 @@ export const contracts = {
           },
           resources: {},
         },
+        schedule: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentScheduleChange',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  input: {
+                    $ref: '#/$defs/AgentScheduledInput',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'create',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'input'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  taskId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  input: {
+                    $ref: '#/$defs/AgentScheduledInput',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'update',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'taskId', 'revision', 'input'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  taskId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'approve',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'taskId', 'revision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  taskId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'pause',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'taskId', 'revision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  taskId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'resume',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'taskId', 'revision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  taskId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'trigger_now',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'taskId', 'revision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  taskId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  delayMs: {
+                    type: 'integer',
+                    format: 'int64',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'snooze',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'taskId', 'revision', 'delayMs'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  taskId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  fireId: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'acknowledge',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'taskId', 'revision', 'fireId'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  taskId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'clear_history',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'taskId', 'revision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  taskId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'delete',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'taskId', 'revision'],
+              },
+            ],
+            $defs: {
+              AgentScheduledInput: {
+                type: 'object',
+                properties: {
+                  task: {
+                    $ref: '#/$defs/Create',
+                  },
+                  timezone: {
+                    type: 'string',
+                  },
+                  misfire: {
+                    $ref: '#/$defs/Misfire',
+                  },
+                },
+                additionalProperties: false,
+                required: ['task', 'timezone', 'misfire'],
+              },
+              Create: {
+                type: 'object',
+                properties: {
+                  title: {
+                    type: 'string',
+                  },
+                  intentBody: {
+                    type: 'string',
+                  },
+                  schedule: {
+                    $ref: '#/$defs/Schedule',
+                  },
+                  effect: {
+                    $ref: '#/$defs/AgentScheduledEffect',
+                  },
+                  maxFires: {
+                    type: ['integer', 'null'],
+                    format: 'uint32',
+                    minimum: 0,
+                    default: null,
+                  },
+                  expiresAt: {
+                    type: ['integer', 'null'],
+                    format: 'int64',
+                    default: null,
+                  },
+                },
+                additionalProperties: false,
+                required: ['title', 'intentBody', 'schedule', 'effect'],
+              },
+              Schedule: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      runAt: {
+                        type: 'integer',
+                        format: 'int64',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'once',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'runAt'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      everySeconds: {
+                        type: 'integer',
+                        format: 'uint32',
+                        minimum: 0,
+                      },
+                      startAt: {
+                        type: 'integer',
+                        format: 'int64',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'interval',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'everySeconds', 'startAt'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      recurrence: {
+                        $ref: '#/$defs/Recurrence',
+                      },
+                      anchorAt: {
+                        type: 'integer',
+                        format: 'int64',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'calendar',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'recurrence', 'anchorAt'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      expression: {
+                        type: 'string',
+                      },
+                      startAt: {
+                        type: 'integer',
+                        format: 'int64',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'cron',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'expression', 'startAt'],
+                  },
+                ],
+              },
+              Recurrence: {
+                type: 'string',
+                enum: ['daily', 'weekly', 'monthly'],
+              },
+              AgentScheduledEffect: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'reminder',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      target: {
+                        $ref: '#/$defs/AgentScheduledTarget',
+                      },
+                      model: {
+                        $ref: '#/$defs/ModelSelection',
+                      },
+                      thinkingLevel: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ThinkingLevel',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'session',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'target', 'model'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      target: {
+                        $ref: '#/$defs/AgentScheduledTarget',
+                      },
+                      model: {
+                        $ref: '#/$defs/ModelSelection',
+                      },
+                      thinkingLevel: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ThinkingLevel',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'agent_run',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'target', 'model'],
+                  },
+                ],
+              },
+              AgentScheduledTarget: {
+                description:
+                  'Exact observed source boundary. This data is checked against the original\nSession; passing it never grants execution by itself.',
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  workspace: {
+                    $ref: '#/$defs/AgentWorkspace',
+                  },
+                  permissions: {
+                    $ref: '#/$defs/AgentWorkspacePermissions',
+                  },
+                  boundaryRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['sessionId', 'workspace', 'permissions', 'boundaryRevision'],
+              },
+              AgentWorkspace: {
+                type: 'object',
+                properties: {
+                  projectId: {
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                  },
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['path', 'directoryIdentity', 'identity'],
+              },
+              AgentWorkspacePermissions: {
+                type: 'object',
+                properties: {
+                  access: {
+                    $ref: '#/$defs/AgentWorkspaceAccess',
+                  },
+                  requestPermissions: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['access', 'requestPermissions'],
+              },
+              AgentWorkspaceAccess: {
+                description:
+                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                type: 'string',
+                enum: ['read_only', 'workspace_write'],
+              },
+              ModelSelection: {
+                description:
+                  'Exact public selection observed by a caller, checked once at run admission.',
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  modelId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 512,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision', 'modelId'],
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+              Misfire: {
+                type: 'string',
+                enum: ['skip', 'latest'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentScheduleResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  taskId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'committed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'taskId', 'revision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  actual: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'conflict',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  reason: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'reason'],
+              },
+            ],
+          },
+          resources: {},
+        },
+        scheduleAlerts: {
+          mode: 'subscription',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentScheduleAlertsRead',
+            type: 'object',
+            additionalProperties: false,
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentScheduleAlerts',
+            type: 'object',
+            properties: {
+              pending: {
+                type: 'integer',
+                format: 'uint32',
+                minimum: 0,
+              },
+              reminders: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/AgentScheduledReminder',
+                },
+              },
+            },
+            additionalProperties: false,
+            required: ['pending', 'reminders'],
+            $defs: {
+              AgentScheduledReminder: {
+                type: 'object',
+                properties: {
+                  taskId: {
+                    type: 'string',
+                  },
+                  fireId: {
+                    type: 'string',
+                  },
+                  title: {
+                    type: 'string',
+                  },
+                  body: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['taskId', 'fireId', 'title', 'body'],
+              },
+            },
+          },
+          resources: {},
+        },
+        schedules: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentScheduleRead',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  cursor: {
+                    type: ['string', 'null'],
+                  },
+                  expectedRevision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'list',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  taskId: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'get',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'taskId'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  reference: {
+                    $ref: '#/$defs/RecoveryRef',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'receipt',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'reference'],
+              },
+            ],
+            $defs: {
+              RecoveryRef: {
+                type: 'object',
+                properties: {
+                  source: {
+                    $ref: '#/$defs/DeploymentRef',
+                  },
+                  namespace: {
+                    $ref: '#/$defs/InstanceId',
+                  },
+                  export: {
+                    type: 'string',
+                  },
+                  method: {
+                    type: 'string',
+                  },
+                  operation: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  fingerprint: {
+                    type: 'string',
+                  },
+                  contract: {
+                    $ref: '#/$defs/Contract',
+                  },
+                  recovery: {
+                    $ref: '#/$defs/RecoveryProtocol',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'source',
+                  'namespace',
+                  'export',
+                  'method',
+                  'operation',
+                  'fingerprint',
+                  'contract',
+                  'recovery',
+                ],
+              },
+              DeploymentRef: {
+                type: 'object',
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['stateDomain', 'deployment', 'revision'],
+              },
+              InstanceId: {
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
+              },
+              Contract: {
+                description:
+                  'Public contract definitions are package data, not live registration records.',
+                type: 'object',
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  version: {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                  transport: {
+                    $ref: '#/$defs/Transport',
+                  },
+                  interface: {
+                    $ref: '#/$defs/Interface',
+                  },
+                },
+                additionalProperties: false,
+                required: ['name', 'version', 'transport', 'interface'],
+              },
+              Transport: {
+                type: 'string',
+                enum: ['local', 'remote'],
+              },
+              Interface: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      methods: {
+                        type: 'object',
+                        additionalProperties: {
+                          $ref: '#/$defs/Method',
+                        },
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'service',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'methods'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      props: true,
+                      events: {
+                        type: 'object',
+                        additionalProperties: true,
+                      },
+                      captures: {
+                        type: 'object',
+                        additionalProperties: {
+                          $ref: '#/$defs/Capture',
+                        },
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'component',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'props', 'events', 'captures'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      schema: true,
+                      kind: {
+                        type: 'string',
+                        const: 'value',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'schema'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      resource: {
+                        type: 'string',
+                      },
+                      schema: true,
+                      kind: {
+                        type: 'string',
+                        const: 'resource',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'resource', 'schema'],
+                  },
+                ],
+              },
+              Method: {
+                type: 'object',
+                properties: {
+                  mode: {
+                    $ref: '#/$defs/MethodMode',
+                  },
+                  input: true,
+                  output: true,
+                  progress: {
+                    description:
+                      'Bounded transient observations from this mutation, separate from its\noriginal final receipt. Only mutation methods may declare progress.',
+                  },
+                  resources: {
+                    type: 'object',
+                    additionalProperties: {
+                      $ref: '#/$defs/ResourceSlot',
+                    },
+                  },
+                },
+                additionalProperties: false,
+                required: ['mode', 'input', 'output', 'resources'],
+              },
+              MethodMode: {
+                type: 'string',
+                enum: ['query', 'mutation', 'subscription'],
+              },
+              ResourceSlot: {
+                description:
+                  'One declared input slot: its nominal type and whether the caller may omit it.',
+                type: 'object',
+                properties: {
+                  type: {
+                    $ref: '#/$defs/ResourceType',
+                  },
+                  optional: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['type', 'optional'],
+              },
+              ResourceType: {
+                description:
+                  'Nominal read-only resource shape, not a resource id or authorization token.',
+                type: 'object',
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  version: {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['name', 'version'],
+              },
+              Capture: {
+                type: 'object',
+                properties: {
+                  input: true,
+                  output: {
+                    $ref: '#/$defs/CaptureOutput',
+                  },
+                },
+                additionalProperties: false,
+                required: ['input', 'output'],
+              },
+              CaptureOutput: {
+                description:
+                  'Resource captures enter checked service slots; continuations remain in the\noriginal presentation owner and only decide admission of query feedback.',
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      resource: {
+                        $ref: '#/$defs/ResourceType',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'resource',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'resource'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'continuation',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                ],
+              },
+              RecoveryProtocol: {
+                type: 'string',
+                enum: ['journal_v1'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentSchedules',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  tasks: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/AgentScheduledSummary',
+                    },
+                  },
+                  nextCursor: {
+                    type: ['string', 'null'],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'page',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'revision', 'tasks'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  detail: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentScheduledDetail',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'task',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'revision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  result: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentScheduleResult',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'receipt',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind'],
+              },
+            ],
+            $defs: {
+              AgentScheduledSummary: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  title: {
+                    type: 'string',
+                  },
+                  status: {
+                    $ref: '#/$defs/Status',
+                  },
+                  approved: {
+                    type: 'boolean',
+                  },
+                  nextFireAt: {
+                    type: ['integer', 'null'],
+                    format: 'int64',
+                  },
+                  pendingFire: {
+                    type: ['string', 'null'],
+                  },
+                  reminder: {
+                    type: 'boolean',
+                  },
+                  lastError: {
+                    type: ['string', 'null'],
+                  },
+                },
+                additionalProperties: false,
+                required: ['id', 'revision', 'title', 'status', 'approved', 'reminder'],
+              },
+              Status: {
+                type: 'string',
+                enum: ['active', 'paused', 'completed', 'expired'],
+              },
+              AgentScheduledDetail: {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  task: {
+                    $ref: '#/$defs/Task',
+                  },
+                  timezone: {
+                    type: 'string',
+                  },
+                  misfire: {
+                    $ref: '#/$defs/Misfire',
+                  },
+                  approved: {
+                    type: 'boolean',
+                  },
+                  pendingFire: {
+                    type: ['string', 'null'],
+                  },
+                },
+                additionalProperties: false,
+                required: ['revision', 'task', 'timezone', 'misfire', 'approved'],
+              },
+              Task: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  title: {
+                    type: 'string',
+                  },
+                  intent: {
+                    $ref: '#/$defs/Intent',
+                  },
+                  schedule: {
+                    $ref: '#/$defs/Schedule',
+                  },
+                  effect: {
+                    $ref: '#/$defs/AgentScheduledEffect',
+                  },
+                  status: {
+                    $ref: '#/$defs/Status',
+                  },
+                  nextFireAt: {
+                    type: ['integer', 'null'],
+                    format: 'int64',
+                  },
+                  lastFireAt: {
+                    type: ['integer', 'null'],
+                    format: 'int64',
+                  },
+                  fireCount: {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                  maxFires: {
+                    type: ['integer', 'null'],
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                  expiresAt: {
+                    type: ['integer', 'null'],
+                    format: 'int64',
+                  },
+                  createdBy: {
+                    $ref: '#/$defs/Creator',
+                  },
+                  createdAt: {
+                    type: 'integer',
+                    format: 'int64',
+                  },
+                  updatedAt: {
+                    type: 'integer',
+                    format: 'int64',
+                  },
+                  runs: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/Run',
+                    },
+                  },
+                  lastError: {
+                    type: ['string', 'null'],
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'id',
+                  'title',
+                  'intent',
+                  'schedule',
+                  'effect',
+                  'status',
+                  'fireCount',
+                  'createdBy',
+                  'createdAt',
+                  'updatedAt',
+                  'runs',
+                ],
+              },
+              Intent: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      body: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'text',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'body'],
+                  },
+                ],
+              },
+              Schedule: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      runAt: {
+                        type: 'integer',
+                        format: 'int64',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'once',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'runAt'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      everySeconds: {
+                        type: 'integer',
+                        format: 'uint32',
+                        minimum: 0,
+                      },
+                      startAt: {
+                        type: 'integer',
+                        format: 'int64',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'interval',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'everySeconds', 'startAt'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      recurrence: {
+                        $ref: '#/$defs/Recurrence',
+                      },
+                      anchorAt: {
+                        type: 'integer',
+                        format: 'int64',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'calendar',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'recurrence', 'anchorAt'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      expression: {
+                        type: 'string',
+                      },
+                      startAt: {
+                        type: 'integer',
+                        format: 'int64',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'cron',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'expression', 'startAt'],
+                  },
+                ],
+              },
+              Recurrence: {
+                type: 'string',
+                enum: ['daily', 'weekly', 'monthly'],
+              },
+              AgentScheduledEffect: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'reminder',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      target: {
+                        $ref: '#/$defs/AgentScheduledTarget',
+                      },
+                      model: {
+                        $ref: '#/$defs/ModelSelection',
+                      },
+                      thinkingLevel: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ThinkingLevel',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'session',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'target', 'model'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      target: {
+                        $ref: '#/$defs/AgentScheduledTarget',
+                      },
+                      model: {
+                        $ref: '#/$defs/ModelSelection',
+                      },
+                      thinkingLevel: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ThinkingLevel',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'agent_run',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'target', 'model'],
+                  },
+                ],
+              },
+              AgentScheduledTarget: {
+                description:
+                  'Exact observed source boundary. This data is checked against the original\nSession; passing it never grants execution by itself.',
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  workspace: {
+                    $ref: '#/$defs/AgentWorkspace',
+                  },
+                  permissions: {
+                    $ref: '#/$defs/AgentWorkspacePermissions',
+                  },
+                  boundaryRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['sessionId', 'workspace', 'permissions', 'boundaryRevision'],
+              },
+              AgentWorkspace: {
+                type: 'object',
+                properties: {
+                  projectId: {
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                  },
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['path', 'directoryIdentity', 'identity'],
+              },
+              AgentWorkspacePermissions: {
+                type: 'object',
+                properties: {
+                  access: {
+                    $ref: '#/$defs/AgentWorkspaceAccess',
+                  },
+                  requestPermissions: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['access', 'requestPermissions'],
+              },
+              AgentWorkspaceAccess: {
+                description:
+                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                type: 'string',
+                enum: ['read_only', 'workspace_write'],
+              },
+              ModelSelection: {
+                description:
+                  'Exact public selection observed by a caller, checked once at run admission.',
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  modelId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 512,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision', 'modelId'],
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+              Creator: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'user',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      sessionId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'agent',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'sessionId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'system',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                ],
+              },
+              Run: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  at: {
+                    type: 'integer',
+                    format: 'int64',
+                  },
+                  outcome: {
+                    $ref: '#/$defs/Outcome',
+                  },
+                  message: {
+                    type: 'string',
+                  },
+                  sessionId: {
+                    type: ['string', 'null'],
+                  },
+                  runId: {
+                    type: ['string', 'null'],
+                  },
+                },
+                additionalProperties: false,
+                required: ['id', 'at', 'outcome', 'message'],
+              },
+              Outcome: {
+                type: 'string',
+                enum: ['ok', 'failed', 'blocked'],
+              },
+              Misfire: {
+                type: 'string',
+                enum: ['skip', 'latest'],
+              },
+              AgentScheduleResult: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      taskId: {
+                        type: 'string',
+                      },
+                      revision: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'committed',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'taskId', 'revision'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      actual: {
+                        type: ['integer', 'null'],
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'conflict',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      reason: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'rejected',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'reason'],
+                  },
+                ],
+              },
+            },
+          },
+          resources: {},
+        },
         search: {
           mode: 'query',
           input: {
@@ -16167,6 +17730,962 @@ export const contracts = {
               AgentInteractionKind: {
                 type: 'string',
                 enum: ['service_approval', 'question', 'permissions', 'form', 'client_capability'],
+              },
+            },
+          },
+          resources: {},
+        },
+        watchSchedules: {
+          mode: 'subscription',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentScheduleRead',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  cursor: {
+                    type: ['string', 'null'],
+                  },
+                  expectedRevision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'list',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  taskId: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'get',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'taskId'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  reference: {
+                    $ref: '#/$defs/RecoveryRef',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'receipt',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'reference'],
+              },
+            ],
+            $defs: {
+              RecoveryRef: {
+                type: 'object',
+                properties: {
+                  source: {
+                    $ref: '#/$defs/DeploymentRef',
+                  },
+                  namespace: {
+                    $ref: '#/$defs/InstanceId',
+                  },
+                  export: {
+                    type: 'string',
+                  },
+                  method: {
+                    type: 'string',
+                  },
+                  operation: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  fingerprint: {
+                    type: 'string',
+                  },
+                  contract: {
+                    $ref: '#/$defs/Contract',
+                  },
+                  recovery: {
+                    $ref: '#/$defs/RecoveryProtocol',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'source',
+                  'namespace',
+                  'export',
+                  'method',
+                  'operation',
+                  'fingerprint',
+                  'contract',
+                  'recovery',
+                ],
+              },
+              DeploymentRef: {
+                type: 'object',
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['stateDomain', 'deployment', 'revision'],
+              },
+              InstanceId: {
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
+              },
+              Contract: {
+                description:
+                  'Public contract definitions are package data, not live registration records.',
+                type: 'object',
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  version: {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                  transport: {
+                    $ref: '#/$defs/Transport',
+                  },
+                  interface: {
+                    $ref: '#/$defs/Interface',
+                  },
+                },
+                additionalProperties: false,
+                required: ['name', 'version', 'transport', 'interface'],
+              },
+              Transport: {
+                type: 'string',
+                enum: ['local', 'remote'],
+              },
+              Interface: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      methods: {
+                        type: 'object',
+                        additionalProperties: {
+                          $ref: '#/$defs/Method',
+                        },
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'service',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'methods'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      props: true,
+                      events: {
+                        type: 'object',
+                        additionalProperties: true,
+                      },
+                      captures: {
+                        type: 'object',
+                        additionalProperties: {
+                          $ref: '#/$defs/Capture',
+                        },
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'component',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'props', 'events', 'captures'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      schema: true,
+                      kind: {
+                        type: 'string',
+                        const: 'value',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'schema'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      resource: {
+                        type: 'string',
+                      },
+                      schema: true,
+                      kind: {
+                        type: 'string',
+                        const: 'resource',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'resource', 'schema'],
+                  },
+                ],
+              },
+              Method: {
+                type: 'object',
+                properties: {
+                  mode: {
+                    $ref: '#/$defs/MethodMode',
+                  },
+                  input: true,
+                  output: true,
+                  progress: {
+                    description:
+                      'Bounded transient observations from this mutation, separate from its\noriginal final receipt. Only mutation methods may declare progress.',
+                  },
+                  resources: {
+                    type: 'object',
+                    additionalProperties: {
+                      $ref: '#/$defs/ResourceSlot',
+                    },
+                  },
+                },
+                additionalProperties: false,
+                required: ['mode', 'input', 'output', 'resources'],
+              },
+              MethodMode: {
+                type: 'string',
+                enum: ['query', 'mutation', 'subscription'],
+              },
+              ResourceSlot: {
+                description:
+                  'One declared input slot: its nominal type and whether the caller may omit it.',
+                type: 'object',
+                properties: {
+                  type: {
+                    $ref: '#/$defs/ResourceType',
+                  },
+                  optional: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['type', 'optional'],
+              },
+              ResourceType: {
+                description:
+                  'Nominal read-only resource shape, not a resource id or authorization token.',
+                type: 'object',
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  version: {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['name', 'version'],
+              },
+              Capture: {
+                type: 'object',
+                properties: {
+                  input: true,
+                  output: {
+                    $ref: '#/$defs/CaptureOutput',
+                  },
+                },
+                additionalProperties: false,
+                required: ['input', 'output'],
+              },
+              CaptureOutput: {
+                description:
+                  'Resource captures enter checked service slots; continuations remain in the\noriginal presentation owner and only decide admission of query feedback.',
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      resource: {
+                        $ref: '#/$defs/ResourceType',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'resource',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'resource'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'continuation',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                ],
+              },
+              RecoveryProtocol: {
+                type: 'string',
+                enum: ['journal_v1'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentSchedules',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  tasks: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/AgentScheduledSummary',
+                    },
+                  },
+                  nextCursor: {
+                    type: ['string', 'null'],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'page',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'revision', 'tasks'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  detail: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentScheduledDetail',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'task',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'revision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  result: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentScheduleResult',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'receipt',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind'],
+              },
+            ],
+            $defs: {
+              AgentScheduledSummary: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  title: {
+                    type: 'string',
+                  },
+                  status: {
+                    $ref: '#/$defs/Status',
+                  },
+                  approved: {
+                    type: 'boolean',
+                  },
+                  nextFireAt: {
+                    type: ['integer', 'null'],
+                    format: 'int64',
+                  },
+                  pendingFire: {
+                    type: ['string', 'null'],
+                  },
+                  reminder: {
+                    type: 'boolean',
+                  },
+                  lastError: {
+                    type: ['string', 'null'],
+                  },
+                },
+                additionalProperties: false,
+                required: ['id', 'revision', 'title', 'status', 'approved', 'reminder'],
+              },
+              Status: {
+                type: 'string',
+                enum: ['active', 'paused', 'completed', 'expired'],
+              },
+              AgentScheduledDetail: {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  task: {
+                    $ref: '#/$defs/Task',
+                  },
+                  timezone: {
+                    type: 'string',
+                  },
+                  misfire: {
+                    $ref: '#/$defs/Misfire',
+                  },
+                  approved: {
+                    type: 'boolean',
+                  },
+                  pendingFire: {
+                    type: ['string', 'null'],
+                  },
+                },
+                additionalProperties: false,
+                required: ['revision', 'task', 'timezone', 'misfire', 'approved'],
+              },
+              Task: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  title: {
+                    type: 'string',
+                  },
+                  intent: {
+                    $ref: '#/$defs/Intent',
+                  },
+                  schedule: {
+                    $ref: '#/$defs/Schedule',
+                  },
+                  effect: {
+                    $ref: '#/$defs/AgentScheduledEffect',
+                  },
+                  status: {
+                    $ref: '#/$defs/Status',
+                  },
+                  nextFireAt: {
+                    type: ['integer', 'null'],
+                    format: 'int64',
+                  },
+                  lastFireAt: {
+                    type: ['integer', 'null'],
+                    format: 'int64',
+                  },
+                  fireCount: {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                  maxFires: {
+                    type: ['integer', 'null'],
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                  expiresAt: {
+                    type: ['integer', 'null'],
+                    format: 'int64',
+                  },
+                  createdBy: {
+                    $ref: '#/$defs/Creator',
+                  },
+                  createdAt: {
+                    type: 'integer',
+                    format: 'int64',
+                  },
+                  updatedAt: {
+                    type: 'integer',
+                    format: 'int64',
+                  },
+                  runs: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/Run',
+                    },
+                  },
+                  lastError: {
+                    type: ['string', 'null'],
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'id',
+                  'title',
+                  'intent',
+                  'schedule',
+                  'effect',
+                  'status',
+                  'fireCount',
+                  'createdBy',
+                  'createdAt',
+                  'updatedAt',
+                  'runs',
+                ],
+              },
+              Intent: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      body: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'text',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'body'],
+                  },
+                ],
+              },
+              Schedule: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      runAt: {
+                        type: 'integer',
+                        format: 'int64',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'once',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'runAt'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      everySeconds: {
+                        type: 'integer',
+                        format: 'uint32',
+                        minimum: 0,
+                      },
+                      startAt: {
+                        type: 'integer',
+                        format: 'int64',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'interval',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'everySeconds', 'startAt'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      recurrence: {
+                        $ref: '#/$defs/Recurrence',
+                      },
+                      anchorAt: {
+                        type: 'integer',
+                        format: 'int64',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'calendar',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'recurrence', 'anchorAt'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      expression: {
+                        type: 'string',
+                      },
+                      startAt: {
+                        type: 'integer',
+                        format: 'int64',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'cron',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'expression', 'startAt'],
+                  },
+                ],
+              },
+              Recurrence: {
+                type: 'string',
+                enum: ['daily', 'weekly', 'monthly'],
+              },
+              AgentScheduledEffect: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'reminder',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      target: {
+                        $ref: '#/$defs/AgentScheduledTarget',
+                      },
+                      model: {
+                        $ref: '#/$defs/ModelSelection',
+                      },
+                      thinkingLevel: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ThinkingLevel',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'session',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'target', 'model'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      target: {
+                        $ref: '#/$defs/AgentScheduledTarget',
+                      },
+                      model: {
+                        $ref: '#/$defs/ModelSelection',
+                      },
+                      thinkingLevel: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ThinkingLevel',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'agent_run',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'target', 'model'],
+                  },
+                ],
+              },
+              AgentScheduledTarget: {
+                description:
+                  'Exact observed source boundary. This data is checked against the original\nSession; passing it never grants execution by itself.',
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  workspace: {
+                    $ref: '#/$defs/AgentWorkspace',
+                  },
+                  permissions: {
+                    $ref: '#/$defs/AgentWorkspacePermissions',
+                  },
+                  boundaryRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['sessionId', 'workspace', 'permissions', 'boundaryRevision'],
+              },
+              AgentWorkspace: {
+                type: 'object',
+                properties: {
+                  projectId: {
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                  },
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['path', 'directoryIdentity', 'identity'],
+              },
+              AgentWorkspacePermissions: {
+                type: 'object',
+                properties: {
+                  access: {
+                    $ref: '#/$defs/AgentWorkspaceAccess',
+                  },
+                  requestPermissions: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['access', 'requestPermissions'],
+              },
+              AgentWorkspaceAccess: {
+                description:
+                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                type: 'string',
+                enum: ['read_only', 'workspace_write'],
+              },
+              ModelSelection: {
+                description:
+                  'Exact public selection observed by a caller, checked once at run admission.',
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  modelId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 512,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision', 'modelId'],
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+              Creator: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'user',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      sessionId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'agent',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'sessionId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'system',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                ],
+              },
+              Run: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  at: {
+                    type: 'integer',
+                    format: 'int64',
+                  },
+                  outcome: {
+                    $ref: '#/$defs/Outcome',
+                  },
+                  message: {
+                    type: 'string',
+                  },
+                  sessionId: {
+                    type: ['string', 'null'],
+                  },
+                  runId: {
+                    type: ['string', 'null'],
+                  },
+                },
+                additionalProperties: false,
+                required: ['id', 'at', 'outcome', 'message'],
+              },
+              Outcome: {
+                type: 'string',
+                enum: ['ok', 'failed', 'blocked'],
+              },
+              Misfire: {
+                type: 'string',
+                enum: ['skip', 'latest'],
+              },
+              AgentScheduleResult: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      taskId: {
+                        type: 'string',
+                      },
+                      revision: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'committed',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'taskId', 'revision'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      actual: {
+                        type: ['integer', 'null'],
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'conflict',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      reason: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'rejected',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'reason'],
+                  },
+                ],
               },
             },
           },

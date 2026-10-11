@@ -27,6 +27,9 @@ use std::collections::BTreeMap;
 
 #[path = "contract_imports.rs"]
 mod imports;
+#[path = "contract_scheduler.rs"]
+mod scheduler;
+pub use scheduler::*;
 #[path = "contract_recall.rs"]
 mod recall;
 pub use imports::*;
@@ -49,6 +52,9 @@ pub use permissions::*;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentConfiguration")]
 pub struct Configuration {
+    /// Enable model proposals and approved scheduled work for this Agent.
+    #[serde(default)]
+    pub scheduled_tasks: bool,
     /// Explicit access to this Agent’s earlier conversations for model tools.
     #[serde(default)]
     pub recall: bool,
@@ -983,6 +989,22 @@ pub fn contract() -> Contract {
         transport: Transport::Remote,
         interface: Interface::Service {
             methods: BTreeMap::from([
+                (
+                    "schedules".into(),
+                    method::<ScheduleRead, Schedules>(MethodMode::Query),
+                ),
+                (
+                    "watchSchedules".into(),
+                    method::<ScheduleRead, Schedules>(MethodMode::Subscription),
+                ),
+                (
+                    "scheduleAlerts".into(),
+                    method::<ScheduleAlertsRead, ScheduleAlerts>(MethodMode::Subscription),
+                ),
+                (
+                    "schedule".into(),
+                    method::<ScheduleChange, ScheduleResult>(MethodMode::Mutation),
+                ),
                 (
                     "list".into(),
                     method::<List, SessionPage>(MethodMode::Query),

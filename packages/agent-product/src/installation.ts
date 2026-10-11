@@ -66,6 +66,7 @@ export function installation(
     maxActiveRuns: 4,
     maxSteps: 16,
     recall: true,
+    scheduledTasks: true,
     tools,
     skillLibrary: 'skills',
   };

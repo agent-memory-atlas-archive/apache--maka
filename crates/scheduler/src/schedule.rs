@@ -21,7 +21,7 @@ use crate::{Error, MAX_DELAY_MS, cron::Cron, invalid};
 use jiff::{Timestamp, ToSpan, civil::Date, tz::TimeZone};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Recurrence {
     Daily,
@@ -29,7 +29,7 @@ pub enum Recurrence {
     Monthly,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(
     tag = "kind",
     rename_all = "snake_case",

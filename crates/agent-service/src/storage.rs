@@ -17,24 +17,28 @@
  * under the License.
  */
 
-use super::*;
+use futures_util::future::BoxFuture;
 use maka_plugins::{
     call::Resources,
     storage::{self, Mutation, Namespace, Page, Record, Scan, StoreError},
 };
+use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
-pub(super) struct Storage {
+pub(crate) struct Storage {
     log: Arc<maka_event_log::EventLog>,
     prefix: String,
+    namespace: Namespace,
     drain: CancellationToken,
     resources: Arc<Resources>,
 }
 impl Storage {
-    pub fn new(log: Arc<maka_event_log::EventLog>, prefix: String) -> Self {
+    pub fn new(log: Arc<maka_event_log::EventLog>, prefix: String, namespace: Namespace) -> Self {
         Self {
             log,
             prefix,
+            namespace,
             drain: CancellationToken::new(),
             resources: Arc::default(),
         }
@@ -64,12 +68,8 @@ impl Storage {
             result
         })
         .await
-        .map_err(|_| StoreError::OutcomeUnknown("ACP storage worker disappeared".into()))?
+        .map_err(|_| StoreError::OutcomeUnknown("native storage worker disappeared".into()))?
     }
-}
-fn namespace() -> Namespace {
-    Namespace::new(IMPLEMENTATION, maka_runtime::scope::Scope::Profile)
-        .expect("ACP storage namespace")
 }
 fn error(error: maka_event_log::StoreError) -> StoreError {
     match error {
@@ -94,7 +94,7 @@ impl storage::Store for Storage {
                     let mut page = store
                         .log
                         .plugin_data_scan(
-                            &namespace(),
+                            &store.namespace,
                             Scan {
                                 prefix: format!("{}{}", store.prefix, query.prefix),
                                 after: query.after.map(|key| format!("{}{key}", store.prefix)),
@@ -122,7 +122,7 @@ impl storage::Store for Storage {
                         .map_err(|e| StoreError::Unavailable(e.to_string()))?;
                     store
                         .log
-                        .plugin_data(&namespace(), &format!("{}{key}", store.prefix))
+                        .plugin_data(&store.namespace, &format!("{}{key}", store.prefix))
                         .await
                         .map_err(error)
                 })
@@ -145,7 +145,7 @@ impl storage::Store for Storage {
                     }
                     store
                         .log
-                        .plugin_data_batch(&namespace(), mutations)
+                        .plugin_data_batch(&store.namespace, mutations)
                         .await
                         .map_err(error)
                 })

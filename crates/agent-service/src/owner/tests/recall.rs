@@ -112,7 +112,7 @@ async fn recall_native_queries_keep_unicode_dates_titles_namespace_and_exact_his
         f.app.shutdown().await.unwrap();
     }).await.unwrap();
 }
-async fn tool(socket: &mut TcpStream, name: &str, input: Value) {
+pub(super) async fn tool(socket: &mut TcpStream, name: &str, input: Value) {
     let delta = json!({"id":"recall-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":format!("call-{}",Uuid::new_v4()),"type":"function","function":{"name":name,"arguments":input.to_string()}}]},"finish_reason":null}]});
     let end = json!({"id":"recall-model","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]});
     let body = format!("data: {delta}\n\ndata: {end}\n\ndata: [DONE]\n\n");
@@ -122,7 +122,7 @@ async fn tool(socket: &mut TcpStream, name: &str, input: Value) {
 async fn recall_native_model_tools_expand_exclude_active_turn_and_retain_material_copy() {
     tokio::time::timeout(Duration::from_secs(60), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let f = Fixture::configured(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None,None,None,true).await;
+        let f = Fixture::configured(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None,None,None,true,false).await;
         images::enable_vision(&f).await;
         let source = imported(&f, "Earlier conversation", &f.owner.prefix).await;
         let found = f.query("recall",json!({"terms":["café"],"session_id":source})).await.unwrap();

@@ -22,7 +22,8 @@ use maka_event_log::message_queue::{MessageQueue, QueueCommand, QueueEdit};
 
 impl MessageBasis {
     fn same_execution(&self, other: &Self) -> bool {
-        self.model == other.model
+        self.background == other.background
+            && self.model == other.model
             && self.executor == other.executor
             && self.internal_tools == other.internal_tools
             && self.internal_bindings == other.internal_bindings

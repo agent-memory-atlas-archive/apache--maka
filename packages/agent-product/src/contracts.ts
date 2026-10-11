@@ -184,6 +184,10 @@ export interface ProjectsProps extends PageShellProps {
 }
 export type ImportsProps = ProjectsProps;
 export type RecallProps = ProjectsProps;
+export interface SchedulerProps extends ProjectsProps {
+  catalogEpoch: number;
+  requested: { sequence: number; taskId: string } | null;
+}
 export interface DirectoryPickerProps {
   purpose?: 'workspace' | 'import';
   chooseLabel?: string;
@@ -563,6 +567,31 @@ export const recallContract = component(
     ),
     chrome: pageChrome,
     closed: object({}),
+  },
+);
+export const schedulerContract = component(
+  'maka.agent.Scheduler',
+  pageProps({
+    theme: { $ref: '#/$defs/Theme' },
+    locale,
+    open: { type: 'boolean' },
+    busy: { type: 'boolean' },
+    catalogEpoch: { type: 'integer', minimum: 0 },
+    requested: {
+      anyOf: [
+        object({
+          sequence: { type: 'integer', minimum: 0 },
+          taskId: { type: 'string', maxLength: 160 },
+        }),
+        { type: 'null' },
+      ],
+    },
+  }),
+  {
+    selected: withDefs({ $ref: '#/$defs/AgentSession' }),
+    chrome: pageChrome,
+    closed: object({}),
+    connections: object({}),
   },
 );
 export const importsContract = component(

@@ -83,6 +83,43 @@ impl Handler for Agent {
                         context.emit(encode(page)?).await?;
                     }
                 }
+                "schedules" => encode(owner.schedules(decode(input)?).await?),
+                "watchSchedules" | "scheduleAlerts" => {
+                    let mut changes = owner.schedule_changes();
+                    let query: Option<ScheduleRead> = if method == "watchSchedules" {
+                        Some(decode(input)?)
+                    } else {
+                        None
+                    };
+                    if matches!(query, Some(ScheduleRead::Receipt { .. })) {
+                        return Err("scheduler_subscription_invalid".into());
+                    }
+                    loop {
+                        changes.borrow_and_update();
+                        let value = if let Some(query) = &query {
+                            encode(owner.schedules(query.clone()).await?)?
+                        } else {
+                            encode(owner.schedule_alerts().await?)?
+                        };
+                        context.emit(value).await?;
+                        tokio::select! {
+                            biased;
+                            _ = context.scope().cancellation.cancelled() => return Err("scheduler_observation_cancelled".into()),
+                            result = changes.changed() => result.map_err(|_| "scheduler_observation_closed")?,
+                        }
+                    }
+                }
+                "schedule" => {
+                    let operation = context
+                        .operation()
+                        .ok_or("agent_mutation_required")?
+                        .clone();
+                    encode(
+                        owner
+                            .schedule_change(decode(input)?, operation, context.scope())
+                            .await?,
+                    )
+                }
                 "recall" => encode(owner.recall.query(decode(input)?, context.scope()).await?),
                 "imports" => encode(owner.imports(decode(input)?, context.scope()).await?),
                 "import" => {

@@ -164,6 +164,11 @@ export type RuntimeProtocol =
   | SkillPreparationRecord
   | AgentList
   | AgentCreate
+  | AgentScheduleRead
+  | AgentSchedules
+  | AgentScheduleChange
+  | AgentScheduleResult
+  | AgentScheduleAlerts
   | RecallQuery
   | AgentRecallPage
   | AgentImportsRead
@@ -2317,6 +2322,161 @@ export type AgentWorkspaceSelection =
   | {
       sessionId: string;
       kind: 'session';
+    };
+export type AgentScheduleRead =
+  | {
+      cursor?: string | null;
+      expectedRevision?: number | null;
+      kind: 'list';
+    }
+  | {
+      taskId: string;
+      kind: 'get';
+    }
+  | {
+      reference: RecoveryRef;
+      kind: 'receipt';
+    };
+export type AgentSchedules =
+  | {
+      revision: number;
+      tasks: AgentScheduledSummary[];
+      nextCursor?: string | null;
+      kind: 'page';
+    }
+  | {
+      detail?: AgentScheduledDetail | null;
+      kind: 'task';
+    }
+  | {
+      revision: number;
+      kind: 'changed';
+    }
+  | {
+      result?: AgentScheduleResult | null;
+      kind: 'receipt';
+    };
+export type Status = 'active' | 'paused' | 'completed' | 'expired';
+export type Intent = {
+  body: string;
+  kind: 'text';
+};
+export type Schedule =
+  | {
+      runAt: number;
+      kind: 'once';
+    }
+  | {
+      everySeconds: number;
+      startAt: number;
+      kind: 'interval';
+    }
+  | {
+      recurrence: Recurrence;
+      anchorAt: number;
+      kind: 'calendar';
+    }
+  | {
+      expression: string;
+      startAt: number;
+      kind: 'cron';
+    };
+export type Recurrence = 'daily' | 'weekly' | 'monthly';
+export type AgentScheduledEffect =
+  | {
+      kind: 'reminder';
+    }
+  | {
+      target: AgentScheduledTarget;
+      model: ModelSelection;
+      thinkingLevel?: ThinkingLevel | null;
+      kind: 'session';
+    }
+  | {
+      target: AgentScheduledTarget;
+      model: ModelSelection;
+      thinkingLevel?: ThinkingLevel | null;
+      kind: 'agent_run';
+    };
+export type Creator =
+  | {
+      kind: 'user';
+    }
+  | {
+      sessionId: string;
+      kind: 'agent';
+    }
+  | {
+      kind: 'system';
+    };
+export type Outcome = 'ok' | 'failed' | 'blocked';
+export type Misfire = 'skip' | 'latest';
+export type AgentScheduleResult =
+  | {
+      taskId: string;
+      revision: number;
+      kind: 'committed';
+    }
+  | {
+      actual?: number | null;
+      kind: 'conflict';
+    }
+  | {
+      reason: string;
+      kind: 'rejected';
+    };
+export type AgentScheduleChange =
+  | {
+      input: AgentScheduledInput;
+      kind: 'create';
+    }
+  | {
+      taskId: string;
+      revision: number;
+      input: AgentScheduledInput;
+      kind: 'update';
+    }
+  | {
+      taskId: string;
+      revision: number;
+      kind: 'approve';
+    }
+  | {
+      taskId: string;
+      revision: number;
+      kind: 'pause';
+    }
+  | {
+      taskId: string;
+      revision: number;
+      kind: 'resume';
+    }
+  | {
+      taskId: string;
+      revision: number;
+      kind: 'trigger_now';
+    }
+  | {
+      taskId: string;
+      revision: number;
+      delayMs: number;
+      kind: 'snooze';
+    }
+  | {
+      taskId: string;
+      revision: number;
+      fireId: string;
+      kind: 'acknowledge';
+    }
+  | {
+      taskId: string;
+      revision: number;
+      kind: 'clear_history';
+    }
+  | {
+      taskId: string;
+      revision: number;
+      kind: 'delete';
     };
 export type AgentImportsRead =
   | {
@@ -5637,6 +5797,10 @@ export interface TextChunk {
 }
 export interface AgentConfiguration {
   /**
+   * Enable model proposals and approved scheduled work for this Agent.
+   */
+  scheduledTasks?: boolean;
+  /**
    * Explicit access to this Agent’s earlier conversations for model tools.
    */
   recall?: boolean;
@@ -7023,6 +7187,84 @@ export interface AgentCreate {
 export interface AgentProjectRef {
   id: string;
   revision: string;
+}
+export interface AgentScheduledSummary {
+  id: string;
+  revision: number;
+  title: string;
+  status: Status;
+  approved: boolean;
+  nextFireAt?: number | null;
+  pendingFire?: string | null;
+  reminder: boolean;
+  lastError?: string | null;
+}
+export interface AgentScheduledDetail {
+  revision: number;
+  task: Task;
+  timezone: string;
+  misfire: Misfire;
+  approved: boolean;
+  pendingFire?: string | null;
+}
+export interface Task {
+  id: string;
+  title: string;
+  intent: Intent;
+  schedule: Schedule;
+  effect: AgentScheduledEffect;
+  status: Status;
+  nextFireAt?: number | null;
+  lastFireAt?: number | null;
+  fireCount: number;
+  maxFires?: number | null;
+  expiresAt?: number | null;
+  createdBy: Creator;
+  createdAt: number;
+  updatedAt: number;
+  runs: Run[];
+  lastError?: string | null;
+}
+/**
+ * Exact observed source boundary. This data is checked against the original
+ * Session; passing it never grants execution by itself.
+ */
+export interface AgentScheduledTarget {
+  sessionId: string;
+  workspace: AgentWorkspace;
+  permissions: AgentWorkspacePermissions;
+  boundaryRevision: number;
+}
+export interface Run {
+  id: string;
+  at: number;
+  outcome: Outcome;
+  message: string;
+  sessionId?: string | null;
+  runId?: string | null;
+}
+export interface AgentScheduledInput {
+  task: Create;
+  timezone: string;
+  misfire: Misfire;
+}
+export interface Create {
+  title: string;
+  intentBody: string;
+  schedule: Schedule;
+  effect: AgentScheduledEffect;
+  maxFires?: number | null;
+  expiresAt?: number | null;
+}
+export interface AgentScheduleAlerts {
+  pending: number;
+  reminders: AgentScheduledReminder[];
+}
+export interface AgentScheduledReminder {
+  taskId: string;
+  fireId: string;
+  title: string;
+  body: string;
 }
 export interface RecallQuery {
   /**

@@ -185,6 +185,7 @@ const specifications = {
       projects: one(own.projectsContract),
       imports: one(own.importsContract),
       recall: one(own.recallContract),
+      scheduler: one(own.schedulerContract),
       apps: one(own.appsContract),
       details: one(own.sessionDetailsContract),
       terminals: one(own.terminalPanelContract),
@@ -206,6 +207,7 @@ const specifications = {
         locale: own.locale,
         terminals: { type: 'boolean' },
         skills: { type: 'boolean' },
+        scheduledTasks: { type: 'boolean' },
         place: { type: 'string', maxLength: 4096 },
       },
       ['locale'],
@@ -339,6 +341,21 @@ specifications.recall = {
     reading: one(sdk.contracts.readingArea),
     input: one(sdk.contracts.textInput),
     reader: one(sdk.contracts.textReader),
+  },
+};
+specifications.scheduler = {
+  contract: own.schedulerContract,
+  export: 'Scheduler',
+  module: 'scheduler',
+  imports: {
+    agent: one(sdk.contracts.agent),
+    reading: one(sdk.contracts.readingArea),
+    input: one(sdk.contracts.textInput),
+    editor: one(sdk.contracts.textarea),
+    reader: one(sdk.contracts.textReader),
+    models: one(own.modelsContract),
+    receipts: one(sdk.contracts.receiptReader),
+    history: one(sdk.contracts.callerHistory),
   },
 };
 specifications.projects = {
@@ -500,7 +517,7 @@ for (const [name, spec] of Object.entries(specifications)) {
     if (name === 'appearance')
       contents = `import {activate as appearance} from '${resolve(root, 'src/theme.ts')}';export function activate(configuration){return appearance(configuration,${target === 'tui'});}`;
     else if (name === 'workspace')
-      contents = `import {workspace} from '${resolve(root, 'src/workspace.ts')}';import {workspaceContract} from '${resolve(root, 'src/contracts.ts')}';export let component;export function activate(configuration){component=workspace(presentations.${target},configuration.locale,configuration.terminals === true, configuration.place ?? '', configuration.skills === true);return {Workspace:{kind:'component',contract:workspaceContract,component:['component']}};}`;
+      contents = `import {workspace} from '${resolve(root, 'src/workspace.ts')}';import {workspaceContract} from '${resolve(root, 'src/contracts.ts')}';export let component;export function activate(configuration){component=workspace(presentations.${target},configuration.locale,configuration.terminals === true, configuration.place ?? '', configuration.skills === true, configuration.scheduledTasks === true);return {Workspace:{kind:'component',contract:workspaceContract,component:['component']}};}`;
     else if (name === 'apps')
       contents = `import {apps,activate as exports} from '${resolve(root, 'src/apps.ts')}';export let component;export function activate(configuration){component=apps(presentations.${target},configuration);return exports();}`;
     else if (name === 'workhub-root')

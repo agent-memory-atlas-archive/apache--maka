@@ -35,6 +35,8 @@ pub(super) enum PreparedRun {
 }
 impl Owner {
     pub fn activated(self: &Arc<Self>) {
+        self.scheduler.bind(self);
+        self.start_schedules();
         let owner = self.clone();
         self.workers.spawn(async move { owner.schedule().await });
     }
@@ -225,6 +227,7 @@ impl Owner {
     ) -> Result<(PreparedRun, MessageBasis), String> {
         let basis: MessageBasis = serde_json::from_value(entry.execution.basis.clone())
             .map_err(|_| "agent_message_basis_invalid")?;
+        self.validate_background(&basis).await?;
         let tools_changed = if basis.executor.is_some() {
             !basis.tools.is_empty()
                 || !basis.internal_tools.is_empty()
@@ -238,6 +241,7 @@ impl Owner {
             return Err("agent_tools_changed".into());
         }
         let session = self.session(&invocation.session_id).await?;
+        basis.validate_background_target(&session)?;
         if session.archived || session.configuration.workspace != basis.workspace {
             return Err("agent_session_configuration_changed".into());
         }

@@ -74,6 +74,8 @@ mod imports;
 mod projects;
 #[path = "tests/recall.rs"]
 mod recall_tests;
+#[path = "tests/scheduler.rs"]
+mod scheduler_tests;
 
 #[path = "tests/workspaces.rs"]
 mod workspaces;
@@ -429,7 +431,7 @@ impl Fixture {
         peer: Option<Arc<maka_application_bridge::transport::PeerPolicy>>,
         tooling: Option<service_tools::Setup>,
     ) -> Self {
-        Self::configured(base, cap, model, peer, tooling, false).await
+        Self::configured(base, cap, model, peer, tooling, false, false).await
     }
     async fn configured(
         base: &str,
@@ -438,6 +440,7 @@ impl Fixture {
         peer: Option<Arc<maka_application_bridge::transport::PeerPolicy>>,
         tooling: Option<service_tools::Setup>,
         recall: bool,
+        scheduled_tasks: bool,
     ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("root");
@@ -500,6 +503,7 @@ impl Fixture {
             maka_config::oauth::enrollment::LoginCompletion::Committed(_)
         ));
         let mut settings = Configuration {
+            scheduled_tasks,
             recall,
             import_roots: vec![maka_runtime_host::server::DirectoryRootSpec {
                 label: "Import sources".into(),
@@ -524,7 +528,7 @@ impl Fixture {
                 },
             ],
             max_active_runs: cap,
-            max_steps: if recall { 6 } else { 1 },
+            max_steps: if recall || scheduled_tasks { 6 } else { 1 },
             tools: vec![],
         };
         if let Some(tooling) = &tooling {

@@ -119,9 +119,10 @@ impl Mutation {
         }
     }
 }
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Update {
+#[serde(bound(deserialize = "E: Deserialize<'de>"))]
+pub struct Update<E = Effect> {
     #[serde(default, deserialize_with = "present")]
     pub title: Option<String>,
     #[serde(default, deserialize_with = "present")]
@@ -129,11 +130,23 @@ pub struct Update {
     #[serde(default, deserialize_with = "present")]
     pub schedule: Option<Schedule>,
     #[serde(default, deserialize_with = "present")]
-    pub effect: Option<Effect>,
+    pub effect: Option<E>,
     #[serde(default)]
     pub max_fires: Patch<u32>,
     #[serde(default)]
     pub expires_at: Patch<i64>,
+}
+impl<E> Default for Update<E> {
+    fn default() -> Self {
+        Self {
+            title: None,
+            intent_body: None,
+            schedule: None,
+            effect: None,
+            max_fires: Patch::Keep,
+            expires_at: Patch::Keep,
+        }
+    }
 }
 #[derive(Serialize, Deserialize)]
 #[serde(

@@ -17,20 +17,22 @@
  * under the License.
  */
 
+#[cfg(test)]
 use super::Plan;
+use super::TaskPlan;
 use crate::{
     Error,
     command::Update,
     invalid,
     schedule::Schedule,
-    task::{Create, Intent, Status},
+    task::{Create, Intent, Status, TaskEffect},
 };
 use jiff::tz::TimeZone;
 use maka_runtime::configuration::Patch;
 
-impl Plan {
+impl<E: TaskEffect, A: Clone> TaskPlan<E, A> {
     /// Work on a candidate: a rejected edit never mutates the loaded authority.
-    pub fn update(&self, patch: Update, now: i64) -> Result<Self, Error> {
+    pub fn update(&self, patch: Update<E>, now: i64) -> Result<Self, Error> {
         if !matches!(self.task.status, Status::Active | Status::Paused) {
             return Err(invalid("terminal task cannot be edited"));
         }

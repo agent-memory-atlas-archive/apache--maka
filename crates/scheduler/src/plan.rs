@@ -23,12 +23,14 @@ use crate::{
     Error,
     authorization::Authorization,
     invalid,
-    task::{Create, Creator, Effect, Intent, Outcome, Run, Status, Task},
+    task::{Create, Creator, Effect, Intent, Outcome, Run, Status, Task, TaskEffect},
 };
 use jiff::tz::TimeZone;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Misfire {
     #[default]
@@ -40,33 +42,37 @@ pub enum Misfire {
 /// never the task's potentially edited title, effect or instruction.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Fire {
+#[serde(bound(deserialize = "E: Deserialize<'de>, A: Deserialize<'de>"))]
+pub struct Fire<E = Effect, A = Authorization> {
     pub id: String,
     pub task_id: String,
     pub scheduled_at: i64,
     pub title: String,
     pub intent: Intent,
-    pub effect: Effect,
+    pub effect: E,
     /// Notifications cannot be blindly replayed after an unknown external result.
     pub delivery_started: bool,
     #[serde(default)]
-    pub authorization: Option<Authorization>,
+    pub authorization: Option<A>,
 }
+pub type Plan = TaskPlan<Effect, Authorization>;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Plan {
-    pub task: Task,
+#[serde(bound(deserialize = "E: Deserialize<'de>, A: Deserialize<'de>"))]
+pub struct TaskPlan<E, A> {
+    pub task: Task<E>,
     pub timezone: String,
     pub misfire: Misfire,
-    pub pending: Option<Fire>,
+    pub pending: Option<Fire<E, A>>,
     #[serde(default)]
-    pub authorization: Option<Authorization>,
+    pub authorization: Option<A>,
 }
-impl Plan {
+impl<E: TaskEffect, A: Clone> TaskPlan<E, A> {
     pub(crate) fn waiting_notification(&self) -> bool {
         self.pending
             .as_ref()
-            .is_some_and(|fire| matches!(fire.effect, Effect::Notify(_)) && !fire.delivery_started)
+            .is_some_and(|fire| fire.effect.is_notification() && !fire.delivery_started)
     }
     pub(crate) fn cancel_waiting_notification(&mut self) {
         if self.waiting_notification() {
@@ -118,7 +124,7 @@ impl Plan {
 
     pub fn create(
         id: String,
-        input: Create,
+        input: Create<E>,
         creator: Creator,
         timezone: String,
         now: i64,
@@ -185,7 +191,7 @@ impl Plan {
     }
     /// Returns the same intent while settlement is pending. The repository must
     /// commit the changed Plan before the caller may dispatch the Fire.
-    pub fn claim(&mut self, now: i64) -> Result<Option<&Fire>, Error> {
+    pub fn claim(&mut self, now: i64) -> Result<Option<&Fire<E, A>>, Error> {
         if self.pending.is_some() {
             return Ok(self.pending.as_ref());
         }
@@ -209,7 +215,7 @@ impl Plan {
             intent: self.task.intent.clone(),
             effect: self.task.effect.clone(),
             delivery_started: false,
-            authorization: self.authorization,
+            authorization: self.authorization.clone(),
         });
         self.task.updated_at = self.task.updated_at.max(now);
         Ok(self.pending.as_ref())
