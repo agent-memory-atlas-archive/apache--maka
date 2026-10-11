@@ -192,7 +192,7 @@ impl Plan {
             paths_truncated: paths.len() != entries,
             paths,
             locally_modified: self.locally_modified,
-            review: self.review,
+            review: Box::new(self.review),
         }
     }
 }

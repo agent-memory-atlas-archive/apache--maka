@@ -250,7 +250,9 @@ impl Hub {
             )
             .await?
         {
-            crate::contract::Created::Created { session } => Ok(Coordinator::Ready { session }),
+            crate::contract::Created::Created { session } => {
+                Ok(Coordinator::Ready { session: *session })
+            }
             crate::contract::Created::Rejected { reason } => Ok(Coordinator::Rejected { reason }),
         }
     }

@@ -207,7 +207,7 @@ pub struct Review {
 #[schemars(rename = "SkillLibraryPreview")]
 pub enum Preview {
     Ready {
-        review: Review,
+        review: Box<Review>,
         target: String,
         entries: usize,
         paths: Vec<String>,

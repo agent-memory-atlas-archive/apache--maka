@@ -254,6 +254,7 @@ pub(crate) async fn initialize(
     directory::open(&path, &selection.directory_identity)
         .map_err(|_| "agent_workspace_initialization_failed")?;
     Ok(Some(Workspace {
+        project_id: None,
         path: host_path(&path)?,
         directory_identity: selection.directory_identity,
         identity,
@@ -294,4 +295,78 @@ pub(crate) async fn validate(
     })
     .await
     .map_err(|_| "agent_workspace_unavailable")?
+}
+
+/// Re-observe a published directory without creating a workspace marker.
+pub(crate) async fn selected(
+    roots: Vec<Root>,
+    selection: DirectorySelection,
+    managed: std::path::PathBuf,
+) -> Result<Option<Directory>, String> {
+    tokio::task::spawn_blocking(move || {
+        let Ok(root) = root(&roots, &selection.root_id) else {
+            return None;
+        };
+        let selected = choice(
+            root,
+            selection.root_id.clone(),
+            selection.segments.clone(),
+            selection
+                .segments
+                .last()
+                .cloned()
+                .unwrap_or_else(|| root.name.clone()),
+        )
+        .ok()?;
+        if selected.selection.directory_identity != selection.directory_identity
+            || Path::new(&selected.path).starts_with(&managed)
+        {
+            return None;
+        }
+        let path = std::path::PathBuf::from(&selected.path);
+        let directory = directory::open(&path, &selection.directory_identity).ok()?;
+        match workspace::read_directory_identity(path, directory) {
+            Ok(_) => Some(selected),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(selected),
+            Err(_) => None,
+        }
+    })
+    .await
+    .map_err(|_| "agent_directory_unavailable".into())
+}
+
+pub(crate) async fn selection_at(
+    roots: Vec<Root>,
+    path: String,
+    managed: std::path::PathBuf,
+) -> Result<Option<DirectorySelection>, String> {
+    tokio::task::spawn_blocking(move || {
+        let path = Path::new(&path);
+        if path.starts_with(&managed) {
+            return None;
+        }
+        for (index, root) in roots.iter().enumerate() {
+            let Ok(relative) = path.strip_prefix(root.directory.path()) else {
+                continue;
+            };
+            let segments = relative
+                .components()
+                .map(|part| part.as_os_str().to_str().map(str::to_owned))
+                .collect::<Option<Vec<_>>>()?;
+            let Ok(selected) = choice(
+                root,
+                format!("root-{}", index + 1),
+                segments,
+                root.name.clone(),
+            ) else {
+                continue;
+            };
+            if Path::new(&selected.path) == path {
+                return Some(selected.selection);
+            }
+        }
+        None
+    })
+    .await
+    .map_err(|_| "agent_directory_unavailable".into())
 }

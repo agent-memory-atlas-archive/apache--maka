@@ -35,6 +35,15 @@ pub struct ProjectRelink {
     pub updated_session_ids: Vec<String>,
 }
 
+/// Exact source and destination observations plus the only Session namespace
+/// whose typed metadata this owner is permitted to rewrite.
+#[derive(Clone, Debug)]
+pub struct ProjectRelinkGuard {
+    pub source: ProjectRecord,
+    pub destination: Option<ProjectRecord>,
+    pub session_prefix: String,
+}
+
 impl EventLog {
     /// Project aliases, locations and Session membership commit together.
     /// The domain closure updates validated, typed Session control metadata;
@@ -44,7 +53,42 @@ impl EventLog {
         id: &str,
         registration: ProjectRegistration,
         now: u64,
+        reassign: F,
+    ) -> Result<ProjectRelink>
+    where
+        T: Serialize + DeserializeOwned + Send + 'static,
+        F: FnMut(&mut T, &ProjectRelinkContext) -> Result<()> + Send + 'static,
+    {
+        self.relink_project_guarded(id, registration, now, reassign, None)
+            .await
+    }
+
+    pub async fn relink_project_if<T, F>(
+        &self,
+        guard: ProjectRelinkGuard,
+        registration: ProjectRegistration,
+        now: u64,
+        reassign: F,
+    ) -> Result<ProjectRelink>
+    where
+        T: Serialize + DeserializeOwned + Send + 'static,
+        F: FnMut(&mut T, &ProjectRelinkContext) -> Result<()> + Send + 'static,
+    {
+        if guard.session_prefix.is_empty() || guard.session_prefix.len() > 128 {
+            return Err(invalid("invalid project Session namespace"));
+        }
+        let id = guard.source.id.clone();
+        self.relink_project_guarded(&id, registration, now, reassign, Some(guard))
+            .await
+    }
+
+    async fn relink_project_guarded<T, F>(
+        &self,
+        id: &str,
+        registration: ProjectRegistration,
+        now: u64,
         mut reassign: F,
+        guard: Option<ProjectRelinkGuard>,
     ) -> Result<ProjectRelink>
     where
         T: Serialize + DeserializeOwned + Send + 'static,
@@ -71,6 +115,16 @@ impl EventLog {
                         Some(id) => Some(read(&mut tx, &id).await?.ok_or(ProjectError::NotFound)?),
                         None => None,
                     };
+                    if let Some(guard) = &guard {
+                        let destination = if project.identity == registration.identity {
+                            Some(&project)
+                        } else {
+                            conflict.as_ref()
+                        };
+                        if guard.source != project || guard.destination.as_ref() != destination {
+                            return Err(ProjectError::Changed.into());
+                        }
+                    }
                     let context = ProjectRelinkContext {
                         project_id: project.id.clone(),
                         previous_ids: std::iter::once(project.id.clone())
@@ -85,8 +139,13 @@ impl EventLog {
                             .collect(),
                         destination_path: registration.path.clone(),
                     };
-                    let updated_session_ids =
-                        reassign_sessions(&mut tx, &context, &mut reassign).await?;
+                    let updated_session_ids = reassign_sessions(
+                        &mut tx,
+                        &context,
+                        &mut reassign,
+                        guard.as_ref().map(|guard| guard.session_prefix.as_str()),
+                    )
+                    .await?;
                     sqlx::query("DELETE FROM project_locations WHERE project_id = ?")
                         .bind(&project.id)
                         .execute(&mut *tx)
@@ -152,6 +211,7 @@ async fn reassign_sessions<T, F>(
     connection: &mut SqliteConnection,
     context: &ProjectRelinkContext,
     reassign: &mut F,
+    prefix: Option<&str>,
 ) -> Result<Vec<String>>
 where
     T: Serialize + DeserializeOwned,
@@ -171,6 +231,10 @@ where
             break;
         }
         for (id, original) in rows {
+            cursor = id.clone();
+            if prefix.is_some_and(|prefix| !id.starts_with(prefix)) {
+                continue;
+            }
             let mut configuration: T = serde_json::from_str(&original)?;
             // Compare normalized encodings, not the input's incidental key order.
             let before = serde_json::to_string(&configuration)?;

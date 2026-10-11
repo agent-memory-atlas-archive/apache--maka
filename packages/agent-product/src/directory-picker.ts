@@ -274,7 +274,13 @@ function frame<N extends Node>(
             text.directoryRefresh,
           ),
           ...(current
-            ? [ui.button(`${state.pageKey}-choose`, text.directoryChoose, !enabled)]
+            ? [
+                ui.button(
+                  `${state.pageKey}-choose`,
+                  props.chooseLabel ?? text.directoryChoose,
+                  !enabled,
+                ),
+              ]
             : []),
           ui.button(
             'close',

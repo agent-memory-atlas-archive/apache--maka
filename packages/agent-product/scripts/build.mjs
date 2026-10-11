@@ -182,6 +182,7 @@ const specifications = {
       composer: one(own.composerContract),
       palette: one(own.paletteContract),
       directories: one(own.directoryPickerContract),
+      projects: one(own.projectsContract),
       details: one(own.sessionDetailsContract),
       terminals: one(own.terminalPanelContract),
       skills: { contract: own.skillLibraryContract, cardinality: { kind: 'optional' } },
@@ -301,6 +302,20 @@ specifications['command-palette'] = {
     input: one(sdk.contracts.textInput),
     reader: one(sdk.contracts.textReader),
     reading: one(sdk.contracts.readingArea),
+  },
+};
+specifications.projects = {
+  contract: own.projectsContract,
+  export: 'Projects',
+  module: 'projects',
+  imports: {
+    agent: one(sdk.contracts.agent),
+    directories: one(own.directoryPickerContract),
+    reading: one(sdk.contracts.readingArea),
+    input: one(sdk.contracts.textInput),
+    reader: one(sdk.contracts.textReader),
+    receipts: one(sdk.contracts.receiptReader),
+    history: one(sdk.contracts.callerHistory),
   },
 };
 specifications['directory-picker'] = {

@@ -68,6 +68,9 @@ mod settings;
 #[path = "tests/images.rs"]
 mod images;
 
+#[path = "tests/projects.rs"]
+mod projects;
+
 #[path = "tests/workspaces.rs"]
 mod workspaces;
 

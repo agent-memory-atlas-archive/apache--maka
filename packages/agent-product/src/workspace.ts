@@ -59,6 +59,7 @@ import type {
   AgentMarkReadResult,
   AgentDirectoryPage,
   AgentDirectorySelection,
+  AgentProjectRef,
   AgentList,
   AgentSendResult,
   AgentAttachmentUploadResult,
@@ -254,7 +255,8 @@ export interface State {
   modelRefreshing: boolean;
   searchOpen: boolean;
   browse: number | null;
-  pages: ('settings' | 'connections' | 'deployment')[];
+  pages: ('settings' | 'connections' | 'deployment' | 'projects')[];
+  projectsOpened: boolean;
   settingsCategory: SettingsCategory;
   sidebar: { open: boolean } | { command: TerminalPaneCommand | null };
   terminals: boolean;
@@ -781,6 +783,7 @@ type RootCommand =
   | 'create-workspace'
   | 'navigation-toggle'
   | 'settings'
+  | 'projects-open'
   | 'deployment-open'
   | 'reload'
   | 'stop'
@@ -1027,6 +1030,13 @@ function rootCommands(
         ]
       : []),
     {
+      kind: 'projects-open',
+      id: 'projects-open',
+      label: text.projectsTitle,
+      hint: '',
+      disabled: !route || !!state.embedding.fixed,
+    },
+    {
       kind: 'settings',
       id: 'settings',
       label: target === 'tui' ? tuiText(locale, 'route-settings') : text.settings,
@@ -1122,6 +1132,10 @@ function rootCommand(
   else if (kind === 'navigation-toggle') controlSidebar(state, 'toggle');
   else if (kind === 'settings') {
     state.pages = [target === 'tui' ? 'settings' : 'connections'];
+  } else if (kind === 'projects-open') {
+    state.pages = ['projects'];
+    state.projectsOpened = true;
+    if (target === 'tui') controlSidebar(state, 'dismiss_transient');
   } else if (kind === 'deployment-open') {
     state.pages = ['deployment'];
   } else if (kind === 'stop' && state.selected && state.run)
@@ -2299,6 +2313,14 @@ function frame<N extends Node>(
             ui.box(
               'navigation-footer',
               [
+                ...(!state.embedding.fixed
+                  ? [
+                      ui.button('projects-open', text.projectsTitle, false, false, {
+                        background: 0,
+                        align: 'start',
+                      }),
+                    ]
+                  : []),
                 ui.button(
                   'settings',
                   `${theme.ascii ? 'S' : '⛭'} ${tuiText(locale, 'route-settings')}`,
@@ -2583,13 +2605,15 @@ function frame<N extends Node>(
         : '';
   const title = ui.text(
     'title',
-    state.pages.at(-1) === 'settings'
-      ? tuiText(locale, 'route-settings')
-      : state.pages.at(-1) === 'connections'
-        ? text.settings
-        : state.pages.at(-1) === 'deployment'
-          ? text.deploymentTitle
-          : (state.selected?.title ?? tuiText(locale, 'route-workspace')),
+    state.pages.at(-1) === 'projects'
+      ? text.projectsTitle
+      : state.pages.at(-1) === 'settings'
+        ? tuiText(locale, 'route-settings')
+        : state.pages.at(-1) === 'connections'
+          ? text.settings
+          : state.pages.at(-1) === 'deployment'
+            ? text.deploymentTitle
+            : (state.selected?.title ?? tuiText(locale, 'route-workspace')),
     17,
     theme.text,
     650,
@@ -2656,6 +2680,7 @@ function frame<N extends Node>(
                   ),
                 ),
                 ui.button('terminal-open', text.terminalTitle, !state.selected || state.loading),
+                ...(!state.embedding.fixed ? [ui.button('projects-open', text.projectsTitle)] : []),
                 ui.button('settings', text.settings),
                 ui.button('deployment-open', text.deploymentTitle),
               ],
@@ -3144,6 +3169,25 @@ function frame<N extends Node>(
             ),
           ]
         : []),
+      ...(state.projectsOpened
+        ? [
+            presentation.slot(
+              'projects',
+              'projects',
+              {
+                theme,
+                locale,
+                open: state.pages.at(-1) === 'projects',
+                busy: mutationPending(state) || catalogPending(state),
+              },
+              {
+                closed: 'projects-closed',
+                selected: 'project-selected',
+                changed: 'projects-changed',
+              },
+            ),
+          ]
+        : []),
       ...(state.pages.at(-1) === 'connections'
         ? [
             presentation.slot(
@@ -3547,6 +3591,7 @@ export function workspace<N extends Node>(
         catalogEpoch: 0,
         modelRefreshing: false,
         pages: [],
+        projectsOpened: false,
         settingsCategory: 'appearance',
         searchOpen: false,
         browse: null,
@@ -3622,7 +3667,7 @@ export function workspace<N extends Node>(
               Array.isArray(item.pages) &&
               item.pages.length <= 3 &&
               item.pages.every((page) =>
-                ['settings', 'connections', 'deployment'].includes(page),
+                ['settings', 'connections', 'deployment', 'projects'].includes(page),
               ) &&
               ['appearance', 'interface', 'models', 'plugins'].includes(item.category)
               ? item
@@ -3631,6 +3676,8 @@ export function workspace<N extends Node>(
         );
         if (restored) {
           state.pages = restored.pages;
+          if (state.pages.includes('projects') && !state.embedding.fixed)
+            state.projectsOpened = true;
           state.settingsCategory = restored.category;
         }
       }
@@ -3888,6 +3935,33 @@ export function workspace<N extends Node>(
           else if (input.name === 'changed') {
             if (state.selected?.id === (input.event as { sessionId: string }).sessionId)
               observe(state, actions);
+          }
+          return frame(presentation, configuredLocale, state, values, actions);
+        }
+        if (input.child === 'projects') {
+          if (input.name === 'closed' && state.pages.at(-1) === 'projects') state.pages.pop();
+          else if (input.name === 'changed') {
+            catalog(state);
+            if (state.selected) observe(state, actions);
+          } else if (
+            input.name === 'selected' &&
+            state.pages.at(-1) === 'projects' &&
+            !state.embedding.fixed &&
+            !mutationPending(state) &&
+            !catalogPending(state)
+          ) {
+            intent(state, actions, { kind: 'create' }, 'agent', 'create', {
+              title: copy(locale).new,
+              labels: [],
+              workspace: {
+                kind: 'project',
+                ...(input.event as {
+                  project: AgentProjectRef;
+                  selection: AgentDirectorySelection;
+                }),
+              },
+            });
+            state.pages = [];
           }
           return frame(presentation, configuredLocale, state, values, actions);
         }

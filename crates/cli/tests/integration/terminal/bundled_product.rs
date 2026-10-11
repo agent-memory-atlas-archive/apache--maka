@@ -629,3 +629,169 @@ fn standard_product_settings_save_restores_page_and_original_result() {
         });
     }
 }
+
+#[test]
+#[ignore = "manages projects through the standard product and real Host in a native PTY"]
+fn standard_product_projects_complete_workflow_and_original_receipt_reopen() {
+    let directory = tempfile::tempdir().unwrap();
+    let workspace = directory.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    std::fs::create_dir(workspace.join("destination")).unwrap();
+    let root = directory.path().join("ui");
+    let home = directory.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    for first in [true, false] {
+        let mut args = vec!["application", "launch", "--root", root.to_str().unwrap()];
+        if first {
+            args.extend([
+                "--workspace",
+                workspace.to_str().unwrap(),
+                "--trust-workspace",
+            ]);
+        }
+        let mut tui = Pty::spawn_with(&args, false, |command| {
+            command.current_dir(&workspace).env("HOME", &home);
+        });
+        if first {
+            tui.wait_until_with_timeout(
+                |screen| screen.contains("Settings"),
+                Duration::from_secs(60),
+            );
+            click_text(&mut tui, "Projects");
+            tui.wait_for("No projects yet.");
+            click_text(&mut tui, "Add directory");
+            tui.wait_for("Choose a workspace");
+            click_text(&mut tui, "Workspace");
+            tui.wait_for("Use this directory");
+            click_text(&mut tui, "Use this directory");
+            tui.wait_for("Confirm change");
+            click_text(&mut tui, "Confirm change");
+            tui.wait_for("Project updated.");
+            let size = libc::winsize {
+                ws_row: 18,
+                ws_col: 50,
+                ws_xpixel: 0,
+                ws_ypixel: 0,
+            };
+            tui.frames.resize();
+            tui.screen
+                .resize(TerminalSize::new(50, 18).unwrap())
+                .unwrap();
+            assert_eq!(
+                unsafe {
+                    libc::ioctl(
+                        tui.master.as_ref().unwrap().as_raw_fd(),
+                        libc::TIOCSWINSZ,
+                        &size,
+                    )
+                },
+                0
+            );
+            click_text(&mut tui, "Rename");
+            tui.wait_for("Save changes");
+            tui.send(b"\x1b[H\x1b[1;2FResearch");
+            click_text(&mut tui, "Save changes");
+            tui.wait_until(|screen| {
+                screen.contains("Research") && !screen.contains("Save changes")
+            });
+            click_text(&mut tui, "Archive");
+            tui.wait_for("Existing conversations remain readable.");
+            click_text(&mut tui, "Confirm change");
+            tui.wait_for("Archived");
+            click_text(&mut tui, "Restore");
+            tui.wait_for("Confirm change");
+            click_text(&mut tui, "Confirm change");
+            tui.wait_until(|screen| {
+                screen.contains("Research")
+                    && !screen.contains("Archived")
+                    && !screen.contains("Confirm change")
+            });
+            click_text(&mut tui, "New conversation");
+            tui.wait_for("Choose model");
+            tui.send(b"\x0b");
+            tui.wait_for("Search commands or conversations");
+            tui.send(b"Projects");
+            tui.wait_for("› Projects");
+            tui.send(b"\r");
+            tui.wait_for("Research");
+            click_text(&mut tui, "Relocate");
+            tui.wait_for("Choose a workspace");
+            click_text(&mut tui, "Workspace");
+            tui.wait_for("destination");
+            click_text(&mut tui, "destination");
+            tui.wait_for("No folders here.");
+            tui.wait_for("Use this directory");
+            click_text(&mut tui, "Use this directory");
+            tui.wait_for("Previous directory grants will expire.");
+            click_text(&mut tui, "Confirm change");
+            tui.wait_until(|screen| {
+                screen.contains("Research")
+                    && screen.contains("Project updated.")
+                    && !screen.contains("Confirm change")
+            });
+        } else {
+            tui.wait_until_with_timeout(
+                |screen| screen.contains("Research") && screen.contains("Project updated."),
+                Duration::from_secs(60),
+            );
+        }
+        tui.send(b"\x11");
+        tui.finish();
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let namespaces = RootNamespaces::for_current_account().unwrap();
+            let owner = std::sync::Arc::new(RootOwner::open(&root, &namespaces).unwrap());
+            let store = maka_event_log::EventLog::for_root(owner).await.unwrap();
+            let launch = store.application_launch().await.unwrap().unwrap();
+            let intents = store
+                .application_deployment_intents(launch.deployment, 0, 32)
+                .await
+                .unwrap();
+            assert_eq!(
+                intents
+                    .iter()
+                    .filter(|intent| intent.reference.method == "project")
+                    .count(),
+                5,
+                "reopening does not repeat project writes"
+            );
+            assert_eq!(
+                intents
+                    .iter()
+                    .filter(|intent| intent.reference.method == "create")
+                    .count(),
+                1
+            );
+            store.close().await.unwrap();
+            let owner =
+                std::sync::Arc::new(RootOwner::open(&root.join("host"), &namespaces).unwrap());
+            let store = maka_event_log::EventLog::for_root(owner).await.unwrap();
+            let projects = store.list_projects().await.unwrap();
+            assert_eq!(projects.len(), 1);
+            assert_eq!(projects[0].name, "Research");
+            assert!(projects[0].archived_at.is_none());
+            assert!(
+                projects[0]
+                    .locations
+                    .iter()
+                    .any(|location| location.path.ends_with("/destination"))
+            );
+            let sessions = store
+                .list_sessions::<serde_json::Value>(None, None, 16)
+                .await
+                .unwrap();
+            assert_eq!(sessions.sessions.len(), 1);
+            assert_eq!(
+                sessions.sessions[0].configuration["workspace"]["projectId"],
+                projects[0].id
+            );
+            assert!(
+                sessions.sessions[0].configuration["workspace"]["path"]
+                    .as_str()
+                    .unwrap()
+                    .ends_with("/destination")
+            );
+            assert_eq!(sessions.sessions[0].configuration["boundary_revision"], 1);
+            store.close().await.unwrap();
+        });
+    }
+}

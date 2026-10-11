@@ -14667,3 +14667,39 @@ test('TUI plugin target selection restores independently and gates save until ac
     modelSlots(result.frame.view).find((node) => node.key === 'deployment-editor-services'),
   );
 });
+
+for (const target of ['tui', 'desktop']) {
+  const rootModule = await import(
+    pathToFileURL(resolve(root, `dist/packages/workspace/${target}.js`))
+  );
+  rootModule.activate({ locale: 'en' });
+  test(`${target} Projects route creates once from the displayed physical directory and retains hidden page custody`, () => {
+    const client = new Client(rootModule.component).start();
+    client.raw('projects-open');
+    assert.deepEqual(client.state.pages, ['projects']);
+    assert.equal(client.state.projectsOpened, true);
+    const selected = {
+      project: { id: '00000000-0000-0000-0000-000000000033', revision: 'a'.repeat(64) },
+      selection: {
+        rootId: 'root-1',
+        segments: ['selected'],
+        directoryIdentity: 'sha256:' + 'd'.repeat(64),
+      },
+    };
+    client.input({ kind: 'component', child: 'projects', name: 'selected', event: selected });
+    const action = client.find('create');
+    assert.deepEqual(action.input.workspace, { kind: 'project', ...selected });
+    assert.deepEqual(client.state.pages, []);
+    assert.equal(client.state.projectsOpened, true);
+    client.input({ kind: 'component', child: 'projects', name: 'selected', event: selected });
+    assert.deepEqual(client.output.actions, [], 'a hidden project page never repeats creation');
+    client.complete(action, returned({ kind: 'rejected', reason: 'workspace_unavailable' }));
+    client.raw('projects-open');
+    assert.deepEqual(client.state.pages, ['projects']);
+    assert.ok(
+      modelSlots(client.output.frame.view).some(
+        (node) => node.key === 'projects' && node.props.open,
+      ),
+    );
+  });
+}

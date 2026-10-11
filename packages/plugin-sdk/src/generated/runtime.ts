@@ -159,6 +159,10 @@ export type RuntimeProtocol =
   | SkillPreparationRecord
   | AgentList
   | AgentCreate
+  | AgentProjectsRead
+  | AgentProjectsPage
+  | AgentProjectChange
+  | AgentProjectResult
   | AgentCreated
   | AgentDirectories
   | AgentDirectoryPage
@@ -2234,12 +2238,230 @@ export type AgentSessionPosition =
     };
 export type AgentWorkspaceSelection =
   | {
+      project: AgentProjectRef;
+      selection: AgentDirectorySelection;
+      kind: 'project';
+    }
+  | {
       selection: AgentDirectorySelection;
       kind: 'directory';
     }
   | {
       sessionId: string;
       kind: 'session';
+    };
+export type AgentProjectsRead =
+  | {
+      cursor: AgentProjectCursor | null;
+      kind: 'list';
+    }
+  | {
+      selection: AgentDirectorySelection;
+      kind: 'directory';
+    };
+export type AgentProjectsPage =
+  | {
+      revision: string;
+      /**
+       * @maxItems 16
+       */
+      projects:
+        | []
+        | [AgentProject]
+        | [AgentProject, AgentProject]
+        | [AgentProject, AgentProject, AgentProject]
+        | [AgentProject, AgentProject, AgentProject, AgentProject]
+        | [AgentProject, AgentProject, AgentProject, AgentProject, AgentProject]
+        | [AgentProject, AgentProject, AgentProject, AgentProject, AgentProject, AgentProject]
+        | [
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+          ]
+        | [
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+          ]
+        | [
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+          ]
+        | [
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+          ]
+        | [
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+          ]
+        | [
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+          ]
+        | [
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+          ]
+        | [
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+          ]
+        | [
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+          ]
+        | [
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+            AgentProject,
+          ];
+      next: AgentProjectCursor | null;
+      kind: 'projects';
+    }
+  | {
+      location: AgentProjectLocation;
+      kind: 'directory';
+    }
+  | {
+      kind: 'changed';
+    }
+  | {
+      kind: 'unavailable';
+    };
+export type AgentProjectChange =
+  | {
+      selection: AgentDirectorySelection;
+      expected: AgentProjectRef | null;
+      kind: 'register';
+    }
+  | {
+      project: AgentProjectRef;
+      name: string;
+      kind: 'rename';
+    }
+  | {
+      project: AgentProjectRef;
+      kind: 'archive';
+    }
+  | {
+      project: AgentProjectRef;
+      kind: 'restore';
+    }
+  | {
+      project: AgentProjectRef;
+      selection: AgentDirectorySelection;
+      destination: AgentProjectRef | null;
+      kind: 'relocate';
+    };
+export type AgentProjectResult =
+  | {
+      project: AgentProject;
+      kind: 'committed';
+    }
+  | {
+      kind: 'changed';
+    }
+  | {
+      kind: 'unavailable';
+    }
+  | {
+      kind: 'busy';
+    }
+  | {
+      kind: 'invalid';
     };
 export type AgentCreated =
   | {
@@ -5246,6 +5468,10 @@ export interface AgentDataSource {
   namespace: InstanceId;
 }
 export interface AgentWorkspace {
+  /**
+   * Optional membership in this Agent's canonical Project catalog.
+   */
+  projectId?: string | null;
   path: string;
   directoryIdentity: string;
   identity: string;
@@ -6220,6 +6446,28 @@ export interface AgentCreate {
    */
   labels: string[];
   workspace: AgentWorkspaceSelection;
+}
+export interface AgentProjectRef {
+  id: string;
+  revision: string;
+}
+export interface AgentProjectCursor {
+  revision: string;
+  after: string;
+}
+export interface AgentProject {
+  reference: AgentProjectRef;
+  name: string;
+  archived: boolean;
+  available: boolean;
+  selection: AgentDirectorySelection | null;
+  path: string | null;
+}
+export interface AgentProjectLocation {
+  selection: AgentDirectorySelection;
+  path: string;
+  name: string;
+  project: AgentProject | null;
 }
 export interface AgentDirectory {
   name: string;

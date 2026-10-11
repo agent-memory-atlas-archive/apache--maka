@@ -225,6 +225,7 @@ mod tests {
             .await
             .unwrap();
         Workspace {
+            project_id: None,
             path: path.to_str().unwrap().into(),
             directory_identity,
             identity,

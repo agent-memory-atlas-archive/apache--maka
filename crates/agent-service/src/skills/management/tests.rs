@@ -48,7 +48,7 @@ async fn review(library: &Library, kind: ChangeKind, reference: &str, scope: &Sc
         revision: library.snapshot(scope).await.unwrap().revision,
     };
     match library.preview(change, scope).await.unwrap() {
-        Preview::Ready { review, .. } => review,
+        Preview::Ready { review, .. } => *review,
         _ => panic!("expected bounded change preview"),
     }
 }
@@ -481,6 +481,7 @@ async fn project_installation_keeps_its_reviewed_workspace_and_relative_resource
     .await
     .unwrap();
     let workspace = crate::contract::Workspace {
+        project_id: None,
         path: project.to_str().unwrap().into(),
         directory_identity,
         identity,

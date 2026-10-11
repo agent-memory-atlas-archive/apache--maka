@@ -29,6 +29,30 @@ impl EventLog {
         prefer: bool,
         now: u64,
     ) -> Result<ProjectRecord> {
+        self.register_project_guarded(registration, prefer, now, None)
+            .await
+    }
+
+    /// Compare the complete previously observed row (or absence) in the same
+    /// transaction that registers this physical project identity.
+    pub async fn register_project_if(
+        &self,
+        registration: ProjectRegistration,
+        prefer: bool,
+        now: u64,
+        expected: Option<ProjectRecord>,
+    ) -> Result<ProjectRecord> {
+        self.register_project_guarded(registration, prefer, now, Some(expected))
+            .await
+    }
+
+    async fn register_project_guarded(
+        &self,
+        registration: ProjectRegistration,
+        prefer: bool,
+        now: u64,
+        expected: Option<Option<ProjectRecord>>,
+    ) -> Result<ProjectRecord> {
         self.validate_root()?;
         validate_registration(&registration)?;
         let now = timestamp(now)?;
@@ -41,6 +65,15 @@ impl EventLog {
                             .bind(&registration.identity)
                             .fetch_optional(&mut *tx)
                             .await?;
+                    if let Some(expected) = expected {
+                        let actual = match &existing {
+                            Some(id) => read(&mut tx, id).await?,
+                            None => None,
+                        };
+                        if actual != expected {
+                            return Err(ProjectError::Changed.into());
+                        }
+                    }
                     let id = if let Some(id) = existing {
                         sqlx::query(
                             "UPDATE projects SET last_used_at = MAX(last_used_at, ?) WHERE id = ?",
@@ -98,6 +131,26 @@ impl EventLog {
         mutation: ProjectMutation,
         now: u64,
     ) -> Result<ProjectRecord> {
+        self.mutate_project_guarded(id, mutation, now, None).await
+    }
+
+    pub async fn mutate_project_if(
+        &self,
+        expected: ProjectRecord,
+        mutation: ProjectMutation,
+        now: u64,
+    ) -> Result<ProjectRecord> {
+        self.mutate_project_guarded(&expected.id.clone(), mutation, now, Some(expected))
+            .await
+    }
+
+    async fn mutate_project_guarded(
+        &self,
+        id: &str,
+        mutation: ProjectMutation,
+        now: u64,
+        expected: Option<ProjectRecord>,
+    ) -> Result<ProjectRecord> {
         self.validate_root()?;
         validate_id(id)?;
         let now = timestamp(now)?;
@@ -110,6 +163,12 @@ impl EventLog {
                 Box::pin(async move {
                     let mut tx = connection.begin_with("BEGIN IMMEDIATE").await?;
                     let record = read(&mut tx, &id).await?.ok_or(ProjectError::NotFound)?;
+                    if expected
+                        .as_ref()
+                        .is_some_and(|expected| expected != &record)
+                    {
+                        return Err(ProjectError::Changed.into());
+                    }
                     match mutation {
                         ProjectMutation::Rename(name) => {
                             sqlx::query("UPDATE projects SET name = ? WHERE id = ?")
@@ -150,6 +209,28 @@ impl EventLog {
         available_paths: Vec<String>,
         now: u64,
     ) -> Result<(ProjectRecord, String)> {
+        self.select_project_guarded(id, available_paths, now, None)
+            .await
+    }
+
+    pub async fn select_project_if(
+        &self,
+        expected: ProjectRecord,
+        available_paths: Vec<String>,
+        now: u64,
+    ) -> Result<(ProjectRecord, String)> {
+        let id = expected.id.clone();
+        self.select_project_guarded(&id, available_paths, now, Some(expected))
+            .await
+    }
+
+    async fn select_project_guarded(
+        &self,
+        id: &str,
+        available_paths: Vec<String>,
+        now: u64,
+        expected: Option<ProjectRecord>,
+    ) -> Result<(ProjectRecord, String)> {
         self.validate_root()?;
         validate_id(id)?;
         let now = timestamp(now)?;
@@ -159,6 +240,12 @@ impl EventLog {
                 Box::pin(async move {
                     let mut tx = connection.begin_with("BEGIN IMMEDIATE").await?;
                     let record = read(&mut tx, &id).await?.ok_or(ProjectError::NotFound)?;
+                    if expected
+                        .as_ref()
+                        .is_some_and(|expected| expected != &record)
+                    {
+                        return Err(ProjectError::Changed.into());
+                    }
                     if record.archived_at.is_some() {
                         return Err(ProjectError::Archived.into());
                     }

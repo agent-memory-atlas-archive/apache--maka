@@ -24,7 +24,7 @@ mod mutation;
 mod relink;
 
 use crate::{EventLog, StoreError};
-pub use relink::{ProjectRelink, ProjectRelinkContext};
+pub use relink::{ProjectRelink, ProjectRelinkContext, ProjectRelinkGuard};
 use sqlx::{Connection, Row, SqliteConnection};
 use std::collections::BTreeMap;
 
@@ -33,6 +33,8 @@ type Result<T> = std::result::Result<T, StoreError>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectError {
+    #[error("project changed since it was observed")]
+    Changed,
     #[error("project not found")]
     NotFound,
     #[error("project is archived")]
@@ -43,18 +45,19 @@ pub enum ProjectError {
     PathMismatch,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct ProjectLocation {
     pub path: String,
     pub is_worktree: bool,
     pub last_used_at: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct ProjectRecord {
     pub id: String,
     pub aliases: Vec<String>,
-    /// Resolved folder path or shared Git directory, not the workspace UUID.
+    /// Domain identity of a folder or shared Git directory, optionally scoped
+    /// by its owning service. This is not the workspace UUID.
     pub identity: String,
     pub name: String,
     pub locations: Vec<ProjectLocation>,
@@ -81,12 +84,23 @@ pub enum ProjectMutation {
 
 impl EventLog {
     pub async fn list_projects(&self) -> Result<Vec<ProjectRecord>> {
+        self.project_catalog(None).await
+    }
+
+    /// Select an owning service's logical identity namespace in the same SQL
+    /// snapshot as its locations and aliases. The prefix is data, not a grant.
+    pub async fn projects_with_identity_prefix(&self, prefix: &str) -> Result<Vec<ProjectRecord>> {
+        validate_text(prefix, 128)?;
+        self.project_catalog(Some(prefix.to_owned())).await
+    }
+
+    async fn project_catalog(&self, prefix: Option<String>) -> Result<Vec<ProjectRecord>> {
         self.validate_root()?;
         self.connection
-            .run(|connection| {
+            .run(move |connection| {
                 Box::pin(async move {
                     let mut tx = connection.begin().await?;
-                    let mut projects = read_all(&mut tx).await?;
+                    let mut projects = read_all(&mut tx, prefix.as_deref()).await?;
                     projects.sort_by(|a, b| {
                         a.archived_at
                             .is_some()
@@ -115,10 +129,14 @@ impl EventLog {
     }
 }
 
-async fn read_all(connection: &mut SqliteConnection) -> Result<Vec<ProjectRecord>> {
+async fn read_all(
+    connection: &mut SqliteConnection,
+    prefix: Option<&str>,
+) -> Result<Vec<ProjectRecord>> {
     let rows = sqlx::query(
-        "SELECT id, identity, name, last_used_at, archived_at FROM projects ORDER BY id",
+        "SELECT id, identity, name, last_used_at, archived_at FROM projects WHERE (?1 IS NULL OR instr(identity, ?1)=1) ORDER BY id",
     )
+    .bind(prefix)
     .fetch_all(&mut *connection)
     .await?;
     let mut records = BTreeMap::new();
@@ -141,8 +159,9 @@ async fn read_all(connection: &mut SqliteConnection) -> Result<Vec<ProjectRecord
         );
     }
     for row in sqlx::query(
-        "SELECT id, project_id FROM project_identities WHERE id != project_id ORDER BY id",
+        "SELECT a.id, a.project_id FROM project_identities a JOIN projects p ON p.id=a.project_id WHERE a.id != a.project_id AND (?1 IS NULL OR instr(p.identity, ?1)=1) ORDER BY a.id",
     )
+    .bind(prefix)
     .fetch_all(&mut *connection)
     .await?
     {
@@ -154,8 +173,9 @@ async fn read_all(connection: &mut SqliteConnection) -> Result<Vec<ProjectRecord
             .push(row.try_get("id")?);
     }
     for row in sqlx::query(
-        "SELECT project_id, path, is_worktree, last_used_at FROM project_locations ORDER BY path",
+        "SELECT l.project_id, l.path, l.is_worktree, l.last_used_at FROM project_locations l JOIN projects p ON p.id=l.project_id WHERE (?1 IS NULL OR instr(p.identity, ?1)=1) ORDER BY l.path",
     )
+    .bind(prefix)
     .fetch_all(connection)
     .await?
     {

@@ -27,6 +27,7 @@ mod attachments;
 mod execution;
 mod interactions;
 mod notifications;
+mod projects;
 pub(crate) use notifications::ReturnRoute;
 mod queue;
 mod skills;
@@ -301,14 +302,16 @@ impl Owner {
             });
         }
         let selected = match input.workspace {
+            WorkspaceSelection::Project { project, selection } => {
+                let Some(workspace) = self.select_project(project, selection).await? else {
+                    return Ok(Created::Rejected {
+                        reason: Rejection::WorkspaceUnavailable,
+                    });
+                };
+                workspace
+            }
             WorkspaceSelection::Directory { selection } => {
-                let Some(workspace) = workspace::initialize(
-                    &self.workspace_roots,
-                    selection,
-                    &self.managed_worktrees,
-                )
-                .await?
-                else {
+                let Some(workspace) = self.create_project_workspace(selection).await? else {
                     return Ok(Created::Rejected {
                         reason: Rejection::WorkspaceUnavailable,
                     });
@@ -331,7 +334,11 @@ impl Owner {
                         reason: Rejection::SessionUnavailable,
                     });
                 };
-                if session.archived {
+                if session.archived
+                    || !self
+                        .project_accepts_session(&session.configuration.workspace)
+                        .await?
+                {
                     return Ok(Created::Rejected {
                         reason: Rejection::SessionUnavailable,
                     });
@@ -369,7 +376,7 @@ impl Owner {
             .await
             .map_err(|_| "agent_creation_failed")?;
         Ok(Created::Created {
-            session: crate::service::summary(self, record),
+            session: Box::new(crate::service::summary(self, record)),
         })
     }
     pub async fn mark_read(&self, input: MarkRead) -> Result<MarkReadResult, String> {
@@ -402,7 +409,7 @@ impl Owner {
             .await
             .map_err(|_| "agent_read_marker_failed")?;
         Ok(MarkReadResult::Observed {
-            session: crate::service::summary(self, record),
+            session: Box::new(crate::service::summary(self, record)),
         })
     }
     pub async fn metadata(&self, input: Metadata) -> Result<MetadataResult, String> {

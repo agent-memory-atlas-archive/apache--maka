@@ -83,6 +83,11 @@ impl Handler for Agent {
                         context.emit(encode(page)?).await?;
                     }
                 }
+                "projects" => encode(owner.projects(decode(input)?).await?),
+                "project" => {
+                    context.operation().ok_or("agent_mutation_required")?;
+                    encode(owner.project(decode(input)?).await?)
+                }
                 "directories" => encode(
                     crate::workspace::query(owner.workspace_roots.clone(), decode(input)?).await?,
                 ),

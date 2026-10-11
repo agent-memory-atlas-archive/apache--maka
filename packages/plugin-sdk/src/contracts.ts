@@ -7140,6 +7140,11 @@ export const contracts = {
               AgentWorkspace: {
                 type: 'object',
                 properties: {
+                  projectId: {
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                  },
                   path: {
                     type: 'string',
                     minLength: 1,
@@ -7196,6 +7201,23 @@ export const contracts = {
                   {
                     type: 'object',
                     properties: {
+                      project: {
+                        $ref: '#/$defs/AgentProjectRef',
+                      },
+                      selection: {
+                        $ref: '#/$defs/AgentDirectorySelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'project',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'project', 'selection'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
                       selection: {
                         $ref: '#/$defs/AgentDirectorySelection',
                       },
@@ -7224,6 +7246,21 @@ export const contracts = {
                     required: ['kind', 'sessionId'],
                   },
                 ],
+              },
+              AgentProjectRef: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'string',
+                    pattern: '^[a-f0-9]{64}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['id', 'revision'],
               },
               AgentDirectorySelection: {
                 type: 'object',
@@ -7399,6 +7436,11 @@ export const contracts = {
               AgentWorkspace: {
                 type: 'object',
                 properties: {
+                  projectId: {
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                  },
                   path: {
                     type: 'string',
                     minLength: 1,
@@ -10015,6 +10057,11 @@ export const contracts = {
               AgentWorkspace: {
                 type: 'object',
                 properties: {
+                  projectId: {
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                  },
                   path: {
                     type: 'string',
                     minLength: 1,
@@ -10210,6 +10257,11 @@ export const contracts = {
               AgentWorkspace: {
                 type: 'object',
                 properties: {
+                  projectId: {
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                  },
                   path: {
                     type: 'string',
                     minLength: 1,
@@ -10496,6 +10548,11 @@ export const contracts = {
               AgentWorkspace: {
                 type: 'object',
                 properties: {
+                  projectId: {
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                  },
                   path: {
                     type: 'string',
                     minLength: 1,
@@ -10695,6 +10752,11 @@ export const contracts = {
               AgentWorkspace: {
                 type: 'object',
                 properties: {
+                  projectId: {
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                  },
                   path: {
                     type: 'string',
                     minLength: 1,
@@ -10824,6 +10886,570 @@ export const contracts = {
               AgentInteractionKind: {
                 type: 'string',
                 enum: ['service_approval', 'question', 'permissions', 'form', 'client_capability'],
+              },
+            },
+          },
+          resources: {},
+        },
+        project: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentProjectChange',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  selection: {
+                    $ref: '#/$defs/AgentDirectorySelection',
+                  },
+                  expected: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentProjectRef',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'register',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'selection', 'expected'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  project: {
+                    $ref: '#/$defs/AgentProjectRef',
+                  },
+                  name: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 256,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rename',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'project', 'name'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  project: {
+                    $ref: '#/$defs/AgentProjectRef',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'archive',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'project'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  project: {
+                    $ref: '#/$defs/AgentProjectRef',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'restore',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'project'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  project: {
+                    $ref: '#/$defs/AgentProjectRef',
+                  },
+                  selection: {
+                    $ref: '#/$defs/AgentDirectorySelection',
+                  },
+                  destination: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentProjectRef',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'relocate',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'project', 'selection', 'destination'],
+              },
+            ],
+            $defs: {
+              AgentDirectorySelection: {
+                type: 'object',
+                properties: {
+                  rootId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 64,
+                  },
+                  segments: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                    maxItems: 64,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['rootId', 'segments', 'directoryIdentity'],
+              },
+              AgentProjectRef: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'string',
+                    pattern: '^[a-f0-9]{64}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['id', 'revision'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentProjectResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  project: {
+                    $ref: '#/$defs/AgentProject',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'committed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'project'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'unavailable',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'busy',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'invalid',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
+            $defs: {
+              AgentProject: {
+                type: 'object',
+                properties: {
+                  reference: {
+                    $ref: '#/$defs/AgentProjectRef',
+                  },
+                  name: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 256,
+                  },
+                  archived: {
+                    type: 'boolean',
+                  },
+                  available: {
+                    type: 'boolean',
+                  },
+                  selection: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentDirectorySelection',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  path: {
+                    type: ['string', 'null'],
+                  },
+                },
+                additionalProperties: false,
+                required: ['reference', 'name', 'archived', 'available', 'selection', 'path'],
+              },
+              AgentProjectRef: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'string',
+                    pattern: '^[a-f0-9]{64}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['id', 'revision'],
+              },
+              AgentDirectorySelection: {
+                type: 'object',
+                properties: {
+                  rootId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 64,
+                  },
+                  segments: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                    maxItems: 64,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['rootId', 'segments', 'directoryIdentity'],
+              },
+            },
+          },
+          resources: {},
+        },
+        projects: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentProjectsRead',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  cursor: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentProjectCursor',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'list',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'cursor'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  selection: {
+                    $ref: '#/$defs/AgentDirectorySelection',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'directory',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'selection'],
+              },
+            ],
+            $defs: {
+              AgentProjectCursor: {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'string',
+                    pattern: '^[a-f0-9]{64}$',
+                  },
+                  after: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                },
+                additionalProperties: false,
+                required: ['revision', 'after'],
+              },
+              AgentDirectorySelection: {
+                type: 'object',
+                properties: {
+                  rootId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 64,
+                  },
+                  segments: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                    maxItems: 64,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['rootId', 'segments', 'directoryIdentity'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentProjectsPage',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'string',
+                    pattern: '^[a-f0-9]{64}$',
+                  },
+                  projects: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/AgentProject',
+                    },
+                    maxItems: 16,
+                  },
+                  next: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentProjectCursor',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'projects',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'revision', 'projects', 'next'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  location: {
+                    $ref: '#/$defs/AgentProjectLocation',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'directory',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'location'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'unavailable',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
+            $defs: {
+              AgentProject: {
+                type: 'object',
+                properties: {
+                  reference: {
+                    $ref: '#/$defs/AgentProjectRef',
+                  },
+                  name: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 256,
+                  },
+                  archived: {
+                    type: 'boolean',
+                  },
+                  available: {
+                    type: 'boolean',
+                  },
+                  selection: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentDirectorySelection',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  path: {
+                    type: ['string', 'null'],
+                  },
+                },
+                additionalProperties: false,
+                required: ['reference', 'name', 'archived', 'available', 'selection', 'path'],
+              },
+              AgentProjectRef: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'string',
+                    pattern: '^[a-f0-9]{64}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['id', 'revision'],
+              },
+              AgentDirectorySelection: {
+                type: 'object',
+                properties: {
+                  rootId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 64,
+                  },
+                  segments: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                    maxItems: 64,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['rootId', 'segments', 'directoryIdentity'],
+              },
+              AgentProjectCursor: {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'string',
+                    pattern: '^[a-f0-9]{64}$',
+                  },
+                  after: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                },
+                additionalProperties: false,
+                required: ['revision', 'after'],
+              },
+              AgentProjectLocation: {
+                type: 'object',
+                properties: {
+                  selection: {
+                    $ref: '#/$defs/AgentDirectorySelection',
+                  },
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  name: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 256,
+                  },
+                  project: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentProject',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
+                required: ['selection', 'path', 'name', 'project'],
               },
             },
           },
@@ -15058,6 +15684,11 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  projectId: {
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                  },
                   path: {
                     type: 'string',
                     minLength: 1,
@@ -15330,6 +15961,11 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  projectId: {
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                  },
                   path: {
                     type: 'string',
                     minLength: 1,
@@ -16970,6 +17606,11 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  projectId: {
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                  },
                   path: {
                     type: 'string',
                     minLength: 1,
@@ -17092,6 +17733,11 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  projectId: {
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                  },
                   path: {
                     type: 'string',
                     minLength: 1,
@@ -17284,6 +17930,11 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  projectId: {
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                  },
                   path: {
                     type: 'string',
                     minLength: 1,
@@ -17532,6 +18183,11 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  projectId: {
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                  },
                   path: {
                     type: 'string',
                     minLength: 1,
@@ -18044,6 +18700,11 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  projectId: {
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                  },
                   path: {
                     type: 'string',
                     minLength: 1,
@@ -18391,6 +19052,11 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  projectId: {
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                  },
                   path: {
                     type: 'string',
                     minLength: 1,
@@ -18535,6 +19201,11 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  projectId: {
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                  },
                   path: {
                     type: 'string',
                     minLength: 1,
@@ -18601,6 +19272,11 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  projectId: {
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                  },
                   path: {
                     type: 'string',
                     minLength: 1,
@@ -18822,6 +19498,11 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  projectId: {
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                  },
                   path: {
                     type: 'string',
                     minLength: 1,

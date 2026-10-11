@@ -169,7 +169,14 @@ export interface HelpProps {
 export interface SkillLibraryProps extends HelpProps {
   workspace?: AgentWorkspace | null;
 }
+export interface ProjectsProps {
+  theme: Theme;
+  locale: string;
+  open: boolean;
+  busy: boolean;
+}
 export interface DirectoryPickerProps {
+  chooseLabel?: string;
   theme: Theme;
   locale: string;
   open: boolean;
@@ -298,6 +305,7 @@ const session = native.agent.interface.methods.list.output;
 const defs = {
   ...native.agent.interface.methods.respond.input.$defs,
   ...native.agent.interface.methods.directories.output.$defs,
+  ...native.agent.interface.methods.projects.output.$defs,
   ...editor.props.$defs,
   ...editor.events.changed.$defs,
   ...editor.events.files.$defs,
@@ -456,14 +464,37 @@ export const skillLibraryContract = component(
   ),
   { closed: object({}) },
 );
-export const directoryPickerContract = component(
-  'maka.agent.DirectoryPicker',
+export const projectsContract = component(
+  'maka.agent.Projects',
   object({
     theme: { $ref: '#/$defs/Theme' },
     locale,
     open: { type: 'boolean' },
     busy: { type: 'boolean' },
   }),
+  {
+    selected: withDefs(
+      object({
+        project: { $ref: '#/$defs/AgentProjectRef' },
+        selection: { $ref: '#/$defs/AgentDirectorySelection' },
+      }),
+    ),
+    changed: object({}),
+    closed: object({}),
+  },
+);
+export const directoryPickerContract = component(
+  'maka.agent.DirectoryPicker',
+  object(
+    {
+      theme: { $ref: '#/$defs/Theme' },
+      locale,
+      open: { type: 'boolean' },
+      busy: { type: 'boolean' },
+      chooseLabel: string,
+    },
+    ['theme', 'locale', 'open', 'busy'],
+  ),
   { selected: withDefs({ $ref: '#/$defs/AgentDirectorySelection' }), closed: object({}) },
 );
 export const sessionDetailsContract = component(

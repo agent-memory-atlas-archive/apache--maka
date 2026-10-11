@@ -25,6 +25,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+#[path = "contract_projects.rs"]
+mod projects;
+pub use projects::*;
 #[path = "contract_execution.rs"]
 mod execution;
 pub use execution::*;
@@ -195,6 +198,10 @@ pub struct Create {
 )]
 #[schemars(rename = "AgentWorkspaceSelection")]
 pub enum WorkspaceSelection {
+    Project {
+        project: ProjectRef,
+        selection: DirectorySelection,
+    },
     Directory {
         selection: DirectorySelection,
     },
@@ -253,6 +260,9 @@ pub enum DirectoryPage {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentWorkspace")]
 pub struct Workspace {
+    /// Optional membership in this Agent's canonical Project catalog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<uuid::Uuid>,
     #[schemars(length(min = 1, max = 4096))]
     pub path: String,
     #[schemars(with = "String", regex(pattern = "^sha256:[a-f0-9]{64}$"))]
@@ -290,7 +300,7 @@ pub enum Rejection {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "AgentCreated")]
 pub enum Created {
-    Created { session: Session },
+    Created { session: Box<Session> },
     Rejected { reason: Rejection },
 }
 #[derive(Serialize, JsonSchema)]
@@ -394,7 +404,7 @@ pub struct MarkRead {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "AgentMarkReadResult")]
 pub enum MarkReadResult {
-    Observed { session: Session },
+    Observed { session: Box<Session> },
     Rejected { reason: Rejection },
 }
 #[derive(Deserialize, JsonSchema)]
@@ -967,6 +977,14 @@ pub fn contract() -> Contract {
                 (
                     "catalog".into(),
                     method::<List, SessionPage>(MethodMode::Subscription),
+                ),
+                (
+                    "projects".into(),
+                    method::<ProjectsRead, ProjectsPage>(MethodMode::Query),
+                ),
+                (
+                    "project".into(),
+                    method::<ProjectChange, ProjectResult>(MethodMode::Mutation),
                 ),
                 (
                     "directories".into(),

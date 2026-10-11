@@ -263,3 +263,151 @@ async fn relink_merges_aliases_and_sessions_in_one_transaction_without_rewriting
     );
     reopened.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn conditional_project_writes_reject_stale_rows_and_relink_only_the_owned_session_namespace()
+{
+    use maka_event_log::projects::ProjectRelinkGuard;
+    let temp = tempfile::tempdir().unwrap();
+    let log = EventLog::open(&temp.path().join("projects.sqlite"))
+        .await
+        .unwrap();
+    let first = log
+        .register_project_if(
+            registration("owner:folder:/first", "/first", false),
+            true,
+            1,
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        log.register_project_if(
+            registration("owner:folder:/first", "/first", false),
+            true,
+            2,
+            None
+        )
+        .await,
+        Err(StoreError::Project(ProjectError::Changed))
+    ));
+    let renamed = log
+        .mutate_project_if(first.clone(), ProjectMutation::Rename("Renamed".into()), 2)
+        .await
+        .unwrap();
+    assert!(matches!(
+        log.mutate_project_if(first.clone(), ProjectMutation::Archive, 3)
+            .await,
+        Err(StoreError::Project(ProjectError::Changed))
+    ));
+    assert!(matches!(
+        log.select_project_if(first, vec!["/first".into()], 3).await,
+        Err(StoreError::Project(ProjectError::Changed))
+    ));
+    let target = log
+        .register_project_if(
+            registration("owner:folder:/target", "/target", false),
+            true,
+            3,
+            None,
+        )
+        .await
+        .unwrap();
+    let other = log
+        .register_project(
+            registration("foreign:folder:/hidden", "/hidden", false),
+            true,
+            3,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        log.projects_with_identity_prefix("owner:")
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        log.projects_with_identity_prefix("foreign:").await.unwrap(),
+        vec![other]
+    );
+    let member = Membership {
+        project: Some(renamed.id.clone()),
+        cwd: "/first".into(),
+    };
+    log.create_session("own_session", "original", &member, 1)
+        .await
+        .unwrap();
+    let foreign = serde_json::json!({"unrelated":"a different service configuration"});
+    log.create_session("foreign_session", "foreign", &foreign, 1)
+        .await
+        .unwrap();
+    let stale = ProjectRelinkGuard {
+        source: renamed.clone(),
+        destination: Some(target.clone()),
+        session_prefix: "own_".into(),
+    };
+    let target = log
+        .mutate_project_if(
+            target,
+            ProjectMutation::Rename("Destination changed".into()),
+            4,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        log.relink_project_if(
+            stale,
+            registration("owner:folder:/target", "/target", false),
+            5,
+            reassign
+        )
+        .await,
+        Err(StoreError::Project(ProjectError::Changed))
+    ));
+    assert_eq!(
+        log.get_session::<Membership>("own_session")
+            .await
+            .unwrap()
+            .unwrap()
+            .configuration,
+        member
+    );
+    assert_eq!(
+        log.get_project(&renamed.id).await.unwrap().unwrap(),
+        renamed
+    );
+    let merged = log
+        .relink_project_if(
+            ProjectRelinkGuard {
+                source: renamed,
+                destination: Some(target),
+                session_prefix: "own_".into(),
+            },
+            registration("owner:folder:/target", "/target", false),
+            6,
+            reassign,
+        )
+        .await
+        .unwrap();
+    assert_eq!(merged.updated_session_ids, ["own_session"]);
+    assert_eq!(
+        log.get_session::<Membership>("own_session")
+            .await
+            .unwrap()
+            .unwrap()
+            .configuration
+            .cwd,
+        "/target"
+    );
+    assert_eq!(
+        log.get_session::<serde_json::Value>("foreign_session")
+            .await
+            .unwrap()
+            .unwrap()
+            .configuration,
+        foreign
+    );
+    log.close().await.unwrap();
+}
