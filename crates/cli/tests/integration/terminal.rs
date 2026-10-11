@@ -207,7 +207,7 @@ impl Pty {
             }
             assert!(
                 Instant::now() < deadline,
-                "screen condition timed out (pending tty bytes: {}):\n{}",
+                "screen condition timed out (pending tty bytes: {}):\n{}\n{}",
                 {
                     let mut pending = 0;
                     assert_eq!(
@@ -222,7 +222,11 @@ impl Pty {
                     );
                     pending
                 },
-                snapshot.screen
+                snapshot.screen,
+                String::from_utf8_lossy(&self.output)
+                    .lines()
+                    .find(|line| line.contains("invalid UI activation or batch:"))
+                    .unwrap_or("")
             );
             assert!(
                 self.child.try_wait().unwrap().is_none(),

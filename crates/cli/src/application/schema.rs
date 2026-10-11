@@ -45,6 +45,9 @@ pub(super) fn catalog() -> Value {
         root::<maka_plugin_core::deployment::management::InstanceSetEnabled>(&mut g),
         root::<maka_plugin_core::deployment::management::DeploymentDocument>(&mut g),
         root::<maka_plugin_core::deployment::management::DeploymentDocumentRead>(&mut g),
+        root::<maka_plugin_core::deployment::management::InstanceSettingsRead>(&mut g),
+        root::<maka_plugin_core::deployment::management::InstanceSettingsPage>(&mut g),
+        root::<maka_plugin_core::deployment::management::InstanceConfigure>(&mut g),
         root::<maka_plugin_core::deployment::management::DeploymentDocumentChunk>(&mut g),
         root::<
             maka_plugin_core::deployment::management::ManagementResult<

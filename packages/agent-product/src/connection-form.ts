@@ -59,6 +59,14 @@ const names = [
   'overlay',
 ] as const;
 type FieldName = (typeof names)[number];
+const advancedFields: readonly FieldName[] = ['configuration', 'overrides', 'overlay'];
+function formPanes(state: State) {
+  return names.filter(
+    (name) =>
+      (name !== 'slug' || !state.baseline) &&
+      (!advancedFields.includes(name) || state.advanced || state.fields[name].enabled),
+  );
+}
 interface Field {
   enabled: boolean;
   observation: EditorObservation | null;
@@ -92,6 +100,7 @@ interface State {
   enabled: boolean;
   enabledEdited: boolean;
   pane: number;
+  advanced: boolean;
   pending: Record<string, Request>;
   current: {
     kind: 'save' | 'remove';
@@ -421,7 +430,7 @@ function frame<N extends Node>(
   const locked = busy(state);
   const identity: Identity | undefined =
     state.baseline?.target.provider ?? state.provider?.identity;
-  const panes: FieldName[] = state.baseline ? names.filter((name) => name !== 'slug') : [...names];
+  const panes = formPanes(state);
   const currentPane = panes[Math.min(state.pane, panes.length - 1)];
   const form = ui.box(
     'form',
@@ -586,6 +595,15 @@ function frame<N extends Node>(
                 ]
               : []),
           ]),
+      ...(state.baseline || state.provider
+        ? [
+            ui.button(
+              'form-advanced',
+              state.advanced ? text.basicSettings : text.advancedSettings,
+              locked,
+            ),
+          ]
+        : []),
       // All original native owners stay mounted across provider selection, panes and confirmations.
       ...names.map((name) => {
         const f = state.fields[name],
@@ -694,7 +712,8 @@ function frame<N extends Node>(
               : []),
           ],
           {
-            visible: available && (target === 'desktop' || currentPane === name),
+            visible:
+              available && panes.includes(name) && (target === 'desktop' || currentPane === name),
             gap: target === 'desktop' ? 8 : 1,
             padding: 0,
             style: { width: fill },
@@ -938,6 +957,7 @@ export function connectionForm<N extends Node>(
         enabled: props.connection?.enabled ?? true,
         enabledEdited: false,
         pane: 0,
+        advanced: false,
         pending: {},
         current: null,
         notice: null,
@@ -1207,7 +1227,11 @@ export function connectionForm<N extends Node>(
           if (key === 'connection-enabled') {
             state.enabled = !state.enabled;
             state.enabledEdited = true;
-          } else if (key === 'field-next') state.pane++;
+          } else if (key === 'form-advanced') {
+            state.advanced = !state.advanced;
+            state.pane = 0;
+          } else if (key === 'field-next')
+            state.pane = Math.min(state.pane + 1, formPanes(state).length - 1);
           else if (key === 'field-previous') state.pane = Math.max(0, state.pane - 1);
           else if (key === 'provider-refresh' && !state.provider && !state.baseline)
             request(state, actions, { kind: 'providers' }, 'settings', 'providers', { offset: 0 });

@@ -21,6 +21,25 @@ use super::*;
 use maka_event_log::root::{RootNamespaces, RootOwner};
 use serde_json::json;
 
+fn click_text(tui: &mut Pty, label: &str) {
+    use unicode_width::UnicodeWidthStr;
+    let locate = |screen: &str| {
+        screen.lines().enumerate().find_map(|(row, line)| {
+            line.match_indices(label).find_map(|(at, _)| {
+                let suffix = &line[at + label.len()..];
+                let before = &line[..at];
+                ((before.is_empty() || before.ends_with(' '))
+                    && (suffix.is_empty() || suffix.starts_with(' ')))
+                .then(|| (row + 1, before.width() + 1))
+            })
+        })
+    };
+    tui.wait_until(|screen| locate(screen).is_some() && !screen.contains("Connecting…"));
+    let screen = tui.screen.snapshot().unwrap().screen;
+    let (row, column) = locate(&screen).unwrap();
+    tui.send(format!("\x1b[<0;{column};{row}M\x1b[<0;{column};{row}m").as_bytes());
+}
+
 #[test]
 #[ignore = "starts the bundled product and its real Host in a native PTY"]
 fn bundled_product_launch_initializes_and_reopens_original_roots_without_node() {
@@ -61,7 +80,7 @@ fn bundled_product_launch_initializes_and_reopens_original_roots_without_node() 
         // First launch now includes authoring and three durable source commits
         // before the same bounded UI startup previously exercised on its own.
         tui.wait_until_with_timeout(
-            |screen| screen.contains("Plugins"),
+            |screen| screen.contains("Settings"),
             Duration::from_secs(if first { 60 } else { 30 }),
         );
         eprintln!(
@@ -275,7 +294,10 @@ fn bundled_product_launch_recovers_partial_commits_without_reauthoring() {
     let preparation = Instant::now();
     tui.wait_for_output("Opening product…", Duration::from_secs(30));
     eprintln!("partial launch preparation: {:?}", preparation.elapsed());
-    tui.wait_until_with_timeout(|screen| screen.contains("Plugins"), Duration::from_secs(30));
+    tui.wait_until_with_timeout(
+        |screen| screen.contains("Settings"),
+        Duration::from_secs(30),
+    );
     tui.send(b"\x11");
     tui.finish();
     runtime.block_on(async {
@@ -315,23 +337,6 @@ fn bundled_product_launch_recovers_partial_commits_without_reauthoring() {
 #[test]
 #[ignore = "starts the standard product and original Host without an installation file"]
 fn standard_product_launch_uses_system_language_and_reopens_without_reauthoring() {
-    fn click_text(tui: &mut Pty, label: &str) {
-        use unicode_width::UnicodeWidthStr;
-        tui.wait_for(label);
-        let screen = tui.screen.snapshot().unwrap().screen;
-        let (row, column) = screen
-            .lines()
-            .enumerate()
-            .find_map(|(row, line)| {
-                line.find(label).and_then(|at| {
-                    line[at + label.len()..]
-                        .starts_with(' ')
-                        .then(|| (row + 1, line[..at].width() + 1))
-                })
-            })
-            .unwrap();
-        tui.send(format!("\x1b[<0;{column};{row}M\x1b[<0;{column};{row}m").as_bytes());
-    }
     let directory = tempfile::tempdir().unwrap();
     let workspace = directory.path().join("workspace");
     std::fs::create_dir(&workspace).unwrap();
@@ -377,9 +382,66 @@ fn standard_product_launch_uses_system_language_and_reopens_without_reauthoring(
             tui.wait_for_output("继续 [y/N]", Duration::from_secs(10));
             tui.send(b"y\n");
         }
-        tui.wait_until_with_timeout(|screen| screen.contains("插件"), Duration::from_secs(60));
+        tui.wait_until_with_timeout(|screen| screen.contains("设置"), Duration::from_secs(60));
+        if first {
+            tui.send(b"\x0b");
+            tui.wait_for("搜索命令或对话");
+            tui.send("设置".as_bytes());
+            tui.wait_for("› 设置");
+            tui.send(b"\r");
+            tui.wait_for("配色");
+            click_text(&mut tui, "界面");
+            tui.wait_for("动态效果");
+            tui.wait_until(|screen| !screen.contains("配色"));
+            // Width belongs to the native presenter: all categories become one
+            // scrollable column without remounting preferences or the conversation.
+            let size = libc::winsize {
+                ws_row: 18,
+                ws_col: 50,
+                ws_xpixel: 0,
+                ws_ypixel: 0,
+            };
+            tui.frames.resize();
+            tui.screen
+                .resize(TerminalSize::new(50, 18).unwrap())
+                .unwrap();
+            assert_eq!(
+                unsafe {
+                    libc::ioctl(
+                        tui.master.as_ref().unwrap().as_raw_fd(),
+                        libc::TIOCSWINSZ,
+                        &size,
+                    )
+                },
+                0
+            );
+            tui.wait_for("配色");
+            tui.send(b"\x1b");
+            tui.wait_until(|screen| !screen.contains("配色"));
+            let size = libc::winsize {
+                ws_row: 30,
+                ws_col: 100,
+                ws_xpixel: 0,
+                ws_ypixel: 0,
+            };
+            tui.frames.resize();
+            tui.screen
+                .resize(TerminalSize::new(100, 30).unwrap())
+                .unwrap();
+            assert_eq!(
+                unsafe {
+                    libc::ioctl(
+                        tui.master.as_ref().unwrap().as_raw_fd(),
+                        libc::TIOCSWINSZ,
+                        &size,
+                    )
+                },
+                0
+            );
+        }
         tui.send(b"\x0b");
-        tui.wait_for("搜索命令或对话");
+        tui.wait_for("关闭命令面板");
+        tui.send(b"\x01");
         tui.send("外观".as_bytes());
         tui.wait_for("› 外观");
         tui.send(b"\r");
@@ -452,6 +514,118 @@ fn standard_product_launch_uses_system_language_and_reopens_without_reauthoring(
             );
             store.close().await.unwrap();
             drop(RootOwner::open(&root.join("host"), &namespaces).unwrap());
+        });
+    }
+}
+
+#[test]
+#[ignore = "changes the real Host Agent through its native settings form and reloads the UI"]
+fn standard_product_settings_save_restores_page_and_original_result() {
+    let directory = tempfile::tempdir().unwrap();
+    let workspace = directory.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let root = directory.path().join("ui");
+    let home = directory.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    for first in [true, false] {
+        let mut args = vec!["application", "launch", "--root", root.to_str().unwrap()];
+        if first {
+            args.extend([
+                "--workspace",
+                workspace.to_str().unwrap(),
+                "--trust-workspace",
+            ]);
+        }
+        let mut tui = Pty::spawn_with(&args, false, |command| {
+            command.current_dir(&workspace).env("HOME", &home);
+        });
+        if first {
+            tui.wait_until_with_timeout(
+                |screen| screen.contains("Settings"),
+                Duration::from_secs(60),
+            );
+            tui.send(b"\x0b");
+            tui.wait_for("Search commands or conversations");
+            tui.send(b"Plugins");
+            tui.wait_for("› Plugins");
+            tui.send(b"\r");
+            click_text(&mut tui, "Services");
+            tui.wait_for("Edit the connected Host");
+            tui.wait_until(|screen| {
+                screen.contains("Enabled ·") && !screen.contains("Connecting…")
+            });
+            let has_agent = |screen: &str| {
+                screen.lines().any(|line| {
+                    line.trim_start()
+                        .trim_start_matches("› ")
+                        .starts_with("agent ")
+                })
+            };
+            if !has_agent(&tui.screen.snapshot().unwrap().screen) {
+                click_text(&mut tui, "More components");
+                tui.wait_until(|screen| has_agent(screen) && !screen.contains("Connecting…"));
+            }
+            click_text(&mut tui, "agent");
+            tui.wait_for("› agent");
+            tui.send(b"\r");
+            tui.wait_for("Plugin settings");
+            click_text(&mut tui, "Max Steps");
+            tui.wait_for("Apply");
+            tui.send(b"\x1b[H\x1b[1;2F15");
+            click_text(&mut tui, "Apply");
+            tui.wait_until(|screen| {
+                !screen.contains("Apply") && !screen.contains("Preparing your changes")
+            });
+            click_text(&mut tui, "Save changes");
+            // Changing Agent configuration reactivates dependent UI components.
+            // The original route, field draft and canonical receipt must survive.
+            tui.wait_until_with_timeout(
+                |screen| {
+                    screen.contains("Changes saved.")
+                        && screen.contains("Plugin settings")
+                        && screen
+                            .lines()
+                            .any(|line| line.contains("Max Steps") && line.contains("15"))
+                },
+                Duration::from_secs(60),
+            );
+        } else {
+            tui.wait_until_with_timeout(
+                |screen| {
+                    screen.contains("Plugin settings")
+                        && screen
+                            .lines()
+                            .any(|line| line.contains("Max Steps") && line.contains("15"))
+                },
+                Duration::from_secs(60),
+            );
+            assert!(
+                tui.screen
+                    .snapshot()
+                    .unwrap()
+                    .screen
+                    .contains("Changes saved."),
+                "a later reopen retains the confirmed save alongside its committed form"
+            );
+        }
+        tui.send(b"\x11");
+        tui.finish();
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let namespaces = RootNamespaces::for_current_account().unwrap();
+            let owner = std::sync::Arc::new(RootOwner::open(&root, &namespaces).unwrap());
+            let store = maka_event_log::EventLog::for_root(owner).await.unwrap();
+            let launch = store.application_launch().await.unwrap().unwrap();
+            let intents = store
+                .application_deployment_intents(launch.deployment, 0, 16)
+                .await
+                .unwrap();
+            assert_eq!(
+                intents.len(),
+                1,
+                "reopening never repeats the saved operation"
+            );
+            assert_eq!(intents[0].reference.method, "configure");
+            store.close().await.unwrap();
         });
     }
 }

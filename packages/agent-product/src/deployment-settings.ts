@@ -18,21 +18,30 @@
  */
 
 import type { Component, Emission } from '../../plugin-sdk/src/index.js';
-import { deploymentContract, type ConnectionsProps } from './contracts.js';
+import { deploymentContract, type DeploymentProps } from './contracts.js';
+import {
+  bookmark,
+  bookmarkReady,
+  bookmarkView,
+  observeBookmark,
+  retryBookmark,
+  type Bookmark,
+} from './bookmark.js';
 import { copy } from './locale.js';
 import { fill, output, type Presentation, type Node } from './view.js';
 
 type Place = 'interface' | 'services';
 interface State {
   revision: number;
+  bookmark: Bookmark<Place>;
   selected: Place;
   opened: Place[];
 }
 
 export function deploymentSettings<N extends Node>(
   presentation: Presentation<N>,
-): Component<State, ConnectionsProps, N> {
-  function frame(state: State, props: ConnectionsProps, events: Emission[] = []) {
+): Component<State, DeploymentProps, N> {
+  function frame(state: State, props: DeploymentProps, events: Emission[] = []) {
     const ui = presentation.paint(props.theme),
       text = copy(props.locale);
     return output(
@@ -40,6 +49,20 @@ export function deploymentSettings<N extends Node>(
       ui.box(
         'deployment-settings',
         [
+          ...(presentation.target === 'tui'
+            ? [
+                bookmarkView(
+                  presentation,
+                  state.bookmark,
+                  'deployment-place-checkpoint',
+                  (props.bookmarkKey ?? 'deployment') + '/place',
+                  state.selected,
+                ),
+                ...(state.bookmark.observed?.state.kind === 'failed'
+                  ? [ui.button('deployment-place-retry', text.sourceRetry)]
+                  : []),
+              ]
+            : []),
           ui.box(
             'deployment-targets',
             [
@@ -69,7 +92,21 @@ export function deploymentSettings<N extends Node>(
           ...state.opened.map((place) =>
             ui.box(
               'deployment-target-' + place,
-              [presentation.slot('deployment-editor-' + place, place, props, { closed: 'closed' })],
+              [
+                presentation.slot(
+                  'deployment-editor-' + place,
+                  place,
+                  {
+                    ...props,
+                    bookmarkKey: (props.bookmarkKey ?? 'deployment') + '/' + place,
+                    navigationReady:
+                      props.navigationReady !== false &&
+                      (presentation.target !== 'tui' ||
+                        bookmarkReady(state.bookmark, state.selected)),
+                  },
+                  { closed: 'closed' },
+                ),
+              ],
               {
                 visible: state.selected === place,
                 terminal: { grow: 1, basis: 0 },
@@ -93,7 +130,15 @@ export function deploymentSettings<N extends Node>(
   }
   return {
     mount(props) {
-      return frame({ revision: 0, selected: 'interface', opened: ['interface'] }, props);
+      return frame(
+        {
+          revision: 0,
+          selected: 'interface',
+          opened: ['interface'],
+          bookmark: bookmark<Place>('interface'),
+        },
+        props,
+      );
     },
     update(state, props) {
       state.revision++;
@@ -102,6 +147,19 @@ export function deploymentSettings<N extends Node>(
     event(state, input, props) {
       state.revision++;
       const events: Emission[] = [];
+      if (input.kind === 'raw' && input.key === 'deployment-place-retry')
+        retryBookmark(state.bookmark);
+      const restored = observeBookmark(
+        state.bookmark,
+        input,
+        'deployment-place-checkpoint',
+        state.selected,
+        (value) => (value === 'interface' || value === 'services' ? value : null),
+      );
+      if (restored) {
+        state.selected = restored;
+        if (!state.opened.includes(restored)) state.opened.push(restored);
+      }
       if (input.kind === 'raw') {
         if (input.key === 'deployment-settings-back') events.push({ name: 'closed', value: {} });
         const place =

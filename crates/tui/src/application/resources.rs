@@ -575,6 +575,14 @@ impl Presenter {
             self.drag = None;
             return Ok(());
         }
+        // An observation may create a new scene or add scrolling regions.
+        // Capture its actions before applying commands, then initialize the new
+        // native state before paint. New observations remain queued for the next
+        // synchronization, keeping each pass bounded.
+        let resources = &mut self.resources;
+        self.application
+            .capture_actions(&self.root, |target| resources.capture(target))?;
+        self.resources.commit(&self.application, &self.root)?;
         self.sync_modal_focus()?;
         self.apply_focus_exits()?;
         if let Some(target) = &self.drag

@@ -25,10 +25,12 @@ import {
   appearanceView,
   type AppearanceEditor,
 } from './appearance-editor.js';
+import { settingsView, settingsEvent, type SettingsCategory } from './settings.js';
 import { tuiText } from './tui-locale.js';
 import type {
   Action,
   ActionOutcome,
+  Shortcut,
   ModelSelection,
   AgentExecutorSelection,
   ThinkingLevel,
@@ -93,6 +95,14 @@ import type {
   MessageCopyObservation,
 } from './contracts.js';
 import { sameValue } from './value.js';
+import {
+  bookmark,
+  bookmarkReady,
+  bookmarkView,
+  observeBookmark,
+  retryBookmark,
+  type Bookmark,
+} from './bookmark.js';
 import { copy, resolveLocale, type Copy } from './locale.js';
 import { compactLabel, fill, output, pixels, type Presentation, type Node } from './view.js';
 
@@ -209,7 +219,18 @@ interface QueueEdit {
   body: string | null;
   command: EditorCommand | null;
 }
+type Navigation = { pages: State['pages']; category: SettingsCategory };
+function navigationBookmark(state: State): Navigation {
+  return { pages: state.pages, category: state.settingsCategory };
+}
+function navigationKey(state: State): string {
+  return (
+    'navigation/' +
+    (state.embedding.fixed ? (state.embedding.session?.id ?? 'pending') : 'workspace')
+  );
+}
 export interface State {
+  bookmark: Bookmark<Navigation>;
   embedding: WorkspaceProps;
   externalSelection: WorkspaceProps['session'] | null;
   preferences: AppearanceEditor;
@@ -233,8 +254,8 @@ export interface State {
   modelRefreshing: boolean;
   searchOpen: boolean;
   browse: number | null;
-  settingsOpen: boolean;
-  deploymentOpen: boolean;
+  pages: ('settings' | 'connections' | 'deployment')[];
+  settingsCategory: SettingsCategory;
   sidebar: { open: boolean } | { command: TerminalPaneCommand | null };
   terminals: boolean;
   skills: boolean;
@@ -527,8 +548,7 @@ function createSession(state: State, actions: Action[], locale: string) {
 }
 function openModelSetup(state: State) {
   if (state.modelSetup === 'connect' && !state.hasBackends) {
-    state.settingsOpen = true;
-    state.deploymentOpen = false;
+    state.pages = ['connections'];
   } else state.modelOpenRequest = ++state.serial;
 }
 function catalogPending(state: State): boolean {
@@ -766,7 +786,7 @@ type RootCommand =
   | 'stop'
   | 'check';
 function conversationRoute(state: State) {
-  return !state.settingsOpen && !state.deploymentOpen;
+  return state.pages.length === 0;
 }
 function reviewTarget(state: State) {
   const retained = state.interaction,
@@ -1009,7 +1029,7 @@ function rootCommands(
     {
       kind: 'settings',
       id: 'settings',
-      label: text.settings,
+      label: target === 'tui' ? tuiText(locale, 'route-settings') : text.settings,
       hint: '',
       disabled: !route,
     },
@@ -1101,11 +1121,9 @@ function rootCommand(
   else if (kind === 'details-open') state.dialog = 'details';
   else if (kind === 'navigation-toggle') controlSidebar(state, 'toggle');
   else if (kind === 'settings') {
-    state.settingsOpen = true;
-    state.deploymentOpen = false;
+    state.pages = [target === 'tui' ? 'settings' : 'connections'];
   } else if (kind === 'deployment-open') {
-    state.deploymentOpen = true;
-    state.settingsOpen = false;
+    state.pages = ['deployment'];
   } else if (kind === 'stop' && state.selected && state.run)
     intent(state, actions, { kind: 'stop', sessionId: state.selected.id }, 'agent', 'stop', {
       sessionId: state.selected.id,
@@ -2282,23 +2300,9 @@ function frame<N extends Node>(
               'navigation-footer',
               [
                 ui.button(
-                  'appearance-open',
-                  `${theme.ascii ? 'S' : '⛭'} ${tuiText(locale, 'settings-appearance')}`,
-                  false,
-                  false,
-                  { background: 0, align: 'start' },
-                ),
-                ui.button(
                   'settings',
-                  `${theme.ascii ? 'C' : '⇄'} ${tuiText(locale, 'route-connections')}`,
-                  busy,
+                  `${theme.ascii ? 'S' : '⛭'} ${tuiText(locale, 'route-settings')}`,
                   false,
-                  { background: 0, align: 'start' },
-                ),
-                ui.button(
-                  'deployment-open',
-                  `${theme.ascii ? 'P' : '◇'} ${text.deploymentTitle}`,
-                  busy,
                   false,
                   { background: 0, align: 'start' },
                 ),
@@ -2425,7 +2429,7 @@ function frame<N extends Node>(
       theme,
       locale,
       image: state.image,
-      active: !!state.image && !state.settingsOpen && !state.deploymentOpen,
+      active: !!state.image && conversationRoute(state),
     },
     { closed: 'image-closed' },
   );
@@ -2579,11 +2583,13 @@ function frame<N extends Node>(
         : '';
   const title = ui.text(
     'title',
-    state.settingsOpen
-      ? text.settings
-      : state.deploymentOpen
-        ? text.deploymentTitle
-        : (state.selected?.title ?? tuiText(locale, 'route-workspace')),
+    state.pages.at(-1) === 'settings'
+      ? tuiText(locale, 'route-settings')
+      : state.pages.at(-1) === 'connections'
+        ? text.settings
+        : state.pages.at(-1) === 'deployment'
+          ? text.deploymentTitle
+          : (state.selected?.title ?? tuiText(locale, 'route-workspace')),
     17,
     theme.text,
     650,
@@ -2661,21 +2667,26 @@ function frame<N extends Node>(
               'header-left',
               [
                 ui.button(
-                  'navigation-toggle',
-                  theme.ascii ? '=' : '≡',
+                  conversationRoute(state) ? 'navigation-toggle' : 'page-back',
+                  conversationRoute(state) ? (theme.ascii ? '=' : '≡') : theme.ascii ? '<' : '‹',
                   false,
                   false,
                   { background: 0 },
                   undefined,
-                  text.toggleSidebar + ' · Ctrl+B',
+                  conversationRoute(state) ? text.toggleSidebar + ' · Ctrl+B' : text.back,
                 ),
               ],
-              { visible: !state.embedding.fixed, row: true, gap: 0, terminal: { basis: 3 } },
+              {
+                visible: !state.embedding.fixed || !conversationRoute(state),
+                row: true,
+                gap: 0,
+                terminal: { basis: 3 },
+              },
             ),
             ui.box(
               'header-task',
               [
-                ...(state.selected && !state.settingsOpen && !state.deploymentOpen
+                ...(state.selected && conversationRoute(state)
                   ? [
                       state.run?.state === 'waiting_for_user'
                         ? ui.text('task-face', '-_-', 14, theme.warning)
@@ -3085,7 +3096,7 @@ function frame<N extends Node>(
     {
       row: target === 'desktop',
       gap: 0,
-      visible: !state.settingsOpen && !state.deploymentOpen,
+      visible: conversationRoute(state),
       terminal: { grow: 1 },
       style: { width: fill, height: fill },
     },
@@ -3093,19 +3104,47 @@ function frame<N extends Node>(
   const background = ui.box(
     'product',
     [
-      ...(target === 'tui' ? [header] : []),
+      ...(target === 'tui' && (conversationRoute(state) || state.pages.at(-1) === 'settings')
+        ? [header]
+        : []),
       conversation,
-      ...(state.deploymentOpen
+      ...(target === 'tui' && (!state.embedding.fixed || state.embedding.session)
+        ? [
+            bookmarkView(
+              presentation,
+              state.bookmark,
+              'navigation-checkpoint-' + navigationKey(state),
+              navigationKey(state),
+              navigationBookmark(state),
+            ),
+            ...(state.bookmark.observed?.state.kind === 'failed'
+              ? [ui.button('navigation-checkpoint-retry', copy(locale).sourceRetry)]
+              : []),
+          ]
+        : []),
+      ...(state.pages.at(-1) === 'settings'
+        ? [settingsView(presentation, state.preferences, theme, locale, state.settingsCategory)]
+        : []),
+      ...(state.pages.at(-1) === 'deployment'
         ? [
             presentation.slot(
               'deployment',
               'deployment',
-              { theme, locale },
+              {
+                theme,
+                locale,
+                ...(target === 'tui'
+                  ? {
+                      bookmarkKey: navigationKey(state) + '/deployment',
+                      navigationReady: bookmarkReady(state.bookmark, navigationBookmark(state)),
+                    }
+                  : {}),
+              },
               { closed: 'deployment-closed' },
             ),
           ]
         : []),
-      ...(state.settingsOpen
+      ...(state.pages.at(-1) === 'connections'
         ? [
             presentation.slot(
               'connections',
@@ -3122,6 +3161,9 @@ function frame<N extends Node>(
       style: { width: fill, height: fill, align: 'center' },
       terminal: { grow: 1 },
       shortcuts: [
+        ...(state.pages.at(-1) === 'settings' && state.dialog === null && !state.preferences.open
+          ? ([{ key: 'escape', modifiers: [], input: 'page-back', enabled: true }] as Shortcut[])
+          : []),
         {
           key: 'f',
           modifiers: ['primary'],
@@ -3149,7 +3191,7 @@ function frame<N extends Node>(
           key: 'b',
           modifiers: ['primary'],
           input: 'navigation-toggle',
-          enabled: !state.embedding.fixed && !state.settingsOpen && !state.deploymentOpen,
+          enabled: !state.embedding.fixed && conversationRoute(state),
         },
         {
           key: 'n',
@@ -3157,8 +3199,7 @@ function frame<N extends Node>(
           input: 'create',
           enabled:
             !state.embedding.fixed &&
-            !state.settingsOpen &&
-            !state.deploymentOpen &&
+            conversationRoute(state) &&
             !mutationPending(state) &&
             !catalogPending(state),
         },
@@ -3486,6 +3527,7 @@ export function workspace<N extends Node>(
         externalSelection: null,
         place,
         preferences: initialAppearance(),
+        bookmark: bookmark({ pages: [], category: 'appearance' }),
         revision: 0,
         attachments: { files: [], selection: null, paste: null },
         drafts: [],
@@ -3504,8 +3546,8 @@ export function workspace<N extends Node>(
         modelOpenRequest: null,
         catalogEpoch: 0,
         modelRefreshing: false,
-        settingsOpen: false,
-        deploymentOpen: false,
+        pages: [],
+        settingsCategory: 'appearance',
         searchOpen: false,
         browse: null,
         sidebar: target === 'desktop' ? { open: true } : { command: null },
@@ -3549,6 +3591,11 @@ export function workspace<N extends Node>(
       return frame(presentation, configuredLocale, state, values, actions);
     },
     update(state, props, values) {
+      if (state.embedding.fixed && state.embedding.session?.id !== props.session?.id) {
+        state.bookmark = bookmark({ pages: [], category: 'appearance' });
+        state.pages = [];
+        state.settingsCategory = 'appearance';
+      }
       return frame(
         presentation,
         configuredLocale,
@@ -3561,6 +3608,32 @@ export function workspace<N extends Node>(
       // the candidate frame and publish with its intents in one UI transaction.
       const state = previous;
       state.embedding = props;
+      if (target === 'tui') {
+        if (input.kind === 'raw' && input.key === 'navigation-checkpoint-retry')
+          retryBookmark(state.bookmark);
+        const restored = observeBookmark(
+          state.bookmark,
+          input,
+          'navigation-checkpoint-' + navigationKey(state),
+          navigationBookmark(state),
+          (value) => {
+            const item = value as Navigation | null;
+            return item &&
+              Array.isArray(item.pages) &&
+              item.pages.length <= 3 &&
+              item.pages.every((page) =>
+                ['settings', 'connections', 'deployment'].includes(page),
+              ) &&
+              ['appearance', 'interface', 'models', 'plugins'].includes(item.category)
+              ? item
+              : null;
+          },
+        );
+        if (restored) {
+          state.pages = restored.pages;
+          state.settingsCategory = restored.category;
+        }
+      }
       if (input.kind === 'component' && input.child === 'attachment-list' && input.name === 'input')
         input = input.event as ComponentInput;
       if (input.kind === 'component' && input.child === 'composer' && input.name === 'attachments')
@@ -3940,10 +4013,7 @@ export function workspace<N extends Node>(
             state.tailReceipt = receipt;
             follow(state, actions);
           }
-        } else if (input.child === 'deployment' && input.name === 'closed')
-          state.deploymentOpen = false;
-        else if (input.child === 'connections' && input.name === 'closed')
-          state.settingsOpen = false;
+        } else if (input.name === 'closed' && input.child === state.pages.at(-1)) state.pages.pop();
         else if (input.child === 'connections' && input.name === 'changed') {
           state.catalogEpoch++;
           state.modelSetup = 'loading';
@@ -4031,8 +4101,7 @@ export function workspace<N extends Node>(
           conversationRoute(state) &&
           !state.dialog
         ) {
-          state.settingsOpen = true;
-          state.deploymentOpen = false;
+          state.pages = ['connections'];
         } else if (
           input.child === 'models' &&
           input.name === 'selected' &&
@@ -4452,6 +4521,17 @@ export function workspace<N extends Node>(
             selection.browse = false;
             focusAttachments(state);
           } else closeDialog(state);
+        } else if (
+          input.key === 'page-back' &&
+          state.pages.at(-1) === 'settings' &&
+          !state.dialog
+        ) {
+          state.pages.pop();
+        } else if (
+          state.pages.at(-1) === 'settings' &&
+          settingsEvent(state, input, values.appearance?.[0] as Theme)
+        ) {
+          // Settings write through the existing preference checkpoint.
         } else if (input.key === 'navigation-back' && state.dialog === null) {
           if ('open' in state.sidebar) state.sidebar.open = false;
           else controlSidebar(state, 'toggle');

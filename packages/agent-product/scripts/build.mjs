@@ -139,6 +139,7 @@ const specifications = {
     imports: {
       reading: one(sdk.contracts.readingArea),
       management: one(sdk.contracts.deploymentManager),
+      reader: one(sdk.contracts.textReader),
       receipts: one(sdk.contracts.receiptReader),
       history: one(sdk.contracts.callerHistory),
       editor: one(sdk.contracts.textarea),
@@ -505,6 +506,8 @@ for (const [name, spec] of Object.entries(specifications)) {
       welcome: one(sdk.contracts.morphMark),
       input: one(sdk.contracts.textInput),
     });
+  if (name === 'deployment-settings' || name === 'deployment')
+    entries.tui.imports.checkpoint = one(sdk.contracts.valueCheckpoint);
   if (name === 'tool-details') entries.tui.imports.diff = one(sdk.contracts.diff);
   if (name === 'image-viewer') entries.desktop.imports.image = one(sdk.contracts.image);
   if (name === 'timeline') {

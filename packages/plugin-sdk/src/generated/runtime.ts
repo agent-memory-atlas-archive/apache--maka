@@ -32,6 +32,9 @@ export type RuntimeProtocol =
   | InstanceSetEnabled
   | DeploymentDocument
   | DeploymentDocumentRead
+  | InstanceSettingsRead
+  | InstanceSettingsPage
+  | InstanceConfigure
   | DeploymentDocumentChunk
   | ManagementResultForPackageInstalled
   | ManagementResultForDeploymentRef
@@ -320,6 +323,30 @@ export type DeploymentInstances =
       source: DeploymentRef;
       after?: InstanceId | null;
       kind: 'continue';
+    };
+export type SettingKind =
+  | 'text'
+  | 'number'
+  | 'boolean'
+  | 'object'
+  | 'array'
+  | 'null'
+  | 'unsupported';
+export type SettingValue =
+  | {
+      text: string;
+      kind: 'text';
+    }
+  | {
+      text: string;
+      kind: 'number';
+    }
+  | {
+      value: boolean;
+      kind: 'boolean';
+    }
+  | {
+      kind: 'null';
     };
 /**
  * A deterministic refusal is a recorded business result. Uncertain SQL/worker
@@ -3378,6 +3405,411 @@ export interface DeploymentDocument {
 export interface DeploymentDocumentRead {
   source: DeploymentRef;
   offset: number;
+}
+export interface InstanceSettingsRead {
+  source: DeploymentRef;
+  instance: InstanceId;
+  /**
+   * @maxItems 16
+   */
+  path:
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ];
+  after?: string | null;
+}
+export interface InstanceSettingsPage {
+  source: DeploymentRef;
+  instance: InstanceId;
+  path: string[];
+  /**
+   * @maxItems 8
+   */
+  fields:
+    | []
+    | [SettingField]
+    | [SettingField, SettingField]
+    | [SettingField, SettingField, SettingField]
+    | [SettingField, SettingField, SettingField, SettingField]
+    | [SettingField, SettingField, SettingField, SettingField, SettingField]
+    | [SettingField, SettingField, SettingField, SettingField, SettingField, SettingField]
+    | [
+        SettingField,
+        SettingField,
+        SettingField,
+        SettingField,
+        SettingField,
+        SettingField,
+        SettingField,
+      ]
+    | [
+        SettingField,
+        SettingField,
+        SettingField,
+        SettingField,
+        SettingField,
+        SettingField,
+        SettingField,
+        SettingField,
+      ];
+  next?: string | null;
+}
+export interface SettingField {
+  key: string;
+  label: string;
+  description: string;
+  kind: SettingKind;
+  present: boolean;
+  required: boolean;
+  nullable: boolean;
+  editable: boolean;
+  value?: SettingValue | null;
+  /**
+   * @maxItems 16
+   */
+  options:
+    | []
+    | [SettingValue]
+    | [SettingValue, SettingValue]
+    | [SettingValue, SettingValue, SettingValue]
+    | [SettingValue, SettingValue, SettingValue, SettingValue]
+    | [SettingValue, SettingValue, SettingValue, SettingValue, SettingValue]
+    | [SettingValue, SettingValue, SettingValue, SettingValue, SettingValue, SettingValue]
+    | [
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+      ]
+    | [
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+      ]
+    | [
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+      ]
+    | [
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+      ]
+    | [
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+      ]
+    | [
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+      ]
+    | [
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+      ]
+    | [
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+      ]
+    | [
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+      ]
+    | [
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+        SettingValue,
+      ];
+}
+export interface InstanceConfigure {
+  expectedRevision: number;
+  instance: InstanceId;
+  /**
+   * @minItems 1
+   * @maxItems 32
+   */
+  changes: [SettingChange, ...SettingChange[]];
+}
+export interface SettingChange {
+  /**
+   * @minItems 1
+   * @maxItems 16
+   */
+  path:
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ];
+  /**
+   * None removes the field; all other fields retain their original source.
+   */
+  value?: SettingValue | null;
 }
 export interface DeploymentDocumentChunk {
   source: DeploymentRef;

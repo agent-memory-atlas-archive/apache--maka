@@ -1269,3 +1269,208 @@ async fn execution_basis_includes_cohost_manager_target_but_not_source_revision(
     }
     f.close().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn settings_forms_preserve_exact_numbers_unedited_sources_and_original_cas() {
+    use maka_plugin_core::composition::{Parameter, PresentationTarget, Template};
+    let f = Fixture::create(Some(PresentationTarget::Tui)).await;
+    let schema = json!({"type":"object","additionalProperties":false,
+        "properties":{
+            "label":{"type":"string","title":"Display name"},
+            "limit":{"type":"integer","minimum":1},
+            "theme":{"type":"string","enum":["light","dark"]},
+            "enabled":{"type":"boolean"},
+            "details":{"$ref":"#/$defs/details"},
+            "flags":{"type":"array","items":{"type":"boolean"}},
+            "optional":{"type":"string"},
+            "nullable":{"anyOf":[{"type":"string"},{"type":"null"}]}
+        },"required":["label","limit","theme","enabled","details","flags","nullable"],
+        "$defs":{"details":{"type":"object","properties":{"path":{"type":"string"},"opaque":{"type":"integer"}},"required":["path","opaque"],"additionalProperties":false}}
+    });
+    let leaf = Package::new(BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({
+        "schemaVersion":2,"id":"form.leaf","application":Declaration {
+            entries:BTreeMap::from([(EntryTarget::Tui, EntryDeclaration {
+                scene:None, implementation:Implementation::Native { implementation:"unused.form.availability".into() },
+                configuration:schema, imports:BTreeMap::new(), exports:BTreeMap::new(),
+            })]),composition:None,
+        }
+    })).unwrap())])).unwrap();
+    let values: BTreeMap<String, Value> = serde_json::from_value(json!({
+        "label":"original", "limit":9007199254740993_u64, "theme":"light", "enabled":true,
+        "details":{"path":"original/path","opaque":18446744073709551615_u64},
+        "flags":[true,false], "nullable":null,
+    }))
+    .unwrap();
+    let mut root = node(&leaf, 77, true);
+    root.configuration.values = values.clone();
+    let mut child = node(&leaf, 78, true);
+    child.configuration.values = values;
+    child.configuration.values.remove("label");
+    child
+        .configuration
+        .parameters
+        .insert("label".into(), "name".into());
+    let template = Package::new(BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({
+        "schemaVersion":2,"id":"form.product","application":Declaration {
+            entries:BTreeMap::new(),composition:Some(Template {
+                parameters:BTreeMap::from([("name".into(),Parameter { schema:json!({"type":"string"}),default:None })]),
+                imports:BTreeMap::new(),exports:BTreeMap::new(),children:BTreeMap::from([("child".into(),child)]),
+            }),
+        }
+    })).unwrap())])).unwrap();
+    let mut product = node(&template, 79, true);
+    product.use_package = PackageUse::Composition;
+    product
+        .parameters
+        .values
+        .insert("name".into(), json!("inherited name"));
+    let original_product = product.clone();
+    let source = f
+        .store
+        .commit_application(
+            f.managed.deployment,
+            1,
+            Input {
+                environment: Environment {
+                    location: ExecutionLocation::Ui,
+                    presentation: Some(PresentationTarget::Tui),
+                },
+                instances: BTreeMap::from([
+                    ("settings".into(), root.clone()),
+                    ("product".into(), product),
+                ]),
+                recovery: None,
+                launch: None,
+            },
+            vec![],
+            vec![leaf, template],
+        )
+        .await
+        .unwrap();
+    let read = |source: &DeploymentRef, instance: InstanceId, path: Vec<&str>| json!({"source":source,"instance":instance,"path":path,"after":null});
+    let page: InstanceSettingsPage = serde_json::from_value(
+        f.query("readSettings", read(&source, id(77), vec![]))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(page.fields.len(), 8);
+    assert_eq!(
+        page.fields.iter().find(|f| f.key == "limit").unwrap().value,
+        Some(SettingValue::Number {
+            text: "9007199254740993".into()
+        })
+    );
+    assert_eq!(
+        page.fields.iter().find(|f| f.key == "label").unwrap().label,
+        "Display name"
+    );
+    assert_eq!(
+        page.fields
+            .iter()
+            .find(|f| f.key == "theme")
+            .unwrap()
+            .options
+            .len(),
+        2
+    );
+    assert!(
+        !page
+            .fields
+            .iter()
+            .find(|f| f.key == "optional")
+            .unwrap()
+            .present
+    );
+    assert!(matches!(
+        page.fields
+            .iter()
+            .find(|f| f.key == "nullable")
+            .unwrap()
+            .kind,
+        SettingKind::Text
+    ));
+    let changed = f
+        .mutate(
+            "configure",
+            json!({"expectedRevision":2,"instance":id(77),"changes":[
+                {"path":["label"],"value":{"kind":"text","text":"新名称🙂"}},
+                {"path":["details","path"],"value":{"kind":"text","text":"new/path"}},
+                {"path":["limit"],"value":{"kind":"number","text":"9007199254740995"}},
+                {"path":["flags","1"],"value":{"kind":"boolean","value":true}}
+            ]}),
+            Attachments::new(),
+        )
+        .await;
+    let next: DeploymentRef = serde_json::from_value(returned(&changed)["value"].clone()).unwrap();
+    let current = f.read().await;
+    let actual = &current.source.input.instances["settings"];
+    assert_eq!(
+        actual.configuration.values["limit"],
+        json!(9007199254740995_u64)
+    );
+    assert_eq!(
+        actual.configuration.values["details"]["opaque"],
+        json!(18446744073709551615_u64)
+    );
+    assert_eq!(actual.configuration.values["flags"], json!([true, true]));
+    assert_eq!(actual.bindings, root.bindings);
+    assert_eq!(actual.package, root.package);
+    assert_eq!(current.source.input.instances["product"], original_product);
+    // An old form remains a frozen read, but cannot overwrite a newer source.
+    assert_eq!(
+        f.query("readSettings", read(&source, id(77), vec![]))
+            .await
+            .unwrap(),
+        serde_json::to_value(page).unwrap()
+    );
+    let conflict = f.mutate("configure",json!({"expectedRevision":2,"instance":id(77),"changes":[{"path":["label"],"value":{"kind":"text","text":"stale"}}]}),Attachments::new()).await;
+    assert_eq!(returned(&conflict)["status"], "conflict");
+    let invalid = f.mutate("configure",json!({"expectedRevision":next.revision,"instance":id(77),"changes":[{"path":["theme"],"value":{"kind":"text","text":"invalid"}}]}),Attachments::new()).await;
+    assert_eq!(returned(&invalid)["status"], "rejected");
+    assert_eq!(f.read().await.source.reference, next);
+    let nested = InstanceId(vec![Uuid::from_u128(79), Uuid::from_u128(78)]);
+    let configured = f.mutate("configure",json!({"expectedRevision":next.revision,"instance":nested,"changes":[{"path":["enabled"],"value":{"kind":"boolean","value":false}}]}),Attachments::new()).await;
+    assert_eq!(returned(&configured)["status"], "committed");
+    let current = f.read().await;
+    let product = &current.source.input.instances["product"];
+    assert_eq!(product.parameters, original_product.parameters);
+    assert_eq!(product.overrides.len(), 1);
+    assert_eq!(
+        product.overrides[0].configuration,
+        BTreeMap::from([("enabled".into(), json!(false))])
+    );
+    let fields: InstanceSettingsPage = serde_json::from_value(
+        f.query(
+            "readSettings",
+            read(&current.source.reference, nested, vec![]),
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        fields
+            .fields
+            .iter()
+            .find(|f| f.key == "label")
+            .unwrap()
+            .value,
+        Some(SettingValue::Text {
+            text: "inherited name".into()
+        })
+    );
+    let mut foreign = source.clone();
+    foreign.deployment = Uuid::new_v4();
+    assert!(
+        f.query("readSettings", read(&foreign, id(77), vec![]))
+            .await
+            .is_err()
+    );
+    assert!(
+        f.query("readSettings", read(&source, id(77), vec!["missing"]))
+            .await
+            .is_err()
+    );
+    f.close().await;
+}

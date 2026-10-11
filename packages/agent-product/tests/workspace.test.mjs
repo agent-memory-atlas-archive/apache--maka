@@ -885,12 +885,17 @@ test('bundled products author without Node and export exact checked sources for 
         assert.deepEqual(manager.endpoints.management.grant.methods, [
           'instances',
           'setEnabled',
+          'readSettings',
+          'configure',
           'readDocument',
           'replace',
           'install',
         ]);
         assert.equal(manager.endpoints.receipts.grant.recovery, true);
         assert.deepEqual(ui.instances.deployment.bindings, {
+          ...(presentation === 'tui'
+            ? { checkpoint: [{ kind: 'instance', path: ['checkpoint'], export: 'Checkpoint' }] }
+            : {}),
           interface: [{ kind: 'instance', path: ['interface-deployment'], export: 'Deployment' }],
           services: [{ kind: 'instance', path: ['service-deployment'], export: 'Deployment' }],
         });
@@ -4757,6 +4762,24 @@ test('editor-local submission uses latest observation and the original send gate
   }
 });
 
+function mountDeployment(component, props, target) {
+  const mounted = component.mount(props, {});
+  if (target !== 'tui') return mounted;
+  const observed = component.event(
+    structuredClone(mounted.frame.state),
+    {
+      kind: 'component',
+      child: 'settings-checkpoint',
+      name: 'bookmark',
+      event: { sequence: 0, state: { kind: 'ready', revision: null, value: null } },
+    },
+    props,
+    {},
+  );
+  observed.actions.unshift(...mounted.actions);
+  return observed;
+}
+
 for (const target of ['desktop', 'tui']) {
   test(`${target} deployment paging keeps the exact source and changes navigation only after success`, async () => {
     const { component } = await import(
@@ -4772,7 +4795,7 @@ for (const target of ['desktop', 'tui']) {
       disabled: false,
       parentDisabled: false,
     });
-    let result = component.mount(props, {});
+    let result = mountDeployment(component, props, target);
     const complete = (value, status = 'succeeded') => {
       const key = result.actions[0].key;
       result = component.event(
@@ -4824,7 +4847,7 @@ for (const target of ['desktop', 'tui']) {
       disabled: false,
       parentDisabled: false,
     };
-    let result = component.mount(props, {});
+    let result = mountDeployment(component, props, target);
     const complete = (outcome) => {
       const key = result.actions[0].key;
       result = component.event(
@@ -4857,7 +4880,7 @@ for (const target of ['desktop', 'tui']) {
       select('select');
       assert.equal(result.actions.length, 0);
       assert.equal(result.frame.state.confirmation, null);
-      select('submit');
+      press('deployment-toggle-0');
       assert.equal(result.actions.length, 0);
       assert.deepEqual(result.frame.state.confirmation, { source, instance, enabled: false });
       press('deployment-dialog');
@@ -4935,7 +4958,7 @@ for (const target of ['desktop', 'tui']) {
     );
     const props = { theme: values.appearance[0], locale: 'en' };
     const source = { stateDomain: 'a'.repeat(64), deployment: uuid(80), revision: 7 };
-    let result = component.mount(props, {});
+    let result = mountDeployment(component, props, target);
     const complete = (event) => {
       result = component.event(
         result.frame.state,
@@ -5103,7 +5126,7 @@ for (const target of ['desktop', 'tui']) {
     const props = { theme: values.appearance[0], locale: 'en' },
       source = { stateDomain: 'a'.repeat(64), deployment: uuid(80), revision: 7 };
     for (const failure of ['source', 'receipt']) {
-      let result = component.mount(props, {});
+      let result = mountDeployment(component, props, target);
       const complete = (value) => {
         result = component.event(
           result.frame.state,
@@ -5183,7 +5206,7 @@ for (const target of ['desktop', 'tui']) {
       file: { name: '插件.maka-plugin', bytes: 123, digest: 'sha256:' + 'b'.repeat(64) },
       error: null,
     };
-    let result = component.mount(props, {});
+    let result = mountDeployment(component, props, target);
     const complete = (event) => {
       result = component.event(
         result.frame.state,
@@ -5318,7 +5341,7 @@ for (const target of ['desktop', 'tui']) {
       phase: 'ready',
       file: { name: 'sample.maka-plugin', bytes: 123, digest: 'sha256:' + 'b'.repeat(64) },
     };
-    let result = component.mount(props, {});
+    let result = mountDeployment(component, props, target);
     const complete = (event) => {
       result = component.event(
         result.frame.state,
@@ -5685,7 +5708,7 @@ test('ordinary root shortcuts share creation policy and close only presented pag
     'child pages own their closing policy',
   );
   client.input({ kind: 'component', child: 'connections', name: 'closed', event: {} });
-  assert.equal(client.state.settingsOpen, false);
+  assert.equal(client.state.pages.at(-1) === 'connections', false);
   client.raw('create');
   assert.deepEqual(client.find('create').input, {
     title: 'New conversation',
@@ -6199,11 +6222,11 @@ for (const target of ['desktop', 'tui']) {
     );
     client.raw('deployment-open');
     assert.equal(
-      client.state.settingsOpen,
-      true,
+      client.state.pages.at(-1),
+      target === 'tui' ? 'settings' : 'connections',
       'management route cannot bypass its guarded Back',
     );
-    assert.equal(client.state.deploymentOpen, false);
+    assert.equal(client.state.pages.at(-1) === 'deployment', false);
     choose(client, 'invoked', { id: 'create' });
     assert.deepEqual(client.output.actions, []);
   });
@@ -7199,8 +7222,14 @@ for (const target of ['tui', 'desktop']) {
       const before = structuredClone(client.state);
       client.raw('help-open');
       assert.equal(client.state.dialog, 'help');
-      assert.equal(client.state.settingsOpen, before.settingsOpen);
-      assert.equal(client.state.deploymentOpen, before.deploymentOpen);
+      assert.equal(
+        client.state.pages.at(-1) === 'connections',
+        before.pages.at(-1) === 'connections',
+      );
+      assert.equal(
+        client.state.pages.at(-1) === 'deployment',
+        before.pages.at(-1) === 'deployment',
+      );
       assert.deepEqual(client.state.sidebar, before.sidebar);
       assert.deepEqual(client.state.command, before.command);
       assert.deepEqual(client.state.watch, before.watch);
@@ -7211,9 +7240,16 @@ for (const target of ['tui', 'desktop']) {
       assert.deepEqual(client.output.actions, []);
       client.input({ kind: 'component', child: 'help', name: 'closed', event: {} });
       assert.equal(client.state.dialog, null);
-      assert.equal(client.state.settingsOpen, before.settingsOpen);
-      assert.equal(client.state.deploymentOpen, before.deploymentOpen);
-      if (route)
+      assert.equal(
+        client.state.pages.at(-1) === 'connections',
+        before.pages.at(-1) === 'connections',
+      );
+      assert.equal(
+        client.state.pages.at(-1) === 'deployment',
+        before.pages.at(-1) === 'deployment',
+      );
+      if (route === 'settings' && target === 'tui') client.raw('page-back');
+      else if (route)
         client.input({
           kind: 'component',
           child: route === 'settings' ? 'connections' : 'deployment',
@@ -13299,7 +13335,7 @@ for (const target of ['tui', 'desktop']) {
       });
     setup('connect');
     client.raw('create');
-    assert.equal(client.state.settingsOpen, true);
+    assert.equal(client.state.pages.at(-1) === 'connections', true);
     assert.equal(
       client.output.actions.some((action) => ['create', 'directories'].includes(action.method)),
       false,
@@ -13327,7 +13363,7 @@ for (const target of ['tui', 'desktop']) {
     );
     setup('choose');
     client.raw('create-workspace');
-    assert.equal(client.state.settingsOpen, false);
+    assert.equal(client.state.pages.at(-1) === 'connections', false);
     assert.equal(client.state.dialog, null);
     const request = client.state.modelOpenRequest;
     assert.equal(typeof request, 'number');
@@ -14125,7 +14161,7 @@ for (const target of ['desktop', 'tui']) {
     });
     client.raw('home-new');
     assert.notEqual(client.state.modelOpenRequest, null);
-    assert.equal(client.state.settingsOpen, false);
+    assert.equal(client.state.pages.at(-1) === 'connections', false);
     choose(client);
     const file = {
       id: 'attached',
@@ -14205,3 +14241,429 @@ for (const target of ['desktop', 'tui']) {
     );
   });
 }
+
+test('TUI settings preserve the conversation, return to the parent category, and apply only acknowledged preferences', async () => {
+  const rootModule = await import(pathToFileURL(resolve(root, 'dist/packages/workspace/tui.js')));
+  rootModule.activate({ locale: 'en' });
+  const client = new Client(rootModule.component).start();
+  const selected = structuredClone(client.state.selected),
+    watch = structuredClone(client.state.watch);
+  client.raw('settings');
+  assert.deepEqual(client.state.pages, ['settings']);
+  client.raw('settings-category-models');
+  client.raw('settings-connections');
+  assert.deepEqual(client.state.pages, ['settings', 'connections']);
+  client.raw('page-back');
+  assert.deepEqual(
+    client.state.pages,
+    ['settings', 'connections'],
+    'outer navigation cannot dismiss an owned editor',
+  );
+  client.input({ kind: 'component', child: 'connections', name: 'closed', event: {} });
+  assert.deepEqual(client.state.pages, ['settings']);
+  assert.equal(client.state.settingsCategory, 'models');
+  client.raw('settings-category-interface');
+  client.input({
+    kind: 'component',
+    child: 'appearance-checkpoint',
+    name: 'changed',
+    event: {
+      sequence: 0,
+      state: { kind: 'ready', revision: 4, value: null },
+    },
+  });
+  client.input({ kind: 'raw', key: 'settings-language', event: { key: 'zh-CN' } });
+  const command = structuredClone(client.state.preferences.command);
+  assert.equal(command.kind, 'write');
+  assert.equal(command.expectedRevision, 4);
+  assert.equal(command.value.locale, 'zh-CN');
+  assert.equal(client.state.preferences.saved, null, 'a submitted preference is not yet committed');
+  client.input({ kind: 'raw', key: 'settings-symbols', event: { key: 'ascii' } });
+  assert.deepEqual(
+    client.state.preferences.command,
+    command,
+    'a pending checkpoint is not overwritten',
+  );
+  client.input({
+    kind: 'component',
+    child: 'appearance-checkpoint',
+    name: 'changed',
+    event: {
+      sequence: command.sequence,
+      state: { kind: 'ready', revision: 5, value: command.value },
+    },
+  });
+  assert.equal(client.state.preferences.saved.locale, 'zh-CN');
+  client.raw('page-back');
+  assert.deepEqual(client.state.pages, []);
+  assert.deepEqual(client.state.selected, selected);
+  assert.deepEqual(client.state.watch, watch);
+});
+
+for (const target of ['tui', 'desktop'])
+  test(`${target} instance forms edit fields without a source document and recover only the original save`, async () => {
+    const { component } = await import(
+      pathToFileURL(resolve(root, `dist/packages/deployment/${target}.js`))
+    );
+    const props = { theme: values.appearance[0], locale: 'en' };
+    const source = { stateDomain: 'a'.repeat(64), deployment: uuid(80), revision: 7 };
+    const instance = {
+      instance: [uuid(1)],
+      path: ['plugin'],
+      package: { id: 'example', revision: 'sha256-' + 'b'.repeat(64) },
+      structural: false,
+      disabled: false,
+      parentDisabled: false,
+    };
+    let result = mountDeployment(component, props, target);
+    const send = (input) =>
+      (result = component.event(structuredClone(result.frame.state), input, props, {}));
+    const press = (key, event = {}) => send({ kind: 'raw', key, event });
+    const complete = (event) => send({ kind: 'action', key: result.actions[0].key, event });
+    const succeed = (value) => complete({ status: 'succeeded', value });
+    const field = (key, kind, value) => ({
+      key,
+      label: key,
+      description: '',
+      kind,
+      value,
+      options: [],
+      required: true,
+      present: true,
+      nullable: false,
+      editable: true,
+    });
+    const settingsPage = {
+      source,
+      instance: instance.instance,
+      path: [],
+      next: null,
+      fields: [
+        { ...field('enabled', 'boolean', { kind: 'boolean', value: false }), nullable: true },
+        field('limit', 'number', { kind: 'number', text: '9007199254740993' }),
+        field('nested', 'object', null),
+      ],
+    };
+    succeed({ source, instances: [instance], next: null });
+    press('deployment-configure-0');
+    assert.equal(result.actions[0].method, 'readSettings');
+    assert.deepEqual(result.actions[0].input, {
+      source,
+      instance: instance.instance,
+      path: [],
+      after: null,
+    });
+    succeed(settingsPage);
+    press(target === 'tui' ? 'instance-setting-choice-0' : 'instance-setting-null-0', { key: '2' });
+    assert.deepEqual(result.frame.state.settings.changes[0].value, { kind: 'null' });
+    press(target === 'tui' ? 'instance-setting-choice-0' : 'instance-setting-0', { key: '0' });
+    press('instance-setting-1');
+    const observe = (text, revision, receipt = null) => {
+      const observation = modelObservation(text, revision);
+      observation.receipt = receipt;
+      send({
+        kind: 'component',
+        child: 'instance-setting-editor',
+        name: 'changed',
+        event: observation,
+      });
+      return observation;
+    };
+    observe('', 0);
+    const command = result.frame.state.settings.command;
+    assert.equal(command.edit.text, '9007199254740993');
+    observe(command.edit.text, 1, {
+      owner: command.owner,
+      sequence: command.sequence,
+      revision: 1,
+      outcome: { status: 'applied' },
+    });
+    const oversized = observe('1'.repeat(129), 2);
+    press('instance-setting-apply');
+    succeed({ text: '1'.repeat(129), metadata: oversized.snapshot.text });
+    assert.equal(result.frame.state.settings.notice, 'settingsInvalidNumber');
+    assert.ok(result.frame.state.settings.field, 'invalid input remains editable');
+    const captured = observe('9007199254740995', 3);
+    press('instance-setting-apply');
+    assert.deepEqual(result.actions[0].resources.text.input, {
+      kind: 'at_revision',
+      owner: captured.snapshot.text.owner,
+      revision: 3,
+    });
+    succeed({ text: '9007199254740995', metadata: captured.snapshot.text });
+    assert.equal(result.frame.state.settings.field, null);
+    press('instance-settings-back');
+    assert.equal(result.frame.state.settings.discard, 'close');
+    press('instance-setting-cancel');
+    assert.equal(result.frame.state.settings.changes.length, 2);
+    press('instance-setting-2');
+    assert.deepEqual(result.actions[0].input.path, ['nested']);
+    succeed({
+      ...settingsPage,
+      path: ['nested'],
+      fields: [field('name', 'text', { kind: 'text', text: 'original' })],
+    });
+    press('instance-settings-up');
+    succeed(settingsPage);
+    if (target === 'tui') {
+      press('instance-settings-save');
+      assert.deepEqual(result.actions, [], 'save waits for the durable UI bookmark');
+      while (result.frame.state.bookmark.command) {
+        const write = structuredClone(result.frame.state.bookmark.command);
+        assert.equal(write.kind, 'write');
+        send({
+          kind: 'component',
+          child: 'settings-checkpoint',
+          name: 'bookmark',
+          event: {
+            sequence: write.sequence,
+            state: { kind: 'ready', revision: write.sequence, value: write.value },
+          },
+        });
+      }
+    }
+    press('instance-settings-save');
+    const save = structuredClone(result.actions[0]);
+    assert.equal(save.method, 'configure');
+    assert.deepEqual(save.input, {
+      expectedRevision: 7,
+      instance: instance.instance,
+      changes: [
+        { path: ['enabled'], value: { kind: 'boolean', value: true } },
+        { path: ['limit'], value: { kind: 'number', text: '9007199254740995' } },
+      ],
+    });
+    assert.deepEqual(save.resources, {});
+    const original = {
+      ...reference,
+      source,
+      method: 'configure',
+      contract: sdk.contracts.deploymentManager,
+    };
+    if (target === 'tui') {
+      const active = result;
+      for (const finalStatus of ['committed', 'conflict']) {
+        result = component.mount(props, {});
+        succeed({ source: { ...source, revision: 8 }, instances: [instance], next: null });
+        send({
+          kind: 'component',
+          child: 'settings-checkpoint',
+          name: 'bookmark',
+          event: { sequence: 0, state: { kind: 'ready', revision: 1, value: save.recovery.form } },
+        });
+        assert.equal(result.actions[0].method, 'page');
+        // Caller history is ascending. A previous attempt must not hide the
+        // most recent original intent, even across bounded query pages.
+        succeed([{ cursor: 2, reference: { ...original, method: 'replace' }, recovery: null }]);
+        assert.equal(result.actions[0].input.after, 2);
+        succeed([
+          { cursor: 9, reference: original, recovery: save.recovery },
+          {
+            cursor: 10,
+            reference: { ...original, operation: uuid(90) },
+            recovery: { ...save.recovery, bookmarkKey: 'another-session' },
+          },
+        ]);
+        assert.equal(result.actions[0].input.after, 10);
+        succeed([{ cursor: 11, reference: { ...original, method: 'install' }, recovery: null }]);
+        assert.equal(result.actions[0].input.after, 11);
+        succeed([]);
+        assert.equal(result.actions[0].method, 'read');
+        assert.deepEqual(result.actions[0].input, original);
+        succeed({ reference: original, receipt: { kind: 'unknown' } });
+        assert.equal(result.actions[0].method, 'readSettings');
+        assert.deepEqual(result.frame.state.settings.changes, save.input.changes);
+        succeed(settingsPage);
+        press('instance-settings-save');
+        assert.deepEqual(result.actions, [], 'a remount never replays the original mutation');
+        press('deployment-check');
+        assert.deepEqual(result.actions[0].input, original);
+        succeed({
+          reference: original,
+          receipt: {
+            kind: 'recorded',
+            outcome: {
+              kind: 'returned',
+              value:
+                finalStatus === 'committed'
+                  ? { status: 'committed', value: { ...source, revision: 8 } }
+                  : { status: 'conflict', currentRevision: 8 },
+            },
+            cleanup: { kind: 'confirmed' },
+          },
+        });
+        assert.equal(result.frame.state.settings.open, true);
+        assert.deepEqual(
+          result.frame.state.settings.changes,
+          finalStatus === 'committed' ? [] : save.input.changes,
+        );
+        assert.equal(result.frame.state.settings.conflict, finalStatus === 'conflict');
+        if (finalStatus === 'committed') {
+          assert.equal(result.actions[0].method, 'readSettings');
+          assert.equal(result.actions[0].input.source.revision, 8);
+          assert.equal(result.frame.state.notice, 'deploymentSaved');
+          const committedBookmark = structuredClone(result.frame.state.bookmark.command.value);
+          assert.equal(committedBookmark.saved, true);
+          result = component.mount(props, {});
+          succeed({ source: { ...source, revision: 8 }, instances: [instance], next: null });
+          send({
+            kind: 'component',
+            child: 'settings-checkpoint',
+            name: 'bookmark',
+            event: { sequence: 0, state: { kind: 'ready', revision: 2, value: committedBookmark } },
+          });
+          succeed([]);
+          assert.equal(result.actions[0].method, 'readSettings');
+          succeed({ ...settingsPage, source: { ...source, revision: 8 } });
+          assert.equal(
+            result.frame.state.notice,
+            'deploymentSaved',
+            'settlement before retirement retains feedback',
+          );
+          assert.deepEqual(result.frame.state.settings.changes, []);
+          press('instance-setting-choice-0', { key: '0' });
+          assert.equal(result.frame.state.notice, null, 'a new edit clears previous save feedback');
+        }
+      }
+      // If caller history is unavailable, do not expose a new save as a retry.
+      result = component.mount(props, {});
+      succeed({ source, instances: [instance], next: null });
+      send({
+        kind: 'component',
+        child: 'settings-checkpoint',
+        name: 'bookmark',
+        event: { sequence: 0, state: { kind: 'ready', revision: 1, value: save.recovery.form } },
+      });
+      complete({ status: 'failed', diagnostic: 'offline' });
+      succeed(settingsPage);
+      press('instance-settings-save');
+      assert.deepEqual(result.actions, []);
+      const retained = structuredClone(result.frame.state.settings.changes);
+      press('instance-setting-choice-0', { key: '1' });
+      press('instance-settings-back');
+      assert.deepEqual(
+        result.frame.state.settings.changes,
+        retained,
+        'failed history cannot permit edits that lose the original correlation',
+      );
+      assert.equal(result.frame.state.settings.discard, null);
+      press('settings-checkpoint-retry');
+      assert.equal(result.actions[0].method, 'page');
+      result = active;
+    }
+    complete({ status: 'operation', reply: { reference: original, receipt: { kind: 'unknown' } } });
+    press('instance-settings-save');
+    assert.deepEqual(result.actions, []);
+    press('deployment-back');
+    assert.deepEqual(result.events, []);
+    press('deployment-check');
+    assert.deepEqual(result.actions[0].input, original);
+    succeed({
+      reference: original,
+      receipt: {
+        kind: 'recorded',
+        outcome: { kind: 'returned', value: { status: 'conflict', currentRevision: 8 } },
+        cleanup: { kind: 'confirmed' },
+      },
+    });
+    assert.deepEqual(result.frame.state.settings.changes, save.input.changes);
+    assert.equal(result.frame.state.settings.conflict, true);
+    press('instance-settings-save');
+    assert.deepEqual(result.actions, []);
+    press('instance-settings-reload');
+    assert.equal(result.frame.state.settings.discard, 'reload');
+    press('instance-setting-cancel');
+    assert.equal(result.frame.state.settings.source.revision, 7);
+    press('instance-settings-reload');
+    press('instance-settings-discard');
+    succeed({ source: { ...source, revision: 8 }, instances: [instance], next: null });
+    assert.equal(result.actions[0].method, 'readSettings');
+    assert.equal(result.actions[0].input.source.revision, 8);
+    assert.deepEqual(result.frame.state.settings.changes, []);
+  });
+
+test('TUI settings navigation checkpoints coalesce changes and restore the page after remount', async () => {
+  const rootModule = await import(pathToFileURL(resolve(root, 'dist/packages/workspace/tui.js')));
+  rootModule.activate({ locale: 'en' });
+  const client = new Client(rootModule.component).start();
+  const observe = (client, sequence, revision, value) =>
+    client.input({
+      kind: 'component',
+      child: 'navigation-checkpoint-navigation/workspace',
+      name: 'bookmark',
+      event: { sequence, state: { kind: 'ready', revision, value } },
+    });
+  observe(client, 0, null, null);
+  client.raw('settings');
+  const first = structuredClone(client.state.bookmark.command);
+  client.raw('settings-category-plugins');
+  client.raw('settings-plugins');
+  assert.deepEqual(client.state.bookmark.command, first, 'an in-flight write is immutable');
+  assert.equal(
+    modelSlots(client.output.frame.view).find((node) => node.key === 'deployment').props
+      .navigationReady,
+    false,
+  );
+  observe(client, first.sequence, 1, first.value);
+  const second = structuredClone(client.state.bookmark.command);
+  assert.deepEqual(second.value, { pages: ['settings', 'deployment'], category: 'plugins' });
+  observe(client, second.sequence, 2, second.value);
+  assert.equal(client.state.bookmark.command, null);
+  assert.equal(
+    modelSlots(client.output.frame.view).find((node) => node.key === 'deployment').props
+      .navigationReady,
+    true,
+  );
+  const restarted = new Client(rootModule.component).start();
+  observe(restarted, 0, 2, second.value);
+  assert.deepEqual(restarted.state.pages, ['settings', 'deployment']);
+  assert.equal(restarted.state.settingsCategory, 'plugins');
+  const late = new Client(rootModule.component).start();
+  late.raw('settings');
+  late.raw('settings-category-models');
+  observe(late, 0, 2, second.value);
+  assert.deepEqual(late.state.pages, ['settings']);
+  assert.equal(late.state.settingsCategory, 'models', 'a late read cannot replace user navigation');
+});
+
+test('TUI plugin target selection restores independently and gates save until acknowledged', async () => {
+  const { component } = await import(
+    pathToFileURL(resolve(root, 'dist/packages/deployment-settings/tui.js'))
+  );
+  const props = {
+    theme: values.appearance[0],
+    locale: 'en',
+    navigationReady: true,
+    bookmarkKey: 'navigation/workspace/deployment',
+  };
+  let result = component.mount(props, {});
+  const send = (input) =>
+    (result = component.event(structuredClone(result.frame.state), input, props, {}));
+  const observe = (sequence, revision, value) =>
+    send({
+      kind: 'component',
+      child: 'deployment-place-checkpoint',
+      name: 'bookmark',
+      event: { sequence, state: { kind: 'ready', revision, value } },
+    });
+  observe(0, null, null);
+  send({ kind: 'raw', key: 'deployment-services', event: {} });
+  assert.equal(
+    modelSlots(result.frame.view).find((node) => node.key === 'deployment-editor-services').props
+      .navigationReady,
+    false,
+  );
+  const command = structuredClone(result.frame.state.bookmark.command);
+  observe(command.sequence, 1, command.value);
+  assert.equal(
+    modelSlots(result.frame.view).find((node) => node.key === 'deployment-editor-services').props
+      .navigationReady,
+    true,
+  );
+  result = component.mount(props, {});
+  observe(0, 1, 'services');
+  assert.equal(result.frame.state.selected, 'services');
+  assert.ok(
+    modelSlots(result.frame.view).find((node) => node.key === 'deployment-editor-services'),
+  );
+});

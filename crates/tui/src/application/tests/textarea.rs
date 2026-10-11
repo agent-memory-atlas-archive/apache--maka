@@ -1414,3 +1414,54 @@ fn native_clipboard_gesture_uses_the_original_textarea_commit_and_observation() 
     );
     close(&mut tui);
 }
+
+#[test]
+fn native_observation_initializes_new_scroll_scene_before_first_paint() {
+    let (runtime, mut input, packages) = editor_fixture();
+    let packages = packages.into_iter().map(|original| {
+        if original.manifest().id != "dynamic.app" { return original; }
+        let Implementation::JavaScript { module, .. } = &original.manifest().application.as_ref().unwrap().entries[&EntryTarget::Tui].implementation else { unreachable!() };
+        let mut files = original.files().clone();
+        let source = files.get_mut(module).unwrap();
+        source.extend_from_slice(br#"
+const beforeRestoration=frame;
+frame=(state)=>{
+  const out=beforeRestoration(state);
+  if(state.observation) out.frame.view.children.push({kind:'stack',key:'restored-scroll',direction:'column',gap:0,padding:0,background:0,scroll:'manual',layout:{basis:3},children:[{kind:'text',key:'restored-content',text:'restored\n'.repeat(12),color:16777215}]});
+  return out;
+};
+"#);
+        let package = Package::new(files).unwrap();
+        for node in input.instances.values_mut().filter(|node| matches!(&node.package,maka_plugin_core::package::PackageSelection::Pinned {package} if package.id == "dynamic.app")) {
+            node.package = package.application_ref().into();
+        }
+        package
+    }).collect();
+    let mut tui = Presenter::new(
+        &input,
+        packages,
+        runtime.handle().clone(),
+        registry(),
+        json!({}),
+    )
+    .unwrap();
+    assert!(tui.application.frame(&tui.root).unwrap().state["observation"].is_object());
+    let owner = &tui.resources.owners[&tui.root.id()];
+    assert!(
+        owner
+            .state
+            .downcast_ref::<super::super::scroll::SceneState>()
+            .unwrap()
+            .scrolls
+            .contains_key("restored-scroll"),
+        "the scene created by a native observation must be committed before paint"
+    );
+    // Deliberately do not call draw(): its extra sync would hide the missing
+    // native commit after an observation creates a new scrolling region.
+    let area = Rect::new(0, 0, 60, 30);
+    let mut buffer = Buffer::empty(area);
+    let scene = tui.paint(area, &mut buffer).unwrap();
+    tui.present(scene);
+    assert!(buffer.content.iter().any(|cell| cell.symbol() == "r"));
+    tui.input(key(KeyCode::Down)).unwrap();
+}

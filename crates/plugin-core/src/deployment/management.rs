@@ -24,6 +24,9 @@ use crate::{
     deployment::{Deployment, DeploymentRef, RemoteObservation},
     package::PackageRef,
 };
+mod settings;
+pub use settings::*;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -194,6 +197,16 @@ pub fn deployment_manager_contract() -> Contract {
                     method::<DeploymentRead, ManagedDeployment>(MethodMode::Query),
                 ),
                 ("install".into(), install),
+                (
+                    "readSettings".into(),
+                    method::<InstanceSettingsRead, InstanceSettingsPage>(MethodMode::Query),
+                ),
+                (
+                    "configure".into(),
+                    method::<InstanceConfigure, ManagementResult<DeploymentRef>>(
+                        MethodMode::Mutation,
+                    ),
+                ),
                 (
                     "readDocument".into(),
                     method::<DeploymentDocumentRead, DeploymentDocumentChunk>(MethodMode::Query),

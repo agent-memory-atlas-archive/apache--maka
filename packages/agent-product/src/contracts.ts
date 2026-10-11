@@ -964,6 +964,10 @@ export interface ConnectionsProps {
   theme: Theme;
   locale: string;
 }
+export interface DeploymentProps extends ConnectionsProps {
+  bookmarkKey?: string;
+  navigationReady?: boolean;
+}
 export interface CredentialProps extends ConnectionsProps {
   target: ConnectionCredentialTarget;
 }
@@ -1026,7 +1030,15 @@ export const connectionsContract = component(
 
 export const deploymentContract = component(
   'maka.agent.Deployment',
-  object({ theme: { $ref: '#/$defs/Theme' }, locale }),
+  object(
+    {
+      theme: { $ref: '#/$defs/Theme' },
+      locale,
+      bookmarkKey: string,
+      navigationReady: { type: 'boolean' },
+    },
+    ['theme', 'locale'],
+  ),
   { closed: object({}) },
 );
 

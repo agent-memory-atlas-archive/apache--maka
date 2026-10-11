@@ -271,11 +271,15 @@ function settingsComposition(
           surface: [local('surface', 'Surface')],
         },
       ),
+      ...(configuration.presentation === 'tui' ? { checkpoint: node('checkpoint') } : {}),
       'source-text': node('source-text'),
       deployment: node(
         'deployment-settings',
         {},
         {
+          ...(configuration.presentation === 'tui'
+            ? { checkpoint: [local('checkpoint', 'Checkpoint')] }
+            : {}),
           interface: [local('interface-deployment', 'Deployment')],
           services: [local('service-deployment', 'Deployment')],
         },
@@ -285,8 +289,12 @@ function settingsComposition(
         'deployment',
         {},
         {
+          ...(configuration.presentation === 'tui'
+            ? { checkpoint: [local('checkpoint', 'Checkpoint')] }
+            : {}),
           reading: [local('recovery-reading', 'ReadingArea')],
           editor: [local('editor', 'Textarea')],
+          reader: [local('reader', 'Reader')],
           file: [local('file', 'FilePicker')],
           management: [remote('host-deployment-manager', 'Management')],
           receipts: [remote('receipts', 'Receipts')],
@@ -298,8 +306,12 @@ function settingsComposition(
         'deployment',
         {},
         {
+          ...(configuration.presentation === 'tui'
+            ? { checkpoint: [local('checkpoint', 'Checkpoint')] }
+            : {}),
           reading: [local('recovery-reading', 'ReadingArea')],
           editor: [local('editor', 'Textarea')],
+          reader: [local('reader', 'Reader')],
           file: [local('file', 'FilePicker')],
           management: [
             {
@@ -443,7 +455,15 @@ function settingsComposition(
           management: expose(
             'deployment-gateway',
             'management',
-            ['instances', 'setEnabled', 'readDocument', 'replace', 'install'],
+            [
+              'instances',
+              'setEnabled',
+              'readSettings',
+              'configure',
+              'readDocument',
+              'replace',
+              'install',
+            ],
             false,
           ),
           receipts: expose('deployment-gateway', 'receipts', ['read'], true),
@@ -457,7 +477,15 @@ function settingsComposition(
           management: expose(
             'host-deployment-gateway',
             'management',
-            ['instances', 'setEnabled', 'readDocument', 'replace', 'install'],
+            [
+              'instances',
+              'setEnabled',
+              'readSettings',
+              'configure',
+              'readDocument',
+              'replace',
+              'install',
+            ],
             false,
           ),
           receipts: expose('recovery-gateway', 'receipts', ['read'], true),

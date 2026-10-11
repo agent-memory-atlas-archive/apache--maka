@@ -127,6 +127,25 @@ function valid(value: unknown): Preferences | null {
     return null;
   }
 }
+export function saveAppearanceSetting(
+  state: AppearanceEditor,
+  base: Theme,
+  change: (next: Preferences) => void,
+) {
+  if (state.open || state.command || state.checkpoint?.state.kind !== 'ready') return;
+  const next = valid(state.saved ?? { version: 1, appearance: base.configuration, locale: 'auto' });
+  if (!next) return;
+  change(next);
+  if (!valid(next)) return;
+  state.error = null;
+  state.command = {
+    kind: 'write',
+    sequence: ++state.sequence,
+    expectedRevision: state.checkpoint.state.revision,
+    value: next,
+  };
+}
+
 function custom(state: AppearanceEditor): CustomTheme {
   const configuration = state.draft!.appearance;
   if (!configuration.customTheme)
@@ -282,6 +301,8 @@ export function appearanceEvent(
         state.command = null;
         state.open = false;
         state.draft = null;
+      } else if (state.command?.kind === 'read' && observed.sequence === state.command.sequence) {
+        state.command = null;
       }
     }
     return true;

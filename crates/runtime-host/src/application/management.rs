@@ -29,6 +29,8 @@ use maka_plugin_core::deployment::management::{
 };
 use serde::Deserialize;
 
+mod settings;
+
 pub const DEPLOYMENT_MANAGER: &str = "maka.application.management";
 
 /// Trusted launcher handle. The target and execution environment never come
@@ -459,6 +461,8 @@ impl Handler for Manager {
                 }
                 "instances" => manager.instances(input).await,
                 "readDocument" => manager.read_document(input).await,
+                "readSettings" => manager.read_settings(input).await,
+                "configure" => manager.configure(input).await,
                 "setEnabled" => manager.set_enabled(input).await,
                 "install" => manager.install(input, context).await,
                 "replace" => manager.replace(input, context).await,

@@ -387,7 +387,7 @@ fn agent_installs_studio_and_production_launcher_replaces_the_surface_and_backen
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         tui.read();
-        if tui.frames.ready() && tui.screen.snapshot().unwrap().screen.contains("Plugins") {
+        if tui.frames.ready() && tui.screen.snapshot().unwrap().screen.contains("Settings") {
             break;
         }
         assert!(
@@ -573,7 +573,10 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
         "--connections",
         connections.to_str().unwrap(),
     ]);
-    tui.wait_until_with_timeout(|screen| screen.contains("Plugins"), Duration::from_secs(30));
+    tui.wait_until_with_timeout(
+        |screen| screen.contains("Settings"),
+        Duration::from_secs(30),
+    );
     tui.send(b"\x0b");
     tui.wait_for("Commands");
     paste(&mut tui, "Skills");
@@ -835,7 +838,10 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
         "--connections",
         connections.to_str().unwrap(),
     ]);
-    reopened.wait_until_with_timeout(|screen| screen.contains("Plugins"), Duration::from_secs(30));
+    reopened.wait_until_with_timeout(
+        |screen| screen.contains("Settings"),
+        Duration::from_secs(30),
+    );
     reopened.send(b"\x0b");
     reopened.wait_for("Commands");
     paste(&mut reopened, "Skills");

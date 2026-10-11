@@ -27284,6 +27284,222 @@ export const contracts = {
     interface: {
       kind: 'service',
       methods: {
+        configure: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'InstanceConfigure',
+            type: 'object',
+            properties: {
+              expectedRevision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 1,
+                maximum: 9007199254740990,
+              },
+              instance: {
+                $ref: '#/$defs/InstanceId',
+              },
+              changes: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/SettingChange',
+                },
+                minItems: 1,
+                maxItems: 32,
+              },
+            },
+            additionalProperties: false,
+            required: ['expectedRevision', 'instance', 'changes'],
+            $defs: {
+              InstanceId: {
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
+              },
+              SettingChange: {
+                type: 'object',
+                properties: {
+                  path: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                    minItems: 1,
+                    maxItems: 16,
+                  },
+                  value: {
+                    description:
+                      'None removes the field; all other fields retain their original source.',
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/SettingValue',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
+                required: ['path'],
+              },
+              SettingValue: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      text: {
+                        type: 'string',
+                        maxLength: 4096,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'text',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'text'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      text: {
+                        type: 'string',
+                        maxLength: 128,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'number',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'text'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      value: {
+                        type: 'boolean',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'boolean',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'value'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'null',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                ],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'ManagementResultForDeploymentRef',
+            description:
+              "A deterministic refusal is a recorded business result. Uncertain SQL/worker\nfailures remain in the original operation journal's Unknown outcome.",
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  value: {
+                    $ref: '#/$defs/DeploymentRef',
+                  },
+                  status: {
+                    type: 'string',
+                    const: 'committed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['status', 'value'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  currentRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  status: {
+                    type: 'string',
+                    const: 'conflict',
+                  },
+                },
+                additionalProperties: false,
+                required: ['status', 'currentRevision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/ManagementRejection',
+                  },
+                  diagnostic: {
+                    type: ['string', 'null'],
+                    maxLength: 512,
+                  },
+                  status: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                additionalProperties: false,
+                required: ['status', 'reason'],
+              },
+            ],
+            $defs: {
+              DeploymentRef: {
+                type: 'object',
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['stateDomain', 'deployment', 'revision'],
+              },
+              ManagementRejection: {
+                type: 'string',
+                enum: [
+                  'invalid_bundle',
+                  'invalid_document',
+                  'invalid_source',
+                  'package_unavailable',
+                  'execution_environment',
+                  'instance_unavailable',
+                  'parent_disabled',
+                ],
+              },
+            },
+          },
+          resources: {},
+        },
         install: {
           mode: 'mutation',
           input: {
@@ -28328,6 +28544,248 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['stateDomain', 'deployment', 'revision'],
+              },
+            },
+          },
+          resources: {},
+        },
+        readSettings: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'InstanceSettingsRead',
+            type: 'object',
+            properties: {
+              source: {
+                $ref: '#/$defs/DeploymentRef',
+              },
+              instance: {
+                $ref: '#/$defs/InstanceId',
+              },
+              path: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                },
+                maxItems: 16,
+              },
+              after: {
+                type: ['string', 'null'],
+              },
+            },
+            additionalProperties: false,
+            required: ['source', 'instance', 'path'],
+            $defs: {
+              DeploymentRef: {
+                type: 'object',
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['stateDomain', 'deployment', 'revision'],
+              },
+              InstanceId: {
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'InstanceSettingsPage',
+            type: 'object',
+            properties: {
+              source: {
+                $ref: '#/$defs/DeploymentRef',
+              },
+              instance: {
+                $ref: '#/$defs/InstanceId',
+              },
+              path: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                },
+              },
+              fields: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/SettingField',
+                },
+                maxItems: 8,
+              },
+              next: {
+                type: ['string', 'null'],
+              },
+            },
+            additionalProperties: false,
+            required: ['source', 'instance', 'path', 'fields'],
+            $defs: {
+              DeploymentRef: {
+                type: 'object',
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['stateDomain', 'deployment', 'revision'],
+              },
+              InstanceId: {
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
+              },
+              SettingField: {
+                type: 'object',
+                properties: {
+                  key: {
+                    type: 'string',
+                  },
+                  label: {
+                    type: 'string',
+                  },
+                  description: {
+                    type: 'string',
+                    maxLength: 512,
+                  },
+                  kind: {
+                    $ref: '#/$defs/SettingKind',
+                  },
+                  present: {
+                    type: 'boolean',
+                  },
+                  required: {
+                    type: 'boolean',
+                  },
+                  nullable: {
+                    type: 'boolean',
+                  },
+                  editable: {
+                    type: 'boolean',
+                  },
+                  value: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/SettingValue',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  options: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/SettingValue',
+                    },
+                    maxItems: 16,
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'key',
+                  'label',
+                  'description',
+                  'kind',
+                  'present',
+                  'required',
+                  'nullable',
+                  'editable',
+                  'options',
+                ],
+              },
+              SettingKind: {
+                type: 'string',
+                enum: ['text', 'number', 'boolean', 'object', 'array', 'null', 'unsupported'],
+              },
+              SettingValue: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      text: {
+                        type: 'string',
+                        maxLength: 4096,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'text',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'text'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      text: {
+                        type: 'string',
+                        maxLength: 128,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'number',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'text'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      value: {
+                        type: 'boolean',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'boolean',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'value'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'null',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                ],
               },
             },
           },
