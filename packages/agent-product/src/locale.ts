@@ -24,6 +24,16 @@ export function resolveLocale(configured: string, native: unknown): string {
 }
 
 export const en = {
+  executionBackend: 'Execution backend',
+  executionModel: 'Connected model',
+  executionModelName: 'Backend model (optional)',
+  executionModelHint: 'Leave empty to use the backend default.',
+  executionDefault: 'Backend default',
+  executionUnavailable: 'Could not read execution backends.',
+  executionSettingsFailed: 'Backend settings could not be read. Your selection was kept.',
+  executionAttachments:
+    'This backend currently accepts text only. Your draft and attachments were kept.',
+
   workhubChat: 'Coordinator',
   workhubTasks: 'Tasks',
   workhubSessions: 'Agent sessions',
@@ -684,6 +694,15 @@ export const en = {
 } as const;
 export type Copy = { [K in keyof typeof en]: string };
 const zhCN: Copy = {
+  executionBackend: '执行后端',
+  executionModel: '已连接模型',
+  executionModelName: '后端模型（可选）',
+  executionModelHint: '留空使用后端默认模型。',
+  executionDefault: '后端默认',
+  executionUnavailable: '无法读取执行后端。',
+  executionSettingsFailed: '无法读取后端设置，原选择已保留。',
+  executionAttachments: '此后端目前仅支持文本，草稿和附件已保留。',
+
   workhubChat: '协调对话',
   workhubTasks: '任务',
   workhubSessions: 'Agent 会话',
@@ -1308,6 +1327,15 @@ const zhCN: Copy = {
   connecting: '正在连接…',
 };
 const zhTW: Copy = {
+  executionBackend: '執行後端',
+  executionModel: '已連接模型',
+  executionModelName: '後端模型（可選）',
+  executionModelHint: '留空使用後端預設模型。',
+  executionDefault: '後端預設',
+  executionUnavailable: '無法讀取執行後端。',
+  executionSettingsFailed: '無法讀取後端設定，原選擇已保留。',
+  executionAttachments: '此後端目前僅支援文字，草稿和附件已保留。',
+
   workhubChat: '協調對話',
   workhubTasks: '任務',
   workhubSessions: 'Agent 會話',

@@ -40,8 +40,8 @@ native drafts, attachments and original operation recovery while hidden. Tasks s
 original admission/progress and bounded answer pages; opening a task selects its exact
 worker Session. Check refreshes the original task rather than following a newer Session
 execution. Setup recovery queries original receipts; an unknown result never creates a
-replacement coordinator. External executors, notifications after the coordinator's turn,
-and progress across changed native bindings remain unfinished.
+replacement coordinator. Explicit external executors use the same task and answer paths.
+Notifications after the coordinator's turn remain unfinished.
 
 ## ACP backends
 
@@ -68,9 +68,17 @@ process owners and callback grants, even when their display names match. Shared
 Files/Forms services retain their own identities. Composing only exports checked
 sources; it does not launch or authenticate an external program.
 
-The product's interactive backend selector, setup/authentication workflow and
-attachment forwarding are still being integrated. Existing explicit Agent callers
-can use `executors` and `execute` with these sources.
+Workspace's Execution backend control selects a configured backend or returns to the
+existing connected-model picker. An optional backend model name and thinking level
+belong to that backend; leaving them unset uses its defaults. Selection is local to
+the view and is frozen when the composer captures a message. Unknown executions
+query the original receipt, and restart reconciles the original execute before
+restoring a persistent draft. A backend can create and use Sessions without a Host
+model connection.
+
+Setup/authentication and attachment forwarding remain unfinished. Sending attachments
+to an external backend currently preserves the draft and files with an explicit
+notice. Configuration Studio retains the existing model-only picker.
 
 ## Configuration Studio
 

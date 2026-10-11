@@ -36,6 +36,7 @@ export const packageNames = [
   'workhub',
   'recovery',
   'command-palette',
+  'execution-picker',
   'directory-picker',
   'skill-library',
   'skills',
@@ -609,7 +610,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         serviceApproval: [local('service-approval', 'ServiceApproval')],
         permissionApproval: [local('permission-approval', 'PermissionApproval')],
         help: [local('help', 'Help')],
-        models: [local('models', 'Models')],
+        models: [local('execution-picker', 'ExecutionPicker')],
         connections: [local('connections', 'Connections')],
         deployment: [local('deployment', 'Deployment')],
         navigation: [local('navigation', 'Navigation')],
@@ -618,6 +619,16 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         appearance: [local('appearance', 'Appearance')],
         locale: [local('locale', 'Locale')],
         surface: [local('surface', 'Surface')],
+      },
+    ),
+    'execution-picker': node(
+      'execution-picker',
+      {},
+      {
+        models: [local('models', 'Models')],
+        agent: [remote('agent', 'agent')],
+        input: [local('input', 'TextInput')],
+        reader: [local('reader', 'Reader')],
       },
     ),
     'command-palette': node(

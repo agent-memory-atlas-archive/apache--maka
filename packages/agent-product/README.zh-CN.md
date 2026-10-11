@@ -44,8 +44,7 @@ WorkHub 在 `application compose` 或首次 `application launch` 加 `--product 
 WorkHub 根页面提供协调对话、任务、Agent 会话三个入口。首次设置使用协调器公布的真实目录选择；
 两个对话复用 Workspace，隐藏时保留原生草稿、附件及原操作恢复。任务展示原接纳/进度及
 有界答案分页，打开任务选择其精确 worker 会话；检查读取原任务，不跟随后来的会话执行。
-设置恢复只查询原回执，未知结果不新建替代协调器。外部 executor、协调轮次结束后的通知及
-原生 binding 改变后的进度衔接仍未完成。
+设置恢复只查询原回执，未知结果不新建替代协调器。显式外部 executor 复用同一任务和答案路径；协调轮次结束后的通知仍未完成。
 
 原生 CLI 已携带普通产品包与原组合代码，无需 Node、源码目录或网络。首次启动 TUI 可以直接初始化并保存产品选择：
 
@@ -74,7 +73,7 @@ TUI 外观页提供 Maka、Dusk、Paper、Terminal 与自定义配色，支持�
 
 安装配置包含 `presentation`（`desktop`/`tui`）、完整 `locale`（或 `auto`）、`scheme`（`light`/`dark`）、`hostRoot` 与 SDK 生成的 `AgentConfiguration` 对应 `agent`。可提供原安装的 `hostDeployment`、`managementDeployment` 和完整 `keys`；缺省身份只分配一次，保存在输出的 `installation.json`，后续生成应复用该文件以保留 namespace。连接凭据和 endpoint 属于选中的 Host Root，不进入产品组合。
 
-`keys` 为 `src/composition.ts` 导出的 `instanceNames` 中所有实例名分配稳定非零 UUID；安装时生成一次并保存，构建新 revision 时沿用。部署 UUID 同样属于安装身份，不能每次构建重建业务 namespace。具体字段、包名和配置约束见英文文档。
+`keys` 为 `src/composition.ts` 导出的 `installationNames(configuration)` 中所有实例名分配稳定非零 UUID；安装时生成一次并保存，构建新 revision 时沿用。部署 UUID 同样属于安装身份，不能每次构建重建业务 namespace。具体字段、包名和配置约束见英文文档。
 
 组合命令调用真实 Rust CLI 校验包并计算精确引用，输出并检查 `host.json`、`management-host.json`、`ui.json`、`remote-exports.json`、`connections.json`、`packages.json`。它不初始化 Root、不提交部署、不启动执行。`connections.json` 属于可信启动器输入，其中的逐方法和恢复 grant 需要明确选定。
 
@@ -190,5 +189,6 @@ WorkHub 可另给 `coordinatorAcpExecutors` 和 `coordinatorExecutorProcesses`�
 coordinator 的后端即使同名，也保持独立 key、进程 owner 和 callback grant；Files／Forms
 继续共享原实例。compose 只导出已验证的 source，不启动或认证外部程序。
 
-产品后端选择器、设置／认证流程和附件转交仍在接入。已有显式 Agent 调用方可通过
-`executors`、`execute` 使用这些来源。
+Workspace 的“执行后端”控件可选择已配置后端或返回原模型选择器。后端模型名和思考等级独立于 Host 连接，留空使用后端默认值；选择保留在当前界面，开始捕获 Composer 正文时冻结。未知执行只查询原回执，重启先核对原 execute 再恢复持久草稿；没有 Host 模型连接时也可创建和使用会话。
+
+设置／认证流程和附件转交仍在接入；当前向外部后端提交附件时会提示并保留草稿与全部文件。配置工作台继续使用原模型选择器。

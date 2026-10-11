@@ -21,6 +21,7 @@ import {
   contracts as native,
   type Contract,
   type AgentSession,
+  type AgentExecutorSelection,
   type AgentWorkspace,
   type AgentDataSource,
   type InteractionRecord,
@@ -112,6 +113,9 @@ export interface ModelsProps {
   locale: string;
   selection: SelectedModel | null;
   busy: boolean;
+}
+export interface ExecutionPickerProps extends ModelsProps {
+  executor: AgentExecutorSelection | null;
 }
 export interface ModelSetup {
   catalogEpoch: number;
@@ -892,6 +896,42 @@ export const modelsContract: Contract = {
         kind: { enum: ['loading', 'unavailable', 'connect', 'choose'] },
       }),
       connections: { type: 'null' },
+    },
+    captures: {},
+  },
+};
+
+const executorDefs = native.agent.interface.methods.execute.input.$defs;
+export const executionPickerContract: Contract = {
+  name: 'maka.agent.ExecutionPicker',
+  version: 1,
+  transport: 'local',
+  interface: {
+    kind: 'component',
+    props: withDefs(
+      object({
+        catalogEpoch: { type: 'integer', minimum: 0 },
+        openRequest: { anyOf: [{ type: 'integer', minimum: 0 }, { type: 'null' }] },
+        theme: { $ref: '#/$defs/Theme' },
+        locale,
+        selection: { anyOf: [selectedModel, { type: 'null' }] },
+        executor: { anyOf: [{ $ref: '#/$defs/AgentExecutorSelection' }, { type: 'null' }] },
+        busy: { type: 'boolean' },
+      }),
+      { ...modelDefs, ...executorDefs },
+    ),
+    events: {
+      selected: { ...selectedModel, $defs: modelDefs },
+      setup: object({
+        catalogEpoch: { type: 'integer', minimum: 0 },
+        kind: { enum: ['loading', 'unavailable', 'connect', 'choose'] },
+      }),
+      connections: { type: 'null' },
+      executor: {
+        anyOf: [{ $ref: '#/$defs/AgentExecutorSelection' }, { type: 'null' }],
+        $defs: executorDefs,
+      },
+      backends: object({ available: { type: 'boolean' } }),
     },
     captures: {},
   },

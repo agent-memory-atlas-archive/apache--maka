@@ -28,7 +28,7 @@ fn replace_manifest(package: &Package, manifest: Value) -> Package {
 
 #[test]
 #[ignore = "opt-in real Agent, JS executor, production Workspace and foreground PTY"]
-fn executor_progress_reaches_production_timeline_before_backend_completion() {
+fn executor_selection_and_composer_reach_production_timeline_before_backend_completion() {
     let (dist, mut packages) = built_packages();
     let refs = packages
         .iter()
@@ -63,7 +63,7 @@ fn executor_progress_reaches_production_timeline_before_backend_completion() {
     graph["host"]["instances"]["agent"]["package"]["package"] =
         serde_json::to_value(agent_package.application_ref()).unwrap();
     graph["host"]["instances"]["agent"]["configuration"]["values"]["executors"] =
-        json!([{"name":"external","import":"executor"}]);
+        json!([{"name":"fixture-backend","import":"executor"}]);
     graph["host"]["instances"]["agent"]["bindings"]["executor"] =
         json!([local("executor", "executor")]);
     packages.insert("agent".into(), agent_package);
@@ -77,6 +77,7 @@ fn executor_progress_reaches_production_timeline_before_backend_completion() {
             let release;
             export function activate(){{ return {{executor:{{contract:{executor},service:['backend']}},control:{{contract:{control},service:['control']}}}}; }}
             export const backend={{async execute(input,observation,context){{
+                if(input.message !== 'Run real external backend' || input.settings.model !== 'backend-model') throw Error(JSON.stringify(input));
                 await context.invoke({{operation:'emit',value:{{type:'thinking_delta',text:'Inspecting external workspace'}}}});
                 await context.invoke({{operation:'emit',value:{{type:'output_delta',text:'Live external answer'}}}});
                 await new Promise(resolve=>{{release=resolve;}});
@@ -218,12 +219,42 @@ fn executor_progress_reaches_production_timeline_before_backend_completion() {
             String::from_utf8_lossy(&tui.output)
         );
     }
-    click(&mut tui, "Run external", accent);
+    // The fixture's create receipt precedes Workspace's observed Session. Wait
+    // for its actual composer before using footer coordinates; the home action
+    // has the same label at a different position.
+    tui.wait_until(|screen| screen.contains("Message…") && screen.contains("Execution backend"));
+    let before = tui.screen.snapshot().unwrap().screen;
+    click(&mut tui, "[ Execution backend ]", accent);
+    click(&mut tui, "[ fixture-backend ]", accent);
+    click(&mut tui, "Backend default", accent);
+    paste(&mut tui, "backend-model");
+    tui.wait_for("backend-model");
+    let picker = tui.screen.snapshot().unwrap().screen;
+    click(&mut tui, "[ Apply ]", accent);
+    tui.wait_until(|screen| {
+        screen.contains("Message…") && !screen.contains("Backend model (optional)")
+    });
+    click(&mut tui, "[ fixture-backend ]", accent);
+    tui.wait_until(|screen| {
+        screen.contains("Backend model (optional)") && screen.contains("backend-model")
+    });
+    let reopened = tui.screen.snapshot().unwrap().screen;
+    assert!(
+        reopened.contains("Close"),
+        "compact settings must keep the closing control visible"
+    );
+    tui.send(b"\x1b");
+    tui.wait_until(|screen| {
+        screen.contains("Message…") && !screen.contains("Backend model (optional)")
+    });
+    click(&mut tui, "Message…", accent);
+    paste(&mut tui, "Run real external backend");
+    tui.wait_for("Run real external backend");
+    tui.send(b"\r");
     tui.wait_for("Live external answer");
     let live = tui.screen.snapshot().unwrap().screen;
     assert!(live.contains("Inspecting external workspace"));
     assert!(!live.contains("Final external answer"));
-    assert!(live.contains("running"));
     click(&mut tui, "Release external", accent);
     tui.wait_until(|screen| {
         screen.contains("Final external answer")
@@ -232,6 +263,9 @@ fn executor_progress_reaches_production_timeline_before_backend_completion() {
     });
     if let Ok(path) = std::env::var("MAKA_EXECUTOR_PROGRESS_EVIDENCE") {
         std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(Path::new(&path).join("before.txt"), before).unwrap();
+        std::fs::write(Path::new(&path).join("picker.txt"), picker).unwrap();
+        std::fs::write(Path::new(&path).join("reopened.txt"), reopened).unwrap();
         std::fs::write(Path::new(&path).join("live.txt"), live).unwrap();
         std::fs::write(
             Path::new(&path).join("completed.txt"),

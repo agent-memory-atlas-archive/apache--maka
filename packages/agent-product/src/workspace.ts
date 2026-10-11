@@ -30,6 +30,7 @@ import type {
   Action,
   ActionOutcome,
   ModelSelection,
+  AgentExecutorSelection,
   ThinkingLevel,
   AgentDeliveryPage,
   AgentQueue,
@@ -125,6 +126,9 @@ import {
 } from './drafts.js';
 
 type Notice = keyof Copy | null;
+type Backend =
+  | { kind: 'model'; model: ModelSelection; thinkingLevel: ThinkingLevel | null }
+  | { kind: 'executor'; selection: AgentExecutorSelection };
 type Request =
   | DraftStep
   | { kind: 'observe'; epoch: number }
@@ -144,8 +148,7 @@ type Request =
       attachments: string[];
       draft: EditorObservation;
       sessionId: string;
-      model: ModelSelection;
-      thinkingLevel: ThinkingLevel | null;
+      backend: Backend;
     }
   | {
       kind: 'source';
@@ -168,8 +171,7 @@ type Request =
       attachments: string[];
       draft: EditorObservation;
       sessionId: string;
-      model: ModelSelection;
-      thinkingLevel: ThinkingLevel | null;
+      backend: Backend;
     }
   | {
       kind: 'uploadAttachment';
@@ -223,6 +225,8 @@ export interface State {
   catalogFailed: boolean;
   selected: AgentSession | null;
   model: SelectedModel | null;
+  executor: AgentExecutorSelection | null;
+  hasBackends: boolean;
   modelSetup: ModelSetup['kind'];
   modelOpenRequest: number | null;
   catalogEpoch: number;
@@ -487,9 +491,24 @@ function intent(
       : {}),
   });
 }
+function canExecute(state: State) {
+  return !!state.executor || (!!state.model && !state.modelRefreshing);
+}
+function selectedBackend(state: State): Backend {
+  return state.executor
+    ? {
+        kind: 'executor',
+        selection: { ...state.executor, settings: { ...state.executor.settings } },
+      }
+    : {
+        kind: 'model',
+        model: { ...state.model!.choice.selection },
+        thinkingLevel: state.model!.thinkingLevel,
+      };
+}
 function createSession(state: State, actions: Action[], locale: string) {
   if (mutationPending(state) || catalogPending(state)) return;
-  if (!state.model || state.modelRefreshing) {
+  if (!canExecute(state)) {
     openModelSetup(state);
     return;
   }
@@ -507,7 +526,7 @@ function createSession(state: State, actions: Action[], locale: string) {
     });
 }
 function openModelSetup(state: State) {
-  if (state.modelSetup === 'connect') {
+  if (state.modelSetup === 'connect' && !state.hasBackends) {
     state.settingsOpen = true;
     state.deploymentOpen = false;
   } else state.modelOpenRequest = ++state.serial;
@@ -916,7 +935,11 @@ function rootCommands(
     {
       kind: 'model-setup',
       id: 'model-setup',
-      label: state.modelSetup === 'connect' ? text.configureModels : text.chooseModel,
+      label: state.hasBackends
+        ? text.executionBackend
+        : state.modelSetup === 'connect'
+          ? text.configureModels
+          : text.chooseModel,
       hint: '',
       disabled: !route || mutationPending(state) || executionPending(state),
     },
@@ -1070,7 +1093,7 @@ function rootCommand(
   else if (kind === 'appearance-open') state.preferences.open = true;
   else if (kind === 'model-setup') openModelSetup(state);
   else if (kind === 'create-workspace') {
-    if (!state.model || state.modelRefreshing) openModelSetup(state);
+    if (!canExecute(state)) openModelSetup(state);
     else state.dialog = 'directories';
     if (target === 'tui') controlSidebar(state, 'dismiss_transient');
   } else if (kind === 'terminal-open') state.dialog = 'terminal';
@@ -1855,18 +1878,23 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
           attachments: request.attachments,
           draft: request.draft,
           sessionId: request.sessionId,
-          model: request.model,
-          thinkingLevel: request.thinkingLevel,
+          backend: request.backend,
         },
         'agent',
-        'send',
-        {
-          sessionId: request.sessionId,
-          message: chunk.text,
-          attachments: request.attachments,
-          model: request.model,
-          thinkingLevel: request.thinkingLevel,
-        },
+        request.backend.kind === 'executor' ? 'execute' : 'send',
+        request.backend.kind === 'executor'
+          ? {
+              sessionId: request.sessionId,
+              message: chunk.text,
+              executor: request.backend.selection,
+            }
+          : {
+              sessionId: request.sessionId,
+              message: chunk.text,
+              attachments: request.attachments,
+              model: request.backend.model,
+              thinkingLevel: request.backend.thinkingLevel,
+            },
       );
       break;
     }
@@ -2448,8 +2476,7 @@ function frame<N extends Node>(
       enabled:
         !!state.selected &&
         !state.selected.archived &&
-        !!state.model &&
-        !state.modelRefreshing &&
+        canExecute(state) &&
         !state.loading &&
         state.notice !== 'unavailable',
       command: state.command,
@@ -2568,11 +2595,18 @@ function frame<N extends Node>(
       theme,
       locale,
       selection: state.model,
+      executor: state.executor,
       catalogEpoch: state.catalogEpoch,
       openRequest: state.modelOpenRequest,
       busy: busy || executionPending(state) || (target === 'tui' && !!state.run && !state.queue),
     },
-    { selected: 'model', setup: 'model-setup', connections: 'model-connections' },
+    {
+      selected: 'model',
+      setup: 'model-setup',
+      connections: 'model-connections',
+      executor: 'executor',
+      backends: 'backends',
+    },
   );
 
   const header = ui.box(
@@ -2682,22 +2716,30 @@ function frame<N extends Node>(
             !state.selected || state.selected.archived || mutationPending(state),
           ),
         ) ?? []),
-      ...(target === 'desktop' && (!state.model || state.modelRefreshing)
+      ...(target === 'desktop' && !canExecute(state)
         ? [
             ui.text(
               'model-setup-hint',
-              state.modelSetup === 'loading'
-                ? text.loadingModels
-                : state.modelSetup === 'unavailable'
-                  ? text.modelsUnavailable
-                  : state.modelSetup === 'connect'
-                    ? text.setupConnectionHint
-                    : text.setupModelHint,
+              state.hasBackends
+                ? text.executionBackend
+                : state.modelSetup === 'loading'
+                  ? text.loadingModels
+                  : state.modelSetup === 'unavailable'
+                    ? text.modelsUnavailable
+                    : state.modelSetup === 'connect'
+                      ? text.setupConnectionHint
+                      : text.setupModelHint,
               13,
               theme.muted,
             ),
             ...(state.modelSetup === 'connect'
-              ? [ui.button('model-setup', text.configureModels, busy)]
+              ? [
+                  ui.button(
+                    'model-setup',
+                    state.hasBackends ? text.executionBackend : text.configureModels,
+                    busy,
+                  ),
+                ]
               : []),
           ]
         : []),
@@ -2770,20 +2812,22 @@ function frame<N extends Node>(
                             ]
                           : []),
                         ui.box('home-gap', [], { terminal: { basis: 1 } }),
-                        ...(!state.model || state.modelRefreshing
+                        ...(!canExecute(state)
                           ? [
                               ui.text(
                                 'home-setup',
-                                tuiText(
-                                  locale,
-                                  state.modelSetup === 'loading'
-                                    ? 'connections-loading'
-                                    : state.modelSetup === 'unavailable'
-                                      ? 'home-setup-failed'
-                                      : state.modelSetup === 'connect'
-                                        ? 'home-needs-connection'
-                                        : 'home-needs-default',
-                                ),
+                                state.hasBackends
+                                  ? text.executionBackend
+                                  : tuiText(
+                                      locale,
+                                      state.modelSetup === 'loading'
+                                        ? 'connections-loading'
+                                        : state.modelSetup === 'unavailable'
+                                          ? 'home-setup-failed'
+                                          : state.modelSetup === 'connect'
+                                            ? 'home-needs-connection'
+                                            : 'home-needs-default',
+                                    ),
                                 14,
                                 state.modelSetup === 'unavailable' ? theme.warning : theme.subtle,
                                 400,
@@ -2793,15 +2837,20 @@ function frame<N extends Node>(
                           : []),
                         ui.button(
                           'home-new',
-                          state.model
+                          canExecute(state)
                             ? '+ ' + tuiText(locale, 'sidebar-new-session') + '   Ctrl+N'
-                            : tuiText(
-                                locale,
-                                state.modelSetup === 'connect'
-                                  ? 'route-connections'
-                                  : 'default-model-title',
-                              ),
-                          catalogBusy || (!state.model && state.modelSetup === 'loading'),
+                            : state.hasBackends
+                              ? text.executionBackend
+                              : tuiText(
+                                  locale,
+                                  state.modelSetup === 'connect'
+                                    ? 'route-connections'
+                                    : 'default-model-title',
+                                ),
+                          catalogBusy ||
+                            (!canExecute(state) &&
+                              !state.hasBackends &&
+                              state.modelSetup === 'loading'),
                           true,
                           { background: 0 },
                         ),
@@ -3450,6 +3499,8 @@ export function workspace<N extends Node>(
         catalogFailed: false,
         selected: null,
         model: null,
+        executor: null,
+        hasBackends: false,
         modelSetup: 'loading',
         modelOpenRequest: null,
         catalogEpoch: 0,
@@ -3922,8 +3973,7 @@ export function workspace<N extends Node>(
           !mutationPending(state) &&
           state.selected &&
           !state.selected.archived &&
-          state.model &&
-          !state.modelRefreshing &&
+          canExecute(state) &&
           !state.loading &&
           (!state.run || (target === 'tui' && state.queue !== null)) &&
           !state.command
@@ -3931,6 +3981,11 @@ export function workspace<N extends Node>(
           const draft = input.event as EditorObservation;
           if (draft.snapshot.marked) state.notice = 'draftKept';
           else if (draft.snapshot.text.bytes > 65536) state.notice = 'tooLarge';
+          else if (
+            state.executor &&
+            attachmentFiles(state.attachments, state.selected.id, state.selected.dataSource).length
+          )
+            state.notice = 'executionAttachments';
           else
             intent(
               state,
@@ -3945,8 +4000,7 @@ export function workspace<N extends Node>(
                 ).map((file) => file.id),
                 draft,
                 sessionId: state.selected.id,
-                model: state.model.choice.selection,
-                thinkingLevel: state.model.thinkingLevel,
+                backend: selectedBackend(state),
               },
               'reader',
               'read',
@@ -3965,6 +4019,15 @@ export function workspace<N extends Node>(
             );
         } else if (input.child === 'composer' && input.name === 'stop') {
           rootCommand(state, actions, locale, 'stop', target);
+        } else if (input.child === 'models' && input.name === 'backends') {
+          state.hasBackends = (input.event as { available: boolean }).available;
+        } else if (
+          input.child === 'models' &&
+          input.name === 'executor' &&
+          !mutationPending(state) &&
+          !executionPending(state)
+        ) {
+          state.executor = input.event as AgentExecutorSelection | null;
         } else if (input.child === 'models' && input.name === 'setup') {
           const setup = input.event as ModelSetup;
           if (setup.catalogEpoch === state.catalogEpoch) state.modelSetup = setup.kind;
@@ -3979,6 +4042,7 @@ export function workspace<N extends Node>(
         } else if (
           input.child === 'models' &&
           input.name === 'selected' &&
+          !state.executor &&
           !mutationPending(state) &&
           !executionPending(state)
         ) {

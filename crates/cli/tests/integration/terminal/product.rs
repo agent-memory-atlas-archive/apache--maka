@@ -114,7 +114,11 @@ fn click(tui: &mut Pty, label: &str, enabled: [Color; 2]) {
                 tui.screen.snapshot().unwrap().screen
             );
         }
-        assert!(tui.child.try_wait().unwrap().is_none());
+        assert!(
+            tui.child.try_wait().unwrap().is_none(),
+            "TUI exited while clicking {label}: {}",
+            String::from_utf8_lossy(&tui.output)
+        );
     }
 }
 fn paste(tui: &mut Pty, text: &str) {

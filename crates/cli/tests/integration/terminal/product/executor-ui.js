@@ -17,7 +17,8 @@
  * under the License.
  */
 
-// Test controls invoke the real Agent; the embedded timeline is the shipped Workspace.
+// The fixture only creates a Session and releases the backend. Selection, settings,
+// composer submission and timeline use the shipped Workspace.
 function action(key, method, input, binding = 'agent') {
   return { key, binding, member: 0, method, input, resources: {} };
 }
@@ -43,15 +44,9 @@ function frame(state, actions = []) {
             children: [
               {
                 kind: 'button',
-                key: 'run',
-                label: 'Run external',
-                disabled: state.phase !== 'ready',
-              },
-              {
-                kind: 'button',
                 key: 'release',
                 label: 'Release external',
-                disabled: state.phase !== 'running',
+                disabled: state.phase !== 'ready',
               },
               { kind: 'text', key: 'phase', text: state.phase, color: 0 },
             ],
@@ -111,20 +106,9 @@ export const app = {
         state.session = value.session.id;
         state.phase = 'ready';
       }
-      if (event.key === 'execute') state.phase = 'running';
       if (event.key === 'release') state.phase = 'released';
     } else if (event.kind === 'raw') {
-      if (event.key === 'run' && state.phase === 'ready') {
-        state.phase = 'starting';
-        actions.push(
-          action('execute', 'execute', {
-            sessionId: state.session,
-            message: 'Run real external backend',
-            executor: { executor: 'external', settings: {} },
-          }),
-        );
-      }
-      if (event.key === 'release' && state.phase === 'running') {
+      if (event.key === 'release' && state.phase === 'ready') {
         state.phase = 'releasing';
         actions.push(action('release', 'release', {}, 'control'));
       }

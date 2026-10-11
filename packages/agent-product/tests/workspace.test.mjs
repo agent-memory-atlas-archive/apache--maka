@@ -7769,7 +7769,7 @@ for (const thinkingLevel of [null, 'off', 'high'])
     });
     client.component('send', draft);
     const read = client.find('read');
-    assert.equal(client.state.pending[read.key].thinkingLevel, thinkingLevel);
+    assert.equal(client.state.pending[read.key].backend.thinkingLevel, thinkingLevel);
     client.input({
       kind: 'component',
       child: 'models',
@@ -7781,7 +7781,7 @@ for (const thinkingLevel of [null, 'off', 'high'])
     const send = client.find('send');
     assert.equal(send.input.thinkingLevel, thinkingLevel);
     assert.deepEqual(send.input.model, selection.choice.selection);
-    assert.equal(client.state.pending[send.key].thinkingLevel, thinkingLevel);
+    assert.equal(client.state.pending[send.key].backend.thinkingLevel, thinkingLevel);
     client.complete(send, {
       status: 'operation',
       reply: {
@@ -13866,3 +13866,251 @@ test('ACP product sources bind multiple exact backends and preserve coordinator 
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+for (const target of ['desktop', 'tui']) {
+  const { component: picker } = await import(
+    pathToFileURL(resolve(root, `dist/packages/execution-picker/${target}.js`))
+  );
+  const { component: workspace } = await import(
+    pathToFileURL(resolve(root, `dist/packages/workspace/${target}.js`))
+  );
+  const external = {
+    executor: 'External',
+    settings: { model: 'backend-model', thinkingLevel: 'high' },
+  };
+  const choose = (client, selection = external) =>
+    client.input({ kind: 'component', child: 'models', name: 'executor', event: selection });
+  const native = (form, text, revision = 1) =>
+    form.input({
+      kind: 'component',
+      child: form.state.editor,
+      name: 'changed',
+      event: modelObservation(text, revision),
+    });
+  const ready = () => {
+    const form = new FormClient(picker, { ...modelProps, busy: false, executor: null });
+    form.query('executors', { executors: ['External', 'Other'] });
+    assert.deepEqual(form.output.events, [{ name: 'backends', value: { available: true } }]);
+    form.raw('backends');
+    form.query('executors', { executors: ['External', 'Other'] });
+    form.raw('backend-0');
+    return form;
+  };
+  test(`${target} execution picker applies exact native model and thinking without replacing the model child`, () => {
+    const form = ready();
+    native(form, 'backend-model');
+    const editor = form.state.editor;
+    form.raw('backend-0');
+    assert.equal(
+      form.state.editor,
+      editor,
+      'reselecting the same backend retains the native draft',
+    );
+    form.raw('thinking-high');
+    form.raw('apply');
+    const capture = form.find('read');
+    assert.equal(capture.resources.text.child, form.state.editor);
+    form.raw('thinking-low');
+    form.query('read', {
+      text: 'backend-model',
+      metadata: modelObservation('backend-model', 1).snapshot.text,
+    });
+    assert.deepEqual(form.output.events, [{ name: 'executor', value: external }]);
+    form.update({ executor: external });
+    const retained = modelSlots(form.output.frame.view).find((node) => node.key === 'models');
+    assert.equal(retained.props.busy, true);
+    form.input({
+      kind: 'component',
+      child: 'models',
+      name: 'selected',
+      event: selectedModel(modelChoices[0]),
+    });
+    assert.deepEqual(
+      form.output.events,
+      [],
+      'late model defaults cannot switch the active backend',
+    );
+    form.raw('backends');
+    form.raw('connected');
+    assert.deepEqual(form.output.events, [{ name: 'executor', value: null }]);
+    assert.ok(form.state.modelRequest !== null);
+  });
+  test(`${target} execution picker restores backend settings through the original native receipt before Enter`, () => {
+    const form = ready();
+    form.update({ executor: external });
+    form.raw('close');
+    form.raw('backends');
+    native(form, '');
+    const command = form.state.command;
+    assert.deepEqual(command.edit, { kind: 'reset', text: 'backend-model' });
+    assert.equal(command.owner, 'model-editor');
+    form.raw('apply');
+    assert.equal(form.output.actions.length, 0);
+    form.input({
+      kind: 'component',
+      child: form.state.editor,
+      name: 'changed',
+      event: {
+        ...modelObservation('backend-model', 2),
+        receipt: {
+          owner: command.owner,
+          sequence: command.sequence,
+          revision: 2,
+          outcome: { status: 'applied' },
+        },
+      },
+    });
+    assert.equal(form.state.command, null);
+    form.input({ kind: 'component', child: form.state.editor, name: 'submitted', event: {} });
+    assert.equal(form.find('read').resources.text.input.revision, 2);
+    form.query('read', {
+      text: 'backend-model',
+      metadata: modelObservation('backend-model', 2).snapshot.text,
+    });
+    assert.deepEqual(form.output.events, [{ name: 'executor', value: external }]);
+  });
+  test(`${target} execution picker rejects changed or oversized native text and ignores cancelled capture`, () => {
+    const form = ready();
+    native(form, 'old');
+    form.raw('apply');
+    native(form, 'new', 2);
+    form.query('read', { text: 'old', metadata: modelObservation('old', 1).snapshot.text });
+    assert.deepEqual(form.output.events, []);
+    assert.equal(form.state.error, true);
+    native(form, '界'.repeat(180), 3);
+    form.raw('apply');
+    assert.equal(form.output.actions.length, 0);
+    native(form, 'new', 4);
+    form.raw('apply');
+    const capture = form.find('read');
+    form.raw('close');
+    form.complete(capture, {
+      status: 'succeeded',
+      value: { text: 'new', metadata: modelObservation('new', 4).snapshot.text },
+    });
+    assert.deepEqual(form.output.events, []);
+    assert.equal(form.state.open, false);
+  });
+  test(`${target} external composer freezes backend settings and recovers unknown original execute without replay`, () => {
+    const client = new Client(workspace).start();
+    choose(client);
+    client.component('send', draft);
+    choose(client, { executor: 'Other', settings: {} });
+    assert.deepEqual(client.state.executor, external, 'native draft capture freezes selection');
+    client.query('read', { text: 'Hello', metadata: draft.snapshot.text });
+    const execute = client.find('execute');
+    assert.deepEqual(execute.input, {
+      sessionId: session.id,
+      message: 'Hello',
+      executor: external,
+    });
+    assert.equal(execute.recovery.format, 'maka.agent.draft-send@1');
+    const original = { ...reference, method: 'execute' };
+    client.complete(execute, {
+      status: 'operation',
+      reply: {
+        reference: original,
+        receipt: {
+          kind: 'recorded',
+          outcome: { kind: 'unknown', diagnostic: 'lost' },
+          cleanup: { kind: 'confirmed' },
+        },
+      },
+    });
+    assert.equal(client.state.command, null);
+    client.component('send', draft);
+    assert.equal(client.output.actions.length, 0);
+    client.raw('check');
+    assert.deepEqual(client.find('read').input, original);
+    const resolved = returned({
+      kind: 'started',
+      sessionId: session.id,
+      invocationId: 'run',
+    }).reply;
+    client.query('read', { ...resolved, reference: original });
+    assert.deepEqual(client.state.command, {
+      owner: draft.snapshot.text.owner,
+      sequence: 1,
+      basedOn: draft.revision,
+      edit: { kind: 'reset', text: '' },
+    });
+    assert.equal(
+      [...client.actions.values()].some((action) => action.method === 'execute'),
+      false,
+    );
+  });
+  test(`${target} external composer preserves attachments and can create without a Host model`, () => {
+    const client = new Client(workspace).start();
+    client.state.model = null;
+    client.state.modelRefreshing = true;
+    client.input({
+      kind: 'component',
+      child: 'models',
+      name: 'backends',
+      event: { available: true },
+    });
+    client.raw('home-new');
+    assert.notEqual(client.state.modelOpenRequest, null);
+    assert.equal(client.state.settingsOpen, false);
+    choose(client);
+    const file = {
+      id: 'attached',
+      sessionId: session.id,
+      dataSource,
+      name: 'note.txt',
+      mimeType: 'text/plain',
+      bytes: 1,
+    };
+    client.state.attachments.files.push(file);
+    client.component('send', draft);
+    assert.equal(client.state.notice, 'executionAttachments');
+    assert.deepEqual(client.state.attachments.files, [file]);
+    assert.equal(client.state.command, null);
+    assert.equal(client.output.actions.length, 0);
+    client.raw('home-new');
+    assert.ok(client.find('create'));
+  });
+  test(`${target} restart reconciles an original external execution before restoring its draft`, () => {
+    const client = new Client(workspace, false).start();
+    const original = { ...reference, method: 'execute' };
+    client.checkpoint(
+      session,
+      { kind: 'restore', version: 12, snapshot: draft.snapshot, metadata: { attachments: [] } },
+      'new-editor',
+    );
+    client.query('page', [
+      {
+        cursor: 1,
+        caller: reference.source,
+        consumer: [uuid(80)],
+        reference: original,
+        recovery: {
+          format: 'maka.agent.draft-send@1',
+          sessionId: session.id,
+          editor: { owner: draft.snapshot.text.owner, revision: draft.revision },
+          attachments: [],
+        },
+      },
+    ]);
+    assert.deepEqual(client.find('read').input, original);
+    const resolved = returned({
+      kind: 'started',
+      sessionId: session.id,
+      invocationId: 'run',
+    }).reply;
+    client.query('read', { ...resolved, reference: original });
+    client.query('page', []);
+    const composer = modelSlots(client.output.frame.view).find(
+      (node) => node.key === 'composer',
+    ).props;
+    assert.deepEqual(composer.drafts[0].restore, {
+      owner: 'new-editor',
+      version: 12,
+      clearText: true,
+    });
+    assert.equal(
+      [...client.actions.values()].some((action) => action.method === 'execute'),
+      false,
+    );
+  });
+}

@@ -163,7 +163,7 @@ const specifications = {
       agent: one(sdk.contracts.agent),
       reading: one(sdk.contracts.readingArea),
       file: one(sdk.contracts.filePicker),
-      models: one(own.modelsContract),
+      models: one(own.executionPickerContract),
       connections: one(own.connectionsContract),
       deployment: one(own.deploymentContract),
       receipts: one(sdk.contracts.receiptReader),
@@ -268,6 +268,17 @@ specifications.models = {
     input: one(sdk.contracts.textInput),
     reader: one(sdk.contracts.textReader),
     reading: one(sdk.contracts.readingArea),
+  },
+};
+specifications['execution-picker'] = {
+  contract: own.executionPickerContract,
+  export: 'ExecutionPicker',
+  module: 'execution-picker',
+  imports: {
+    models: one(own.modelsContract),
+    agent: one(sdk.contracts.agent),
+    input: one(sdk.contracts.textInput),
+    reader: one(sdk.contracts.textReader),
   },
 };
 specifications['command-palette'] = {

@@ -96,7 +96,7 @@ function attachments(value: unknown, session: string): AgentAttachment[] | null 
 function correlation(original: CallerIntent, draft: DraftRecord) {
   const reference = original.reference;
   if (
-    reference.method !== 'send' ||
+    (reference.method !== 'send' && reference.method !== 'execute') ||
     reference.source.stateDomain !== draft.dataSource.stateDomain ||
     reference.source.deployment !== draft.dataSource.deployment ||
     !sameValue(reference.namespace, draft.dataSource.namespace)
