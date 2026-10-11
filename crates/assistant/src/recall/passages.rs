@@ -17,15 +17,13 @@
  * under the License.
  */
 
+use super::search::History;
 use super::{
     rank::{Hit, Source, excluded},
     reader::{Reader, failed},
     types::{Passage, PassageMessage},
 };
-use maka_plugins::{
-    call::Scope,
-    session::history::{Chunk, History},
-};
+use maka_plugins::{call::Scope, session::history::Chunk};
 use maka_runtime::tools::ToolError;
 use std::sync::Arc;
 use tokio::sync::OwnedSemaphorePermit;
@@ -43,8 +41,8 @@ pub(super) async fn build(
     let mut passages: Vec<_> = hits
         .iter()
         .map(|hit| Passage {
-            session_id: sources[hit.session].summary.session.session_id.clone(),
-            session_title: sources[hit.session].summary.session.name.clone(),
+            session_id: sources[hit.session].summary.id.clone(),
+            session_title: sources[hit.session].summary.title.clone(),
             anchor_message_id: hit.message_id.clone(),
             anchor_sequence: hit.sequence,
             turn_id: hit.turn_id.clone(),
@@ -67,14 +65,14 @@ pub(super) async fn build(
         let mut reader = Reader::new(
             history.clone(),
             call.clone(),
-            source.summary.session.session_id.clone(),
+            source.summary.id.clone(),
             source.through,
         );
         let mut position = 0;
         while let Some(message) = reader.next().await? {
             let ordinal = position;
             position += 1;
-            if excluded(call, &source.summary.session.session_id, &message) {
+            if excluded(call, &source.summary.id, &message) {
                 continue;
             }
             let mut targets = Vec::new();

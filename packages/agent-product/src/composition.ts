@@ -41,6 +41,7 @@ export const packageNames = [
   'directory-picker',
   'projects',
   'conversation-import',
+  'recall',
   'apps',
   'skill-library',
   'skills',
@@ -719,6 +720,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         directories: [local('directory-picker', 'DirectoryPicker')],
         projects: [local('projects', 'Projects')],
         imports: [local('conversation-import', 'Imports')],
+        recall: [local('recall', 'Recall')],
         apps: [local('apps', 'Apps')],
         details: [local('session-details', 'SessionDetails')],
         terminals: [local('terminal-panel', 'TerminalPanel')],
@@ -759,6 +761,16 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         input: [local('input', 'TextInput')],
         reader: [local('reader', 'Reader')],
         reading: [local('reading-area', 'ReadingArea')],
+      },
+    ),
+    recall: node(
+      'recall',
+      {},
+      {
+        agent: [remote('agent', 'agent')],
+        reading: [local('reading-area', 'ReadingArea')],
+        input: [local('input', 'TextInput')],
+        reader: [local('reader', 'Reader')],
       },
     ),
     projects: node(

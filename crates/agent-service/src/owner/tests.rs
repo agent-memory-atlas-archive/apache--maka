@@ -72,6 +72,8 @@ mod images;
 mod imports;
 #[path = "tests/projects.rs"]
 mod projects;
+#[path = "tests/recall.rs"]
+mod recall_tests;
 
 #[path = "tests/workspaces.rs"]
 mod workspaces;
@@ -427,6 +429,16 @@ impl Fixture {
         peer: Option<Arc<maka_application_bridge::transport::PeerPolicy>>,
         tooling: Option<service_tools::Setup>,
     ) -> Self {
+        Self::configured(base, cap, model, peer, tooling, false).await
+    }
+    async fn configured(
+        base: &str,
+        cap: usize,
+        model: Option<ModelExecutor>,
+        peer: Option<Arc<maka_application_bridge::transport::PeerPolicy>>,
+        tooling: Option<service_tools::Setup>,
+        recall: bool,
+    ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("root");
         let workspace = dir.path().join("workspace");
@@ -488,6 +500,7 @@ impl Fixture {
             maka_config::oauth::enrollment::LoginCompletion::Committed(_)
         ));
         let mut settings = Configuration {
+            recall,
             import_roots: vec![maka_runtime_host::server::DirectoryRootSpec {
                 label: "Import sources".into(),
                 path: workspace.clone(),
@@ -511,7 +524,7 @@ impl Fixture {
                 },
             ],
             max_active_runs: cap,
-            max_steps: 1,
+            max_steps: if recall { 6 } else { 1 },
             tools: vec![],
         };
         if let Some(tooling) = &tooling {

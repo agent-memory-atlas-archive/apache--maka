@@ -1,0 +1,390 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use super::SessionConfiguration;
+use crate::contract::{RecallPage, RecallPassage};
+use futures_util::future::BoxFuture;
+use maka_assistant::recall::search::{self, History};
+use maka_event_log::sessions::{CatalogFilter, CatalogScope, SessionPosition};
+use maka_plugins::{
+    call::Scope,
+    session::{catalog, history},
+};
+use maka_runtime::{
+    tool_call::ToolRejection,
+    tool_output::{DurableToolProjection, ToolOutput, ToolSuccess},
+    tools::*,
+};
+use serde_json::Value;
+use std::sync::Arc;
+use tokio::sync::Semaphore;
+use tokio_util::sync::CancellationToken;
+
+#[derive(Clone)]
+pub(crate) struct Recall {
+    store: Arc<maka_event_log::EventLog>,
+    prefix: String,
+    data_source: crate::contract::DataSource,
+    enabled: bool,
+    services: maka_runtime_host::application::NativeServices,
+    stop: CancellationToken,
+    workers: tokio_util::task::TaskTracker,
+    capacity: Arc<Semaphore>,
+}
+impl Recall {
+    pub fn new(
+        store: Arc<maka_event_log::EventLog>,
+        prefix: String,
+        data_source: crate::contract::DataSource,
+        enabled: bool,
+        stop: CancellationToken,
+        workers: tokio_util::task::TaskTracker,
+        services: maka_runtime_host::application::NativeServices,
+    ) -> Self {
+        Self {
+            store,
+            prefix,
+            data_source,
+            enabled,
+            services,
+            stop,
+            workers,
+            capacity: Arc::new(Semaphore::new(2)),
+        }
+    }
+    async fn session(
+        &self,
+        id: &str,
+    ) -> Result<maka_event_log::sessions::SessionRecord<SessionConfiguration>, String> {
+        if !super::owns_session(&self.prefix, id) {
+            return Err("agent_session_unavailable".into());
+        }
+        self.store
+            .get_session(id)
+            .await
+            .map_err(|_| "agent_store_unavailable".to_owned())?
+            .ok_or("agent_session_unavailable".into())
+    }
+    async fn check(&self, call: &Scope) -> Result<(), ToolError> {
+        if call.cancellation.is_cancelled() || self.stop.is_cancelled() {
+            return Err(failed("Recall cancelled"));
+        }
+        if let Some(invocation) = call.identity.agent() {
+            if !self.enabled {
+                return Err(failed("Recall model access is disabled"));
+            }
+            self.session(&invocation.session_id).await.map_err(failed)?;
+            let boundary = self
+                .store
+                .invocation_boundary(&invocation.session_id, &invocation.invocation_id)
+                .await
+                .map_err(failed)?
+                .ok_or_else(|| failed("Recall invocation unavailable"))?
+                .0;
+            if boundary.invocation != *invocation
+                || matches!(
+                    boundary.state,
+                    maka_event_log::turns::InvocationState::Ended { .. }
+                )
+            {
+                return Err(failed("Recall invocation closed"));
+            }
+        }
+        Ok(())
+    }
+    async fn permit(
+        &self,
+        call: &Scope,
+    ) -> Result<Arc<tokio::sync::OwnedSemaphorePermit>, ToolError> {
+        tokio::select! {
+            biased;
+            _ = call.cancellation.cancelled() => Err(failed("Recall cancelled")),
+            permit = self.capacity.clone().acquire_owned() => permit.map(Arc::new).map_err(failed),
+        }
+    }
+    pub async fn query(
+        self: &Arc<Self>,
+        mut query: search::Query,
+        call: &Scope,
+    ) -> Result<RecallPage, String> {
+        query.validate()?;
+        self.check(call).await.map_err(|e| e.to_string())?;
+        if let Some(id) = &query.session_id {
+            self.session(id).await?;
+        }
+        let permit = self.permit(call).await.map_err(|e| e.to_string())?;
+        let (titles, catalog_complete) = search::titles(self.as_ref(), call, &query)
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut title_matches = Vec::new();
+        for title in titles.into_iter().take(query.limit.unwrap_or(8)) {
+            title_matches.push(crate::service::summary_for(
+                &self.data_source,
+                self.session(&title.id).await?,
+            ));
+        }
+        let found = search::search(self.clone(), call, &query, permit)
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut passages = Vec::new();
+        for passage in found
+            .passages
+            .into_iter()
+            .take(query.limit.unwrap_or(8).saturating_sub(title_matches.len()))
+        {
+            let session = self.session(&passage.session_id).await?;
+            let excerpt = passage
+                .messages
+                .iter()
+                .find(|message| message.is_anchor)
+                .map(|message| message.text.chars().take(1024).collect())
+                .unwrap_or_default();
+            passages.push(RecallPassage {
+                session: crate::service::summary_for(&self.data_source, session),
+                anchor_message_id: passage.anchor_message_id,
+                anchor_sequence: passage.anchor_sequence,
+                excerpt,
+                matched_terms: passage.matched_terms,
+            });
+        }
+        self.check(call).await.map_err(|e| e.to_string())?;
+        let mut page = RecallPage {
+            titles: title_matches,
+            passages,
+            complete: catalog_complete && found.searched_every_session,
+            gaps: found.gaps,
+        };
+        while serde_json::to_vec(&page).map_err(|e| e.to_string())?.len() > 48 * 1024 {
+            page.complete = false;
+            if page.passages.pop().is_none() && page.titles.pop().is_none() {
+                page.gaps.pop();
+            }
+        }
+        Ok(page)
+    }
+    pub fn tools(self: &Arc<Self>) -> Vec<ToolRegistration> {
+        search::definitions()
+            .into_iter()
+            .map(|(name, description, input_schema)| ToolRegistration {
+                definition: ToolDefinition {
+                    provider: None,
+                    name: name.into(),
+                    description: description.into(),
+                    input_schema,
+                    output_schema: None,
+                    freeform: None,
+                },
+                nesting: ToolNesting::Nestable,
+                semantics: ToolSemantics::Parallel,
+                handler: ToolHandler::Prepared(self.clone()),
+            })
+            .collect()
+    }
+}
+impl History for Recall {
+    fn list(
+        &self,
+        call: Scope,
+        input: catalog::List,
+    ) -> BoxFuture<'_, Result<search::Catalog, ToolError>> {
+        Box::pin(async move {
+            input.validate().map_err(failed)?;
+            self.check(&call).await?;
+            let page = self
+                .store
+                .scoped_sessions::<SessionConfiguration>(
+                    CatalogScope::IdPrefix(self.prefix.clone()),
+                    input.revision.as_deref(),
+                    input
+                        .cursor
+                        .as_deref()
+                        .map_or(SessionPosition::Start, SessionPosition::After),
+                    CatalogFilter {
+                        include_archived: true,
+                        pending_only: false,
+                    },
+                )
+                .await
+                .map_err(failed)?;
+            self.check(&call).await?;
+            Ok(search::Catalog {
+                revision: page.revision,
+                next_cursor: page.next_cursor,
+                entries: page
+                    .sessions
+                    .into_iter()
+                    .map(|session| search::Session {
+                        id: session.id,
+                        title: session.configuration.title,
+                        last_message_at: session.last_message.map(|message| message.recorded_at),
+                    })
+                    .collect(),
+            })
+        })
+    }
+    fn read(
+        &self,
+        call: Scope,
+        input: history::Read,
+    ) -> BoxFuture<'_, Result<history::Page, ToolError>> {
+        Box::pin(async move {
+            input.validate().map_err(failed)?;
+            self.check(&call).await?;
+            self.session(&input.session_id).await.map_err(failed)?;
+            let high_water = *self.store.subscribe_commits().borrow();
+            let through = input.through.unwrap_or(high_water);
+            if through > high_water {
+                return Err(failed("Recall history fence invalid"));
+            }
+            let page = if !self
+                .store
+                .prepare_transcript(&input.session_id, through, 32)
+                .await
+                .map_err(failed)?
+            {
+                history::Page::Preparing { through }
+            } else {
+                self.store
+                    .history_text(
+                        &input.session_id,
+                        through,
+                        input.position,
+                        false,
+                        8192,
+                        8,
+                        96 * 1024,
+                    )
+                    .await
+                    .map_err(failed)?
+            };
+            self.session(&input.session_id).await.map_err(failed)?;
+            self.check(&call).await?;
+            Ok(page)
+        })
+    }
+}
+enum Input {
+    Search(search::Query),
+    More(search::More),
+    Material(search::Material),
+}
+impl ToolPreparer for Recall {
+    fn names(&self) -> Vec<String> {
+        search::definitions()
+            .into_iter()
+            .map(|(name, _, _)| name.into())
+            .collect()
+    }
+    fn prepare(
+        &self,
+        name: String,
+        input: Value,
+        context: ToolCallContext,
+        cancellation: CancellationToken,
+    ) -> PreparationFuture {
+        let recall = Arc::new(self.clone());
+        Box::pin(async move {
+            if cancellation.is_cancelled() {
+                return Err(ToolRejection::Cancelled);
+            }
+            let input = match name.as_str() {
+                "Recall" => {
+                    let mut value: search::Query =
+                        serde_json::from_value(input).map_err(invalid)?;
+                    value.validate().map_err(invalid)?;
+                    Input::Search(value)
+                }
+                "RecallMore" => {
+                    let value: search::More = serde_json::from_value(input).map_err(invalid)?;
+                    value.validate().map_err(invalid)?;
+                    Input::More(value)
+                }
+                "RecallMaterial" => {
+                    let value: search::Material = serde_json::from_value(input).map_err(invalid)?;
+                    value.validate().map_err(invalid)?;
+                    Input::Material(value)
+                }
+                _ => return Err(ToolRejection::Unavailable),
+            };
+            Ok(PreparedEffect::new(move |cancellation| {
+                Box::pin(async move {
+                    // The Engine supplies the admitted ToolCallContext. The
+                    // original native activation owns the request and settlement.
+                    let request = recall
+                        .services
+                        .request(
+                            maka_plugins::call::Identity::Agent {
+                                invocation: context.invocation,
+                                operation_id: Some(context.operation_id),
+                            },
+                            cancellation,
+                        )
+                        .map_err(failed)?;
+                    let call = request.scope();
+                    let result = async {
+                        recall.check(call).await?;
+                        if let Input::Material(material) = input {
+                            return recall.material(call.clone(), material).await;
+                        }
+                        let permit = recall.permit(call).await?;
+                        let mut found = match input {
+                            Input::Search(query) => {
+                                search::search(recall.clone(), call, &query, permit).await?
+                            }
+                            Input::More(more) => {
+                                search::more(recall.clone(), call, &more, permit).await?
+                            }
+                            Input::Material(_) => unreachable!(),
+                        };
+                        recall.check(call).await?;
+                        if found.render().len() > 96 * 1024 {
+                            found.gaps.push(
+                                "The 96 KiB response budget omitted lower-ranked passages.".into(),
+                            );
+                            while found.render().len() > 96 * 1024 && !found.passages.is_empty() {
+                                found.passages.pop();
+                            }
+                        }
+                        let text = found.render();
+                        Ok(ToolSuccess::projected(
+                            ToolOutput::Json(serde_json::to_value(found).map_err(failed)?),
+                            DurableToolProjection::Text { text },
+                        ))
+                    }
+                    .await;
+                    request
+                        .finish()
+                        .await
+                        .map_err(ToolError::CleanupUnconfirmed)?;
+                    result
+                })
+            }))
+        })
+    }
+}
+fn failed(error: impl std::fmt::Display) -> ToolError {
+    ToolError::Failed(error.to_string())
+}
+fn invalid(error: impl std::fmt::Display) -> ToolRejection {
+    ToolRejection::InvalidInput {
+        message: error.to_string(),
+    }
+}
+
+mod material;

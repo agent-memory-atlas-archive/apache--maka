@@ -23,7 +23,8 @@ use unicode_normalization::UnicodeNormalization;
 
 #[derive(Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Query {
+#[schemars(rename = "RecallQuery")]
+pub struct Query {
     #[schemars(length(min = 1, max = 8), inner(length(min = 1, max = 500)))]
     pub terms: Vec<String>,
     #[schemars(length(min = 1, max = 500))]
@@ -67,7 +68,7 @@ impl Query {
 }
 #[derive(Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct More {
+pub struct More {
     #[schemars(length(min = 1, max = 256))]
     pub session_id: String,
     #[schemars(length(min = 1, max = 256))]
@@ -105,7 +106,7 @@ pub(super) fn fold(text: &str) -> String {
 }
 
 #[derive(Clone, Serialize)]
-pub(super) struct PassageMessage {
+pub struct PassageMessage {
     pub message_id: String,
     pub role: Role,
     pub text: String,
@@ -116,7 +117,7 @@ pub(super) struct PassageMessage {
     pub attachments: Vec<maka_runtime::attachment::AttachmentRef>,
 }
 #[derive(Serialize)]
-pub(super) struct Passage {
+pub struct Passage {
     pub session_id: String,
     pub session_title: String,
     pub anchor_message_id: String,
@@ -130,7 +131,7 @@ pub(super) struct Passage {
     pub truncated: bool,
 }
 #[derive(Serialize)]
-pub(super) struct ResultSet {
+pub struct ResultSet {
     pub passages: Vec<Passage>,
     pub searched_every_session: bool,
     pub gaps: Vec<String>,

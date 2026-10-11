@@ -8196,6 +8196,7 @@ dependencies = [
  "jsonschema 0.56.0",
  "maka-agent",
  "maka-application-bridge",
+ "maka-assistant",
  "maka-config",
  "maka-event-log",
  "maka-external-agent",

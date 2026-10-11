@@ -46,7 +46,7 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
-mod attachments;
+pub(crate) mod attachments;
 mod permissions;
 
 pub const IMPLEMENTATION: &str = "maka.workspace.files";
@@ -317,7 +317,7 @@ fn capture(
         ceiling,
     })
 }
-enum Output {
+pub(crate) enum Output {
     Json(Value),
     Image { bytes: Vec<u8>, mime_type: String },
 }

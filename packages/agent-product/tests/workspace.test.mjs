@@ -14747,3 +14747,37 @@ for (const target of ['tui', 'desktop']) {
     );
   });
 }
+
+for (const target of ['tui', 'desktop'])
+  test(`${target} Recall selection opens the original anchor behind a fresh session fence`, async () => {
+    const rootModule = await import(
+      pathToFileURL(resolve(root, `dist/packages/workspace/${target}.js`))
+    );
+    rootModule.activate({ locale: 'en' });
+    const client = new Client(rootModule.component).start();
+    client.raw('recall-open');
+    assert.deepEqual(client.state.pages, ['recall']);
+    const recalled = { ...session, id: 'earlier', title: 'Earlier conversation' };
+    client.input({
+      kind: 'component',
+      child: 'recall',
+      name: 'selected',
+      event: { session: recalled, anchor: 1793 },
+    });
+    assert.deepEqual(client.state.pages, []);
+    client.query('observe', { session: recalled, through: 50, run: null, parts: [] });
+    const request = client.find('history');
+    assert.equal(request.input.sessionId, recalled.id);
+    assert.equal(request.input.through, 50);
+    assert.deepEqual(request.input.position, {
+      kind: 'after',
+      cursor: { sequence: 1793, offset: 0, field: 'body' },
+    });
+    client.input({
+      kind: 'component',
+      child: 'recall',
+      name: 'selected',
+      event: { session: { ...recalled, id: 'hidden-stale' }, anchor: 2049 },
+    });
+    assert.equal(client.state.selected.id, recalled.id);
+  });

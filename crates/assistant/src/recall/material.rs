@@ -31,7 +31,7 @@ use maka_runtime::{
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Input {
+pub struct Input {
     pub session_id: String,
     pub artifact_id: String,
     pub offset: Option<usize>,

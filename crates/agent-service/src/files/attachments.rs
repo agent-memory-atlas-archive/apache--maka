@@ -23,7 +23,7 @@ use maka_runtime::{
     read::ReadRequest,
 };
 
-pub(super) async fn read(
+pub(crate) async fn read(
     store: &EventLog,
     session: &str,
     id: &str,

@@ -255,9 +255,11 @@ export interface State {
   modelRefreshing: boolean;
   searchOpen: boolean;
   browse: number | null;
-  pages: ('settings' | 'connections' | 'deployment' | 'projects' | 'imports' | 'apps')[];
+  pages: ('settings' | 'connections' | 'deployment' | 'projects' | 'imports' | 'apps' | 'recall')[];
   projectsOpened: boolean;
   importsOpened: boolean;
+  recallOpened: boolean;
+  recallAnchor: number | null;
   appsOpened: boolean;
   settingsCategory: SettingsCategory;
   sidebar: { open: boolean } | { command: TerminalPaneCommand | null };
@@ -641,6 +643,7 @@ function follow(state: State, actions: Action[]) {
 function select(state: State, actions: Action[], session: AgentSession | null) {
   state.searchOpen = false;
   state.browse = null;
+  state.recallAnchor = null;
   state.selected = session;
   state.epoch++;
   state.window = null;
@@ -787,6 +790,7 @@ type RootCommand =
   | 'settings'
   | 'projects-open'
   | 'imports-open'
+  | 'recall-open'
   | 'apps-open'
   | 'deployment-open'
   | 'reload'
@@ -1041,6 +1045,13 @@ function rootCommands(
       disabled: !route || !!state.embedding.fixed,
     },
     {
+      kind: 'recall-open',
+      id: 'recall-open',
+      label: text.recallTitle,
+      hint: '',
+      disabled: !route || !!state.embedding.fixed,
+    },
+    {
       kind: 'imports-open',
       id: 'imports-open',
       label: text.importsTitle,
@@ -1153,6 +1164,10 @@ function rootCommand(
   } else if (kind === 'apps-open') {
     state.pages = ['apps'];
     state.appsOpened = true;
+    if (target === 'tui') controlSidebar(state, 'dismiss_transient');
+  } else if (kind === 'recall-open') {
+    state.pages = ['recall'];
+    state.recallOpened = true;
     if (target === 'tui') controlSidebar(state, 'dismiss_transient');
   } else if (kind === 'imports-open') {
     state.pages = ['imports'];
@@ -1706,9 +1721,19 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
         !Object.values(state.pending).some(
           (pending) => pending.kind === 'history' && pending.epoch === state.epoch,
         )
-      )
-        history(state, actions, { kind: 'tail' }, observation.through, true);
-      else if (
+      ) {
+        const anchor = state.recallAnchor;
+        state.recallAnchor = null;
+        history(
+          state,
+          actions,
+          anchor === null
+            ? { kind: 'tail' }
+            : { kind: 'after', cursor: { sequence: anchor, offset: 0, field: 'body' } },
+          observation.through,
+          anchor === null,
+        );
+      } else if (
         !Object.values(state.pending).some(
           (pending) =>
             pending.kind === 'history' &&
@@ -2344,6 +2369,10 @@ function frame<N extends Node>(
                         background: 0,
                         align: 'start',
                       }),
+                      ui.button('recall-open', text.recallTitle, false, false, {
+                        background: 0,
+                        align: 'start',
+                      }),
                       ui.button('imports-open', text.importsTitle, false, false, {
                         background: 0,
                         align: 'start',
@@ -2638,19 +2667,21 @@ function frame<N extends Node>(
         : '';
   const title = ui.text(
     'title',
-    state.pages.at(-1) === 'apps'
-      ? text.appsTitle
-      : state.pages.at(-1) === 'imports'
-        ? text.importsTitle
-        : state.pages.at(-1) === 'projects'
-          ? text.projectsTitle
-          : state.pages.at(-1) === 'settings'
-            ? tuiText(locale, 'route-settings')
-            : state.pages.at(-1) === 'connections'
-              ? text.settings
-              : state.pages.at(-1) === 'deployment'
-                ? text.deploymentTitle
-                : (state.selected?.title ?? tuiText(locale, 'route-workspace')),
+    state.pages.at(-1) === 'recall'
+      ? text.recallTitle
+      : state.pages.at(-1) === 'apps'
+        ? text.appsTitle
+        : state.pages.at(-1) === 'imports'
+          ? text.importsTitle
+          : state.pages.at(-1) === 'projects'
+            ? text.projectsTitle
+            : state.pages.at(-1) === 'settings'
+              ? tuiText(locale, 'route-settings')
+              : state.pages.at(-1) === 'connections'
+                ? text.settings
+                : state.pages.at(-1) === 'deployment'
+                  ? text.deploymentTitle
+                  : (state.selected?.title ?? tuiText(locale, 'route-workspace')),
     17,
     theme.text,
     650,
@@ -3227,6 +3258,21 @@ function frame<N extends Node>(
             ),
           ]
         : []),
+      ...(state.recallOpened
+        ? [
+            presentation.slot(
+              'recall',
+              'recall',
+              {
+                theme,
+                locale,
+                open: state.pages.at(-1) === 'recall',
+                busy: mutationPending(state) || catalogPending(state),
+              },
+              { closed: 'recall-closed', selected: 'recall-selected' },
+            ),
+          ]
+        : []),
       ...(state.importsOpened
         ? [
             presentation.slot(
@@ -3666,6 +3712,8 @@ export function workspace<N extends Node>(
         pages: [],
         projectsOpened: false,
         importsOpened: false,
+        recallOpened: false,
+        recallAnchor: null,
         appsOpened: false,
         settingsCategory: 'appearance',
         searchOpen: false,
@@ -3742,9 +3790,15 @@ export function workspace<N extends Node>(
               Array.isArray(item.pages) &&
               item.pages.length <= 3 &&
               item.pages.every((page) =>
-                ['settings', 'connections', 'deployment', 'projects', 'imports', 'apps'].includes(
-                  page,
-                ),
+                [
+                  'settings',
+                  'connections',
+                  'deployment',
+                  'projects',
+                  'imports',
+                  'apps',
+                  'recall',
+                ].includes(page),
               ) &&
               ['appearance', 'interface', 'models', 'plugins'].includes(item.category)
               ? item
@@ -3754,6 +3808,7 @@ export function workspace<N extends Node>(
         if (restored) {
           state.pages = restored.pages;
           if (state.pages.includes('apps') && !state.embedding.fixed) state.appsOpened = true;
+          if (state.pages.includes('recall') && !state.embedding.fixed) state.recallOpened = true;
           if (state.pages.includes('imports') && !state.embedding.fixed) state.importsOpened = true;
           if (state.pages.includes('projects') && !state.embedding.fixed)
             state.projectsOpened = true;
@@ -4021,6 +4076,22 @@ export function workspace<N extends Node>(
           if (input.name === 'closed' && state.pages.at(-1) === 'apps') state.pages.pop();
           if (input.name === 'manage' && state.pages.at(-1) === 'apps')
             state.pages.push('deployment');
+        }
+        if (input.child === 'recall') {
+          if (input.name === 'closed' && state.pages.at(-1) === 'recall') state.pages.pop();
+          else if (
+            input.name === 'selected' &&
+            state.pages.at(-1) === 'recall' &&
+            !state.embedding.fixed &&
+            !mutationPending(state) &&
+            !catalogPending(state)
+          ) {
+            const selected = input.event as { session: AgentSession; anchor: number | null };
+            select(state, actions, selected.session);
+            state.recallAnchor = selected.anchor;
+            state.pages = [];
+          }
+          return frame(presentation, configuredLocale, state, values, actions);
         }
         if (input.child === 'imports') {
           if (input.name === 'closed' && state.pages.at(-1) === 'imports') state.pages.pop();

@@ -17,11 +17,12 @@
  * under the License.
  */
 
+use super::search::{History, Session};
 use maka_plugins::{
     call::Scope,
     session::{
         catalog,
-        history::{Chunk, History, Page, Position, Read},
+        history::{Chunk, Page, Position, Read},
     },
 };
 use maka_runtime::tools::ToolError;
@@ -130,7 +131,7 @@ pub(super) async fn sessions(
     history: &dyn History,
     call: &Scope,
     selected: Option<&str>,
-) -> Result<(Vec<catalog::Summary>, bool), ToolError> {
+) -> Result<(Vec<Session>, bool), ToolError> {
     let mut input = catalog::List {
         include_archived: true,
         ..Default::default()
@@ -143,7 +144,7 @@ pub(super) async fn sessions(
             .await
             .map_err(failed)?;
         for session in page.entries {
-            if selected.is_none_or(|id| id == session.session.session_id) {
+            if selected.is_none_or(|id| id == session.id) {
                 total += 1;
                 all.push(session);
             }
@@ -152,7 +153,7 @@ pub(super) async fn sessions(
         all.sort_by(|a, b| {
             b.last_message_at
                 .cmp(&a.last_message_at)
-                .then_with(|| a.session.session_id.cmp(&b.session.session_id))
+                .then_with(|| a.id.cmp(&b.id))
         });
         all.truncate(200);
         if page.next_cursor.is_none() {

@@ -21,13 +21,13 @@
 
 本 crate 提供普通原生应用实现 `maka.agent.api`，导出 `agent`（`maka.agent.Agent` v1）。Desktop 和 TUI 启动器登记可用实现，产品组合决定是否激活。初始化不会打开旧业务 Host 或自动安装旧业务插件。
 
-配置仅声明 1–16 范围内的运行容量和最大步骤数。每次 `send` 显式携带 `model`：连接 ID、所观察的 revision 与模型 ID；首次 SQL snapshot 在准备运行前核 revision 和启用的模型成员关系。密钥、请求头、endpoint 与网络设置由实际 Root 的配置存储持有。每个逻辑步骤读取指定连接；不可用时不回退到其他账号或模型。凭据来自配置存储真实的认证回执。当前服务执行空工具目录的文本对话。
+配置仅声明 1–16 范围内的运行容量和最大步骤数。每次 `send` 显式携带 `model`：连接 ID、所观察的 revision 与模型 ID；首次 SQL snapshot 在准备运行前核 revision 和启用的模型成员关系。密钥、请求头、endpoint 与网络设置由实际 Root 的配置存储持有。每个逻辑步骤读取指定连接；不可用时不回退到其他账号或模型。凭据来自配置存储真实的认证回执。服务工具由 `tools` 显式选择；`recall: true` 另行启用原生历史工具，默认关闭。
 
 `create`、`send` 是持久化 mutation。`send` 授权指定账号/模型上的完整有界运行，返回已接纳的 invocation ID。返回前，原始 NativeOwner 已持有真实运行句柄及非等待式容量 permit；请求结束或界面关闭不取消已接受的工作。`stop` 指定准确 invocation，迟到的停止请求不会取消后继运行。`list`、`observe`、`history`、`watch` 从 canonical session 元数据、同快照的 run/活动 part 身份、文本历史分页和有界投影读取内容，不发布 provider 请求体或凭据。
 
 `uploadAttachment` 在 `file` slot 接收原生不可变二进制资源，参数包含 `sessionId`、文件名、字节数及 SHA-256。owner 验证最多 50 MiB 的实际内容，原子写入原 SessionArtifact，返回带所属会话的规范描述。无效文件、容量占满、关闭和归档均有明确拒绝结果；原请求 Scope 保持 worker 至 SQL 完成，每个 Agent owner 只允许一个物化副本。丢回复后查询原 operation reference；重新捕获文件不能冒充原上传重放。
 
-`send.attachments` 最多接受当前私有会话内八个不重复的上传 ID，由后端重建规范元数据，支持仅附件消息；队列正文编辑保留附件。Files 的 `readText`／`readImage` 在原 live invocation 授权后解析附件 URI、短前缀和续读地址，不把附件地址当作工作区路径。文本读取最多 10 MiB、只接受无 NUL 的 UTF-8，有界页预留服务外层空间以保留模型可用的 `next`；图片沿原 5 MiB 订阅读取，PDF 解码仍不支持。本阶段只提供附件输入的服务链路，普通产品的选择器、剪贴板、草稿持久化和附件管理仍待接入。
+`send.attachments` 最多接受当前私有会话内八个不重复的上传 ID，由后端重建规范元数据，支持仅附件消息；队列正文编辑保留附件。Files 的 `readText`／`readImage` 在原 live invocation 授权后解析附件 URI、短前缀和续读地址，不把附件地址当作工作区路径。文本读取最多 10 MiB、只接受无 NUL 的 UTF-8，有界页预留服务外层空间以保留模型可用的 `next`；图片沿原 5 MiB 订阅读取，PDF 解码仍不支持。普通产品的选择器、剪贴板、持久草稿和附件管理已接入此服务链路。
 
 会话归实际 Root、deployment 与插件 instance 所有，包版本和 activation 变化不创建新的数据所有者。会话保留对话元数据，每次 canonical invocation 记录实际选中的 binding；同一会话后续发送可以换模型。单次运行固定 provider 身份、原配置与真正执行参数，改名、测试、目录描述与其它模型不会中断它；endpoint、协议、预算或所选模型成员变化则拒绝后续步骤。凭据、请求头与网络策略继续由原配置 owner 提供。业务 ID 由原始 operation reference 派生；Host journal 内的 UUID 冲突仍然拒绝执行。卸载会请求停止并等待原始任务和配置 SQL 所有者清理；清理未确认时继续持有容量，NativeOwner close 返回失败，应用继续保留 Root fence。
 
@@ -110,3 +110,5 @@ ProtocolProcesses 的 `launch` 须独立授权并显式配置 `setupDirectory`�
 安装文件／网络上限和当前 Host 网络路由，始终排除 Host 私有 Root。stdin 只接纳原调用方 activation
 及应用请求；不构造 Agent invocation 或 Session 进程记录。原 mutation 持有进程至实际退出，
 取消或进度不证明登录或清理完成，恢复查询不会重新认证。
+
+`recall` 仅搜索当前 Agent 命名空间内的会话（包括归档），复用原有 Unicode 字面检索、最近 200 个会话上限和规范历史快照。普通 Recall 页面支持标题／正文、UTC 日期、会话筛选，并定位原消息。显式 `recall: true` 为模型提供 `Recall`、`RecallMore`、`RecallMaterial`，冻结的定义参与正常运行恢复。工具使用 Engine 的真实调用上下文及原生激活所持请求，每页复核活动 invocation，并排除当前轮。附件先在 SQLite 中复制到当前会话，再复用有界文本／图片读取；原请求资源和 worker 容量持有到复制完成。

@@ -27,7 +27,10 @@ use std::collections::BTreeMap;
 
 #[path = "contract_imports.rs"]
 mod imports;
+#[path = "contract_recall.rs"]
+mod recall;
 pub use imports::*;
+pub use recall::*;
 #[path = "contract_projects.rs"]
 mod projects;
 pub use projects::*;
@@ -46,6 +49,9 @@ pub use permissions::*;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentConfiguration")]
 pub struct Configuration {
+    /// Explicit access to this Agent’s earlier conversations for model tools.
+    #[serde(default)]
+    pub recall: bool,
     /// Explicit service backends; discovery does not authorize execution.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(length(max = 8))]
@@ -68,7 +74,7 @@ pub struct Configuration {
     pub max_active_runs: usize,
     #[schemars(range(min = 1, max = 16))]
     pub max_steps: usize,
-    /// Only explicitly selected, frozen application service methods become tools.
+    /// Explicitly selected, frozen application service tools, alongside configured native tools.
     #[schemars(length(max = 128))]
     pub tools: Vec<ServiceTool>,
 }
@@ -984,6 +990,10 @@ pub fn contract() -> Contract {
                 (
                     "catalog".into(),
                     method::<List, SessionPage>(MethodMode::Subscription),
+                ),
+                (
+                    "recall".into(),
+                    method::<RecallQuery, RecallPage>(MethodMode::Query),
                 ),
                 (
                     "imports".into(),

@@ -147,6 +147,11 @@ export const configurations = {
     title: 'AgentConfiguration',
     type: 'object',
     properties: {
+      recall: {
+        description: 'Explicit access to this Agent’s earlier conversations for model tools.',
+        type: 'boolean',
+        default: false,
+      },
       executors: {
         description: 'Explicit service backends; discovery does not authorize execution.',
         type: 'array',
@@ -199,7 +204,8 @@ export const configurations = {
         maximum: 16,
       },
       tools: {
-        description: 'Only explicitly selected, frozen application service methods become tools.',
+        description:
+          'Explicitly selected, frozen application service tools, alongside configured native tools.',
         type: 'array',
         items: {
           $ref: '#/$defs/AgentServiceTool',
@@ -566,6 +572,11 @@ export const configurations = {
         type: 'object',
         additionalProperties: false,
         properties: {
+          recall: {
+            type: 'boolean',
+            description: 'Explicit access to this Agent’s earlier conversations for model tools.',
+            default: false,
+          },
           executors: {
             type: 'array',
             items: {
@@ -623,7 +634,7 @@ export const configurations = {
               $ref: '#/$defs/AgentServiceTool',
             },
             description:
-              'Only explicitly selected, frozen application service methods become tools.',
+              'Explicitly selected, frozen application service tools, alongside configured native tools.',
             maxItems: 128,
           },
         },

@@ -65,6 +65,7 @@ export function installation(
     permissions: { access: 'workspace_write', requestPermissions: true },
     maxActiveRuns: 4,
     maxSteps: 16,
+    recall: true,
     tools,
     skillLibrary: 'skills',
   };

@@ -176,6 +176,7 @@ export interface ProjectsProps {
   busy: boolean;
 }
 export type ImportsProps = ProjectsProps;
+export type RecallProps = ProjectsProps;
 export interface DirectoryPickerProps {
   purpose?: 'workspace' | 'import';
   chooseLabel?: string;
@@ -523,6 +524,24 @@ export const applicationPageContract = component(
     open: { type: 'boolean' },
   }),
   { closed: object({}) },
+);
+export const recallContract = component(
+  'maka.agent.Recall',
+  object({
+    theme: { $ref: '#/$defs/Theme' },
+    locale,
+    open: { type: 'boolean' },
+    busy: { type: 'boolean' },
+  }),
+  {
+    selected: withDefs(
+      object({
+        session: { $ref: '#/$defs/AgentSession' },
+        anchor: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
+      }),
+    ),
+    closed: object({}),
+  },
 );
 export const importsContract = component(
   'maka.agent.Imports',

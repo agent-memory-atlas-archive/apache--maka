@@ -80,67 +80,7 @@ impl ToolPreparer for Recall {
                         Input::Material(_) => unreachable!("material handled before search"),
                         Input::Search(query) => recall.search(&call, &query, permit).await?,
                         Input::More(more) => {
-                            let (catalog, _) = reader::sessions(
-                                recall.history.as_ref(),
-                                &call,
-                                Some(&more.session_id),
-                            )
-                            .await?;
-                            let summary = catalog
-                                .into_iter()
-                                .next()
-                                .ok_or_else(|| failed("Recall source Session was not found"))?;
-                            let mut reader = Reader::new(
-                                recall.history.clone(),
-                                call.clone(),
-                                more.session_id.clone(),
-                                None,
-                            );
-                            let mut position = 0;
-                            let hit = loop {
-                                let message = reader
-                                    .next()
-                                    .await?
-                                    .ok_or_else(|| failed("Recall anchor was not found"))?;
-                                if message.message_id == more.anchor_message_id {
-                                    if rank::excluded(&call, &more.session_id, &message) {
-                                        return Err(failed("Recall cannot expand its active Turn"));
-                                    }
-                                    break rank::Hit {
-                                        session: 0,
-                                        position,
-                                        sequence: message.sequence,
-                                        message_id: message.message_id,
-                                        turn_id: message.turn_id,
-                                        timestamp: message.timestamp,
-                                        role: message.role,
-                                        length: 0,
-                                        frequencies: vec![],
-                                        offset: more.offset.unwrap_or(0),
-                                        score: 0.0,
-                                    };
-                                }
-                                position += 1;
-                            };
-                            let sources = [rank::Source {
-                                summary,
-                                through: reader.through(),
-                            }];
-                            let passages = passages::build(
-                                recall.history.clone(),
-                                &call,
-                                &sources,
-                                &[hit],
-                                &[],
-                                (more.before.unwrap_or(8), more.after.unwrap_or(8)),
-                                permit,
-                            )
-                            .await?;
-                            ResultSet {
-                                passages,
-                                searched_every_session: true,
-                                gaps: vec![],
-                            }
+                            search::more(Arc::new(recall.clone()), &call, &more, permit).await?
                         }
                     };
                     recall.check_privacy().await?;
@@ -181,26 +121,7 @@ impl Recall {
         query: &Query,
         permit: Arc<tokio::sync::OwnedSemaphorePermit>,
     ) -> Result<ResultSet, ToolError> {
-        let scan = rank::search(self.history.clone(), call, query, permit.clone()).await?;
-        let mut hits = scan.hits;
-        for hit in &mut hits {
-            hit.offset = hit.offset.saturating_sub(512);
-        }
-        let passages = passages::build(
-            self.history.clone(),
-            call,
-            &scan.sources,
-            &hits,
-            &query.terms,
-            (4, 4),
-            permit,
-        )
-        .await?;
-        Ok(ResultSet {
-            passages,
-            searched_every_session: scan.complete,
-            gaps: scan.gaps,
-        })
+        search::search(Arc::new(self.clone()), call, query, permit).await
     }
 }
 

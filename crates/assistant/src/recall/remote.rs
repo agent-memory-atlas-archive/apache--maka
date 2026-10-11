@@ -17,7 +17,7 @@
  * under the License.
  */
 
-use super::{Query, Recall, reader, types::fold};
+use super::{Query, Recall, search};
 use futures_util::future::BoxFuture;
 use maka_plugins::{
     authorization::{Capability, Request, Target},
@@ -103,22 +103,10 @@ impl Method for Search {
                     _ = call.cancellation.cancelled() => return Err(Error::Cancelled),
                     permit = recall.workers.clone().acquire_owned() => Arc::new(permit.map_err(provider)?),
                 };
-                let (sessions, catalog_complete) = reader::sessions(
-                    recall.history.as_ref(), &call, query.session_id.as_deref(),
-                ).await.map_err(provider)?;
-                let terms: Vec<_> = query.terms.iter().map(|term| fold(term)).collect();
-                let mut matches = Vec::new();
-                for session in sessions {
-                    // Titles have no message timestamp; time-bounded searches
-                    // must be satisfied by an actual historical message.
-                    if query.since.is_none() && query.until.is_none()
-                        && terms.iter().any(|term| fold(&session.session.name).contains(term)) {
-                        matches.push(Match::Title {
-                            session_id: session.session.session_id,
-                            title: session.session.name,
-                        });
-                    }
-                }
+                let (sessions, catalog_complete) = search::titles(recall.as_ref(), &call, &query).await.map_err(provider)?;
+                let mut matches: Vec<_> = sessions.into_iter().map(|session| Match::Title {
+                    session_id: session.id, title: session.title,
+                }).collect();
                 let result = recall.search(&call, &query, permit).await.map_err(provider)?;
                 for passage in result.passages {
                     let anchor = passage.messages.iter().find(|message| message.is_anchor)

@@ -164,6 +164,8 @@ export type RuntimeProtocol =
   | SkillPreparationRecord
   | AgentList
   | AgentCreate
+  | RecallQuery
+  | AgentRecallPage
   | AgentImportsRead
   | AgentImportsPage
   | AgentImportChange
@@ -5624,6 +5626,10 @@ export interface TextChunk {
 }
 export interface AgentConfiguration {
   /**
+   * Explicit access to this Agent’s earlier conversations for model tools.
+   */
+  recall?: boolean;
+  /**
    * Explicit service backends; discovery does not authorize execution.
    *
    * @maxItems 8
@@ -5770,7 +5776,7 @@ export interface AgentConfiguration {
   maxActiveRuns: number;
   maxSteps: number;
   /**
-   * Only explicitly selected, frozen application service methods become tools.
+   * Explicitly selected, frozen application service tools, alongside configured native tools.
    *
    * @maxItems 128
    */
@@ -7006,6 +7012,39 @@ export interface AgentCreate {
 export interface AgentProjectRef {
   id: string;
   revision: string;
+}
+export interface RecallQuery {
+  /**
+   * @minItems 1
+   * @maxItems 8
+   */
+  terms:
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string];
+  question?: string | null;
+  limit?: number | null;
+  session_id?: string | null;
+  since?: number | null;
+  until?: number | null;
+}
+export interface AgentRecallPage {
+  titles: AgentSession[];
+  passages: AgentRecallPassage[];
+  complete: boolean;
+  gaps: string[];
+}
+export interface AgentRecallPassage {
+  session: AgentSession;
+  anchorMessageId: string;
+  anchorSequence: number;
+  excerpt: string;
+  matchedTerms: string[];
 }
 export interface AgentImportSourceRef {
   id: string;

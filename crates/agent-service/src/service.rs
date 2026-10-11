@@ -83,6 +83,7 @@ impl Handler for Agent {
                         context.emit(encode(page)?).await?;
                     }
                 }
+                "recall" => encode(owner.recall.query(decode(input)?, context.scope()).await?),
                 "imports" => encode(owner.imports(decode(input)?, context.scope()).await?),
                 "import" => {
                     let operation = context
@@ -624,6 +625,12 @@ fn encode<T: Serialize>(value: T) -> Result<Value, String> {
     serde_json::to_value(value).map_err(|_| "agent_output_unavailable".into())
 }
 pub(crate) fn summary(owner: &Owner, session: SessionRecord<SessionConfiguration>) -> Session {
+    summary_for(&owner.data_source, session)
+}
+pub(crate) fn summary_for(
+    data_source: &DataSource,
+    session: SessionRecord<SessionConfiguration>,
+) -> Session {
     use maka_event_log::sessions::SessionExecutionState;
     use maka_runtime::event::TerminalStatus;
     let activity = if session.pending_interaction_since.is_some() {
@@ -643,7 +650,7 @@ pub(crate) fn summary(owner: &Owner, session: SessionRecord<SessionConfiguration
         SessionActivity::Idle
     };
     Session {
-        data_source: Box::new(owner.data_source.clone()),
+        data_source: Box::new(data_source.clone()),
         permissions: session.configuration.permissions,
         boundary_revision: session.configuration.boundary_revision,
         activity,

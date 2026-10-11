@@ -29,7 +29,7 @@ export type SettingsCategory = (typeof settingsCategories)[number];
 interface SettingsState {
   preferences: AppearanceEditor;
   settingsCategory: SettingsCategory;
-  pages: ('settings' | 'connections' | 'deployment' | 'projects' | 'imports' | 'apps')[];
+  pages: ('settings' | 'connections' | 'deployment' | 'projects' | 'imports' | 'apps' | 'recall')[];
 }
 export function settingsEvent(state: SettingsState, input: ComponentInput, base: Theme): boolean {
   if (input.kind !== 'raw') return false;

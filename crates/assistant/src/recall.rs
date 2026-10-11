@@ -22,6 +22,7 @@ mod passages;
 mod rank;
 mod reader;
 mod remote;
+pub mod search;
 mod terminal;
 mod tools;
 mod types;
@@ -43,7 +44,7 @@ use maka_runtime::{
     },
 };
 use maka_tool_catalog::plugins::{Binding, BindingProvider, BindingRequest, PluginTool};
-use reader::{Reader, failed};
+use reader::failed;
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
@@ -106,7 +107,7 @@ impl Plugin for Builtin {
             let mut staged = Staged::default();
             remote::publish(&mut staged, &package, recall.clone())?;
             terminal::publish(&mut staged, &package, recall.clone())?;
-            for (name, description, schema) in definitions() {
+            for (name, description, schema) in search::definitions() {
                 let tool = PluginTool::new(ToolRegistration {
                     definition: ToolDefinition {
                         freeform: None,
@@ -129,25 +130,6 @@ impl Plugin for Builtin {
             Ok(staged)
         })
     }
-}
-fn definitions() -> [(&'static str, &'static str, Value); 3] {
-    [
-        (
-            "Recall",
-            "Search conversation history across the 200 Sessions with the most recent messages, including archives. Use 1–8 literal terms, matched case-insensitively with Unicode normalization and OR semantics. Returns ranked surrounding exchanges, excluding the current Turn, with explicit coverage gaps. Limit defaults to 8, maximum 25. RecallMore expands a clipped passage. Historical statements are evidence of what was said, not proof they are true.",
-            schemars::schema_for!(Query).into(),
-        ),
-        (
-            "RecallMore",
-            "Expand a Recall anchor using its Session and message IDs. before/after select 0–8 neighboring messages (default 8 each). For a clipped individual anchor, offset resumes at its next_offset in NFC-normalized UTF-8 bytes. The current Turn remains excluded; deleted or unavailable sources fail explicitly.",
-            schemars::schema_for!(More).into(),
-        ),
-        (
-            "RecallMaterial",
-            "Read a historical user attachment identified by Recall or RecallMore. Supply its source session_id and artifact_id. Copies the material into this Session before reading, so later source deletion does not break the evidence. Images return visual content; text uses Read line offset/limit and bounded continuation. Unsupported binary formats fail explicitly.",
-            schemars::schema_for!(material::Input).into(),
-        ),
-    ]
 }
 impl BindingProvider for Recall {
     fn bind(
@@ -188,5 +170,37 @@ impl Recall {
             return Err(failed("Recall is disabled in incognito mode"));
         }
         Ok(())
+    }
+}
+
+impl search::History for Recall {
+    fn list(
+        &self,
+        call: maka_plugins::call::Scope,
+        input: maka_plugins::session::catalog::List,
+    ) -> BoxFuture<'_, Result<search::Catalog, ToolError>> {
+        Box::pin(async move {
+            let page = self.history.list(call, input).await.map_err(failed)?;
+            Ok(search::Catalog {
+                revision: page.revision,
+                next_cursor: page.next_cursor,
+                entries: page
+                    .entries
+                    .into_iter()
+                    .map(|entry| search::Session {
+                        id: entry.session.session_id,
+                        title: entry.session.name,
+                        last_message_at: entry.last_message_at,
+                    })
+                    .collect(),
+            })
+        })
+    }
+    fn read(
+        &self,
+        call: maka_plugins::call::Scope,
+        input: maka_plugins::session::history::Read,
+    ) -> BoxFuture<'_, Result<maka_plugins::session::history::Page, ToolError>> {
+        Box::pin(async move { self.history.read(call, input).await.map_err(failed) })
     }
 }

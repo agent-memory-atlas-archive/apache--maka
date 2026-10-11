@@ -185,6 +185,8 @@ pub(super) fn catalog() -> Value {
         root::<maka_agent_service::skills::contract::PreparationRecord>(&mut g),
         root::<maka_agent_service::contract::List>(&mut g),
         root::<maka_agent_service::contract::Create>(&mut g),
+        root::<maka_agent_service::contract::RecallQuery>(&mut g),
+        root::<maka_agent_service::contract::RecallPage>(&mut g),
         root::<maka_agent_service::contract::ImportsRead>(&mut g),
         root::<maka_agent_service::contract::ImportsPage>(&mut g),
         root::<maka_agent_service::contract::ImportChange>(&mut g),

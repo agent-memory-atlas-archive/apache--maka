@@ -31,6 +31,7 @@ mod notifications;
 mod projects;
 pub(crate) use notifications::ReturnRoute;
 mod queue;
+mod recall;
 mod skills;
 use maka_config::ConfigurationStore;
 use maka_event_log::{EventLog, sessions::SessionRecord};
@@ -113,6 +114,7 @@ struct Runs {
 }
 pub(crate) struct Owner {
     pub store: Arc<EventLog>,
+    pub recall: Arc<recall::Recall>,
     pub settings: Configuration,
     pub prefix: String,
     pub data_source: DataSource,
@@ -162,7 +164,7 @@ impl Owner {
         input: Value,
         implementation: &'static str,
         prompt: Option<&'static str>,
-        additional: Vec<maka_runtime::tools::ToolRegistration>,
+        mut additional: Vec<maka_runtime::tools::ToolRegistration>,
         internal_bindings: BTreeMap<String, Option<String>>,
     ) -> Result<Arc<Self>, String> {
         if !jsonschema_valid(&input) {
@@ -171,16 +173,6 @@ impl Owner {
         let settings: Configuration =
             serde_json::from_value(input).map_err(|_| "agent_configuration_invalid")?;
         let persistence = context.persistence().ok_or("agent_requires_persistence")?;
-        let internal_tools = additional
-            .iter()
-            .map(|tool| tool.definition.clone())
-            .collect();
-        let (tools, tool_basis) = crate::tools::catalog(
-            context.services(),
-            persistence.store().clone(),
-            &settings.tools,
-            additional,
-        )?;
         let root = persistence
             .store()
             .owned_root()
@@ -210,6 +202,28 @@ impl Owner {
             .map_err(|_| "agent_executor_unavailable")?;
         let workers = TaskTracker::new();
         let stop = CancellationToken::new();
+        let recall = Arc::new(recall::Recall::new(
+            persistence.store().clone(),
+            prefix.clone(),
+            data_source.clone(),
+            settings.recall,
+            stop.clone(),
+            workers.clone(),
+            context.services(),
+        ));
+        if settings.recall {
+            additional.extend(recall.tools());
+        }
+        let internal_tools = additional
+            .iter()
+            .map(|tool| tool.definition.clone())
+            .collect();
+        let (tools, tool_basis) = crate::tools::catalog(
+            context.services(),
+            persistence.store().clone(),
+            &settings.tools,
+            additional,
+        )?;
         let credentials = crate::model::Credentials {
             executor: models.clone(),
             refresh: Arc::new(maka_runtime_host::oauth::Authority::new(
@@ -245,6 +259,7 @@ impl Owner {
                 .map_err(|_| "agent_configuration_unavailable")?,
         );
         Ok(Arc::new(Self {
+            recall,
             store: persistence.store().clone(),
             prefix,
             data_source,
@@ -280,12 +295,7 @@ impl Owner {
         format!("{}{}", self.prefix, &digest[..32])
     }
     pub fn owns(&self, id: &str) -> bool {
-        id.strip_prefix(&self.prefix).is_some_and(|tail| {
-            tail.len() == 32
-                && tail
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        })
+        owns_session(&self.prefix, id)
     }
     pub async fn session(&self, id: &str) -> Result<SessionRecord<SessionConfiguration>, String> {
         if !self.owns(id) {
@@ -843,3 +853,12 @@ fn public_error(error: RunError) -> String {
 #[cfg(test)]
 #[path = "owner/tests.rs"]
 mod tests;
+
+pub(crate) fn owns_session(prefix: &str, id: &str) -> bool {
+    id.strip_prefix(prefix).is_some_and(|tail| {
+        tail.len() == 32
+            && tail
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
+}

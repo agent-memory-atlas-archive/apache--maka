@@ -19,14 +19,12 @@
 
 use super::{
     reader::{Reader, failed, sessions},
+    search::{History, Session},
     types::{Query, fold},
 };
 use maka_plugins::{
     call::Scope,
-    session::{
-        catalog::Summary,
-        history::{Chunk, History, Role},
-    },
+    session::history::{Chunk, Role},
 };
 use maka_runtime::tools::ToolError;
 use std::{
@@ -36,7 +34,7 @@ use std::{
 use tokio::sync::OwnedSemaphorePermit;
 
 pub(super) struct Source {
-    pub summary: Summary,
+    pub summary: Session,
     pub through: Option<u64>,
 }
 #[derive(Clone)]
@@ -90,12 +88,7 @@ pub(super) async fn search(
     let mut corpus = 0;
     for summary in catalog {
         let session = scan.sources.len();
-        let mut reader = Reader::new(
-            history.clone(),
-            call.clone(),
-            summary.session.session_id.clone(),
-            None,
-        );
+        let mut reader = Reader::new(history.clone(), call.clone(), summary.id.clone(), None);
         let mut position = 0;
         loop {
             let message = match reader.next().await {
@@ -108,7 +101,7 @@ pub(super) async fn search(
                     scan.complete = false;
                     scan.gaps.push(format!(
                         "Session {} was not fully read: {error}",
-                        summary.session.session_id
+                        summary.id
                     ));
                     // Do not return evidence from a source whose access or contents changed.
                     scan.hits.retain(|hit| hit.session != session);
@@ -118,7 +111,7 @@ pub(super) async fn search(
             let ordinal = position;
             position += 1;
             corpus += 1;
-            if excluded(call, &summary.session.session_id, &message)
+            if excluded(call, &summary.id, &message)
                 || query.since.is_some_and(|value| message.timestamp < value)
                 || query.until.is_some_and(|value| message.timestamp > value)
             {

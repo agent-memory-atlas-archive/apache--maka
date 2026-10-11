@@ -94,11 +94,13 @@ Ctrl+V reads the local OS clipboard once, preferring files, then an image, then 
 Images are limited to 33,554,432 pixels and encoded directly into immutable PNG chunks;
 no temporary image file is created. Text uses its original insertion position and
 requires the same conversation and unchanged draft. Clipboard failures require a
-new physical paste; Retry only rereads an original selected file. Attachment draft
-restoration remains unfinished.
+new physical paste; Retry only rereads an original selected file. The ordinary product restores unsent attachment references from the original
+local native checkpoint.
 
 Conversation navigation retains up to 32 original native draft editors, including
 selection and undo. Late captures and send acknowledgements still target their
 original owner/revision. At capacity, only an observed empty, idle draft can be
-reclaimed; otherwise send or clear an existing draft first. These drafts remain
-local to the current Composer mount; restart restoration is not implemented.
+reclaimed; otherwise send or clear an existing draft first. Native checkpoints persist text, validated selection and unsent attachment
+references under the UI Root. The ordinary product reconciles original send
+receipts before restoring them; unknown outcomes never trigger a resend. Undo
+history remains local to the current mount.

@@ -184,6 +184,7 @@ const specifications = {
       directories: one(own.directoryPickerContract),
       projects: one(own.projectsContract),
       imports: one(own.importsContract),
+      recall: one(own.recallContract),
       apps: one(own.appsContract),
       details: one(own.sessionDetailsContract),
       terminals: one(own.terminalPanelContract),
@@ -327,6 +328,17 @@ specifications['command-palette'] = {
     input: one(sdk.contracts.textInput),
     reader: one(sdk.contracts.textReader),
     reading: one(sdk.contracts.readingArea),
+  },
+};
+specifications.recall = {
+  contract: own.recallContract,
+  export: 'Recall',
+  module: 'recall',
+  imports: {
+    agent: one(sdk.contracts.agent),
+    reading: one(sdk.contracts.readingArea),
+    input: one(sdk.contracts.textInput),
+    reader: one(sdk.contracts.textReader),
   },
 };
 specifications.projects = {

@@ -879,9 +879,18 @@ fn standard_product_import_sources_preview_publish_remove_and_original_receipt_r
             tui.wait_for("Imported in Maka");
             tui.send(b"\x0b");
             tui.wait_for("Search commands or conversations");
-            tui.send(b"Import conversations");
-            tui.wait_for("› Import conversations");
+            tui.send(b"Recall");
+            tui.wait_for("› Recall");
             tui.send(b"\r");
+            tui.wait_for("Find what was said in earlier conversations.");
+            tui.send(b"native\r");
+            tui.wait_for("Imported native answer");
+            click_text(&mut tui, "Imported in Maka");
+            tui.wait_until(|screen| {
+                screen.contains("Imported native answer")
+                    && !screen.contains("Find what was said in earlier conversations.")
+            });
+            click_text(&mut tui, "Import conversations");
             tui.wait_for("Imported conversations");
             click_text(&mut tui, "Back");
             tui.wait_for("Remove source");
