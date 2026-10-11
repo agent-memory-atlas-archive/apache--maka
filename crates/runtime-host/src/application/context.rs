@@ -38,12 +38,12 @@ impl Context {
     pub fn caller(&self) -> Option<&Caller> {
         self.caller.as_ref()
     }
-    /// Publish one bounded, schema-checked subscription item. Backpressure waits
+    /// Publish bounded, schema-checked subscription or mutation progress. Backpressure waits
     /// for the reader; producer completion or cancellation rejects further emits.
     pub fn emit(&self, value: Value) -> BoxFuture<'static, Result<()>> {
         match &self.stream {
             Some(stream) => stream.emit(value),
-            None => Box::pin(async { Err("request is not a subscription".into()) }),
+            None => Box::pin(async { Err("request does not declare a progress stream".into()) }),
         }
     }
     pub fn operation(&self) -> Option<&RecoveryRef> {
@@ -136,6 +136,22 @@ impl Context {
         operation: Uuid,
         attachments: impl Into<CallResources>,
     ) -> Result<BoxFuture<'static, Result<OperationReply>>> {
+        let result =
+            self.begin_mutation(import, provider, method, input, operation, attachments)?;
+        Ok(Box::pin(async move { Ok(result.await?.result().await) }))
+    }
+    /// Enqueues the same durable mutation and exposes its original progress
+    /// reader. Final receipt and physical cleanup remain independent; dropping
+    /// this observer cannot release the accepted request's parent Ticket.
+    pub fn begin_mutation(
+        &self,
+        import: &str,
+        provider: usize,
+        method: String,
+        input: Value,
+        operation: Uuid,
+        attachments: impl Into<CallResources>,
+    ) -> Result<BoxFuture<'static, Result<Mutation>>> {
         let (reply, result) = oneshot::channel();
         self.enqueue(
             import,
@@ -151,11 +167,9 @@ impl Context {
             },
         )?;
         Ok(Box::pin(async move {
-            Ok(result
+            result
                 .await
-                .map_err(|_| "Host deployment is closed".to_string())??
-                .result()
-                .await)
+                .map_err(|_| "Host deployment is closed".to_string())?
         }))
     }
     /// Uses the original reference, never the current import/provider selection.

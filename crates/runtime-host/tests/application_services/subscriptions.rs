@@ -700,7 +700,7 @@ async fn terminal_result_schema_and_query_emit_rejection_share_existing_owner() 
                         .emit(json!("invalid query publication"))
                         .await
                         .unwrap_err()
-                        .contains("not a subscription")
+                        .contains("does not declare a progress stream")
                 );
                 Ok(input)
             })

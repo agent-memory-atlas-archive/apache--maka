@@ -513,6 +513,10 @@ pub struct Delivery {
 #[schemars(rename = "AgentDeliveryFact")]
 pub enum DeliveryFact {
     Opened,
+    /// Both external text streams share the original ExecutorStarted message.
+    ExecutorStarted {
+        message_id: String,
+    },
     /// Canonical transcript facts changed; clients query bounded history.
     TranscriptChanged,
     StepEnded {
@@ -938,6 +942,7 @@ pub enum ToolImagePage {
 pub fn contract() -> Contract {
     fn method<I: JsonSchema, O: JsonSchema>(mode: MethodMode) -> Method {
         Method {
+            progress: None,
             mode,
             input: serde_json::to_value(schemars::schema_for!(I)).expect("input schema"),
             output: serde_json::to_value(schemars::schema_for!(O)).expect("output schema"),
@@ -1007,6 +1012,7 @@ pub fn contract() -> Contract {
                 (
                     "uploadAttachment".into(),
                     Method {
+                        progress: None,
                         resources: BTreeMap::from([(
                             "file".into(),
                             maka_plugin_core::contract::binary_resource_type(),

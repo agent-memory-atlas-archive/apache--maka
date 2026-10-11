@@ -85,6 +85,10 @@ pub struct Method {
     pub mode: MethodMode,
     pub input: Value,
     pub output: Value,
+    /// Bounded transient observations from this mutation, separate from its
+    /// original final receipt. Only mutation methods may declare progress.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<Value>,
     pub resources: BTreeMap<String, ResourceType>,
 }
 
@@ -172,6 +176,14 @@ impl Contract {
                     crate::name(name)?;
                     crate::schema(&method.input)?;
                     crate::schema(&method.output)?;
+                    if let Some(progress) = &method.progress {
+                        if method.mode != MethodMode::Mutation {
+                            return Err(Error::Declaration(
+                                "only mutation methods may declare progress".into(),
+                            ));
+                        }
+                        crate::schema(progress)?;
+                    }
                     for (slot, resource) in &method.resources {
                         crate::name(slot)?;
                         resource.validate()?;

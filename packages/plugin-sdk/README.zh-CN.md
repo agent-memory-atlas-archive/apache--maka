@@ -277,12 +277,19 @@ Agent 图片工具使用生成的 `AgentToolImageFrame` 契约及 `result: "imag
 `contracts.executor` 是只有 `execute` mutation 的普通 Host 服务。`ExecutorExecute`
 包含原 invocation、conversation key、正文、工作区路径、指令及后端自己的模型／思考设置。
 这些字段只描述工作，不授予文件、进程或其它服务权限；相应 import 和 grant 必须独立声明。
-实际工作与资源结算后才能返回 `ExecutorOutcome`。当前契约只传递文本输入与最终结果，尚未包含
-流式事件或附件资源。
+实际工作与资源结算后才能返回 `ExecutorOutcome`。声明的 `progress` schema 接收
+`ExecutorOutput` 正文、思考增量及工具活动观察；附件资源仍待接入。
 
 包 manifest 声明该 export（JavaScript 入口必须包含 realm），普通 `activate` 返回
 `{ executor: { contract: contracts.executor, service: ['backend'] } }`，导出的 `backend.execute`
 接收 `ExecutorExecute`，返回例如 `{ status: 'completed', text: input.message }`。
+回调第三参数为 `RequestContext`，通过
+`await context.invoke({ operation: 'emit', value: { type: 'output_delta', text: '正文' } })`
+逐项发出进度。有界临时流最多排队 16 项，每项 64 KiB；emit 接受不代表 Agent 已持久化事件。
+Agent 通过原 executor recorder 记录每项进度后才发布完成；工具帧只观察后端活动，不派发 Agent 工具。
+原生消费方通过 `Context::begin_mutation` 和 `Mutation::recv` 读取，再等待原 completion；
+仅等待回执的调用方自动排空进度。丢弃读取端关闭进度需求，原 Scope 仍负责实际 effect 的清理。
+恢复只读取原回执，不重放进度或执行。
 
 消费方原生 Agent 显式声明匹配契约的 import，并配置
 `executors: [{ name: "external", import: "backend" }]`；组合将 `backend` 绑定到实际 provider，

@@ -91,6 +91,7 @@ export type RuntimeProtocol =
   | AgentExecutors
   | ExecutorExecute
   | ExecutorOutcome
+  | ExecutorOutput
   | WorkHubResolve
   | WorkHubCoordinator
   | WorkHubConfiguration
@@ -1212,6 +1213,35 @@ export type ExecutorOutcome =
       code?: string | null;
       recoverable?: boolean;
       status: 'failed';
+    };
+/**
+ * External tool activity is observation, never a request to dispatch a Host tool.
+ */
+export type ExecutorOutput =
+  | {
+      text: string;
+      type: 'output_delta';
+    }
+  | {
+      text: string;
+      type: 'thinking_delta';
+    }
+  | {
+      toolCallId: string;
+      name: string;
+      input: unknown;
+      type: 'tool_start';
+    }
+  | {
+      toolCallId: string;
+      text: string;
+      type: 'tool_progress';
+    }
+  | {
+      toolCallId: string;
+      text: string;
+      isError?: boolean;
+      type: 'tool_result';
     };
 export type WorkHubCoordinator =
   | {
@@ -2589,6 +2619,10 @@ export type AgentDeliveryFact =
       kind: 'opened';
     }
   | {
+      messageId: string;
+      kind: 'executor_started';
+    }
+  | {
       kind: 'transcript_changed';
     }
   | {
@@ -3161,6 +3195,13 @@ export interface Method {
   mode: MethodMode;
   input: unknown;
   output: unknown;
+  /**
+   * Bounded transient observations from this mutation, separate from its
+   * original final receipt. Only mutation methods may declare progress.
+   */
+  progress?: {
+    [k: string]: unknown | undefined;
+  };
   resources: {
     [k: string]: ResourceType | undefined;
   };

@@ -49,6 +49,7 @@ pub fn business() -> Contract {
                 (
                     "read".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Query,
                         input: json!({}),
                         output: json!({}),
@@ -58,6 +59,7 @@ pub fn business() -> Contract {
                 (
                     "write".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Mutation,
                         input: json!({}),
                         output: json!({}),

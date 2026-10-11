@@ -191,6 +191,7 @@ fn reference(padding: usize) -> RecoveryRef {
                 methods: BTreeMap::from([(
                     "change".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Mutation,
                         input: json!({"description":"\"\\\n".repeat(padding)}),
                         output: json!({}),

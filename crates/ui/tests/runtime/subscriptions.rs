@@ -53,6 +53,7 @@ fn service_contract() -> Contract {
                 (
                     "read".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Subscription,
                         input: json!({}),
                         output: json!({"type":"integer"}),
@@ -62,6 +63,7 @@ fn service_contract() -> Contract {
                 (
                     "panic".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Mutation,
                         input: json!({}),
                         output: json!({}),
@@ -71,6 +73,7 @@ fn service_contract() -> Contract {
                 (
                     "query".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Query,
                         input: json!({}),
                         output: json!({"type":"integer"}),

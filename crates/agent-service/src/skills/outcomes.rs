@@ -38,6 +38,7 @@ pub fn contract() -> maka_plugin_core::contract::Contract {
             methods: BTreeMap::from([(
                 "read".into(),
                 Method {
+                    progress: None,
                     mode: MethodMode::Query,
                     input: schemars::schema_for!(RecoveryRef).into(),
                     output: schemars::schema_for!(super::contract::Outcome).into(),

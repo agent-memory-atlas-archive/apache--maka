@@ -91,6 +91,7 @@ pub fn contract() -> Contract {
         (
             name.into(),
             Method {
+                progress: None,
                 mode: if name == "readImage" {
                     MethodMode::Subscription
                 } else if method(name).expect("known method").1 {

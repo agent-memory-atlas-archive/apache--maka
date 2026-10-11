@@ -112,6 +112,7 @@ pub fn text_contract() -> Contract {
             methods: BTreeMap::from([(
                 "plain".into(),
                 Method {
+                    progress: None,
                     mode: MethodMode::Query,
                     input: serde_json::to_value(schemars::schema_for!(MarkdownTextInput))
                         .expect("Markdown text input"),

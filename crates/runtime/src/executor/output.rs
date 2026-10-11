@@ -21,7 +21,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// External tool activity is observation, never a request to dispatch a Host tool.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(rename = "ExecutorOutput")]
 #[serde(
     tag = "type",
     rename_all = "snake_case",

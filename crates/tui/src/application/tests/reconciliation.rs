@@ -108,6 +108,7 @@ fn root_handoff_keeps_original_job_and_requires_exact_restoration_receipt() {
                 methods: BTreeMap::from([(
                     "run".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Query,
                         input: json!({"type":"object"}),
                         output: json!({}),

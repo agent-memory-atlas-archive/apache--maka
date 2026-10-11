@@ -113,6 +113,7 @@ fn terminal_restoration_during_preparation_runs_close_successor_before_root_rele
             methods: BTreeMap::from([(
                 "run".into(),
                 Method {
+                    progress: None,
                     mode: MethodMode::Mutation,
                     input: json!({}),
                     output: json!({}),

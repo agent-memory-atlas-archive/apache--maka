@@ -77,6 +77,7 @@ fn contract(mode: MethodMode) -> Contract {
             methods: BTreeMap::from([(
                 "echo".into(),
                 Method {
+                    progress: None,
                     mode,
                     input: json!({"type":"string"}),
                     output: json!({"type":"string"}),

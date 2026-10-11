@@ -408,6 +408,7 @@ impl Source {
                 methods: BTreeMap::from([(
                     "produce".into(),
                     Method {
+                        progress: None,
                         mode: if self.is_image() {
                             MethodMode::Subscription
                         } else {

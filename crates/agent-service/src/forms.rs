@@ -62,6 +62,7 @@ pub fn contract() -> Contract {
             methods: BTreeMap::from([(
                 "ask".into(),
                 Method {
+                    progress: None,
                     mode: MethodMode::Mutation,
                     input: schemars::schema_for!(Ask).into(),
                     output: schemars::schema_for!(Answer).into(),

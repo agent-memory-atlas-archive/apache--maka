@@ -348,24 +348,34 @@ Selected Agent image tools use the generated `AgentToolImageFrame` contract and 
 workspace path, instructions and executor-owned model/thinking settings. These
 values describe work; filesystem, process and other service access still require
 independent bindings and grants. Return `ExecutorOutcome` only after the actual
-work has settled. The current contract carries a final result and text input;
-streaming events and attachment resources are not part of this version.
+work has settled. Its declared `progress` schema carries `ExecutorOutput` frames:
+text/thinking deltas and observed tool activity. Attachment resources remain unfinished.
 
 Declare the service export in the package manifest, including the JavaScript
 realm, and publish it normally:
 
 ```ts
-import { contracts, type ExecutorExecute, type ExecutorOutcome } from '@maka-agent/plugin-sdk';
+import { contracts, type ExecutorExecute, type ExecutorOutcome, type RequestContext } from '@maka-agent/plugin-sdk';
 
 export function activate() {
   return { executor: { contract: contracts.executor, service: ['backend'] } };
 }
 export const backend = {
-  execute(input: ExecutorExecute): ExecutorOutcome {
+  async execute(input: ExecutorExecute, _observation: unknown, context: RequestContext): Promise<ExecutorOutcome> {
+    await context.invoke({ operation: 'emit', value: { type: 'output_delta', text: input.message } });
     return { status: 'completed', text: input.message };
   },
 };
 ```
+
+Await each `emit`. Progress uses a bounded transient stream (16 queued items,
+64 KiB per item); acceptance does not acknowledge a canonical Agent event. The
+Agent records each frame through its original executor recorder before publishing
+completion. Tool frames describe backend activity and cannot dispatch Agent tools.
+Native consumers use `Context::begin_mutation`, read `Mutation::recv`, then await
+the original completion. Receipt-only consumers drain progress automatically.
+Dropping the reader closes progress demand; original Scope cleanup still owns the
+effect. Recovery reads the original receipt and never replays progress or execution.
 
 The consuming native Agent declares an import with that exact contract and selects
 it with `executors: [{ name: "external", import: "backend" }]`. The composition

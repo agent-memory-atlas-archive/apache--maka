@@ -266,6 +266,7 @@ pub fn contract() -> Contract {
                 (
                     "prepare".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Query,
                         input: schemars::schema_for!(SkillToolRequest<Prepare>).into(),
                         output: schemars::schema_for!(Preparation).into(),
@@ -275,6 +276,7 @@ pub fn contract() -> Contract {
                 (
                     "search".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Query,
                         input: schemars::schema_for!(SkillToolRequest<ModelSearch>).into(),
                         output: schemars::schema_for!(ModelSearchResult<'static>).into(),
@@ -284,6 +286,7 @@ pub fn contract() -> Contract {
                 (
                     "load".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Query,
                         input: schemars::schema_for!(SkillToolRequest<ModelLoad>).into(),
                         output: schemars::schema_for!(ModelLoadResult<'static>).into(),
@@ -293,6 +296,7 @@ pub fn contract() -> Contract {
                 (
                     "setPreference".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Mutation,
                         input: schemars::schema_for!(SetPreference).into(),
                         output: schemars::schema_for!(PreferenceResult).into(),
@@ -302,6 +306,7 @@ pub fn contract() -> Contract {
                 (
                     "preview".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Query,
                         input: schemars::schema_for!(Change).into(),
                         output: schemars::schema_for!(Preview).into(),
@@ -311,6 +316,7 @@ pub fn contract() -> Contract {
                 (
                     "apply".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Mutation,
                         input: schemars::schema_for!(Review).into(),
                         output: schemars::schema_for!(ChangeResult).into(),
@@ -320,6 +326,7 @@ pub fn contract() -> Contract {
                 (
                     "importSource".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Mutation,
                         input: schemars::schema_for!(ImportSource).into(),
                         output: schemars::schema_for!(ChangeResult).into(),
@@ -338,6 +345,7 @@ pub fn contract() -> Contract {
                 (
                     "deleteSource".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Mutation,
                         input: schemars::schema_for!(Review).into(),
                         output: schemars::schema_for!(ChangeResult).into(),
@@ -347,6 +355,7 @@ pub fn contract() -> Contract {
                 (
                     "list".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Query,
                         input: schemars::schema_for!(List).into(),
                         output: schemars::schema_for!(Page).into(),
@@ -356,6 +365,7 @@ pub fn contract() -> Contract {
                 (
                     "read".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Query,
                         input: schemars::schema_for!(Read).into(),
                         output: schemars::schema_for!(Document).into(),

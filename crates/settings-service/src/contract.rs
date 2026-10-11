@@ -236,6 +236,7 @@ pub fn contract() -> Contract {
     }
     fn method<I: JsonSchema, O: JsonSchema>(mode: MethodMode) -> Method {
         Method {
+            progress: None,
             mode,
             input: schema::<I>(schemars::generate::Contract::Deserialize),
             output: schema::<O>(schemars::generate::Contract::Serialize),
@@ -300,6 +301,7 @@ pub fn contract() -> Contract {
                 (
                     "saveCredential".into(),
                     Method {
+                        progress: None,
                         resources: BTreeMap::from([(
                             "secret".into(),
                             maka_plugin_core::contract::ResourceType {

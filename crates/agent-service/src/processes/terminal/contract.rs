@@ -125,6 +125,7 @@ pub enum Outcome<T> {
 }
 fn method<I: JsonSchema, O: JsonSchema>(mode: MethodMode) -> Method {
     Method {
+        progress: None,
         mode,
         input: schemars::schema_for!(I).into(),
         output: schemars::schema_for!(Outcome<O>).into(),

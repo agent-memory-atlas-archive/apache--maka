@@ -29,6 +29,8 @@ enum Behavior {
     Held,
     Lost,
     Unsettled,
+    Streaming,
+    InvalidProgress,
 }
 struct Probe {
     behavior: Behavior,
@@ -74,6 +76,27 @@ impl Handler for Probe {
         Box::pin(async move {
             entered.add_permits(1);
             match behavior {
+                Behavior::Streaming => {
+                    context
+                        .emit(json!({"type":"thinking_delta","text":"checking"}))
+                        .await?;
+                    for index in 0..35 {
+                        context
+                            .emit(json!({"type":"output_delta","text":format!("part {index}\n")}))
+                            .await?;
+                    }
+                    tokio::select! {
+                        permit=release.acquire() => permit.unwrap().forget(),
+                        ()=context.scope().cancellation.cancelled() => return Ok(json!({"status":"cancelled","reason":"stopped"})),
+                    }
+                }
+                Behavior::InvalidProgress => {
+                    // Valid schema, invalid canonical ordering. The recorder owns this check.
+                    context.emit(json!({"type":"tool_result","toolCallId":"not-started","text":"unsafe to accept"})).await?;
+                    context.scope().cancellation.cancelled().await;
+                    cancelled.add_permits(1);
+                    return Ok(json!({"status":"cancelled","reason":"output rejected"}));
+                }
                 Behavior::Returned => {}
                 Behavior::Lost => return Err("fixture lost executor reply".into()),
                 Behavior::Held => tokio::select! {
@@ -150,7 +173,16 @@ async fn activate(fixture: &mut Fixture, install: bool, probe: Option<Arc<Probe>
             "exports":{"executor":{"contract":executor::contract(),"availability":"required"}}
         }}}})).unwrap())]);
         if probe.is_none() {
-            files.insert("executor.mjs".into(),format!(r#"export function activate(){{return {{executor:{{contract:{},service:['backend']}}}};}} export const backend={{execute(input){{return {{status:'completed',text:input.message+' / '+input.settings.model+' / '+input.settings.thinkingLevel}};}}}};"#,serde_json::to_string(&executor::contract()).unwrap()).into_bytes());
+            files.insert("executor.mjs".into(),format!(r#"export function activate(){{return {{executor:{{contract:{},service:['backend']}}}};}} export const backend={{async execute(input, observation, context){{
+                for (const value of [
+                    {{type:'thinking_delta',text:'思考'}},
+                    {{type:'output_delta',text:'live 外部'}},
+                    {{type:'tool_start',toolCallId:'observed-tool',name:'external.read',input:{{path:'source.txt'}}}},
+                    {{type:'tool_progress',toolCallId:'observed-tool',text:'reading'}},
+                    {{type:'tool_result',toolCallId:'observed-tool',text:'done',isError:false}}
+                ]) await context.invoke({{operation:'emit',value}});
+                return {{status:'completed',text:input.message+' / '+input.settings.model+' / '+input.settings.thinkingLevel}};
+            }}}};"#,serde_json::to_string(&executor::contract()).unwrap()).into_bytes());
         }
         let package = Package::new(files).unwrap();
         input.instances.insert(
@@ -314,6 +346,17 @@ async fn executor_service_javascript_uses_original_engine_and_read_only_restart(
             row.event.fact,
             maka_runtime::event::Fact::ModelRequested { .. }
         )));
+        let outputs=prefix.events.iter().filter_map(|row| match &row.event.fact {
+            maka_runtime::event::Fact::ExecutorObserved { output } => Some(serde_json::to_value(output).unwrap()),
+            _=>None,
+        }).collect::<Vec<_>>();
+        assert_eq!(outputs,vec![
+            json!({"type":"thinking_delta","text":"思考"}),
+            json!({"type":"output_delta","text":"live 外部"}),
+            json!({"type":"tool_start","toolCallId":"observed-tool","name":"external.read","input":{"path":"source.txt"}}),
+            json!({"type":"tool_progress","toolCallId":"observed-tool","text":"reading"}),
+            json!({"type":"tool_result","toolCallId":"observed-tool","text":"done","isError":false}),
+        ]);
         let binding = prefix
             .events
             .iter()
@@ -473,6 +516,181 @@ async fn executor_service_cancelled_unsettled_callback_keeps_actual_capacity() {
             tokio::task::yield_now().await;
         }
         assert!(fixture.app.shutdown().await.is_err());
+        fixture.config.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn executor_service_progress_is_canonical_before_original_backend_finishes() {
+    tokio::time::timeout(Duration::from_secs(40), async {
+        let mut fixture = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+        let probe = Probe::new(Behavior::Streaming);
+        activate(&mut fixture, true, Some(probe.clone()), true).await;
+        let session = fixture.create("Live output").await;
+        let mut commits = fixture.store.subscribe_commits();
+        let accepted = fixture
+            .mutation(
+                2,
+                "execute",
+                input_for(&session, "final canonical answer"),
+                Uuid::new_v4(),
+            )
+            .await
+            .unwrap();
+        probe.entered.acquire().await.unwrap().forget();
+        let live = work(&fixture, &session, &accepted).await;
+        let run = live["execution"]["runId"].as_str().unwrap();
+        loop {
+            commits.borrow_and_update();
+            let prefix = fixture
+                .store
+                .run_prefix(&session, run, None, 64, 65536)
+                .await
+                .unwrap()
+                .unwrap();
+            let outputs = prefix
+                .events
+                .iter()
+                .filter(|row| {
+                    matches!(
+                        &row.event.fact,
+                        maka_runtime::event::Fact::ExecutorObserved { .. }
+                    )
+                })
+                .count();
+            assert!(prefix.events.iter().all(|row| !matches!(
+                &row.event.fact,
+                maka_runtime::event::Fact::InvocationEnded { .. }
+                    | maka_runtime::event::Fact::ExecutorCompleted { .. }
+            )));
+            if outputs == 36 {
+                break;
+            }
+            commits.changed().await.unwrap();
+        }
+        let snapshot = fixture
+            .query("observe", json!({"sessionId":session}))
+            .await
+            .unwrap();
+        let parts = snapshot["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0]["messageId"], parts[1]["messageId"]);
+        let mut stream = fixture
+            .app
+            .client()
+            .subscribe(
+                fixture.binding(2).await,
+                "watch".into(),
+                json!({"sessionId":session,"after":0}),
+                scope(&fixture.issuer, true),
+                Attachments::new().into(),
+            )
+            .await
+            .unwrap();
+        let mut deltas = Vec::new();
+        let mut started = None;
+        while deltas.len() < 36 {
+            let page = stream.recv().await.unwrap();
+            if let Some(events) = page["events"].as_array() {
+                for event in events {
+                    let fact = &event["fact"];
+                    match fact["kind"].as_str().unwrap() {
+                        "executor_started" => started = Some(fact["messageId"].clone()),
+                        "delta" => {
+                            assert_eq!(fact["stepId"], accepted["invocationId"]);
+                            deltas.push((fact["partId"].clone(), fact["text"].clone()));
+                        }
+                        "ended" => panic!("watch ended before actual backend completion"),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        assert_eq!(started, Some(parts[0]["messageId"].clone()));
+        assert_eq!(deltas[0], (json!("thinking"), json!("checking")));
+        for index in 0..35 {
+            assert_eq!(
+                deltas[index + 1],
+                (json!("text"), json!(format!("part {index}\n")))
+            );
+        }
+        stream.completion().await.cleanup.unwrap();
+        let records = fixture
+            .store
+            .application_intents(fixture.app.source().unwrap().deployment, id(1), 0, 128)
+            .await
+            .unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            fixture
+                .store
+                .operation_observation(&records[0].reference)
+                .await
+                .unwrap()
+                .unwrap()
+                .outcome,
+            OperationOutcome::Unresolved
+        );
+        probe.release.add_permits(1);
+        fixture.drained().await;
+        assert_eq!(
+            work(&fixture, &session, &accepted).await["answer"]["text"],
+            "final canonical answer"
+        );
+        assert_eq!(probe.calls.load(Ordering::SeqCst), 1);
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn executor_service_invalid_progress_stops_original_request_without_false_completion() {
+    tokio::time::timeout(Duration::from_secs(40), async {
+        let mut fixture = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+        let probe = Probe::new(Behavior::InvalidProgress);
+        activate(&mut fixture, true, Some(probe.clone()), true).await;
+        let session = fixture.create("Invalid output").await;
+        let accepted = fixture
+            .mutation(
+                2,
+                "execute",
+                input_for(&session, "never complete"),
+                Uuid::new_v4(),
+            )
+            .await
+            .unwrap();
+        probe.cancelled.acquire().await.unwrap().forget();
+        fixture.drained().await;
+        let observed = work(&fixture, &session, &accepted).await;
+        assert_eq!(observed["execution"]["state"], "failed");
+        let prefix = fixture
+            .store
+            .run_prefix(
+                &session,
+                observed["execution"]["runId"].as_str().unwrap(),
+                None,
+                64,
+                65536,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(prefix.events.iter().all(|row| !matches!(
+            &row.event.fact,
+            maka_runtime::event::Fact::ExecutorCompleted { .. }
+                | maka_runtime::event::Fact::ExecutorObserved { .. }
+        )));
+        assert_eq!(probe.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            fixture.owner.permits.available_permits(),
+            1,
+            "actual cleanup releases the original execution capacity"
+        );
+        fixture.app.shutdown().await.unwrap();
         fixture.config.shutdown().await.unwrap();
     })
     .await

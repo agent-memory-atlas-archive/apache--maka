@@ -1960,7 +1960,14 @@ function delivery(state: State, page: AgentDeliveryPage, actions: Action[]) {
     if (event.sequence <= watch.last) continue;
     const fact = event.fact;
     if (
-      ['opened', 'transcript_changed', 'part_finished', 'step_ended', 'ended'].includes(fact.kind)
+      [
+        'opened',
+        'executor_started',
+        'transcript_changed',
+        'part_finished',
+        'step_ended',
+        'ended',
+      ].includes(fact.kind)
     )
       canonicalChanged = true;
     if (fact.kind === 'opened') {
@@ -1968,26 +1975,42 @@ function delivery(state: State, page: AgentDeliveryPage, actions: Action[]) {
         state.run = { invocationId: event.invocationId, turnId: event.turnId, state: 'running' };
         state.runThrough = event.sequence;
       }
-    } else if (fact.kind === 'part_started') {
+    } else if (fact.kind === 'part_started' || fact.kind === 'executor_started') {
+      const started: DisplayPart[] =
+        fact.kind === 'executor_started'
+          ? (['text', 'thinking'] as const).map((textKind) => ({
+              startSequence: event.sequence,
+              messageId: fact.messageId,
+              stepId: event.invocationId,
+              partId: textKind,
+              textKind,
+              invocationId: event.invocationId,
+            }))
+          : [
+              {
+                startSequence: event.sequence,
+                messageId: fact.messageId,
+                stepId: fact.stepId,
+                partId: fact.partId,
+                textKind: fact.textKind,
+                invocationId: event.invocationId,
+              },
+            ];
       state.parts = state.parts.filter(
         (part) =>
-          part.invocationId !== event.invocationId ||
-          part.stepId !== fact.stepId ||
-          part.partId !== fact.partId,
+          !started.some(
+            (next) =>
+              part.invocationId === next.invocationId &&
+              part.stepId === next.stepId &&
+              part.partId === next.partId,
+          ),
       );
-      if (state.parts.length >= 128) {
+      if (state.parts.length + started.length > 128) {
         state.watch = null;
         state.notice = 'unavailable';
         return;
       }
-      state.parts.push({
-        startSequence: event.sequence,
-        messageId: fact.messageId,
-        stepId: fact.stepId,
-        partId: fact.partId,
-        textKind: fact.textKind,
-        invocationId: event.invocationId,
-      });
+      state.parts.push(...started);
     } else if (fact.kind === 'delta') {
       const part = state.parts.find(
         (part) =>

@@ -1095,8 +1095,25 @@ impl Owner {
                                 ..
                             }
                     ) {
-                        return Ok((None, None, request, reference, authenticated_caller));
+                        return Ok((None, None, request, reference, authenticated_caller, None));
                     }
+                    // Reserve bounded progress custody before admitting execution
+                    // or dispatching an effect. It is not a second operation.
+                    let progress = service.methods[&method]
+                        .progress
+                        .clone()
+                        .map(|validator| {
+                            let buffer = self
+                                .dispatch
+                                .upgrade()
+                                .ok_or("Host deployment is closed")?
+                                .stream_buffers
+                                .clone()
+                                .try_acquire_owned()
+                                .map_err(|_| "Host subscription buffer capacity exhausted")?;
+                            Ok::<_, String>((validator, buffer))
+                        })
+                        .transpose()?;
                     let child = scope.child().map_err(|e| e.to_string())?;
                     let execution = self.runtime.admit(&binding.0).map_err(|e| e.to_string())?;
                     Ok((
@@ -1105,6 +1122,7 @@ impl Owner {
                         request,
                         reference,
                         authenticated_caller,
+                        progress,
                     ))
                 })();
                 match admission {
@@ -1120,7 +1138,7 @@ impl Owner {
                         }
                         kind.reject(error);
                     }
-                    Ok((execution, child, request, reference, authenticated_caller)) => {
+                    Ok((execution, child, request, reference, authenticated_caller, progress)) => {
                         if let CallKind::PrepareMutation { reply, .. } = kind {
                             let _ = reply.send(Ok(PreparedMutation {
                                 reference: reference.expect("mutation reference"),
@@ -1200,6 +1218,7 @@ impl Owner {
                             execution.id(),
                             reference.clone(),
                             execution.value().methods[&method].output.clone(),
+                            progress,
                             scope.cancellation.clone(),
                         );
                         let context = Context {

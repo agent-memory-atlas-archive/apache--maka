@@ -17,6 +17,8 @@
  * under the License.
  */
 
+mod executor;
+
 use super::*;
 use alacritty_terminal::{
     Term,

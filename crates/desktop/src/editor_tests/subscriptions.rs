@@ -108,6 +108,7 @@ fn original_stream(cx: &mut TestAppContext, inexact: bool, capture: bool) {
             methods: BTreeMap::from([(
                 "read".into(),
                 Method {
+                    progress: None,
                     mode: MethodMode::Subscription,
                     input: json!({}),
                     output: json!({"type":"integer"}),

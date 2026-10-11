@@ -49,6 +49,7 @@ fn reference() -> RecoveryRef {
                 methods: BTreeMap::from([(
                     "change".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Mutation,
                         input: json!({}),
                         output: json!({}),

@@ -165,6 +165,7 @@ fn contract(name: &str, method: &str) -> Contract {
             methods: BTreeMap::from([(
                 method.into(),
                 Method {
+                    progress: None,
                     mode: MethodMode::Mutation,
                     input: json!({}),
                     output: json!({}),

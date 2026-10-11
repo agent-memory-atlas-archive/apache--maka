@@ -72,6 +72,7 @@ fn fixture(
             methods: BTreeMap::from([(
                 "tail".into(),
                 Method {
+                    progress: None,
                     mode: MethodMode::Query,
                     input: json!({"type":"null"}),
                     output: json!({"type":"object"}),

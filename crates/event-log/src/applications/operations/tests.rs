@@ -41,6 +41,7 @@ async fn request(store: &EventLog) -> OperationRequest {
                 methods: BTreeMap::from([(
                     "change".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Mutation,
                         input: serde_json::json!({}),
                         output: serde_json::json!({}),

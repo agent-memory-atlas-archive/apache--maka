@@ -168,6 +168,7 @@ impl NativeRegistry {
 pub(super) struct Method {
     input: jsonschema::Validator,
     output: Arc<jsonschema::Validator>,
+    progress: Option<Arc<jsonschema::Validator>>,
 }
 pub(super) enum ImplementationValue {
     JavaScript(maka_js_runtime::plugin::Captured),
@@ -192,6 +193,15 @@ impl Service {
                 Ok((
                     name.clone(),
                     Method {
+                        progress: method
+                            .progress
+                            .as_ref()
+                            .map(|schema| {
+                                jsonschema::validator_for(schema)
+                                    .map(Arc::new)
+                                    .map_err(|e| e.to_string())
+                            })
+                            .transpose()?,
                         input: jsonschema::validator_for(&method.input)
                             .map_err(|e| e.to_string())?,
                         output: Arc::new(
@@ -338,6 +348,7 @@ pub struct Mutation {
     pub id: Uuid,
     pub reference: RecoveryRef,
     result: oneshot::Receiver<MutationCompletion>,
+    progress: Option<subscriptions::Items>,
 }
 /// Receipt knowledge and this request's actual executor cleanup are independent.
 /// A historical receipt describes the original operation, not a new lookup's cleanup.
@@ -346,13 +357,26 @@ pub struct MutationCompletion {
     pub cleanup: Result<()>,
 }
 impl Mutation {
+    /// Ordered transient progress, never an operation receipt or cleanup proof.
+    /// Historical replay produces no new items. Dropping this reader closes
+    /// demand without cancelling the original mutation Scope.
+    pub async fn recv(&mut self) -> Option<Value> {
+        match &mut self.progress {
+            Some(progress) => progress.recv().await,
+            None => None,
+        }
+    }
     /// Observe original receipt knowledge only; this does not acknowledge cleanup.
     pub async fn result(self) -> OperationReply {
         self.completion().await.reply
     }
     /// Original owner reports actual cleanup independently of receipt persistence.
     /// Losing this observer neither cancels execution nor acknowledges cleanup.
-    pub async fn completion(self) -> MutationCompletion {
+    pub async fn completion(mut self) -> MutationCompletion {
+        // Receipt-only callers still consume progress, avoiding backpressure
+        // deadlock without pretending that these items were durably recorded.
+        while self.recv().await.is_some() {}
+        drop(self.progress.take());
         self.result.await.unwrap_or_else(|_| MutationCompletion {
             reply: OperationReply {
                 reference: self.reference,
@@ -539,6 +563,7 @@ impl CallKind {
         id: Uuid,
         reference: Option<RecoveryRef>,
         validator: Arc<jsonschema::Validator>,
+        progress: Option<(Arc<jsonschema::Validator>, OwnedSemaphorePermit)>,
         stop: CancellationToken,
     ) -> (Reply, Option<subscriptions::Emitter>) {
         match self {
@@ -558,17 +583,26 @@ impl CallKind {
             Self::Mutation { reply, .. } => {
                 let reference = reference.expect("admitted mutation reference");
                 let (output, result) = oneshot::channel();
+                let (progress, emitter) = match progress {
+                    Some((validator, buffer)) => {
+                        let (items, emitter) =
+                            subscriptions::items(validator, stop.child_token(), buffer);
+                        (Some(items), Some(emitter))
+                    }
+                    None => (None, None),
+                };
                 let _ = reply.send(Ok(Mutation {
                     id,
                     reference: reference.clone(),
                     result,
+                    progress,
                 }));
                 (
                     Reply::Mutation {
                         reference: Box::new(reference),
                         reply: output,
                     },
-                    None,
+                    emitter,
                 )
             }
         }

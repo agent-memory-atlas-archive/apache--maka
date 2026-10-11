@@ -111,6 +111,7 @@ pub fn contract() -> Contract {
         (
             name.into(),
             Method {
+                progress: None,
                 mode,
                 input,
                 output: schemars::schema_for!(ProcessResult).into(),

@@ -1,0 +1,246 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use super::*;
+use maka_plugins::package::MANIFEST_FILE;
+
+fn replace_manifest(package: &Package, manifest: Value) -> Package {
+    let mut files = package.files().clone();
+    files.insert(MANIFEST_FILE.into(), serde_json::to_vec(&manifest).unwrap());
+    Package::new(files).unwrap()
+}
+
+#[test]
+#[ignore = "opt-in real Agent, JS executor, production Workspace and foreground PTY"]
+fn executor_progress_reaches_production_timeline_before_backend_completion() {
+    let (dist, mut packages) = built_packages();
+    let refs = packages
+        .iter()
+        .map(|(name, package)| (name.clone(), package.application_ref()))
+        .collect();
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("ui");
+    let agent_root = directory.path().join("agent");
+    let workspace = directory.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let deployment = Uuid::new_v4();
+    let agent_id = Uuid::new_v4();
+    let manager_id = Uuid::new_v4();
+    let (mut graph, _, accent) = authored(
+        &dist.join("authoring/agent-product/src/composition.mjs"),
+        json!({
+            "presentation":"tui", "locale":"en", "scheme":"light",
+            "hostRoot":agent_root, "hostDeployment":agent_id, "managementDeployment":manager_id,
+            "studioRoot":directory.path().join("studio"), "studioDeployment":Uuid::new_v4(),
+            "workspaceRoots":[{"label":"Workspace", "path":workspace}]
+        }),
+        &refs,
+    );
+    let executor = serde_json::to_value(maka_agent_service::executor::contract()).unwrap();
+    let control = json!({"name":"fixture.ExecutorControl","version":1,"transport":"remote","interface":{"kind":"service","methods":{"release":{"mode":"mutation","input":{"type":"object","additionalProperties":false},"output":{"type":"object"},"resources":{}}}}});
+    let one = |contract: &Value| json!({"contract":contract,"cardinality":{"kind":"one"}});
+    let required = |contract: &Value| json!({"contract":contract,"availability":"required"});
+    let local = |name: &str, export: &str| json!({"kind":"instance","path":[name],"export":export});
+    let mut agent_manifest = serde_json::to_value(packages["agent"].manifest()).unwrap();
+    agent_manifest["application"]["entries"]["host"]["imports"]["executor"] = one(&executor);
+    let agent_package = replace_manifest(&packages["agent"], agent_manifest);
+    graph["host"]["instances"]["agent"]["package"]["package"] =
+        serde_json::to_value(agent_package.application_ref()).unwrap();
+    graph["host"]["instances"]["agent"]["configuration"]["values"]["executors"] =
+        json!([{"name":"external","import":"executor"}]);
+    graph["host"]["instances"]["agent"]["bindings"]["executor"] =
+        json!([local("executor", "executor")]);
+    packages.insert("agent".into(), agent_package);
+    let executor_package = Package::new(BTreeMap::from([
+        (MANIFEST_FILE.into(),serde_json::to_vec(&json!({"schemaVersion":2,"id":"fixture.executor.progress","application":{"entries":{"host":{
+            "implementation":{"kind":"javascript","module":"executor.mjs","realm":"shared"},
+            "configuration":{"type":"object","additionalProperties":false},"imports":{},
+            "exports":{"executor":required(&executor),"control":required(&control)}
+        }}}})).unwrap()),
+        ("executor.mjs".into(),format!(r#"
+            let release;
+            export function activate(){{ return {{executor:{{contract:{executor},service:['backend']}},control:{{contract:{control},service:['control']}}}}; }}
+            export const backend={{async execute(input,observation,context){{
+                await context.invoke({{operation:'emit',value:{{type:'thinking_delta',text:'Inspecting external workspace'}}}});
+                await context.invoke({{operation:'emit',value:{{type:'output_delta',text:'Live external answer'}}}});
+                await new Promise(resolve=>{{release=resolve;}});
+                return {{status:'completed',text:'Final external answer'}};
+            }}}};
+            export const control={{release(){{if(!release)throw Error('not executing');release();return {{released:true}};}}}};
+        "#).into_bytes())
+    ])).unwrap();
+    let provider_key = Uuid::new_v4();
+    graph["host"]["instances"]["executor"] = json!({"key":provider_key,"package":{"source":"pinned","package":executor_package.application_ref()},"usePackage":"entry","configuration":{"values":{}},"bindings":{}});
+    packages.insert("executor".into(), executor_package);
+    let mut gateway_manifest = serde_json::to_value(packages["gateway"].manifest()).unwrap();
+    gateway_manifest["application"]["entries"]["host"]["imports"]["control"] = one(&control);
+    let gateway_package = replace_manifest(&packages["gateway"], gateway_manifest);
+    graph["host"]["instances"]["gateway"]["package"]["package"] =
+        serde_json::to_value(gateway_package.application_ref()).unwrap();
+    graph["host"]["instances"]["gateway"]["bindings"]["control"] =
+        json!([local("executor", "control")]);
+    packages.insert("gateway".into(), gateway_package);
+    let agent_key = graph["host"]["instances"]["agent"]["key"].clone();
+    let gateway_key = graph["host"]["instances"]["gateway"]["key"].clone();
+    let host = graph["connections"]["hosts"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|host| host["name"] == "local")
+        .unwrap();
+    host["native"] = json!([{"origin":[agent_key],"consumer":[agent_key],"provider":[provider_key],"export":"executor","methods":["execute"],"recovery":true}]);
+    host["endpoints"]["control"] = json!({"consumer":[gateway_key],"import":"control","grant":{"methods":["release"],"recovery":true}});
+    let remote_control = json!({"deployment":"local","instance":[provider_key],"export":"control"});
+    graph["remoteExports"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"capability":remote_control,"declaration":required(&control)}));
+    let workspace_contract = serde_json::to_value(
+        &packages["workspace"]
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .entries[&maka_plugin_core::package::EntryTarget::Tui]
+            .exports["Workspace"]
+            .contract,
+    )
+    .unwrap();
+    let agent_contract = serde_json::to_value(maka_agent_service::contract()).unwrap();
+    let surface = serde_json::to_value(
+        &packages["surface"]
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .entries[&maka_plugin_core::package::EntryTarget::Tui]
+            .exports["Surface"]
+            .contract,
+    )
+    .unwrap();
+    let ui_package=Package::new(BTreeMap::from([
+        (MANIFEST_FILE.into(),serde_json::to_vec(&json!({"schemaVersion":2,"id":"fixture.executor.ui","application":{"entries":{"tui":{
+            "implementation":{"kind":"javascript","module":"ui.mjs","realm":"shared"},"scene":{"name":"maka.tui.scene","version":1},"configuration":{"type":"object","additionalProperties":false},
+            "imports":{"workspace":one(&workspace_contract),"agent":one(&agent_contract),"control":one(&control),"surface":one(&surface)},
+            "exports":{"App":required(&workspace_contract)}
+        }}}})).unwrap()),
+        ("ui.mjs".into(),format!("export function activate(){{return {{App:{{kind:'component',contract:{workspace_contract},component:['app']}}}};}}\n{}",include_str!("executor-ui.js")).into_bytes())
+    ])).unwrap();
+    graph["ui"]["instances"]["fixture"] = json!({"key":Uuid::new_v4(),"package":{"source":"pinned","package":ui_package.application_ref()},"usePackage":"entry","configuration":{"values":{}},"bindings":{
+        "workspace":[local("workspace","Workspace")],"surface":[local("surface","Surface")],
+        "agent":graph["ui"]["instances"]["workspace"]["bindings"]["agent"],
+        "control":[{"kind":"remote","deployment":"local","instance":[provider_key],"export":"control"}]
+    }});
+    graph["ui"]["launch"] = local("fixture", "App");
+    packages.insert("fixture".into(), ui_package);
+    let connections = directory.path().join("connections.json");
+    std::fs::write(
+        &connections,
+        serde_json::to_vec(&graph["connections"]).unwrap(),
+    )
+    .unwrap();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let ns = RootNamespaces::for_current_account().unwrap();
+    runtime.block_on(async {
+        for (path, id, input, remote) in [
+            (&agent_root, agent_id, &graph["host"], json!([])),
+            (&root, manager_id, &graph["managementHost"], json!([])),
+        ] {
+            let store = EventLog::for_root(Arc::new(RootOwner::create(path, &ns).unwrap()))
+                .await
+                .unwrap();
+            store
+                .commit_application(
+                    id,
+                    0,
+                    serde_json::from_value(input.clone()).unwrap(),
+                    serde_json::from_value(remote).unwrap(),
+                    packages.values().cloned().collect(),
+                )
+                .await
+                .unwrap();
+            store.shutdown().await.unwrap();
+        }
+        let store = EventLog::for_root(Arc::new(RootOwner::open(&root, &ns).unwrap()))
+            .await
+            .unwrap();
+        store
+            .commit_application(
+                deployment,
+                0,
+                serde_json::from_value(graph["ui"].clone()).unwrap(),
+                serde_json::from_value(graph["remoteExports"].clone()).unwrap(),
+                packages.values().cloned().collect(),
+            )
+            .await
+            .unwrap();
+        store.shutdown().await.unwrap();
+    });
+    let mut tui = Pty::spawn(&[
+        "application",
+        "run",
+        "--root",
+        root.to_str().unwrap(),
+        "--deployment",
+        &deployment.to_string(),
+        "--connections",
+        connections.to_str().unwrap(),
+    ]);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        tui.read();
+        if tui.frames.ready() && tui.screen.snapshot().unwrap().screen.contains("ready") {
+            break;
+        }
+        assert!(
+            tui.child.try_wait().unwrap().is_none() && Instant::now() < deadline,
+            "fixture startup: {}",
+            String::from_utf8_lossy(&tui.output)
+        );
+    }
+    click(&mut tui, "Run external", accent);
+    tui.wait_for("Live external answer");
+    let live = tui.screen.snapshot().unwrap().screen;
+    assert!(live.contains("Inspecting external workspace"));
+    assert!(!live.contains("Final external answer"));
+    assert!(live.contains("running"));
+    click(&mut tui, "Release external", accent);
+    tui.wait_until(|screen| {
+        screen.contains("Final external answer")
+            && !screen.contains("Live external answer")
+            && screen.contains("Finished")
+    });
+    if let Ok(path) = std::env::var("MAKA_EXECUTOR_PROGRESS_EVIDENCE") {
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(Path::new(&path).join("live.txt"), live).unwrap();
+        std::fs::write(
+            Path::new(&path).join("completed.txt"),
+            tui.screen.snapshot().unwrap().screen,
+        )
+        .unwrap();
+        std::fs::write(Path::new(&path).join("terminal.ansi"), &tui.output).unwrap();
+    }
+    tui.send(b"\x03");
+    tui.finish();
+    drop(RootOwner::open(&agent_root, &ns).unwrap());
+}

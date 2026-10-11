@@ -22,6 +22,9 @@ mod reconciliation;
 #[path = "startup.rs"]
 mod startup;
 
+#[path = "mutation_progress.rs"]
+mod mutation_progress;
+
 #[path = "peer_confirmations.rs"]
 mod peer_confirmations;
 #[path = "receipts.rs"]

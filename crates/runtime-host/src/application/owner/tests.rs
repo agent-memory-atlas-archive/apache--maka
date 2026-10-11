@@ -59,6 +59,7 @@ async fn final_admission_rejects_failed_consumer_before_terminal_notification_is
                 methods: BTreeMap::from([(
                     "echo".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Query,
                         input: json!({}),
                         output: json!({}),

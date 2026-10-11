@@ -13520,6 +13520,22 @@ export const contracts = {
                   },
                   {
                     description:
+                      'Both external text streams share the original ExecutorStarted message.',
+                    type: 'object',
+                    properties: {
+                      messageId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'executor_started',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'messageId'],
+                  },
+                  {
+                    description:
                       'Canonical transcript facts changed; clients query bounded history.',
                     type: 'object',
                     properties: {
@@ -14107,6 +14123,98 @@ export const contracts = {
                 required: ['status', 'message'],
               },
             ],
+          },
+          progress: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  text: {
+                    type: 'string',
+                  },
+                  type: {
+                    type: 'string',
+                    const: 'output_delta',
+                  },
+                },
+                required: ['type', 'text'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  text: {
+                    type: 'string',
+                  },
+                  type: {
+                    type: 'string',
+                    const: 'thinking_delta',
+                  },
+                },
+                required: ['type', 'text'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  toolCallId: {
+                    type: 'string',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                  input: true,
+                  type: {
+                    type: 'string',
+                    const: 'tool_start',
+                  },
+                },
+                required: ['type', 'toolCallId', 'name', 'input'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  toolCallId: {
+                    type: 'string',
+                  },
+                  text: {
+                    type: 'string',
+                  },
+                  type: {
+                    type: 'string',
+                    const: 'tool_progress',
+                  },
+                },
+                required: ['type', 'toolCallId', 'text'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  toolCallId: {
+                    type: 'string',
+                  },
+                  text: {
+                    type: 'string',
+                  },
+                  isError: {
+                    type: 'boolean',
+                    default: false,
+                  },
+                  type: {
+                    type: 'string',
+                    const: 'tool_result',
+                  },
+                },
+                required: ['type', 'toolCallId', 'text'],
+              },
+            ],
+            description:
+              'External tool activity is observation, never a request to dispatch a Host tool.',
+            title: 'ExecutorOutput',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
           },
           resources: {},
         },
@@ -18320,6 +18428,10 @@ export const contracts = {
                   },
                   input: true,
                   output: true,
+                  progress: {
+                    description:
+                      'Bounded transient observations from this mutation, separate from its\noriginal final receipt. Only mutation methods may declare progress.',
+                  },
                   resources: {
                     type: 'object',
                     additionalProperties: {
@@ -18610,6 +18722,10 @@ export const contracts = {
                   },
                   input: true,
                   output: true,
+                  progress: {
+                    description:
+                      'Bounded transient observations from this mutation, separate from its\noriginal final receipt. Only mutation methods may declare progress.',
+                  },
                   resources: {
                     type: 'object',
                     additionalProperties: {
@@ -25508,6 +25624,10 @@ export const contracts = {
                   },
                   input: true,
                   output: true,
+                  progress: {
+                    description:
+                      'Bounded transient observations from this mutation, separate from its\noriginal final receipt. Only mutation methods may declare progress.',
+                  },
                   resources: {
                     type: 'object',
                     additionalProperties: {
@@ -26450,6 +26570,10 @@ export const contracts = {
                   },
                   input: true,
                   output: true,
+                  progress: {
+                    description:
+                      'Bounded transient observations from this mutation, separate from its\noriginal final receipt. Only mutation methods may declare progress.',
+                  },
                   resources: {
                     type: 'object',
                     additionalProperties: {
@@ -27052,6 +27176,10 @@ export const contracts = {
                   },
                   input: true,
                   output: true,
+                  progress: {
+                    description:
+                      'Bounded transient observations from this mutation, separate from its\noriginal final receipt. Only mutation methods may declare progress.',
+                  },
                   resources: {
                     type: 'object',
                     additionalProperties: {
@@ -27320,6 +27448,10 @@ export const contracts = {
                   },
                   input: true,
                   output: true,
+                  progress: {
+                    description:
+                      'Bounded transient observations from this mutation, separate from its\noriginal final receipt. Only mutation methods may declare progress.',
+                  },
                   resources: {
                     type: 'object',
                     additionalProperties: {

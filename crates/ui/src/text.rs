@@ -46,6 +46,7 @@ pub fn reader_contract() -> Contract {
             methods: BTreeMap::from([(
                 "read".into(),
                 Method {
+                    progress: None,
                     mode: MethodMode::Query,
                     input: serde_json::to_value(schemars::schema_for!(ReadText))
                         .expect("read input schema"),

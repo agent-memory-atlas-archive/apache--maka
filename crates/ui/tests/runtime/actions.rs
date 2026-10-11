@@ -666,6 +666,7 @@ fn actual_native_query_preserves_exact_integer_while_javascript_fails_without_re
                 methods: BTreeMap::from([(
                     "read".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Query,
                         input: json!({"type":"null"}),
                         output: json!({"type":"integer"}),

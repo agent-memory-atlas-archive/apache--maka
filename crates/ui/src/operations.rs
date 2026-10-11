@@ -56,6 +56,7 @@ pub fn caller_history_contract() -> Contract {
             methods: BTreeMap::from([(
                 "page".into(),
                 Method {
+                    progress: None,
                     mode: MethodMode::Query,
                     input: serde_json::to_value(schemars::schema_for!(CallerHistoryPage))
                         .expect("caller history request schema"),

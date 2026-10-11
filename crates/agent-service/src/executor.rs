@@ -17,7 +17,7 @@
  * under the License.
  */
 
-//! Explicit unary Executor services, driven by the original Agent engine.
+//! Explicit Executor services, driven by the original Agent engine.
 use futures_util::{FutureExt, future::BoxFuture};
 use maka_event_log::EventLog;
 use maka_plugin_core::{
@@ -79,6 +79,7 @@ pub fn contract() -> Contract {
             methods: BTreeMap::from([(
                 "execute".into(),
                 Method {
+                    progress: Some(schemars::schema_for!(maka_runtime::executor::Output).into()),
                     mode: MethodMode::Mutation,
                     input: serde_json::to_value(schemars::schema_for!(Execute))
                         .expect("executor input"),
@@ -254,7 +255,7 @@ struct Call {
 impl executor::Execution for Call {
     fn execute(
         self: Box<Self>,
-        _output: Arc<dyn OutputSink>,
+        output: Arc<dyn OutputSink>,
         cancellation: CancellationToken,
     ) -> BoxFuture<'static, Settlement> {
         Box::pin(async move {
@@ -293,8 +294,8 @@ impl executor::Execution for Call {
                             })
                             .ok_or(Error::Unknown)?
                     } else {
-                        request
-                            .mutate(
+                        let mut mutation = request
+                            .begin_mutation(
                                 &self.backend.accepted.import,
                                 0,
                                 "execute".into(),
@@ -304,8 +305,17 @@ impl executor::Execution for Call {
                             )
                             .map_err(Error::Provider)?
                             .await
-                            .map_err(Error::Provider)?
-                            .receipt
+                            .map_err(Error::Provider)?;
+                        while let Some(value) = mutation.recv().await {
+                            let observed = serde_json::from_value(value)
+                                .map_err(|error| Error::Invalid(error.to_string()))?;
+                            output.emit(observed).await?;
+                        }
+                        let completed = mutation.completion().await;
+                        if completed.cleanup.is_err() {
+                            return Err(Error::CleanupUnconfirmed);
+                        }
+                        completed.reply.receipt
                     };
                     match receipt {
                         Receipt::Recorded {

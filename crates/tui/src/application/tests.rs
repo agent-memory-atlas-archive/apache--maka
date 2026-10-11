@@ -223,6 +223,7 @@ fn accepted_worker_survives_surface_close_and_cleanup_failure_keeps_actual_capac
                 methods: BTreeMap::from([(
                     "run".into(),
                     Method {
+                        progress: None,
                         // This fixture waits on a resource; it performs no business mutation.
                         mode: MethodMode::Query,
                         input: json!({"type":"object"}),

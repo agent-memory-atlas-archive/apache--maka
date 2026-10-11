@@ -112,6 +112,7 @@ pub(super) fn catalog() -> Value {
         root::<maka_agent_service::contract::Executors>(&mut g),
         root::<maka_agent_service::executor::Execute>(&mut g),
         root::<maka_plugins::executor::Outcome>(&mut g),
+        root::<maka_runtime::executor::Output>(&mut g),
         root::<maka_agent_service::workhub::contract::Resolve>(&mut g),
         root::<maka_agent_service::workhub::contract::Coordinator>(&mut g),
         root::<maka_agent_service::workhub::contract::Configuration>(&mut g),

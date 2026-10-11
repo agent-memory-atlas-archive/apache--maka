@@ -27,8 +27,12 @@ const ITEM_BYTES: usize = 64 * 1024;
 /// A request-local reader. Demand cancellation and executor cleanup are distinct.
 /// Read through EOF to drain successful output; completion cancels undrained work.
 pub struct Subscription {
-    receiver: mpsc::Receiver<Value>,
     accepted: Accepted,
+    items: Items,
+}
+/// Shared bounded queue mechanics, independent of query or mutation settlement.
+pub(super) struct Items {
+    receiver: mpsc::Receiver<Value>,
     shared: Arc<Shared>,
     _cancel_on_drop: DropGuard,
 }
@@ -40,6 +44,24 @@ impl Subscription {
     /// Receive ordered items. Producer completion permits draining already
     /// accepted items even if a native handler retained an old Context/future.
     pub async fn recv(&mut self) -> Option<Value> {
+        self.items.recv().await
+    }
+
+    /// Requests stop and closes demand. It does not acknowledge executor cleanup.
+    pub fn cancel(&mut self) {
+        self.items.cancel();
+    }
+
+    /// Close demand before awaiting the original owner's independent business
+    /// and cleanup observations, so undrained backpressure cannot deadlock it.
+    pub async fn completion(mut self) -> QueryCompletion {
+        self.cancel();
+        while self.items.receiver.try_recv().is_ok() {}
+        self.accepted.completion().await
+    }
+}
+impl Items {
+    pub(super) async fn recv(&mut self) -> Option<Value> {
         if let Ok(value) = self.receiver.try_recv() {
             return Some(value);
         }
@@ -53,18 +75,9 @@ impl Subscription {
         }
     }
 
-    /// Requests stop and closes demand. It does not acknowledge executor cleanup.
-    pub fn cancel(&mut self) {
+    fn cancel(&mut self) {
         self.shared.stop.cancel();
         self.receiver.close();
-    }
-
-    /// Close demand before awaiting the original owner's independent business
-    /// and cleanup observations, so undrained backpressure cannot deadlock it.
-    pub async fn completion(mut self) -> QueryCompletion {
-        self.cancel();
-        while self.receiver.try_recv().is_ok() {}
-        self.accepted.completion().await
     }
 }
 
@@ -141,6 +154,17 @@ pub(super) fn channel(
     stop: CancellationToken,
     buffer: OwnedSemaphorePermit,
 ) -> (Subscription, Emitter) {
+    let (items, emitter) = items(output, stop, buffer);
+    (Subscription { accepted, items }, emitter)
+}
+
+/// The caller chooses the cancellation boundary. Mutation demand uses a child
+/// token, so dropping its reader never cancels the original execution Scope.
+pub(super) fn items(
+    output: Arc<jsonschema::Validator>,
+    stop: CancellationToken,
+    buffer: OwnedSemaphorePermit,
+) -> (Items, Emitter) {
     let (sender, receiver) = mpsc::channel(ITEMS);
     let guard = stop.clone().drop_guard();
     let shared = Arc::new(Shared {
@@ -152,9 +176,8 @@ pub(super) fn channel(
         _buffer: buffer,
     });
     (
-        Subscription {
+        Items {
             receiver,
-            accepted,
             shared: shared.clone(),
             _cancel_on_drop: guard,
         },

@@ -164,6 +164,7 @@ pub enum ManagementRejection {
 pub fn deployment_manager_contract() -> Contract {
     fn method<I: JsonSchema, O: JsonSchema>(mode: MethodMode) -> Method {
         Method {
+            progress: None,
             mode,
             input: serde_json::to_value(schemars::schema_for!(I)).expect("management input schema"),
             output: serde_json::to_value(schemars::schema_for!(O))

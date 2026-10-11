@@ -223,6 +223,7 @@ pub fn contract() -> Contract {
                 (
                     "control".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Query,
                         input: schemars::schema_for!(ControlRead).into(),
                         output: schemars::schema_for!(Control).into(),
@@ -232,6 +233,7 @@ pub fn contract() -> Contract {
                 (
                     "controls".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Query,
                         input: schemars::schema_for!(ControlsRead).into(),
                         output: schemars::schema_for!(Controls).into(),
@@ -241,6 +243,7 @@ pub fn contract() -> Contract {
                 (
                     "tasks".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Query,
                         input: schemars::schema_for!(TasksRead).into(),
                         output: schemars::schema_for!(Tasks).into(),
@@ -250,6 +253,7 @@ pub fn contract() -> Contract {
                 (
                     "task".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Query,
                         input: schemars::schema_for!(TaskRead).into(),
                         output: schemars::schema_for!(Task).into(),
@@ -259,6 +263,7 @@ pub fn contract() -> Contract {
                 (
                     "coordinator".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Query,
                         input: serde_json::json!({"type":"object","properties":{},"additionalProperties":false}),
                         output: schemars::schema_for!(Coordinator).into(),
@@ -268,6 +273,7 @@ pub fn contract() -> Contract {
                 (
                     "resolve".into(),
                     Method {
+                        progress: None,
                         mode: MethodMode::Mutation,
                         input: schemars::schema_for!(Resolve).into(),
                         output: schemars::schema_for!(Coordinator).into(),

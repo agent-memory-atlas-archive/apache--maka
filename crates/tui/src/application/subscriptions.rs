@@ -80,6 +80,7 @@ fn terminal_task_owner_delivers_each_item_then_drains_real_close_after_restorati
             methods: BTreeMap::from([(
                 "run".into(),
                 Method {
+                    progress: None,
                     mode: MethodMode::Subscription,
                     input: json!({}),
                     output: json!({"type":"integer"}),

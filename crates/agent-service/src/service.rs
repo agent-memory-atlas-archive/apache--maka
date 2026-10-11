@@ -511,7 +511,7 @@ impl Handler for Agent {
                             .emit(encode(DeliveryPage::Events {
                                 through: page.through_sequence,
                                 next_after: after,
-                                events: page.events.into_iter().filter_map(delivery).collect(),
+                                events: page.events.into_iter().map(delivery).collect(),
                             })?)
                             .await?;
                         if page.next_after.is_some() {
@@ -627,9 +627,24 @@ pub(crate) fn summary(owner: &Owner, session: SessionRecord<SessionConfiguration
         has_unread: session.read_state.has_unread,
     }
 }
-fn delivery(event: StoreStreamEvent) -> Option<Delivery> {
+fn delivery(event: StoreStreamEvent) -> Delivery {
     let fact = match event.fact {
         StreamFact::InvocationOpened => DeliveryFact::Opened,
+        StreamFact::ExecutorStarted => DeliveryFact::ExecutorStarted {
+            message_id: event.id,
+        },
+        StreamFact::ExecutorDelta { text_kind, text } => DeliveryFact::Delta {
+            step_id: event.invocation.invocation_id.clone(),
+            part_id: match text_kind {
+                maka_runtime::model::TextKind::Text => "text",
+                maka_runtime::model::TextKind::Thinking => "thinking",
+            }
+            .into(),
+            text,
+        },
+        StreamFact::ExecutorCompleted => DeliveryFact::StepEnded {
+            step_id: event.invocation.invocation_id.clone(),
+        },
         StreamFact::PartStarted {
             step_id,
             part_id,
@@ -655,17 +670,19 @@ fn delivery(event: StoreStreamEvent) -> Option<Delivery> {
         StreamFact::InvocationEnded { failed, .. } => DeliveryFact::Ended { failed },
         StreamFact::StepEnded { step_id, .. } => DeliveryFact::StepEnded { step_id },
         StreamFact::MessageSteered
+        | StreamFact::ExecutorToolStart { .. }
+        | StreamFact::ExecutorToolProgress { .. }
+        | StreamFact::ExecutorToolResult { .. }
         | StreamFact::ToolDispatched { .. }
         | StreamFact::ToolRejected { .. }
         | StreamFact::ToolSettled { .. } => DeliveryFact::TranscriptChanged,
-        _ => return None,
     };
-    Some(Delivery {
+    Delivery {
         sequence: event.sequence,
         invocation_id: event.invocation.invocation_id,
         turn_id: event.invocation.turn_id,
         fact,
-    })
+    }
 }
 
 impl maka_runtime_host::application::NativeOwner for Agent {
