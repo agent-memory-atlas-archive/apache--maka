@@ -82,8 +82,6 @@ pub(super) async fn run(
                         .read_model_context(
                             &input.invocation.session_id,
                             Some(&input.invocation.invocation_id),
-                            10_000,
-                            8 * 1024 * 1024,
                         )
                         .await
                         .ok()?;
@@ -159,8 +157,6 @@ pub(super) async fn run(
                     .read_manual_message_context(
                         &input.invocation.session_id,
                         &input.invocation.invocation_id,
-                        maka_runtime::context::MAX_HISTORY_EVENTS,
-                        maka_runtime::context::MAX_HISTORY_BYTES,
                     )
                     .await?
             } else {
@@ -169,16 +165,26 @@ pub(super) async fn run(
                     .read_model_context(
                         &input.invocation.session_id,
                         Some(&input.invocation.invocation_id),
-                        maka_runtime::context::MAX_HISTORY_EVENTS,
-                        maka_runtime::context::MAX_HISTORY_BYTES,
                     )
                     .await?
             };
+            let mut prompt = model_attempt::prompt(
+                inner,
+                input,
+                &source,
+                ModelPurpose::Main,
+                cancellation,
+                continuation_base,
+                &input.invocation.invocation_id,
+                prior_unknown,
+            )
+            .await?;
+            let needs_compaction = crate::context_input::needs_compaction(input, &prompt);
             if tools.code_idle()
                 && compaction == CompactionBudget::Available
                 && pending.is_none()
                 && !prior_unknown
-                && auto_context::due(input, &source)
+                && (needs_compaction || auto_context::due(input, &source))
             {
                 compaction = CompactionBudget::Failed;
                 if let Some((candidate, background)) = auto_context::start(
@@ -191,7 +197,7 @@ pub(super) async fn run(
                 )
                 .await?
                 {
-                    if background {
+                    if background && !needs_compaction {
                         pending = Some(candidate);
                     } else if candidate.adopt(inner, cancellation).await? {
                         compaction = CompactionBudget::Reshaped;
@@ -202,13 +208,22 @@ pub(super) async fn run(
                     .read_model_context(
                         &input.invocation.session_id,
                         Some(&input.invocation.invocation_id),
-                        10_000,
-                        8 * 1024 * 1024,
                     )
                     .await?;
                 // Compaction makes its own logical requests. The following
                 // main step must observe any provider change made meanwhile.
                 input.refresh_model(cancellation).await?;
+                prompt = model_attempt::prompt(
+                    inner,
+                    input,
+                    &source,
+                    ModelPurpose::Main,
+                    cancellation,
+                    continuation_base,
+                    &input.invocation.invocation_id,
+                    prior_unknown,
+                )
+                .await?;
             }
             tools.set_model(input.provider.tool_context());
             let request_tools = tools
@@ -232,17 +247,6 @@ pub(super) async fn run(
                 )
                 .await?,
             );
-            let prompt = model_attempt::prompt(
-                inner,
-                input,
-                &source,
-                ModelPurpose::Main,
-                cancellation,
-                continuation_base,
-                &input.invocation.invocation_id,
-                prior_unknown,
-            )
-            .await?;
             let initial_high_water = source.source_evidence.high_water;
             let result = model_attempt::execute(
                 inner,
@@ -349,8 +353,6 @@ pub(super) async fn run(
                         .read_manual_message_context(
                             &input.invocation.session_id,
                             &input.invocation.invocation_id,
-                            10_000,
-                            8 * 1024 * 1024,
                         )
                         .await?
                 } else {
@@ -359,8 +361,6 @@ pub(super) async fn run(
                         .read_model_context(
                             &input.invocation.session_id,
                             Some(&input.invocation.invocation_id),
-                            10_000,
-                            8 * 1024 * 1024,
                         )
                         .await?
                 };

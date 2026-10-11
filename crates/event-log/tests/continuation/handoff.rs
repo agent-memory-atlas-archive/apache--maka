@@ -60,7 +60,7 @@ async fn handoff_rejects_unresolved_provider_effects_but_accepts_effect_free_sum
         let source = opening("source", None);
         append(&log, &source).await;
         let context = if provider_effect {
-            log.read_model_context("session", Some("source"), 100, 65536)
+            log.read_model_context("session", Some("source"))
                 .await
                 .unwrap()
         } else {

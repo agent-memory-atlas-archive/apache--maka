@@ -25,6 +25,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+#[path = "contract_imports.rs"]
+mod imports;
+pub use imports::*;
 #[path = "contract_projects.rs"]
 mod projects;
 pub use projects::*;
@@ -57,6 +60,10 @@ pub struct Configuration {
     /// Installation-published directories, captured without creating workspace markers.
     #[schemars(length(min = 1, max = 8))]
     pub workspace_roots: Vec<maka_runtime_host::server::DirectoryRootSpec>,
+    /// Explicit read-only roots for user-selected conversation sources.
+    #[serde(default)]
+    #[schemars(length(max = 8))]
+    pub import_roots: Vec<maka_runtime_host::server::DirectoryRootSpec>,
     #[schemars(range(min = 1, max = 16))]
     pub max_active_runs: usize,
     #[schemars(range(min = 1, max = 16))]
@@ -210,7 +217,7 @@ pub enum WorkspaceSelection {
         session_id: String,
     },
 }
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentDirectorySelection")]
 pub struct DirectorySelection {
@@ -977,6 +984,18 @@ pub fn contract() -> Contract {
                 (
                     "catalog".into(),
                     method::<List, SessionPage>(MethodMode::Subscription),
+                ),
+                (
+                    "imports".into(),
+                    method::<ImportsRead, ImportsPage>(MethodMode::Query),
+                ),
+                (
+                    "import".into(),
+                    method::<ImportChange, ImportResult>(MethodMode::Mutation),
+                ),
+                (
+                    "importDirectories".into(),
+                    method::<Directories, DirectoryPage>(MethodMode::Query),
                 ),
                 (
                     "projects".into(),

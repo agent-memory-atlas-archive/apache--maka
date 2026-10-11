@@ -251,9 +251,7 @@ async fn reexport(log: &EventLog, root: &str) {
     let mut staged = StagedBundle::read(bytes.as_slice()).await.unwrap();
     staged.validate_history().await.unwrap();
     staged.close().await.unwrap();
-    log.read_model_context(root, None, 1_000, 1_048_576)
-        .await
-        .unwrap();
+    log.read_model_context(root, None).await.unwrap();
 }
 
 async fn collect(log: &EventLog) {

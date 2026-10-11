@@ -477,6 +477,28 @@ fn reading_focus_command_waits_for_actual_reveal_and_only_queues_follow_focus() 
     p.input(key(KeyCode::Down)).unwrap();
     draw(&mut p, 24, 4);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-11");
+    // Replacing the page before the follow-focus notification is delivered must
+    // retire the old item input while retaining the ReadingArea itself.
+    focus_command(&mut p, &props, 2, "item-0");
+    draw(&mut p, 24, 4);
+    draw(&mut p, 24, 4);
+    assert!(
+        p.resources
+            .commit(&p.application, &p.root)
+            .unwrap()
+            .iter()
+            .any(|(_, input)| input.key == "item-0")
+    );
+    props.borrow_mut()["content"]["children"] = json!([]);
+    refresh(&mut p);
+    assert!(
+        !p.resources
+            .commit(&p.application, &p.root)
+            .unwrap()
+            .iter()
+            .any(|(_, input)| input.key == "item-0")
+    );
+    assert!(p.reported.is_empty(), "{:?}", p.reported);
     close(&mut p);
 }
 #[test]

@@ -83,6 +83,23 @@ impl Handler for Agent {
                         context.emit(encode(page)?).await?;
                     }
                 }
+                "imports" => encode(owner.imports(decode(input)?, context.scope()).await?),
+                "import" => {
+                    let operation = context
+                        .operation()
+                        .ok_or("agent_mutation_required")?
+                        .clone();
+                    encode(
+                        owner
+                            .import(decode(input)?, operation, context.scope())
+                            .await?,
+                    )
+                }
+                "importDirectories" => encode(
+                    owner
+                        .import_directories(decode(input)?, context.scope())
+                        .await?,
+                ),
                 "projects" => encode(owner.projects(decode(input)?).await?),
                 "project" => {
                     context.operation().ok_or("agent_mutation_required")?;

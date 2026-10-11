@@ -410,7 +410,7 @@ async fn accepted_call_runs_before_stream_completion_and_survives_retry_in_direc
             let destination = EventLog::open(&directory.path().join("imported.sqlite")).await.unwrap();
             destination.import_bundle(staged,&maka_runtime::artifact::content_digest(b"fixture destination"),
                 BTreeMap::from([("session".into(),json!({}))])).await.unwrap();
-            let imported = destination.read_model_context("session",None,100,128*1024).await.unwrap();
+            let imported = destination.read_model_context("session", None).await.unwrap();
             assert!(!imported.tail.is_empty());
         }
     }).await.expect("streaming execution, progress retry and transcript projection must settle");

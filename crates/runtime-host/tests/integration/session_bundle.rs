@@ -294,9 +294,7 @@ async fn native_bundle_transfer_binds_preview_and_recovers_original_receipt_afte
     assert!(log.session_manager("child").await.unwrap().is_none());
     assert!(log.session_manager("managed").await.unwrap().is_none());
     assert!(log.unfinished_invocations(10).await.unwrap().is_empty());
-    log.read_model_context("source", None, 100, 65536)
-        .await
-        .unwrap();
+    log.read_model_context("source", None).await.unwrap();
     log.close().await.unwrap();
     let target = Running::open(&destination).await;
     assert_eq!(

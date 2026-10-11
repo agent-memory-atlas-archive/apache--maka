@@ -17,7 +17,6 @@
  * under the License.
  */
 
-mod query;
 use super::{Access, SessionConfiguration, SessionViews};
 use maka_plugins::{
     composition::Scope,
@@ -115,7 +114,7 @@ pub(super) async fn read(views: &SessionViews, input: api::Read) -> Result<Vec<a
         let _lease = lease;
         let _permit = permit;
         ticket.start();
-        let result = query::read(&path, input.queries, &cancelled, &stopping);
+        let result = api::query::read(&path, input.queries, &cancelled, &stopping);
         // A rejected read has no unresolved external effect. Close happens
         // inside query::read, before releasing admission or acknowledging cleanup.
         ticket.complete(Ok(()));

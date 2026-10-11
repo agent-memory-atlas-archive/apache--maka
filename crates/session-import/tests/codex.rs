@@ -177,7 +177,7 @@ async fn codex_keeps_observations_ordered_without_mirrors_or_invented_execution(
 }
 
 #[tokio::test]
-async fn codex_rejects_corruption_identity_mismatch_and_oversized_history_as_a_whole() {
+async fn codex_rejects_corruption_and_identity_mismatch_but_keeps_large_history() {
     let valid = lines(vec![
         meta(),
         json!({"type":"event_msg","payload":{"type":"user_message","message":"hello"}}),
@@ -210,16 +210,13 @@ async fn codex_rejects_corruption_identity_mismatch_and_oversized_history_as_a_w
     let oversized = lines(vec![
         meta(),
         json!({"type":"event_msg","payload":{
-            "type":"user_message","message":"x".repeat(maka_runtime::import::MAX_IMPORT_BYTES as usize)
+            "type":"user_message","message":"x".repeat(6 * 1024 * 1024)
         }}),
     ]);
-    assert!(matches!(
-        read(&oversized, "source").await,
-        Err(Error::Limit {
-            kind: "converted_bytes",
-            ..
-        })
-    ));
+    let imported = read(&oversized, "source").await.unwrap();
+    assert!(
+        matches!(&imported.records[0].content, Content::User { text } if text.len() == 6 * 1024 * 1024)
+    );
     let mut unterminated = valid.clone();
     unterminated.pop();
     assert!(
@@ -240,29 +237,19 @@ async fn codex_rejects_corruption_identity_mismatch_and_oversized_history_as_a_w
     let dense = vec![0; 65_536];
     let dense_output = lines(vec![
         meta(),
+        json!({"type":"event_msg","payload":{"type":"user_message","message":"Keep dense tool history"}}),
         json!({"type":"response_item","payload":{
             "type":"function_call_output","call_id":"dense","output":dense
         }}),
     ]);
-    assert!(matches!(
-        read(&dense_output, "source").await,
-        Err(Error::Limit {
-            kind: "record_complexity",
-            ..
-        })
-    ));
-    // An encoded arguments string must pass the same expansion budget as output.
+    assert!(read(&dense_output, "source").await.is_ok());
+    // Large tool arguments and output remain intact historical evidence.
     let dense_input = lines(vec![
         meta(),
+        json!({"type":"event_msg","payload":{"type":"user_message","message":"Keep dense tool history"}}),
         json!({"type":"response_item","payload":{
             "type":"function_call","call_id":"dense","name":"shell","arguments":serde_json::to_string(&dense).unwrap()
         }}),
     ]);
-    assert!(matches!(
-        read(&dense_input, "source").await,
-        Err(Error::Limit {
-            kind: "record_complexity",
-            ..
-        })
-    ));
+    assert!(read(&dense_input, "source").await.is_ok());
 }

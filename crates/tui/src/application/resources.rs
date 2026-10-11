@@ -558,7 +558,14 @@ impl Presenter {
         let observed = self.resources.commit(&self.application, &self.root)?;
         for (mount, input) in observed {
             if !self.application.is_retiring(&mount) {
-                let revision = self.application.frame(&mount)?.revision;
+                let frame = self.application.frame(&mount)?;
+                // A queued follow-focus notification may outlive its list item.
+                // Retire it when the new recipe no longer declares that target.
+                if !frame.view.declares_input(&input.key) {
+                    self.resources.published(&mount, &input);
+                    continue;
+                }
+                let revision = frame.revision;
                 match self
                     .application
                     .dispatch(&mount, revision, &input.key, input.value.clone())

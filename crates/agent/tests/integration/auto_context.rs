@@ -38,7 +38,7 @@ mod background;
 fn context(window: Option<u64>) -> Option<ModelRequestContext> {
     Some(ModelRequestContext {
         provider_id: "openai".into(),
-        context_window: Some(170),
+        context_window: Some(170_000),
         model_context_window: Some(200_000),
         declared_window: window,
     })
@@ -93,16 +93,14 @@ async fn resolved_threshold_and_matching_latest_main_route_are_required_for_pret
         worker.run(next, CancellationToken::new()).await.unwrap();
         worker.drain().await;
         let requests = server.await.unwrap();
-        assert_eq!(
-            requests.last().unwrap()["max_tokens"],
-            if expected {
-                200_000
-            } else if matching {
-                191_930 // 200K capacity, 70 observed retained tokens, 8K growth reserve.
-            } else {
-                200_000 // Another connection's usage is not a budget for this request.
-            }
-        );
+        let output = requests.last().unwrap()["max_tokens"].as_u64().unwrap();
+        if !expected && matching {
+            // Actual retained usage still applies only to the matching route.
+            assert_eq!(output, 191_930);
+        } else {
+            // A fresh request reserves its own prompt inside the 200K model window.
+            assert!((199_000..200_000).contains(&output));
+        }
         let prefix = log.prefix(100, 128 * 1024).await.unwrap();
         let checkpoints: Vec<_> = prefix
             .events
@@ -206,10 +204,7 @@ async fn midturn_waits_for_all_code_mode_results_and_replays_exact_image_anchor_
     );
     assert!(after["messages"].to_string().contains("summary-marker"));
     assert!(after["messages"].to_string().contains("image_url"));
-    let source = log
-        .read_model_context("session", None, 100, 128 * 1024)
-        .await
-        .unwrap();
+    let source = log.read_model_context("session", None).await.unwrap();
     let anchor = source.anchor.as_ref().unwrap().event.id.clone();
     assert!(
         matches!(&source.baseline.as_ref().unwrap().checkpoint.mode,CheckpointMode::MidTurn {anchor_event_id} if anchor_event_id==&anchor)
@@ -248,7 +243,7 @@ async fn midturn_waits_for_all_code_mode_results_and_replays_exact_image_anchor_
     Arc::try_unwrap(log).ok().unwrap().close().await.unwrap();
     let log = Arc::new(EventLog::open(&path).await.unwrap());
     assert_eq!(
-        log.read_model_context("session", None, 100, 128 * 1024)
+        log.read_model_context("session", None)
             .await
             .unwrap()
             .anchor

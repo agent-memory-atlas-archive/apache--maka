@@ -25,6 +25,7 @@ use maka_agent::{Engine, RunError, RunInput, RunWork};
 
 mod attachments;
 mod execution;
+mod imports;
 mod interactions;
 mod notifications;
 mod projects;
@@ -120,6 +121,8 @@ pub(crate) struct Owner {
     revision: SourceRevision,
     behavior: Option<SystemPrompt>,
     pub workspace_roots: Vec<workspace::Root>,
+    pub import_roots: Vec<workspace::Root>,
+    import_capacity: Arc<Semaphore>,
     internal_tools: Vec<maka_runtime::tools::ToolDefinition>,
     internal_bindings: BTreeMap<String, Option<String>>,
     managed_worktrees: std::path::PathBuf,
@@ -196,6 +199,11 @@ impl Owner {
         let managed_worktrees = root.canonical_path().join("subagent-worktrees");
         let workspace_roots =
             workspace::open(settings.workspace_roots.clone(), &managed_worktrees)?;
+        let import_roots = if settings.import_roots.is_empty() {
+            Vec::new()
+        } else {
+            workspace::open(settings.import_roots.clone(), root.canonical_path())?
+        };
         let models = ModelExecutor::new(1, Duration::from_secs(60))
             .map_err(|_| "agent_executor_unavailable")?;
         let cells = maka_js_runtime::CodeExecutor::new(1, maka_js_runtime::CellLimits::default())
@@ -241,6 +249,8 @@ impl Owner {
             prefix,
             data_source,
             workspace_roots,
+            import_roots,
+            import_capacity: Arc::new(Semaphore::new(2)),
             managed_worktrees,
             revision,
             behavior,

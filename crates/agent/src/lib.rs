@@ -20,6 +20,7 @@
 mod auto_context;
 mod cleanup;
 mod compact;
+mod context_input;
 mod continuation;
 mod executor;
 pub use executor::ExecutorInput;

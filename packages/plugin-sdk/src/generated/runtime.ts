@@ -159,6 +159,10 @@ export type RuntimeProtocol =
   | SkillPreparationRecord
   | AgentList
   | AgentCreate
+  | AgentImportsRead
+  | AgentImportsPage
+  | AgentImportChange
+  | AgentImportResult
   | AgentProjectsRead
   | AgentProjectsPage
   | AgentProjectChange
@@ -2249,6 +2253,418 @@ export type AgentWorkspaceSelection =
   | {
       sessionId: string;
       kind: 'session';
+    };
+export type AgentImportsRead =
+  | {
+      kind: 'sources';
+    }
+  | {
+      source: AgentImportSourceRef;
+      query: AgentImportQuery;
+      kind: 'catalog';
+    }
+  | {
+      source: AgentImportSourceRef;
+      entry: AgentImportEntryRef;
+      digest: string | null;
+      after: number;
+      kind: 'preview';
+    }
+  | {
+      after: string | null;
+      kind: 'copies';
+    };
+export type AgentImportsPage =
+  | {
+      revision: number;
+      sources: AgentImportSource[];
+      kind: 'sources';
+    }
+  | {
+      source: AgentImportSourceRef;
+      /**
+       * @maxItems 16
+       */
+      entries:
+        | []
+        | [AgentImportEntry]
+        | [AgentImportEntry, AgentImportEntry]
+        | [AgentImportEntry, AgentImportEntry, AgentImportEntry]
+        | [AgentImportEntry, AgentImportEntry, AgentImportEntry, AgentImportEntry]
+        | [AgentImportEntry, AgentImportEntry, AgentImportEntry, AgentImportEntry, AgentImportEntry]
+        | [
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+          ]
+        | [
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+          ]
+        | [
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+          ]
+        | [
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+          ]
+        | [
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+          ]
+        | [
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+          ]
+        | [
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+          ]
+        | [
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+          ]
+        | [
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+          ]
+        | [
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+          ]
+        | [
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+            AgentImportEntry,
+          ];
+      next: string | null;
+      kind: 'catalog';
+    }
+  | {
+      preview: AgentImportPreview;
+      kind: 'preview';
+    }
+  | {
+      /**
+       * @maxItems 16
+       */
+      sessions:
+        | []
+        | [AgentSession]
+        | [AgentSession, AgentSession]
+        | [AgentSession, AgentSession, AgentSession]
+        | [AgentSession, AgentSession, AgentSession, AgentSession]
+        | [AgentSession, AgentSession, AgentSession, AgentSession, AgentSession]
+        | [AgentSession, AgentSession, AgentSession, AgentSession, AgentSession, AgentSession]
+        | [
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+          ]
+        | [
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+          ]
+        | [
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+          ]
+        | [
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+          ]
+        | [
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+          ]
+        | [
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+          ]
+        | [
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+          ]
+        | [
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+          ]
+        | [
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+          ]
+        | [
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+            AgentSession,
+          ];
+      next: string | null;
+      kind: 'copies';
+    }
+  | {
+      kind: 'changed';
+    }
+  | {
+      kind: 'unavailable';
+    }
+  | {
+      kind: 'invalid';
+    }
+  | {
+      kind: 'busy';
+    }
+  | {
+      kind: 'limit';
+    };
+export type AgentImportLocation =
+  | {
+      directory: AgentDirectorySelection;
+      kind: 'codex';
+    }
+  | {
+      directory: AgentDirectorySelection;
+      kind: 'claude_code';
+    }
+  | {
+      directory: AgentDirectorySelection;
+      database: string;
+      kind: 'open_code';
+    };
+export type AgentImportRecordKind = 'user' | 'assistant' | 'tool_call' | 'tool_result' | 'note';
+export type AgentImportChange =
+  | {
+      revision: number;
+      id: string | null;
+      name: string;
+      location: AgentImportLocation;
+      kind: 'save_source';
+    }
+  | {
+      revision: number;
+      id: string;
+      kind: 'remove_source';
+    }
+  | {
+      selection: AgentImportSelection;
+      directory: AgentDirectorySelection;
+      title: string;
+      kind: 'copy';
+    };
+export type AgentImportResult =
+  | {
+      revision: number;
+      sources: AgentImportSource[];
+      kind: 'sources';
+    }
+  | {
+      session: AgentSession;
+      kind: 'imported';
+    }
+  | {
+      kind: 'changed';
+    }
+  | {
+      kind: 'unavailable';
+    }
+  | {
+      kind: 'invalid';
+    }
+  | {
+      kind: 'busy';
+    }
+  | {
+      kind: 'limit';
     };
 export type AgentProjectsRead =
   | {
@@ -5211,6 +5627,51 @@ export interface AgentConfiguration {
         DirectoryRootSpec,
         DirectoryRootSpec,
       ];
+  /**
+   * Explicit read-only roots for user-selected conversation sources.
+   *
+   * @maxItems 8
+   */
+  importRoots?:
+    | []
+    | [DirectoryRootSpec]
+    | [DirectoryRootSpec, DirectoryRootSpec]
+    | [DirectoryRootSpec, DirectoryRootSpec, DirectoryRootSpec]
+    | [DirectoryRootSpec, DirectoryRootSpec, DirectoryRootSpec, DirectoryRootSpec]
+    | [
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+      ]
+    | [
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+      ]
+    | [
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+      ]
+    | [
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+      ];
   maxActiveRuns: number;
   maxSteps: number;
   /**
@@ -6450,6 +6911,101 @@ export interface AgentCreate {
 export interface AgentProjectRef {
   id: string;
   revision: string;
+}
+export interface AgentImportSourceRef {
+  id: string;
+  revision: number;
+}
+export interface AgentImportQuery {
+  text: string;
+  includeArchived: boolean;
+  cursor: string | null;
+}
+export interface AgentImportEntryRef {
+  sessionId: string;
+  path: string;
+}
+export interface AgentImportSource {
+  id: string;
+  name: string;
+  location: AgentImportLocation;
+  path: string;
+}
+export interface AgentImportEntry {
+  id: string;
+  path: string;
+  title: string;
+  cwd: string | null;
+  updatedAt: number | null;
+  archived: boolean;
+}
+export interface AgentImportPreview {
+  selection: AgentImportSelection;
+  title: string;
+  cwd: string | null;
+  records: number;
+  bytes: number;
+  incompleteTail: boolean;
+  /**
+   * @maxItems 8
+   */
+  items:
+    | []
+    | [AgentImportPreviewItem]
+    | [AgentImportPreviewItem, AgentImportPreviewItem]
+    | [AgentImportPreviewItem, AgentImportPreviewItem, AgentImportPreviewItem]
+    | [
+        AgentImportPreviewItem,
+        AgentImportPreviewItem,
+        AgentImportPreviewItem,
+        AgentImportPreviewItem,
+      ]
+    | [
+        AgentImportPreviewItem,
+        AgentImportPreviewItem,
+        AgentImportPreviewItem,
+        AgentImportPreviewItem,
+        AgentImportPreviewItem,
+      ]
+    | [
+        AgentImportPreviewItem,
+        AgentImportPreviewItem,
+        AgentImportPreviewItem,
+        AgentImportPreviewItem,
+        AgentImportPreviewItem,
+        AgentImportPreviewItem,
+      ]
+    | [
+        AgentImportPreviewItem,
+        AgentImportPreviewItem,
+        AgentImportPreviewItem,
+        AgentImportPreviewItem,
+        AgentImportPreviewItem,
+        AgentImportPreviewItem,
+        AgentImportPreviewItem,
+      ]
+    | [
+        AgentImportPreviewItem,
+        AgentImportPreviewItem,
+        AgentImportPreviewItem,
+        AgentImportPreviewItem,
+        AgentImportPreviewItem,
+        AgentImportPreviewItem,
+        AgentImportPreviewItem,
+        AgentImportPreviewItem,
+      ];
+  next: number | null;
+}
+export interface AgentImportSelection {
+  source: AgentImportSourceRef;
+  entry: AgentImportEntryRef;
+  digest: string;
+}
+export interface AgentImportPreviewItem {
+  index: number;
+  kind: AgentImportRecordKind;
+  text: string;
+  truncated: boolean;
 }
 export interface AgentProjectCursor {
   revision: string;

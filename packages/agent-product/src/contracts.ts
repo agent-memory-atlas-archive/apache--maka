@@ -175,7 +175,9 @@ export interface ProjectsProps {
   open: boolean;
   busy: boolean;
 }
+export type ImportsProps = ProjectsProps;
 export interface DirectoryPickerProps {
+  purpose?: 'workspace' | 'import';
   chooseLabel?: string;
   theme: Theme;
   locale: string;
@@ -483,6 +485,20 @@ export const projectsContract = component(
     closed: object({}),
   },
 );
+export const importsContract = component(
+  'maka.agent.Imports',
+  object({
+    theme: { $ref: '#/$defs/Theme' },
+    locale,
+    open: { type: 'boolean' },
+    busy: { type: 'boolean' },
+  }),
+  {
+    selected: withDefs(object({ session: { $ref: '#/$defs/AgentSession' } })),
+    changed: object({}),
+    closed: object({}),
+  },
+);
 export const directoryPickerContract = component(
   'maka.agent.DirectoryPicker',
   object(
@@ -492,6 +508,7 @@ export const directoryPickerContract = component(
       open: { type: 'boolean' },
       busy: { type: 'boolean' },
       chooseLabel: string,
+      purpose: { type: 'string', enum: ['workspace', 'import'] },
     },
     ['theme', 'locale', 'open', 'busy'],
   ),

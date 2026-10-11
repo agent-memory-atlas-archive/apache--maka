@@ -24,7 +24,7 @@ publish.workspace = true
 
 [dependencies]
 async-compression = { version = "0.4.46", features = ["tokio", "gzip"] }
-rusqlite = { workspace = true, features = ["hooks", "limits"] }
+rusqlite.workspace = true
 maka-providers.workspace = true
 maka-workhub.workspace = true
 maka-assistant.workspace = true

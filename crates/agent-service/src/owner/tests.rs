@@ -68,6 +68,8 @@ mod settings;
 #[path = "tests/images.rs"]
 mod images;
 
+#[path = "tests/imports.rs"]
+mod imports;
 #[path = "tests/projects.rs"]
 mod projects;
 
@@ -486,6 +488,10 @@ impl Fixture {
             maka_config::oauth::enrollment::LoginCompletion::Committed(_)
         ));
         let mut settings = Configuration {
+            import_roots: vec![maka_runtime_host::server::DirectoryRootSpec {
+                label: "Import sources".into(),
+                path: workspace.clone(),
+            }],
             executors: vec![],
             skill_library: tooling
                 .as_ref()

@@ -90,7 +90,7 @@ async fn lineage_model_cut_allows_only_independent_cell_progress_not_compaction_
     .await;
     settle(&log, "exec").await;
     let frozen = log
-        .read_model_context("session", Some("child"), 100, 65536)
+        .read_model_context("session", Some("child"))
         .await
         .unwrap();
     dispatch(
@@ -125,8 +125,6 @@ async fn lineage_model_cut_allows_only_independent_cell_progress_not_compaction_
         log.prepare_context_compaction(
             "session",
             Some("child"),
-            100,
-            65536,
             &CheckpointMode::MidTurn {
                 anchor_event_id: child.id
             }
@@ -202,7 +200,7 @@ async fn lineage_model_cut_allows_only_independent_cell_progress_not_compaction_
         .await
         .unwrap();
     let pending = log
-        .read_model_context("session", Some("child"), 100, 65536)
+        .read_model_context("session", Some("child"))
         .await
         .unwrap();
     assert!(
@@ -214,7 +212,7 @@ async fn lineage_model_cut_allows_only_independent_cell_progress_not_compaction_
         .await
         .unwrap();
     let before_settlement = log
-        .read_model_context("session", Some("child"), 100, 65536)
+        .read_model_context("session", Some("child"))
         .await
         .unwrap();
     settle(&log, "nested").await;
@@ -235,7 +233,7 @@ async fn lineage_model_cut_allows_only_independent_cell_progress_not_compaction_
             .is_err()
     );
     let before_direct = log
-        .read_model_context("session", Some("child"), 100, 65536)
+        .read_model_context("session", Some("child"))
         .await
         .unwrap();
     dispatch(&log, "direct", ToolOrigin::Standalone).await;
@@ -247,7 +245,7 @@ async fn lineage_model_cut_allows_only_independent_cell_progress_not_compaction_
         "a settled direct result cannot be omitted either"
     );
     let fresh = log
-        .read_model_context("session", Some("child"), 100, 65536)
+        .read_model_context("session", Some("child"))
         .await
         .unwrap();
     log.append(&lineage_request("next", ModelPurpose::Main, &fresh))

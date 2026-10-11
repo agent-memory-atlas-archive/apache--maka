@@ -20,11 +20,8 @@
 //! Imported conversation is historical evidence, never local execution or usage.
 use serde::{Deserialize, Serialize};
 
-// Leave room for the new opening and execution facts before automatic compaction.
-// Oversized imports fail as a whole; no partial conversation is published.
-pub const MAX_IMPORT_BYTES: u64 = (crate::context::MAX_HISTORY_BYTES * 3 / 4) as u64;
-pub const MAX_IMPORT_RECORDS: u64 = (crate::context::MAX_HISTORY_EVENTS * 3 / 4) as u64;
-pub const MAX_RECORD_BYTES: usize = MAX_IMPORT_BYTES as usize;
+/// Size of a legacy transport append batch, independent of total history size.
+pub const IMPORT_BATCH_BYTES: usize = 6 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -119,13 +116,6 @@ impl Record {
             && (call_id.is_empty() || call_id.len() > 1024 || call_id.chars().any(char::is_control))
         {
             return Err("invalid imported tool identity");
-        }
-        if serde_json::to_vec(self)
-            .map_err(|_| "invalid imported record")?
-            .len()
-            > MAX_RECORD_BYTES
-        {
-            return Err("imported record exceeds its byte limit");
         }
         Ok(())
     }

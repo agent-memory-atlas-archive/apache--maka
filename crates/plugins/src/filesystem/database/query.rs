@@ -17,7 +17,7 @@
  * under the License.
  */
 
-use maka_plugins::filesystem::database::{Cell, Error, Limit, MAX_BYTES, MAX_ROWS, Query, Table};
+use super::{Cell, Error, Limit, MAX_BYTES, MAX_ROWS, Query, Table};
 use rusqlite::{
     Connection, OpenFlags,
     fallible_iterator::FallibleIterator,
@@ -35,11 +35,34 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
-pub(super) fn read(
+/// Reads a trusted, already authorized pathname. The embedding must retain its
+/// source grant and worker custody, and validate directory and sidecar access.
+pub fn read(
     path: &Path,
     queries: Vec<Query>,
     cancelled: &CancellationToken,
     stopping: &CancellationToken,
+) -> Result<Vec<Table>, Error> {
+    read_with_limits(path, queries, cancelled, stopping, true)
+}
+
+/// Local native imports do not serialize the snapshot through a plugin wire frame.
+/// Read the complete selected history, retaining read-only policy and cancellation.
+pub fn read_import(
+    path: &Path,
+    queries: Vec<Query>,
+    cancelled: &CancellationToken,
+    stopping: &CancellationToken,
+) -> Result<Vec<Table>, Error> {
+    read_with_limits(path, queries, cancelled, stopping, false)
+}
+
+fn read_with_limits(
+    path: &Path,
+    queries: Vec<Query>,
+    cancelled: &CancellationToken,
+    stopping: &CancellationToken,
+    bounded: bool,
 ) -> Result<Vec<Table>, Error> {
     if cancelled.is_cancelled() || stopping.is_cancelled() {
         return Err(Error::Cancelled);
@@ -51,7 +74,7 @@ pub(super) fn read(
             | OpenFlags::SQLITE_OPEN_NOFOLLOW,
     )
     .map_err(failed)?;
-    read_connection(connection, queries, cancelled, stopping)
+    read_connection(connection, queries, cancelled, stopping, bounded)
 }
 
 fn read_connection(
@@ -59,6 +82,7 @@ fn read_connection(
     queries: Vec<Query>,
     cancelled: &CancellationToken,
     stopping: &CancellationToken,
+    bounded: bool,
 ) -> Result<Vec<Table>, Error> {
     connection
         .busy_timeout(Duration::from_millis(250))
@@ -86,7 +110,9 @@ fn read_connection(
         (SqlLimit::SQLITE_LIMIT_VARIABLE_NUMBER, 128),
         (SqlLimit::SQLITE_LIMIT_ATTACHED, 0),
     ] {
-        connection.set_limit(limit, value).map_err(failed)?;
+        if bounded {
+            connection.set_limit(limit, value).map_err(failed)?;
+        }
     }
     let deadline = Instant::now() + Duration::from_secs(30);
     let exhausted = Arc::new(AtomicBool::new(false));
@@ -99,7 +125,7 @@ fn read_connection(
             1000,
             Some(move || {
                 work += 1000;
-                if work >= 50_000_000 || Instant::now() >= deadline {
+                if bounded && (work >= 50_000_000 || Instant::now() >= deadline) {
                     work_exhausted.store(true, Ordering::Relaxed);
                 }
                 abort.is_cancelled()
@@ -110,14 +136,20 @@ fn read_connection(
         .map_err(failed)?;
     connection.execute_batch("BEGIN DEFERRED").map_err(failed)?;
     connection.authorizer(Some(authorize)).map_err(failed)?;
-    let result = collect(&connection, queries, cancelled, stopping, deadline);
+    let result = collect(
+        &connection,
+        queries,
+        cancelled,
+        stopping,
+        bounded.then_some(deadline),
+    );
     // Closing the connection releases the read transaction even after a rejected
     // statement. Never send user SQL a COMMIT/ROLLBACK or control hook capability.
     let closed = connection.close().map_err(|(_, error)| failed(error));
     if cancelled.is_cancelled() || stopping.is_cancelled() {
         return Err(Error::Cancelled);
     }
-    if exhausted.load(Ordering::Relaxed) || Instant::now() >= deadline {
+    if bounded && (exhausted.load(Ordering::Relaxed) || Instant::now() >= deadline) {
         return Err(Error::Limit(Limit::Work));
     }
     closed?;
@@ -186,16 +218,19 @@ fn collect(
     queries: Vec<Query>,
     cancelled: &CancellationToken,
     stopping: &CancellationToken,
-    deadline: Instant,
+    deadline: Option<Instant>,
 ) -> Result<Vec<Table>, Error> {
     let mut tables = Vec::new();
-    let mut budget = Budget(2);
+    let mut budget = Budget {
+        bytes: 2,
+        bounded: deadline.is_some(),
+    };
     let mut count = 0;
     for query in queries {
         if cancelled.is_cancelled() || stopping.is_cancelled() {
             return Err(Error::Cancelled);
         }
-        if Instant::now() >= deadline {
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             return Err(Error::Limit(Limit::Work));
         }
         // Batch rejects additional statements instead of silently executing a prefix.
@@ -228,11 +263,11 @@ fn collect(
             if cancelled.is_cancelled() || stopping.is_cancelled() {
                 return Err(Error::Cancelled);
             }
-            if Instant::now() >= deadline {
+            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 return Err(Error::Limit(Limit::Work));
             }
             count += 1;
-            if count > MAX_ROWS {
+            if deadline.is_some() && count > MAX_ROWS {
                 return Err(Error::Limit(Limit::Rows));
             }
             budget.reserve(3)?; // Row brackets and separator.
@@ -242,7 +277,8 @@ fn collect(
                 // Check borrowed payloads before allocating; do not materialize an
                 // entire oversized row before discovering the output limit.
                 if let ValueRef::Text(bytes) | ValueRef::Blob(bytes) = field
-                    && bytes.len() > MAX_BYTES.saturating_sub(budget.0)
+                    && budget.bounded
+                    && bytes.len() > MAX_BYTES.saturating_sub(budget.bytes)
                 {
                     return Err(Error::Limit(Limit::Bytes));
                 }
@@ -284,26 +320,32 @@ impl rusqlite::ToSql for Parameter<'_> {
         }))
     }
 }
-struct Budget(usize);
+struct Budget {
+    bytes: usize,
+    bounded: bool,
+}
 impl Budget {
     fn reserve(&mut self, bytes: usize) -> Result<(), Error> {
-        if bytes > MAX_BYTES.saturating_sub(self.0) {
+        if self.bounded && bytes > MAX_BYTES.saturating_sub(self.bytes) {
             return Err(Error::Limit(Limit::Bytes));
         }
-        self.0 += bytes;
+        self.bytes += bytes;
         Ok(())
     }
     fn add(&mut self, value: &impl serde::Serialize) -> Result<(), Error> {
+        if !self.bounded {
+            return Ok(());
+        }
         serde_json::to_writer(&mut *self, value).map_err(|_| Error::Limit(Limit::Bytes))?;
         self.reserve(1)
     }
 }
 impl std::io::Write for Budget {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        if bytes.len() > MAX_BYTES.saturating_sub(self.0) {
+        if self.bounded && bytes.len() > MAX_BYTES.saturating_sub(self.bytes) {
             return Err(std::io::Error::other("database result byte limit"));
         }
-        self.0 += bytes.len();
+        self.bytes += bytes.len();
         Ok(bytes.len())
     }
     fn flush(&mut self) -> std::io::Result<()> {
@@ -370,6 +412,7 @@ mod tests {
             ],
             &cancelled,
             &retired,
+            true,
         )
         .unwrap();
         assert_eq!(tables[0].rows, [vec![Cell::Integer(1)]]);

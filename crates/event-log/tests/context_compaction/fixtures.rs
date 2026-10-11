@@ -159,8 +159,6 @@ pub(super) async fn prepare_trace(
         .prepare_context_compaction(
             "session",
             Some(id),
-            10_000,
-            8 * 1024 * 1024,
             &maka_runtime::context::CheckpointMode::Standalone,
         )
         .await

@@ -99,8 +99,6 @@ async fn compact_attempts_preserve_visible_history_read_markers_and_rebuild() {
             .prepare_context_compaction(
                 "session",
                 Some(&compact.invocation_id),
-                100,
-                1024 * 1024,
                 &CheckpointMode::Standalone,
             )
             .await

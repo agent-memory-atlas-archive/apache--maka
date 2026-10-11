@@ -106,7 +106,7 @@ async fn stopping_summary_drains_attempt_without_checkpoint_or_retry() {
             .any(|event| matches!(event.event.fact, Fact::ContextCheckpointRecorded { .. }))
     );
     assert!(
-        log.read_model_context("session", None, 100, 128 * 1024)
+        log.read_model_context("session", None)
             .await
             .unwrap()
             .baseline

@@ -29,7 +29,7 @@ use crate::{
 };
 use lineage::Index;
 use maka_plugins::filesystem::PinnedFile;
-use maka_runtime::import::{Content, MAX_IMPORT_BYTES, MAX_IMPORT_RECORDS, Record, Source};
+use maka_runtime::import::{Content, Record, Source};
 use std::{collections::BTreeMap, sync::Arc};
 use wire::{Block, Kind, Message, Row, StopReason};
 
@@ -200,26 +200,9 @@ impl ResponseKey {
 #[derive(Default)]
 struct Responses {
     entries: BTreeMap<ResponseKey, Vec<(u64, Message)>>,
-    bytes: u64,
-    fragments: u64,
 }
 impl Responses {
     fn push(&mut self, line: u64, message: Message) -> Result<(), Error> {
-        let bytes = crate::transcript::retained_size(&message)?;
-        if bytes > MAX_IMPORT_BYTES - self.bytes {
-            return Err(Error::Limit {
-                kind: "response_bytes",
-                max: MAX_IMPORT_BYTES,
-            });
-        }
-        if self.fragments >= MAX_IMPORT_RECORDS {
-            return Err(Error::Limit {
-                kind: "response_fragments",
-                max: MAX_IMPORT_RECORDS,
-            });
-        }
-        self.bytes += bytes;
-        self.fragments += 1;
         self.entries
             .entry(ResponseKey::new(&message, line)?)
             .or_default()

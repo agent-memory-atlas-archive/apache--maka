@@ -281,8 +281,6 @@ pub(super) async fn execute(
                     .read_manual_message_context(
                         &input.invocation.session_id,
                         &input.invocation.invocation_id,
-                        maka_runtime::context::MAX_HISTORY_EVENTS,
-                        maka_runtime::context::MAX_HISTORY_BYTES,
                     )
                     .await?
             } else {
@@ -291,8 +289,6 @@ pub(super) async fn execute(
                     .read_model_context(
                         &input.invocation.session_id,
                         Some(&input.invocation.invocation_id),
-                        maka_runtime::context::MAX_HISTORY_EVENTS,
-                        maka_runtime::context::MAX_HISTORY_BYTES,
                     )
                     .await?
             };
@@ -510,7 +506,6 @@ pub(super) fn prepare_request(
     definitions: Vec<ToolDefinition>,
     max_output_tokens: Option<u64>,
 ) -> Result<PreparedRequest, RunError> {
-    let max_output_tokens = Some(max_output_tokens.unwrap_or(8000));
     let prompt = if input.supports_vision
         && matches!(
             &input.provider.kind,
@@ -523,6 +518,12 @@ pub(super) fn prepare_request(
     };
     let prompt = history::project_compatible(prompt, &input.provider.kind);
     let prompt = maka_model::reasoning::project(prompt, &input.provider.kind);
+    let max_output_tokens = Some(crate::context_input::output_limit(
+        input,
+        &prompt,
+        &definitions,
+        max_output_tokens.unwrap_or(8000),
+    ));
     let mut evidence = json!({"projection":"maka.model-history.v1","prompt":prompt,
         "tools":definitions,"providerOptions":input.provider_options});
     if let Some(limit) = max_output_tokens {

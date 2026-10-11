@@ -33,13 +33,7 @@ async fn stale_after_opening_binds_summary_and_late_prune_rolls_back_checkpoint(
         end(&log, "old").await;
         open(&log, "compact", true).await;
         let stale = log
-            .prepare_context_compaction(
-                "session",
-                Some("compact"),
-                100,
-                64 * 1024,
-                &CheckpointMode::Standalone,
-            )
+            .prepare_context_compaction("session", Some("compact"), &CheckpointMode::Standalone)
             .await
             .unwrap();
         let archived = archive("compact", &first);
@@ -50,13 +44,7 @@ async fn stale_after_opening_binds_summary_and_late_prune_rolls_back_checkpoint(
                 .is_err()
         );
         let fresh = log
-            .prepare_context_compaction(
-                "session",
-                Some("compact"),
-                100,
-                64 * 1024,
-                &CheckpointMode::Standalone,
-            )
+            .prepare_context_compaction("session", Some("compact"), &CheckpointMode::Standalone)
             .await
             .unwrap();
         assert_eq!(fresh.source_evidence.digest, stale.source_evidence.digest);
@@ -97,7 +85,7 @@ async fn stale_after_opening_binds_summary_and_late_prune_rolls_back_checkpoint(
             log.append(&archive("compact", &second)).await.unwrap();
             assert!(log.append_batch(&pair).await.is_err());
             assert!(
-                log.read_model_context("session", Some("compact"), 100, 64 * 1024)
+                log.read_model_context("session", Some("compact"))
                     .await
                     .unwrap()
                     .baseline
@@ -124,8 +112,6 @@ async fn stale_after_opening_binds_summary_and_late_prune_rolls_back_checkpoint(
                 .prepare_context_compaction(
                     "session",
                     Some("next-compact"),
-                    100,
-                    64 * 1024,
                     &CheckpointMode::Standalone,
                 )
                 .await
@@ -142,17 +128,13 @@ async fn stale_after_opening_binds_summary_and_late_prune_rolls_back_checkpoint(
                     .unwrap(),
                 expected
             );
-            log.read_model_context("session", None, 100, 64 * 1024)
-                .await
-                .unwrap();
+            log.read_model_context("session", None).await.unwrap();
             let imported = archive("next-compact", &second);
             let inspect = rusqlite::Connection::open(&path).unwrap();
             inspect.execute("INSERT INTO event_log(event_id,invocation_id,kind,operation_id,event_json) VALUES (?,'next-compact','tool_result_archived',NULL,?)",
                 rusqlite::params![imported.event().id,serde_json::to_string(imported.event()).unwrap()]).unwrap();
             assert!(
-                log.read_model_context("session", None, 100, 64 * 1024)
-                    .await
-                    .is_err(),
+                log.read_model_context("session", None).await.is_err(),
                 "read must reject imported post-summary prune, not reinterpret the old summary"
             );
             log.close().await.unwrap();

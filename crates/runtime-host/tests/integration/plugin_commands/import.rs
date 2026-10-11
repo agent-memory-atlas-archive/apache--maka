@@ -199,7 +199,7 @@ async fn verify_intent(
             std::slice::from_ref(&source)
         );
         // Host retention also includes canonical event/source envelopes.
-        let text = "x".repeat(maka_runtime::import::MAX_IMPORT_BYTES as usize - 16 * 1024);
+        let text = "x".repeat((6 * 1024 * 1024) - 16 * 1024);
         let transcript = Transcript {
             source: Source {
                 adapter: "codex".into(),
@@ -267,7 +267,7 @@ async fn verify_intent(
         assert_eq!(saved.intent().request, request);
         let transcript = repository.transcript(&saved).await.unwrap();
         assert!(
-            matches!(&transcript.records[0].content, Content::User { text } if text.len() == maka_runtime::import::MAX_IMPORT_BYTES as usize - 16 * 1024)
+            matches!(&transcript.records[0].content, Content::User { text } if text.len() == (6 * 1024 * 1024) - 16 * 1024)
         );
         let progress = commands
             .import_session(Command::Inspect {

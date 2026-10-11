@@ -25,7 +25,7 @@ use maka_plugins::{
     remote::Views,
     session::import::{Command, ImportState, Receipt},
 };
-use maka_runtime::import::MAX_RECORD_BYTES;
+use maka_runtime::import::IMPORT_BATCH_BYTES;
 use uuid::Uuid;
 
 impl Repository {
@@ -155,7 +155,7 @@ impl Repository {
                     .map_err(|_| Error::Invalid("invalid normalized record"))?
                     .len()
                     + usize::from(!records.is_empty());
-                if records.len() == 8 || bytes + size > MAX_RECORD_BYTES {
+                if records.len() == 8 || bytes + size > IMPORT_BATCH_BYTES {
                     break;
                 }
                 bytes += size;

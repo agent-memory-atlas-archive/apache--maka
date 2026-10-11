@@ -48,7 +48,7 @@ async fn narrower_checkpoint_does_not_corrupt_later_whole_session_archives() {
     let child = continuation::opening("child", Some(claim));
     continuation::append(&log, &child).await;
     let active = log
-        .read_model_context("session", Some("child"), 100, 65536)
+        .read_model_context("session", Some("child"))
         .await
         .unwrap();
     let mut main = request("child", "main", Some(&active)).event().clone();
@@ -64,7 +64,7 @@ async fn narrower_checkpoint_does_not_corrupt_later_whole_session_archives() {
         anchor_event_id: child.id.clone(),
     };
     let compact = log
-        .prepare_context_compaction("session", Some("child"), 100, 65536, &mode)
+        .prepare_context_compaction("session", Some("child"), &mode)
         .await
         .unwrap();
     let pair = summary_pair(&log, "child", &compact).await;
@@ -86,7 +86,7 @@ async fn narrower_checkpoint_does_not_corrupt_later_whole_session_archives() {
         .unwrap()
         .unwrap();
     let current = log
-        .read_model_context("session", Some("writer"), 100, 65536)
+        .read_model_context("session", Some("writer"))
         .await
         .unwrap();
     assert!(current.baseline.is_none());

@@ -92,10 +92,7 @@ async fn branch_export_keeps_archive_proofs_and_owned_bytes_without_parent_futur
     )
     .await
     .unwrap();
-    let empty_source = log
-        .read_model_context("source", None, 100, 65536)
-        .await
-        .unwrap();
+    let empty_source = log.read_model_context("source", None).await.unwrap();
     log.commit_artifact(
         Artifact {
             id: "input".into(),

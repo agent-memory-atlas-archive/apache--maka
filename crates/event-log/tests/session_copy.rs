@@ -485,10 +485,7 @@ async fn copies_own_history_and_files_without_replaying_execution_across_retries
             .map(|e| (e.sequence, &e.event))
             .collect::<Vec<_>>()
     );
-    let context = log
-        .read_model_context("branch", None, 100, 65536)
-        .await
-        .unwrap();
+    let context = log.read_model_context("branch", None).await.unwrap();
     assert_eq!(context.source_evidence.digest, inherited.digest);
     assert_eq!(context.tail.len(), 2);
     assert_eq!(
@@ -598,7 +595,7 @@ async fn copies_own_history_and_files_without_replaying_execution_across_retries
                 .collect::<Vec<_>>()
         );
         assert_eq!(
-            log.read_model_context(session, None, 100, 65536)
+            log.read_model_context(session, None)
                 .await
                 .unwrap()
                 .tail
@@ -825,7 +822,7 @@ async fn failed_copy_publishes_neither_destination_nor_partial_resources() {
     .await;
     assert!(empty.execution.is_none());
     assert!(
-        log.read_model_context("target", None, 100, 65536)
+        log.read_model_context("target", None)
             .await
             .unwrap()
             .tail
@@ -903,7 +900,7 @@ async fn revisions_own_excluded_inputs_and_allocate_one_durable_family() {
         indexes.push(*index);
         assert!(record.execution.is_none());
         assert!(
-            log.read_model_context(&record.id, None, 100, 65536)
+            log.read_model_context(&record.id, None)
                 .await
                 .unwrap()
                 .tail

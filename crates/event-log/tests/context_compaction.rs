@@ -51,10 +51,7 @@ async fn repeated_checkpoints_cross_old_history_limits_with_bounded_tail_and_exa
     for round in 0..3 {
         closed(&log, &format!("main-{round}"), 3 * 1024 * 1024, 3400).await;
         if round == 0 {
-            let source = log
-                .read_model_context("session", None, 10_000, 8 * 1024 * 1024)
-                .await
-                .unwrap();
+            let source = log.read_model_context("session", None).await.unwrap();
             let prefix = log
                 .scoped_prefix(
                     LogScope::Session {
@@ -94,10 +91,7 @@ async fn repeated_checkpoints_cross_old_history_limits_with_bounded_tail_and_exa
         .await,
         Err(StoreError::PrefixTooLarge)
     ));
-    let source = log
-        .read_model_context("session", None, 100, 8192)
-        .await
-        .unwrap();
+    let source = log.read_model_context("session", None).await.unwrap();
     assert_eq!(source.baseline.unwrap().event_id, last[0].event().id);
     assert!(source.tail.len() < 10);
     let revision = log
@@ -140,7 +134,7 @@ async fn repeated_checkpoints_cross_old_history_limits_with_bounded_tail_and_exa
         maka_event_log::sessions::SessionCopyResult::Committed(_)
     ));
     let inherited = log
-        .read_model_context("copied-session", None, 100, 8192)
+        .read_model_context("copied-session", None)
         .await
         .unwrap();
     assert_eq!(inherited.baseline.unwrap().event_id, last[0].event().id);
@@ -165,7 +159,7 @@ async fn repeated_checkpoints_cross_old_history_limits_with_bounded_tail_and_exa
     log.append_batch(&last).await.unwrap();
     assert!(!commits.has_changed().unwrap());
     assert_eq!(
-        log.read_model_context("session", None, 100, 8192)
+        log.read_model_context("session", None)
             .await
             .unwrap()
             .source_evidence
@@ -173,7 +167,7 @@ async fn repeated_checkpoints_cross_old_history_limits_with_bounded_tail_and_exa
         source.source_evidence.digest
     );
     assert!(
-        log.read_model_context("other", None, 100, 8192)
+        log.read_model_context("other", None)
             .await
             .unwrap()
             .baseline
@@ -241,11 +235,7 @@ async fn forged_summary_source_and_hidden_old_unknowns_never_become_a_baseline()
         )
         .unwrap();
     inspect.execute("UPDATE event_log SET event_json = replace(event_json, 'part', 'changed') WHERE event_id = ?", [&observed]).unwrap();
-    assert!(
-        log.read_model_context("session", None, 100, 8192)
-            .await
-            .is_err()
-    );
+    assert!(log.read_model_context("session", None).await.is_err());
     let mut unknown: RuntimeEvent = serde_json::from_str(&original).unwrap();
     unknown.fact = Fact::ToolDispatched {
         presentation: None,
@@ -257,17 +247,12 @@ async fn forged_summary_source_and_hidden_old_unknowns_never_become_a_baseline()
     };
     inspect.execute("UPDATE event_log SET kind = 'tool_dispatched', operation_id = 'hidden', event_json = ? WHERE event_id = ?",
         rusqlite::params![serde_json::to_string(&unknown).unwrap(), observed]).unwrap();
-    let error = log
-        .read_model_context("session", None, 100, 8192)
-        .await
-        .unwrap_err();
+    let error = log.read_model_context("session", None).await.unwrap_err();
     assert!(error.to_string().contains("unresolved prior execution"));
     assert!(
         log.prepare_context_compaction(
             "session",
             None,
-            100,
-            8192,
             &maka_runtime::context::CheckpointMode::Standalone
         )
         .await

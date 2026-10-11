@@ -18,10 +18,7 @@
  */
 
 use maka_runtime::import::Content;
-use maka_session_import::{
-    Error,
-    opencode::{self, Message, Part, Session, Snapshot},
-};
+use maka_session_import::opencode::{self, Message, Part, Session, Snapshot};
 use serde_json::{Value, json, value::to_raw_value};
 
 fn message(id: &str, at: u64, data: Value) -> Message {
@@ -206,11 +203,5 @@ fn opencode_refuses_ambiguous_or_corrupt_snapshots_before_publishing_any_history
     assert!(opencode::convert(broken, "s").is_err());
     let mut dense = snapshot();
     dense.parts[0].data = to_raw_value(&json!({"type":"tool","tool":"Read","callID":"c","state":{"status":"running","input":vec![0;70_000]}})).unwrap();
-    assert!(matches!(
-        opencode::convert(dense, "s"),
-        Err(Error::Limit {
-            kind: "record_complexity",
-            ..
-        })
-    ));
+    assert!(opencode::convert(dense, "s").is_ok());
 }

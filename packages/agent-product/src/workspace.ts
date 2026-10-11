@@ -255,8 +255,9 @@ export interface State {
   modelRefreshing: boolean;
   searchOpen: boolean;
   browse: number | null;
-  pages: ('settings' | 'connections' | 'deployment' | 'projects')[];
+  pages: ('settings' | 'connections' | 'deployment' | 'projects' | 'imports')[];
   projectsOpened: boolean;
+  importsOpened: boolean;
   settingsCategory: SettingsCategory;
   sidebar: { open: boolean } | { command: TerminalPaneCommand | null };
   terminals: boolean;
@@ -784,6 +785,7 @@ type RootCommand =
   | 'navigation-toggle'
   | 'settings'
   | 'projects-open'
+  | 'imports-open'
   | 'deployment-open'
   | 'reload'
   | 'stop'
@@ -1030,6 +1032,13 @@ function rootCommands(
         ]
       : []),
     {
+      kind: 'imports-open',
+      id: 'imports-open',
+      label: text.importsTitle,
+      hint: '',
+      disabled: !route || !!state.embedding.fixed,
+    },
+    {
       kind: 'projects-open',
       id: 'projects-open',
       label: text.projectsTitle,
@@ -1132,6 +1141,9 @@ function rootCommand(
   else if (kind === 'navigation-toggle') controlSidebar(state, 'toggle');
   else if (kind === 'settings') {
     state.pages = [target === 'tui' ? 'settings' : 'connections'];
+  } else if (kind === 'imports-open') {
+    state.pages = ['imports'];
+    state.importsOpened = true;
   } else if (kind === 'projects-open') {
     state.pages = ['projects'];
     state.projectsOpened = true;
@@ -2315,6 +2327,10 @@ function frame<N extends Node>(
               [
                 ...(!state.embedding.fixed
                   ? [
+                      ui.button('imports-open', text.importsTitle, false, false, {
+                        background: 0,
+                        align: 'start',
+                      }),
                       ui.button('projects-open', text.projectsTitle, false, false, {
                         background: 0,
                         align: 'start',
@@ -2605,15 +2621,17 @@ function frame<N extends Node>(
         : '';
   const title = ui.text(
     'title',
-    state.pages.at(-1) === 'projects'
-      ? text.projectsTitle
-      : state.pages.at(-1) === 'settings'
-        ? tuiText(locale, 'route-settings')
-        : state.pages.at(-1) === 'connections'
-          ? text.settings
-          : state.pages.at(-1) === 'deployment'
-            ? text.deploymentTitle
-            : (state.selected?.title ?? tuiText(locale, 'route-workspace')),
+    state.pages.at(-1) === 'imports'
+      ? text.importsTitle
+      : state.pages.at(-1) === 'projects'
+        ? text.projectsTitle
+        : state.pages.at(-1) === 'settings'
+          ? tuiText(locale, 'route-settings')
+          : state.pages.at(-1) === 'connections'
+            ? text.settings
+            : state.pages.at(-1) === 'deployment'
+              ? text.deploymentTitle
+              : (state.selected?.title ?? tuiText(locale, 'route-workspace')),
     17,
     theme.text,
     650,
@@ -2680,7 +2698,12 @@ function frame<N extends Node>(
                   ),
                 ),
                 ui.button('terminal-open', text.terminalTitle, !state.selected || state.loading),
-                ...(!state.embedding.fixed ? [ui.button('projects-open', text.projectsTitle)] : []),
+                ...(!state.embedding.fixed
+                  ? [
+                      ui.button('projects-open', text.projectsTitle),
+                      ui.button('imports-open', text.importsTitle),
+                    ]
+                  : []),
                 ui.button('settings', text.settings),
                 ui.button('deployment-open', text.deploymentTitle),
               ],
@@ -3169,6 +3192,21 @@ function frame<N extends Node>(
             ),
           ]
         : []),
+      ...(state.importsOpened
+        ? [
+            presentation.slot(
+              'imports',
+              'imports',
+              {
+                theme,
+                locale,
+                open: state.pages.at(-1) === 'imports',
+                busy: mutationPending(state) || catalogPending(state),
+              },
+              { closed: 'imports-closed', selected: 'import-selected', changed: 'imports-changed' },
+            ),
+          ]
+        : []),
       ...(state.projectsOpened
         ? [
             presentation.slot(
@@ -3592,6 +3630,7 @@ export function workspace<N extends Node>(
         modelRefreshing: false,
         pages: [],
         projectsOpened: false,
+        importsOpened: false,
         settingsCategory: 'appearance',
         searchOpen: false,
         browse: null,
@@ -3667,7 +3706,7 @@ export function workspace<N extends Node>(
               Array.isArray(item.pages) &&
               item.pages.length <= 3 &&
               item.pages.every((page) =>
-                ['settings', 'connections', 'deployment', 'projects'].includes(page),
+                ['settings', 'connections', 'deployment', 'projects', 'imports'].includes(page),
               ) &&
               ['appearance', 'interface', 'models', 'plugins'].includes(item.category)
               ? item
@@ -3676,6 +3715,7 @@ export function workspace<N extends Node>(
         );
         if (restored) {
           state.pages = restored.pages;
+          if (state.pages.includes('imports') && !state.embedding.fixed) state.importsOpened = true;
           if (state.pages.includes('projects') && !state.embedding.fixed)
             state.projectsOpened = true;
           state.settingsCategory = restored.category;
@@ -3935,6 +3975,22 @@ export function workspace<N extends Node>(
           else if (input.name === 'changed') {
             if (state.selected?.id === (input.event as { sessionId: string }).sessionId)
               observe(state, actions);
+          }
+          return frame(presentation, configuredLocale, state, values, actions);
+        }
+        if (input.child === 'imports') {
+          if (input.name === 'closed' && state.pages.at(-1) === 'imports') state.pages.pop();
+          else if (input.name === 'changed') catalog(state);
+          else if (
+            input.name === 'selected' &&
+            state.pages.at(-1) === 'imports' &&
+            !state.embedding.fixed &&
+            !mutationPending(state) &&
+            !catalogPending(state)
+          ) {
+            select(state, actions, (input.event as { session: AgentSession }).session);
+            state.pages = [];
+            catalog(state);
           }
           return frame(presentation, configuredLocale, state, values, actions);
         }

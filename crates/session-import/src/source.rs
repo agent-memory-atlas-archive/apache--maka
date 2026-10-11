@@ -20,10 +20,8 @@
 use crate::{Error, Transcript, catalog};
 use maka_plugins::{
     filesystem::{OpenFile, ReadDirectory, Symlinks},
-    remote::{Views, WorkspaceViewInput},
     storage::{self, Data, Mutation, Store, StoreError},
 };
-use maka_runtime::execution::{CollaborationMode, SandboxMode, WorkspaceTarget};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, path::Path};
 use uuid::Uuid;
@@ -95,7 +93,7 @@ impl Configuration {
 impl Source {
     pub fn validate(&self) -> Result<(), Error> {
         if self.name.trim().is_empty()
-            || self.name.len() > 256
+            || self.name.chars().count() > 256
             || self.name.chars().any(char::is_control)
         {
             return Err(Error::Invalid("invalid import source name"));
@@ -117,7 +115,7 @@ impl Source {
 
     pub async fn catalog(
         &self,
-        views: &dyn Views,
+        views: &(impl crate::access::ReadSource + ?Sized),
         query: catalog::Query,
     ) -> Result<catalog::Page, Error> {
         self.validate()?;
@@ -139,7 +137,7 @@ impl Source {
 
     pub async fn read(
         &self,
-        views: &dyn Views,
+        views: &(impl crate::access::ReadSource + ?Sized),
         selection: &Selection,
     ) -> Result<Transcript, Error> {
         self.validate()?;
@@ -173,15 +171,11 @@ impl Source {
     }
 }
 
-async fn directory(views: &dyn Views, path: String) -> Result<ReadDirectory, Error> {
-    Ok(views
-        .workspace(WorkspaceViewInput {
-            workspace: WorkspaceTarget::HostPath { path },
-            sandbox_mode: SandboxMode::ReadOnly,
-            collaboration_mode: CollaborationMode::Agent,
-        })
-        .await?
-        .files)
+async fn directory(
+    views: &(impl crate::access::ReadSource + ?Sized),
+    path: String,
+) -> Result<ReadDirectory, Error> {
+    views.directory(path).await
 }
 
 pub async fn read(store: &dyn Store) -> Result<Snapshot, Error> {

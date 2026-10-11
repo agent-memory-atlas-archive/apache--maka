@@ -39,7 +39,7 @@ async fn automatic_modes_apply_archived_sources_without_sealing_the_message() {
         let archived = archive("writer", &target);
         log.append(&archived).await.unwrap();
         let source = log
-            .read_model_context("session", Some("writer"), 100, 64 * 1024)
+            .read_model_context("session", Some("writer"))
             .await
             .unwrap();
         let anchor = source
@@ -63,7 +63,7 @@ async fn automatic_modes_apply_archived_sources_without_sealing_the_message() {
             CheckpointMode::PreTurn
         };
         let source = log
-            .prepare_context_compaction("session", Some("writer"), 100, 64 * 1024, &mode)
+            .prepare_context_compaction("session", Some("writer"), &mode)
             .await
             .unwrap();
         assert!(
@@ -82,7 +82,7 @@ async fn automatic_modes_apply_archived_sources_without_sealing_the_message() {
             .unwrap();
         assert_eq!(log.unfinished_invocations(10).await.unwrap().len(), 1);
         let source = log
-            .read_model_context("session", Some("writer"), 100, 8192)
+            .read_model_context("session", Some("writer"))
             .await
             .unwrap();
         assert_eq!(source.anchor.is_some(), mid);

@@ -77,7 +77,7 @@ async fn continuation_requests_and_checkpoints_prove_selected_source_across_repa
         let child = continuation::opening("child", Some(claim.clone()));
         let opened = continuation::append(&log, &child).await;
         let main_source = log
-            .read_model_context("session", Some("child"), 100, 65536)
+            .read_model_context("session", Some("child"))
             .await
             .unwrap();
         let request = lineage_request("main", ModelPurpose::Main, &main_source);
@@ -128,7 +128,7 @@ async fn continuation_requests_and_checkpoints_prove_selected_source_across_repa
             CheckpointMode::PreTurn
         };
         let source = log
-            .prepare_context_compaction("session", Some("child"), 100, 65536, &mode)
+            .prepare_context_compaction("session", Some("child"), &mode)
             .await
             .unwrap();
         assert_eq!(
@@ -196,7 +196,7 @@ async fn continuation_requests_and_checkpoints_prove_selected_source_across_repa
         assert!(log.append(&checkpoint).await.is_err());
         assert!(!commits.has_changed().unwrap());
         assert_eq!(
-            log.read_model_context("session", Some("child"), 100, 65536)
+            log.read_model_context("session", Some("child"))
                 .await
                 .unwrap()
                 .baseline
@@ -209,7 +209,7 @@ async fn continuation_requests_and_checkpoints_prove_selected_source_across_repa
             .unwrap();
         log.append(&checkpoint).await.unwrap();
         let after = log
-            .read_model_context("session", Some("child"), 100, 65536)
+            .read_model_context("session", Some("child"))
             .await
             .unwrap();
         assert_eq!(
@@ -241,7 +241,7 @@ async fn continuation_requests_and_checkpoints_prove_selected_source_across_repa
             checkpoint.event().id
         );
         assert_eq!(
-            log.read_model_context("session", None, 100, 65536)
+            log.read_model_context("session", None)
                 .await
                 .unwrap()
                 .baseline

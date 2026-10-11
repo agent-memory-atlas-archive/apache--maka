@@ -183,6 +183,7 @@ const specifications = {
       palette: one(own.paletteContract),
       directories: one(own.directoryPickerContract),
       projects: one(own.projectsContract),
+      imports: one(own.importsContract),
       details: one(own.sessionDetailsContract),
       terminals: one(own.terminalPanelContract),
       skills: { contract: own.skillLibraryContract, cardinality: { kind: 'optional' } },
@@ -308,6 +309,20 @@ specifications.projects = {
   contract: own.projectsContract,
   export: 'Projects',
   module: 'projects',
+  imports: {
+    agent: one(sdk.contracts.agent),
+    directories: one(own.directoryPickerContract),
+    reading: one(sdk.contracts.readingArea),
+    input: one(sdk.contracts.textInput),
+    reader: one(sdk.contracts.textReader),
+    receipts: one(sdk.contracts.receiptReader),
+    history: one(sdk.contracts.callerHistory),
+  },
+};
+specifications['conversation-import'] = {
+  contract: own.importsContract,
+  export: 'Imports',
+  module: 'imports',
   imports: {
     agent: one(sdk.contracts.agent),
     directories: one(own.directoryPickerContract),

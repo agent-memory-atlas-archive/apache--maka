@@ -177,6 +177,15 @@ export const configurations = {
         minItems: 1,
         maxItems: 8,
       },
+      importRoots: {
+        description: 'Explicit read-only roots for user-selected conversation sources.',
+        type: 'array',
+        items: {
+          $ref: '#/$defs/DirectoryRootSpec',
+        },
+        maxItems: 8,
+        default: [],
+      },
       maxActiveRuns: {
         type: 'integer',
         format: 'uint',
@@ -586,6 +595,15 @@ export const configurations = {
               'Installation-published directories, captured without creating workspace markers.',
             minItems: 1,
             maxItems: 8,
+          },
+          importRoots: {
+            type: 'array',
+            items: {
+              $ref: '#/$defs/DirectoryRootSpec',
+            },
+            description: 'Explicit read-only roots for user-selected conversation sources.',
+            maxItems: 8,
+            default: [],
           },
           maxActiveRuns: {
             type: 'integer',

@@ -19,6 +19,8 @@
 
 //! One-shot reads of an explicitly authorized, trusted Host pathname. This is
 //! not a captured ReadDirectory and does not resist malicious same-user path races.
+pub mod query;
+
 use serde::{Deserialize, Serialize};
 pub const MAX_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_ROWS: usize = 250_000;

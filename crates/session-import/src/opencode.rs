@@ -33,9 +33,6 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use wire::{Part as ContentPart, Role, Status};
 
-pub const MAX_RAW_BYTES: u64 = 64 * 1024 * 1024;
-pub const MAX_ROWS: usize = 250_000;
-
 /// Raw SQL cells, not a provider export or a second canonical message model.
 pub struct Snapshot {
     pub session: Session,
@@ -86,12 +83,7 @@ pub fn convert(mut snapshot: Snapshot, expected_session_id: &str) -> Result<Tran
     {
         return Err(Error::Invalid("OpenCode source is a child session"));
     }
-    if snapshot.messages.len().saturating_add(snapshot.parts.len()) > MAX_ROWS {
-        return Err(Error::Limit {
-            kind: "source_rows",
-            max: MAX_ROWS as u64,
-        });
-    }
+
     let mut fingerprint = Evidence::default();
     fingerprint.record(&snapshot.session)?;
     let mut message_ids = BTreeSet::new();
@@ -348,23 +340,14 @@ struct Evidence {
 impl Evidence {
     fn record(&mut self, value: &impl Serialize) -> Result<(), Error> {
         use std::io::Write;
-        serde_json::to_writer(&mut *self, value).map_err(|_| Error::Limit {
-            kind: "source_bytes",
-            max: MAX_RAW_BYTES,
-        })?;
-        self.write_all(b"\n").map_err(|_| Error::Limit {
-            kind: "source_bytes",
-            max: MAX_RAW_BYTES,
-        })
+        serde_json::to_writer(&mut *self, value)
+            .map_err(|_| Error::Invalid("invalid source snapshot"))?;
+        self.write_all(b"\n")
+            .map_err(|_| Error::Invalid("invalid source snapshot"))
     }
 }
 impl std::io::Write for Evidence {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        if bytes.len() as u64 > MAX_RAW_BYTES - self.bytes {
-            return Err(std::io::Error::other(
-                "source snapshot exceeds its byte limit",
-            ));
-        }
         self.bytes += bytes.len() as u64;
         self.hash.update(bytes);
         Ok(bytes.len())

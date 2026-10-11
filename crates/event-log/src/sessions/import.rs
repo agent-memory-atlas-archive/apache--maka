@@ -17,14 +17,14 @@
  * under the License.
  */
 
-//! Chunked import admission. Canonical rows are immutable immediately; only
-//! publication creates the Session. Staging never rewrites an old log fence.
+//! Atomic native publication and legacy chunked admission share canonical rows.
+//! Only publication creates the Session; imports never rewrite an old log fence.
 use super::{PluginSession, origin, validate_id, validate_time};
 use crate::{EventLog, StoreError};
 use maka_runtime::{
     artifact::content_digest,
     event::{Fact, Invocation, RuntimeEvent},
-    import::{MAX_IMPORT_BYTES, MAX_IMPORT_RECORDS, Record, Source},
+    import::{Record, Source},
 };
 use serde::{Serialize, de::DeserializeOwned};
 use sqlx::{Connection, SqliteConnection};
@@ -122,75 +122,30 @@ impl EventLog {
     ) -> Result<ImportProgress, StoreError> {
         self.validate_root()?;
         validate_id(session)?;
-        if records.is_empty() || records.len() > 8 || position >= MAX_IMPORT_RECORDS {
+        if records.is_empty() || records.len() > 8 {
             return Err(invalid("invalid import batch"));
         }
         for record in &records {
             record.validate().map_err(invalid)?;
         }
-        if serde_json::to_vec(&records)?.len() > maka_runtime::import::MAX_RECORD_BYTES {
+        if serde_json::to_vec(&records)?.len() > maka_runtime::import::IMPORT_BATCH_BYTES {
             return Err(invalid("import batch exceeds its byte limit"));
         }
         let session = session.to_owned();
         let commits = self.commits.clone();
-        self.connection.run(move |connection| Box::pin(async move {
-            let mut tx = connection.begin_with("BEGIN IMMEDIATE").await?;
-            let mut current = progress(&mut tx, &session).await?;
-            if current.state == ImportState::Abandoned { return Err(StoreError::SessionRetired); }
-            let end = position + records.len() as u64;
-            if position > current.records || (position < current.records && end > current.records) {
-                return Err(invalid("import batch does not match its next position"));
-            }
-            let retry = end <= current.records;
-            if !retry && (current.state != ImportState::Collecting || end > MAX_IMPORT_RECORDS) {
-                return Err(invalid("import no longer accepts records"));
-            }
-            let (source, now): (String, i64) = sqlx::query_as(
-                "SELECT source_json,created_at FROM session_imports WHERE session_id=?"
-            ).bind(&session).fetch_one(&mut *tx).await?;
-            let source: Source = serde_json::from_str(&source)?;
-            let mut last = None;
-            for (offset, record) in records.into_iter().enumerate() {
-                let index = position + offset as u64;
-                let event_id = identity(&session, "message", &index.to_string());
-                let conversation = record.is_conversation();
-                let event = RuntimeEvent {
-                    id: event_id.clone(),
-                    invocation: Invocation {
-                        session_id: session.clone(),
-                        turn_id: identity(&session, "turn", &record.source_turn_id),
-                        run_id: identity(&session, "run", &index.to_string()),
-                        invocation_id: identity(&session, "record", &index.to_string()),
-                    },
-                    recorded_at: UNIX_EPOCH + Duration::from_millis(now as u64),
-                    fact: Fact::MessageImported { source: source.clone(), record: Box::new(record) },
-                };
-                let json = serde_json::to_string(&event)?;
-                if retry {
-                    let prior: (Option<String>, Option<String>) = sqlx::query_as(
-                        "SELECT event_json,body_digest FROM event_log WHERE event_id=?"
-                    ).bind(event_id).fetch_one(&mut *tx).await?;
-                    let digest = prior.0.map(|body| content_digest(body.as_bytes())).or(prior.1);
-                    if digest.as_deref() != Some(content_digest(json.as_bytes()).as_str()) {
-                        return Err(StoreError::EventConflict);
+        self.connection
+            .run(move |connection| {
+                Box::pin(async move {
+                    let mut tx = connection.begin_with("BEGIN IMMEDIATE").await?;
+                    let (current, last) = append(&mut tx, &session, position, records).await?;
+                    tx.commit().await.map_err(StoreError::CommitUnknown)?;
+                    if let Some(sequence) = last {
+                        commits.send_replace(sequence);
                     }
-                    continue;
-                }
-                current.bytes += json.len() as u64;
-                if current.bytes > MAX_IMPORT_BYTES { return Err(invalid("import exceeds total byte capacity")); }
-                let inserted = sqlx::query("INSERT INTO event_log(event_id,invocation_id,kind,event_json) VALUES(?,?,'message_imported',?)")
-                    .bind(&event.id).bind(&event.invocation.invocation_id).bind(json).execute(&mut *tx).await?;
-                last = Some(inserted.last_insert_rowid() as u64);
-                super::project_execution(&mut tx, inserted.last_insert_rowid() as u64).await?;
-                sqlx::query("UPDATE session_imports SET records=records+1,bytes=?,conversation=conversation+? WHERE session_id=?")
-                    .bind(current.bytes as i64).bind(i64::from(conversation)).bind(&session).execute(&mut *tx).await?;
-            }
-            if retry { return Ok(current); }
-            current.records = end;
-            tx.commit().await.map_err(StoreError::CommitUnknown)?;
-            if let Some(sequence) = last { commits.send_replace(sequence); }
-            Ok(current)
-        })).await
+                    Ok(current)
+                })
+            })
+            .await
     }
 
     /// Publication and its receipt share Session creation's writer transaction.
@@ -234,6 +189,119 @@ impl EventLog {
         })).await
     }
 
+    /// Published imports in one embedding-owned Session namespace. No foreign
+    /// Session configuration is decoded, and the cursor never broadens the scope.
+    pub async fn imported_sessions<T: DeserializeOwned + Send + 'static>(
+        &self,
+        prefix: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<(Vec<super::SessionRecord<T>>, Option<String>), StoreError> {
+        self.validate_root()?;
+        if prefix.is_empty() || prefix.len() > 128 || !(1..=16).contains(&limit) {
+            return Err(invalid("invalid import history query"));
+        }
+        if let Some(after) = after {
+            validate_id(after)?;
+            if !after.starts_with(prefix) {
+                return Err(invalid("foreign import cursor"));
+            }
+        }
+        let prefix = prefix.to_owned();
+        let after = after.map(str::to_owned);
+        self.connection.run(move |connection| Box::pin(async move {
+            let mut tx = connection.begin().await?;
+            let anchor: Option<i64> = if let Some(after) = &after {
+                Some(sqlx::query_scalar("SELECT created_at FROM session_imports WHERE session_id=? AND state='published'")
+                    .bind(after).fetch_optional(&mut *tx).await?.ok_or(StoreError::SessionNotFound)?)
+            } else { None };
+            let ids: Vec<String> = sqlx::query_scalar(
+                "SELECT i.session_id FROM session_imports i JOIN session_control s ON s.id=i.session_id
+                 WHERE instr(i.session_id,?1)=1 AND i.state='published'
+                 AND (?2 IS NULL OR i.created_at<?2 OR (i.created_at=?2 AND i.session_id<?3))
+                 AND NOT EXISTS (SELECT 1 FROM session_retirements r WHERE r.session_id=i.session_id AND r.remove_session=1)
+                 ORDER BY i.created_at DESC,i.session_id DESC LIMIT ?4"
+            ).bind(prefix).bind(anchor).bind(after).bind((limit+1) as i64).fetch_all(&mut *tx).await?;
+            let next = (ids.len()>limit).then(|| ids[limit-1].clone());
+            let mut records = Vec::with_capacity(limit);
+            for id in ids.into_iter().take(limit) {
+                records.push(super::read(&mut tx, &id).await?.ok_or(StoreError::SessionNotFound)?);
+            }
+            Ok((records, next))
+        })).await
+    }
+
+    /// The complete, bounded conversion and Session publication share one writer
+    /// transaction. A failed record leaves neither a partial log nor a Session.
+    /// The same bound origin validates an exact retry against canonical records.
+    pub async fn import_session<T: Serialize + DeserializeOwned + Send + 'static>(
+        &self,
+        owner: &PluginSession,
+        source: &Source,
+        configuration: &T,
+        records: Vec<Record>,
+        now: u64,
+    ) -> Result<super::SessionRecord<T>, StoreError> {
+        self.validate_root()?;
+        owner.validate()?;
+        if owner.fingerprint.is_empty() || owner.fingerprint.len() > 512 {
+            return Err(invalid("invalid import fingerprint"));
+        }
+        source.validate().map_err(invalid)?;
+        validate_time(now)?;
+        if records.is_empty() || !records.iter().any(Record::is_conversation) {
+            return Err(invalid("invalid complete import"));
+        }
+        for record in &records {
+            record.validate().map_err(invalid)?;
+        }
+        let configuration = serde_json::to_string(configuration)?;
+        if configuration.len() > super::MAX_CONFIGURATION_BYTES {
+            return Err(invalid("import configuration exceeds capacity"));
+        }
+        let source = serde_json::to_string(source)?;
+        let owner = owner.clone();
+        let commits = self.commits.clone();
+        self.connection.run(move |connection| Box::pin(async move {
+            let mut tx = connection.begin_with("BEGIN IMMEDIATE").await?;
+            let previous: Option<(String, String)> = sqlx::query_as(
+                "SELECT source_json, configuration FROM session_imports WHERE session_id=?"
+            ).bind(&owner.session_id).fetch_optional(&mut *tx).await?;
+            if let Some(previous) = previous {
+                origin::check(&mut tx, &owner.session_id, Some(&owner)).await?;
+                let current = progress(&mut tx, &owner.session_id).await?;
+                if previous != (source, configuration) || current.state != ImportState::Published
+                    || current.records != records.len() as u64
+                {
+                    return Err(StoreError::SessionConflict);
+                }
+                // append's exact-retry path also verifies original event digests.
+                append(&mut tx, &owner.session_id, 0, records).await?;
+                return super::read(&mut tx, &owner.session_id).await?.ok_or(StoreError::SessionNotFound);
+            }
+            let occupied: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM session_control WHERE id=?1
+                    UNION ALL SELECT 1 FROM session_retirements WHERE session_id=?1
+                    UNION ALL SELECT 1 FROM session_history_copies WHERE session_id=?1
+                    UNION ALL SELECT 1 FROM event_log WHERE event_session=?1)"
+            ).bind(&owner.session_id).fetch_one(&mut *tx).await?;
+            if occupied { return Err(StoreError::SessionConflict); }
+            origin::insert(&mut tx, &owner).await?;
+            sqlx::query("INSERT INTO session_imports(session_id,source_json,configuration,created_at,state,records,bytes,conversation)
+                VALUES(?,?,?,?,'collecting',0,0,0)")
+                .bind(&owner.session_id).bind(source).bind(&configuration).bind(now as i64)
+                .execute(&mut *tx).await?;
+            let (_, through) = append(&mut tx, &owner.session_id, 0, records).await?;
+            sqlx::query("UPDATE session_imports SET state='published' WHERE session_id=?")
+                .bind(&owner.session_id).execute(&mut *tx).await?;
+            super::insert(&mut tx, &owner.session_id, &owner.fingerprint, &configuration, now).await?;
+            let record = super::read(&mut tx, &owner.session_id).await?.ok_or(StoreError::SessionNotFound)?;
+            tx.commit().await.map_err(StoreError::CommitUnknown)?;
+            if let Some(sequence) = through { commits.send_replace(sequence); }
+            Ok(record)
+        })).await
+    }
+
     pub async fn abandon_session_import(
         &self,
         session: &str,
@@ -265,6 +333,80 @@ impl EventLog {
             Ok(current)
         })).await
     }
+}
+
+async fn append(
+    connection: &mut SqliteConnection,
+    session: &str,
+    position: u64,
+    records: Vec<Record>,
+) -> Result<(ImportProgress, Option<u64>), StoreError> {
+    let mut current = progress(&mut *connection, session).await?;
+    if current.state == ImportState::Abandoned {
+        return Err(StoreError::SessionRetired);
+    }
+    let end = position + records.len() as u64;
+    if position > current.records || (position < current.records && end > current.records) {
+        return Err(invalid("import batch does not match its next position"));
+    }
+    let retry = end <= current.records;
+    if !retry && current.state != ImportState::Collecting {
+        return Err(invalid("import no longer accepts records"));
+    }
+    let (source, now): (String, i64) =
+        sqlx::query_as("SELECT source_json,created_at FROM session_imports WHERE session_id=?")
+            .bind(session)
+            .fetch_one(&mut *connection)
+            .await?;
+    let source: Source = serde_json::from_str(&source)?;
+    let mut last = None;
+    for (offset, record) in records.into_iter().enumerate() {
+        let index = position + offset as u64;
+        let event_id = identity(session, "message", &index.to_string());
+        let conversation = record.is_conversation();
+        let event = RuntimeEvent {
+            id: event_id.clone(),
+            invocation: Invocation {
+                session_id: session.to_owned(),
+                turn_id: identity(session, "turn", &record.source_turn_id),
+                run_id: identity(session, "run", &index.to_string()),
+                invocation_id: identity(session, "record", &index.to_string()),
+            },
+            recorded_at: UNIX_EPOCH + Duration::from_millis(now as u64),
+            fact: Fact::MessageImported {
+                source: source.clone(),
+                record: Box::new(record),
+            },
+        };
+        let json = serde_json::to_string(&event)?;
+        if retry {
+            let prior: (Option<String>, Option<String>) =
+                sqlx::query_as("SELECT event_json,body_digest FROM event_log WHERE event_id=?")
+                    .bind(event_id)
+                    .fetch_one(&mut *connection)
+                    .await?;
+            let digest = prior
+                .0
+                .map(|body| content_digest(body.as_bytes()))
+                .or(prior.1);
+            if digest.as_deref() != Some(content_digest(json.as_bytes()).as_str()) {
+                return Err(StoreError::EventConflict);
+            }
+            continue;
+        }
+        current.bytes += json.len() as u64;
+        let inserted = sqlx::query("INSERT INTO event_log(event_id,invocation_id,kind,event_json) VALUES(?,?,'message_imported',?)")
+                    .bind(&event.id).bind(&event.invocation.invocation_id).bind(json).execute(&mut *connection).await?;
+        last = Some(inserted.last_insert_rowid() as u64);
+        super::project_execution(&mut *connection, inserted.last_insert_rowid() as u64).await?;
+        sqlx::query("UPDATE session_imports SET records=records+1,bytes=?,conversation=conversation+? WHERE session_id=?")
+                    .bind(current.bytes as i64).bind(i64::from(conversation)).bind(session).execute(&mut *connection).await?;
+    }
+    if retry {
+        return Ok((current, None));
+    }
+    current.records = end;
+    Ok((current, last))
 }
 
 async fn progress(

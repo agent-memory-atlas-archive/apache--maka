@@ -44,6 +44,7 @@ maka-runtime.workspace = true
 maka-runtime-host.workspace = true
 maka-sandbox.workspace = true
 maka-skills.workspace = true
+maka-session-import.workspace = true
 maka-tools.workspace = true
 futures-util.workspace = true
 jsonschema.workspace = true

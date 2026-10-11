@@ -19,15 +19,16 @@
 
 use super::{Message, Part, Session, Snapshot};
 use crate::{Error, Transcript, transcript::identity};
-use maka_plugins::{
-    filesystem::database::{Cell, Query, Read, Table},
-    remote::Views,
-};
+use maka_plugins::filesystem::database::{Cell, Query, Read, Table};
 use serde_json::value::RawValue;
 
 /// Reads only the selected session through the caller's public Host-path authority.
 /// All three tables come from one WAL-aware snapshot, with no source mutation.
-pub async fn read(views: &dyn Views, path: String, session_id: &str) -> Result<Transcript, Error> {
+pub async fn read(
+    views: &(impl crate::access::ReadSource + ?Sized),
+    path: String,
+    session_id: &str,
+) -> Result<Transcript, Error> {
     identity(session_id)?;
     let tables = views.query_database(Read {
         path,

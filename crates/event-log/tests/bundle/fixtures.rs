@@ -45,12 +45,7 @@ pub(super) async fn output(
     output: ToolSuccess,
 ) -> (EventWrite, u64) {
     let source = log
-        .read_model_context(
-            &invocation.session_id,
-            Some(&invocation.run_id),
-            100,
-            262144,
-        )
+        .read_model_context(&invocation.session_id, Some(&invocation.run_id))
         .await
         .unwrap();
     let event = |fact| EventWrite::plain(RuntimeEvent::new(invocation.clone(), fact)).unwrap();

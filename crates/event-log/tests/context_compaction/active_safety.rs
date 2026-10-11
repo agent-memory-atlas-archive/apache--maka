@@ -34,7 +34,7 @@ async fn active_cuts_require_settled_effects_or_explicit_retry_safety() {
         let anchor = opening("active");
         log.append(&anchor).await.unwrap();
         let source = log
-            .read_model_context("session", Some("active"), 100, 8192)
+            .read_model_context("session", Some("active"))
             .await
             .unwrap();
         log.append(&request("active", "main", ModelPurpose::Main, &source))
@@ -80,7 +80,7 @@ async fn active_cuts_require_settled_effects_or_explicit_retry_safety() {
             anchor_event_id: anchor.event().id.clone(),
         };
         assert_eq!(
-            log.prepare_context_compaction("session", Some("active"), 100, 8192, &mode)
+            log.prepare_context_compaction("session", Some("active"), &mode)
                 .await
                 .is_ok(),
             safe,
@@ -96,9 +96,7 @@ async fn active_cuts_require_settled_effects_or_explicit_retry_safety() {
             .await
             .unwrap();
             assert!(
-                log.read_model_context("session", None, 100, 8192)
-                    .await
-                    .is_err(),
+                log.read_model_context("session", None).await.is_err(),
                 "closing an invocation does not settle a provider tool effect",
             );
         }
@@ -116,7 +114,7 @@ async fn private_summary_failure_allows_main_progress_only_without_provider_effe
         let anchor = opening("active");
         log.append(&anchor).await.unwrap();
         let source = log
-            .read_model_context("session", Some("active"), 100, 16384)
+            .read_model_context("session", Some("active"))
             .await
             .unwrap();
         log.append(&request("active", "main", ModelPurpose::Main, &source))
@@ -129,7 +127,7 @@ async fn private_summary_failure_allows_main_progress_only_without_provider_effe
             anchor_event_id: anchor.event().id.clone(),
         };
         let source = log
-            .prepare_context_compaction("session", Some("active"), 100, 16384, &mode)
+            .prepare_context_compaction("session", Some("active"), &mode)
             .await
             .unwrap();
         log.append(&request(
@@ -175,7 +173,7 @@ async fn private_summary_failure_allows_main_progress_only_without_provider_effe
         .await
         .unwrap();
         let tail = log
-            .read_model_context("session", Some("active"), 100, 16384)
+            .read_model_context("session", Some("active"))
             .await
             .unwrap();
         let next = log
@@ -192,7 +190,7 @@ async fn private_summary_failure_allows_main_progress_only_without_provider_effe
                 .unwrap();
         }
         assert_eq!(
-            log.prepare_context_compaction("session", Some("active"), 100, 32768, &mode)
+            log.prepare_context_compaction("session", Some("active"), &mode)
                 .await
                 .is_ok(),
             !provider_effect

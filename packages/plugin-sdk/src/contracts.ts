@@ -8949,6 +8949,1373 @@ export const contracts = {
           },
           resources: {},
         },
+        import: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentImportChange',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  id: {
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                  },
+                  name: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  location: {
+                    $ref: '#/$defs/AgentImportLocation',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'save_source',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'revision', 'id', 'name', 'location'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  id: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'remove_source',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'revision', 'id'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  selection: {
+                    $ref: '#/$defs/AgentImportSelection',
+                  },
+                  directory: {
+                    $ref: '#/$defs/AgentDirectorySelection',
+                  },
+                  title: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'copy',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'selection', 'directory', 'title'],
+              },
+            ],
+            $defs: {
+              AgentImportLocation: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      directory: {
+                        $ref: '#/$defs/AgentDirectorySelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'codex',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'directory'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      directory: {
+                        $ref: '#/$defs/AgentDirectorySelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'claude_code',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'directory'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      directory: {
+                        $ref: '#/$defs/AgentDirectorySelection',
+                      },
+                      database: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 255,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'open_code',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'directory', 'database'],
+                  },
+                ],
+              },
+              AgentDirectorySelection: {
+                type: 'object',
+                properties: {
+                  rootId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 64,
+                  },
+                  segments: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                    maxItems: 64,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['rootId', 'segments', 'directoryIdentity'],
+              },
+              AgentImportSelection: {
+                type: 'object',
+                properties: {
+                  source: {
+                    $ref: '#/$defs/AgentImportSourceRef',
+                  },
+                  entry: {
+                    $ref: '#/$defs/AgentImportEntryRef',
+                  },
+                  digest: {
+                    type: 'string',
+                    pattern: '^[a-f0-9]{64}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['source', 'entry', 'digest'],
+              },
+              AgentImportSourceRef: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                },
+                additionalProperties: false,
+                required: ['id', 'revision'],
+              },
+              AgentImportEntryRef: {
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 1024,
+                  },
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                },
+                additionalProperties: false,
+                required: ['sessionId', 'path'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentImportResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  sources: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/AgentImportSource',
+                    },
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'sources',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'revision', 'sources'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  session: {
+                    $ref: '#/$defs/AgentSession',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'imported',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'session'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'unavailable',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'invalid',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'busy',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'limit',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
+            $defs: {
+              AgentImportSource: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  name: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  location: {
+                    $ref: '#/$defs/AgentImportLocation',
+                  },
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                },
+                additionalProperties: false,
+                required: ['id', 'name', 'location', 'path'],
+              },
+              AgentImportLocation: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      directory: {
+                        $ref: '#/$defs/AgentDirectorySelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'codex',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'directory'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      directory: {
+                        $ref: '#/$defs/AgentDirectorySelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'claude_code',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'directory'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      directory: {
+                        $ref: '#/$defs/AgentDirectorySelection',
+                      },
+                      database: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 255,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'open_code',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'directory', 'database'],
+                  },
+                ],
+              },
+              AgentDirectorySelection: {
+                type: 'object',
+                properties: {
+                  rootId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 64,
+                  },
+                  segments: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                    maxItems: 64,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['rootId', 'segments', 'directoryIdentity'],
+              },
+              AgentSession: {
+                type: 'object',
+                properties: {
+                  dataSource: {
+                    $ref: '#/$defs/AgentDataSource',
+                  },
+                  permissions: {
+                    $ref: '#/$defs/AgentWorkspacePermissions',
+                  },
+                  boundaryRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  id: {
+                    type: 'string',
+                  },
+                  title: {
+                    type: 'string',
+                  },
+                  labels: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  workspace: {
+                    $ref: '#/$defs/AgentWorkspace',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  updatedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  archived: {
+                    type: 'boolean',
+                  },
+                  hasUnread: {
+                    type: 'boolean',
+                  },
+                  activity: {
+                    $ref: '#/$defs/AgentSessionActivity',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'dataSource',
+                  'permissions',
+                  'boundaryRevision',
+                  'id',
+                  'title',
+                  'labels',
+                  'workspace',
+                  'revision',
+                  'updatedAt',
+                  'archived',
+                  'hasUnread',
+                  'activity',
+                ],
+              },
+              AgentDataSource: {
+                description:
+                  'Stable business-data origin, independent of package or activation revisions.',
+                type: 'object',
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  namespace: {
+                    $ref: '#/$defs/InstanceId',
+                  },
+                },
+                additionalProperties: false,
+                required: ['stateDomain', 'deployment', 'namespace'],
+              },
+              InstanceId: {
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
+              },
+              AgentWorkspacePermissions: {
+                type: 'object',
+                properties: {
+                  access: {
+                    $ref: '#/$defs/AgentWorkspaceAccess',
+                  },
+                  requestPermissions: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['access', 'requestPermissions'],
+              },
+              AgentWorkspaceAccess: {
+                description:
+                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                type: 'string',
+                enum: ['read_only', 'workspace_write'],
+              },
+              AgentWorkspace: {
+                type: 'object',
+                properties: {
+                  projectId: {
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                  },
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['path', 'directoryIdentity', 'identity'],
+              },
+              AgentSessionActivity: {
+                type: 'string',
+                enum: ['idle', 'working', 'waiting'],
+              },
+            },
+          },
+          resources: {},
+        },
+        importDirectories: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentDirectories',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'roots',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  selection: {
+                    $ref: '#/$defs/AgentDirectorySelection',
+                  },
+                  after: {
+                    type: ['string', 'null'],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'children',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'selection', 'after'],
+              },
+            ],
+            $defs: {
+              AgentDirectorySelection: {
+                type: 'object',
+                properties: {
+                  rootId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 64,
+                  },
+                  segments: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                    maxItems: 64,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['rootId', 'segments', 'directoryIdentity'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentDirectoryPage',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  roots: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/AgentDirectory',
+                    },
+                    maxItems: 8,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'roots',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'roots'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  directory: {
+                    $ref: '#/$defs/AgentDirectory',
+                  },
+                  children: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/AgentDirectory',
+                    },
+                    maxItems: 32,
+                  },
+                  after: {
+                    type: ['string', 'null'],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'children',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'directory', 'children', 'after'],
+              },
+            ],
+            $defs: {
+              AgentDirectory: {
+                type: 'object',
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  path: {
+                    type: 'string',
+                  },
+                  selection: {
+                    $ref: '#/$defs/AgentDirectorySelection',
+                  },
+                },
+                additionalProperties: false,
+                required: ['name', 'path', 'selection'],
+              },
+              AgentDirectorySelection: {
+                type: 'object',
+                properties: {
+                  rootId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 64,
+                  },
+                  segments: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                    maxItems: 64,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['rootId', 'segments', 'directoryIdentity'],
+              },
+            },
+          },
+          resources: {},
+        },
+        imports: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentImportsRead',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'sources',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  source: {
+                    $ref: '#/$defs/AgentImportSourceRef',
+                  },
+                  query: {
+                    $ref: '#/$defs/AgentImportQuery',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'catalog',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'source', 'query'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  source: {
+                    $ref: '#/$defs/AgentImportSourceRef',
+                  },
+                  entry: {
+                    $ref: '#/$defs/AgentImportEntryRef',
+                  },
+                  digest: {
+                    type: ['string', 'null'],
+                  },
+                  after: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    maximum: 7499,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'preview',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'source', 'entry', 'digest', 'after'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  after: {
+                    type: ['string', 'null'],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'copies',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'after'],
+              },
+            ],
+            $defs: {
+              AgentImportSourceRef: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                },
+                additionalProperties: false,
+                required: ['id', 'revision'],
+              },
+              AgentImportQuery: {
+                type: 'object',
+                properties: {
+                  text: {
+                    type: 'string',
+                    maxLength: 1024,
+                  },
+                  includeArchived: {
+                    type: 'boolean',
+                  },
+                  cursor: {
+                    type: ['string', 'null'],
+                  },
+                },
+                additionalProperties: false,
+                required: ['text', 'includeArchived', 'cursor'],
+              },
+              AgentImportEntryRef: {
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 1024,
+                  },
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                },
+                additionalProperties: false,
+                required: ['sessionId', 'path'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentImportsPage',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  sources: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/AgentImportSource',
+                    },
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'sources',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'revision', 'sources'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  source: {
+                    $ref: '#/$defs/AgentImportSourceRef',
+                  },
+                  entries: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/AgentImportEntry',
+                    },
+                    maxItems: 16,
+                  },
+                  next: {
+                    type: ['string', 'null'],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'catalog',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'source', 'entries', 'next'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  preview: {
+                    $ref: '#/$defs/AgentImportPreview',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'preview',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'preview'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  sessions: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/AgentSession',
+                    },
+                    maxItems: 16,
+                  },
+                  next: {
+                    type: ['string', 'null'],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'copies',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'sessions', 'next'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'unavailable',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'invalid',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'busy',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'limit',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
+            $defs: {
+              AgentImportSource: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  name: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  location: {
+                    $ref: '#/$defs/AgentImportLocation',
+                  },
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                },
+                additionalProperties: false,
+                required: ['id', 'name', 'location', 'path'],
+              },
+              AgentImportLocation: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      directory: {
+                        $ref: '#/$defs/AgentDirectorySelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'codex',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'directory'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      directory: {
+                        $ref: '#/$defs/AgentDirectorySelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'claude_code',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'directory'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      directory: {
+                        $ref: '#/$defs/AgentDirectorySelection',
+                      },
+                      database: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 255,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'open_code',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'directory', 'database'],
+                  },
+                ],
+              },
+              AgentDirectorySelection: {
+                type: 'object',
+                properties: {
+                  rootId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 64,
+                  },
+                  segments: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                    maxItems: 64,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['rootId', 'segments', 'directoryIdentity'],
+              },
+              AgentImportSourceRef: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                },
+                additionalProperties: false,
+                required: ['id', 'revision'],
+              },
+              AgentImportEntry: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  path: {
+                    type: 'string',
+                  },
+                  title: {
+                    type: 'string',
+                  },
+                  cwd: {
+                    type: ['string', 'null'],
+                  },
+                  updatedAt: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  archived: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['id', 'path', 'title', 'cwd', 'updatedAt', 'archived'],
+              },
+              AgentImportPreview: {
+                type: 'object',
+                properties: {
+                  selection: {
+                    $ref: '#/$defs/AgentImportSelection',
+                  },
+                  title: {
+                    type: 'string',
+                  },
+                  cwd: {
+                    type: ['string', 'null'],
+                  },
+                  records: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  bytes: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  incompleteTail: {
+                    type: 'boolean',
+                  },
+                  items: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/AgentImportPreviewItem',
+                    },
+                    maxItems: 8,
+                  },
+                  next: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'selection',
+                  'title',
+                  'cwd',
+                  'records',
+                  'bytes',
+                  'incompleteTail',
+                  'items',
+                  'next',
+                ],
+              },
+              AgentImportSelection: {
+                type: 'object',
+                properties: {
+                  source: {
+                    $ref: '#/$defs/AgentImportSourceRef',
+                  },
+                  entry: {
+                    $ref: '#/$defs/AgentImportEntryRef',
+                  },
+                  digest: {
+                    type: 'string',
+                    pattern: '^[a-f0-9]{64}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['source', 'entry', 'digest'],
+              },
+              AgentImportEntryRef: {
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 1024,
+                  },
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                },
+                additionalProperties: false,
+                required: ['sessionId', 'path'],
+              },
+              AgentImportPreviewItem: {
+                type: 'object',
+                properties: {
+                  index: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    $ref: '#/$defs/AgentImportRecordKind',
+                  },
+                  text: {
+                    type: 'string',
+                    maxLength: 4096,
+                  },
+                  truncated: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['index', 'kind', 'text', 'truncated'],
+              },
+              AgentImportRecordKind: {
+                type: 'string',
+                enum: ['user', 'assistant', 'tool_call', 'tool_result', 'note'],
+              },
+              AgentSession: {
+                type: 'object',
+                properties: {
+                  dataSource: {
+                    $ref: '#/$defs/AgentDataSource',
+                  },
+                  permissions: {
+                    $ref: '#/$defs/AgentWorkspacePermissions',
+                  },
+                  boundaryRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  id: {
+                    type: 'string',
+                  },
+                  title: {
+                    type: 'string',
+                  },
+                  labels: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  workspace: {
+                    $ref: '#/$defs/AgentWorkspace',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  updatedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  archived: {
+                    type: 'boolean',
+                  },
+                  hasUnread: {
+                    type: 'boolean',
+                  },
+                  activity: {
+                    $ref: '#/$defs/AgentSessionActivity',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'dataSource',
+                  'permissions',
+                  'boundaryRevision',
+                  'id',
+                  'title',
+                  'labels',
+                  'workspace',
+                  'revision',
+                  'updatedAt',
+                  'archived',
+                  'hasUnread',
+                  'activity',
+                ],
+              },
+              AgentDataSource: {
+                description:
+                  'Stable business-data origin, independent of package or activation revisions.',
+                type: 'object',
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  namespace: {
+                    $ref: '#/$defs/InstanceId',
+                  },
+                },
+                additionalProperties: false,
+                required: ['stateDomain', 'deployment', 'namespace'],
+              },
+              InstanceId: {
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
+              },
+              AgentWorkspacePermissions: {
+                type: 'object',
+                properties: {
+                  access: {
+                    $ref: '#/$defs/AgentWorkspaceAccess',
+                  },
+                  requestPermissions: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['access', 'requestPermissions'],
+              },
+              AgentWorkspaceAccess: {
+                description:
+                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                type: 'string',
+                enum: ['read_only', 'workspace_write'],
+              },
+              AgentWorkspace: {
+                type: 'object',
+                properties: {
+                  projectId: {
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                  },
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['path', 'directoryIdentity', 'identity'],
+              },
+              AgentSessionActivity: {
+                type: 'string',
+                enum: ['idle', 'working', 'waiting'],
+              },
+            },
+          },
+          resources: {},
+        },
         interaction: {
           mode: 'query',
           input: {

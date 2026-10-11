@@ -18,7 +18,7 @@
  */
 
 use maka_plugins::filesystem::ReadError;
-use maka_runtime::import::{MAX_IMPORT_BYTES, MAX_IMPORT_RECORDS, Record, Source};
+use maka_runtime::import::{Record, Source};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, thiserror::Error)]
@@ -70,24 +70,9 @@ pub struct Transcript {
 #[derive(Default)]
 pub(crate) struct Records {
     records: Vec<Record>,
-    bytes: u64,
 }
 impl Records {
     pub fn push(&mut self, record: Record) -> Result<(), Error> {
-        if self.records.len() as u64 >= MAX_IMPORT_RECORDS {
-            return Err(Error::Limit {
-                kind: "records",
-                max: MAX_IMPORT_RECORDS,
-            });
-        }
-        let bytes = retained_size(&record)?;
-        if bytes > MAX_IMPORT_BYTES - self.bytes {
-            return Err(Error::Limit {
-                kind: "converted_bytes",
-                max: MAX_IMPORT_BYTES,
-            });
-        }
-        self.bytes += bytes;
         record.validate().map_err(Error::Invalid)?;
         self.records.push(record);
         Ok(())
@@ -101,43 +86,7 @@ impl Records {
     }
     pub fn retain(&mut self, keep: impl FnMut(&Record) -> bool) -> Result<(), Error> {
         self.records.retain(keep);
-        self.bytes = 0;
-        for record in &self.records {
-            self.bytes += retained_size(record)?;
-        }
         Ok(())
-    }
-}
-
-pub(crate) fn retained_size(value: &impl Serialize) -> Result<u64, Error> {
-    struct Counter {
-        bytes: u64,
-        exceeded: bool,
-    }
-    impl std::io::Write for Counter {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            if bytes.len() as u64 > MAX_IMPORT_BYTES - self.bytes {
-                self.exceeded = true;
-                return Err(std::io::Error::other("converted byte limit"));
-            }
-            self.bytes += bytes.len() as u64;
-            Ok(bytes.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-    let mut counter = Counter {
-        bytes: 0,
-        exceeded: false,
-    };
-    match serde_json::to_writer(&mut counter, value) {
-        Ok(()) => Ok(counter.bytes),
-        Err(_) if counter.exceeded => Err(Error::Limit {
-            kind: "converted_bytes",
-            max: MAX_IMPORT_BYTES,
-        }),
-        Err(_) => Err(Error::Invalid("invalid converted record")),
     }
 }
 

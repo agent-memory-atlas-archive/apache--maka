@@ -14703,3 +14703,44 @@ for (const target of ['tui', 'desktop']) {
     );
   });
 }
+
+for (const target of ['tui', 'desktop']) {
+  const rootModule = await import(
+    pathToFileURL(resolve(root, `dist/packages/workspace/${target}.js`))
+  );
+  rootModule.activate({ locale: 'en' });
+  test(`${target} Imports route selects the published conversation without submitting another copy`, () => {
+    const client = new Client(rootModule.component).start();
+    client.raw('imports-open');
+    assert.deepEqual(client.state.pages, ['imports']);
+    assert.equal(client.state.importsOpened, true);
+    const imported = { ...session, id: 'imported', title: 'Imported history' };
+    client.input({
+      kind: 'component',
+      child: 'imports',
+      name: 'selected',
+      event: { session: imported },
+    });
+    assert.equal(client.state.selected.id, imported.id);
+    assert.deepEqual(client.state.pages, []);
+    assert.equal(
+      client.output.actions.some(
+        (action) => action.method === 'create' || action.method === 'import',
+      ),
+      false,
+    );
+    client.input({
+      kind: 'component',
+      child: 'imports',
+      name: 'selected',
+      event: { session: { ...imported, id: 'late-hidden' } },
+    });
+    assert.equal(client.state.selected.id, imported.id);
+    client.raw('imports-open');
+    assert.ok(
+      modelSlots(client.output.frame.view).some(
+        (node) => node.key === 'imports' && node.props.open,
+      ),
+    );
+  });
+}

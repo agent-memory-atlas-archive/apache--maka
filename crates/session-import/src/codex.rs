@@ -341,12 +341,6 @@ impl Converter {
     }
     fn track_turn(&mut self, turn: &str) -> Result<(), Error> {
         if !self.turns.iter().any(|existing| existing == turn) {
-            if self.turns.len() as u64 >= maka_runtime::import::MAX_IMPORT_RECORDS {
-                return Err(Error::Limit {
-                    kind: "turns",
-                    max: maka_runtime::import::MAX_IMPORT_RECORDS,
-                });
-            }
             self.turns.push(turn.to_owned());
         }
         Ok(())

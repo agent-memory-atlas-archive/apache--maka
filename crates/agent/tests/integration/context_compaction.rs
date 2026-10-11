@@ -98,10 +98,7 @@ async fn compact_next_main_and_reopen_use_durable_baseline_with_complete_tail() 
         .run(input(&base, "compact", true), CancellationToken::new())
         .await
         .unwrap();
-    let source = log
-        .read_model_context("session", None, 100, 128 * 1024)
-        .await
-        .unwrap();
+    let source = log.read_model_context("session", None).await.unwrap();
     let checkpoint = source.baseline.unwrap().event_id;
     worker
         .run(input(&base, "tail", false), CancellationToken::new())

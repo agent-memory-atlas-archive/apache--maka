@@ -795,3 +795,159 @@ fn standard_product_projects_complete_workflow_and_original_receipt_reopen() {
         });
     }
 }
+
+#[test]
+#[ignore = "imports a foreign conversation through native product forms and the real Host"]
+fn standard_product_import_sources_preview_publish_remove_and_original_receipt_reopen() {
+    let directory = tempfile::tempdir().unwrap();
+    let workspace = directory.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let root = directory.path().join("ui");
+    let home = directory.path().join("home");
+    let source = home.join(".codex/sessions/2026/rollout-native.jsonl");
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    let rows = [
+        json!({"type":"session_meta","payload":{"id":"native","cwd":"/foreign/workspace","api_key":"source-secret-never-import"}}),
+        json!({"type":"event_msg","payload":{"type":"user_message","message":"Imported native question"}}),
+        json!({"type":"event_msg","payload":{"type":"agent_message","message":"Imported native answer"}}),
+    ];
+    std::fs::write(
+        &source,
+        rows.iter()
+            .map(|value| format!("{value}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
+    for first in [true, false] {
+        let mut args = vec!["application", "launch", "--root", root.to_str().unwrap()];
+        if first {
+            args.extend([
+                "--workspace",
+                workspace.to_str().unwrap(),
+                "--trust-workspace",
+            ]);
+        }
+        let mut tui = Pty::spawn_with(&args, false, |command| {
+            command.current_dir(&workspace).env("HOME", &home);
+        });
+        if first {
+            tui.wait_until_with_timeout(
+                |screen| screen.contains("Settings"),
+                Duration::from_secs(60),
+            );
+            click_text(&mut tui, "Import conversations");
+            tui.wait_for("No sources yet.");
+            click_text(&mut tui, "Add source");
+            tui.wait_for("Source name");
+            click_text(&mut tui, "Choose source directory");
+            tui.wait_for("Conversation sources");
+            click_text(&mut tui, "Conversation sources");
+            tui.wait_for(".codex");
+            click_text(&mut tui, ".codex");
+            tui.wait_for("sessions");
+            click_text(&mut tui, "Use this directory");
+            tui.wait_for(
+                home.join(".codex")
+                    .canonicalize()
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
+            );
+            click_text(&mut tui, "Save changes");
+            tui.wait_for("Source saved.");
+            click_text(&mut tui, "Open conversation");
+            tui.wait_for("Imported native question");
+            click_text(&mut tui, "Imported native question");
+            tui.send(b"\r");
+            tui.wait_for("Conversation name");
+            tui.wait_for("Imported native answer");
+            tui.send(b"\x1b[H\x1b[1;2FImported in Maka");
+            click_text(&mut tui, "Choose destination");
+            tui.wait_for("Destination directory");
+            click_text(&mut tui, "Workspace");
+            tui.wait_for("No folders here.");
+            click_text(&mut tui, "Use this directory");
+            tui.wait_for(workspace.canonicalize().unwrap().to_str().unwrap());
+            click_text(&mut tui, "Review import");
+            tui.wait_for("Source files stay in place.");
+            click_text(&mut tui, "Import conversation");
+            tui.wait_for("Conversation imported.");
+            click_text(&mut tui, "Open conversation");
+            tui.wait_for("Imported native answer");
+            tui.wait_for("Imported in Maka");
+            tui.send(b"\x0b");
+            tui.wait_for("Search commands or conversations");
+            tui.send(b"Import conversations");
+            tui.wait_for("› Import conversations");
+            tui.send(b"\r");
+            tui.wait_for("Imported conversations");
+            click_text(&mut tui, "Back");
+            tui.wait_for("Remove source");
+            click_text(&mut tui, "Remove source");
+            tui.wait_for("Imported conversations remain in Maka.");
+            click_text(&mut tui, "Remove source");
+            tui.wait_for("Source removed.");
+        } else {
+            tui.wait_until_with_timeout(
+                |screen| screen.contains("Source removed.") && screen.contains("No sources yet."),
+                Duration::from_secs(60),
+            );
+            click_text(&mut tui, "Imported conversations");
+            tui.wait_for("Imported in Maka");
+            click_text(&mut tui, "Imported in Maka");
+            tui.send(b"\r");
+            tui.wait_for("Imported native answer");
+        }
+        tui.send(b"\x11");
+        tui.finish();
+        assert!(!String::from_utf8_lossy(&tui.output).contains("invalid UI activation"));
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let namespaces = RootNamespaces::for_current_account().unwrap();
+            let owner = std::sync::Arc::new(RootOwner::open(&root, &namespaces).unwrap());
+            let store = maka_event_log::EventLog::for_root(owner).await.unwrap();
+            let launch = store.application_launch().await.unwrap().unwrap();
+            let intents = store
+                .application_deployment_intents(launch.deployment, 0, 32)
+                .await
+                .unwrap();
+            assert_eq!(
+                intents
+                    .iter()
+                    .filter(|intent| intent.reference.method == "import")
+                    .count(),
+                3,
+                "source registration, one copy, and removal retain their original receipts"
+            );
+            store.close().await.unwrap();
+            let owner =
+                std::sync::Arc::new(RootOwner::open(&root.join("host"), &namespaces).unwrap());
+            let store = maka_event_log::EventLog::for_root(owner).await.unwrap();
+            let sessions = store
+                .list_sessions::<serde_json::Value>(None, None, 16)
+                .await
+                .unwrap();
+            assert_eq!(sessions.sessions.len(), 1);
+            assert_eq!(
+                sessions.sessions[0].configuration["title"],
+                "Imported in Maka"
+            );
+            assert_eq!(
+                sessions.sessions[0].configuration["workspace"]["path"],
+                workspace.canonicalize().unwrap().to_str().unwrap()
+            );
+            assert_eq!(
+                store
+                    .session_import_progress(&sessions.sessions[0].id)
+                    .await
+                    .unwrap()
+                    .records,
+                2
+            );
+            assert!(store.unfinished_invocations(16).await.unwrap().is_empty());
+            store.close().await.unwrap();
+        });
+        if first {
+            std::fs::remove_file(&source).unwrap();
+        }
+    }
+}

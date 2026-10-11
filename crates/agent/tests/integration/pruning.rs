@@ -196,7 +196,7 @@ async fn settled_results_are_pruned_before_context_limits_and_survive_failed_sum
                 .unwrap();
         }
         let previous = log
-            .read_model_context("session", None, 200, 16 * 1024 * 1024)
+            .read_model_context("session", None)
             .await
             .unwrap()
             .baseline
@@ -218,7 +218,7 @@ async fn settled_results_are_pruned_before_context_limits_and_survive_failed_sum
             usize::from(interrupted)
         );
         let next = log
-            .read_model_context("session", None, 200, 16 * 1024 * 1024)
+            .read_model_context("session", None)
             .await
             .unwrap()
             .baseline

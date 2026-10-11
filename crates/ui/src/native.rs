@@ -169,10 +169,14 @@ impl<V: ?Sized> NativeView<V> {
             &*self.slot_render_depth,
         )
     }
+    /// Whether an input target still belongs to this published recipe.
+    pub fn declares_input(&self, key: &str) -> bool {
+        self.inputs.contains_key(key)
+    }
     pub(crate) fn validate_input(&self, key: &str, input: &Value) -> Result<()> {
         self.inputs
             .get(key)
-            .ok_or_else(|| Error::Invalid("undeclared native input".into()))?
+            .ok_or_else(|| Error::Invalid(format!("undeclared native input: {key}")))?
             .validate(input)
             .map_err(|error| Error::Invalid(error.to_string()))
     }

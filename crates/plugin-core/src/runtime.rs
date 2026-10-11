@@ -424,7 +424,12 @@ impl<T> Runtime<T> {
             .entry
             .as_ref()
             .and_then(|entry| entry.imports.get(import))
-            .ok_or_else(|| Error::Contract(format!("undeclared executable import: {import}")))?;
+            .ok_or_else(|| {
+                Error::Contract(format!(
+                    "undeclared executable import: {import} in {}",
+                    plan.path.join("/")
+                ))
+            })?;
         let mut handles = Vec::new();
         for binding in &plan.bindings[import] {
             if let Some(handle) = self.resolve(consumer, binding)? {

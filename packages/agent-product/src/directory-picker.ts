@@ -37,6 +37,7 @@ import { compactLabel, fill, output, pixels, type Presentation, type Node } from
 
 type Navigation = 'roots' | 'child' | 'parent' | 'page';
 interface State {
+  purpose: 'workspace' | 'import';
   revision: number;
   serial: number;
   open: boolean;
@@ -133,7 +134,16 @@ function query(state: State, input: AgentDirectories, navigation: Navigation): A
   const key = `directory-${++state.serial}`;
   state.pending = { key, navigation };
   state.failed = false;
-  return [{ key, binding: 'agent', member: 0, method: 'directories', input, resources: {} }];
+  return [
+    {
+      key,
+      binding: 'agent',
+      member: 0,
+      method: state.purpose === 'import' ? 'importDirectories' : 'directories',
+      input,
+      resources: {},
+    },
+  ];
 }
 function roots(state: State) {
   return query(state, { kind: 'roots' }, 'roots');
@@ -182,7 +192,15 @@ function frame<N extends Node>(
     'directory-picker',
     [
       ...(target === 'desktop'
-        ? [ui.text('directory-title', text.directoryTitle, 17, props.theme.text, 550)]
+        ? [
+            ui.text(
+              'directory-title',
+              props.purpose === 'import' ? text.importsChooseSource : text.directoryTitle,
+              17,
+              props.theme.text,
+              550,
+            ),
+          ]
         : []),
       ui.text('directory-help', text.directoryHelp, 13, props.theme.muted),
       ui.box(
@@ -317,6 +335,7 @@ export function directoryPicker<N extends Node>(
     mount(props) {
       const state: State = {
         revision: 0,
+        purpose: props.purpose ?? 'workspace',
         serial: 0,
         open: props.open,
         page: null,
@@ -337,6 +356,12 @@ export function directoryPicker<N extends Node>(
     update(previous, props) {
       const state = { ...previous, revision: previous.revision + 1 };
       let actions: Action[] = [];
+      if (state.purpose !== (props.purpose ?? 'workspace')) {
+        state.purpose = props.purpose ?? 'workspace';
+        state.open = false;
+        state.pending = null;
+        state.reading = null;
+      }
       if (!props.open) {
         state.open = false;
         state.pending = null;

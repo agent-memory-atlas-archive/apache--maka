@@ -17,8 +17,7 @@
  * under the License.
  */
 
-use crate::{Inner, RunError, RunInput, model_attempt};
-use maka_event_log::StoreError;
+use crate::{Inner, RunError, RunInput, context_input, model_attempt};
 use maka_runtime::{
     context::{
         CheckpointMode, CompactOutcome, ContextCheckpoint, ModelPurpose, SUMMARY_FORMAT_TEMPLATE,
@@ -55,7 +54,6 @@ pub(super) async fn run(
             },
             None,
         )),
-        Err(RunError::Store(StoreError::PrefixTooLarge)) => Ok(failed("input_too_large")),
         Err(error) => Err(error),
     }
 }
@@ -73,12 +71,10 @@ pub(super) async fn capture(
         .prepare_context_compaction(
             &input.invocation.session_id,
             Some(&input.invocation.invocation_id),
-            maka_runtime::context::MAX_HISTORY_EVENTS,
-            maka_runtime::context::MAX_HISTORY_BYTES,
             mode,
         )
         .await?;
-    if !source
+    let has_new_history = source
         .tail
         .iter()
         .any(|event| match event {
@@ -92,10 +88,7 @@ pub(super) async fn capture(
                     | Fact::ModelCompleted { .. }
             ) || matches!(&stored.event.fact, Fact::MessageImported { record, .. } if record.is_conversation()),
             maka_event_log::context::ContextEvent::Archived(_) => false,
-        })
-    {
-        return Ok(None);
-    }
+        });
     let prompt = model_attempt::prompt(
         inner,
         input,
@@ -107,6 +100,11 @@ pub(super) async fn capture(
         false,
     )
     .await?;
+    if !has_new_history
+        && (source.baseline.is_none() || !context_input::needs_compaction(input, &prompt))
+    {
+        return Ok(None);
+    }
     let adapter = inner.model.binding_in_scope(
         &input.provider,
         &maka_plugins::composition::Scope::Session(input.invocation.session_id.clone()),
@@ -138,12 +136,13 @@ impl Job {
             "You are a context summarization assistant.\nRead the conversation between a user and an AI assistant, then produce a structured summary another LLM will use to continue the same task.\nDo NOT continue the conversation. Do NOT answer questions in it. ONLY output the structured summary.\n\nUse this exact format:\n\n{SUMMARY_FORMAT_TEMPLATE}\n\nKeep each section concise. Preserve exact file paths, function names, commands, and error messages."
         );
         let mut instruction = base.clone();
+        let mut input_budget = context_input::summary_budget(&input);
         let mut shortened = false;
         let mut repair = None;
         loop {
-            let mut request = prompt.clone();
+            let mut request = context_input::fit_summary(&prompt, input_budget);
             request.push(maka_model::prompt::Message::user(format!("{instruction}\n\nNow write the structured summary of the conversation above. Output only the summary.")));
-            let model_attempt::Outcome::Response(step_id, output) = model_attempt::execute(
+            let result = model_attempt::execute(
                 inner,
                 &input,
                 &mut source,
@@ -155,11 +154,21 @@ impl Job {
                 },
                 cancellation,
             )
-            .await?
-            else {
-                return Err(RunError::Internal(
-                    "summary cannot dispatch a finishing tool".into(),
-                ));
+            .await;
+            let (step_id, output) = match result {
+                Ok(model_attempt::Outcome::Response(step_id, output)) => (step_id, output),
+                Ok(model_attempt::Outcome::FinishedByTool) => {
+                    return Err(RunError::Internal(
+                        "summary cannot dispatch a finishing tool".into(),
+                    ));
+                }
+                Err(RunError::Model(maka_model::ModelError::ContextOverflow {
+                    observed_output: false,
+                })) if input_budget > 256 => {
+                    input_budget = input_budget.min(context_input::estimate(&prompt)).max(1) / 2;
+                    continue;
+                }
+                Err(error) => return Err(error),
             };
             if output.finish_reason == ModelFinishReason::Length {
                 if shortened || repair.is_some() {

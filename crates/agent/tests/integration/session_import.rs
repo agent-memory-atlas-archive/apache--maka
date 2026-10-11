@@ -188,10 +188,7 @@ async fn import_is_retryable_history_not_an_execution_and_survives_copy_and_rest
         session.last_message.as_ref().unwrap().preview.as_deref(),
         Some("the original answer")
     );
-    let source = log
-        .read_model_context("imported", None, 100, 1024 * 1024)
-        .await
-        .unwrap();
+    let source = log.read_model_context("imported", None).await.unwrap();
     let frozen = source.source_evidence;
     let prefix = log
         .scoped_prefix(
@@ -281,7 +278,7 @@ async fn import_is_retryable_history_not_an_execution_and_survives_copy_and_rest
         .unwrap();
     assert!(matches!(copy, SessionCopyResult::Committed(_)));
     assert_eq!(
-        log.read_model_context("copy", None, 100, 1024 * 1024)
+        log.read_model_context("copy", None)
             .await
             .unwrap()
             .tail
@@ -392,7 +389,7 @@ async fn nonconversation_import_cannot_publish_and_abandon_releases_material() {
             vec![record(
                 "oversize",
                 Content::User {
-                    text: "x".repeat(maka_runtime::import::MAX_IMPORT_BYTES as usize),
+                    text: "x".repeat(6 * 1024 * 1024),
                 }
             )]
         )
@@ -516,7 +513,7 @@ async fn imported_conversation_compacts_before_its_first_native_turn() {
         .await
         .unwrap();
     assert!(
-        log.read_model_context("session", None, 100, 128 * 1024)
+        log.read_model_context("session", None)
             .await
             .unwrap()
             .baseline
@@ -531,6 +528,147 @@ async fn imported_conversation_compacts_before_its_first_native_turn() {
     assert!(requests[0].to_string().contains("original-import-answer"));
     assert!(!requests[1].to_string().contains("original-import-answer"));
     assert!(requests[1].to_string().contains("summary-marker"));
+    drop(worker);
+    Arc::try_unwrap(log).ok().unwrap().close().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn large_import_fits_summary_recovers_overflow_and_continues_after_restart() {
+    use crate::support::context::{SUMMARY, engine, input, read_request, respond};
+    use maka_runtime::context::ModelRequestContext;
+    use std::sync::Arc;
+    use tokio::io::AsyncWriteExt;
+    use tokio_util::sync::CancellationToken;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("large-import.sqlite");
+    let log = Arc::new(EventLog::open(&path).await.unwrap());
+    let large = format!(
+        "original-goal-marker {} original-tail-marker",
+        "历史".repeat(1_600_000)
+    );
+    let large_bytes = large.len();
+    let mut records = vec![record("large", Content::User { text: large })];
+    records.extend((0..7600).map(|index| {
+        record(
+            &format!("row-{index}"),
+            Content::User {
+                text: format!("Historical update {index}: keep this work available."),
+            },
+        )
+    }));
+    log.import_session(&owner("session"), &source(), &json!({}), records, 1)
+        .await
+        .unwrap();
+    let progress = log.session_import_progress("session").await.unwrap();
+    assert_eq!(progress.records, 7601);
+    assert!(progress.bytes > 9 * 1024 * 1024);
+    assert!(log.unfinished_invocations(16).await.unwrap().is_empty());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let mut requests = Vec::new();
+        for response in [
+            None,
+            Some(SUMMARY),
+            Some("continued-answer"),
+            Some("reopened-answer"),
+        ] {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            requests.push(read_request(&mut socket).await);
+            if let Some(response) = response {
+                respond(&mut socket, response, "stop").await;
+            } else {
+                let body = json!({"error":{"message":"maximum context length exceeded", "type":"invalid_request_error", "code":"context_length_exceeded"}}).to_string();
+                socket.write_all(format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+            }
+        }
+        requests
+    });
+    let run_input = |id| {
+        let mut run = input(&base, id, false);
+        let window = if id == "reopen" { 4096 } else { 65_536 };
+        run.context = Some(ModelRequestContext {
+            provider_id: "fixture".into(),
+            context_window: Some(window),
+            model_context_window: Some(window),
+            declared_window: Some(window * 85 / 100),
+        });
+        run
+    };
+    let worker = engine(log.clone());
+    worker
+        .run(run_input("continue"), CancellationToken::new())
+        .await
+        .unwrap();
+    worker.drain().await;
+    let checkpoint = log
+        .read_model_context("session", None)
+        .await
+        .unwrap()
+        .baseline
+        .unwrap()
+        .event_id;
+    assert_eq!(
+        log.session_import_progress("session").await.unwrap(),
+        progress
+    );
+    let original = log
+        .scoped_prefix(
+            LogScope::Session {
+                id: "session".into(),
+            },
+            8000,
+            32 * 1024 * 1024,
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(&original.events[0].event.fact, Fact::MessageImported { record, .. }
+        if matches!(&record.content, Content::User { text } if text.len() == large_bytes && text.ends_with("original-tail-marker")))
+    );
+    drop(original);
+    drop(worker);
+    Arc::try_unwrap(log).ok().unwrap().close().await.unwrap();
+
+    let log = Arc::new(EventLog::open(&path).await.unwrap());
+    let worker = engine(log.clone());
+    worker
+        .run(run_input("reopen"), CancellationToken::new())
+        .await
+        .unwrap();
+    worker.drain().await;
+    let requests = server.await.unwrap();
+    assert!(requests[3]["max_tokens"].as_u64().unwrap() < 4096);
+    let first = requests[0].to_string();
+    let second = requests[1].to_string();
+    assert!(first.contains("original-goal-marker") && first.contains("Historical update 7599"));
+    assert!(first.len() < 200_000, "{}", first.len());
+    assert!(
+        second.len() < first.len() * 3 / 4,
+        "overflow must shrink the actual request"
+    );
+    for (index, current) in [(2, "question-continue"), (3, "question-reopen")] {
+        let request = requests[index].to_string();
+        assert!(request.contains("summary-marker") && request.contains(current));
+        assert!(
+            !request.contains("Historical update") && !request.contains("original-goal-marker")
+        );
+    }
+    assert_eq!(
+        log.read_model_context("session", None)
+            .await
+            .unwrap()
+            .baseline
+            .unwrap()
+            .event_id,
+        checkpoint
+    );
+    assert_eq!(
+        log.session_import_progress("session").await.unwrap(),
+        progress
+    );
     drop(worker);
     Arc::try_unwrap(log).ok().unwrap().close().await.unwrap();
 }

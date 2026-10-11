@@ -179,14 +179,9 @@ fn scan(
                 match item.kind {
                     Kind::Directory
                         if format == Format::ClaudeCode && depth == 0
-                            || format == Format::Codex && depth < 8 =>
+                            || format == Format::Codex =>
                     {
                         directories.push((path, depth + 1))
-                    }
-                    Kind::Directory if format == Format::Codex => {
-                        return Err(Error::Invalid(
-                            "Codex catalog directory nesting exceeds its limit",
-                        ));
                     }
                     Kind::File if item.name.ends_with(".jsonl") => {
                         let info = match reader.file_info(OpenFile {

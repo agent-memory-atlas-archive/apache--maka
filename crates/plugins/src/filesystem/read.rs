@@ -32,7 +32,6 @@ use cap_std::fs::OpenOptions;
 pub use file::{FileInfo, OpenFile, PinnedFile, PinnedReader, ReadRange};
 use serde::Deserialize;
 use std::{
-    cell::Cell,
     collections::{BTreeMap, BTreeSet},
     io::{self, Read, Seek, SeekFrom},
     path::{Component, Path},
@@ -332,10 +331,7 @@ impl ReadDirectory {
         };
         let view = self.clone();
         tokio::task::spawn_blocking(move || {
-            let reader = Reader {
-                view: &view,
-                visited: Cell::new(0),
-            };
+            let reader = Reader { view: &view };
             reader.check()?;
             lease.start();
             if let Some(ticket) = &mut ticket {
@@ -391,7 +387,6 @@ impl ReadDirectory {
 /// No mutable file, directory handle or ambient pathname is exposed.
 pub struct Reader<'a> {
     view: &'a ReadDirectory,
-    visited: Cell<u64>,
 }
 impl Reader<'_> {
     pub fn file_info(&self, input: OpenFile) -> Result<FileInfo, ReadError> {
@@ -505,8 +500,8 @@ impl Reader<'_> {
         })
     }
 
-    /// Visit authorized entries once, in filesystem order. All directory scans
-    /// in this batch share a 100,000-entry budget, including filtered entries.
+    /// Visit authorized entries once in filesystem order, checking cancellation
+    /// between entries. Pagination bounds retained output, not source size.
     pub fn visit_directory<E: From<ReadError>>(
         &self,
         path: &str,
@@ -532,10 +527,6 @@ impl Reader<'_> {
         }
         for entry in directory.dir().entries().map_err(ReadError::from)? {
             self.check()?;
-            if self.visited.get() == 100_000 {
-                return Err(ReadError::ScanLimit { max: 100_000 }.into());
-            }
-            self.visited.set(self.visited.get() + 1);
             let entry = entry.map_err(ReadError::from)?;
             let name = entry
                 .file_name()
@@ -674,25 +665,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["allowed"]
         );
-        view.with_reader(|reader| {
-            // Filtered entries consume the same scan budget as visible ones.
-            // Start near the cap without creating 100,001 fixture files.
-            reader.visited.set(99_999);
-            assert!(matches!(
-                reader.visit_directory("", Symlinks::Reject, |_| Ok::<_, ReadError>(())),
-                Err(ReadError::ScanLimit { max: 100_000 })
-            ));
-            assert!(matches!(
-                reader.list(ListFiles {
-                    path: String::new(),
-                    after: None,
-                    limit: 10
-                }),
-                Err(ReadError::ScanLimit { max: 100_000 })
-            ));
-        })
-        .await
-        .unwrap();
         let workspace = root.bind(owner.context(), cancellation.clone());
         assert!(workspace.read(read("../private")).await.is_err());
         #[cfg(unix)]

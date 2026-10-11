@@ -123,6 +123,13 @@ pub(crate) fn fits<T: serde::Serialize>(value: &T) -> bool {
         .is_ok_and(|value| maka_js_runtime::plugin::check_json_delivery(&value, PAGE_BYTES).is_ok())
 }
 pub(crate) async fn query(roots: Vec<Root>, input: Directories) -> Result<DirectoryPage, String> {
+    query_excluding(roots, input, None).await
+}
+pub(crate) async fn query_excluding(
+    roots: Vec<Root>,
+    input: Directories,
+    excluded: Option<std::path::PathBuf>,
+) -> Result<DirectoryPage, String> {
     tokio::task::spawn_blocking(move || {
         let Directories::Children { selection, after } = input else {
             return root_page(&roots);
@@ -139,7 +146,11 @@ pub(crate) async fn query(roots: Vec<Root>, input: Directories) -> Result<Direct
             selection.segments.clone(),
             name,
         )?;
-        if selected.selection.directory_identity != selection.directory_identity {
+        if selected.selection.directory_identity != selection.directory_identity
+            || excluded
+                .as_ref()
+                .is_some_and(|path| Path::new(&selected.path).starts_with(path))
+        {
             return Err("agent_directory_unavailable".into());
         }
         if after.as_ref().is_some_and(|name| {
@@ -150,7 +161,7 @@ pub(crate) async fn query(roots: Vec<Root>, input: Directories) -> Result<Direct
         }) {
             return Err("agent_directory_invalid".into());
         }
-        let names: Vec<_> = root
+        let mut names: Vec<_> = root
             .directory
             .directory_names(&selection.segments, 4096)
             .map_err(|_| "agent_directory_unavailable")?
@@ -162,6 +173,15 @@ pub(crate) async fn query(roots: Vec<Root>, input: Directories) -> Result<Direct
                         .is_none_or(|cursor| name.encode_utf16().cmp(cursor.encode_utf16()).is_gt())
             })
             .collect();
+        if let Some(excluded) = &excluded {
+            names.retain(|name| {
+                let mut segments = selection.segments.clone();
+                segments.push(name.clone());
+                root.directory
+                    .resolve(&segments)
+                    .is_ok_and(|path| !path.starts_with(excluded))
+            });
+        }
         let mut children = Vec::new();
         for name in names.iter().take(32) {
             let mut segments = selection.segments.clone();
@@ -303,6 +323,21 @@ pub(crate) async fn selected(
     selection: DirectorySelection,
     managed: std::path::PathBuf,
 ) -> Result<Option<Directory>, String> {
+    resolve_selection(roots, selection, managed, true).await
+}
+pub(crate) async fn observed(
+    roots: Vec<Root>,
+    selection: DirectorySelection,
+    excluded: std::path::PathBuf,
+) -> Result<Option<Directory>, String> {
+    resolve_selection(roots, selection, excluded, false).await
+}
+async fn resolve_selection(
+    roots: Vec<Root>,
+    selection: DirectorySelection,
+    managed: std::path::PathBuf,
+    workspace_marker: bool,
+) -> Result<Option<Directory>, String> {
     tokio::task::spawn_blocking(move || {
         let Ok(root) = root(&roots, &selection.root_id) else {
             return None;
@@ -325,6 +360,9 @@ pub(crate) async fn selected(
         }
         let path = std::path::PathBuf::from(&selected.path);
         let directory = directory::open(&path, &selection.directory_identity).ok()?;
+        if !workspace_marker {
+            return Some(selected);
+        }
         match workspace::read_directory_identity(path, directory) {
             Ok(_) => Some(selected),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(selected),

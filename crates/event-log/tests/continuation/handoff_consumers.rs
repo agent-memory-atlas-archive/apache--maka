@@ -158,12 +158,7 @@ async fn handoff_output_keeps_one_public_identity_and_all_physical_evidence_afte
             .await;
         }
         let context = log
-            .read_model_context(
-                "session",
-                Some(&current.invocation.invocation_id),
-                100,
-                65536,
-            )
+            .read_model_context("session", Some(&current.invocation.invocation_id))
             .await
             .unwrap();
         append(

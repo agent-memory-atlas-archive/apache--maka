@@ -105,7 +105,7 @@ async fn background_summary_preserves_steering_tool_tail_and_frozen_physical_ret
         worker.drain().await;
         server.await.unwrap();
         assert_eq!(count.load(Ordering::SeqCst), 2, "each accepted tool effect happens once");
-        let source = log.read_model_context("session", None, 200, 512 * 1024).await.unwrap();
+        let source = log.read_model_context("session", None).await.unwrap();
         assert!(source.baseline.is_some());
         assert!(log.unfinished_invocations(10).await.unwrap().is_empty());
     }).await.expect("background work and physical retries must settle");
@@ -215,7 +215,7 @@ async fn background_summary_drains_before_terminal_handoff_and_retirement() {
             }
             assert!(rows.iter().all(|row| !serde_json::to_string(&row.message).unwrap().contains("private unfinished summary")));
             assert!(log.unfinished_invocations(10).await.unwrap().is_empty());
-            assert!(log.read_model_context("session", None, 200, 512 * 1024).await.unwrap().baseline.is_none());
+            assert!(log.read_model_context("session", None).await.unwrap().baseline.is_none());
             assert_eq!(count.load(Ordering::SeqCst), usize::from(ending == "handoff"));
             if ending == "retire" { assert!(log.session_retirement_ready("session").await.unwrap()); }
             drop(worker);

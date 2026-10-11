@@ -70,7 +70,7 @@ fn completion(id: &str, step: &str, text: &str) -> EventWrite {
 
 async fn checkpoint(log: &EventLog, id: &str, mode: CheckpointMode) -> EventWrite {
     let source = log
-        .prepare_context_compaction("session", Some(id), 100, 8192, &mode)
+        .prepare_context_compaction("session", Some(id), &mode)
         .await
         .unwrap();
     let step = format!("{id}-summary");
@@ -105,7 +105,7 @@ async fn active_anchor_is_atomic_bounded_and_survives_next_turn_and_reopen() {
     let anchor = opening("active");
     log.append(&anchor).await.unwrap();
     let source = log
-        .read_model_context("session", Some("active"), 100, 8192)
+        .read_model_context("session", Some("active"))
         .await
         .unwrap();
     log.append(&request("active", "main-step", ModelPurpose::Main, &source))
@@ -115,7 +115,7 @@ async fn active_anchor_is_atomic_bounded_and_survives_next_turn_and_reopen() {
         anchor_event_id: anchor.event().id.clone(),
     };
     assert!(
-        log.prepare_context_compaction("session", Some("active"), 100, 8192, &mode)
+        log.prepare_context_compaction("session", Some("active"), &mode)
             .await
             .is_err()
     );
@@ -139,7 +139,7 @@ async fn active_anchor_is_atomic_bounded_and_survives_next_turn_and_reopen() {
             .is_err()
     );
     assert!(
-        log.read_model_context("session", Some("active"), 100, 8192)
+        log.read_model_context("session", Some("active"))
             .await
             .unwrap()
             .baseline
@@ -155,19 +155,19 @@ async fn active_anchor_is_atomic_bounded_and_survives_next_turn_and_reopen() {
         "a new candidate cannot reuse a predecessor superseded after its source cut"
     );
     assert!(
-        log.prepare_context_compaction("session", Some("active"), 100, 8192, &mode)
+        log.prepare_context_compaction("session", Some("active"), &mode)
             .await
             .is_err(),
         "a summary completion cannot renew its own compaction budget"
     );
     let source = log
-        .read_model_context("session", Some("active"), 100, 8192)
+        .read_model_context("session", Some("active"))
         .await
         .unwrap();
     assert_eq!(source.anchor.unwrap().event, *anchor.event());
     assert!(source.tail.is_empty());
     assert!(
-        log.read_model_context("session", Some("active"), 0, 8192)
+        log.read_model_context("session", Some("active"))
             .await
             .is_err()
     );
@@ -184,7 +184,7 @@ async fn active_anchor_is_atomic_bounded_and_survives_next_turn_and_reopen() {
     log.close().await.unwrap();
     let log = EventLog::open(&path).await.unwrap();
     let source = log
-        .read_model_context("session", Some("next"), 100, 8192)
+        .read_model_context("session", Some("next"))
         .await
         .unwrap();
     assert_eq!(source.anchor.unwrap().event, *anchor.event());
@@ -215,7 +215,7 @@ async fn active_cut_rejects_pending_child_and_changed_summary_repair_source() {
     let anchor = opening("active");
     log.append(&anchor).await.unwrap();
     let source = log
-        .read_model_context("session", Some("active"), 100, 8192)
+        .read_model_context("session", Some("active"))
         .await
         .unwrap();
     log.append(&request("active", "main", ModelPurpose::Main, &source))
@@ -241,7 +241,7 @@ async fn active_cut_rejects_pending_child_and_changed_summary_repair_source() {
         anchor_event_id: anchor.event().id.clone(),
     };
     assert!(
-        log.prepare_context_compaction("session", Some("active"), 100, 8192, &mode)
+        log.prepare_context_compaction("session", Some("active"), &mode)
             .await
             .is_err()
     );
@@ -257,7 +257,7 @@ async fn active_cut_rejects_pending_child_and_changed_summary_repair_source() {
     .await
     .unwrap();
     let source = log
-        .prepare_context_compaction("session", Some("active"), 100, 8192, &mode)
+        .prepare_context_compaction("session", Some("active"), &mode)
         .await
         .unwrap();
     log.append(&request(
@@ -330,13 +330,13 @@ async fn active_cut_rejects_pending_child_and_changed_summary_repair_source() {
         .is_err()
     );
     assert!(
-        log.prepare_context_compaction("session", Some("active"), 100, 16384, &mode)
+        log.prepare_context_compaction("session", Some("active"), &mode)
             .await
             .is_err(),
         "summary events cannot renew their own attempt budget"
     );
     let main = log
-        .read_model_context("session", Some("active"), 100, 16384)
+        .read_model_context("session", Some("active"))
         .await
         .unwrap();
     log.append(&request("active", "new-main", ModelPurpose::Main, &main))
@@ -346,13 +346,13 @@ async fn active_cut_rejects_pending_child_and_changed_summary_repair_source() {
         .await
         .unwrap();
     let next = log
-        .prepare_context_compaction("session", Some("active"), 100, 16384, &mode)
+        .prepare_context_compaction("session", Some("active"), &mode)
         .await
         .unwrap();
     assert!(next.source_evidence.high_water > source.source_evidence.high_water);
     // Main may finish after capture but before Summary's request is committed.
     let raced = log
-        .read_model_context("session", Some("active"), 100, 16384)
+        .read_model_context("session", Some("active"))
         .await
         .unwrap();
     log.append(&request("active", "raced-main", ModelPurpose::Main, &raced))
@@ -388,7 +388,7 @@ async fn active_cut_rejects_pending_child_and_changed_summary_repair_source() {
         "a new source must cover the Main whose progress renews it"
     );
     let after = log
-        .prepare_context_compaction("session", Some("active"), 100, 32768, &mode)
+        .prepare_context_compaction("session", Some("active"), &mode)
         .await
         .unwrap();
     log.append(&request(
@@ -415,7 +415,7 @@ async fn active_cut_rejects_pending_child_and_changed_summary_repair_source() {
         .await
         .unwrap();
     assert!(
-        log.prepare_context_compaction("session", Some("active"), 100, 32768, &mode)
+        log.prepare_context_compaction("session", Some("active"), &mode)
             .await
             .is_err()
     );

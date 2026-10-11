@@ -27,18 +27,13 @@ use maka_plugins::{
     session::import::{ImportState, Receipt},
     storage::{Data, Mutation, Record, Store, StoreError},
 };
-use maka_runtime::{
-    execution::WorkspaceTarget,
-    import::{MAX_IMPORT_BYTES, MAX_IMPORT_RECORDS},
-};
+use maka_runtime::execution::WorkspaceTarget;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use uuid::Uuid;
 
 const PART_BYTES: usize = 512 * 1024;
-const MAX_PAYLOAD: usize = MAX_IMPORT_BYTES as usize + 64 * 1024;
-const MAX_PARTS: usize = MAX_PAYLOAD.div_ceil(PART_BYTES);
 
 mod delivery;
 mod index;
@@ -139,16 +134,11 @@ impl Repository {
             ));
         }
         transcript.source.validate().map_err(Error::Invalid)?;
-        if transcript.records.is_empty() || transcript.records.len() as u64 > MAX_IMPORT_RECORDS {
+        if transcript.records.is_empty() {
             return Err(Error::Invalid("invalid imported history size"));
         }
-        let mut record_bytes = 0;
         for record in &transcript.records {
             record.validate().map_err(Error::Invalid)?;
-            record_bytes += crate::transcript::retained_size(record)? as usize;
-            if record_bytes > MAX_IMPORT_BYTES as usize {
-                return Err(Error::Invalid("imported history exceeds its budget"));
-            }
         }
         if !transcript
             .records
@@ -159,9 +149,6 @@ impl Repository {
         }
         let bytes = serde_json::to_vec(&transcript)
             .map_err(|_| Error::Invalid("invalid normalized transcript"))?;
-        if bytes.len() > MAX_PAYLOAD {
-            return Err(Error::Invalid("normalized transcript exceeds its budget"));
-        }
         let intent = Intent {
             request: request.clone(),
             source,
@@ -302,11 +289,8 @@ fn decode(record: Record) -> Result<Saved, Error> {
     };
     let intent: Intent = serde_json::from_value(value).map_err(encoding)?;
     if intent.bytes == 0
-        || intent.bytes > MAX_PAYLOAD
         || intent.parts == 0
-        || intent.parts > MAX_PARTS
         || intent.records == 0
-        || intent.records as u64 > MAX_IMPORT_RECORDS
         || intent.parts != intent.bytes.div_ceil(PART_BYTES)
         || intent.digest.len() != 64
         || !intent.digest.bytes().all(|byte| byte.is_ascii_hexdigit())

@@ -22,15 +22,11 @@ use crate::{
     Error,
     transcript::{identity, source_cwd, title},
 };
-use maka_plugins::{
-    filesystem::database::{Cell, Query as Statement, Read, Table},
-    remote::Views,
-};
+use maka_plugins::filesystem::database::{Cell, Query as Statement, Read, Table};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 const BATCH: usize = 256;
-const MAX_CANDIDATES: usize = 100_000;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -48,7 +44,11 @@ struct Cursor {
 
 /// Lists root sessions in an explicitly authorized OpenCode database. Keysets
 /// bind the source and query; they do not freeze a live source between pages.
-pub async fn opencode(views: &dyn Views, path: String, query: Query) -> Result<Page, Error> {
+pub async fn opencode(
+    views: &(impl crate::access::ReadSource + ?Sized),
+    path: String,
+    query: Query,
+) -> Result<Page, Error> {
     let query = prepare(query)?;
     let hash = format!(
         "{:x}",
@@ -77,7 +77,6 @@ pub async fn opencode(views: &dyn Views, path: String, query: Query) -> Result<P
         })
         .transpose()?;
     let mut candidates = Vec::new();
-    let mut scanned = 0;
     loop {
         let mut parameters = Vec::new();
         let archive = if query.include_archived {
@@ -130,13 +129,6 @@ pub async fn opencode(views: &dyn Views, path: String, query: Query) -> Result<P
         }
         let count = table.rows.len();
         for row in table.rows {
-            scanned += 1;
-            if scanned > MAX_CANDIDATES {
-                return Err(Error::Limit {
-                    kind: "catalog_candidates",
-                    max: MAX_CANDIDATES as u64,
-                });
-            }
             let [id, name, cwd, archived, observed_at, updated_at]: [Cell; 6] = row
                 .try_into()
                 .map_err(|_| Error::Invalid("invalid OpenCode catalog row"))?;

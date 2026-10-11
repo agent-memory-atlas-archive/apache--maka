@@ -62,7 +62,7 @@ async fn interrupted_history_preserves_provider_effect_uncertainty_without_rejec
         log.append(&opening("old")).await.unwrap();
         if case == "other-step" {
             let source = log
-                .read_model_context("session", Some("old"), 100, 8192)
+                .read_model_context("session", Some("old"))
                 .await
                 .unwrap();
             log.append(&request("old", "prior", ModelPurpose::Main, &source))
@@ -80,7 +80,7 @@ async fn interrupted_history_preserves_provider_effect_uncertainty_without_rejec
             })).await.unwrap();
         }
         let source = log
-            .read_model_context("session", Some("old"), 100, 8192)
+            .read_model_context("session", Some("old"))
             .await
             .unwrap();
         log.append(&request("old", "interrupted", ModelPurpose::Main, &source))
@@ -127,10 +127,10 @@ async fn interrupted_history_preserves_provider_effect_uncertainty_without_rejec
         log.close().await.unwrap();
         let log = EventLog::open(&path).await.unwrap();
         let allowed = matches!(case, "settled" | "text");
-        let read = log.read_model_context("session", None, 100, 8192).await;
+        let read = log.read_model_context("session", None).await;
         assert_eq!(read.is_ok(), allowed, "{case}: {read:?}");
         let prepared = log
-            .prepare_context_compaction("session", None, 100, 8192, &CheckpointMode::Standalone)
+            .prepare_context_compaction("session", None, &CheckpointMode::Standalone)
             .await;
         assert_eq!(prepared.is_ok(), allowed, "{case}: {prepared:?}");
         if !allowed {

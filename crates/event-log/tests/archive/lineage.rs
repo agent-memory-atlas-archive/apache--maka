@@ -58,13 +58,7 @@ async fn inherited_prune_and_checkpoint_exclude_later_branch_archives_history_an
     continuation::append(&log, &source).await;
     log.append(&archive("source", &prior_tool)).await.unwrap();
     let before = log
-        .prepare_context_compaction(
-            "session",
-            Some("source"),
-            100,
-            65536,
-            &CheckpointMode::PreTurn,
-        )
+        .prepare_context_compaction("session", Some("source"), &CheckpointMode::PreTurn)
         .await
         .unwrap();
     let mut pair = summary_pair(&log, "source", &before).await;
@@ -125,8 +119,6 @@ async fn inherited_prune_and_checkpoint_exclude_later_branch_archives_history_an
         .prepare_context_compaction(
             "session",
             Some("later-compact"),
-            100,
-            256000,
             &CheckpointMode::Standalone,
         )
         .await
@@ -137,7 +129,7 @@ async fn inherited_prune_and_checkpoint_exclude_later_branch_archives_history_an
     let child = continuation::opening("child", Some(first_claim.clone()));
     continuation::append(&log, &child).await;
     let active = log
-        .read_model_context("session", Some("child"), 100, 65536)
+        .read_model_context("session", Some("child"))
         .await
         .unwrap();
     assert!(
@@ -168,8 +160,7 @@ async fn inherited_prune_and_checkpoint_exclude_later_branch_archives_history_an
     }));
     assert!(
         matches!(
-            log.read_model_context("session", Some("child"), 100, 8192)
-                .await,
+            log.read_model_context("session", Some("child")).await,
             Err(StoreError::PrefixTooLarge)
         ),
         "a later excluded archive cannot shrink the inherited tool's byte budget"

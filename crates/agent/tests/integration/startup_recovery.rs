@@ -96,8 +96,6 @@ async fn reopened_pending_main_and_summary_are_failed_without_replaying_admissio
                     .prepare_context_compaction(
                         "session",
                         Some("invocation"),
-                        100,
-                        128 * 1024,
                         &maka_runtime::context::CheckpointMode::MidTurn {
                             anchor_event_id: original.id.clone(),
                         },
@@ -425,7 +423,7 @@ async fn explicit_new_message_after_unknown_dispatch_informs_model_without_repla
         let log = Arc::new(EventLog::open(&path).await.unwrap());
         assert_eq!(recover(&log).await.unwrap(), 1);
         assert!(log.check_manual_message_history("session").await.unwrap());
-        assert!(log.read_model_context("session", None, 100, 128 * 1024).await.is_err());
+        assert!(log.read_model_context("session", None).await.is_err());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base_url = format!("http://{}/v1", listener.local_addr().unwrap());
         let server = tokio::spawn(async move {
@@ -559,19 +557,14 @@ async fn item_acceptance_survives_crashes_before_dispatch_before_settlement_and_
             .unwrap()
         {}
         if cut != 1 {
-            let source = log
-                .read_model_context("session", None, 100, 128 * 1024)
-                .await
-                .unwrap();
+            let source = log.read_model_context("session", None).await.unwrap();
             assert!(source.tail.iter().any(
                 |event| matches!(event,maka_event_log::context::ContextEvent::ModelItems(items)
                 if items.items.iter().any(|item| matches!(item.part,ModelPart::ToolCall {..})))
             ));
         } else {
             assert!(
-                log.read_model_context("session", None, 100, 128 * 1024)
-                    .await
-                    .is_err(),
+                log.read_model_context("session", None).await.is_err(),
                 "unsettled effects cannot silently resume"
             );
         }
@@ -654,10 +647,7 @@ async fn accepted_history_budget_counts_complete_items_not_token_envelopes() {
             },
         )
         .await;
-        let source = log
-            .read_model_context("session", None, 8, 4096)
-            .await
-            .unwrap();
+        let source = log.read_model_context("session", None).await.unwrap();
         let items = source
             .tail
             .iter()

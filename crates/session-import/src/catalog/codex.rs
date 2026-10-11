@@ -22,15 +22,11 @@ use crate::{
     Error,
     transcript::{source_cwd, title},
 };
-use maka_plugins::{
-    filesystem::{
-        OpenFile, ReadDirectory, ReadError, Symlinks,
-        database::{Cell, Error as DatabaseError, Query as Statement, Read, Table},
-        entries::Kind,
-    },
-    remote::{Views, WorkspaceViewInput},
+use maka_plugins::filesystem::{
+    OpenFile, ReadDirectory, ReadError, Symlinks,
+    database::{Cell, Error as DatabaseError, Query as Statement, Read, Table},
+    entries::Kind,
 };
-use maka_runtime::execution::{CollaborationMode, SandboxMode, WorkspaceTarget};
 use serde::{Deserialize, Serialize};
 use std::{
     cmp::Reverse,
@@ -39,7 +35,6 @@ use std::{
     path::{Component, Path},
 };
 
-const MAX_CANDIDATES: usize = 100_000;
 const COLUMNS: [&str; 13] = [
     "id",
     "rollout_path",
@@ -78,16 +73,13 @@ enum Cursor {
 
 /// Chooses the newest source database once. A continuation stays on that
 /// generation, or on the filesystem selected by its first page.
-pub async fn list(views: &dyn Views, root: String, query: Query) -> Result<Page, Error> {
+pub async fn list(
+    views: &(impl crate::access::ReadSource + ?Sized),
+    root: String,
+    query: Query,
+) -> Result<Page, Error> {
     let mut query = prepare(query)?;
-    let view = views
-        .workspace(WorkspaceViewInput {
-            workspace: WorkspaceTarget::HostPath { path: root.clone() },
-            sandbox_mode: SandboxMode::ReadOnly,
-            collaboration_mode: CollaborationMode::Agent,
-        })
-        .await?
-        .files;
+    let view = views.directory(root.clone()).await?;
     let hash = query_hash(&view, Format::Codex, &query)?;
     let cursor = query
         .cursor
@@ -181,7 +173,7 @@ async fn filesystem(view: &ReadDirectory, query: Query) -> Result<Page, Error> {
 }
 
 async fn database_page(
-    views: &dyn Views,
+    views: &(impl crate::access::ReadSource + ?Sized),
     view: &ReadDirectory,
     root: &str,
     database: String,
@@ -245,22 +237,13 @@ async fn database_page(
         .query_database(Read {
             path,
             queries: vec![Statement {
-                sql: format!(
-                    "SELECT {selected} FROM threads LIMIT {}",
-                    MAX_CANDIDATES + 1
-                ),
+                sql: format!("SELECT {selected} FROM threads"),
                 parameters: vec![],
             }],
         })
         .await?)?;
     if table.columns != COLUMNS {
         return Err(Error::Invalid("unexpected Codex catalog columns"));
-    }
-    if table.rows.len() > MAX_CANDIDATES {
-        return Err(Error::Limit {
-            kind: "catalog_candidates",
-            max: MAX_CANDIDATES as u64,
-        });
     }
     let location = view.location();
     let selected_root = Path::new(root).to_owned();

@@ -96,8 +96,8 @@ CREATE TABLE session_imports (
     configuration TEXT NOT NULL CHECK(json_valid(configuration)),
     created_at INTEGER NOT NULL,
     state TEXT NOT NULL CHECK(state IN ('collecting','published','abandoned')),
-    records INTEGER NOT NULL CHECK(records BETWEEN 0 AND 7500),
-    bytes INTEGER NOT NULL CHECK(bytes BETWEEN 0 AND 6291456),
+    records INTEGER NOT NULL CHECK(records >= 0),
+    bytes INTEGER NOT NULL CHECK(bytes >= 0),
     conversation INTEGER NOT NULL CHECK(conversation BETWEEN 0 AND records)
 );
 

@@ -38,7 +38,7 @@ async fn handoff_reserves_successor_and_cancellation_before_sealing_a_near_capac
         let source = opening("root", None);
         append(&log, &source).await;
         let context = log
-            .read_model_context("session", Some("root"), 100, 65536)
+            .read_model_context("session", Some("root"))
             .await
             .unwrap();
         append(
@@ -201,14 +201,9 @@ async fn handoff_reserves_successor_and_cancellation_before_sealing_a_near_capac
             pause: Box::new(pause),
         };
         append(&log, &target).await;
-        log.read_model_context(
-            "session",
-            Some(&target.invocation.invocation_id),
-            MAX_SOURCE_EVENTS,
-            MAX_SOURCE_BYTES,
-        )
-        .await
-        .unwrap();
+        log.read_model_context("session", Some(&target.invocation.invocation_id))
+            .await
+            .unwrap();
         log.close().await.unwrap();
     }
 }

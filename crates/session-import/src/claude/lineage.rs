@@ -21,8 +21,6 @@ use super::wire::{Kind, Row};
 use crate::{Error, jsonl, transcript::identity};
 use std::collections::{BTreeMap, BTreeSet};
 
-const MAX_INDEX_BYTES: u64 = 64 * 1024 * 1024;
-
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Parent {
     Node(String),
@@ -38,7 +36,6 @@ pub(super) struct Index {
     nodes: BTreeMap<String, Node>,
     dropped: BTreeSet<String>,
     root: u64,
-    bytes: u64,
 }
 impl Index {
     pub fn accept(&mut self, row: &Row<'_>, line: &jsonl::Line<'_>) -> Result<(), Error> {
@@ -60,19 +57,6 @@ impl Index {
             }
             None => Parent::Root(self.root),
         };
-        let bytes = 128
-            + id.len() as u64
-            + row
-                .parent_uuid
-                .as_ref()
-                .map_or(0, |parent| parent.len() as u64);
-        if bytes > MAX_INDEX_BYTES - self.bytes {
-            return Err(Error::Limit {
-                kind: "lineage_bytes",
-                max: MAX_INDEX_BYTES,
-            });
-        }
-        self.bytes += bytes;
         let prompt = row.kind == Kind::User && !row.is_meta && !row.is_compact_summary && {
             let message = row.message(line)?;
             !message.content.has_results() && !super::wire::synthetic(&message.content.text())

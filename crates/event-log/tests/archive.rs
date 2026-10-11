@@ -142,10 +142,7 @@ async fn archive_atomic_retry_reopen_scope_and_source_integrity() {
             .is_none()
     );
     end(&log, "old").await;
-    let frozen = log
-        .read_model_context("session", None, 100, 64 * 1024)
-        .await
-        .unwrap();
+    let frozen = log.read_model_context("session", None).await.unwrap();
     let initial_revision = log
         .get_session::<serde_json::Value>("session")
         .await
@@ -197,7 +194,7 @@ async fn archive_atomic_retry_reopen_scope_and_source_integrity() {
     );
     open(&log, "writer", false).await;
     let source = log
-        .read_model_context("session", Some("writer"), 100, 64 * 1024)
+        .read_model_context("session", Some("writer"))
         .await
         .unwrap();
     let mut main = request("writer", "writer-main", None).event().clone();
@@ -302,7 +299,7 @@ async fn archive_atomic_retry_reopen_scope_and_source_integrity() {
     log.append(&write).await.unwrap();
     assert!(!commits.has_changed().unwrap());
     let source = log
-        .read_model_context("session", Some("writer"), 100, 16 * 1024)
+        .read_model_context("session", Some("writer"))
         .await
         .unwrap();
     assert!(
@@ -360,10 +357,7 @@ async fn archive_atomic_retry_reopen_scope_and_source_integrity() {
         .unwrap(),
         SessionCopyResult::Committed(_)
     ));
-    let adopted = log
-        .read_model_context("archived-copy", None, 100, 64 * 1024)
-        .await
-        .unwrap();
+    let adopted = log.read_model_context("archived-copy", None).await.unwrap();
     assert_eq!(
         log.read_archive("archived-copy", &placeholder.identity)
             .await
@@ -405,8 +399,7 @@ async fn archive_atomic_retry_reopen_scope_and_source_integrity() {
     );
     assert!(
         matches!(
-            log.read_model_context("unpruned-copy", None, 100, 8192)
-                .await,
+            log.read_model_context("unpruned-copy", None).await,
             Err(StoreError::PrefixTooLarge)
         ),
         "later source pruning cannot replace history already owned by a copy"
@@ -551,11 +544,7 @@ async fn archive_atomic_retry_reopen_scope_and_source_integrity() {
             .await
             .is_err()
     );
-    assert!(
-        log.read_model_context("session", None, 100, 8192)
-            .await
-            .is_err()
-    );
+    assert!(log.read_model_context("session", None).await.is_err());
     log.close().await.unwrap();
 }
 
@@ -597,10 +586,7 @@ async fn inherited_results_prune_and_compact_without_changing_siblings_or_frozen
             SessionCopyResult::Committed(_)
         ));
     }
-    let frozen = log
-        .read_model_context("branch", None, 100, 65536)
-        .await
-        .unwrap();
+    let frozen = log.read_model_context("branch", None).await.unwrap();
     // A later source archive is neither visible nor a duplicate in the copy.
     open(&log, "source-prune", false).await;
     log.append(&archive("source-prune", &target)).await.unwrap();
@@ -645,10 +631,7 @@ async fn inherited_results_prune_and_compact_without_changing_siblings_or_frozen
     )))
     .await
     .unwrap();
-    let pruned = log
-        .read_model_context("branch", None, 100, 65536)
-        .await
-        .unwrap();
+    let pruned = log.read_model_context("branch", None).await.unwrap();
     assert!(pruned.tail.iter().any(
         |entry| matches!(entry, ContextEvent::Archived(a) if a.event_id == target.event().id)
     ));
@@ -659,11 +642,7 @@ async fn inherited_results_prune_and_compact_without_changing_siblings_or_frozen
             .candidates
             .is_empty()
     );
-    assert!(
-        log.read_model_context("sibling", None, 100, 8192)
-            .await
-            .is_err()
-    );
+    assert!(log.read_model_context("sibling", None).await.is_err());
     assert_eq!(
         log.read_frozen_model_context(&frozen.source_evidence, 100, 65536)
             .await
@@ -710,10 +689,7 @@ async fn inherited_results_prune_and_compact_without_changing_siblings_or_frozen
         .unwrap(),
         SessionCopyResult::Committed(_)
     ));
-    let adopted = log
-        .read_model_context("nested", None, 100, 65536)
-        .await
-        .unwrap();
+    let adopted = log.read_model_context("nested", None).await.unwrap();
     assert!(adopted.tail.iter().any(
         |entry| matches!(entry, ContextEvent::Archived(a) if a.event_id == target.event().id)
     ));
@@ -740,8 +716,6 @@ async fn inherited_results_prune_and_compact_without_changing_siblings_or_frozen
         .prepare_context_compaction(
             "branch",
             Some("branch-compact"),
-            100,
-            65536,
             &CheckpointMode::Standalone,
         )
         .await
@@ -794,7 +768,7 @@ async fn inherited_results_prune_and_compact_without_changing_siblings_or_frozen
     log.close().await.unwrap();
     let log = EventLog::open(&path).await.unwrap();
     assert_eq!(
-        log.read_model_context("branch", None, 100, 65536)
+        log.read_model_context("branch", None)
             .await
             .unwrap()
             .baseline
@@ -820,7 +794,7 @@ async fn inherited_results_prune_and_compact_without_changing_siblings_or_frozen
         maka_event_log::sessions::MaterialCollection::Retained("branch".into())
     );
     assert_eq!(
-        log.read_model_context("nested", None, 100, 65536)
+        log.read_model_context("nested", None)
             .await
             .unwrap()
             .effective_source_digest,
@@ -854,11 +828,7 @@ async fn inherited_results_prune_and_compact_without_changing_siblings_or_frozen
             .await
             .is_err()
     );
-    assert!(
-        log.read_model_context("nested", None, 100, 65536)
-            .await
-            .is_err()
-    );
+    assert!(log.read_model_context("nested", None).await.is_err());
     assert!(
         log.read_frozen_model_context(&adopted.source_evidence, 100, 65536)
             .await
@@ -882,8 +852,7 @@ async fn bounded_prune_candidates_do_not_materialize_the_old_tail() {
     open(&log, "current", false).await;
     tool(&log, "current", "current-result", "small".into()).await;
     assert!(matches!(
-        log.read_model_context("session", Some("current"), 10_000, 8 * 1024 * 1024)
-            .await,
+        log.read_model_context("session", Some("current")).await,
         Err(StoreError::PrefixTooLarge)
     ));
     let guard = log
@@ -931,7 +900,7 @@ async fn bounded_prune_candidates_do_not_materialize_the_old_tail() {
     }
     assert_eq!(archived, 40);
     let source = log
-        .read_model_context("session", Some("pruner"), 10_000, 512 * 1024)
+        .read_model_context("session", Some("pruner"))
         .await
         .unwrap();
     assert_eq!(

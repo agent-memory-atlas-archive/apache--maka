@@ -175,7 +175,7 @@ pub(super) async fn start(
     .await?;
     let job = match compact::capture(inner, input, &mode, cancellation, continuation_base).await {
         Ok(Some(job)) => job,
-        Ok(None) | Err(RunError::Store(maka_event_log::StoreError::PrefixTooLarge)) => {
+        Ok(None) => {
             return Ok(None);
         }
         Err(error) => return Err(error),

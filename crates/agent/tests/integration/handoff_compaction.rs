@@ -137,7 +137,7 @@ async fn handoff_preserves_conversation_replay_and_compacts_before_its_physical_
         let latest_sequence = prefix.events.iter().rev().find(|e|
             e.event.invocation.invocation_id == "successor-invocation"
             && matches!(e.event.fact, Fact::ModelCompleted { .. })).unwrap().sequence;
-        let source = log.read_model_context("session", None, 100, 256 * 1024).await.unwrap();
+        let source = log.read_model_context("session", None).await.unwrap();
         assert!(matches!(source.latest_main, LatestMainContext::Selected(latest)
             if latest.sequence == latest_sequence));
         log.shutdown().await.unwrap();

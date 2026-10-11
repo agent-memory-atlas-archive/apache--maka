@@ -53,21 +53,16 @@ impl EventLog {
         &self,
         session: &str,
         current: Option<&str>,
-        max_events: usize,
-        max_bytes: usize,
     ) -> Result<ModelContextSource, StoreError> {
-        self.context_source(session, current, max_events, max_bytes, None, false)
-            .await
+        self.context_source(session, current, None, false).await
     }
 
     pub async fn read_manual_message_context(
         &self,
         session: &str,
         current: &str,
-        max_events: usize,
-        max_bytes: usize,
     ) -> Result<ModelContextSource, StoreError> {
-        self.context_source(session, Some(current), max_events, max_bytes, None, true)
+        self.context_source(session, Some(current), None, true)
             .await
     }
 
@@ -75,27 +70,16 @@ impl EventLog {
         &self,
         session: &str,
         current: Option<&str>,
-        max_events: usize,
-        max_bytes: usize,
         mode: &CheckpointMode,
     ) -> Result<ModelContextSource, StoreError> {
-        self.context_source(
-            session,
-            current,
-            max_events,
-            max_bytes,
-            Some(mode.clone()),
-            false,
-        )
-        .await
+        self.context_source(session, current, Some(mode.clone()), false)
+            .await
     }
 
     async fn context_source(
         &self,
         session: &str,
         current: Option<&str>,
-        max_events: usize,
-        max_bytes: usize,
         mode: Option<CheckpointMode>,
         manual_message: bool,
     ) -> Result<ModelContextSource, StoreError> {
@@ -167,8 +151,8 @@ impl EventLog {
                         &selection,
                         high_water,
                         before,
-                        max_events,
-                        max_bytes,
+                        usize::MAX,
+                        usize::MAX,
                         latest_main,
                     )
                     .await?;
