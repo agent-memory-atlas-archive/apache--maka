@@ -23,7 +23,7 @@
 
 这是一份普通的文本 agent 插件组合，同一组包分别提供 desktop/TUI 入口。Workspace、Composer、Navigation、Timeline、Appearance 可以独立替换；启动器不包含产品页面。Surface、编辑器、文本捕获、调用历史及 Host agent 服务由随构建提供的原生包承担，各部分通过明确的公开契约连接。
 
-当前切片包含创建/选择对话、规范历史分页、流式回复、精确 invocation 停止与原始 mutation 回执恢复。连接浏览、创建、公开字段编辑与原生 API 密钥保存/移除已接入普通插件；默认模型设置与清除已接入独立普通组件，具备明确确认与回执恢复；工具流程、附件、历史虚拟化和各平台视觉/IME/可访问性验收尚未完成，不把运行时测试当作成品验收。
+产品支持对话、规范历史分页与搜索、流式回复、工具与交互终端、附件、精确执行控制和原 mutation 回执恢复。连接及默认模型设置、ACP 后端设置和认证均通过普通组件接入。TUI 提供三语、内置及自定义主题；各平台完整视觉、IME 和可访问性验收继续推进。
 
 独立普通包 `maka.studio.workbench` 提供双端“配置工作台”：用顶部导航管理连接、
 默认模型和插件组合，隐藏页面保留同一挂载与原生草稿。工作台不包含会话、输入区
@@ -36,6 +36,8 @@
 旧界面实际清理；新根不继承旧产品的原生草稿。切换 Host 位置还需明确修改可信连接
 配置，来源中的声明本身不授权访问另一 Host。
 
+直接运行 `maka application launch` 使用随构建提供的普通产品和文件、进程、问答、技能工具。首次启动确认工作目录（`--workspace` 或当前目录）；命令可读取目录外文件、在目录内写入，子进程网络禁用。Host 私有数据和会话权限仍由原服务保护。默认 UI Root 为 `~/.maka/application`，独立 Host Root 为其中的 `host`，自定义主题文件为 `appearance/theme.json`。语言跟随系统或已保存的外观设置，模型连接在应用设置中配置。重开保留原部署、包、授权及用户编辑的来源。
+
 WorkHub 在 `application compose` 或首次 `application launch` 加 `--product workhub` 选择。
 安装配置中的 `agent` 配置 worker 会话，另提供同为 `AgentConfiguration` 的 `coordinator`。
 可选 `processes` 与 `coordinatorProcesses` 分别配置进程权限上限及终端会话归属；生成来源中
@@ -44,7 +46,7 @@ WorkHub 在 `application compose` 或首次 `application launch` 加 `--product 
 WorkHub 根页面提供协调对话、任务、Agent 会话三个入口。首次设置使用协调器公布的真实目录选择；
 两个对话复用 Workspace，隐藏时保留原生草稿、附件及原操作恢复。任务展示原接纳/进度及
 有界答案分页，打开任务选择其精确 worker 会话；检查读取原任务，不跟随后来的会话执行。
-设置恢复只查询原回执，未知结果不新建替代协调器。显式外部 executor 复用同一任务和答案路径；协调轮次结束后的通知仍未完成。
+设置恢复只查询原回执，未知结果不新建替代协调器。显式外部 executor 复用同一任务和答案路径；任务列表和答案页在可见时自动更新，离开页面仅取消观察。worker 结束后，WorkHub 在协调器空闲时通过原消息队列接纳通知，使用原模型选择与当前获准服务。通知携带精确任务结果和有界答案；原接纳、交付和取消记录避免重启后重复通知，不确定结果不重新派发。恢复后的任务可独立通知下一次终态。
 
 原生 CLI 已携带普通产品包与原组合代码，无需 Node、源码目录或网络。首次启动 TUI 可以直接初始化并保存产品选择：
 
@@ -56,7 +58,7 @@ maka application launch --root UI_ROOT
 
 首次配置仍明确工作目录、独立 Host Root、工具和权限；presentation 可省略，给出时必须为 tui。首次加 `--product studio` 选择 Studio。Host/UI Root 必须不同；不存在或空目录可初始化，不接管已有部署身份。提交任何应用前先持久保存原始源码、精确包字节和连接输入；失败可能留下部分提交，重开沿原输入恢复并保留用户已更新的版本。完成后清除初始化数据，以已提交源码启动，不再读取原配置文件或随新二进制同步包。重开只传 Root，不重复传 configuration。子进程取得原租约后核对 Host Root 身份。
 
-裸 CLI 默认入口仍等待完整 TUI 体验验收；Desktop 继续使用下述显式编写和提交路径。
+需要自定义组合时，可使用上述安装文件。Desktop 继续使用下述显式编写和提交路径。
 
 ```sh
 maka application compose --configuration installation.json --output product-source
@@ -202,4 +204,4 @@ Workspace 的“执行后端”控件可选择已配置后端或返回原模型�
 外部执行沿用原附件上传、队列和回执；WorkHub 转交后仍绑定 worker 自己的 Session。ACP v1/v2
 按协商能力发送图片或嵌入文件；普通文本也可发送给仅支持文本的后端。编码后的整条 prompt
 受现有 1 MiB 帧上限约束；不支持的媒体或超限输入会在 prompt 派发前明确失败，附件保留在
-原会话历史中。设置／认证流程仍在接入。配置工作台继续使用原模型选择器。
+原会话历史中。设置／认证通过后端声明的方法接入。配置工作台继续使用原模型选择器。

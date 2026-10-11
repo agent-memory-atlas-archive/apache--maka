@@ -38,7 +38,9 @@ The supported preview set is macOS arm64, Linux x64 with glibc, and Windows x64.
 
 The native CLI also embeds the ordinary Agent/Studio product packages. `maka application compose --configuration installation.json --output product-source` authors checked Host/UI inputs and installable packages without a source checkout or runtime Node. See the [product configuration and installation guide](../agent-product/README.md).
 
-`maka application launch --root UI_ROOT --configuration installation.json` initializes and opens a terminal product; subsequent launches use only `maka application launch --root UI_ROOT`, including recovery after partial initialization. See the [product guide](../agent-product/README.md) for explicit workspace and permission configuration.
+Run `maka application launch` in a terminal. The first launch confirms the current workspace and installs the standard Agent product in `~/.maka/application`; subsequent launches reopen that saved application. Use `--workspace DIRECTORY`, `--product workhub`, `--locale auto|en|zh-CN|zh-TW` or `--light` for a new installation, and `--root DIRECTORY` to select a separate application. `--trust-workspace` supplies the same explicit first-install trust without the prompt. Workspace file changes and sandboxed commands are enabled; subprocess network access starts disabled. Choose a model connection in the application. Saved installations are edited through Settings and Plugins; startup flags do not overwrite them.
+
+The bare CLI retains its help entry while complete TUI parity is being verified. Advanced installations can supply `--configuration installation.json` on their first launch. Reopening requires only `--root UI_ROOT`, including recovery after partial initialization. See the [product guide](../agent-product/README.md).
 
 
 ## Build and publish

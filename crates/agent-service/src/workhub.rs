@@ -21,6 +21,7 @@
 //! explicit service imports, never a dependency from the Agent back to itself.
 pub mod contract;
 mod tasks;
+mod watch;
 use crate::{owner::Owner, service::Agent};
 use contract::{Coordinator, Resolve};
 use futures_util::future::BoxFuture;
@@ -280,6 +281,9 @@ impl Handler for Hub {
                     if scope.cancellation.is_cancelled() {
                         return Err("workhub_call_cancelled".into());
                     }
+                    if method == "watchTasks" || method == "watchTask" {
+                        return hub.watch(input, method == "watchTask", &context).await;
+                    }
                     if method == "controls" {
                         let input: contract::ControlsRead =
                             serde_json::from_value(input).map_err(|_| "workhub_input_invalid")?;
@@ -346,6 +350,7 @@ impl Handler for Hub {
 impl NativeOwner for Hub {
     fn activated(&self) {
         self.agent.0.activated();
+        self.tasks.start_notifications(&self.agent.0);
     }
     fn close(&self) -> BoxFuture<'static, Result<(), String>> {
         let agent = self.agent.0.clone();

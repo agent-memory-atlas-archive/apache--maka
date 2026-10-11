@@ -89,13 +89,20 @@ fn packages(directory: &std::path::Path, poisoned: bool) -> Vec<String> {
     ]
 }
 #[test]
-fn no_command_shows_help_and_removed_business_entry_cannot_acquire_a_root() {
+fn standard_launch_requires_a_terminal_and_help_and_operator_commands_remain_available() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("unused-root");
     let help = Command::new(env!("CARGO_BIN_EXE_maka")).output().unwrap();
     assert!(help.status.success());
     assert!(String::from_utf8_lossy(&help.stdout).contains("application"));
     assert!(!help.stdout.contains(&0x1b));
+    let piped = Command::new(env!("CARGO_BIN_EXE_maka"))
+        .args(["application", "launch", "--root", root.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!piped.status.success());
+    assert!(String::from_utf8_lossy(&piped.stderr).contains("interactive terminal"));
+    assert!(!root.exists());
     let rejected = Command::new(env!("CARGO_BIN_EXE_maka"))
         .args(["tui", "--root", root.to_str().unwrap()])
         .output()

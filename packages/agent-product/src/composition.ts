@@ -30,6 +30,7 @@ import {
   type Target as BindingTarget,
 } from '../../plugin-sdk/src/index.js';
 import { welcomeMark } from './welcome.js';
+export { installation } from './installation.js';
 export const packageNames = [
   'workspace',
   'workhub-root',

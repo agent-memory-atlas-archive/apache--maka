@@ -1,0 +1,196 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+//! WorkHub follow-ups use the original Agent admission gate and durable queue.
+use super::*;
+use maka_event_log::message_admissions::{PendingExecution, PendingMessageAdmission};
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ReturnRoute {
+    model: crate::model::AcceptedModel,
+    workspace: Workspace,
+}
+impl Owner {
+    pub(crate) fn background<F, Fut>(&self, task: F)
+    where
+        F: FnOnce(CancellationToken) -> Fut,
+        Fut: std::future::Future<Output = ()> + std::marker::Send + 'static,
+    {
+        self.workers.spawn(task(self.stop.child_token()));
+    }
+
+    pub(crate) async fn return_route(&self, source: &Invocation) -> Result<ReturnRoute, String> {
+        let runs = self.runs.lock().await;
+        let control = runs
+            .controls
+            .get(&source.session_id)
+            .ok_or("workhub_source_inactive")?;
+        if control.invocation != *source || control.failure.is_some() {
+            return Err("workhub_source_changed".into());
+        }
+        Ok(ReturnRoute {
+            model: control
+                .basis
+                .model
+                .clone()
+                .ok_or("workhub_model_unavailable")?,
+            workspace: control.basis.workspace.clone(),
+        })
+    }
+
+    pub(crate) async fn prepare_notification(
+        &self,
+        source: &Invocation,
+        route: &ReturnRoute,
+        identity: &str,
+        text: String,
+    ) -> Result<Option<PendingMessageAdmission>, String> {
+        let runs = self.runs.lock().await;
+        if runs.closing || self.stop.is_cancelled() {
+            return Err("agent_closed".into());
+        }
+        if runs.controls.contains_key(&source.session_id) {
+            return Ok(None);
+        }
+        let session = match self.session(&source.session_id).await {
+            Ok(session) => session,
+            Err(error) if error == "agent_session_unavailable" => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        if session.archived || session.configuration.workspace != route.workspace {
+            return Ok(None);
+        }
+        if workspace::validate(
+            &self.workspace_roots,
+            &route.workspace,
+            &self.managed_worktrees,
+        )
+        .await
+        .is_err()
+        {
+            return Ok(None);
+        }
+        let basis = MessageBasis {
+            model: Some(route.model.clone()),
+            executor: None,
+            workspace: route.workspace.clone(),
+            fingerprint: format!("{:x}", Sha256::digest(text.as_bytes())),
+            tools: self.tool_basis.clone(),
+            internal_tools: self.internal_tools.clone(),
+            internal_bindings: self.internal_bindings.clone(),
+            behavior: self.behavior.clone(),
+            max_steps: self.settings.max_steps,
+        };
+        let message: MessageInput = text.into();
+        let delivered = RootSourceMessage {
+            message: DeliveredMessage {
+                message_id: format!("m_{identity}"),
+                submitted_content_digest: message
+                    .content_digest()
+                    .map_err(|_| "agent_message_invalid")?,
+                content: message.clone(),
+            },
+            unprepared_content: message,
+            submitted_placement: Placement::CurrentTurn,
+            disposition: MessageDisposition::TurnStarted,
+            submitted_intent: None,
+        };
+        Ok(Some(PendingMessageAdmission {
+            execution: PendingExecution {
+                owner: self.prefix.clone(),
+                basis: serde_json::to_value(basis).map_err(|_| "agent_message_basis_invalid")?,
+            },
+            invocation: Invocation {
+                session_id: source.session_id.clone(),
+                turn_id: format!("t_{identity}"),
+                run_id: format!("r_{identity}"),
+                invocation_id: format!("i_{identity}"),
+            },
+            steering_invocation: None,
+            source: delivered,
+            required_tools: Default::default(),
+            admitted_at: now(),
+        }))
+    }
+
+    /// Reopening a frozen notification consults original acceptance, delivery and
+    /// cancellation. SQL uncertainty never creates a replacement message identity.
+    pub(crate) async fn admit_notification(
+        self: &Arc<Self>,
+        admission: &PendingMessageAdmission,
+    ) -> Result<bool, String> {
+        let mut runs = self.runs.lock().await;
+        let session = &admission.invocation.session_id;
+        let message = &admission.source.message.message_id;
+        if admission.execution.owner != self.prefix || !self.owns(session) {
+            return Err("agent_queue_owner_invalid".into());
+        }
+        if self
+            .store
+            .root_message(session, message)
+            .await
+            .map_err(|_| "agent_queue_unavailable")?
+            .is_some()
+            || self
+                .store
+                .message_cancelled(session, message)
+                .await
+                .map_err(|_| "agent_queue_unavailable")?
+        {
+            return Ok(true);
+        }
+        if let Some(original) = self
+            .store
+            .message_admission(session, message)
+            .await
+            .map_err(|_| "agent_queue_unavailable")?
+        {
+            if original != *admission {
+                return Err("agent_message_identity_changed".into());
+            }
+        } else {
+            if runs.closing || self.stop.is_cancelled() {
+                return Err("agent_closed".into());
+            }
+            if runs.controls.contains_key(session) {
+                return Ok(false);
+            }
+            let current = match self.session(session).await {
+                Ok(session) => session,
+                Err(error) if error == "agent_session_unavailable" => return Ok(false),
+                Err(error) => return Err(error),
+            };
+            let basis: MessageBasis = serde_json::from_value(admission.execution.basis.clone())
+                .map_err(|_| "agent_message_basis_invalid")?;
+            if current.archived || current.configuration.workspace != basis.workspace {
+                return Ok(false);
+            }
+            self.store
+                .admit_message(admission.clone())
+                .await
+                .map_err(|_| "agent_admission_unknown")?;
+        }
+        // Capacity pressure retains the accepted message in the original queue.
+        self.schedule_locked(&mut runs)
+            .await
+            .map_err(public_error)?;
+        Ok(true)
+    }
+}

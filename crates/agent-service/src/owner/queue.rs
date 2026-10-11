@@ -51,7 +51,7 @@ impl Owner {
             self.stop.cancel();
         }
     }
-    async fn schedule_locked(self: &Arc<Self>, runs: &mut Runs) -> Result<(), RunError> {
+    pub(super) async fn schedule_locked(self: &Arc<Self>, runs: &mut Runs) -> Result<(), RunError> {
         let mut after = None;
         loop {
             if self.permits.available_permits() == 0 || self.stop.is_cancelled() {

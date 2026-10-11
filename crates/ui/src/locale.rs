@@ -32,7 +32,8 @@ pub fn contract() -> Contract {
     }
 }
 
-pub(crate) fn system() -> String {
+/// Normalized native startup language, shared by the bootstrap prompt and UI value.
+pub fn system() -> String {
     resolve(|key| std::env::var(key).ok(), sys_locale::get_locale)
 }
 

@@ -26,6 +26,8 @@ use maka_agent::{Engine, RunError, RunInput, RunWork};
 mod attachments;
 mod execution;
 mod interactions;
+mod notifications;
+pub(crate) use notifications::ReturnRoute;
 mod queue;
 mod skills;
 use maka_config::ConfigurationStore;

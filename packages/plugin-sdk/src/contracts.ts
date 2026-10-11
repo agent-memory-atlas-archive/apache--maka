@@ -15890,6 +15890,532 @@ export const contracts = {
           },
           resources: {},
         },
+        watchTask: {
+          mode: 'subscription',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              taskId: {
+                type: 'string',
+                pattern: '^wt_[a-f0-9]{64}$',
+              },
+              cursor: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/AgentAnswerCursor',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+            },
+            required: ['taskId'],
+            title: 'WorkHubTaskRead',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              AgentAnswerCursor: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  invocationId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  offset: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                },
+                required: ['invocationId', 'offset'],
+              },
+            },
+          },
+          output: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              taskId: {
+                type: 'string',
+              },
+              worker: {
+                type: 'string',
+              },
+              operation: {
+                type: 'string',
+                format: 'uuid',
+              },
+              status: {
+                $ref: '#/$defs/WorkHubTaskStatus',
+              },
+            },
+            required: ['taskId', 'worker', 'operation', 'status'],
+            title: 'WorkHubTask',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              WorkHubTaskStatus: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      stage: {
+                        $ref: '#/$defs/WorkHubPreparationStage',
+                      },
+                      operation: {
+                        type: 'string',
+                        format: 'uuid',
+                      },
+                      sessionId: {
+                        type: ['string', 'null'],
+                      },
+                      state: {
+                        $ref: '#/$defs/WorkHubPreparationState',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'preparing',
+                      },
+                    },
+                    required: ['kind', 'stage', 'operation', 'state'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'pending',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'uncertain',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'unavailable',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      reason: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'rejected',
+                      },
+                    },
+                    required: ['kind', 'reason'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      sessionId: {
+                        type: 'string',
+                      },
+                      invocationId: {
+                        type: 'string',
+                      },
+                      progress: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/AgentWork',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'started',
+                      },
+                    },
+                    required: ['kind', 'sessionId', 'invocationId'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      sessionId: {
+                        type: 'string',
+                      },
+                      messageId: {
+                        type: 'string',
+                      },
+                      progress: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/AgentWork',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'queued',
+                      },
+                    },
+                    required: ['kind', 'sessionId', 'messageId'],
+                  },
+                ],
+              },
+              WorkHubPreparationStage: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'create',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      index: {
+                        type: 'integer',
+                        format: 'uint',
+                        minimum: 0,
+                      },
+                      total: {
+                        type: 'integer',
+                        format: 'uint',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'attachment',
+                      },
+                    },
+                    required: ['kind', 'index', 'total'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'delivery',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                ],
+              },
+              WorkHubPreparationState: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'pending',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'unavailable',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'uncertain',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'original_capture_required',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                    description:
+                      'The original resource-bearing call can only be observed, never recaptured.',
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      reason: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'rejected',
+                      },
+                    },
+                    required: ['kind', 'reason'],
+                  },
+                ],
+              },
+              AgentWork: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'missing',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'pending',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'cancelled',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'changed',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      shared: {
+                        type: 'boolean',
+                      },
+                      execution: {
+                        $ref: '#/$defs/AgentExecution',
+                      },
+                      answer: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/AgentAnswerPage',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      pendingInteractions: {
+                        type: 'integer',
+                        format: 'uint32',
+                        minimum: 0,
+                        description:
+                          'Count for this exact Run; original Session interactions retain all authority.',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'delivered',
+                      },
+                    },
+                    required: ['kind', 'shared', 'execution', 'pendingInteractions'],
+                  },
+                ],
+              },
+              AgentExecution: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  turnId: {
+                    type: 'string',
+                  },
+                  runId: {
+                    type: 'string',
+                  },
+                  invocationId: {
+                    type: 'string',
+                  },
+                  highWater: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    description: 'Run-local event count, not the root-global transcript cursor.',
+                  },
+                  state: {
+                    $ref: '#/$defs/AgentExecutionState',
+                  },
+                },
+                required: ['sessionId', 'turnId', 'runId', 'invocationId', 'highWater', 'state'],
+                description:
+                  'Canonical physical execution receipt, independent of the current Session tip.',
+              },
+              AgentExecutionState: {
+                type: 'string',
+                enum: [
+                  'admitted',
+                  'running',
+                  'waiting',
+                  'paused',
+                  'completed',
+                  'failed',
+                  'cancelled',
+                ],
+              },
+              AgentAnswerPage: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  text: {
+                    type: 'string',
+                  },
+                  next: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentAnswerCursor',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                required: ['text'],
+              },
+              AgentAnswerCursor: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  invocationId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  offset: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                },
+                required: ['invocationId', 'offset'],
+              },
+            },
+          },
+          resources: {},
+        },
+        watchTasks: {
+          mode: 'subscription',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              after: {
+                type: ['string', 'null'],
+              },
+            },
+            title: 'WorkHubTasksRead',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              entries: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/WorkHubTaskEntry',
+                },
+                maxItems: 16,
+              },
+              after: {
+                type: ['string', 'null'],
+              },
+            },
+            required: ['entries'],
+            title: 'WorkHubTasks',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              WorkHubTaskEntry: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  taskId: {
+                    type: 'string',
+                  },
+                  worker: {
+                    type: 'string',
+                  },
+                  title: {
+                    type: 'string',
+                    maxLength: 256,
+                  },
+                },
+                required: ['taskId', 'worker', 'title'],
+              },
+            },
+          },
+          resources: {},
+        },
       },
     },
   },

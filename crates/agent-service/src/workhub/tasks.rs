@@ -18,6 +18,7 @@
  */
 
 mod controls;
+mod notifications;
 mod preparation;
 use super::*;
 use contract::{Task, TaskStatus};
@@ -57,6 +58,7 @@ pub(super) struct Tasks {
     source: DeploymentRef,
     workers: BTreeMap<String, Option<Binding>>,
     failed: Arc<AtomicBool>,
+    link: Link,
 }
 impl Tasks {
     pub(super) fn bindings(&self) -> BTreeMap<String, Option<String>> {
@@ -159,6 +161,8 @@ struct Assignment {
     input: Value,
     target: Target,
     attachments: Vec<Transfer>,
+    return_route: crate::owner::ReturnRoute,
+    notification: Option<notifications::Notification>,
 }
 struct Call<'a> {
     worker: &'a str,
@@ -231,6 +235,7 @@ pub(super) fn prepare(
                 .clone(),
             workers,
             failed: Arc::new(AtomicBool::new(false)),
+            link: link.clone(),
         },
         additional,
         link,
@@ -558,6 +563,8 @@ impl Hub {
                     }
                     input["message"] = serde_json::json!(message);
                     let assignment = Assignment {
+                        return_route: self.agent.0.return_route(&context.invocation).await?,
+                        notification: None,
                         source: context.invocation,
                         tool_operation: context.operation_id,
                         worker,

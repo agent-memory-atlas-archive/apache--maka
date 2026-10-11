@@ -2228,11 +2228,17 @@ function frame<N extends Node>(
         ],
         { row: true, focusGroup: target === 'tui', gap: 1 },
       ),
-      ...(!state.catalogFailed &&
-      !catalogPending(state) &&
-      state.catalogFilter === 'needs_you' &&
-      state.catalog?.sessions.length === 0
-        ? [ui.text('catalog-empty', text.noneNeedsYou, 12, theme.muted)]
+      ...(!state.catalogFailed && !catalogPending(state) && state.catalog?.sessions.length === 0
+        ? [
+            ui.text(
+              'catalog-empty',
+              state.catalogFilter === 'needs_you'
+                ? text.noneNeedsYou
+                : tuiText(locale, 'sidebar-empty'),
+              12,
+              theme.muted,
+            ),
+          ]
         : []),
       ...(state.catalogFailed
         ? [ui.text('catalog-error', text.sessionsUnavailable, 12, theme.muted)]
@@ -2582,7 +2588,7 @@ function frame<N extends Node>(
     theme.text,
     650,
     {
-      align: 'center',
+      align: target === 'tui' ? 'start' : 'center',
       width: pixels(0),
       grow: 1,
       minWidth: 0,
@@ -2664,12 +2670,11 @@ function frame<N extends Node>(
                   text.toggleSidebar + ' · Ctrl+B',
                 ),
               ],
-              { visible: !state.embedding.fixed, row: true, gap: 0, terminal: { basis: 9 } },
+              { visible: !state.embedding.fixed, row: true, gap: 0, terminal: { basis: 3 } },
             ),
             ui.box(
               'header-task',
               [
-                ui.box('header-title-leading', [], { terminal: { grow: 1 } }),
                 ...(state.selected && !state.settingsOpen && !state.deploymentOpen
                   ? [
                       state.run?.state === 'waiting_for_user'
@@ -2799,17 +2804,10 @@ function frame<N extends Node>(
                         }),
                         ...(state.place
                           ? [
-                              ui.text(
-                                'home-place',
-                                state.place.split(/[\\/]/).filter(Boolean).at(-1) ?? state.place,
-                                14,
-                                theme.subtle,
-                                400,
-                                {
-                                  align: 'center',
-                                  truncate: true,
-                                },
-                              ),
+                              ui.text('home-place', state.place, 14, theme.subtle, 400, {
+                                align: 'center',
+                                truncate: true,
+                              }),
                             ]
                           : []),
                         ui.box('home-gap', [], { terminal: { basis: 1 } }),
@@ -2847,7 +2845,7 @@ function frame<N extends Node>(
                                   state.modelSetup === 'connect'
                                     ? 'route-connections'
                                     : 'default-model-title',
-                                ),
+                                ) + '   Ctrl+N',
                           catalogBusy ||
                             (!canExecute(state) &&
                               !state.hasBackends &&
@@ -2856,7 +2854,7 @@ function frame<N extends Node>(
                           { background: 0 },
                         ),
                       ],
-                      { gap: 1, terminal: { basis: 52, shrink: true } },
+                      { gap: 0, terminal: { basis: 52, shrink: true } },
                     ),
                     ui.box('home-right', [], { terminal: { grow: 1 } }),
                   ],

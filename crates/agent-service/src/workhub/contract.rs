@@ -221,6 +221,26 @@ pub fn contract() -> Contract {
         interface: Interface::Service {
             methods: BTreeMap::from([
                 (
+                    "watchTasks".into(),
+                    Method {
+                        progress: None,
+                        mode: MethodMode::Subscription,
+                        input: schemars::schema_for!(TasksRead).into(),
+                        output: schemars::schema_for!(Tasks).into(),
+                        resources: BTreeMap::new(),
+                    },
+                ),
+                (
+                    "watchTask".into(),
+                    Method {
+                        progress: None,
+                        mode: MethodMode::Subscription,
+                        input: schemars::schema_for!(TaskRead).into(),
+                        output: schemars::schema_for!(Task).into(),
+                        resources: BTreeMap::new(),
+                    },
+                ),
+                (
                     "control".into(),
                     Method {
                         progress: None,

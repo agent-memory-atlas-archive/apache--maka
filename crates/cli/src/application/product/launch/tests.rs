@@ -139,13 +139,9 @@ async fn partial_initialization_resumes_original_inputs_and_preserves_new_heads(
         .await
         .unwrap();
     assert!(
-        prepare(
-            &store,
-            Some(directory.path().join("absent.json")),
-            Product::Agent
-        )
-        .await
-        .is_err()
+        prepare(&store, Some(json!({})), Product::Agent)
+            .await
+            .is_err()
     );
     prepare(&store, None, Product::Agent).await.unwrap();
     assert_eq!(

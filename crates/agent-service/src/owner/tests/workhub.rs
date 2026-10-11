@@ -774,23 +774,44 @@ async fn workhub_real_model_routes_original_input_and_recovers_child_receipt_wit
         let worker=worker_session(&fixture).await;
         let ready=resolve(&fixture,selection(&fixture).await,Uuid::new_v4()).await;
         let coordinator=ready["session"]["id"].as_str().unwrap().to_owned();
+        let mut list_watch = fixture.app.client().subscribe(imported(&fixture, hub::EXPORT).await, "watchTasks".into(), json!({}), scope(&fixture.issuer,true), Attachments::default().into()).await.unwrap();
+        assert_eq!(list_watch.recv().await.unwrap()["entries"], json!([]));
         fixture.send(&coordinator).await.unwrap();
         let (mut socket,_)=listener.accept().await.unwrap();
         let initial=request(&mut socket).await;
         assert!(initial["tools"].to_string().contains("workhub_tasks"));
         task_response(&mut socket,json!({"operation":"route","worker":"worker","target":{"kind":"existing","sessionId":worker},"note":"Process this assigned work","model":fixture.selection().await})).await;
         let mut worker_calls=0;
-        for _ in 0..2 {
+        let mut task_watch = None;
+        for _ in 0..3 {
             let (mut socket,_)=listener.accept().await.unwrap();
             let input=request(&mut socket).await;
-            if input["messages"].to_string().contains("Original user request:") {
+            if !is_coordinator(&input) {
                 worker_calls+=1;
+                let page = list_watch.recv().await.unwrap();
+                let id = page["entries"][0]["taskId"].clone();
+                task_watch = Some(fixture.app.client().subscribe(imported(&fixture, hub::EXPORT).await, "watchTask".into(), json!({"taskId": id}), scope(&fixture.issuer,true), Attachments::default().into()).await.unwrap());
+                assert_eq!(task_watch.as_mut().unwrap().recv().await.unwrap()["taskId"], id);
                 assert!(input["messages"].to_string().contains("Hello"));
                 assert!(input["messages"].to_string().contains("Process this assigned work"));
-            } else {assert!(input["messages"].to_string().contains("wt_"));}
+            } else {
+                assert!(input["messages"].to_string().contains("wt_"));
+                if input["messages"].to_string().contains("Original worker observation:") {
+                    assert!(input["messages"].to_string().contains("Elegant response"));
+                    assert!(input["messages"].to_string().contains("has ended"));
+                }
+            }
             response(&mut socket).await;
         }
         assert_eq!(worker_calls,1);
+        loop {
+            let observed = task_watch.as_mut().unwrap().recv().await.unwrap();
+            if observed["status"]["progress"]["execution"]["state"] == "completed" {
+                assert_eq!(observed["status"]["progress"]["answer"]["text"], "Elegant response");
+                break;
+            }
+        }
+        drop(task_watch); drop(list_watch);
         idle(&fixture,EXPORT,&coordinator).await;
         idle(&fixture,"worker",&worker).await;
         let task_id=first_task(&fixture).await;
@@ -804,6 +825,15 @@ async fn workhub_real_model_routes_original_input_and_recovers_child_receipt_wit
         assert_eq!(originals[0].reference.namespace,id(21));
         assert_eq!(originals[0].reference.method,"send");
         assert_eq!(task["operation"], originals[0].reference.operation.to_string());
+        let namespace = maka_plugins::storage::Namespace::new(hub::IMPLEMENTATION, maka_runtime::scope::Scope::Profile).unwrap();
+        let records = fixture.store.plugin_data_scan(&namespace, maka_plugins::storage::Scan { prefix: String::new(), after: None }).await.unwrap();
+        let record = records.entries.into_iter().find(|entry| entry.key.ends_with(&format!("tasks/{task_id}"))).unwrap();
+        let maka_plugins::storage::Data::Present(mut value) = record.record.data else { panic!("task data"); };
+        assert!(!value["notification"]["admission"].is_null());
+        value["notification"]["accepted"] = json!(false);
+        fixture.store.plugin_data_batch(&namespace, vec![maka_plugins::storage::Mutation {
+            key: record.key, expected_revision: Some(record.record.revision), data: maka_plugins::storage::Data::Present(value),
+        }]).await.unwrap();
         activate_workers(&mut fixture,false,true,true).await;
         let restored=query_import(&fixture,hub::EXPORT,"task",json!({"taskId":task_id})).await;
         assert_eq!(restored["status"]["invocationId"],task["status"]["invocationId"]);
@@ -1120,6 +1150,31 @@ fn tool_value(input: &Value) -> Value {
     serde_json::from_str(message["content"].as_str().unwrap())
         .unwrap_or_else(|error| panic!("{error}: {}", message["content"]))
 }
+// A completion can arrive between explicit coordinator turns. Consume that
+// independent real model request before scripting the next user-triggered tool.
+async fn coordinator_request(listener: &TcpListener) -> (TcpStream, Value) {
+    loop {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let input = request(&mut socket).await;
+        assert!(is_coordinator(&input));
+        let notice = input["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|message| message["role"] == "user")
+            .is_some_and(|message| {
+                message["content"]
+                    .to_string()
+                    .contains("Original worker observation:")
+            });
+        if notice {
+            response(&mut socket).await;
+        } else {
+            return (socket, input);
+        }
+    }
+}
 async fn control_turn(
     fixture: &Fixture,
     listener: &TcpListener,
@@ -1127,12 +1182,9 @@ async fn control_turn(
     input: Value,
 ) -> Value {
     fixture.send(coordinator).await.unwrap();
-    let (mut socket, _) = listener.accept().await.unwrap();
-    assert!(is_coordinator(&request(&mut socket).await));
+    let (mut socket, _) = coordinator_request(listener).await;
     task_response(&mut socket, input).await;
-    let (mut socket, _) = listener.accept().await.unwrap();
-    let next = request(&mut socket).await;
-    assert!(is_coordinator(&next));
+    let (mut socket, next) = coordinator_request(listener).await;
     let result = tool_value(&next);
     response(&mut socket).await;
     idle(fixture, EXPORT, coordinator).await;
@@ -1179,7 +1231,7 @@ async fn workhub_control_preserves_stop_resume_and_unknown_originals_without_ret
             drop(running);idle(&fixture,"worker",&worker).await;
             assert_eq!(query_import(&fixture,hub::EXPORT,"task",json!({"taskId":task_id})).await["status"]["progress"]["execution"]["state"],"cancelled");
             fixture.send(&coordinator).await.unwrap();
-            let (mut socket,_)=listener.accept().await.unwrap();request(&mut socket).await;
+            let (mut socket,_)=coordinator_request(&listener).await;
             task_response(&mut socket,json!({"operation":"control","taskId":task_id,"action":{"kind":"resume","model":fixture.selection().await}})).await;
             let mut resumed=None;let mut worker_calls=0;
             for _ in 0..2 {

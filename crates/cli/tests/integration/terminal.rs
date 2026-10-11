@@ -181,6 +181,18 @@ impl Pty {
         self.wait_until(|screen| screen.contains(text));
     }
     #[track_caller]
+    fn wait_for_output(&mut self, text: &str, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        loop {
+            self.read();
+            if String::from_utf8_lossy(&self.output).contains(text) {
+                return;
+            }
+            assert!(Instant::now() < deadline, "startup output missing: {text}");
+            assert!(self.child.try_wait().unwrap().is_none(), "startup exited");
+        }
+    }
+    #[track_caller]
     fn wait_until(&mut self, predicate: impl Fn(&str) -> bool) {
         self.wait_until_with_timeout(predicate, Duration::from_secs(10));
     }

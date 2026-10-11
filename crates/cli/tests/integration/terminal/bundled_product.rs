@@ -270,6 +270,11 @@ fn bundled_product_launch_recovers_partial_commits_without_reauthoring() {
                 .env_remove("NODE_PATH");
         },
     );
+    // Recovery first commits the two missing deployments, just as installation
+    // does. Bound that preparation separately from the unchanged UI deadline.
+    let preparation = Instant::now();
+    tui.wait_for_output("Opening product…", Duration::from_secs(30));
+    eprintln!("partial launch preparation: {:?}", preparation.elapsed());
     tui.wait_until_with_timeout(|screen| screen.contains("Plugins"), Duration::from_secs(30));
     tui.send(b"\x11");
     tui.finish();
@@ -305,4 +310,148 @@ fn bundled_product_launch_recovers_partial_commits_without_reauthoring() {
         );
         store.close().await.unwrap();
     });
+}
+
+#[test]
+#[ignore = "starts the standard product and original Host without an installation file"]
+fn standard_product_launch_uses_system_language_and_reopens_without_reauthoring() {
+    fn click_text(tui: &mut Pty, label: &str) {
+        use unicode_width::UnicodeWidthStr;
+        tui.wait_for(label);
+        let screen = tui.screen.snapshot().unwrap().screen;
+        let (row, column) = screen
+            .lines()
+            .enumerate()
+            .find_map(|(row, line)| {
+                line.find(label).and_then(|at| {
+                    line[at + label.len()..]
+                        .starts_with(' ')
+                        .then(|| (row + 1, line[..at].width() + 1))
+                })
+            })
+            .unwrap();
+        tui.send(format!("\x1b[<0;{column};{row}M\x1b[<0;{column};{row}m").as_bytes());
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let workspace = directory.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let root = directory.path().join("ui");
+    let home = directory.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    let mut declined = Pty::spawn_with(
+        &["application", "launch", "--root", root.to_str().unwrap()],
+        false,
+        |command| {
+            command
+                .current_dir(&workspace)
+                .env("HOME", &home)
+                .env("LC_ALL", "zh_CN.UTF-8");
+        },
+    );
+    declined.wait_for_output("继续 [y/N]", Duration::from_secs(10));
+    declined.send(b"n\n");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        declined.read();
+        if let Some(status) = declined.child.try_wait().unwrap() {
+            assert!(!status.success());
+            break;
+        }
+        assert!(Instant::now() < deadline);
+    }
+    assert!(!root.join("host").exists());
+    for first in [true, false] {
+        let mut args = vec!["application", "launch", "--root", root.to_str().unwrap()];
+        if first {
+            args.extend(["--workspace", workspace.to_str().unwrap()]);
+        }
+        let mut tui = Pty::spawn_with(&args, false, |command| {
+            command
+                .current_dir(&workspace)
+                .env("HOME", &home)
+                .env("PATH", directory.path())
+                .env("LC_ALL", "zh_CN.UTF-8")
+                .env_remove("NODE_PATH");
+        });
+        if first {
+            tui.wait_for_output("继续 [y/N]", Duration::from_secs(10));
+            tui.send(b"y\n");
+        }
+        tui.wait_until_with_timeout(|screen| screen.contains("插件"), Duration::from_secs(60));
+        tui.send(b"\x0b");
+        tui.wait_for("搜索命令或对话");
+        tui.send("外观".as_bytes());
+        tui.wait_for("› 外观");
+        tui.send(b"\r");
+        tui.wait_for("保存并应用");
+        if first {
+            tui.send(b"\r\x1b[B\x1b[B\x1b[B\x1b[B\r");
+            click_text(&mut tui, "保存到文件");
+            tui.wait_for("主题文件已保存");
+            let file = root.join("appearance/theme.json");
+            let mut theme: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+            theme["name"] = json!("External acceptance");
+            std::fs::write(&file, serde_json::to_vec(&theme).unwrap()).unwrap();
+            let size = libc::winsize {
+                ws_row: 18,
+                ws_col: 50,
+                ws_xpixel: 0,
+                ws_ypixel: 0,
+            };
+            tui.frames.resize();
+            tui.screen
+                .resize(TerminalSize::new(50, 18).unwrap())
+                .unwrap();
+            assert_eq!(
+                unsafe {
+                    libc::ioctl(
+                        tui.master.as_ref().unwrap().as_raw_fd(),
+                        libc::TIOCSWINSZ,
+                        &size,
+                    )
+                },
+                0
+            );
+            click_text(&mut tui, "保存到文件");
+            tui.wait_for("文件已被外部修改");
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&std::fs::read(&file).unwrap())
+                    .unwrap()["name"],
+                "External acceptance"
+            );
+            click_text(&mut tui, "重新读取");
+            tui.wait_for("文件已载入预览");
+            click_text(&mut tui, "保存并应用");
+        } else {
+            tui.wait_for("External acceptance");
+            tui.send(b"\x1b");
+        }
+        tui.wait_until(|screen| !screen.contains("保存并应用"));
+        tui.send(b"\x11");
+        tui.finish();
+        assert!(!tui.screen.snapshot().unwrap().alternate_screen);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let namespaces = RootNamespaces::for_current_account().unwrap();
+            let owner = std::sync::Arc::new(RootOwner::open(&root, &namespaces).unwrap());
+            let store = maka_event_log::EventLog::for_root(owner).await.unwrap();
+            let launch = store.application_launch().await.unwrap().unwrap();
+            assert!(launch.pending.is_none());
+            let source = store
+                .load_application(launch.deployment)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(source.source.reference.revision, 1);
+            assert_eq!(
+                source.source.input.instances["workspace"]
+                    .configuration
+                    .values["locale"],
+                "auto"
+            );
+            store.close().await.unwrap();
+            drop(RootOwner::open(&root.join("host"), &namespaces).unwrap());
+        });
+    }
 }

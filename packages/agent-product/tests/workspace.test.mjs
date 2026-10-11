@@ -5249,7 +5249,7 @@ for (const target of ['desktop', 'tui']) {
       Object.keys(sdk.contracts.deploymentManager.interface.methods.install.resources),
     );
     assert.equal(
-      sdk.contracts.deploymentManager.interface.methods.install.resources.package.name,
+      sdk.contracts.deploymentManager.interface.methods.install.resources.package.type.name,
       sdk.contracts.filePicker.interface.captures.snapshot.output.resource.name,
     );
     const original = {
@@ -13519,11 +13519,18 @@ for (const target of ['desktop', 'tui']) {
       ...entry,
       status: { kind: 'started', sessionId: 'exact-worker-session', progress: { kind: 'missing' } },
     };
-    client.query('task', task);
+    client.complete(client.find('watchTask'), { status: 'updated', value: task });
     client.raw(`task-open-${client.state.pageKey}-0`);
-    assert.equal(client.find('task').input.taskId, entry.taskId);
-    client.query('task', task);
+    assert.equal(client.find('watchTask').input.taskId, entry.taskId);
+    client.complete(client.find('watchTask'), { status: 'updated', value: task });
+    const oldWatch = client.find('watchTask');
     client.raw('task-session');
+    assert.equal(client.output.subscriptions.length, 0);
+    client.complete(oldWatch, {
+      status: 'updated',
+      value: { ...task, taskId: 'wt_' + 'b'.repeat(64) },
+    });
+    assert.equal(client.state.selected.task.taskId, entry.taskId);
     assert.equal(client.state.workerSelection.id, 'exact-worker-session');
     client.raw('workhub-route-tasks');
     client.raw('task-check');
@@ -13705,16 +13712,19 @@ for (const target of ['desktop', 'tui']) {
         },
       },
     };
-    client.query('task', task);
+    client.complete(client.find('watchTask'), { status: 'updated', value: task });
     client.raw(`task-open-${client.state.pageKey}-0`);
-    client.query('task', task);
+    client.complete(client.find('watchTask'), { status: 'updated', value: task });
     assert.equal(
       modelSlots(client.output.frame.view).find((node) => node.binding === 'source').props.source,
       'first 🧭',
     );
     client.raw('answer-next');
-    assert.deepEqual(client.find('task').input, { taskId: entry.taskId, cursor });
-    client.query('task', { ...task, status: { ...task.status, progress: { kind: 'changed' } } });
+    assert.deepEqual(client.find('watchTask').input, { taskId: entry.taskId, cursor });
+    client.complete(client.find('watchTask'), {
+      status: 'updated',
+      value: { ...task, status: { ...task.status, progress: { kind: 'changed' } } },
+    });
     assert.equal(
       modelSlots(client.output.frame.view).some((node) => node.binding === 'source'),
       false,

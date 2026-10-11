@@ -70,6 +70,8 @@ interface State {
   pageKey: number;
   cache: Record<string, WorkHubTask | null>;
   refreshTasks: boolean;
+  watchRevision: number;
+  watchFailures: string[];
   selected: Selection | null;
   failed: boolean;
   retry: Exclude<Request, { kind: 'resolve' }> | null;
@@ -77,6 +79,10 @@ interface State {
 }
 function ask(state: State, actions: Action[], request: Request) {
   if (state.pending) return;
+  if (request.kind === 'tasks' || request.kind === 'task') {
+    state.watchRevision++;
+    state.watchFailures = [];
+  }
   const key = `workhub-${++state.serial}`;
   state.pending = { key, request };
   state.failed = false;
@@ -102,6 +108,31 @@ function ask(state: State, actions: Action[], request: Request) {
                 ? { taskId: request.entry.taskId, cursor: request.cursor }
                 : {},
   });
+}
+function watches(state: State) {
+  if (state.route !== 'tasks' || state.pending || !state.entries || state.failed) return [];
+  const base = `workhub-watch-${state.watchRevision}`;
+  const task = (taskId: string, cursor: AgentAnswerCursor | null) => ({
+    key: `${base}-task-${taskId}`,
+    binding: 'workhub',
+    member: 0,
+    method: 'watchTask',
+    input: { taskId, cursor },
+    resources: {},
+  });
+  return [
+    {
+      key: `${base}-list`,
+      binding: 'workhub',
+      member: 0,
+      method: 'watchTasks',
+      input: { after: state.pageAfter },
+      resources: {},
+    },
+    ...(state.selected
+      ? [task(state.selected.entry.taskId, state.selected.cursor)]
+      : state.entries.entries.map((entry) => task(entry.taskId, null))),
+  ].filter((watch) => !state.watchFailures.includes(watch.key));
 }
 function original(state: State, reply: OperationReply, expected?: RecoveryRef) {
   if (expected && !sameValue(reply.reference, expected)) {
@@ -195,19 +226,6 @@ export function workhubRoot<N extends Node>(
         if (state.refreshTasks || !state.entries) {
           state.refreshTasks = false;
           ask(state, actions, { kind: 'tasks', after: state.pageAfter });
-        } else if (state.selected) {
-          if (!state.selected.task && !state.selected.failed)
-            ask(state, actions, {
-              kind: 'task',
-              entry: state.selected.entry,
-              cursor: state.selected.cursor,
-              detail: true,
-            });
-        } else {
-          const entry = state.entries.entries.find(
-            (entry) => !Object.hasOwn(state.cache, entry.taskId),
-          );
-          if (entry) ask(state, actions, { kind: 'task', entry, cursor: null, detail: false });
         }
       }
     }
@@ -469,6 +487,7 @@ export function workhubRoot<N extends Node>(
       ? { kind: 'window', binding: 'surface', title: 'WorkHub', width: 1100, height: 760 }
       : { kind: 'terminal', binding: 'surface' };
     out.actions = actions;
+    out.subscriptions = watches(state);
     return out;
   }
   return {
@@ -492,6 +511,8 @@ export function workhubRoot<N extends Node>(
           pageKey: 0,
           cache: {},
           refreshTasks: false,
+          watchRevision: 0,
+          watchFailures: [],
           selected: null,
           failed: false,
           retry: null,
@@ -508,7 +529,54 @@ export function workhubRoot<N extends Node>(
       const actions: Action[] = [];
       if (event.kind === 'component' && event.child === 'workhub-reading' && event.name === 'input')
         event = event.event as ComponentInput;
-      if (event.kind === 'action' && event.key === state.pending?.key) {
+      const watch =
+        event.kind === 'action'
+          ? watches(state).find((watch) => watch.key === event.key)
+          : undefined;
+      if (watch && event.kind === 'action') {
+        const outcome = event.event as ActionOutcome;
+        if (outcome.status === 'updated') {
+          if (watch.method === 'watchTasks') {
+            const entries = outcome.value as WorkHubTasks;
+            if (!sameValue(entries, state.entries)) {
+              state.entries = entries;
+              state.pageKey++;
+              state.cache = Object.fromEntries(
+                entries.entries
+                  .filter((entry) => Object.hasOwn(state.cache, entry.taskId))
+                  .map((entry) => [entry.taskId, state.cache[entry.taskId]]),
+              );
+            }
+          } else {
+            const task = outcome.value as WorkHubTask;
+            const entry =
+              state.selected?.entry.taskId === task.taskId
+                ? state.selected.entry
+                : state.entries?.entries.find((entry) => entry.taskId === task.taskId);
+            if (
+              entry?.worker === task.worker &&
+              'taskId' in watch.input &&
+              task.taskId === watch.input.taskId
+            ) {
+              if (state.selected?.entry.taskId === task.taskId) {
+                state.selected.task = task;
+                state.selected.failed = false;
+              } else state.cache[task.taskId] = task;
+            }
+          }
+        } else if (
+          outcome.status === 'failed' ||
+          outcome.status === 'not_accepted' ||
+          outcome.status === 'succeeded'
+        ) {
+          state.watchFailures.push(watch.key);
+          if (watch.method === 'watchTasks') state.failed = true;
+          else if ('taskId' in watch.input) {
+            if (state.selected?.entry.taskId === watch.input.taskId) state.selected.failed = true;
+            else state.cache[watch.input.taskId] = null;
+          }
+        }
+      } else if (event.kind === 'action' && event.key === state.pending?.key) {
         const request = state.pending.request,
           result = event.event as ActionOutcome;
         state.pending = null;
@@ -595,6 +663,10 @@ export function workhubRoot<N extends Node>(
         if (key.startsWith('workhub-route-')) {
           const route = key.slice('workhub-route-'.length) as Route;
           if (['coordinator', 'tasks', 'sessions'].includes(route)) {
+            if (route !== state.route) {
+              state.watchRevision++;
+              state.watchFailures = [];
+            }
             if (route === 'tasks' && state.route !== route && !state.selected)
               state.refreshTasks = true;
             state.route = route;
@@ -614,6 +686,8 @@ export function workhubRoot<N extends Node>(
             cursor: null,
             failed: false,
           };
+          state.watchRevision++;
+          state.watchFailures = [];
         } else if (!state.pending) {
           if (key === 'workhub-check-original' && state.original)
             ask(state, actions, { kind: 'receipt', reference: state.original });
@@ -629,8 +703,11 @@ export function workhubRoot<N extends Node>(
             )
               state.directories = true;
           } else if (state.route === 'tasks') {
-            if (key === 'task-back') state.selected = null;
-            else if (key === 'tasks-refresh' || key === 'tasks-first' || key === 'tasks-next') {
+            if (key === 'task-back') {
+              state.selected = null;
+              state.watchRevision++;
+              state.watchFailures = [];
+            } else if (key === 'tasks-refresh' || key === 'tasks-first' || key === 'tasks-next') {
               if (key !== 'tasks-next' || state.entries?.after)
                 ask(state, actions, {
                   kind: 'tasks',
@@ -664,6 +741,8 @@ export function workhubRoot<N extends Node>(
                   selection.cursor = key === 'answer-first' ? null : next!;
                   selection.task = null;
                   selection.failed = false;
+                  state.watchRevision++;
+                  state.watchFailures = [];
                 }
               }
             }

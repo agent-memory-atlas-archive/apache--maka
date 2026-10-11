@@ -35,20 +35,37 @@ use maka_plugin_core::{
 use maka_plugins::package::Package;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    io::{IsTerminal, Write},
+    path::PathBuf,
+    sync::Arc,
+};
 use uuid::Uuid;
 
 #[derive(Args)]
 pub(crate) struct Launch {
-    /// UI State Root; also selects the saved product on subsequent launches.
+    /// UI State Root (default: ~/.maka/application); reopen its saved product.
     #[arg(long)]
-    root: PathBuf,
-    /// Required only for first initialization; explicit workspaces, Host Root and grants.
-    #[arg(long, value_name = "FILE")]
+    root: Option<PathBuf>,
+    /// Advanced first-install configuration; otherwise use the standard product.
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["workspace", "locale", "light", "trust_workspace"])]
     configuration: Option<PathBuf>,
     /// Product for first initialization. Reopen uses the persisted application.
-    #[arg(long, value_enum, requires = "configuration")]
+    #[arg(long, value_enum)]
     product: Option<Product>,
+    /// First-install workspace (default: current directory).
+    #[arg(long, value_name = "DIRECTORY")]
+    workspace: Option<PathBuf>,
+    /// Initial language; omitted follows the system, settings can override it.
+    #[arg(long, value_parser = ["auto", "en", "zh-CN", "zh-TW"])]
+    locale: Option<String>,
+    /// Start the first installation with the light theme.
+    #[arg(long)]
+    light: bool,
+    /// Trust the first-install workspace for file changes and sandboxed commands.
+    #[arg(long)]
+    trust_workspace: bool,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -59,15 +76,34 @@ struct Preparation {
 }
 
 impl Launch {
-    pub(in crate::application) async fn run(self) -> Result<(), HostError> {
-        eprintln!("Opening product…");
-        let store = Arc::new(open(self.root, self.configuration.is_some(), None).await?);
-        let result = prepare(
-            &store,
-            self.configuration,
-            self.product.unwrap_or(Product::Agent),
-        )
-        .await;
+    pub(crate) async fn run(self) -> Result<(), HostError> {
+        if self.configuration.is_none()
+            && (!std::io::stdin().is_terminal() || !std::io::stdout().is_terminal())
+        {
+            return Err(
+                "Maka needs an interactive terminal. Use --help for automation commands.".into(),
+            );
+        }
+        let root = match &self.root {
+            Some(root) => std::path::absolute(root)?,
+            None => crate::serve::home_directory()?
+                .ok_or("home directory unavailable; select --root")?
+                .join(".maka/application"),
+        };
+        let store = Arc::new(open(root.clone(), true, None).await?);
+        let result = async {
+            let existing = store.application_launch().await?.is_some();
+            if existing && (self.workspace.is_some() || self.locale.is_some() || self.light
+                || self.product.is_some() || self.trust_workspace) {
+                return Err("first-install options cannot change a saved product; reopen with --root only and use Settings or Plugins".into());
+            }
+            let configuration = match self.configuration {
+                Some(path) => Some(read_json(&path)?),
+                None if existing => None,
+                None => Some(standard_configuration(root, self.workspace, self.locale, self.light, self.trust_workspace).await?),
+            };
+            prepare(&store, configuration, self.product.unwrap_or(Product::Agent)).await
+        }.await;
         let (deployment, configuration) = match result {
             Ok(value) => value,
             Err(error) => {
@@ -75,8 +111,74 @@ impl Launch {
                 return Err(error);
             }
         };
+        eprintln!("Opening product…");
         run_tui(store, deployment, configuration).await
     }
+}
+async fn standard_configuration(
+    root: PathBuf,
+    workspace: Option<PathBuf>,
+    locale: Option<String>,
+    light: bool,
+    trusted: bool,
+) -> Result<Value, HostError> {
+    let workspace = std::fs::canonicalize(workspace.unwrap_or(std::env::current_dir()?))?;
+    if !workspace.is_dir() {
+        return Err("workspace must be a directory".into());
+    }
+    let home = crate::serve::home_directory()?;
+    if !trusted {
+        let shown = workspace.clone();
+        let language = locale
+            .as_deref()
+            .filter(|value| *value != "auto")
+            .map(str::to_owned)
+            .unwrap_or_else(maka_ui::locale::system);
+        let accepted = tokio::task::spawn_blocking(move || -> Result<bool, std::io::Error> {
+            eprintln!("Maka workspace: {}", shown.display().to_string().escape_debug());
+            let language = language.to_ascii_lowercase();
+            if language.starts_with("zh") {
+                if language.contains("hant") || language.contains("tw") || language.contains("hk") || language.contains("mo") {
+                    eprintln!("信任此目錄以修改檔案和執行沙箱命令？命令可以讀取目錄外的檔案，但網路存取已停用。專案和使用者技能目錄將啟用。");
+                    eprint!("繼續 [y/N]：");
+                } else {
+                    eprintln!("信任此目录以修改文件和执行沙箱命令？命令可以读取目录外的文件，但网络访问已禁用。项目和用户技能目录将启用。");
+                    eprint!("继续 [y/N]：");
+                }
+            } else {
+                eprintln!("Trust this directory for file changes and sandboxed commands? Commands may read files outside it; their network access is disabled. Project and user skill directories are enabled.");
+                eprint!("Continue [y/N]: ");
+            }
+            std::io::stderr().flush()?;
+            let mut answer = String::new();
+            std::io::stdin().read_line(&mut answer)?;
+            Ok(matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes"))
+        }).await??;
+        if !accepted {
+            return Err("workspace was not trusted; no product was installed".into());
+        }
+    }
+    let options = serde_json::json!({
+        "workspace": workspace, "hostRoot": root.join("host"),
+        "themeFile": root.join("appearance/theme.json"),
+        "helper": std::env::current_exe()?, "home": home,
+        "locale": locale.unwrap_or_else(|| "auto".into()),
+        "scheme": if light { "light" } else { "dark" },
+    });
+    let vm = maka_js_runtime::plugin::Vm::pure(Default::default())?;
+    let result = match vm.load("maka-product-installation".into(), super::AUTHORING.into()) {
+        Ok(module) => {
+            let result = module
+                .call(vec!["installation".into()], vec![options])
+                .await
+                .map_err(HostError::from);
+            let closed = module.close().await.map_err(HostError::from);
+            result.and_then(|value| closed.map(|()| value))
+        }
+        Err(error) => Err(error.into()),
+    };
+    vm.shutdown().await;
+    result
 }
 async fn open(
     root: PathBuf,
@@ -129,7 +231,7 @@ fn targets(configuration: &Configuration) -> Result<(PathBuf, String, Uuid, Uuid
 }
 async fn prepare(
     store: &EventLog,
-    configuration: Option<PathBuf>,
+    configuration: Option<Value>,
     product: Product,
 ) -> Result<(Uuid, Configuration), HostError> {
     let record = match store.application_launch().await? {
@@ -141,7 +243,7 @@ async fn prepare(
         }
         None => {
             let configuration = configuration.ok_or("first launch requires --configuration")?;
-            begin(store, read_json(&configuration)?, product).await?;
+            begin(store, configuration, product).await?;
             store
                 .application_launch()
                 .await?

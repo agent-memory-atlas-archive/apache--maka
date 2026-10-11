@@ -23,7 +23,7 @@
 
 This is an ordinary plugin composition for a text agent, with separate desktop and terminal entries. The launchers contain no product pages. Workspace, composer, navigation, timeline and appearance are individually replaceable packages, connected through explicit public contracts. Native packages provide surfaces, the editor, bounded text capture, operation history and the Host agent service.
 
-The initial product supports conversation creation, selection, canonical transcript pages, streaming replies, exact-run stop and recovery of original mutation receipts. It uses typed English, Simplified Chinese and Traditional Chinese catalogs. The desktop design uses scoped light/dark appearance, system typography, quiet navigation and a native multiline composer. Connection browsing, creation, public field editing and native API-key saving/removal are ordinary plugins. Default model setting and clearing are ordinary plugins with explicit confirmation and receipt recovery. Tool workflows, attachments, history virtualization and platform visual/IME/accessibility acceptance remain unfinished.
+The product supports conversations, canonical history and search, streaming replies, tools and interactive terminals, attachments, exact execution control and original mutation recovery. Connection and default-model settings, ACP backend setup and authentication use ordinary components. The TUI provides three languages, built-in themes and custom-theme editing. Full platform visual, IME and accessibility acceptance remains ongoing.
 
 The Plugins page selects **Interface** or **Services**. Each target uses its own
 original deployment editor, immutable draft snapshot and operation receipt; switching
@@ -35,6 +35,18 @@ registrations change; affected UI components reopen after their old resources cl
 Accepted operations remain with their original owners and are never replayed.
 Package installation does not add bindings or grant capabilities;
 new permissions still require explicit changes to the installation's trusted grants.
+
+## Standard terminal startup
+
+`maka application launch` opens this ordinary composition with bundled file, process, question and skill tools.
+First launch asks to trust the selected workspace (`--workspace`, or the current directory).
+Commands may read outside it, can write within it, and have no subprocess network access.
+The Host still excludes its private data and enforces each Session's permission policy.
+The default UI Root is `~/.maka/application`, its independent Host Root is `host` underneath it,
+and custom-theme import/export uses `appearance/theme.json` in the UI Root. Language follows the native
+system unless a saved appearance preference overrides it. A model connection is configured
+through the existing application settings. Reopening preserves the original deployment,
+package bytes, trusted grants, drafts and user-edited sources.
 
 ## WorkHub
 
@@ -52,7 +64,13 @@ original admission/progress and bounded answer pages; opening a task selects its
 worker Session. Check refreshes the original task rather than following a newer Session
 execution. Setup recovery queries original receipts; an unknown result never creates a
 replacement coordinator. Explicit external executors use the same task and answer paths.
-Notifications after the coordinator's turn remain unfinished.
+Task lists and selected answer pages update while visible; leaving the page cancels only observation.
+After a worker finishes, WorkHub admits a follow-up through the coordinator's original message
+queue once it is idle, using the original model selection and currently approved services.
+The notification carries the exact task result and bounded answer page. Original admission,
+delivery and cancellation evidence prevents duplicate messages after a restart; unavailable
+or uncertain worker results never cause a redispatch. A resumed task can report its next
+terminal result independently.
 
 ## ACP backends
 

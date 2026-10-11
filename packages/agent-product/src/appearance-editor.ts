@@ -603,21 +603,6 @@ export function appearanceView<N extends Node>(
           ),
           ...(state.file.observed && state.file.observed.state.kind !== 'unavailable'
             ? [
-                ui.box(
-                  'appearance-file-actions',
-                  [
-                    ui.button('appearance-file-reload', t('theme-reload-file'), busy),
-                    ui.button(
-                      'appearance-file-save',
-                      t('theme-export'),
-                      busy ||
-                        state.file.observed.state.kind !== 'ready' ||
-                        !!state.error ||
-                        !!Object.keys(state.reads).length,
-                    ),
-                  ],
-                  { row: true, gap: 1 },
-                ),
                 ui.text(
                   'appearance-file-path',
                   tuiText(locale, 'theme-path', { path: state.file.observed.path ?? '' }),
@@ -625,9 +610,6 @@ export function appearanceView<N extends Node>(
                   theme.muted,
                 ),
                 ui.text('appearance-file-hint', t('theme-file-draft-hint'), 13, theme.muted),
-                ...(state.file.message
-                  ? [ui.text('appearance-file-message', t(state.file.message), 13, theme.muted)]
-                  : []),
               ]
             : []),
           ui.text('appearance-preview', t('theme-preview'), 14, theme.text),
@@ -643,13 +625,6 @@ export function appearanceView<N extends Node>(
         ],
         { visible: draft?.appearance.theme === 'custom', gap: 0 },
       ),
-      ...(state.error ? [ui.text('appearance-error', t(state.error), 13, theme.warning)] : []),
-      ...(state.checkpoint?.state.kind === 'failed'
-        ? [
-            ui.text('appearance-storage-error', t('state-save-failed'), 13, theme.warning),
-            ui.button('appearance-retry', t('home-retry')),
-          ]
-        : []),
     ],
     { gap: 1, scroll: 'manual', terminal: { grow: 1 } },
   );
@@ -679,6 +654,38 @@ export function appearanceView<N extends Node>(
       'appearance-body',
       [
         content,
+        ...(draft?.appearance.theme === 'custom' &&
+        state.file.observed &&
+        state.file.observed.state.kind !== 'unavailable'
+          ? [
+              ui.box(
+                'appearance-file-actions',
+                [
+                  ui.button('appearance-file-reload', t('theme-reload-file'), busy),
+                  ui.button(
+                    'appearance-file-save',
+                    t('theme-export'),
+                    busy ||
+                      state.file.observed.state.kind !== 'ready' ||
+                      !!state.error ||
+                      !!Object.keys(state.reads).length,
+                  ),
+                ],
+                { row: true, gap: 1 },
+              ),
+            ]
+          : []),
+        // Save failures must remain visible when the custom editor scrolls.
+        ...(state.file.message
+          ? [ui.text('appearance-file-message', t(state.file.message), 13, theme.muted)]
+          : []),
+        ...(state.error ? [ui.text('appearance-error', t(state.error), 13, theme.warning)] : []),
+        ...(state.checkpoint?.state.kind === 'failed'
+          ? [
+              ui.text('appearance-storage-error', t('state-save-failed'), 13, theme.warning),
+              ui.button('appearance-retry', t('home-retry')),
+            ]
+          : []),
         ui.box(
           'appearance-actions',
           [
