@@ -221,6 +221,12 @@ impl Owner {
         .await
         .map_err(public_error)?;
         let basis = MessageBasis {
+            // Ordinary Agents retain their existing queue compatibility. A
+            // coordinator continuation cannot silently adopt a newer behavior.
+            behavior: self
+                .behavior
+                .as_ref()
+                .and(configuration.system_prompt.clone()),
             model: source.accepted.clone(),
             workspace: workspace.clone(),
             fingerprint: fingerprint.clone(),

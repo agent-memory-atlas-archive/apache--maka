@@ -33,6 +33,7 @@ mod service;
 pub mod skills;
 mod source_path;
 mod tools;
+pub mod workhub;
 mod workspace;
 pub use contract::{Configuration, ModelSelection, configuration_schema, contract};
 use futures_util::future::BoxFuture;
@@ -50,6 +51,7 @@ pub fn provide(registry: &mut NativeRegistry) -> Result<(), String> {
     processes::provide(registry)?;
     questions::provide(registry)?;
     forms::provide(registry)?;
+    workhub::provide(registry)?;
     registry.insert(
         IMPLEMENTATION.into(),
         Arc::new(|context, configuration| {

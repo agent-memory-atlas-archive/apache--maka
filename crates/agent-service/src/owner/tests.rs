@@ -48,6 +48,9 @@ mod history_search;
 #[path = "tests/execution.rs"]
 mod execution;
 
+#[path = "tests/workhub.rs"]
+mod workhub;
+
 #[path = "tests/queue.rs"]
 mod queue;
 

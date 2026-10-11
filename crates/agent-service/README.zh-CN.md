@@ -36,3 +36,15 @@
 `history` 首次固定已提交的原始事件 `through` 水位。准备工作有界；重试保留同一 position 和返回的水位。`start` 从头向前扫描，`tail` 读取末尾；`before` 在真实 sparse transcript row 的 UTF-8 字节游标处排他结束，`after` 从该游标处包含开始，两者必须携带原固定水位。Ready 始终返回 `before`、`after`，只有 `null` 表示该方向结束。反向窗口也按源顺序返回，每个窗口合计最多 8192 UTF-8 字节、两块节选；实际序列化结果还必须通过 64 KiB 检查。不发布附件或 provider 请求体。`event` 用 inclusive 原始事件编号定位执行书签，不伪造 transcript cursor。活动 part 提供原 start sequence，用于完整重放前缀，thinking 不当作回答。规范历史变化有显式 delivery invalidation。每次读取重新检查私有会话范围。公开 Rust 协议类型直接生成插件 SDK。
 
 初版产品组合见 [agent-product](../../packages/agent-product/README.zh-CN.md)。完整工具与连接设置流程仍需继续实现；本 crate 是执行服务，尚不是完整 agent 产品。
+
+`maka.workhub.api` 导出同一 `agent` 服务及 `workhub`
+（`maka.workhub.Coordinator` v1），内部复用原 Agent 执行器和生命周期，
+使用固定协调提示与独立稳定 Session namespace。配置仍是 Agent schema，
+工具导入及 native grants 必须显式声明。
+`workhub.coordinator({})` 只读指定协调会话；
+`workhub.resolve({workspace: directorySelection})` 先冻结首个创建意图，
+并发或重新激活后沿原 operation 身份解析同一会话。后续 workspace 参数不会
+移动已有或待创建的协调器，原目录变化会拒绝创建。普通 Agent export 提供
+模型选择、消息、历史、队列、停止与恢复；其它 Session 不改变指定协调器。
+协调行为随准入消息冻结，跨 activation 的排队消息保留原行为来源。
+任务分派、结果回流及 WorkHub 产品界面尚未接入。

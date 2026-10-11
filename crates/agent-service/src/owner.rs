@@ -65,6 +65,8 @@ pub(crate) struct SessionConfiguration {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MessageBasis {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    behavior: Option<SystemPrompt>,
     model: crate::model::AcceptedModel,
     workspace: Workspace,
     fingerprint: String,
@@ -92,6 +94,7 @@ pub(crate) struct Owner {
     configuration: Arc<ConfigurationStore>,
     credentials: crate::model::Credentials,
     revision: SourceRevision,
+    behavior: Option<SystemPrompt>,
     pub workspace_roots: Vec<workspace::Root>,
     managed_worktrees: std::path::PathBuf,
     engine: Engine,
@@ -106,6 +109,14 @@ pub(crate) struct Owner {
 }
 impl Owner {
     pub async fn open(context: NativeContext, input: Value) -> Result<Arc<Self>, String> {
+        Self::open_behavior(context, input, IMPLEMENTATION, None).await
+    }
+    pub(crate) async fn open_behavior(
+        context: NativeContext,
+        input: Value,
+        implementation: &'static str,
+        prompt: Option<&'static str>,
+    ) -> Result<Arc<Self>, String> {
         if !jsonschema_valid(&input) {
             return Err("agent_configuration_invalid".into());
         }
@@ -126,11 +137,16 @@ impl Owner {
             deployment: persistence.source().deployment,
             namespace: context.activation().instance().clone(),
         };
-        let prefix = namespace(
+        let mut prefix = namespace(
             &persistence.source().state_domain,
             persistence.source().deployment,
             context.activation().instance(),
         );
+        if implementation != IMPLEMENTATION {
+            // Changing an instance from an ordinary Agent to a coordinator must
+            // not reinterpret the old Agent's Sessions or accepted queue.
+            prefix = format!("wh_{}", &prefix[3..]);
+        }
         let managed_worktrees = root.canonical_path().join("subagent-worktrees");
         let workspace_roots =
             workspace::open(settings.workspace_roots.clone(), &managed_worktrees)?;
@@ -150,12 +166,21 @@ impl Owner {
         let engine = Engine::new(persistence.store().clone(), models, cells);
         let revision = SourceRevision {
             kind: SourceKind::ModelProvider,
-            name: IMPLEMENTATION.into(),
+            name: implementation.into(),
             package_id: context.package().id.clone(),
-            entry_id: IMPLEMENTATION.into(),
+            entry_id: implementation.into(),
             activation: context.activation().epoch().to_string(),
             revision: context.package().revision.clone(),
         };
+        let behavior = prompt.map(|text| {
+            let mut source = revision.clone();
+            source.kind = SourceKind::PromptSection;
+            SystemPrompt {
+                text: text.into(),
+                policy_revision: 0,
+                sources: vec![source],
+            }
+        });
         let skills = skills::Library::select(&context, &settings, revision.clone())?;
         // Acquire the only asynchronous persistent child last. No fallible
         // export preparation remains after the actual native owner is created.
@@ -171,6 +196,7 @@ impl Owner {
             workspace_roots,
             managed_worktrees,
             revision,
+            behavior,
             permits: Arc::new(Semaphore::new(settings.max_active_runs)),
             upload_capacity: Arc::new(Semaphore::new(1)),
             settings,
@@ -463,6 +489,7 @@ impl Owner {
         )
         .await?;
         let basis = MessageBasis {
+            behavior: self.behavior.clone(),
             model: source.accepted.clone(),
             workspace: session.configuration.workspace.clone(),
             fingerprint: operation.fingerprint.clone(),

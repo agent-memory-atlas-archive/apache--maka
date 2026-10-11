@@ -13348,6 +13348,475 @@ export const contracts = {
       },
     },
   },
+  workhubCoordinator: {
+    name: 'maka.workhub.Coordinator',
+    version: 1,
+    transport: 'remote',
+    interface: {
+      kind: 'service',
+      methods: {
+        coordinator: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            properties: {},
+            additionalProperties: false,
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'missing',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'pending',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  session: {
+                    $ref: '#/$defs/AgentSession',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'ready',
+                  },
+                },
+                required: ['kind', 'session'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/AgentRejection',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                required: ['kind', 'reason'],
+              },
+            ],
+            title: 'WorkHubCoordinator',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              AgentSession: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  dataSource: {
+                    $ref: '#/$defs/AgentDataSource',
+                  },
+                  permissions: {
+                    $ref: '#/$defs/AgentWorkspacePermissions',
+                  },
+                  boundaryRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  id: {
+                    type: 'string',
+                  },
+                  title: {
+                    type: 'string',
+                  },
+                  labels: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  workspace: {
+                    $ref: '#/$defs/AgentWorkspace',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  updatedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  archived: {
+                    type: 'boolean',
+                  },
+                  hasUnread: {
+                    type: 'boolean',
+                  },
+                  activity: {
+                    $ref: '#/$defs/AgentSessionActivity',
+                  },
+                },
+                required: [
+                  'dataSource',
+                  'permissions',
+                  'boundaryRevision',
+                  'id',
+                  'title',
+                  'labels',
+                  'workspace',
+                  'revision',
+                  'updatedAt',
+                  'archived',
+                  'hasUnread',
+                  'activity',
+                ],
+              },
+              AgentDataSource: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  namespace: {
+                    $ref: '#/$defs/InstanceId',
+                  },
+                },
+                required: ['stateDomain', 'deployment', 'namespace'],
+                description:
+                  'Stable business-data origin, independent of package or activation revisions.',
+              },
+              InstanceId: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+              },
+              AgentWorkspacePermissions: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  access: {
+                    $ref: '#/$defs/AgentWorkspaceAccess',
+                  },
+                  requestPermissions: {
+                    type: 'boolean',
+                  },
+                },
+                required: ['access', 'requestPermissions'],
+              },
+              AgentWorkspaceAccess: {
+                type: 'string',
+                enum: ['read_only', 'workspace_write'],
+                description:
+                  'Access inside the original selected directory; never an ambient filesystem grant.',
+              },
+              AgentWorkspace: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                required: ['path', 'directoryIdentity', 'identity'],
+              },
+              AgentSessionActivity: {
+                type: 'string',
+                enum: ['idle', 'working', 'waiting'],
+              },
+              AgentRejection: {
+                type: 'string',
+                enum: [
+                  'title_invalid',
+                  'labels_invalid',
+                  'workspace_unavailable',
+                  'session_unavailable',
+                  'closed',
+                ],
+              },
+            },
+          },
+          resources: {},
+        },
+        resolve: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              workspace: {
+                $ref: '#/$defs/AgentDirectorySelection',
+                description: 'Used only when freezing the first coordinator creation intent.',
+              },
+            },
+            required: ['workspace'],
+            title: 'WorkHubResolve',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              AgentDirectorySelection: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  rootId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 64,
+                  },
+                  segments: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                    maxItems: 64,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                },
+                required: ['rootId', 'segments', 'directoryIdentity'],
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'missing',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'pending',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  session: {
+                    $ref: '#/$defs/AgentSession',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'ready',
+                  },
+                },
+                required: ['kind', 'session'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/AgentRejection',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                required: ['kind', 'reason'],
+              },
+            ],
+            title: 'WorkHubCoordinator',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              AgentSession: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  dataSource: {
+                    $ref: '#/$defs/AgentDataSource',
+                  },
+                  permissions: {
+                    $ref: '#/$defs/AgentWorkspacePermissions',
+                  },
+                  boundaryRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  id: {
+                    type: 'string',
+                  },
+                  title: {
+                    type: 'string',
+                  },
+                  labels: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  workspace: {
+                    $ref: '#/$defs/AgentWorkspace',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  updatedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  archived: {
+                    type: 'boolean',
+                  },
+                  hasUnread: {
+                    type: 'boolean',
+                  },
+                  activity: {
+                    $ref: '#/$defs/AgentSessionActivity',
+                  },
+                },
+                required: [
+                  'dataSource',
+                  'permissions',
+                  'boundaryRevision',
+                  'id',
+                  'title',
+                  'labels',
+                  'workspace',
+                  'revision',
+                  'updatedAt',
+                  'archived',
+                  'hasUnread',
+                  'activity',
+                ],
+              },
+              AgentDataSource: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  namespace: {
+                    $ref: '#/$defs/InstanceId',
+                  },
+                },
+                required: ['stateDomain', 'deployment', 'namespace'],
+                description:
+                  'Stable business-data origin, independent of package or activation revisions.',
+              },
+              InstanceId: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+              },
+              AgentWorkspacePermissions: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  access: {
+                    $ref: '#/$defs/AgentWorkspaceAccess',
+                  },
+                  requestPermissions: {
+                    type: 'boolean',
+                  },
+                },
+                required: ['access', 'requestPermissions'],
+              },
+              AgentWorkspaceAccess: {
+                type: 'string',
+                enum: ['read_only', 'workspace_write'],
+                description:
+                  'Access inside the original selected directory; never an ambient filesystem grant.',
+              },
+              AgentWorkspace: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                required: ['path', 'directoryIdentity', 'identity'],
+              },
+              AgentSessionActivity: {
+                type: 'string',
+                enum: ['idle', 'working', 'waiting'],
+              },
+              AgentRejection: {
+                type: 'string',
+                enum: [
+                  'title_invalid',
+                  'labels_invalid',
+                  'workspace_unavailable',
+                  'session_unavailable',
+                  'closed',
+                ],
+              },
+            },
+          },
+          resources: {},
+        },
+      },
+    },
+  },
   questions: {
     name: 'maka.interactions.Questions',
     version: 1,

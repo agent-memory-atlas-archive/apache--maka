@@ -68,3 +68,18 @@ Session workspace on the Host, preserves literal `..`, and rejects oversized,
 control/bidi and URI inputs. It performs no filesystem access and grants no file
 capability. Unknown presentation keys, unrelated selectors and partial excerpts
 have no projected path. The ordinary product uses it only for native path copying.
+
+`maka.workhub.api` exports the same `agent` service plus `workhub`
+(`maka.workhub.Coordinator` v1). It owns one ordinary Agent executor with a
+coordinator prompt and a separate stable Session namespace. Use the Agent
+configuration schema and explicitly bind all tools and native grants.
+`workhub.coordinator({})` reads the designated coordinator without starting work;
+`workhub.resolve({workspace: directorySelection})` freezes its first creation
+intent and resolves that original Session on subsequent calls. Later workspace
+arguments do not move an existing or pending coordinator. Concurrent calls and
+reactivation reuse the original operation identity. A pending intent whose
+original directory changed is rejected instead of being redirected. The normal
+Agent export supplies model selection, messages, history, queue, stop and resume;
+its other Sessions do not change the designated coordinator. Behavior is frozen
+with each accepted message, including queued messages restored after activation.
+Task routing, result feedback and the WorkHub product UI are not yet installed.

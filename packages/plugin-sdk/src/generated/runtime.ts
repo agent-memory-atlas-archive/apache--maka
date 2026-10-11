@@ -86,6 +86,8 @@ export type RuntimeProtocol =
   | ReadText
   | TextChunk
   | AgentConfiguration
+  | WorkHubResolve
+  | WorkHubCoordinator
   | ModelSelection
   | SettingsModelsRead
   | SettingsModelsPage
@@ -1171,6 +1173,28 @@ export type AgentWorkspaceAccess = 'read_only' | 'workspace_write';
 export type AgentToolInput = 'json' | 'skill';
 export type AgentToolResult = 'json' | 'image';
 export type AgentToolConfirmation = 'required' | 'preapproved';
+export type WorkHubCoordinator =
+  | {
+      kind: 'missing';
+    }
+  | {
+      kind: 'pending';
+    }
+  | {
+      session: AgentSession;
+      kind: 'ready';
+    }
+  | {
+      reason: AgentRejection;
+      kind: 'rejected';
+    };
+export type AgentSessionActivity = 'idle' | 'working' | 'waiting';
+export type AgentRejection =
+  | 'title_invalid'
+  | 'labels_invalid'
+  | 'workspace_unavailable'
+  | 'session_unavailable'
+  | 'closed';
 export type SettingsModelsRead =
   | {
       query?: string;
@@ -1886,13 +1910,6 @@ export type AgentCreated =
       reason: AgentRejection;
       kind: 'rejected';
     };
-export type AgentSessionActivity = 'idle' | 'working' | 'waiting';
-export type AgentRejection =
-  | 'title_invalid'
-  | 'labels_invalid'
-  | 'workspace_unavailable'
-  | 'session_unavailable'
-  | 'closed';
 export type AgentDirectories =
   | {
       kind: 'roots';
@@ -4276,6 +4293,47 @@ export interface DisplayText {
     [k: string]: string | undefined;
   };
 }
+export interface WorkHubResolve {
+  /**
+   * Used only when freezing the first coordinator creation intent.
+   */
+  workspace: AgentDirectorySelection;
+}
+export interface AgentDirectorySelection {
+  rootId: string;
+  /**
+   * @maxItems 64
+   */
+  segments: string[];
+  directoryIdentity: string;
+}
+export interface AgentSession {
+  dataSource: AgentDataSource;
+  permissions: AgentWorkspacePermissions;
+  boundaryRevision: number;
+  id: string;
+  title: string;
+  labels: string[];
+  workspace: AgentWorkspace;
+  revision: number;
+  updatedAt: number;
+  archived: boolean;
+  hasUnread: boolean;
+  activity: AgentSessionActivity;
+}
+/**
+ * Stable business-data origin, independent of package or activation revisions.
+ */
+export interface AgentDataSource {
+  stateDomain: string;
+  deployment: string;
+  namespace: InstanceId;
+}
+export interface AgentWorkspace {
+  path: string;
+  directoryIdentity: string;
+  identity: string;
+}
 /**
  * Exact public selection observed by a caller, checked once at run admission.
  */
@@ -4690,11 +4748,6 @@ export interface SkillLibraryList {
   query: string;
   cursor?: SkillLibraryCursor | null;
 }
-export interface AgentWorkspace {
-  path: string;
-  directoryIdentity: string;
-  identity: string;
-}
 export interface SkillLibraryCursor {
   revision: string;
   query: string;
@@ -4851,36 +4904,6 @@ export interface AgentCreate {
    */
   labels: string[];
   workspace: AgentWorkspaceSelection;
-}
-export interface AgentDirectorySelection {
-  rootId: string;
-  /**
-   * @maxItems 64
-   */
-  segments: string[];
-  directoryIdentity: string;
-}
-export interface AgentSession {
-  dataSource: AgentDataSource;
-  permissions: AgentWorkspacePermissions;
-  boundaryRevision: number;
-  id: string;
-  title: string;
-  labels: string[];
-  workspace: AgentWorkspace;
-  revision: number;
-  updatedAt: number;
-  archived: boolean;
-  hasUnread: boolean;
-  activity: AgentSessionActivity;
-}
-/**
- * Stable business-data origin, independent of package or activation revisions.
- */
-export interface AgentDataSource {
-  stateDomain: string;
-  deployment: string;
-  namespace: InstanceId;
 }
 export interface AgentDirectory {
   name: string;

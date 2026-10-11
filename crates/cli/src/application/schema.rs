@@ -107,6 +107,8 @@ pub(super) fn catalog() -> Value {
         root::<text::ReadText>(&mut g),
         root::<text::TextChunk>(&mut g),
         root::<maka_agent_service::contract::Configuration>(&mut g),
+        root::<maka_agent_service::workhub::contract::Resolve>(&mut g),
+        root::<maka_agent_service::workhub::contract::Coordinator>(&mut g),
         root::<maka_runtime::configuration::ModelSelection>(&mut g),
         root::<maka_settings_service::contract::ModelsRead>(&mut g),
         root::<maka_settings_service::contract::ModelsPage>(&mut g),
@@ -282,6 +284,7 @@ pub(super) fn catalog() -> Value {
             "textInput": input::text_input_contract(), "secretInput": input::secret_input_contract(),
             // Bundled availability is data, never an activated service or grant.
             "agent": maka_agent_service::contract(),
+            "workhubCoordinator": maka_agent_service::workhub::contract(),
             "questions": maka_agent_service::questions::contract(),
             "forms": maka_agent_service::forms::contract(),
             "skillLibrary": maka_agent_service::skills::contract(),

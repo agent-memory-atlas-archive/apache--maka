@@ -265,7 +265,21 @@ impl Owner {
     ) -> Result<RunInput, String> {
         let binding = source.accepted.binding.clone();
         let thinking_level = source.accepted.thinking_level;
-        let system_prompt = skills::prompt(&delivered.message.content)?;
+        let system_prompt = match (
+            basis.behavior.clone(),
+            skills::prompt(&delivered.message.content)?,
+        ) {
+            (Some(mut behavior), Some(skills)) => {
+                behavior.text.push_str("\n\n");
+                behavior.text.push_str(&skills.text);
+                behavior.sources.extend(skills.sources);
+                Some(behavior)
+            }
+            (behavior, skills) => behavior.or(skills),
+        };
+        if let Some(prompt) = &system_prompt {
+            prompt.validate().map_err(|_| "agent_prompt_invalid")?;
+        }
         Ok(RunInput {
             model_source: Some(Arc::new(source)),
             model_revision: Some(prepared.revision),
