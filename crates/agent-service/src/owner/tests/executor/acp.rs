@@ -68,6 +68,98 @@ async fn native_acp_reuses_process_and_restores_original_conversation() {
 async fn native_acp_v2_reuses_process_and_resumes_original_conversation() {
     reuse(2).await;
 }
+#[tokio::test]
+async fn native_acp_continues_after_only_its_caller_is_reactivated() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let (mut f, control, trace, configuration) = setup(2).await;
+        activate_backend(&mut f, true, None, true, Some(configuration), &[]).await;
+        let session = f.create("ACP caller replacement").await;
+        let first = execute(&f, &session, "before replacement").await;
+        let permission = super::super::files::pending(&f, &session).await;
+        super::super::files::answer(&f, &permission, Some("session")).await;
+        let (_process, _) = control.accept().await.unwrap();
+        f.drained().await;
+        assert_eq!(
+            work(&f, &session, &first).await["execution"]["state"],
+            "completed"
+        );
+        let client = f.app.client();
+        let caller = client.activation(&id(1)).unwrap();
+        let backend = client.activation(&id(21)).unwrap();
+        let processes = client.activation(&id(22)).unwrap();
+        let loaded = f
+            .store
+            .load_application(f.app.source().unwrap().deployment)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut input = loaded.source.input;
+        input
+            .instances
+            .get_mut("provider")
+            .unwrap()
+            .configuration
+            .values
+            .insert("maxActiveRuns".into(), json!(2));
+        let source = f
+            .store
+            .commit_application(
+                loaded.source.reference.deployment,
+                loaded.source.reference.revision,
+                input,
+                vec![],
+                loaded.packages,
+            )
+            .await
+            .unwrap();
+        f.app.adopt_committed(source).await.unwrap();
+        f.app.ready().await.unwrap();
+        assert_ne!(client.activation(&id(1)).unwrap(), caller);
+        assert_eq!(client.activation(&id(21)).unwrap(), backend);
+        assert_eq!(client.activation(&id(22)).unwrap(), processes);
+        let mut changes = f.store.subscribe_commits();
+        let next = execute(&f, &session, "after replacement").await;
+        loop {
+            let observed = work(&f, &session, &next).await;
+            match observed["execution"]["state"].as_str() {
+                Some("running") | Some("admitted") | Some("waiting_for_user") | None => {
+                    changes.changed().await.unwrap();
+                }
+                _ => {
+                    assert_eq!(observed["execution"]["state"], "completed", "{observed}");
+                    break;
+                }
+            }
+        }
+        let requests = std::fs::read_to_string(trace).unwrap();
+        let requests: Vec<Value> = requests
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(
+            requests.iter().filter(|v| v["method"] == "spawn").count(),
+            1
+        );
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|v| v["method"] == "session/new")
+                .count(),
+            1
+        );
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|v| v["method"] == "session/prompt")
+                .count(),
+            2
+        );
+        f.app.shutdown().await.unwrap();
+        f.config.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
+}
 async fn reuse(protocol: u8) {
     tokio::time::timeout(Duration::from_secs(90), async {
         let (mut fixture, control, trace, configuration) = setup(protocol).await;

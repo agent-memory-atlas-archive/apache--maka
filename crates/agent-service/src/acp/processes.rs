@@ -19,7 +19,7 @@
 
 use super::*;
 use crate::processes::protocol;
-use maka_plugin_core::runtime::Activation;
+use maka_plugin_core::composition::InstanceId;
 use maka_plugins::{
     call::{Attachments, Resources, Scope},
     process::{self, Chunk, Command, Error, Exit, Handle, Id, Process, Stream},
@@ -37,7 +37,7 @@ pub(super) struct Processes {
 }
 struct Entry {
     id: Uuid,
-    consumer: Activation,
+    consumer: InstanceId,
     session: String,
     running: Arc<Running>,
 }
@@ -79,7 +79,10 @@ impl Processes {
     }
     fn bind(&self, scope: Scope, entry: Arc<Entry>) -> Result<Handle, Error> {
         let origin = self.calls.origin(&scope).map_err(Error::Invalid)?;
-        if origin.requester() != &entry.consumer
+        // The admitted caller's stable instance owns the conversation. The ACP
+        // activation, not that caller's activation, owns the protocol process.
+        // Each new prompt still supplies fresh Context evidence and input grants.
+        if origin.requester().instance() != &entry.consumer
             || origin.scope().identity.agent().map(|i| &i.session_id) != Some(&entry.session)
         {
             return Err(Error::Denied);
@@ -120,7 +123,7 @@ impl process::Processes for Processes {
                     return Err(Error::Invalid("ACP process capacity reached".into()));
                 }
             }
-            let consumer = origin.requester().clone();
+            let consumer = origin.requester().instance().clone();
             let session = origin
                 .scope()
                 .identity
