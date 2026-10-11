@@ -36,6 +36,17 @@
 旧界面实际清理；新根不继承旧产品的原生草稿。切换 Host 位置还需明确修改可信连接
 配置，来源中的声明本身不授权访问另一 Host。
 
+WorkHub 在 `application compose` 或首次 `application launch` 加 `--product workhub` 选择。
+安装配置中的 `agent` 配置 worker 会话，另提供同为 `AgentConfiguration` 的 `coordinator`。
+可选 `processes` 与 `coordinatorProcesses` 分别配置进程权限上限及终端会话归属；生成来源中
+明确列出协调器的 worker 绑定和原生方法授权。共享连接设置和技能集合保留原所有者。
+
+WorkHub 根页面提供协调对话、任务、Agent 会话三个入口。首次设置使用协调器公布的真实目录选择；
+两个对话复用 Workspace，隐藏时保留原生草稿、附件及原操作恢复。任务展示原接纳/进度及
+有界答案分页，打开任务选择其精确 worker 会话；检查读取原任务，不跟随后来的会话执行。
+设置恢复只查询原回执，未知结果不新建替代协调器。外部 executor、协调轮次结束后的通知及
+原生 binding 改变后的进度衔接仍未完成。
+
 原生 CLI 已携带普通产品包与原组合代码，无需 Node、源码目录或网络。首次启动 TUI 可以直接初始化并保存产品选择：
 
 ```sh

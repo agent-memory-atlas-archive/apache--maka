@@ -37,6 +37,7 @@ include!(concat!(env!("OUT_DIR"), "/product-assets.rs"));
 pub(super) enum Product {
     Agent,
     Studio,
+    Workhub,
 }
 
 #[derive(Args)]
@@ -128,6 +129,7 @@ async fn author(
                     let method = match product {
                         Product::Agent => "composition",
                         Product::Studio => "studioComposition",
+                        Product::Workhub => "workhubComposition",
                     };
                     Ok(module
                         .call(vec![method.into()], vec![Value::Object(values.clone())])

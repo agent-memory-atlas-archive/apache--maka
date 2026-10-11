@@ -22,7 +22,7 @@ use crate::workhub as hub;
 use maka_runtime::event::Fact;
 use maka_runtime_host::application::{Handler, NativeOwner};
 
-async fn activate(fixture: &mut Fixture, install: bool) {
+pub(super) async fn activate(fixture: &mut Fixture, install: bool) {
     activate_workers(fixture, install, false, false).await
 }
 async fn activate_workers(fixture: &mut Fixture, install: bool, workers: bool, granted: bool) {
@@ -39,6 +39,26 @@ async fn activate_worker_mode(
     fixture.app.shutdown().await.unwrap();
     if install {
         let (mut composition, mut packages) = input(&fixture.owner.settings);
+        if fixture
+            .owner
+            .settings
+            .tools
+            .iter()
+            .any(|tool| tool.import == "service" && tool.method == "execute")
+        {
+            assert!(
+                !workers,
+                "fixture process and worker providers use distinct scenarios"
+            );
+            service_tools::Setup::processes().install(&mut composition, &mut packages);
+            composition
+                .instances
+                .get_mut("service")
+                .unwrap()
+                .configuration
+                .values
+                .insert("sessionKind".into(), json!("workhub"));
+        }
         let worker_package = if workers {
             let base = package(true);
             let mut manifest = base.manifest().clone();
@@ -304,7 +324,7 @@ async fn prepare(
         .await
         .unwrap()
 }
-async fn resolve(fixture: &Fixture, selection: Value, operation: Uuid) -> Value {
+pub(super) async fn resolve(fixture: &Fixture, selection: Value, operation: Uuid) -> Value {
     let prepared = prepare(fixture, selection, operation).await;
     let recorded = fixture
         .store
@@ -332,7 +352,7 @@ async fn resolve(fixture: &Fixture, selection: Value, operation: Uuid) -> Value 
         other => panic!("unexpected coordinator receipt {other:?}"),
     }
 }
-async fn selection(fixture: &Fixture) -> Value {
+pub(super) async fn selection(fixture: &Fixture) -> Value {
     fixture
         .query("directories", json!({"kind":"roots"}))
         .await
@@ -443,7 +463,10 @@ async fn workhub_persisted_intent_recovers_original_identity_before_session_crea
             )
             .await
             .unwrap();
-        assert_eq!(coordinator(&fixture).await, json!({"kind":"pending"}));
+        assert_eq!(
+            coordinator(&fixture).await,
+            json!({"kind":"pending","workspace":selected})
+        );
         activate(&mut fixture, false).await;
         let mut different = selected.clone();
         different["rootId"] = json!("ignored-later-choice");
@@ -683,6 +706,7 @@ async fn workhub_real_model_routes_original_input_and_recovers_child_receipt_wit
         idle(&fixture,EXPORT,&coordinator).await;
         idle(&fixture,"worker",&worker).await;
         let task_id=first_task(&fixture).await;
+        assert_eq!(query_import(&fixture,hub::EXPORT,"tasks",json!({})).await["entries"][0]["title"],"Hello");
         let task=query_import(&fixture,hub::EXPORT,"task",json!({"taskId":task_id})).await;
         assert_eq!(task["status"]["kind"],"started");
         assert_eq!(task["status"]["progress"]["execution"]["state"],"completed");
@@ -1239,6 +1263,7 @@ async fn workhub_creates_selected_worker_and_transfers_original_attachment_bytes
         }
         assert_eq!(worker_calls,1);
         let task=dispatched.unwrap();assert_eq!(task["status"]["kind"],"started");
+        assert_eq!(query_import(&fixture,hub::EXPORT,"tasks",json!({})).await["entries"][0]["title"],"New assigned worker");
         let worker=task["status"]["sessionId"].as_str().unwrap();
         idle(&fixture,EXPORT,&coordinator).await;idle(&fixture,"worker",worker).await;
         let records=fixture.store.list_artifacts(worker,0,10).await.unwrap();assert_eq!(records.records.len(),1);

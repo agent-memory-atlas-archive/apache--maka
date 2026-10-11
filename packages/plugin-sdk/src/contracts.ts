@@ -13983,14 +13983,17 @@ export const contracts = {
               },
               {
                 type: 'object',
+                additionalProperties: false,
                 properties: {
+                  workspace: {
+                    $ref: '#/$defs/AgentDirectorySelection',
+                  },
                   kind: {
                     type: 'string',
                     const: 'pending',
                   },
                 },
-                required: ['kind'],
-                additionalProperties: false,
+                required: ['kind', 'workspace'],
               },
               {
                 type: 'object',
@@ -14024,6 +14027,29 @@ export const contracts = {
             title: 'WorkHubCoordinator',
             $schema: 'https://json-schema.org/draft/2020-12/schema',
             $defs: {
+              AgentDirectorySelection: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  rootId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 64,
+                  },
+                  segments: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                    maxItems: 64,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                },
+                required: ['rootId', 'segments', 'directoryIdentity'],
+              },
               AgentSession: {
                 type: 'object',
                 additionalProperties: false,
@@ -14229,14 +14255,17 @@ export const contracts = {
               },
               {
                 type: 'object',
+                additionalProperties: false,
                 properties: {
+                  workspace: {
+                    $ref: '#/$defs/AgentDirectorySelection',
+                  },
                   kind: {
                     type: 'string',
                     const: 'pending',
                   },
                 },
-                required: ['kind'],
-                additionalProperties: false,
+                required: ['kind', 'workspace'],
               },
               {
                 type: 'object',
@@ -14270,6 +14299,29 @@ export const contracts = {
             title: 'WorkHubCoordinator',
             $schema: 'https://json-schema.org/draft/2020-12/schema',
             $defs: {
+              AgentDirectorySelection: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  rootId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 64,
+                  },
+                  segments: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                    maxItems: 64,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                },
+                required: ['rootId', 'segments', 'directoryIdentity'],
+              },
               AgentSession: {
                 type: 'object',
                 additionalProperties: false,
@@ -14935,8 +14987,12 @@ export const contracts = {
                   worker: {
                     type: 'string',
                   },
+                  title: {
+                    type: 'string',
+                    maxLength: 256,
+                  },
                 },
-                required: ['taskId', 'worker'],
+                required: ['taskId', 'worker', 'title'],
               },
             },
           },

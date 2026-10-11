@@ -25,6 +25,24 @@ This is an ordinary plugin composition for a text agent, with separate desktop a
 
 The initial product supports conversation creation, selection, canonical transcript pages, streaming replies, exact-run stop and recovery of original mutation receipts. It uses typed English, Simplified Chinese and Traditional Chinese catalogs. The desktop design uses scoped light/dark appearance, system typography, quiet navigation and a native multiline composer. Connection browsing, creation, public field editing and native API-key saving/removal are ordinary plugins. Default model setting and clearing are ordinary plugins with explicit confirmation and receipt recovery. Tool workflows, attachments, history virtualization and platform visual/IME/accessibility acceptance remain unfinished.
 
+## WorkHub
+
+Use `--product workhub` with `application compose` or on the first `application launch`.
+The installation supplies `agent` for worker conversations and a separate `coordinator`
+with the same `AgentConfiguration` shape. Optional `processes` and
+`coordinatorProcesses` select independent process ceilings and terminal Session owners.
+The coordinator's worker binding and native method grants are explicit in the generated
+sources. Shared connection settings and skill collections retain their original owners.
+
+The root has Coordinator, Tasks and Agent sessions pages. Initial setup uses a published
+coordinator directory selection. Both conversation views reuse Workspace and retain
+native drafts, attachments and original operation recovery while hidden. Tasks show
+original admission/progress and bounded answer pages; opening a task selects its exact
+worker Session. Check refreshes the original task rather than following a newer Session
+execution. Setup recovery queries original receipts; an unknown result never creates a
+replacement coordinator. External executors, notifications after the coordinator's turn,
+and progress across changed native bindings remain unfinished.
+
 ## Configuration Studio
 
 An independent ordinary `maka.studio.workbench` package provides desktop and terminal

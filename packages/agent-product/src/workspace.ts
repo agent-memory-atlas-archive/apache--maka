@@ -77,6 +77,7 @@ import type {
   TerminalPaneCommand,
 } from '../../plugin-sdk/src/index.js';
 import type {
+  WorkspaceProps,
   PaletteCommand,
   Message,
   Theme,
@@ -158,6 +159,7 @@ type Request =
   | { kind: 'interaction'; attempt: number; sessionId: string; requestId: string }
   | { kind: 'questionRead'; attempt: number; index: number; draft: EditorObservation }
   | { kind: 'respond'; attempt: number; sessionId: string; requestId: string }
+  | { kind: 'openSession'; selection: NonNullable<WorkspaceProps['session']> }
   | { kind: 'create' }
   | { kind: 'createDirectory'; title: string }
   | {
@@ -206,6 +208,8 @@ interface QueueEdit {
   command: EditorCommand | null;
 }
 export interface State {
+  embedding: WorkspaceProps;
+  externalSelection: WorkspaceProps['session'] | null;
   preferences: AppearanceEditor;
   drafts: DraftRecord[];
   attachments: AttachmentDrafts;
@@ -591,7 +595,7 @@ function follow(state: State, actions: Action[]) {
     history(state, actions, { kind: 'tail' }, state.latestKnown, true, true);
   }
 }
-function select(state: State, actions: Action[], session: AgentSession) {
+function select(state: State, actions: Action[], session: AgentSession | null) {
   state.searchOpen = false;
   state.browse = null;
   state.selected = session;
@@ -611,9 +615,9 @@ function select(state: State, actions: Action[], session: AgentSession) {
   state.runThrough = 0;
   state.live = [];
   state.latestKnown = 0;
-  state.loading = true;
+  state.loading = session !== null;
   state.notice = null;
-  observe(state, actions);
+  if (session) observe(state, actions);
 }
 function readHistorySource(state: State, actions: Action[], position: SourcePosition) {
   const source = state.source;
@@ -1018,7 +1022,11 @@ function rootCommands(
       disabled:
         !route || Object.values(state.pending).some((request) => request.kind === 'receipt'),
     });
-  return commands;
+  return state.embedding.fixed
+    ? commands.filter(
+        (command) => !['create', 'create-workspace', 'navigation-toggle'].includes(command.kind),
+      )
+    : commands;
 }
 function sidebarLabel(state: State, text: ReturnType<typeof copy>) {
   return 'open' in state.sidebar
@@ -1088,6 +1096,7 @@ function rootCommand(
         after: state.restoreAfter,
         limit: 1,
       });
+    else if (!state.selected && state.embedding.session) state.externalSelection = null;
     else if (!state.selected) catalog(state);
     else {
       const window = state.window;
@@ -1489,7 +1498,12 @@ function queryFailed(state: State, request: Request) {
       state.notice = 'unavailable';
     }
   } else {
-    if (request.kind === 'createDirectory') {
+    if (request.kind === 'openSession') {
+      if (sameValue(request.selection, state.externalSelection)) {
+        state.loading = false;
+        state.notice = 'unavailable';
+      }
+    } else if (request.kind === 'createDirectory') {
       if (state.notice !== 'unavailable') state.notice = 'createRejected';
     } else if (request.kind === 'restoreReceipt') {
       state.uncertain = { reference: request.reference, request: { kind: 'restored' } };
@@ -1506,6 +1520,17 @@ function queryFailed(state: State, request: Request) {
 }
 function querySucceeded(state: State, actions: Action[], request: Request, value: unknown) {
   switch (request.kind) {
+    case 'openSession': {
+      if (!sameValue(request.selection, state.externalSelection)) break;
+      const observed = value as AgentObservation;
+      if (observed.session.id !== request.selection.id) {
+        state.loading = false;
+        state.notice = 'unavailable';
+        break;
+      }
+      select(state, actions, observed.session);
+      break;
+    }
     case 'interaction': {
       const question = state.interaction,
         record = value as InteractionRecord;
@@ -2006,6 +2031,16 @@ function frame<N extends Node>(
   actions: Action[] = [],
 ) {
   const target = presentation.target;
+  const requested = state.embedding.session;
+  if (requested && !sameValue(requested, state.externalSelection) && !mutationPending(state)) {
+    state.externalSelection = requested;
+    select(state, actions, null);
+    state.loading = true;
+    closeDialog(state);
+    intent(state, actions, { kind: 'openSession', selection: requested }, 'agent', 'observe', {
+      sessionId: requested.id,
+    });
+  }
   if (state.dialog !== 'palette') {
     state.copyRequest = null;
     state.messageCopy = null;
@@ -2522,11 +2557,20 @@ function frame<N extends Node>(
     [
       ...(target === 'desktop'
         ? [
-            ui.box('context', [title, ui.button('navigation-toggle', sidebarLabel(state, text))], {
-              row: true,
-              gap: 8,
-              style: { width: fill, align: 'center' },
-            }),
+            ui.box(
+              'context',
+              [
+                title,
+                ...(!state.embedding.fixed
+                  ? [ui.button('navigation-toggle', sidebarLabel(state, text))]
+                  : []),
+              ],
+              {
+                row: true,
+                gap: 8,
+                style: { width: fill, align: 'center' },
+              },
+            ),
             ui.box(
               'toolbar',
               [
@@ -2562,7 +2606,7 @@ function frame<N extends Node>(
                   text.toggleSidebar + ' · Ctrl+B',
                 ),
               ],
-              { row: true, gap: 0, terminal: { basis: 9 } },
+              { visible: !state.embedding.fixed, row: true, gap: 0, terminal: { basis: 9 } },
             ),
             ui.box(
               'header-task',
@@ -2749,7 +2793,7 @@ function frame<N extends Node>(
               ],
               {
                 gap: 0,
-                visible: !state.selected,
+                visible: !state.selected && !state.embedding.fixed,
                 viewport: true,
                 terminal: { grow: 1 },
               },
@@ -2937,34 +2981,36 @@ function frame<N extends Node>(
   );
   const conversation = ui.box(
     'workspace',
-    target === 'desktop'
-      ? [
-          ui.box('sidebar', [navigation], {
-            visible: 'open' in state.sidebar && state.sidebar.open,
-            style: { width: pixels(240), height: fill, shrink: 0 },
-          }),
-          main,
-        ]
-      : [
-          ui.adaptivePane!(
-            'navigation-pane',
-            text.conversations,
-            ui.box(
-              'page',
-              [
-                ui.box('page-inset-start', [], { terminal: { basis: 1 } }),
-                main,
-                ui.box('page-inset-end', [], { terminal: { basis: 1 } }),
-              ],
-              { row: true, gap: 0, terminal: { grow: 1 } },
-            ),
-            ui.box('navigation-content', [navigation], {
-              gap: 0,
-              terminal: { grow: 1 },
+    state.embedding.fixed
+      ? [main]
+      : target === 'desktop'
+        ? [
+            ui.box('sidebar', [navigation], {
+              visible: 'open' in state.sidebar && state.sidebar.open,
+              style: { width: pixels(240), height: fill, shrink: 0 },
             }),
-            'command' in state.sidebar ? state.sidebar.command : null,
-          ),
-        ],
+            main,
+          ]
+        : [
+            ui.adaptivePane!(
+              'navigation-pane',
+              text.conversations,
+              ui.box(
+                'page',
+                [
+                  ui.box('page-inset-start', [], { terminal: { basis: 1 } }),
+                  main,
+                  ui.box('page-inset-end', [], { terminal: { basis: 1 } }),
+                ],
+                { row: true, gap: 0, terminal: { grow: 1 } },
+              ),
+              ui.box('navigation-content', [navigation], {
+                gap: 0,
+                terminal: { grow: 1 },
+              }),
+              'command' in state.sidebar ? state.sidebar.command : null,
+            ),
+          ],
     {
       row: target === 'desktop',
       gap: 0,
@@ -3032,13 +3078,14 @@ function frame<N extends Node>(
           key: 'b',
           modifiers: ['primary'],
           input: 'navigation-toggle',
-          enabled: !state.settingsOpen && !state.deploymentOpen,
+          enabled: !state.embedding.fixed && !state.settingsOpen && !state.deploymentOpen,
         },
         {
           key: 'n',
           modifiers: ['primary'],
           input: 'create',
           enabled:
+            !state.embedding.fixed &&
             !state.settingsOpen &&
             !state.deploymentOpen &&
             !mutationPending(state) &&
@@ -3280,7 +3327,10 @@ function frame<N extends Node>(
               open: state.dialog === 'palette',
               busy: false,
               selectionDisabled:
-                !conversationRoute(state) || mutationPending(state) || catalogPending(state),
+                !!state.embedding.fixed ||
+                !conversationRoute(state) ||
+                mutationPending(state) ||
+                catalogPending(state),
               commands: rootCommands(state, locale, target).map(
                 ({ kind: _kind, ...command }) => command,
               ),
@@ -3315,10 +3365,11 @@ function frame<N extends Node>(
       out.frame.view,
       resolveLocale('auto', values.locale?.[0]),
     );
-  out.frame.surface =
-    target === 'desktop'
-      ? { kind: 'window', binding: 'surface', title: 'maka', width: 1100, height: 760 }
-      : { kind: 'terminal', binding: 'surface' };
+  if (!state.embedding.embedded)
+    out.frame.surface =
+      target === 'desktop'
+        ? { kind: 'window', binding: 'surface', title: 'maka', width: 1100, height: 760 }
+        : { kind: 'terminal', binding: 'surface' };
   out.actions = actions;
   out.subscriptions = [
     ...(state.catalogWatch
@@ -3354,12 +3405,14 @@ export function workspace<N extends Node>(
   terminals = false,
   place = '',
   skills = false,
-): Component<State, Record<string, never>, N> {
+): Component<State, WorkspaceProps, N> {
   const target = presentation.target;
   const configuredLocale = locale;
   return {
-    mount(_props, values) {
+    mount(props, values) {
       const state: State = {
+        embedding: props,
+        externalSelection: null,
         place,
         preferences: initialAppearance(),
         revision: 0,
@@ -3422,18 +3475,19 @@ export function workspace<N extends Node>(
       intent(state, actions, { kind: 'restorePage' }, 'history', 'page', { after: 0, limit: 1 });
       return frame(presentation, configuredLocale, state, values, actions);
     },
-    update(state, _props, values) {
+    update(state, props, values) {
       return frame(
         presentation,
         configuredLocale,
-        { ...state, revision: state.revision + 1 },
+        { ...state, embedding: props, revision: state.revision + 1 },
         values,
       );
     },
-    event(previous, input, _props, values) {
+    event(previous, input, props, values) {
       // Callbacks receive detached committed state. Mutations here belong only to
       // the candidate frame and publish with its intents in one UI transaction.
       const state = previous;
+      state.embedding = props;
       if (input.kind === 'component' && input.child === 'attachment-list' && input.name === 'input')
         input = input.event as ComponentInput;
       if (input.kind === 'component' && input.child === 'composer' && input.name === 'attachments')
@@ -3466,7 +3520,12 @@ export function workspace<N extends Node>(
             state.catalogWatch.loading = false;
             state.catalogFailed = false;
             state.catalog = outcome.value as AgentSessionPage;
-            if (!state.selected && state.catalog.sessions.length)
+            if (
+              !state.selected &&
+              !state.embedding.session &&
+              !state.embedding.fixed &&
+              state.catalog.sessions.length
+            )
               select(state, actions, state.catalog.sessions[0]);
             else if (state.selected) {
               const selected = state.catalog.sessions.find(
@@ -3691,6 +3750,7 @@ export function workspace<N extends Node>(
             if (input.name === 'closed') state.dialog = null;
             else if (
               input.name === 'selected' &&
+              !state.embedding.fixed &&
               !mutationPending(state) &&
               !catalogPending(state)
             ) {
@@ -3719,6 +3779,7 @@ export function workspace<N extends Node>(
                 state.dialog = null;
             } else if (
               input.name === 'selected' &&
+              !state.embedding.fixed &&
               !mutationPending(state) &&
               !catalogPending(state)
             ) {
@@ -3902,6 +3963,7 @@ export function workspace<N extends Node>(
           state.modelRefreshing = false;
         } else if (
           input.child === 'navigation' &&
+          !state.embedding.fixed &&
           input.name === 'select' &&
           state.dialog === null &&
           !mutationPending(state) &&

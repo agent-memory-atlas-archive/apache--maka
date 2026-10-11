@@ -951,3 +951,197 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
         drop(RootOwner::open(path, &ns).unwrap());
     }
 }
+
+#[test]
+#[ignore = "starts WorkHub, its real Host, and retained conversations in a native PTY"]
+fn workhub_launch_preserves_coordinator_worker_drafts_and_original_sessions() {
+    let directory = tempfile::tempdir().unwrap();
+    let workspace = directory.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let host = directory.path().join("host");
+    let ui = directory.path().join("ui");
+    let configuration = directory.path().join("installation.json");
+    let agent = json!({
+        "workspaceRoots": [{"label": "Workspace", "path": workspace}],
+        "maxActiveRuns": 1, "maxSteps": 4, "tools": [],
+        "permissions": {"access": "read_only", "requestPermissions": true}
+    });
+    std::fs::write(
+        &configuration,
+        serde_json::to_vec(&json!({
+            "presentation": "tui", "locale": "en", "scheme": "light",
+            "hostRoot": host, "agent": agent, "coordinator": agent,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let (dist, _) = built_packages();
+    let theme = Command::new("node")
+        .args([
+            "--input-type=module",
+            "-e",
+            r#"
+        const {activate} = await import(process.argv[1]);
+        const theme = activate({scheme:'light'}).Appearance.value;
+        console.log(JSON.stringify([theme.accent >>> 8, theme.text >>> 8]));
+    "#,
+        ])
+        .arg(format!(
+            "file://{}",
+            dist.join("packages/appearance/tui.js").display()
+        ))
+        .output()
+        .unwrap();
+    assert!(theme.status.success());
+    let colors: [u32; 2] = serde_json::from_slice(&theme.stdout).unwrap();
+    let enabled = colors.map(|color| {
+        Color::Spec(Rgb {
+            r: (color >> 16) as u8,
+            g: (color >> 8) as u8,
+            b: color as u8,
+        })
+    });
+    let press = |tui: &mut Pty, label: &str| {
+        if label == "Message…" || label == "Workspace" {
+            click(tui, label, enabled);
+        } else {
+            click(tui, &format!("[ {label} ]"), enabled);
+        }
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let namespaces = RootNamespaces::for_current_account().unwrap();
+    runtime.block_on(async {
+        // Seed only a selectable catalog target; this draft test performs no model request.
+        use maka_runtime::configuration::{CatalogMutationResult, ConnectionTarget, SetDefaultConnectionTargetInput};
+        let owner = Arc::new(RootOwner::create(&host, &namespaces).unwrap());
+        let settings = maka_config::ConfigurationStore::for_root(owner).await.unwrap();
+        let created = settings.create_connection(serde_json::from_value(json!({
+            "expectedCatalogRevision": 0,
+            "connection": { "slug": "fixture", "name": "Fixture", "enabled": true,
+                "provider": { "packageId": "maka.providers", "entryId": "maka.providers", "scope": "profile", "name": "openai-compatible" },
+                "configuration": { "baseUrl": "http://127.0.0.1:1/v1" }, "enabledModelIds": ["fixture-model"] }
+        })).unwrap()).await.unwrap();
+        let CatalogMutationResult::Committed { catalog_revision, connection: Some(connection) } = created else { panic!("fixture catalog commit"); };
+        assert!(matches!(settings.set_default_target(SetDefaultConnectionTargetInput {
+            expected_catalog_revision: catalog_revision,
+            target: Some(ConnectionTarget { connection_id: connection.connection_id, model_id: "fixture-model".into() }),
+        }).await.unwrap(), CatalogMutationResult::Committed { .. }));
+        settings.shutdown().await.unwrap();
+    });
+    drop(RootOwner::open(&host, &namespaces).unwrap());
+    let mut original = Vec::new();
+    for first in [true, false] {
+        let mut args = vec!["application", "launch", "--root", ui.to_str().unwrap()];
+        if first {
+            args.extend([
+                "--configuration",
+                configuration.to_str().unwrap(),
+                "--product",
+                "workhub",
+            ]);
+        }
+        let started = Instant::now();
+        eprintln!("WorkHub launch first={first}, root={}", ui.display());
+        let mut tui = Pty::spawn_with(&args, false, |command| {
+            command
+                .current_dir(directory.path())
+                .env("PATH", directory.path())
+                .env_remove("NODE_PATH");
+        });
+        tui.wait_until_with_timeout(
+            |screen| {
+                screen.contains(if first {
+                    "Set up WorkHub"
+                } else {
+                    "coordinator draft retained"
+                })
+            },
+            Duration::from_secs(if first { 60 } else { 30 }),
+        );
+        eprintln!("WorkHub first={first}: ready in {:?}", started.elapsed());
+        if first {
+            press(&mut tui, "Set up WorkHub");
+            tui.wait_for("Choose a workspace");
+            press(&mut tui, "Workspace");
+            press(&mut tui, "Create here");
+            tui.wait_until(|screen| {
+                screen.contains("Message…") && !screen.contains("Choose a workspace")
+            });
+            press(&mut tui, "Message…");
+            paste(&mut tui, "coordinator draft retained");
+            tui.wait_for("coordinator draft retained");
+        }
+        press(&mut tui, "Tasks");
+        tui.wait_for("No delegated tasks yet.");
+        assert!(
+            !tui.screen
+                .snapshot()
+                .unwrap()
+                .screen
+                .contains("coordinator draft retained")
+        );
+        press(&mut tui, "Agent sessions");
+        if first {
+            press(&mut tui, "New session");
+            tui.wait_for("Message…");
+            press(&mut tui, "Message…");
+            paste(&mut tui, "worker draft retained");
+        }
+        tui.wait_for("worker draft retained");
+        assert!(
+            !tui.screen
+                .snapshot()
+                .unwrap()
+                .screen
+                .contains("coordinator draft retained")
+        );
+        press(&mut tui, "Coordinator");
+        tui.wait_for("coordinator draft retained");
+        assert!(
+            !tui.screen
+                .snapshot()
+                .unwrap()
+                .screen
+                .contains("worker draft retained")
+        );
+        tui.send(b"\x11");
+        tui.finish();
+        assert!(!tui.screen.snapshot().unwrap().alternate_screen);
+        let sessions = runtime.block_on(async {
+            let owner = Arc::new(RootOwner::open(&host, &namespaces).unwrap());
+            let store = EventLog::for_root(owner).await.unwrap();
+            let page = store.list_sessions::<Value>(None, None, 10).await.unwrap();
+            let mut ids: Vec<_> = page
+                .sessions
+                .into_iter()
+                .map(|session| session.id)
+                .collect();
+            ids.sort();
+            store.shutdown().await.unwrap();
+            ids
+        });
+        assert_eq!(
+            sessions.len(),
+            2,
+            "one coordinator and one ordinary worker Session"
+        );
+        assert_eq!(
+            sessions.iter().filter(|id| id.starts_with("wh_")).count(),
+            1
+        );
+        assert_eq!(
+            sessions.iter().filter(|id| id.starts_with("ma_")).count(),
+            1
+        );
+        if first {
+            original = sessions;
+            std::fs::remove_file(&configuration).unwrap();
+        } else {
+            assert_eq!(sessions, original);
+        }
+    }
+}

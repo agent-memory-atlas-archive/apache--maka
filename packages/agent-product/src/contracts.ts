@@ -386,7 +386,23 @@ const component = (
   transport: 'local',
   interface: { kind: 'component', props: withDefs(props), events, captures },
 });
-export const workspaceContract = component('maka.agent.Workspace', object({}));
+export interface WorkspaceProps {
+  embedded?: boolean;
+  fixed?: boolean;
+  session?: { request: number; id: string };
+}
+export const workhubRootContract = component('maka.workhub.Workspace', object({}));
+export const workspaceContract = component(
+  'maka.agent.Workspace',
+  object(
+    {
+      embedded: { type: 'boolean' },
+      fixed: { type: 'boolean' },
+      session: object({ request: { type: 'integer', minimum: 0 }, id: string }),
+    },
+    [],
+  ),
+);
 export const paletteContract = component(
   'maka.agent.CommandPalette',
   object({

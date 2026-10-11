@@ -634,6 +634,11 @@ export const configurations = {
           'Trusted Agent Session owner in this Root/deployment. This selects a data\nnamespace only; Terminal endpoints still require their own explicit grants.',
         default: null,
       },
+      sessionKind: {
+        $ref: '#/$defs/WorkspaceProcessSessionKind',
+        description: 'Explicit data namespace of the selected Session owner.',
+        default: 'agent',
+      },
     },
     required: ['filesystem', 'network'],
     description: 'Immutable installation ceiling selected by trusted native composition.',
@@ -751,6 +756,10 @@ export const configurations = {
         },
         description:
           'Hierarchical, stable source keys. Display aliases never become data identities.',
+      },
+      WorkspaceProcessSessionKind: {
+        type: 'string',
+        enum: ['agent', 'workhub'],
       },
     },
   },

@@ -158,16 +158,12 @@ impl Owner {
             deployment: persistence.source().deployment,
             namespace: context.activation().instance().clone(),
         };
-        let mut prefix = namespace(
+        let prefix = session_namespace(
             &persistence.source().state_domain,
             persistence.source().deployment,
             context.activation().instance(),
+            implementation != IMPLEMENTATION,
         );
-        if implementation != IMPLEMENTATION {
-            // Changing an instance from an ordinary Agent to a coordinator must
-            // not reinterpret the old Agent's Sessions or accepted queue.
-            prefix = format!("wh_{}", &prefix[3..]);
-        }
         let managed_worktrees = root.canonical_path().join("subagent-worktrees");
         let workspace_roots =
             workspace::open(settings.workspace_roots.clone(), &managed_worktrees)?;
@@ -697,6 +693,21 @@ fn jsonschema_valid(input: &Value) -> bool {
             .expect("configuration schema")
             .is_valid(input)
 }
+/// Data selection only; service grants remain independent of this prefix.
+pub(crate) fn session_namespace(
+    domain: &str,
+    deployment: uuid::Uuid,
+    instance: &maka_plugin_core::composition::InstanceId,
+    coordinator: bool,
+) -> String {
+    let prefix = namespace(domain, deployment, instance);
+    if coordinator {
+        format!("wh_{}", &prefix[3..])
+    } else {
+        prefix
+    }
+}
+
 pub(crate) fn namespace(
     domain: &str,
     deployment: Uuid,

@@ -55,6 +55,8 @@ pub struct Tasks {
 pub struct TaskEntry {
     pub task_id: String,
     pub worker: String,
+    #[schemars(length(max = 256))]
+    pub title: String,
 }
 #[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -201,9 +203,15 @@ pub struct Resolve {
 #[schemars(rename = "WorkHubCoordinator")]
 pub enum Coordinator {
     Missing,
-    Pending,
-    Ready { session: crate::contract::Session },
-    Rejected { reason: crate::contract::Rejection },
+    Pending {
+        workspace: crate::contract::DirectorySelection,
+    },
+    Ready {
+        session: crate::contract::Session,
+    },
+    Rejected {
+        reason: crate::contract::Rejection,
+    },
 }
 pub fn contract() -> Contract {
     Contract {

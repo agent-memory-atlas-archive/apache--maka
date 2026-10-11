@@ -1189,6 +1189,7 @@ export type WorkHubCoordinator =
       kind: 'missing';
     }
   | {
+      workspace: AgentDirectorySelection;
       kind: 'pending';
     }
   | {
@@ -2453,6 +2454,7 @@ export type FormResult =
       [k: string]: unknown | undefined;
     };
 export type QuestionRejection = 'invalid_input' | 'unavailable';
+export type WorkspaceProcessSessionKind = 'agent' | 'workhub';
 export type Ownership =
   | {
       kind: 'local';
@@ -4859,6 +4861,7 @@ export interface WorkHubTasks {
 export interface WorkHubTaskEntry {
   taskId: string;
   worker: string;
+  title: string;
 }
 export interface AgentWorkRead {
   sessionId: string;
@@ -5815,6 +5818,10 @@ export interface WorkspaceProcessConfiguration {
    * namespace only; Terminal endpoints still require their own explicit grants.
    */
   sessionOwner?: InstanceId | null;
+  /**
+   * Explicit data namespace of the selected Session owner.
+   */
+  sessionKind?: WorkspaceProcessSessionKind & string;
 }
 /**
  * Longest path wins; at the same path exact wins over subtree, then deny wins

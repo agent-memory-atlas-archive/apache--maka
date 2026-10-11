@@ -320,7 +320,18 @@ impl Hub {
             if let Data::Present(value) = entry.record.data {
                 let assignment: Assignment =
                     serde_json::from_value(value).map_err(|_| "workhub_task_invalid")?;
-                entries.push(serde_json::json!({"taskId":id,"worker":assignment.worker}));
+                let title = match &assignment.target {
+                    Target::New { title, .. } => title.as_str(),
+                    Target::Existing { .. } => assignment.input["message"]
+                        .as_str()
+                        .ok_or("workhub_task_invalid")?
+                        .strip_prefix("Original user request:\n")
+                        .ok_or("workhub_task_invalid")?
+                        .split("\n\nCoordinator instructions:")
+                        .next()
+                        .unwrap_or_default(),
+                };
+                entries.push(serde_json::json!({"taskId":id,"worker":assignment.worker,"title":excerpt(title,128)}));
             }
         }
         Ok(serde_json::json!({"entries":entries,"after":if more {last} else {None}}))

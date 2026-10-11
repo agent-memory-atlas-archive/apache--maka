@@ -136,6 +136,25 @@ const specifications = {
       file: one(sdk.contracts.filePicker),
     },
   },
+  'workhub-root': {
+    id: 'maka.workhub.workspace',
+    contract: own.workhubRootContract,
+    export: 'WorkHub',
+    module: 'workhub-root',
+    imports: {
+      workhub: one(sdk.contracts.workhubCoordinator),
+      coordinator: one(own.workspaceContract),
+      worker: one(own.workspaceContract),
+      directories: one(own.directoryPickerContract),
+      reading: one(sdk.contracts.readingArea),
+      source: one(sdk.contracts.sourceText),
+      receipts: one(sdk.contracts.receiptReader),
+      history: one(sdk.contracts.callerHistory),
+      appearance: one(own.themeContract),
+      locale: one(sdk.contracts.locale),
+    },
+    configuration: own.object({ locale: own.locale, worker: { type: 'string', const: 'worker' } }),
+  },
   workspace: {
     contract: own.workspaceContract,
     export: 'Workspace',
@@ -394,6 +413,8 @@ for (const [name, spec] of Object.entries(specifications)) {
       contents = `import {activate as appearance} from '${resolve(root, 'src/theme.ts')}';export function activate(configuration){return appearance(configuration,${target === 'tui'});}`;
     else if (name === 'workspace')
       contents = `import {workspace} from '${resolve(root, 'src/workspace.ts')}';import {workspaceContract} from '${resolve(root, 'src/contracts.ts')}';export let component;export function activate(configuration){component=workspace(presentations.${target},configuration.locale,configuration.terminals === true, configuration.place ?? '', configuration.skills === true);return {Workspace:{kind:'component',contract:workspaceContract,component:['component']}};}`;
+    else if (name === 'workhub-root')
+      contents = `import {workhubRoot,activate as exports} from '${resolve(root, 'src/workhub-root.ts')}';export let component;export function activate(configuration){component=workhubRoot(presentations.${target},configuration.locale,configuration.worker);return exports();}`;
     else if (name === 'studio' || name === 'recovery')
       contents = `import {${name},activate as exports} from '${resolve(root, 'src/' + name + '.ts')}';export let component;export function activate(configuration){component=${name}(presentations.${target},configuration.locale);return exports();}`;
     else if (name === 'connection-form')
@@ -476,7 +497,7 @@ for (const [name, spec] of Object.entries(specifications)) {
     });
   }
   // A surface is an explicit capability in the root's checked plan.
-  if (name === 'workspace' || name === 'studio' || name === 'recovery')
+  if (name === 'workspace' || name === 'studio' || name === 'recovery' || name === 'workhub-root')
     for (const target of ['desktop', 'tui'])
       entries[target].imports.surface = one(
         target === 'desktop' ? sdk.contracts.desktopSurface : sdk.contracts.terminalSurface,
@@ -492,6 +513,16 @@ for (const [name, spec] of Object.entries(specifications)) {
   );
   packages.push(name);
 }
+const agentImports = {
+  skills: { contract: sdk.contracts.skillLibrary, cardinality: { kind: 'optional' } },
+  forms: { contract: sdk.contracts.forms, cardinality: { kind: 'optional' } },
+  questions: { contract: sdk.contracts.questions, cardinality: { kind: 'optional' } },
+  files: { contract: sdk.contracts.workspaceFiles, cardinality: { kind: 'optional' } },
+  processes: {
+    contract: sdk.contracts.workspaceProcesses,
+    cardinality: { kind: 'optional' },
+  },
+};
 const mechanical = {
   locale: {
     entries: Object.fromEntries(
@@ -693,16 +724,23 @@ const mechanical = {
           { agent: required(sdk.contracts.agent) },
           sdk.configurations.agent,
         ),
-        imports: {
-          skills: { contract: sdk.contracts.skillLibrary, cardinality: { kind: 'optional' } },
-          forms: { contract: sdk.contracts.forms, cardinality: { kind: 'optional' } },
-          questions: { contract: sdk.contracts.questions, cardinality: { kind: 'optional' } },
-          files: { contract: sdk.contracts.workspaceFiles, cardinality: { kind: 'optional' } },
-          processes: {
-            contract: sdk.contracts.workspaceProcesses,
-            cardinality: { kind: 'optional' },
+        imports: agentImports,
+      },
+    },
+  },
+  workhub: {
+    id: 'maka.workhub.api',
+    entries: {
+      host: {
+        ...native(
+          'maka.workhub.api',
+          {
+            agent: required(sdk.contracts.agent),
+            workhub: required(sdk.contracts.workhubCoordinator),
           },
-        },
+          sdk.configurations.workhub,
+        ),
+        imports: { ...agentImports, worker: one(sdk.contracts.agent) },
       },
     },
   },
@@ -756,6 +794,15 @@ const mechanical = {
         ...native('maka.application.gateway', {}),
         imports: {
           agent: one(sdk.contracts.agent),
+          coordinator: { contract: sdk.contracts.agent, cardinality: { kind: 'optional' } },
+          workhub: {
+            contract: sdk.contracts.workhubCoordinator,
+            cardinality: { kind: 'optional' },
+          },
+          coordinatorTerminal: {
+            contract: sdk.contracts.terminal,
+            cardinality: { kind: 'optional' },
+          },
           terminal: { contract: sdk.contracts.terminal, cardinality: { kind: 'optional' } },
           skills: { contract: sdk.contracts.skillLibrary, cardinality: { kind: 'optional' } },
           settings: one(sdk.contracts.settings),

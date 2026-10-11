@@ -55,6 +55,17 @@ pub struct Configuration {
     /// namespace only; Terminal endpoints still require their own explicit grants.
     #[serde(default)]
     pub session_owner: Option<maka_plugin_core::composition::InstanceId>,
+    /// Explicit data namespace of the selected Session owner.
+    #[serde(default)]
+    pub session_kind: SessionKind,
+}
+#[derive(Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename = "WorkspaceProcessSessionKind")]
+pub enum SessionKind {
+    #[default]
+    Agent,
+    Workhub,
 }
 pub fn configuration_schema() -> Value {
     schemars::schema_for!(Configuration).into()
@@ -214,10 +225,11 @@ impl Processes {
             context.activation().instance(),
         );
         let session_prefix = settings.session_owner.as_ref().map(|instance| {
-            crate::owner::namespace(
+            crate::owner::session_namespace(
                 &persistence.source().state_domain,
                 persistence.source().deployment,
                 instance,
+                matches!(settings.session_kind, SessionKind::Workhub),
             )
         });
         let drain = CancellationToken::new();

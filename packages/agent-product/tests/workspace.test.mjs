@@ -1004,6 +1004,7 @@ test('bundled products author without Node and export exact checked sources for 
           assert.deepEqual(host.instances['workspace-processes'].configuration.values, {
             ...configuration.processes,
             sessionOwner: [keys.agent],
+            sessionKind: 'agent',
           });
           assert.equal(
             host.instances.agent.configuration.values.tools.at(-1).presentation,
@@ -13407,5 +13408,305 @@ for (const target of ['tui', 'desktop']) {
     assert.deepEqual(out.events, [
       { name: 'setup', value: { catalogEpoch: 3, kind: 'unavailable' } },
     ]);
+  });
+}
+
+for (const target of ['desktop', 'tui']) {
+  test(`${target} WorkHub restores original setup receipts and retains both mounted conversations`, async () => {
+    const guest = await import(
+      pathToFileURL(resolve(root, `dist/packages/workhub-root/${target}.js`))
+    );
+    guest.activate({ locale: 'en', worker: 'worker' });
+    const client = new Client(guest.component, false);
+    const original = {
+      ...reference,
+      contract: { name: 'maka.workhub.Coordinator', version: 1 },
+      method: 'resolve',
+    };
+    client.query('page', [{ cursor: 7, reference: original }]);
+    client.query('read', {
+      reference: original,
+      receipt: {
+        kind: 'recorded',
+        outcome: { kind: 'unknown', diagnostic: 'lost' },
+        cleanup: { kind: 'confirmed' },
+      },
+    });
+    client.query('coordinator', { kind: 'ready', session: { ...session, id: 'coordinator' } });
+    assert.deepEqual(client.state.original, original);
+    assert.equal(client.state.coordinatorSelection.id, 'coordinator');
+    const slots = () =>
+      modelSlots(client.output.frame.view).filter((node) =>
+        ['coordinator', 'worker'].includes(node.binding),
+      );
+    const before = structuredClone(slots());
+    client.raw('workhub-route-sessions');
+    assert.deepEqual(slots(), before);
+    client.raw('workhub-route-coordinator');
+    client.raw('workhub-setup-start');
+    assert.equal(
+      [...client.actions.values()].some((action) => action.method === 'resolve'),
+      false,
+    );
+    client.raw('workhub-coordinator-refresh');
+    assert.deepEqual(slots(), before);
+    client.query('coordinator', { kind: 'pending', workspace: { original: true } });
+    assert.deepEqual(slots(), before);
+    client.raw('workhub-check-original');
+    assert.deepEqual(client.find('read').input, original);
+    client.query('read', {
+      reference: original,
+      receipt: {
+        kind: 'recorded',
+        outcome: {
+          kind: 'returned',
+          value: { kind: 'ready', session: { ...session, id: 'old-historical-session' } },
+        },
+        cleanup: { kind: 'confirmed' },
+      },
+    });
+    assert.equal(client.state.coordinatorSelection.id, 'coordinator');
+    assert.deepEqual(client.find('page').input, { after: 7, limit: 1 });
+  });
+  test(`${target} WorkHub continues only the frozen setup and opens the exact task Session`, async () => {
+    const guest = await import(
+      pathToFileURL(resolve(root, `dist/packages/workhub-root/${target}.js`))
+    );
+    guest.activate({ locale: 'en', worker: 'worker' });
+    const client = new Client(guest.component, false);
+    client.query('page', []);
+    const workspace = { root: 'original', path: '/original', fence: 'original-directory' };
+    client.query('coordinator', { kind: 'pending', workspace });
+    assert.equal(
+      [...client.actions.values()].some((action) => action.method === 'resolve'),
+      false,
+    );
+    client.raw('workhub-setup-start');
+    assert.deepEqual(client.find('resolve').input, { workspace });
+    client.complete(client.find('resolve'), { status: 'failed', reason: 'transport lost' });
+    client.raw('workhub-setup-start');
+    assert.equal(
+      [...client.actions.values()].some((action) => action.method === 'resolve'),
+      false,
+    );
+    client.raw('workhub-retry-read');
+    client.query('page', []);
+    client.raw('workhub-route-tasks');
+    const entry = { taskId: 'wt_' + 'a'.repeat(64), worker: 'worker', title: '' };
+    client.query('tasks', { entries: [entry], after: 'original-page-cursor' });
+    assert.ok(JSON.stringify(client.output.frame.view).includes('Untitled task'));
+    const task = {
+      ...entry,
+      status: { kind: 'started', sessionId: 'exact-worker-session', progress: { kind: 'missing' } },
+    };
+    client.query('task', task);
+    client.raw(`task-open-${client.state.pageKey}-0`);
+    assert.equal(client.find('task').input.taskId, entry.taskId);
+    client.query('task', task);
+    client.raw('task-session');
+    assert.equal(client.state.workerSelection.id, 'exact-worker-session');
+    client.raw('workhub-route-tasks');
+    client.raw('task-check');
+    client.query('task', { ...task, taskId: 'wt_' + 'b'.repeat(64) });
+    assert.equal(client.state.selected.failed, true);
+    assert.equal(client.state.selected.task.taskId, entry.taskId);
+  });
+  test(`${target} embedded fixed Workspace validates explicit Session and never falls back to catalog`, async () => {
+    const guest = await import(
+      pathToFileURL(resolve(root, `dist/packages/workspace/${target}.js`))
+    );
+    guest.activate({ locale: 'en' });
+    const props = { embedded: true, fixed: true, session: { request: 1, id: 'explicit' } };
+    const definition = Object.fromEntries(
+      ['mount', 'update', 'event'].map((method) => [
+        method,
+        (...args) => {
+          args[method === 'mount' ? 0 : method === 'update' ? 1 : 2] = props;
+          return guest.component[method](...args);
+        },
+      ]),
+    );
+    const client = new Client(definition, false);
+    assert.equal(client.output.frame.surface, null);
+    client.query('page', []);
+    client.query('catalog', { sessions: [session], next: null, fence: 'catalog' });
+    const open = client.find('observe');
+    assert.deepEqual(open.input, { sessionId: 'explicit' });
+    client.complete(open, { status: 'succeeded', value: { session: { ...session, id: 'wrong' } } });
+    assert.equal(client.state.selected, null);
+    client.raw('create');
+    client.raw('navigation-toggle');
+    assert.equal(
+      [...client.actions.values()].some((action) => action.method === 'create'),
+      false,
+    );
+    props.session = { request: 2, id: 'explicit' };
+    client.input({ kind: 'raw', key: 'no-op', event: {} });
+    client.query('observe', { session: { ...session, id: 'explicit' } });
+    assert.equal(client.state.selected.id, 'explicit');
+    assert.equal(client.output.frame.surface, null);
+  });
+}
+
+test('WorkHub product authors two independent Agent graphs with explicit native grants in actual CLI', {
+  skip: !process.env.MAKA_PRODUCT_CLI_CHECK,
+}, async () => {
+  const binary = resolve(root, '../..', process.env.CARGO_TARGET_DIR ?? 'target', 'debug/maka');
+  const directory = mkdtempSync(resolve(tmpdir(), 'maka-workhub-composition-'));
+  try {
+    const agent = {
+      workspaceRoots: [{ label: 'Project', path: '/private/product-workspace' }],
+      maxActiveRuns: 1,
+      permissions: { access: 'workspace_write', requestPermissions: true },
+      maxSteps: 2,
+      tools: [],
+    };
+    for (const presentation of ['desktop', 'tui']) {
+      const configuration = {
+        presentation,
+        locale: 'en',
+        scheme: 'light',
+        agent,
+        coordinator: {
+          ...agent,
+          tools: [
+            {
+              name: 'Execute',
+              description: 'Run a command',
+              import: 'processes',
+              method: 'execute',
+              result: 'json',
+              confirmation: 'preapproved',
+            },
+          ],
+        },
+        coordinatorProcesses: {
+          filesystem: { default: 'read', rules: [], denyGlobs: [] },
+          network: 'denied',
+          helper: null,
+        },
+        hostRoot: resolve(directory, 'unopened-host'),
+      };
+      const path = resolve(directory, 'configuration.json');
+      writeFileSync(path, JSON.stringify(configuration));
+      const output = resolve(directory, presentation);
+      execFileSync(
+        binary,
+        [
+          'application',
+          'compose',
+          '--configuration',
+          path,
+          '--output',
+          output,
+          '--product',
+          'workhub',
+        ],
+        { encoding: 'utf8', env: { ...process.env, PATH: directory, NODE_PATH: '' } },
+      );
+      const read = (name) => JSON.parse(readFileSync(resolve(output, `${name}.json`), 'utf8'));
+      const { keys } = read('installation'),
+        host = read('host'),
+        ui = read('ui');
+      assert.equal(existsSync(configuration.hostRoot), false);
+      assert.deepEqual(host.instances.workhub.bindings.worker, [
+        { kind: 'instance', path: ['agent'], export: 'agent' },
+      ]);
+      assert.deepEqual(
+        host.instances['coordinator-workspace-processes'].configuration.values.sessionOwner,
+        [keys.workhub],
+      );
+      assert.equal(
+        host.instances['coordinator-workspace-processes'].configuration.values.sessionKind,
+        'workhub',
+      );
+      assert.equal(host.instances['workspace-processes'], undefined);
+      assert.deepEqual(ui.launch, { kind: 'instance', path: ['workhub-root'], export: 'WorkHub' });
+      assert.equal(ui.instances.workspace.bindings.agent[0].instance[0], keys.agent);
+      assert.equal(
+        ui.instances['coordinator-workspace'].bindings.agent[0].instance[0],
+        keys.workhub,
+      );
+      assert.equal(
+        ui.instances['coordinator-directory-picker'].bindings.agent[0].instance[0],
+        keys.workhub,
+      );
+      const grants = read('connections').hosts.find((host) => host.name === 'local').native;
+      assert.ok(
+        grants.some(
+          (grant) =>
+            grant.origin[0] === keys.workhub &&
+            grant.provider[0] === keys.agent &&
+            grant.methods.includes('send'),
+        ),
+      );
+      assert.ok(
+        grants.some(
+          (grant) =>
+            grant.origin[0] === keys.workhub &&
+            grant.provider[0] === keys['coordinator-workspace-processes'] &&
+            grant.methods.includes('execute'),
+        ),
+      );
+      assert.equal(
+        grants.some((grant) => grant.origin[0] === keys.agent),
+        false,
+      );
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+for (const target of ['desktop', 'tui']) {
+  test(`${target} WorkHub paginates the original answer and retries the exact failed list cursor`, async () => {
+    const guest = await import(
+      pathToFileURL(resolve(root, `dist/packages/workhub-root/${target}.js`))
+    );
+    guest.activate({ locale: 'en', worker: 'worker' });
+    const client = new Client(guest.component, false);
+    client.query('page', []);
+    client.query('coordinator', { kind: 'ready', session: { ...session, id: 'coordinator' } });
+    client.raw('workhub-route-tasks');
+    const entry = { taskId: 'wt_' + 'a'.repeat(64), worker: 'worker', title: 'Paged answer' };
+    client.query('tasks', { entries: [entry], after: 'exact-list-cursor' });
+    const cursor = { invocationId: 'original-run', offset: 7 };
+    const task = {
+      ...entry,
+      status: {
+        kind: 'started',
+        sessionId: 'worker-session',
+        progress: {
+          kind: 'delivered',
+          pendingInteractions: 0,
+          shared: false,
+          execution: { invocationId: 'original-run', state: 'completed' },
+          answer: { text: 'first 🧭', next: cursor },
+        },
+      },
+    };
+    client.query('task', task);
+    client.raw(`task-open-${client.state.pageKey}-0`);
+    client.query('task', task);
+    assert.equal(
+      modelSlots(client.output.frame.view).find((node) => node.binding === 'source').props.source,
+      'first 🧭',
+    );
+    client.raw('answer-next');
+    assert.deepEqual(client.find('task').input, { taskId: entry.taskId, cursor });
+    client.query('task', { ...task, status: { ...task.status, progress: { kind: 'changed' } } });
+    assert.equal(
+      modelSlots(client.output.frame.view).some((node) => node.binding === 'source'),
+      false,
+    );
+    client.raw('task-back');
+    client.raw('tasks-next');
+    const pending = client.find('tasks');
+    assert.deepEqual(pending.input, { after: 'exact-list-cursor' });
+    client.complete(pending, { status: 'failed', reason: 'unavailable' });
+    client.raw('workhub-retry-read');
+    assert.deepEqual(client.find('tasks').input, pending.input);
+    client.query('tasks', { entries: [], after: null });
+    assert.equal(client.state.pageAfter, 'exact-list-cursor');
   });
 }

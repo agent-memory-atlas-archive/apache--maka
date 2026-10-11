@@ -31,6 +31,8 @@ import {
 import { welcomeMark } from './welcome.js';
 export const packageNames = [
   'workspace',
+  'workhub-root',
+  'workhub',
   'recovery',
   'command-palette',
   'directory-picker',
@@ -91,7 +93,11 @@ export const packageNames = [
   'gateway',
 ] as const;
 export type PackageName = (typeof packageNames)[number];
-export const instanceNames = [...packageNames, 'recovery-reading'] as const;
+const baseInstanceNames = [...packageNames, 'recovery-reading'] as const;
+export const instanceNames = [
+  ...baseInstanceNames,
+  ...baseInstanceNames.map((name): `coordinator-${typeof name}` => `coordinator-${name}`),
+] as const;
 export type InstanceName = (typeof instanceNames)[number];
 import type { AppearanceConfiguration } from './terminal-theme.js';
 export interface CompositionConfiguration {
@@ -105,6 +111,8 @@ export interface CompositionConfiguration {
   keys: Record<InstanceName, string>;
   agent: AgentConfiguration;
   processes?: WorkspaceProcessConfiguration;
+  coordinator?: AgentConfiguration;
+  coordinatorProcesses?: WorkspaceProcessConfiguration;
   skills?: SkillLibraryConfiguration;
   hostRoot: string;
   hostDeployment: string;
@@ -454,6 +462,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
     host.instances['workspace-processes'] = node('workspace-processes', {
       ...configuration.processes,
       sessionOwner: [keys.agent],
+      sessionKind: 'agent',
     });
   host.instances.gateway!.bindings!.agent = [local('agent', 'agent')];
   if (configuration.processes)
@@ -793,4 +802,220 @@ export function studioComposition(
   );
   ui.launch = local('studio', 'Workbench');
   return { host, managementHost, ui, remoteExports, connections };
+}
+
+/** One native coordinator and an explicitly selected worker, using ordinary UI bindings. */
+export function workhubComposition(configuration: CompositionConfiguration): ApplicationSources {
+  if (!configuration.coordinator)
+    throw new Error('WorkHub requires an explicit coordinator Agent configuration');
+  const { keys, packages } = configuration;
+  const worker = composition(configuration);
+  const coordinator = composition({
+    ...configuration,
+    agent: configuration.coordinator,
+    processes: configuration.coordinatorProcesses,
+  });
+  const local = (name: string, exportName: string): BindingTarget => ({
+    kind: 'instance',
+    path: [name],
+    export: exportName,
+  });
+  const processName = 'coordinator-workspace-processes';
+  const remapHost = (target: BindingTarget): BindingTarget =>
+    target.kind === 'instance' && target.path.length === 1
+      ? {
+          ...target,
+          path: [
+            target.path[0] === 'agent'
+              ? 'workhub'
+              : target.path[0] === 'workspace-processes'
+                ? processName
+                : target.path[0],
+          ],
+        }
+      : target;
+  const remapBindings = (node: CompositionNode, map: (target: BindingTarget) => BindingTarget) =>
+    Object.fromEntries(
+      Object.entries(node.bindings ?? {}).map(([name, targets]) => [name, targets?.map(map)]),
+    );
+  for (const [name, node] of Object.entries(coordinator.host.instances)) {
+    if (name === 'agent' || name === 'gateway' || name === 'workspace-processes') continue;
+    if (!worker.host.instances[name]) worker.host.instances[name] = node;
+  }
+  const agent = coordinator.host.instances.agent!;
+  worker.host.instances.workhub = {
+    ...agent,
+    key: keys.workhub,
+    package: { source: 'pinned', package: packages.workhub },
+    configuration: { values: { agent: agent.configuration!.values, workers: ['worker'] } },
+    bindings: { ...remapBindings(agent, remapHost), worker: [local('agent', 'agent')] },
+  };
+  if (configuration.coordinatorProcesses) {
+    const processes = coordinator.host.instances['workspace-processes']!;
+    worker.host.instances[processName] = {
+      ...processes,
+      key: keys[processName],
+      configuration: {
+        values: {
+          ...processes.configuration!.values,
+          sessionOwner: [keys.workhub],
+          sessionKind: 'workhub',
+        },
+      },
+    };
+  }
+  const gateway = worker.host.instances.gateway!.bindings!;
+  gateway.coordinator = [local('workhub', 'agent')];
+  gateway.workhub = [local('workhub', 'workhub')];
+  if (configuration.coordinatorProcesses)
+    gateway.coordinatorTerminal = [local(processName, 'terminal')];
+
+  // Clone exactly the dependency closure whose bindings reach the coordinator.
+  // Unrelated shared components remain ordinary instances; component state belongs
+  // to each mounted occurrence, so hidden views keep their original custody.
+  const selected = new Set<string>();
+  const ownRemote = (target: BindingTarget) =>
+    target.kind === 'remote' &&
+    target.deployment === 'local' &&
+    (target.instance[0] === keys.agent || target.instance[0] === keys['workspace-processes']);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [name, node] of Object.entries(coordinator.ui.instances)) {
+      if (
+        !selected.has(name) &&
+        Object.values(node?.bindings ?? {})
+          .flatMap((targets) => targets ?? [])
+          .some(
+            (target) =>
+              ownRemote(target) || (target.kind === 'instance' && selected.has(target.path[0])),
+          )
+      ) {
+        selected.add(name);
+        changed = true;
+      }
+    }
+  }
+  for (const name of selected) {
+    const node = coordinator.ui.instances[name]!;
+    worker.ui.instances[`coordinator-${name}`] = {
+      ...node,
+      key: keys[`coordinator-${name}` as InstanceName],
+      bindings: remapBindings(node, (target) => {
+        if (ownRemote(target) && target.kind === 'remote')
+          return {
+            ...target,
+            instance: [target.instance[0] === keys.agent ? keys.workhub : keys[processName]],
+          };
+        if (target.kind === 'instance' && selected.has(target.path[0]))
+          return { ...target, path: [`coordinator-${target.path[0]}`, ...target.path.slice(1)] };
+        return target;
+      }),
+    };
+  }
+  worker.ui.instances['workhub-root'] = {
+    key: keys['workhub-root'],
+    package: { source: 'pinned', package: packages['workhub-root'] },
+    usePackage: 'entry',
+    configuration: { values: { locale: configuration.locale, worker: 'worker' } },
+    bindings: {
+      workhub: [
+        { kind: 'remote', deployment: 'local', instance: [keys.workhub], export: 'workhub' },
+      ],
+      coordinator: [local('coordinator-workspace', 'Workspace')],
+      worker: [local('workspace', 'Workspace')],
+      directories: [local('coordinator-directory-picker', 'DirectoryPicker')],
+      reading: [local('reading-area', 'ReadingArea')],
+      source: [local('source-text', 'SourceText')],
+      receipts: [
+        { kind: 'remote', deployment: 'local', instance: [keys.receipts], export: 'Receipts' },
+      ],
+      history: [local('history', 'History')],
+      appearance: [local('appearance', 'Appearance')],
+      locale: [local('locale', 'Locale')],
+      surface: [local('surface', 'Surface')],
+    },
+  };
+  worker.ui.launch = local('workhub-root', 'WorkHub');
+  worker.remoteExports.push(
+    {
+      capability: { deployment: 'local', instance: [keys.workhub], export: 'agent' },
+      declaration: { contract: contracts.agent, availability: 'required' },
+    },
+    {
+      capability: { deployment: 'local', instance: [keys.workhub], export: 'workhub' },
+      declaration: { contract: contracts.workhubCoordinator, availability: 'required' },
+    },
+  );
+  if (configuration.coordinatorProcesses)
+    worker.remoteExports.push({
+      capability: { deployment: 'local', instance: [keys[processName]], export: 'terminal' },
+      declaration: { contract: contracts.terminal, availability: 'required' },
+    });
+  type Grant = {
+    origin: string[];
+    consumer: string[];
+    provider: string[];
+    export: string;
+    methods: string[];
+    recovery: boolean;
+  };
+  type Connections = {
+    hosts: { name: string; endpoints: Record<string, unknown>; native?: Grant[] }[];
+  };
+  const host = (worker.connections as Connections).hosts.find((host) => host.name === 'local')!;
+  const coordinatorHost = (coordinator.connections as Connections).hosts.find(
+    (host) => host.name === 'local',
+  )!;
+  const endpoint = (name: string, methods: string[]) => ({
+    consumer: [keys.gateway],
+    import: name,
+    grant: { methods, recovery: true },
+  });
+  host.endpoints.coordinator = endpoint(
+    'coordinator',
+    Object.keys(contracts.agent.interface.methods),
+  );
+  host.endpoints.workhub = endpoint(
+    'workhub',
+    Object.keys(contracts.workhubCoordinator.interface.methods),
+  );
+  if (configuration.coordinatorProcesses)
+    host.endpoints.coordinatorTerminal = endpoint(
+      'coordinatorTerminal',
+      Object.keys(contracts.terminal.interface.methods),
+    );
+  host.native = [
+    ...(host.native ?? []),
+    ...(coordinatorHost.native ?? []).map((grant) => ({
+      ...grant,
+      origin: [keys.workhub],
+      consumer: [keys.workhub],
+      provider:
+        grant.provider[0] === keys['workspace-processes'] ? [keys[processName]] : grant.provider,
+    })),
+    {
+      origin: [keys.workhub],
+      consumer: [keys.workhub],
+      provider: [keys.agent],
+      export: 'agent',
+      methods: [
+        'list',
+        'directories',
+        'create',
+        'uploadAttachment',
+        'send',
+        'execution',
+        'work',
+        'observe',
+        'watch',
+        'stop',
+        'resume',
+        'queue',
+        'editQueue',
+      ],
+      recovery: true,
+    },
+  ];
+  return worker;
 }

@@ -165,7 +165,9 @@ impl Hub {
             Some(session) => Coordinator::Ready {
                 session: crate::service::summary(owner, session),
             },
-            None => Coordinator::Pending,
+            None => Coordinator::Pending {
+                workspace: intent.workspace.clone(),
+            },
         })
     }
     async fn resolve(
