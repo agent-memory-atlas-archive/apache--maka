@@ -17,6 +17,8 @@
  * under the License.
  */
 
+mod apps;
+
 use super::*;
 use maka_event_log::root::{RootNamespaces, RootOwner};
 use serde_json::json;

@@ -381,7 +381,7 @@ async fn complete_unicode_document_uses_fixed_source_chunks_and_recorded_native_
     packages.push(payload.clone());
     let mut payload_node = node(&payload, 77, true);
     payload_node.disabled = true;
-    let original = "中🌟".repeat(60000);
+    let original = "中🌟".repeat(90000);
     payload_node
         .configuration
         .values
@@ -423,7 +423,7 @@ async fn complete_unicode_document_uses_fixed_source_chunks_and_recorded_native_
             break;
         }
     }
-    assert!(text.len() > 256 * 1024);
+    assert!(text.len() > 512 * 1024);
     let mut document: DeploymentDocument = serde_json::from_str(&text).unwrap();
     assert_eq!(document.input, current.source.input);
     assert_eq!(
@@ -1471,6 +1471,177 @@ async fn settings_forms_preserve_exact_numbers_unedited_sources_and_original_cas
         f.query("readSettings", read(&source, id(77), vec!["missing"]))
             .await
             .is_err()
+    );
+    f.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn composition_choices_and_atomic_edits_preserve_source_bindings_and_original_receipts() {
+    use maka_plugin_core::composition::PresentationTarget;
+    let f = Fixture::create(Some(PresentationTarget::Tui)).await;
+    let contract = deployment_manager_contract();
+    let make = |name: &str, configuration: Value, imports, exports| {
+        Package::new(BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({
+            "schemaVersion":2,"id":name,"application":Declaration {
+                entries:BTreeMap::from([(EntryTarget::Tui, EntryDeclaration {
+                    scene:None, implementation:Implementation::Native { implementation:"test.form".into() },
+                    configuration, imports, exports,
+                })]),composition:None,
+            }
+        })).unwrap())])).unwrap()
+    };
+    let catalog = make(
+        "test.catalog",
+        json!({"type":"object","properties":{"entries":{"type":"array"}}}),
+        BTreeMap::from([(
+            "pages".into(),
+            Import {
+                contract: contract.clone(),
+                cardinality: Cardinality::Many { min: 0, max: 20 },
+            },
+        )]),
+        BTreeMap::new(),
+    );
+    let leaf = make(
+        "test.extension",
+        json!({"type":"object","additionalProperties":false,
+        "properties":{"label":{"type":"string","default":"A new app"},"limit":{"type":"integer","default":9007199254740993_u64},"preferences":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}},"required":["label","limit"]}),
+        BTreeMap::from([(
+            "provider".into(),
+            Import {
+                contract: contract.clone(),
+                cardinality: Cardinality::One,
+            },
+        )]),
+        BTreeMap::from([(
+            "Page".into(),
+            Export {
+                contract: contract.clone(),
+                availability: Availability::Required,
+            },
+        )]),
+    );
+    let provider = make(
+        "test.provider",
+        json!({"type":"object"}),
+        BTreeMap::new(),
+        BTreeMap::from([(
+            "Provider".into(),
+            Export {
+                contract,
+                availability: Availability::Required,
+            },
+        )]),
+    );
+    let mut catalog_node = node(&catalog, 80, true);
+    catalog_node
+        .configuration
+        .values
+        .insert("entries".into(), json!([]));
+    catalog_node.bindings.insert("pages".into(), vec![]);
+    let source = f
+        .store
+        .commit_application(
+            f.managed.deployment,
+            1,
+            Input {
+                environment: Environment {
+                    location: ExecutionLocation::Ui,
+                    presentation: Some(PresentationTarget::Tui),
+                },
+                instances: BTreeMap::from([
+                    ("apps".into(), catalog_node),
+                    ("provider".into(), node(&provider, 81, true)),
+                ]),
+                recovery: None,
+                launch: None,
+            },
+            vec![],
+            vec![catalog, leaf.clone(), provider],
+        )
+        .await
+        .unwrap();
+    let query = json!({"source":source,"consumer":{"kind":"root","name":"apps"},"import":"pages","includePackages":true,"after":null});
+    let choices: BindingCandidatesPage =
+        serde_json::from_value(f.query("bindingCandidates", query.clone()).await.unwrap()).unwrap();
+    assert!(choices.current.is_empty());
+    assert_eq!(choices.configuration["entries"], json!([]));
+    assert!(choices.candidates.iter().any(
+        |c| matches!(c,BindingCandidate::Package {package,..} if package == &leaf.application_ref())
+    ));
+    let required: BindingCandidatesPage = serde_json::from_value(f.query("bindingCandidates",json!({"source":source,"consumer":{"kind":"package","package":leaf.application_ref()},"import":"provider","includePackages":false,"after":null})).await.unwrap()).unwrap();
+    let provider_target = Target::Instance {
+        path: vec!["provider".into()],
+        export: "Provider".into(),
+    };
+    assert!(
+        required
+            .candidates
+            .iter()
+            .any(|c| matches!(c,BindingCandidate::Bound {target,..} if target == &provider_target))
+    );
+    let fields: PackageSettingsPage = serde_json::from_value(f.query("packageSettings",json!({"source":source,"package":leaf.application_ref(),"path":[],"after":null,"changes":[]})).await.unwrap()).unwrap();
+    assert_eq!(fields.imports.len(), 1);
+    assert_eq!(
+        fields
+            .fields
+            .iter()
+            .find(|f| f.key == "limit")
+            .unwrap()
+            .value,
+        Some(SettingValue::Number {
+            text: "9007199254740993".into()
+        })
+    );
+    let edit = json!({"expectedRevision":source.revision,"edits":[
+        {"kind":"insert","name":"custom","package":leaf.application_ref(),"settings":[{"path":["label"],"value":{"kind":"text","text":"My app"}},{"path":["preferences","path"],"value":{"kind":"text","text":"notes/local"}}],"bindings":{"provider":[provider_target]}},
+        {"kind":"update","name":"apps","configuration":{"entries":[{"id":"custom","label":"My app"}]},"bindings":{"pages":[{"kind":"instance","path":["custom"],"export":"Page"}]}}
+    ]});
+    let mut invalid = edit.clone();
+    invalid["edits"][0]["bindings"] = json!({});
+    let rejected = f
+        .mutate("editComposition", invalid, Attachments::new())
+        .await;
+    assert_eq!(returned(&rejected)["status"], "rejected");
+    assert_eq!(f.read().await.source.reference, source);
+    assert!(!f.read().await.source.input.instances.contains_key("custom"));
+    let committed = f
+        .mutate("editComposition", edit.clone(), Attachments::new())
+        .await;
+    assert_eq!(returned(&committed)["status"], "committed");
+    let current = f.read().await;
+    let custom = &current.source.input.instances["custom"];
+    assert_eq!(
+        custom.configuration.values["limit"],
+        json!(9007199254740993_u64)
+    );
+    assert_eq!(custom.configuration.values["label"], json!("My app"));
+    assert_eq!(custom.bindings["provider"], vec![provider_target]);
+    assert_eq!(
+        custom.configuration.values["preferences"],
+        json!({"path":"notes/local"})
+    );
+    assert_eq!(
+        f.query("bindingCandidates", query).await.unwrap(),
+        serde_json::to_value(choices).unwrap()
+    );
+    let stale = f.mutate("editComposition", edit, Attachments::new()).await;
+    assert_eq!(returned(&stale)["status"], "conflict");
+    // Removing a gallery entry does not delete the original plugin instance.
+    let removed = f.mutate("editComposition",json!({"expectedRevision":current.source.reference.revision,"edits":[{"kind":"update","name":"apps","configuration":{"entries":[]},"bindings":{"pages":[]}}]}),Attachments::new()).await;
+    assert_eq!(returned(&removed)["status"], "committed");
+    assert_eq!(&f.read().await.source.input.instances["custom"], custom);
+    // Original durable receipts remain exact after further source revisions.
+    assert_eq!(
+        f.store
+            .operation_observation(&committed.reference)
+            .await
+            .unwrap()
+            .unwrap()
+            .outcome,
+        OperationOutcome::Returned {
+            value: returned(&committed)
+        }
     );
     f.close().await;
 }

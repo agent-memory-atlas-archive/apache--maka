@@ -24,7 +24,9 @@ use crate::{
     deployment::{Deployment, DeploymentRef, RemoteObservation},
     package::PackageRef,
 };
+mod composition;
 mod settings;
+pub use composition::*;
 pub use settings::*;
 
 use schemars::JsonSchema;
@@ -197,6 +199,20 @@ pub fn deployment_manager_contract() -> Contract {
                     method::<DeploymentRead, ManagedDeployment>(MethodMode::Query),
                 ),
                 ("install".into(), install),
+                (
+                    "bindingCandidates".into(),
+                    method::<BindingCandidatesRead, BindingCandidatesPage>(MethodMode::Query),
+                ),
+                (
+                    "packageSettings".into(),
+                    method::<PackageSettingsRead, PackageSettingsPage>(MethodMode::Query),
+                ),
+                (
+                    "editComposition".into(),
+                    method::<CompositionEdit, ManagementResult<DeploymentRef>>(
+                        MethodMode::Mutation,
+                    ),
+                ),
                 (
                     "readSettings".into(),
                     method::<InstanceSettingsRead, InstanceSettingsPage>(MethodMode::Query),

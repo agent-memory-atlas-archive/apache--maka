@@ -166,7 +166,9 @@ impl Manager {
 }
 // Local $refs can repeat a large enum across many fields. Bound the encoded
 // projection as well as its row count, leaving room for source/path metadata.
-fn settings_page(mut fields: Vec<SettingField>) -> Result<(Vec<SettingField>, Option<String>)> {
+pub(super) fn settings_page(
+    mut fields: Vec<SettingField>,
+) -> Result<(Vec<SettingField>, Option<String>)> {
     let mut bytes = 0;
     let mut count = 0;
     for field in fields.iter().take(8) {
@@ -185,7 +187,7 @@ fn settings_page(mut fields: Vec<SettingField>) -> Result<(Vec<SettingField>, Op
     let next = more.then(|| fields.last().unwrap().key.clone());
     Ok((fields, next))
 }
-fn check_path(path: &[String], root: bool) -> Result<()> {
+pub(super) fn check_path(path: &[String], root: bool) -> Result<()> {
     if (!root && path.is_empty()) || path.len() > 16 || path.iter().any(|p| p.len() > 256) {
         return Err("invalid settings path".into());
     }
@@ -221,7 +223,10 @@ fn json(value: &SettingValue) -> Result<Value> {
         SettingValue::Null => Value::Null,
     })
 }
-fn apply(configuration: &mut Value, changes: &[SettingChange]) -> Result<BTreeSet<String>> {
+pub(super) fn apply(
+    configuration: &mut Value,
+    changes: &[SettingChange],
+) -> Result<BTreeSet<String>> {
     if changes.is_empty() || changes.len() > 32 {
         return Err("settings change limit exceeded".into());
     }
@@ -237,7 +242,14 @@ fn apply(configuration: &mut Value, changes: &[SettingChange]) -> Result<BTreeSe
         let mut current = &mut *configuration;
         for part in parents {
             current = match current {
-                Value::Object(map) => map.get_mut(part).ok_or("settings parent unavailable")?,
+                Value::Object(map) => {
+                    if change.value.is_some() {
+                        map.entry(part)
+                            .or_insert_with(|| Value::Object(Default::default()))
+                    } else {
+                        map.get_mut(part).ok_or("settings parent unavailable")?
+                    }
+                }
                 Value::Array(items) => items
                     .get_mut(index(part)?)
                     .ok_or("settings item unavailable")?,
@@ -278,7 +290,11 @@ fn index(key: &str) -> Result<usize> {
 }
 // Schema is a display hint; admission validates the entire resulting source.
 // Resolve only local references and the branch selected by the actual value.
-fn resolved<'a>(mut schema: &'a Value, root: &'a Value, value: Option<&Value>) -> &'a Value {
+pub(super) fn resolved<'a>(
+    mut schema: &'a Value,
+    root: &'a Value,
+    value: Option<&Value>,
+) -> &'a Value {
     for _ in 0..16 {
         if let Some(reference) = schema
             .get("$ref")
@@ -342,7 +358,7 @@ fn matches_value(schema: &Value, root: &Value, value: Option<&Value>) -> bool {
         schema.get("type").and_then(Value::as_str) != Some("null")
     }
 }
-fn at<'a>(
+pub(super) fn at<'a>(
     root: &'a Value,
     configuration: &'a Value,
     path: &[String],
@@ -372,7 +388,11 @@ fn at<'a>(
     }
     Ok((resolved(schema, root, value), value))
 }
-fn fields(schema: &Value, root: &Value, value: Option<&Value>) -> Result<Vec<SettingField>> {
+pub(super) fn fields(
+    schema: &Value,
+    root: &Value,
+    value: Option<&Value>,
+) -> Result<Vec<SettingField>> {
     if let Some(items) = value.and_then(Value::as_array) {
         return Ok(items
             .iter()

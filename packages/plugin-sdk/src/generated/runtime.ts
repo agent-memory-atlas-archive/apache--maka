@@ -35,6 +35,11 @@ export type RuntimeProtocol =
   | InstanceSettingsRead
   | InstanceSettingsPage
   | InstanceConfigure
+  | BindingCandidatesRead
+  | BindingCandidatesPage
+  | PackageSettingsRead
+  | PackageSettingsPage
+  | CompositionEdit
   | DeploymentDocumentChunk
   | ManagementResultForPackageInstalled
   | ManagementResultForDeploymentRef
@@ -356,6 +361,68 @@ export type SettingValue =
   | {
       kind: 'null';
     };
+export type BindingConsumer =
+  | {
+      name: string;
+      kind: 'root';
+    }
+  | {
+      package: PackageRef;
+      kind: 'package';
+    };
+export type BindingCandidate =
+  | {
+      key: string;
+      label: string;
+      target: Target;
+      kind: 'bound';
+    }
+  | {
+      key: string;
+      label: string;
+      package: PackageRef;
+      export: string;
+      kind: 'package';
+    };
+export type Cardinality =
+  | {
+      kind: 'one';
+    }
+  | {
+      kind: 'optional';
+    }
+  | {
+      min: number;
+      max: number;
+      kind: 'many';
+    };
+/**
+ * One atomic patch to the original source, not a saved plan or draft registry.
+ */
+export type CompositionChange =
+  | {
+      name: string;
+      package: PackageRef;
+      settings: SettingChange[];
+      bindings: {
+        [k: string]: Target[] | undefined;
+      };
+      kind: 'insert';
+    }
+  | {
+      name: string;
+      configuration: {
+        [k: string]: unknown | undefined;
+      };
+      bindings: {
+        [k: string]: Target[] | undefined;
+      };
+      kind: 'update';
+    }
+  | {
+      name: string;
+      kind: 'remove';
+    };
 /**
  * A deterministic refusal is a recorded business result. Uncertain SQL/worker
  * failures remain in the original operation journal's Unknown outcome.
@@ -411,18 +478,6 @@ export type Implementation =
       kind: 'native';
     };
 export type Realm = 'shared' | 'dedicated';
-export type Cardinality =
-  | {
-      kind: 'one';
-    }
-  | {
-      kind: 'optional';
-    }
-  | {
-      min: number;
-      max: number;
-      kind: 'many';
-    };
 /**
  * Actual exports from a local JavaScript entry. Values are immutable for this
  * activation; component paths are captured before publication.
@@ -4448,6 +4503,46 @@ export interface SettingChange {
    * None removes the field; all other fields retain their original source.
    */
   value?: SettingValue | null;
+}
+export interface BindingCandidatesRead {
+  source?: DeploymentRef | null;
+  consumer: BindingConsumer;
+  import: string;
+  includePackages: boolean;
+  after?: string | null;
+}
+export interface BindingCandidatesPage {
+  source: DeploymentRef;
+  configuration: {
+    [k: string]: unknown | undefined;
+  };
+  current: Target[];
+  candidates: BindingCandidate[];
+  next?: string | null;
+}
+export interface PackageSettingsRead {
+  source: DeploymentRef;
+  package: PackageRef;
+  path: string[];
+  after?: string | null;
+  changes: SettingChange[];
+}
+export interface PackageSettingsPage {
+  source: DeploymentRef;
+  package: PackageRef;
+  path: string[];
+  fields: SettingField[];
+  next?: string | null;
+  imports: ManagedImport[];
+}
+export interface ManagedImport {
+  name: string;
+  contract: string;
+  cardinality: Cardinality;
+}
+export interface CompositionEdit {
+  expectedRevision: number;
+  edits: CompositionChange[];
 }
 export interface DeploymentDocumentChunk {
   source: DeploymentRef;

@@ -485,6 +485,45 @@ export const projectsContract = component(
     closed: object({}),
   },
 );
+export interface AppEntry {
+  id: string;
+  label: string;
+}
+export interface AppsConfiguration {
+  root: string;
+  entries: AppEntry[];
+}
+export interface AppsProps extends ConnectionsProps {
+  open: boolean;
+  busy: boolean;
+}
+export interface ApplicationPageProps extends ConnectionsProps {
+  open: boolean;
+}
+export const appEntrySchema = object({
+  id: { type: 'string', minLength: 1, maxLength: 96, pattern: '^[A-Za-z0-9._-]+$' },
+  label: { type: 'string', minLength: 1, maxLength: 256 },
+});
+export const appsContract = component(
+  'maka.product.Apps',
+  object({
+    theme: { $ref: '#/$defs/Theme' },
+    locale,
+    open: { type: 'boolean' },
+    busy: { type: 'boolean' },
+  }),
+  { closed: object({}), manage: object({}) },
+);
+// An ordinary product extension point. The kernel has no application-page role.
+export const applicationPageContract = component(
+  'maka.product.ApplicationPage',
+  object({
+    theme: { $ref: '#/$defs/Theme' },
+    locale,
+    open: { type: 'boolean' },
+  }),
+  { closed: object({}) },
+);
 export const importsContract = component(
   'maka.agent.Imports',
   object({

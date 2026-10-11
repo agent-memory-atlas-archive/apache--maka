@@ -29,7 +29,10 @@ use crate::{EventLog, StoreError};
 pub use changes::DeploymentChanges;
 use maka_plugin_core::{
     composition::Input,
-    deployment::{Deployment, DeploymentRef, RemoteObservation, management::ManagedDeployment},
+    deployment::{
+        Deployment, DeploymentRef, RemoteObservation,
+        management::{DeploymentDocument, MAX_DOCUMENT_BYTES, ManagedDeployment},
+    },
     package::{PackageRef, Packages},
     plan::{Plan, RemoteExports},
 };
@@ -42,7 +45,7 @@ use std::{
 
 use uuid::Uuid;
 
-const MAX_JSON: usize = 512 * 1024;
+const MAX_JSON: usize = MAX_DOCUMENT_BYTES;
 const MAX_PACKAGES: usize = 128;
 const MAX_BYTES: usize = 128 * 1024 * 1024;
 
@@ -127,6 +130,23 @@ fn validate(
     }
     Plan::prepare(input, &packages, &remote).map_err(|e| invalid(e.to_string()))
 }
+fn check_document(
+    input: &Input,
+    observations: &[RemoteObservation],
+    packages: Vec<PackageRef>,
+) -> Result<(), StoreError> {
+    // Admission and the paged editor share one document budget, including its
+    // package references. A second, smaller source limit rejects valid products.
+    encode(
+        &DeploymentDocument {
+            input: input.clone(),
+            remote_exports: observations.to_vec(),
+            packages,
+        },
+        MAX_JSON,
+    )
+    .map(|_| ())
+}
 /// Shared deterministic source checks, before any SQL effect. This validates
 /// metadata and immutable bytes; it grants no deployment management authority.
 pub fn validate_application(
@@ -134,8 +154,11 @@ pub fn validate_application(
     observations: &[RemoteObservation],
     bytes: &[Package],
 ) -> Result<(), StoreError> {
-    let encoded = encode(input, MAX_JSON)?;
-    encode(observations, MAX_JSON - encoded.len())?;
+    check_document(
+        input,
+        observations,
+        bytes.iter().map(Package::application_ref).collect(),
+    )?;
     validate(input, observations, bytes).map(|_| ())
 }
 impl EventLog {
@@ -160,6 +183,11 @@ impl EventLog {
         if deployment.is_nil() || expected_revision >= 9_007_199_254_740_991 {
             return Err(invalid("invalid deployment or exhausted revision"));
         }
+        check_document(
+            &input,
+            &observations,
+            bytes.iter().map(Package::application_ref).collect(),
+        )?;
         let encoded = encode(&input, MAX_JSON)?;
         let remote = encode(&observations, MAX_JSON - encoded.len())?;
         validate(&input, &observations, &bytes)?;
@@ -339,16 +367,16 @@ async fn read_metadata(
         },
     };
     let Some(row) = sqlx::query("SELECT revision,
-                CASE WHEN length(CAST(input_json AS BLOB)) + length(CAST(remote_exports_json AS BLOB)) <= 524288 THEN input_json END AS input_json,
-                CASE WHEN length(CAST(input_json AS BLOB)) + length(CAST(remote_exports_json AS BLOB)) <= 524288 THEN remote_exports_json END AS remote_exports_json
-                FROM application_sources WHERE deployment = ? AND revision = ?")
-                .bind(&id).bind(revision as i64).fetch_optional(&mut *connection).await? else { return Ok(None); };
+                CASE WHEN length(CAST(input_json AS BLOB)) + length(CAST(remote_exports_json AS BLOB)) <= ?3 THEN input_json END AS input_json,
+                CASE WHEN length(CAST(input_json AS BLOB)) + length(CAST(remote_exports_json AS BLOB)) <= ?3 THEN remote_exports_json END AS remote_exports_json
+                FROM application_sources WHERE deployment = ?1 AND revision = ?2")
+                .bind(&id).bind(revision as i64).bind(MAX_JSON as i64).fetch_optional(&mut *connection).await? else { return Ok(None); };
     let input_json: String = row
         .try_get::<Option<String>, _>("input_json")?
-        .ok_or_else(|| invalid("application source exceeds 512 KiB"))?;
+        .ok_or_else(|| invalid("application source exceeds document byte limit"))?;
     let remote_json: String = row
         .try_get::<Option<String>, _>("remote_exports_json")?
-        .ok_or_else(|| invalid("application source exceeds 512 KiB"))?;
+        .ok_or_else(|| invalid("application source exceeds document byte limit"))?;
     let input: Input = serde_json::from_str(&input_json)?;
     let observations: Vec<RemoteObservation> = serde_json::from_str(&remote_json)?;
     let reference = DeploymentRef {
@@ -379,6 +407,7 @@ async fn read_metadata(
             .map_err(|error| invalid(error.to_string()))?;
         packages.push(reference);
     }
+    check_document(&input, &observations, packages.clone())?;
     Ok(Some(ManagedDeployment {
         source: Deployment {
             reference,

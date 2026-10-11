@@ -118,7 +118,7 @@ async fn oversized_source_is_rejected_before_materialization() {
         Ok(())
     })).await.unwrap();
     let error = store.load_application(id).await.err().unwrap().to_string();
-    assert!(error.contains("512 KiB"), "{error}");
+    assert!(error.contains("document byte limit"), "{error}");
     assert!(encode(&"x".repeat(MAX_JSON), MAX_JSON).is_err());
     store.close().await.unwrap();
 }

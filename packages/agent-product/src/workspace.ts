@@ -255,9 +255,10 @@ export interface State {
   modelRefreshing: boolean;
   searchOpen: boolean;
   browse: number | null;
-  pages: ('settings' | 'connections' | 'deployment' | 'projects' | 'imports')[];
+  pages: ('settings' | 'connections' | 'deployment' | 'projects' | 'imports' | 'apps')[];
   projectsOpened: boolean;
   importsOpened: boolean;
+  appsOpened: boolean;
   settingsCategory: SettingsCategory;
   sidebar: { open: boolean } | { command: TerminalPaneCommand | null };
   terminals: boolean;
@@ -786,6 +787,7 @@ type RootCommand =
   | 'settings'
   | 'projects-open'
   | 'imports-open'
+  | 'apps-open'
   | 'deployment-open'
   | 'reload'
   | 'stop'
@@ -1032,6 +1034,13 @@ function rootCommands(
         ]
       : []),
     {
+      kind: 'apps-open',
+      id: 'apps-open',
+      label: text.appsTitle,
+      hint: '',
+      disabled: !route || !!state.embedding.fixed,
+    },
+    {
       kind: 'imports-open',
       id: 'imports-open',
       label: text.importsTitle,
@@ -1141,6 +1150,10 @@ function rootCommand(
   else if (kind === 'navigation-toggle') controlSidebar(state, 'toggle');
   else if (kind === 'settings') {
     state.pages = [target === 'tui' ? 'settings' : 'connections'];
+  } else if (kind === 'apps-open') {
+    state.pages = ['apps'];
+    state.appsOpened = true;
+    if (target === 'tui') controlSidebar(state, 'dismiss_transient');
   } else if (kind === 'imports-open') {
     state.pages = ['imports'];
     state.importsOpened = true;
@@ -2327,6 +2340,10 @@ function frame<N extends Node>(
               [
                 ...(!state.embedding.fixed
                   ? [
+                      ui.button('apps-open', text.appsTitle, false, false, {
+                        background: 0,
+                        align: 'start',
+                      }),
                       ui.button('imports-open', text.importsTitle, false, false, {
                         background: 0,
                         align: 'start',
@@ -2621,17 +2638,19 @@ function frame<N extends Node>(
         : '';
   const title = ui.text(
     'title',
-    state.pages.at(-1) === 'imports'
-      ? text.importsTitle
-      : state.pages.at(-1) === 'projects'
-        ? text.projectsTitle
-        : state.pages.at(-1) === 'settings'
-          ? tuiText(locale, 'route-settings')
-          : state.pages.at(-1) === 'connections'
-            ? text.settings
-            : state.pages.at(-1) === 'deployment'
-              ? text.deploymentTitle
-              : (state.selected?.title ?? tuiText(locale, 'route-workspace')),
+    state.pages.at(-1) === 'apps'
+      ? text.appsTitle
+      : state.pages.at(-1) === 'imports'
+        ? text.importsTitle
+        : state.pages.at(-1) === 'projects'
+          ? text.projectsTitle
+          : state.pages.at(-1) === 'settings'
+            ? tuiText(locale, 'route-settings')
+            : state.pages.at(-1) === 'connections'
+              ? text.settings
+              : state.pages.at(-1) === 'deployment'
+                ? text.deploymentTitle
+                : (state.selected?.title ?? tuiText(locale, 'route-workspace')),
     17,
     theme.text,
     650,
@@ -2701,6 +2720,7 @@ function frame<N extends Node>(
                 ...(!state.embedding.fixed
                   ? [
                       ui.button('projects-open', text.projectsTitle),
+                      ui.button('apps-open', text.appsTitle),
                       ui.button('imports-open', text.importsTitle),
                     ]
                   : []),
@@ -3192,6 +3212,21 @@ function frame<N extends Node>(
             ),
           ]
         : []),
+      ...(state.appsOpened
+        ? [
+            presentation.slot(
+              'apps',
+              'apps',
+              {
+                theme,
+                locale,
+                open: state.pages.at(-1) === 'apps',
+                busy: mutationPending(state) || catalogPending(state),
+              },
+              { closed: 'apps-closed', manage: 'apps-manage' },
+            ),
+          ]
+        : []),
       ...(state.importsOpened
         ? [
             presentation.slot(
@@ -3631,6 +3666,7 @@ export function workspace<N extends Node>(
         pages: [],
         projectsOpened: false,
         importsOpened: false,
+        appsOpened: false,
         settingsCategory: 'appearance',
         searchOpen: false,
         browse: null,
@@ -3706,7 +3742,9 @@ export function workspace<N extends Node>(
               Array.isArray(item.pages) &&
               item.pages.length <= 3 &&
               item.pages.every((page) =>
-                ['settings', 'connections', 'deployment', 'projects', 'imports'].includes(page),
+                ['settings', 'connections', 'deployment', 'projects', 'imports', 'apps'].includes(
+                  page,
+                ),
               ) &&
               ['appearance', 'interface', 'models', 'plugins'].includes(item.category)
               ? item
@@ -3715,6 +3753,7 @@ export function workspace<N extends Node>(
         );
         if (restored) {
           state.pages = restored.pages;
+          if (state.pages.includes('apps') && !state.embedding.fixed) state.appsOpened = true;
           if (state.pages.includes('imports') && !state.embedding.fixed) state.importsOpened = true;
           if (state.pages.includes('projects') && !state.embedding.fixed)
             state.projectsOpened = true;
@@ -3977,6 +4016,11 @@ export function workspace<N extends Node>(
               observe(state, actions);
           }
           return frame(presentation, configuredLocale, state, values, actions);
+        }
+        if (input.child === 'apps') {
+          if (input.name === 'closed' && state.pages.at(-1) === 'apps') state.pages.pop();
+          if (input.name === 'manage' && state.pages.at(-1) === 'apps')
+            state.pages.push('deployment');
         }
         if (input.child === 'imports') {
           if (input.name === 'closed' && state.pages.at(-1) === 'imports') state.pages.pop();

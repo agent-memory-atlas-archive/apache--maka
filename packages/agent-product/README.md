@@ -36,6 +36,26 @@ Accepted operations remain with their original owners and are never replayed.
 Package installation does not add bindings or grant capabilities;
 new permissions still require explicit changes to the installation's trusted grants.
 
+## Apps
+
+Open **Apps** from the sidebar or command palette. Install a `.maka-plugin` file,
+choose its app component, fill in its settings and explicitly select its required
+connections. Adding an app commits its instance and the list entry in one original
+source transaction. Existing compatible components can also be added to the list.
+
+Returning to the list retains the open view and its native draft. **Close app**
+releases the view; **Remove from Apps** unlinks the entry while keeping the plugin
+instance and its saved data. Source changes can recreate affected views; persistence
+across those changes or a restart belongs to the app. Uncertain writes query their
+original receipt.
+
+An app exports the ordinary `maka.product.ApplicationPage` component contract
+(`theme`, `locale`, `open`; event `closed`). Declare each capability import explicitly;
+an app receives no Agent or Session binding automatically. The default Apps package's
+`pages` import publishes the complete contract. New executable instances use schema
+forms; new composition-template instances and array membership changes remain in
+advanced composition editing.
+
 ## Standard terminal startup
 
 `maka application launch` opens this ordinary composition with bundled file, process, question and skill tools.

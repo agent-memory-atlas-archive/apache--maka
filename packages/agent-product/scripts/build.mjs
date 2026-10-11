@@ -184,6 +184,7 @@ const specifications = {
       directories: one(own.directoryPickerContract),
       projects: one(own.projectsContract),
       imports: one(own.importsContract),
+      apps: one(own.appsContract),
       details: one(own.sessionDetailsContract),
       terminals: one(own.terminalPanelContract),
       skills: { contract: own.skillLibraryContract, cardinality: { kind: 'optional' } },
@@ -208,6 +209,29 @@ const specifications = {
       },
       ['locale'],
     ),
+  },
+  apps: {
+    contract: own.appsContract,
+    export: 'Apps',
+    module: 'apps',
+    imports: {
+      pages: {
+        contract: own.applicationPageContract,
+        cardinality: { kind: 'many', min: 0, max: 4096 },
+      },
+      management: one(sdk.contracts.deploymentManager),
+      receipts: one(sdk.contracts.receiptReader),
+      history: one(sdk.contracts.callerHistory),
+      reading: one(sdk.contracts.readingArea),
+      input: one(sdk.contracts.textInput),
+      editor: one(sdk.contracts.textarea),
+      reader: one(sdk.contracts.textReader),
+      file: one(sdk.contracts.filePicker),
+    },
+    configuration: own.object({
+      root: own.string,
+      entries: { type: 'array', items: own.appEntrySchema },
+    }),
   },
   'skill-library': {
     contract: own.skillLibraryContract,
@@ -465,6 +489,8 @@ for (const [name, spec] of Object.entries(specifications)) {
       contents = `import {activate as appearance} from '${resolve(root, 'src/theme.ts')}';export function activate(configuration){return appearance(configuration,${target === 'tui'});}`;
     else if (name === 'workspace')
       contents = `import {workspace} from '${resolve(root, 'src/workspace.ts')}';import {workspaceContract} from '${resolve(root, 'src/contracts.ts')}';export let component;export function activate(configuration){component=workspace(presentations.${target},configuration.locale,configuration.terminals === true, configuration.place ?? '', configuration.skills === true);return {Workspace:{kind:'component',contract:workspaceContract,component:['component']}};}`;
+    else if (name === 'apps')
+      contents = `import {apps,activate as exports} from '${resolve(root, 'src/apps.ts')}';export let component;export function activate(configuration){component=apps(presentations.${target},configuration);return exports();}`;
     else if (name === 'workhub-root')
       contents = `import {workhubRoot,activate as exports} from '${resolve(root, 'src/workhub-root.ts')}';export let component;export function activate(configuration){component=workhubRoot(presentations.${target},configuration.locale,configuration.worker);return exports();}`;
     else if (name === 'studio' || name === 'recovery')

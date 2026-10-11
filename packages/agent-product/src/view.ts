@@ -132,7 +132,7 @@ interface Painter<N extends Node> {
 export interface Presentation<N extends Node> {
   readonly target: Target;
   paint(theme: Theme): Painter<N>;
-  slot<P>(key: string, binding: string, props: P, on: Record<string, string>): N;
+  slot<P>(key: string, binding: string, props: P, on: Record<string, string>, member?: number): N;
   reading(
     key: string,
     props: Omit<ReadingProps, 'content'> & { content: N },
@@ -437,14 +437,16 @@ export const presentations: {
   desktop: {
     target: 'desktop',
     paint: desktopPaint,
-    slot: (key, binding, props, on) => ui.desktop.component({ key, binding, props, on }),
+    slot: (key, binding, props, on, member) =>
+      ui.desktop.component({ key, binding, props, on, member }),
     reading: (key, props, on) => ui.desktop.reading({ key, binding: 'reading', props, on }),
     popup: ui.desktop.popup,
   },
   tui: {
     target: 'tui',
     paint: terminalPaint,
-    slot: (key, binding, props, on) => ui.terminal.component({ key, binding, props, on }),
+    slot: (key, binding, props, on, member) =>
+      ui.terminal.component({ key, binding, props, on, member }),
     reading: (key, props, on) => ui.terminal.reading({ key, binding: 'reading', props, on }),
   },
 };

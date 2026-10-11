@@ -29,6 +29,7 @@ use maka_plugin_core::deployment::management::{
 };
 use serde::Deserialize;
 
+mod composition;
 mod settings;
 
 pub const DEPLOYMENT_MANAGER: &str = "maka.application.management";
@@ -463,6 +464,9 @@ impl Handler for Manager {
                 "readDocument" => manager.read_document(input).await,
                 "readSettings" => manager.read_settings(input).await,
                 "configure" => manager.configure(input).await,
+                "bindingCandidates" => manager.binding_candidates(input).await,
+                "packageSettings" => manager.package_settings(input).await,
+                "editComposition" => manager.edit_composition(input).await,
                 "setEnabled" => manager.set_enabled(input).await,
                 "install" => manager.install(input, context).await,
                 "replace" => manager.replace(input, context).await,
