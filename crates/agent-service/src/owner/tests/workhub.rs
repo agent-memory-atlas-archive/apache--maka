@@ -1156,7 +1156,7 @@ async fn coordinator_request(listener: &TcpListener) -> (TcpStream, Value) {
     loop {
         let (mut socket, _) = listener.accept().await.unwrap();
         let input = request(&mut socket).await;
-        assert!(is_coordinator(&input));
+        assert!(is_coordinator(&input), "unexpected model request: {input}");
         let notice = input["messages"]
             .as_array()
             .unwrap()
@@ -1249,7 +1249,19 @@ async fn workhub_control_preserves_stop_resume_and_unknown_originals_without_ret
             assert_eq!(controls["entries"].as_array().unwrap().len(),2);
             // New work must not become the target of an old stop's recovery.
             let later=worker_mutation(&fixture,"send",json!({"sessionId":worker,"message":"Later unrelated work","model":fixture.selection().await})).await;
-            let (mut later_socket,_)=listener.accept().await.unwrap();request(&mut later_socket).await;
+            // The completed resumed task can notify its coordinator before this
+            // unrelated worker request reaches the shared model listener.
+            let mut later_socket=loop {
+                let (mut socket,_)=listener.accept().await.unwrap();
+                let input=request(&mut socket).await;
+                if is_coordinator(&input) {
+                    assert!(input["messages"].as_array().unwrap().iter().rev().find(|message| message["role"] == "user").unwrap()["content"].to_string().contains("Original worker observation:"));
+                    response(&mut socket).await;
+                } else {
+                    assert_eq!(input["messages"].as_array().unwrap().last().unwrap()["content"],"Later unrelated work");
+                    break socket;
+                }
+            };
             assert_eq!(control_turn(&fixture,&listener,&coordinator,json!({"operation":"advance_control","controlId":stopped["controlId"]})).await,stopped);
             let view=query_import(&fixture,"worker","observe",json!({"sessionId":worker})).await;
             assert_eq!(view["run"]["invocationId"],later["invocationId"]);
