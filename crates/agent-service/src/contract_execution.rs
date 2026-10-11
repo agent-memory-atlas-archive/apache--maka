@@ -23,6 +23,25 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentMessageExecutionRead")]
+pub struct MessageExecutionRead {
+    #[schemars(length(min = 1, max = 128))]
+    pub session_id: String,
+    #[schemars(length(min = 1, max = 128))]
+    pub message_id: String,
+}
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "AgentMessageExecution")]
+pub enum MessageExecution {
+    Missing,
+    Pending,
+    Cancelled,
+    Delivered { shared: bool, execution: Execution },
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentExecutionRead")]
 pub struct ExecutionRead {
     #[schemars(length(min = 1, max = 128))]
@@ -30,7 +49,7 @@ pub struct ExecutionRead {
     #[schemars(length(min = 1, max = 128))]
     pub invocation_id: String,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "AgentExecutionResult")]
 pub enum ExecutionResult {
@@ -38,7 +57,7 @@ pub enum ExecutionResult {
     Found { execution: Execution },
 }
 /// Canonical physical execution receipt, independent of the current Session tip.
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentExecution")]
 pub struct Execution {
@@ -50,7 +69,7 @@ pub struct Execution {
     pub high_water: u64,
     pub state: ExecutionState,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[schemars(rename = "AgentExecutionState")]
 pub enum ExecutionState {

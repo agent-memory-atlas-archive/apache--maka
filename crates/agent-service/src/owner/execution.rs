@@ -51,6 +51,36 @@ fn parked(reason: ResumeParkReason) -> ResumeResult {
 }
 
 impl Owner {
+    pub async fn message_execution(
+        &self,
+        input: MessageExecutionRead,
+    ) -> Result<MessageExecution, String> {
+        use maka_event_log::message_resolution::MessageExecution as Stored;
+        self.session(&input.session_id).await?;
+        let receipt = self
+            .store
+            .message_execution(&input.session_id, &input.message_id)
+            .await
+            .map_err(|_| "agent_message_execution_unavailable")?;
+        let (shared, boundary) = match receipt {
+            Stored::Missing => return Ok(MessageExecution::Missing),
+            Stored::Pending => return Ok(MessageExecution::Pending),
+            Stored::Cancelled => return Ok(MessageExecution::Cancelled),
+            Stored::Owned(boundary) => (false, boundary),
+            Stored::Shared(boundary) => (true, boundary),
+        };
+        let exact = self
+            .store
+            .invocation_boundary(&input.session_id, &boundary.invocation.invocation_id)
+            .await
+            .map_err(|_| "agent_message_execution_unavailable")?
+            .ok_or("agent_message_execution_unavailable")?;
+        Ok(MessageExecution::Delivered {
+            shared,
+            execution: project(exact),
+        })
+    }
+
     pub async fn execution(&self, input: ExecutionRead) -> Result<ExecutionResult, String> {
         self.session(&input.session_id).await?;
         let boundary = self
@@ -221,6 +251,8 @@ impl Owner {
         .await
         .map_err(public_error)?;
         let basis = MessageBasis {
+            internal_tools: self.internal_tools.clone(),
+            internal_bindings: self.internal_bindings.clone(),
             // Ordinary Agents retain their existing queue compatibility. A
             // coordinator continuation cannot silently adopt a newer behavior.
             behavior: self

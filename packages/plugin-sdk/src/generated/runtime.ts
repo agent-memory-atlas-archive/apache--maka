@@ -88,6 +88,13 @@ export type RuntimeProtocol =
   | AgentConfiguration
   | WorkHubResolve
   | WorkHubCoordinator
+  | WorkHubConfiguration
+  | WorkHubTaskRead
+  | WorkHubTask
+  | WorkHubTasksRead
+  | WorkHubTasks
+  | AgentMessageExecutionRead
+  | AgentMessageExecution
   | ModelSelection
   | SettingsModelsRead
   | SettingsModelsPage
@@ -1195,6 +1202,63 @@ export type AgentRejection =
   | 'workspace_unavailable'
   | 'session_unavailable'
   | 'closed';
+export type WorkHubTaskStatus =
+  | {
+      kind: 'pending';
+    }
+  | {
+      kind: 'uncertain';
+    }
+  | {
+      kind: 'unavailable';
+    }
+  | {
+      reason: string;
+      kind: 'rejected';
+    }
+  | {
+      sessionId: string;
+      invocationId: string;
+      progress?: AgentExecutionResult | null;
+      kind: 'started';
+    }
+  | {
+      sessionId: string;
+      messageId: string;
+      progress?: AgentMessageExecution | null;
+      kind: 'queued';
+    };
+export type AgentExecutionResult =
+  | {
+      kind: 'missing';
+    }
+  | {
+      execution: AgentExecution;
+      kind: 'found';
+    };
+export type AgentExecutionState =
+  | 'admitted'
+  | 'running'
+  | 'waiting'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+export type AgentMessageExecution =
+  | {
+      kind: 'missing';
+    }
+  | {
+      kind: 'pending';
+    }
+  | {
+      kind: 'cancelled';
+    }
+  | {
+      shared: boolean;
+      execution: AgentExecution;
+      kind: 'delivered';
+    };
 export type SettingsModelsRead =
   | {
       query?: string;
@@ -1983,22 +2047,6 @@ export type AgentMetadataResult =
       reason: AgentRejection;
       kind: 'rejected';
     };
-export type AgentExecutionResult =
-  | {
-      kind: 'missing';
-    }
-  | {
-      execution: AgentExecution;
-      kind: 'found';
-    };
-export type AgentExecutionState =
-  | 'admitted'
-  | 'running'
-  | 'waiting'
-  | 'paused'
-  | 'completed'
-  | 'failed'
-  | 'cancelled';
 export type AgentResumeResult =
   | {
       execution: AgentExecution;
@@ -4334,6 +4382,214 @@ export interface AgentWorkspace {
   directoryIdentity: string;
   identity: string;
 }
+export interface WorkHubConfiguration {
+  agent: AgentConfiguration;
+  /**
+   * Exactly selected imports of Agent services. Native grants are independent.
+   *
+   * @maxItems 8
+   */
+  workers:
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string];
+}
+export interface WorkHubTaskRead {
+  taskId: string;
+}
+export interface WorkHubTask {
+  taskId: string;
+  worker: string;
+  operation: string;
+  status: WorkHubTaskStatus;
+}
+/**
+ * Canonical physical execution receipt, independent of the current Session tip.
+ */
+export interface AgentExecution {
+  sessionId: string;
+  turnId: string;
+  runId: string;
+  invocationId: string;
+  /**
+   * Run-local event count, not the root-global transcript cursor.
+   */
+  highWater: number;
+  state: AgentExecutionState;
+}
+export interface WorkHubTasksRead {
+  after?: string | null;
+}
+export interface WorkHubTasks {
+  /**
+   * @maxItems 16
+   */
+  entries:
+    | []
+    | [WorkHubTaskEntry]
+    | [WorkHubTaskEntry, WorkHubTaskEntry]
+    | [WorkHubTaskEntry, WorkHubTaskEntry, WorkHubTaskEntry]
+    | [WorkHubTaskEntry, WorkHubTaskEntry, WorkHubTaskEntry, WorkHubTaskEntry]
+    | [WorkHubTaskEntry, WorkHubTaskEntry, WorkHubTaskEntry, WorkHubTaskEntry, WorkHubTaskEntry]
+    | [
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+      ]
+    | [
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+      ]
+    | [
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+      ]
+    | [
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+      ]
+    | [
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+      ]
+    | [
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+      ]
+    | [
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+      ]
+    | [
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+      ]
+    | [
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+      ]
+    | [
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+      ]
+    | [
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+        WorkHubTaskEntry,
+      ];
+  after?: string | null;
+}
+export interface WorkHubTaskEntry {
+  taskId: string;
+  worker: string;
+}
+export interface AgentMessageExecutionRead {
+  sessionId: string;
+  messageId: string;
+}
 /**
  * Exact public selection observed by a caller, checked once at run admission.
  */
@@ -4961,20 +5217,6 @@ export interface AgentStop {
 export interface AgentExecutionRead {
   sessionId: string;
   invocationId: string;
-}
-/**
- * Canonical physical execution receipt, independent of the current Session tip.
- */
-export interface AgentExecution {
-  sessionId: string;
-  turnId: string;
-  runId: string;
-  invocationId: string;
-  /**
-   * Run-local event count, not the root-global transcript cursor.
-   */
-  highWater: number;
-  state: AgentExecutionState;
 }
 export interface AgentResume {
   sessionId: string;

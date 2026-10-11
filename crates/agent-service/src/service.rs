@@ -43,6 +43,7 @@ impl Handler for Agent {
         let owner = self.0.clone();
         Box::pin(async move {
             match method.as_str() {
+                "messageExecution" => encode(owner.message_execution(decode(input)?).await?),
                 "list" => encode(catalog_page(&owner, &decode(input)?).await?),
                 "catalog" => {
                     let mut input: List = decode(input)?;

@@ -60,6 +60,10 @@ async fn exact_receipt_resumes_original_input_and_deduplicates_after_prerequisit
         let fixture = Fixture::new(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None).await;
         let session = fixture.create("Resume original").await;
         let source = cancelled(&fixture, &listener, &session).await;
+        let boundary = fixture.store.invocation_boundary(&session,source["invocationId"].as_str().unwrap()).await.unwrap().unwrap().0;
+        let maka_runtime::input::InvocationInput::Message {source_messages,..} = boundary.root_input() else {panic!("original message")};
+        let message = source_messages[0].message.message_id.clone();
+
         let later = fixture.mutation(2, "send", json!({"sessionId":session, "message":"Later separate request", "model":fixture.selection().await}), Uuid::new_v4()).await.unwrap();
         let (mut socket, _) = listener.accept().await.unwrap();
         request(&mut socket).await;
@@ -100,6 +104,11 @@ async fn exact_receipt_resumes_original_input_and_deduplicates_after_prerequisit
         let accepted = serde_json::to_value(accepted).unwrap();
         assert_eq!(accepted["execution"]["invocationId"], execution["invocationId"]);
         assert_eq!(accepted["execution"]["state"], "completed");
+        let delivery = fixture.query("messageExecution",json!({"sessionId":session,"messageId":message})).await.unwrap();
+        assert_eq!(delivery["kind"],"delivered");
+        assert_eq!(delivery["shared"],false);
+        assert_eq!(delivery["execution"],accepted["execution"],"message follows canonical continuation, never later unrelated work");
+
         assert!(tokio::time::timeout(Duration::from_millis(30), listener.accept()).await.is_err(), "no second model request");
         fixture.app.shutdown().await.unwrap();
         fixture.config.shutdown().await.unwrap();

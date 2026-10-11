@@ -104,6 +104,13 @@ impl Policy for Grant {
         &self,
         invocation: maka_runtime_host::application::RecoveryInvocation<'_>,
     ) -> Result<(), String> {
+        if invocation.native_origin.is_some() {
+            return self
+                .1
+                .as_ref()
+                .ok_or("native recovery denied")?
+                .recover(invocation);
+        }
         if self.0.evidence::<bool>(invocation.scope) == Some(&true)
             || self.0.evidence::<CallerGrant>(invocation.scope).is_some()
         {

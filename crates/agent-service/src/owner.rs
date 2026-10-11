@@ -65,6 +65,10 @@ pub(crate) struct SessionConfiguration {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MessageBasis {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    internal_tools: Vec<maka_runtime::tools::ToolDefinition>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    internal_bindings: BTreeMap<String, Option<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     behavior: Option<SystemPrompt>,
     model: crate::model::AcceptedModel,
@@ -96,6 +100,8 @@ pub(crate) struct Owner {
     revision: SourceRevision,
     behavior: Option<SystemPrompt>,
     pub workspace_roots: Vec<workspace::Root>,
+    internal_tools: Vec<maka_runtime::tools::ToolDefinition>,
+    internal_bindings: BTreeMap<String, Option<String>>,
     managed_worktrees: std::path::PathBuf,
     engine: Engine,
     tools: maka_tools::ToolCatalog,
@@ -109,13 +115,23 @@ pub(crate) struct Owner {
 }
 impl Owner {
     pub async fn open(context: NativeContext, input: Value) -> Result<Arc<Self>, String> {
-        Self::open_behavior(context, input, IMPLEMENTATION, None).await
+        Self::open_behavior(
+            context,
+            input,
+            IMPLEMENTATION,
+            None,
+            vec![],
+            BTreeMap::new(),
+        )
+        .await
     }
     pub(crate) async fn open_behavior(
         context: NativeContext,
         input: Value,
         implementation: &'static str,
         prompt: Option<&'static str>,
+        additional: Vec<maka_runtime::tools::ToolRegistration>,
+        internal_bindings: BTreeMap<String, Option<String>>,
     ) -> Result<Arc<Self>, String> {
         if !jsonschema_valid(&input) {
             return Err("agent_configuration_invalid".into());
@@ -123,10 +139,15 @@ impl Owner {
         let settings: Configuration =
             serde_json::from_value(input).map_err(|_| "agent_configuration_invalid")?;
         let persistence = context.persistence().ok_or("agent_requires_persistence")?;
+        let internal_tools = additional
+            .iter()
+            .map(|tool| tool.definition.clone())
+            .collect();
         let (tools, tool_basis) = crate::tools::catalog(
             context.services(),
             persistence.store().clone(),
             &settings.tools,
+            additional,
         )?;
         let root = persistence
             .store()
@@ -197,6 +218,8 @@ impl Owner {
             managed_worktrees,
             revision,
             behavior,
+            internal_tools,
+            internal_bindings,
             permits: Arc::new(Semaphore::new(settings.max_active_runs)),
             upload_capacity: Arc::new(Semaphore::new(1)),
             settings,
@@ -489,6 +512,8 @@ impl Owner {
         )
         .await?;
         let basis = MessageBasis {
+            internal_tools: self.internal_tools.clone(),
+            internal_bindings: self.internal_bindings.clone(),
             behavior: self.behavior.clone(),
             model: source.accepted.clone(),
             workspace: session.configuration.workspace.clone(),

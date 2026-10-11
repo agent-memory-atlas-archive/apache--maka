@@ -56,11 +56,17 @@ pub(crate) fn catalog(
     services: NativeServices,
     store: Arc<EventLog>,
     selected: &[ServiceTool],
+    additional: Vec<ToolRegistration>,
 ) -> Result<(ToolCatalog, Vec<SelectedTool>), String> {
     let mut basis = Vec::new();
     let skill_contract = crate::skills::contract();
-    let tool_names: Arc<Vec<String>> =
-        Arc::new(selected.iter().map(|tool| tool.name.clone()).collect());
+    let tool_names: Arc<Vec<String>> = Arc::new(
+        selected
+            .iter()
+            .map(|tool| tool.name.clone())
+            .chain(additional.iter().map(|tool| tool.definition.name.clone()))
+            .collect(),
+    );
     let registrations = selected
         .iter()
         .map(|selection| {
@@ -162,7 +168,8 @@ pub(crate) fn catalog(
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    let catalog = ToolCatalog::new(registrations).map_err(|_| "agent_tool_catalog_invalid")?;
+    let catalog = ToolCatalog::new(registrations.into_iter().chain(additional))
+        .map_err(|_| "agent_tool_catalog_invalid")?;
     Ok((catalog, basis))
 }
 struct Service {

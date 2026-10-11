@@ -72,7 +72,8 @@ have no projected path. The ordinary product uses it only for native path copyin
 `maka.workhub.api` exports the same `agent` service plus `workhub`
 (`maka.workhub.Coordinator` v1). It owns one ordinary Agent executor with a
 coordinator prompt and a separate stable Session namespace. Use the Agent
-configuration schema and explicitly bind all tools and native grants.
+configuration inside `{agent, workers}`, where `workers` selects at most eight
+explicit Agent import aliases. Bind tools and native grants independently.
 `workhub.coordinator({})` reads the designated coordinator without starting work;
 `workhub.resolve({workspace: directorySelection})` freezes its first creation
 intent and resolves that original Session on subsequent calls. Later workspace
@@ -82,4 +83,21 @@ original directory changed is rejected instead of being redirected. The normal
 Agent export supplies model selection, messages, history, queue, stop and resume;
 its other Sessions do not change the designated coordinator. Behavior is frozen
 with each accepted message, including queued messages restored after activation.
-Task routing, result feedback and the WorkHub product UI are not yet installed.
+Selected workers enable the private `workhub_tasks` coordinator tool: list workers
+and Sessions, route original user text plus a bounded instruction to an existing
+worker Session, and inspect or advance the exact assignment. It freezes source,
+worker binding, child operation and input before dispatch. The existing caller
+intent journal holds the original operation reference; unknown replies never
+cause redispatch, and replacement bindings cannot take over old assignments.
+Read-only `workhub.tasks` returns bounded pages and `workhub.task` reads original
+admission and available canonical progress. Admission is not completion. Queued
+coordinator input also freezes worker bindings; changed bindings fail preparation.
+
+`agent.messageExecution({sessionId, messageId})` resolves pending/cancelled delivery
+or its canonical continuation, including whether delivery shares a Run. It does
+not follow unrelated Session activity or authorize control. Started assignments
+observe their exact invocation. After worker reactivation, original admission can
+still be recovered, but current bindings cannot supply that old task's progress.
+Cancellation reaches the original native cleanup budget; unconfirmed cleanup
+retains Host work and the Root fence. Cross-Session attachment transfer, worker
+creation/control, result feedback and the WorkHub product UI remain unfinished.

@@ -26,6 +26,9 @@ import type {
   AgentResume,
   WorkHubResolve,
   WorkHubCoordinator,
+  WorkHubTask,
+  WorkHubConfiguration,
+  AgentMessageExecutionRead,
   AgentExecutionResult,
   AgentHistoryPage,
   AgentSessionPage,
@@ -541,3 +544,20 @@ function coordinatorSession(value: WorkHubCoordinator): string | null {
 }
 void resolveCoordinator;
 void coordinatorSession;
+
+const messageExecution: AgentMessageExecutionRead = {
+  sessionId: 'worker-session',
+  messageId: 'original-message',
+};
+function taskExecution(task: WorkHubTask): string | null {
+  const status = task.status;
+  if (status.kind === 'started' && status.progress?.kind === 'found')
+    return status.progress.execution.invocationId;
+  if (status.kind === 'queued' && status.progress?.kind === 'delivered')
+    return status.progress.shared ? null : status.progress.execution.invocationId;
+  return null;
+}
+function coordinatorWorkers(configuration: WorkHubConfiguration): string[] {
+  return configuration.workers;
+}
+void [messageExecution, taskExecution, coordinatorWorkers];

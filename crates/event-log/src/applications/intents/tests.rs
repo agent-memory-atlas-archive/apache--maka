@@ -147,6 +147,45 @@ async fn caller_history_keeps_first_source_and_original_owner_across_revisions_a
         .await
         .unwrap();
     assert_eq!(again.intent().caller, first);
+    assert_eq!(
+        store
+            .application_intent(deployment, consumer(), original.operation)
+            .await
+            .unwrap(),
+        Some(a.intent().clone()),
+        "exact read keeps the first caller source after updates"
+    );
+    assert!(
+        store
+            .application_intent(Uuid::new_v4(), consumer(), original.operation)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .application_intent(
+                deployment,
+                InstanceId(vec![Uuid::new_v4()]),
+                original.operation
+            )
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .application_intent(deployment, consumer(), Uuid::new_v4())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .application_intent(deployment, consumer(), Uuid::nil())
+            .await
+            .is_err()
+    );
     assert!(
         matches!(
             store

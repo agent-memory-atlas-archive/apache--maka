@@ -987,6 +987,10 @@ pub fn contract() -> Contract {
                     method::<ExecutionRead, ExecutionResult>(MethodMode::Query),
                 ),
                 (
+                    "messageExecution".into(),
+                    method::<MessageExecutionRead, MessageExecution>(MethodMode::Query),
+                ),
+                (
                     "resume".into(),
                     method::<Resume, ResumeResult>(MethodMode::Mutation),
                 ),

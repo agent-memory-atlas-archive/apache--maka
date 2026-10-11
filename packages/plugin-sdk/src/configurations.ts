@@ -321,6 +321,205 @@ export const configurations = {
       },
     },
   },
+  workhub: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      agent: {
+        $ref: '#/$defs/AgentConfiguration',
+      },
+      workers: {
+        type: 'array',
+        items: {
+          type: 'string',
+        },
+        description: 'Exactly selected imports of Agent services. Native grants are independent.',
+        maxItems: 8,
+        uniqueItems: true,
+      },
+    },
+    required: ['agent', 'workers'],
+    title: 'WorkHubConfiguration',
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    $defs: {
+      AgentConfiguration: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          skillLibrary: {
+            type: ['string', 'null'],
+            description:
+              'Explicit Library import for immutable skill input preparation and metadata.\nThis does not select model tools or confer a service grant.',
+            minLength: 1,
+            maxLength: 256,
+            default: null,
+          },
+          permissions: {
+            $ref: '#/$defs/AgentWorkspacePermissions',
+            description: 'Initial policy within the selected workspace capability.',
+          },
+          workspaceRoots: {
+            type: 'array',
+            items: {
+              $ref: '#/$defs/DirectoryRootSpec',
+            },
+            description:
+              'Installation-published directories, captured without creating workspace markers.',
+            minItems: 1,
+            maxItems: 8,
+          },
+          maxActiveRuns: {
+            type: 'integer',
+            format: 'uint',
+            minimum: 1,
+            maximum: 16,
+          },
+          maxSteps: {
+            type: 'integer',
+            format: 'uint',
+            minimum: 1,
+            maximum: 16,
+          },
+          tools: {
+            type: 'array',
+            items: {
+              $ref: '#/$defs/AgentServiceTool',
+            },
+            description:
+              'Only explicitly selected, frozen application service methods become tools.',
+            maxItems: 128,
+          },
+        },
+        required: ['permissions', 'workspaceRoots', 'maxActiveRuns', 'maxSteps', 'tools'],
+      },
+      AgentWorkspacePermissions: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          access: {
+            $ref: '#/$defs/AgentWorkspaceAccess',
+          },
+          requestPermissions: {
+            type: 'boolean',
+          },
+        },
+        required: ['access', 'requestPermissions'],
+      },
+      AgentWorkspaceAccess: {
+        type: 'string',
+        enum: ['read_only', 'workspace_write'],
+        description:
+          'Access inside the original selected directory; never an ambient filesystem grant.',
+      },
+      DirectoryRootSpec: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          label: {
+            type: 'string',
+          },
+          path: {
+            type: 'string',
+          },
+        },
+        required: ['label', 'path'],
+      },
+      AgentServiceTool: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          input: {
+            $ref: '#/$defs/AgentToolInput',
+            description:
+              'Explicit input projection. Skill tools receive the actual Agent tool names,\noutside model-controlled arguments; this is compatibility data, not authority.',
+            default: 'json',
+          },
+          presentation: {
+            type: ['string', 'null'],
+            description:
+              'Explicit versioned renderer key, frozen with the call; never inferred from its name.',
+            minLength: 1,
+            maxLength: 128,
+            default: null,
+          },
+          title: {
+            anyOf: [
+              {
+                $ref: '#/$defs/DisplayText',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            description:
+              'Display only; the selected name, contract and binding still identify execution.',
+            default: null,
+          },
+          result: {
+            $ref: '#/$defs/AgentToolResult',
+            description:
+              'Explicit model projection; JSON data never implicitly grants image access.',
+          },
+          confirmation: {
+            $ref: '#/$defs/AgentToolConfirmation',
+            description:
+              'Additional user consent for this exact call; service grants remain independent.',
+          },
+          name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+          },
+          description: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 4096,
+          },
+          import: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 256,
+          },
+          method: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 256,
+          },
+        },
+        required: ['result', 'confirmation', 'name', 'description', 'import', 'method'],
+      },
+      AgentToolInput: {
+        type: 'string',
+        enum: ['json', 'skill'],
+      },
+      DisplayText: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          fallback: {
+            type: 'string',
+          },
+          translations: {
+            type: 'object',
+            additionalProperties: {
+              type: 'string',
+            },
+            default: {},
+          },
+        },
+        required: ['fallback'],
+        description: 'Presentation text is distinct from the stable identity used for navigation.',
+      },
+      AgentToolResult: {
+        type: 'string',
+        enum: ['json', 'image'],
+      },
+      AgentToolConfirmation: {
+        type: 'string',
+        enum: ['required', 'preapproved'],
+      },
+    },
+  },
   skillLibrary: {
     type: 'object',
     additionalProperties: false,

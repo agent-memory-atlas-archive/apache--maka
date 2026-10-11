@@ -39,12 +39,25 @@
 
 `maka.workhub.api` 导出同一 `agent` 服务及 `workhub`
 （`maka.workhub.Coordinator` v1），内部复用原 Agent 执行器和生命周期，
-使用固定协调提示与独立稳定 Session namespace。配置仍是 Agent schema，
-工具导入及 native grants 必须显式声明。
+使用固定协调提示与独立稳定 Session namespace。配置为 `{agent, workers}`，
+agent 使用原 Agent schema，workers 最多选择八个显式 Agent import alias；
+工具导入及 native grants 独立声明。
 `workhub.coordinator({})` 只读指定协调会话；
 `workhub.resolve({workspace: directorySelection})` 先冻结首个创建意图，
 并发或重新激活后沿原 operation 身份解析同一会话。后续 workspace 参数不会
 移动已有或待创建的协调器，原目录变化会拒绝创建。普通 Agent export 提供
 模型选择、消息、历史、队列、停止与恢复；其它 Session 不改变指定协调器。
 协调行为随准入消息冻结，跨 activation 的排队消息保留原行为来源。
-任务分派、结果回流及 WorkHub 产品界面尚未接入。
+选择 workers 后，私有 `workhub_tasks` 协调工具可列出 worker 与会话，向已有
+worker 会话路由原用户正文和有界说明，并查询或推进该原任务。派发前持久冻结
+来源、worker binding、子 operation 和完整输入；原 caller intent journal 保存
+完整 operation reference。Unknown 不重发，替换 binding 不接管旧任务。
+只读 `workhub.tasks` 返回有界页，`workhub.task` 读取原接纳回执及可用的规范进度；
+已接纳不代表已完成。排队的协调消息也冻结 worker binding，变化后准备失败。
+
+`agent.messageExecution({sessionId, messageId})` 从消息的规范所有者及延续谱系
+读取 pending/cancelled/delivered，标记共享 Run，不跟随无关的会话最新活动或授予
+控制权限。直接启动的任务读取准确 invocation；worker 重新激活后仍可恢复原接纳
+回执，但新 binding 不读取旧任务进度。取消沿原 native 清理时限处理，未确认清理
+继续持有 Host 工作及 Root fence。跨会话附件转移、新 worker 创建与控制、结果回流
+及 WorkHub 产品界面仍待完成。

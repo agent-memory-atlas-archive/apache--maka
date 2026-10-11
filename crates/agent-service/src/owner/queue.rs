@@ -222,7 +222,10 @@ impl Owner {
     ) -> Result<(RunInput, MessageBasis), String> {
         let basis: MessageBasis = serde_json::from_value(entry.execution.basis.clone())
             .map_err(|_| "agent_message_basis_invalid")?;
-        if basis.tools != self.tool_basis {
+        if basis.tools != self.tool_basis
+            || basis.internal_tools != self.internal_tools
+            || basis.internal_bindings != self.internal_bindings
+        {
             return Err("agent_tools_changed".into());
         }
         let session = self.session(&invocation.session_id).await?;

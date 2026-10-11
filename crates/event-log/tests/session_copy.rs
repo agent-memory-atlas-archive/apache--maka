@@ -688,7 +688,7 @@ async fn copies_own_history_and_files_without_replaying_execution_across_retries
         };
         assert!(after.is_none());
         assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].text, "first\ninput.txt");
+        assert_eq!(chunks[0].text, "first\n↳ input.txt · 5 B");
         assert_eq!(
             chunks[0].attachments[0].storage_ref,
             StorageRef::SessionFile {

@@ -149,6 +149,28 @@ async fn read(
     .transpose()
 }
 impl EventLog {
+    /// Exact caller correlation across source revisions. This is an observation,
+    /// never a dispatch token or permission to retry an absent operation.
+    pub async fn application_intent(
+        &self,
+        deployment: Uuid,
+        consumer: InstanceId,
+        operation: Uuid,
+    ) -> Result<Option<CallerIntent>, StoreError> {
+        let domain = self.application_domain()?;
+        consumer_valid(&consumer)?;
+        if deployment.is_nil() || operation.is_nil() {
+            return Err(invalid("invalid caller intent identity"));
+        }
+        self.connection
+            .run(move |connection| {
+                Box::pin(async move {
+                    read(connection, &domain, deployment, &consumer, operation).await
+                })
+            })
+            .await
+    }
+
     /// Commit the exact original reference before dispatch. An unknown commit gives
     /// no token and cannot authorize sending; lookup only returns observation data.
     pub async fn record_application_intent(
