@@ -14491,6 +14491,30 @@ export const contracts = {
                 oneOf: [
                   {
                     type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      stage: {
+                        $ref: '#/$defs/WorkHubPreparationStage',
+                      },
+                      operation: {
+                        type: 'string',
+                        format: 'uuid',
+                      },
+                      sessionId: {
+                        type: ['string', 'null'],
+                      },
+                      state: {
+                        $ref: '#/$defs/WorkHubPreparationState',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'preparing',
+                      },
+                    },
+                    required: ['kind', 'stage', 'operation', 'state'],
+                  },
+                  {
+                    type: 'object',
                     properties: {
                       kind: {
                         type: 'string',
@@ -14589,6 +14613,117 @@ export const contracts = {
                       },
                     },
                     required: ['kind', 'sessionId', 'messageId'],
+                  },
+                ],
+              },
+              WorkHubPreparationStage: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'create',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      index: {
+                        type: 'integer',
+                        format: 'uint',
+                        minimum: 0,
+                      },
+                      total: {
+                        type: 'integer',
+                        format: 'uint',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'attachment',
+                      },
+                    },
+                    required: ['kind', 'index', 'total'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'delivery',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                ],
+              },
+              WorkHubPreparationState: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'pending',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'unavailable',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'uncertain',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'original_capture_required',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                    description:
+                      'The original resource-bearing call can only be observed, never recaptured.',
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      reason: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'rejected',
+                      },
+                    },
+                    required: ['kind', 'reason'],
                   },
                 ],
               },

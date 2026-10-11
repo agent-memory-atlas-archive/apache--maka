@@ -18,6 +18,7 @@
  */
 
 mod controls;
+mod preparation;
 use super::*;
 use contract::{Task, TaskStatus};
 use futures_util::FutureExt;
@@ -35,6 +36,7 @@ use maka_runtime::{
     },
 };
 use maka_runtime_host::application::{Binding, NativeContext, NativeServices};
+use preparation::{Target, Transfer};
 use schemars::JsonSchema;
 use sha2::{Digest, Sha256};
 use std::{
@@ -103,9 +105,13 @@ enum Input {
         worker: String,
         after: Option<String>,
     },
+    Directories {
+        worker: String,
+        location: crate::contract::Directories,
+    },
     Route {
         worker: String,
-        session_id: String,
+        target: Target,
         note: String,
         model: crate::ModelSelection,
         thinking_level: Option<maka_runtime::execution::ThinkingLevel>,
@@ -130,6 +136,8 @@ struct Assignment {
     binding: String,
     operation: Uuid,
     input: Value,
+    target: Target,
+    attachments: Vec<Transfer>,
 }
 struct Call<'a> {
     worker: &'a str,
@@ -137,6 +145,7 @@ struct Call<'a> {
     operation: Uuid,
     method: &'a str,
     input: &'a Value,
+    attachment: Option<&'a Transfer>,
 }
 enum DispatchObservation {
     Pending,
@@ -183,7 +192,7 @@ pub(super) fn prepare(
         vec![ToolRegistration {
         definition: ToolDefinition {
             provider: None, name: NAME.into(),
-            description: "Coordinate work using the explicitly selected Agent services. List workers and their sessions before routing. Sessions browses the live catalog in ID order, returning display excerpts and an after cursor; pass that cursor unchanged to continue. Changes before the cursor require a fresh browse. Route preserves the original user request and adds your note. Admission is not completion. Inspect the returned taskId after uncertain replies; advance only resumes that same frozen dispatch and never redirects it. Wait observes an admitted task until it completes, needs input, pauses, or becomes unavailable; use it to receive the result during this conversation. Inspect returns bounded original answer pages; continue with its exact cursor. Control freezes stop/resume on that task's observed work; shared delivery cannot control the whole Run. Use controls and inspect_control after a missing reply, or advance_control for the same original operation. A requested stop is not confirmed termination. Attachment transfer and new-worker creation are not yet available.".into(),
+            description: "Coordinate work using the explicitly selected Agent services. List workers and sessions before routing. Directories reads that worker’s published choices; pass complete selections to a new target. Route targets an existing session or creates a new one, transfers the original user attachments, then sends the original text and your note. Creation/upload preparations are not worker execution. Sessions browses the live catalog in ID order, returning display excerpts and an after cursor; pass that cursor unchanged to continue. Changes before the cursor require a fresh browse. Route preserves the original user request and adds your note. Admission is not completion. Inspect the returned taskId after uncertain replies; advance only resumes that same frozen dispatch and never redirects it. Wait observes an admitted task until it completes, needs input, pauses, or becomes unavailable; use it to receive the result during this conversation. Inspect returns bounded original answer pages; continue with its exact cursor. Control freezes stop/resume on that task's observed work; shared delivery cannot control the whole Run. Use controls and inspect_control after a missing reply, or advance_control for the same original operation. A requested stop is not confirmed termination. Preparation receipts stay with the original task. Unknown or an original resource capture requirement never authorizes a new route or recapture.".into(),
             input_schema: schemars::schema_for!(Input).into(), output_schema: None, freeform: None,
         },
         nesting: ToolNesting::DirectOnly, semantics: ToolSemantics::ExclusiveStep,
@@ -363,6 +372,34 @@ impl Hub {
             Input::Workers => Ok(
                 serde_json::json!({"workers":self.tasks.workers.iter().map(|(name,binding)| serde_json::json!({"name":name,"available":binding.is_some()})).collect::<Vec<_>>()}),
             ),
+            Input::Directories { worker, location } => {
+                self.tasks
+                    .workers
+                    .get(&worker)
+                    .and_then(Option::as_ref)
+                    .ok_or("workhub_worker_unavailable")?;
+                let request = self.tasks.services.request(
+                    Identity::Agent {
+                        invocation: context.invocation,
+                        operation_id: Some(context.operation_id),
+                    },
+                    cancellation,
+                )?;
+                self.observe_request(&request, async {
+                    let page = request
+                        .call(
+                            &worker,
+                            0,
+                            "directories".into(),
+                            serde_json::to_value(location)
+                                .map_err(|_| "workhub_directory_invalid")?,
+                            Attachments::default(),
+                        )?
+                        .await?;
+                    preparation::directory_page(page)
+                })
+                .await
+            }
             Input::Sessions { worker, after } => {
                 self.tasks
                     .workers
@@ -395,7 +432,7 @@ impl Hub {
             }
             Input::Route {
                 worker,
-                session_id,
+                target,
                 note,
                 model,
                 thinking_level,
@@ -426,22 +463,16 @@ impl Hub {
                     else {
                         return Err("workhub_source_unavailable".into());
                     };
-                    if content
-                        .attachments
-                        .as_ref()
-                        .is_some_and(|items| !items.is_empty())
-                    {
-                        return Ok(
-                            serde_json::json!({"kind":"rejected","reason":"attachment_transfer_unavailable"}),
-                        );
-                    }
-                    if note.trim().is_empty()
-                        || note.len() > 16 * 1024
-                        || session_id.is_empty()
-                        || session_id.len() > 128
-                    {
+                    target.validate()?;
+                    if note.trim().is_empty() || note.len() > 16 * 1024 {
                         return Err("workhub_route_invalid".into());
                     }
+                    let attachments = self
+                        .transfers(
+                            &context.invocation,
+                            content.attachments.as_deref().unwrap_or_default(),
+                        )
+                        .await?;
                     let original = if source_messages.len() == 1 {
                         &source_messages[0].unprepared_content.text
                     } else {
@@ -461,7 +492,9 @@ impl Hub {
                         worker,
                         binding: binding.execution_basis().into(),
                         operation: child_id(&id),
-                        input: serde_json::json!({"sessionId":session_id,"message":message,"model":model,"thinkingLevel":thinking_level}),
+                        input: serde_json::json!({"message":message,"model":model,"thinkingLevel":thinking_level}),
+                        target,
+                        attachments,
                     };
                     if cancellation.is_cancelled() {
                         return Err("workhub_cancelled".into());
@@ -507,6 +540,10 @@ impl Hub {
             return Ok(current);
         }
         let assignment = self.assignment(id).await?;
+        let delivery = self
+            .delivery(id, &assignment)
+            .await?
+            .ok_or("workhub_delivery_missing")?;
         let request = self.tasks.services.request(
             Identity::Agent {
                 invocation: context.invocation,
@@ -515,10 +552,10 @@ impl Hub {
             cancellation.clone(),
         )?;
         self.observe_request(&request, async {
-            let input = serde_json::json!({"sessionId":assignment.input["sessionId"]});
+            let input = serde_json::json!({"sessionId":delivery.session_id});
             let observed = request.call(&assignment.worker, 0, "observe".into(), input, Attachments::default())?.await?;
             let through = observed["through"].as_u64().ok_or("workhub_observation_invalid")?;
-            let mut subscription = request.subscribe(&assignment.worker, 0, "watch".into(), serde_json::json!({"sessionId":assignment.input["sessionId"],"after":through}), Attachments::default())?.await?;
+            let mut subscription = request.subscribe(&assignment.worker, 0, "watch".into(), serde_json::json!({"sessionId":delivery.session_id,"after":through}), Attachments::default())?.await?;
             loop {
                 // Re-read after admission to cover completion between observe and watch.
                 let current = self.task(id, false, None, cancellation.clone()).await?;
@@ -589,7 +626,7 @@ impl Hub {
         if let Some(recorded) = recorded {
             let reference = recorded.reference;
             let observed = request.recover(reference.clone())?.await?;
-            if observed.is_some() || !advance || !same_binding {
+            if observed.is_some() || !advance || !same_binding || call.attachment.is_some() {
                 return Ok(DispatchObservation::Reply(Box::new(OperationReply {
                     reference,
                     receipt: observed.map_or(Receipt::NotRecorded, |observation| {
@@ -606,6 +643,11 @@ impl Hub {
         if !same_binding {
             return Ok(DispatchObservation::Unavailable);
         }
+        let attachments = if let Some(transfer) = call.attachment {
+            self.transfer_resource(request, transfer).await?
+        } else {
+            maka_runtime_host::application::CallResources::default()
+        };
         Ok(DispatchObservation::Reply(Box::new(
             request
                 .mutate(
@@ -614,7 +656,7 @@ impl Hub {
                     call.method.into(),
                     call.input.clone(),
                     call.operation,
-                    Attachments::default(),
+                    attachments,
                 )?
                 .await?,
         )))
@@ -644,9 +686,16 @@ impl Hub {
             cancellation,
         )?;
         self.observe_request(&request, async {
+            let delivery = match self.prepare_delivery(id, &assignment, &request, advance).await? {
+                Ok(delivery) => delivery,
+                Err(status) => return encode_task(id, &assignment, status),
+            };
+            let mut input = assignment.input.clone();
+            input["sessionId"] = serde_json::json!(delivery.session_id);
+            input["attachments"] = serde_json::json!(delivery.attachments);
             let reply = match self.dispatch(&request, Call {
                 worker: &assignment.worker, binding: &assignment.binding,
-                operation: assignment.operation, method: "send", input: &assignment.input,
+                operation: assignment.operation, method: "send", input: &input, attachment: None,
             }, advance).await? {
                 DispatchObservation::Pending => None,
                 DispatchObservation::Unavailable => return encode_task(id, &assignment, TaskStatus::Unavailable),
@@ -662,13 +711,10 @@ impl Hub {
                         },
                     ..
                 }) => {
-                    if value["sessionId"] != assignment.input["sessionId"] {
+                    if value["sessionId"] != delivery.session_id {
                         return Err("workhub_delivery_invalid".into());
                     }
-                    let session = assignment.input["sessionId"]
-                        .as_str()
-                        .ok_or("workhub_task_invalid")?
-                        .to_owned();
+                    let session = delivery.session_id;
                     match value["kind"].as_str() {
                         Some("started") => TaskStatus::Started {
                             progress: if same_binding {

@@ -210,10 +210,11 @@ impl Hub {
                 } => (progress, Some(message_id)),
                 _ => return Ok(rejected("work_unavailable")),
             };
-            let session = assignment.input["sessionId"]
-                .as_str()
-                .ok_or("workhub_task_invalid")?
-                .to_owned();
+            let session = self
+                .delivery(task, &assignment)
+                .await?
+                .ok_or("workhub_delivery_missing")?
+                .session_id;
             let selection = match progress {
                 Some(crate::contract::Work::Delivered { shared: true, .. }) => {
                     return Ok(rejected("shared_work"));
@@ -336,6 +337,7 @@ impl Hub {
                         operation,
                         method,
                         input: &input,
+                        attachment: None,
                     },
                     advance,
                 )

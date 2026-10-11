@@ -84,9 +84,13 @@ Agent export supplies model selection, messages, history, queue, stop and resume
 its other Sessions do not change the designated coordinator. Behavior is frozen
 with each accepted message, including queued messages restored after activation.
 Selected workers enable the private `workhub_tasks` coordinator tool: list workers
-and Sessions, route original user text plus a bounded instruction to an existing
-worker Session, and inspect or advance the exact assignment. It freezes source,
-worker binding, child operation and input before dispatch. The existing caller
+and Sessions, browse a worker’s published directories, then route original user
+text and attachments plus a bounded instruction to an existing or newly created
+worker Session. `target` selects `{kind: "existing", sessionId}` or
+`{kind: "new", title, workspace: directorySelection}`. Complete selections retain
+directory identity; display excerpts do not authorize paths. Inspect or advance
+the exact assignment, which freezes source, worker binding, target, original
+attachment identities/digests, child operation and input before dispatch. The existing caller
 intent journal holds the original operation reference; unknown replies never
 cause redispatch, and replacement bindings cannot take over old assignments.
 Read-only `workhub.tasks` returns bounded pages and `workhub.task` reads original
@@ -116,6 +120,16 @@ physical termination, and unknown replies never authorize redispatch.
 After worker reactivation, original admission/control receipts can still be
 recovered, but current bindings cannot supply the old task's progress.
 Cancellation reaches the original native cleanup budget; unconfirmed cleanup
-retains Host work and the Root fence. Cross-Session attachment transfer, worker
-creation, feedback after the coordinator ends and the WorkHub product UI remain
-unfinished.
+retains Host work and the Root fence.
+
+Creation and each attachment upload have separate original operation receipts.
+`preparing` exposes their stage and uncertainty without claiming worker admission.
+Uploads read only original user attachments from the coordinator Session, reserve
+Host byte capacity before capture, verify exact metadata and digest, and dispatch
+immutable bytes through the original request Scope. Workers receive their own
+artifact IDs. The concrete Session and attachment IDs are committed before send;
+reads never create, upload or commit delivery. Unknown receipts are observed only.
+Even `NotRecorded` for a journaled resource call requires its original capture:
+`advance` does not recapture bytes or manufacture a replacement operation. That
+state does not prove the original call is finished. Feedback after the coordinator
+ends, external executors and the WorkHub product UI remain unfinished.

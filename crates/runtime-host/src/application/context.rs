@@ -72,7 +72,7 @@ impl Context {
             provider,
             method,
             input,
-            attachments,
+            attachments.into(),
             self.scope.clone(),
             CallKind::Query(reply),
         )?;
@@ -111,7 +111,7 @@ impl Context {
             provider,
             method,
             input,
-            attachments,
+            attachments.into(),
             scope,
             CallKind::Subscription { reply, buffer },
         )?;
@@ -134,7 +134,7 @@ impl Context {
         method: String,
         input: Value,
         operation: Uuid,
-        attachments: Attachments,
+        attachments: impl Into<CallResources>,
     ) -> Result<BoxFuture<'static, Result<OperationReply>>> {
         let (reply, result) = oneshot::channel();
         self.enqueue(
@@ -142,7 +142,7 @@ impl Context {
             provider,
             method,
             input,
-            attachments,
+            attachments.into(),
             self.scope.clone(),
             CallKind::Mutation {
                 operation,
@@ -187,7 +187,7 @@ impl Context {
         provider: usize,
         method: String,
         input: Value,
-        attachments: Attachments,
+        attachments: CallResources,
         scope: Scope,
         kind: CallKind,
     ) -> Result<()> {
@@ -201,18 +201,15 @@ impl Context {
             .ok_or("unknown request import provider")?
             .clone();
         let dispatch = self.dispatch.upgrade().ok_or("Host deployment is closed")?;
-        // Reserve before the first descriptor trait call. A native preparation
-        // panic belongs to this already accepted parent's cleanup facts.
-        let ticket = self.scope.resources.reserve().map_err(|e| e.to_string())?;
-        dispatch.enqueue(
-            binding,
-            method,
-            input,
-            scope,
-            attachments.into(),
-            Some(ticket),
-            kind,
-        )?;
+        attachments.check_scope(&scope)?;
+        // A captured input already owns its original Ticket and reservations.
+        // Local descriptors reserve before their first trait call as before.
+        let ticket = if attachments.captured() {
+            None
+        } else {
+            Some(self.scope.resources.reserve().map_err(|e| e.to_string())?)
+        };
+        dispatch.enqueue(binding, method, input, scope, attachments, ticket, kind)?;
         Ok(())
     }
 }

@@ -82,6 +82,12 @@ pub struct Task {
 )]
 #[schemars(rename = "WorkHubTaskStatus")]
 pub enum TaskStatus {
+    Preparing {
+        stage: PreparationStage,
+        operation: uuid::Uuid,
+        session_id: Option<String>,
+        state: PreparationState,
+    },
     Pending,
     Uncertain,
     Unavailable,
@@ -97,6 +103,28 @@ pub enum TaskStatus {
         session_id: String,
         message_id: String,
         progress: Option<crate::contract::Work>,
+    },
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "WorkHubPreparationStage")]
+pub enum PreparationStage {
+    Create,
+    Attachment { index: usize, total: usize },
+    Delivery,
+}
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "WorkHubPreparationState")]
+pub enum PreparationState {
+    Pending,
+    Unavailable,
+    Uncertain,
+    /// The original resource-bearing call can only be observed, never recaptured.
+    OriginalCaptureRequired,
+    Rejected {
+        reason: String,
     },
 }
 

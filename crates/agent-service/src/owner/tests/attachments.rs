@@ -20,7 +20,7 @@
 use super::*;
 use maka_runtime::artifact::content_digest;
 
-async fn upload(
+pub(super) async fn upload(
     f: &Fixture,
     session: &str,
     name: &str,

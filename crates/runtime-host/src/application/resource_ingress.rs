@@ -101,10 +101,32 @@ impl Client {
         scope: Scope,
         descriptors: BTreeMap<String, ResourceDescriptor>,
     ) -> Result<ResourceCapture> {
-        if self.snapshot().closing
-            || self.dispatch.commands.is_closed()
-            || scope.cancellation.is_cancelled()
-        {
+        if self.snapshot().closing {
+            return Err("Host resource reception is closed".into());
+        }
+        self.dispatch.capture_resources(scope, descriptors)
+    }
+}
+impl Context {
+    /// Native producers reserve the same Host budgets before allocating bytes.
+    /// Captured input remains tied to this exact request Scope, never its descriptor.
+    pub fn capture_resources(
+        &self,
+        descriptors: BTreeMap<String, ResourceDescriptor>,
+    ) -> Result<ResourceCapture> {
+        self.dispatch
+            .upgrade()
+            .ok_or("Host deployment is closed")?
+            .capture_resources(self.scope.clone(), descriptors)
+    }
+}
+impl Dispatch {
+    fn capture_resources(
+        &self,
+        scope: Scope,
+        descriptors: BTreeMap<String, ResourceDescriptor>,
+    ) -> Result<ResourceCapture> {
+        if self.commands.is_closed() || scope.cancellation.is_cancelled() {
             return Err("Host resource reception is closed".into());
         }
         if descriptors.len() > 16 {
@@ -129,19 +151,16 @@ impl Client {
         // Ticket first; every subsequent local drop releases physical custody first.
         let parent = scope.resources.reserve().map_err(|e| e.to_string())?;
         let slot = self
-            .dispatch
             .slots
             .clone()
             .try_acquire_owned()
             .map_err(|_| "Host call capacity exhausted")?;
         let bytes = self
-            .dispatch
             .bytes
             .clone()
             .try_acquire_many_owned(descriptor_size.max(1) as u32)
             .map_err(|_| "Host descriptor budget exhausted")?;
         let resources = self
-            .dispatch
             .resources
             .clone()
             .try_acquire_many_owned(size as u32)
@@ -169,7 +188,7 @@ impl Client {
             bytes,
             resources,
             scope,
-            commands: self.dispatch.commands.clone(),
+            commands: self.commands.clone(),
             parent: Some(parent),
         })
     }

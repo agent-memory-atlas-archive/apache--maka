@@ -145,7 +145,11 @@ payloads and capacity. The final owner rechecks actual descriptors against the
 original reservations before policy admission.
 
 `Client::capture_resources` reserves these same call, JSON and payload budgets
-before allocating immutable transport snapshots. Descriptors preserve nominal
+before allocating immutable transport snapshots. Native producers use
+`Context::capture_resources` (also available through `NativeRequest`) with that
+context’s actual Scope; `Context::mutate` consumes the resulting `CallResources`.
+Both entry points reserve the same Host capacities and retain the original request
+until physical capture or dispatch cleanup completes. Descriptors preserve nominal
 type, length, metadata and byte/UTF-8 encoding; these facts grant no authority.
 Zero-byte receptions still own a call slot. `ResourceCapture::write` accepts only
 contiguous chunks of at most 64 KiB. `finish` requires exact completion, validates

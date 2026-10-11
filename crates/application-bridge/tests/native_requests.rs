@@ -867,3 +867,120 @@ async fn native_requests_preserve_unknown_receipts_and_independent_failed_cleanu
         }
     }
 }
+
+#[tokio::test]
+async fn native_resource_capture_shares_host_budget_and_cannot_cross_request_scope() {
+    use maka_plugins::call::ResourceEncoding;
+    use maka_runtime_host::application::ResourceDescriptor;
+    let (_directory, store) = store().await;
+    let deployment = Uuid::new_v4();
+    let (input, packages) = support::host();
+    store
+        .commit_application(deployment, 0, input, vec![], packages)
+        .await
+        .unwrap();
+    let captured = Arc::new(Mutex::new(None));
+    let jobs = Arc::new(Jobs::default());
+    let policy =
+        Arc::new(PeerPolicy::with_native_grants(vec![grant(support::identity(11), true)]).unwrap());
+    let app = Application::start_from_store(
+        store,
+        deployment,
+        native(jobs.clone(), captured.clone()),
+        policy.issuer(),
+        policy,
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    app.ready().await.unwrap();
+    let services = captured.lock().unwrap().clone().unwrap();
+    let original = request(&services, &jobs);
+    let other = request(&services, &jobs);
+    let descriptors = |length| {
+        BTreeMap::from([(
+            "file".into(),
+            ResourceDescriptor {
+                resource: maka_plugin_core::contract::binary_resource_type(),
+                encoding: ResourceEncoding::Bytes,
+                length,
+                metadata: json!({}),
+            },
+        )])
+    };
+    let receiving = original
+        .capture_resources(descriptors(64 * 1024 * 1024))
+        .unwrap();
+    assert!(
+        other
+            .capture_resources(descriptors(1))
+            .err()
+            .unwrap()
+            .contains("budget exhausted")
+    );
+    assert!(
+        app.client()
+            .capture_resources(other.scope().clone(), descriptors(1))
+            .err()
+            .unwrap()
+            .contains("budget exhausted")
+    );
+    drop(receiving);
+    drop(other.capture_resources(descriptors(1)).unwrap());
+    let foreign = original
+        .capture_resources(BTreeMap::new())
+        .unwrap()
+        .finish()
+        .unwrap();
+    assert!(
+        other
+            .mutate(
+                "business",
+                0,
+                "write".into(),
+                json!({}),
+                Uuid::new_v4(),
+                foreign
+            )
+            .err()
+            .unwrap()
+            .contains("another request Scope")
+    );
+    let resources = original
+        .capture_resources(BTreeMap::new())
+        .unwrap()
+        .finish()
+        .unwrap();
+    let reply = original
+        .mutate(
+            "business",
+            0,
+            "write".into(),
+            json!({}),
+            Uuid::new_v4(),
+            resources,
+        )
+        .unwrap()
+        .await
+        .unwrap();
+    assert!(
+        matches!(reply.receipt, Receipt::Recorded {outcome:OperationOutcome::Returned{ref value},cleanup:maka_plugin_core::operation::OperationCleanup::Confirmed} if value==&json!({"effects":1}))
+    );
+    let recovered = original
+        .recover(reply.reference)
+        .unwrap()
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        Receipt::Recorded {
+            outcome: recovered.outcome,
+            cleanup: recovered.cleanup
+        },
+        reply.receipt
+    );
+    original.finish().await.unwrap();
+    other.finish().await.unwrap();
+    assert!(original.capture_resources(BTreeMap::new()).is_err());
+    app.shutdown().await.unwrap();
+}

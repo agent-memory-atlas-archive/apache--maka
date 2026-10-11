@@ -230,6 +230,9 @@ async fn activate_worker_mode(
                         export: EXPORT.into(),
                         methods: [
                             "list",
+                            "directories",
+                            "create",
+                            "uploadAttachment",
                             "send",
                             "execution",
                             "work",
@@ -664,7 +667,7 @@ async fn workhub_real_model_routes_original_input_and_recovers_child_receipt_wit
         let (mut socket,_)=listener.accept().await.unwrap();
         let initial=request(&mut socket).await;
         assert!(initial["tools"].to_string().contains("workhub_tasks"));
-        task_response(&mut socket,json!({"operation":"route","worker":"worker","sessionId":worker,"note":"Process this assigned work","model":fixture.selection().await})).await;
+        task_response(&mut socket,json!({"operation":"route","worker":"worker","target":{"kind":"existing","sessionId":worker},"note":"Process this assigned work","model":fixture.selection().await})).await;
         let mut worker_calls=0;
         for _ in 0..2 {
             let (mut socket,_)=listener.accept().await.unwrap();
@@ -713,7 +716,7 @@ async fn workhub_routing_to_busy_worker_follows_exact_queued_message_after_later
         let coordinator=ready["session"]["id"].as_str().unwrap().to_owned();
         fixture.send(&coordinator).await.unwrap();
         let (mut socket,_)=listener.accept().await.unwrap();request(&mut socket).await;
-        task_response(&mut socket,json!({"operation":"route","worker":"worker","sessionId":worker,"note":"Queued assignment","model":fixture.selection().await})).await;
+        task_response(&mut socket,json!({"operation":"route","worker":"worker","target":{"kind":"existing","sessionId":worker},"note":"Queued assignment","model":fixture.selection().await})).await;
         let (mut socket,_)=listener.accept().await.unwrap();request(&mut socket).await;response(&mut socket).await;
         let task_id=first_task(&fixture).await;
         let queued=query_import(&fixture,hub::EXPORT,"task",json!({"taskId":task_id})).await;
@@ -747,7 +750,7 @@ async fn workhub_selected_worker_requires_independent_native_dispatch_grant() {
         let coordinator=ready["session"]["id"].as_str().unwrap().to_owned();
         fixture.send(&coordinator).await.unwrap();
         let (mut socket,_)=listener.accept().await.unwrap();request(&mut socket).await;
-        task_response(&mut socket,json!({"operation":"route","worker":"worker","sessionId":worker,"note":"Denied assignment","model":fixture.selection().await})).await;
+        task_response(&mut socket,json!({"operation":"route","worker":"worker","target":{"kind":"existing","sessionId":worker},"note":"Denied assignment","model":fixture.selection().await})).await;
         let (mut socket,_)=listener.accept().await.unwrap();
         let next=request(&mut socket).await;assert!(!next["messages"].to_string().contains("Original user request:"));response(&mut socket).await;
         idle(&fixture,EXPORT,&coordinator).await;
@@ -848,7 +851,7 @@ async fn workhub_unknown_worker_admission_keeps_original_receipt_across_source_u
         let coordinator=ready["session"]["id"].as_str().unwrap().to_owned();
         fixture.send(&coordinator).await.unwrap();
         let (mut socket,_)=listener.accept().await.unwrap();request(&mut socket).await;
-        task_response(&mut socket,json!({"operation":"route","worker":"worker","sessionId":worker,"note":"Executed despite lost reply","model":fixture.selection().await})).await;
+        task_response(&mut socket,json!({"operation":"route","worker":"worker","target":{"kind":"existing","sessionId":worker},"note":"Executed despite lost reply","model":fixture.selection().await})).await;
         let mut effects=0;
         for _ in 0..2 {
             let (mut socket,_)=listener.accept().await.unwrap();let input=request(&mut socket).await;
@@ -884,7 +887,7 @@ async fn workhub_unknown_worker_admission_keeps_original_receipt_across_source_u
 
 #[tokio::test]
 async fn workhub_cancelled_worker_queries_and_mutations_reach_cleanup_budget() {
-    for method in ["list", "send"] {
+    for method in ["list", "send", "uploadAttachment"] {
         tokio::time::timeout(Duration::from_secs(30), async {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let mut fixture = Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
@@ -893,9 +896,12 @@ async fn workhub_cancelled_worker_queries_and_mutations_reach_cleanup_budget() {
             let worker = worker_session(&fixture).await;
             let ready = resolve(&fixture,selection(&fixture).await,Uuid::new_v4()).await;
             let coordinator = ready["session"]["id"].as_str().unwrap().to_owned();
-            let sent = fixture.send(&coordinator).await.unwrap();
+            let sent = if method == "uploadAttachment" {
+                let uploaded=attachments::upload(&fixture,&coordinator,"blocked.txt",b"original bytes",Uuid::new_v4()).await.unwrap();
+                fixture.mutation(2,"send",json!({"sessionId":coordinator,"message":"Transfer original attachment","attachments":[uploaded["attachment"]["id"]],"model":fixture.selection().await}),Uuid::new_v4()).await.unwrap()
+            } else { fixture.send(&coordinator).await.unwrap() };
             let (mut socket,_) = listener.accept().await.unwrap();request(&mut socket).await;
-            task_response(&mut socket, if method == "list" { json!({"operation":"sessions","worker":"worker"}) } else { json!({"operation":"route","worker":"worker","sessionId":worker,"note":"Blocked admission","model":fixture.selection().await}) }).await;
+            task_response(&mut socket, if method == "list" { json!({"operation":"sessions","worker":"worker"}) } else { json!({"operation":"route","worker":"worker","target":{"kind":"existing","sessionId":worker},"note":"Blocked admission","model":fixture.selection().await}) }).await;
             blocked.entered.acquire().await.unwrap().forget();
             fixture.mutation(2,"stop",json!({"sessionId":coordinator,"invocationId":sent["invocationId"]}),Uuid::new_v4()).await.unwrap();
             blocked.cancelled.acquire().await.unwrap().forget();
@@ -987,7 +993,7 @@ async fn active_task(
     fixture.send(&coordinator).await.unwrap();
     let (mut socket, _) = listener.accept().await.unwrap();
     request(&mut socket).await;
-    task_response(&mut socket,json!({"operation":"route","worker":"worker","sessionId":worker,"note":"Original assigned work","model":fixture.selection().await})).await;
+    task_response(&mut socket,json!({"operation":"route","worker":"worker","target":{"kind":"existing","sessionId":worker},"note":"Original assigned work","model":fixture.selection().await})).await;
     let mut running = None;
     for _ in 0..2 {
         let (mut socket, _) = listener.accept().await.unwrap();
@@ -1060,7 +1066,7 @@ async fn workhub_stop_retracts_only_its_pending_message_and_preserves_unrelated_
         let (mut running,_)=listener.accept().await.unwrap();request(&mut running).await;
         let ready=resolve(&fixture,selection(&fixture).await,Uuid::new_v4()).await;
         let coordinator=ready["session"]["id"].as_str().unwrap().to_owned();
-        let queued=control_turn(&fixture,&listener,&coordinator,json!({"operation":"route","worker":"worker","sessionId":worker,"note":"Pending task","model":fixture.selection().await})).await;
+        let queued=control_turn(&fixture,&listener,&coordinator,json!({"operation":"route","worker":"worker","target":{"kind":"existing","sessionId":worker},"note":"Pending task","model":fixture.selection().await})).await;
         assert_eq!(queued["status"]["kind"],"queued");
         let stopped=control_turn(&fixture,&listener,&coordinator,json!({"operation":"control","taskId":queued["taskId"],"action":{"kind":"stop"}})).await;
         assert_eq!(stopped["status"]["outcome"]["kind"],"retract");assert_eq!(stopped["status"]["outcome"]["result"]["kind"],"committed");
@@ -1083,7 +1089,7 @@ async fn workhub_shared_delivery_never_authorizes_stop_of_the_original_worker_ru
         let (mut running,_)=listener.accept().await.unwrap();request(&mut running).await;
         let ready=resolve(&fixture,selection(&fixture).await,Uuid::new_v4()).await;
         let coordinator=ready["session"]["id"].as_str().unwrap().to_owned();
-        let queued=control_turn(&fixture,&listener,&coordinator,json!({"operation":"route","worker":"worker","sessionId":worker,"note":"Shared steering input","model":fixture.selection().await})).await;
+        let queued=control_turn(&fixture,&listener,&coordinator,json!({"operation":"route","worker":"worker","target":{"kind":"existing","sessionId":worker},"note":"Shared steering input","model":fixture.selection().await})).await;
         let queue=query_import(&fixture,"worker","queue",json!({"sessionId":worker})).await;
         let promoted=worker_mutation(&fixture,"editQueue",json!({"sessionId":worker,"expectedRevision":queue["revision"],"edit":{"kind":"promote","messageId":queued["status"]["messageId"]}})).await;
         assert_eq!(promoted["kind"],"committed");
@@ -1165,7 +1171,7 @@ async fn workhub_wait_returns_worker_answer_in_the_routing_turn_and_cancels_only
             let coordinator = ready["session"]["id"].as_str().unwrap();
             let accepted = fixture.send(coordinator).await.unwrap();
             let (mut socket,_) = listener.accept().await.unwrap();request(&mut socket).await;
-            task_response(&mut socket,json!({"operation":"route","worker":"worker","sessionId":worker,"note":"Return the worker result","model":fixture.selection().await})).await;
+            task_response(&mut socket,json!({"operation":"route","worker":"worker","target":{"kind":"existing","sessionId":worker},"note":"Return the worker result","model":fixture.selection().await})).await;
             let mut running = None;
             let mut task = None;
             for _ in 0..2 {
@@ -1200,5 +1206,159 @@ async fn workhub_wait_returns_worker_answer_in_the_routing_turn_and_cancels_only
             idle(&fixture,"worker",&worker).await;
             fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
         }
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn workhub_creates_selected_worker_and_transfers_original_attachment_bytes_before_send() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+        activate_workers(&mut fixture,true,true,true).await;
+        let ready=resolve(&fixture,selection(&fixture).await,Uuid::new_v4()).await;
+        let coordinator=ready["session"]["id"].as_str().unwrap().to_owned();
+        let directories=control_turn(&fixture,&listener,&coordinator,json!({"operation":"directories","worker":"worker","location":{"kind":"roots"}})).await;
+        let directory=directories["roots"][0]["selection"].clone();
+        assert!(directory.is_object());
+        let bytes="original user attachment\n中\0".repeat(6000).into_bytes();
+        let uploaded=attachments::upload(&fixture,&coordinator,"transfer.txt",&bytes,Uuid::new_v4()).await.unwrap();
+        let source=uploaded["attachment"]["id"].as_str().unwrap().to_owned();
+        fixture.mutation(2,"send",json!({"sessionId":coordinator,"message":"Use my attached file","attachments":[source],"model":fixture.selection().await}),Uuid::new_v4()).await.unwrap();
+        let (mut socket,_)=listener.accept().await.unwrap();request(&mut socket).await;
+        task_response(&mut socket,json!({"operation":"route","worker":"worker","target":{"kind":"new","title":"New assigned worker","workspace":directory},"note":"Check the original file","model":fixture.selection().await})).await;
+        let mut dispatched=None;
+        let mut worker_calls=0;
+        for _ in 0..2 {
+            let (mut socket,_)=listener.accept().await.unwrap();let input=request(&mut socket).await;
+            if is_coordinator(&input) {dispatched=Some(tool_value(&input));} else {
+                worker_calls+=1;
+                assert!(input["messages"].to_string().contains("Use my attached file"));
+                assert!(!input["messages"].to_string().contains(&source),"foreign artifact IDs must never be forwarded as worker authority");
+            }
+            response(&mut socket).await;
+        }
+        assert_eq!(worker_calls,1);
+        let task=dispatched.unwrap();assert_eq!(task["status"]["kind"],"started");
+        let worker=task["status"]["sessionId"].as_str().unwrap();
+        idle(&fixture,EXPORT,&coordinator).await;idle(&fixture,"worker",worker).await;
+        let records=fixture.store.list_artifacts(worker,0,10).await.unwrap();assert_eq!(records.records.len(),1);
+        let copied=&records.records[0];assert_ne!(copied.id,source);
+        assert_eq!(copied.session_id,worker);
+        assert_eq!(copied.summary.as_deref(),Some(maka_runtime::artifact::content_digest(&bytes).as_str()));
+        assert_eq!(fixture.store.read_artifact_chunk(worker,&copied.id,0,bytes.len()).await.unwrap().unwrap().bytes,bytes);
+        let records=fixture.store.application_intents(fixture.app.source().unwrap().deployment,id(1),0,128).await.unwrap();
+        assert_eq!(records.iter().map(|row|row.reference.method.as_str()).collect::<Vec<_>>(),vec!["create","uploadAttachment","send"]);
+        assert_eq!(query_import(&fixture,"worker","list",json!({"filter":"all","position":{"kind":"start"}})).await["sessions"].as_array().unwrap().len(),1);
+        let replay=control_turn(&fixture,&listener,&coordinator,json!({"operation":"advance","taskId":task["taskId"]})).await;
+        assert_eq!(replay["status"]["invocationId"],task["status"]["invocationId"]);
+        assert_eq!(fixture.store.list_artifacts(worker,0,10).await.unwrap().records.len(),1);
+        assert!(tokio::time::timeout(Duration::from_millis(30),listener.accept()).await.is_err());
+        activate_workers(&mut fixture,false,true,true).await;
+        let restored=query_import(&fixture,hub::EXPORT,"task",json!({"taskId":task["taskId"]})).await;
+        assert_eq!(restored["status"]["sessionId"],worker);assert_eq!(restored["status"]["invocationId"],task["status"]["invocationId"]);
+        assert!(restored["status"]["progress"].is_null());
+        assert_eq!(fixture.store.application_intents(fixture.app.source().unwrap().deployment,id(1),0,128).await.unwrap().len(),3);
+        fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn workhub_unknown_preparation_never_recreates_or_reuploads_on_advance() {
+    for method in ["create", "uploadAttachment"] {
+        tokio::time::timeout(Duration::from_secs(60), async {
+            let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+            activate_worker_mode(&mut fixture,true,true,true,WorkerBehavior::Lost(method)).await;
+            let ready=resolve(&fixture,selection(&fixture).await,Uuid::new_v4()).await;
+            let coordinator=ready["session"]["id"].as_str().unwrap().to_owned();
+            let roots=query_import(&fixture,"worker","directories",json!({"kind":"roots"})).await;
+            let uploaded=attachments::upload(&fixture,&coordinator,"original.txt",b"original bytes",Uuid::new_v4()).await.unwrap();
+            fixture.mutation(2,"send",json!({"sessionId":coordinator,"message":"Use my attached file","attachments":[uploaded["attachment"]["id"]],"model":fixture.selection().await}),Uuid::new_v4()).await.unwrap();
+            let (mut socket,_)=listener.accept().await.unwrap();request(&mut socket).await;
+            task_response(&mut socket,json!({"operation":"route","worker":"worker","target":{"kind":"new","title":"Frozen preparation","workspace":roots["roots"][0]["selection"]},"note":"Use original input","model":fixture.selection().await})).await;
+            let (mut socket,_)=listener.accept().await.unwrap();let next=request(&mut socket).await;
+            assert!(is_coordinator(&next));let original=tool_value(&next);
+            assert_eq!(original["status"]["kind"],"preparing");
+            assert_eq!(original["status"]["state"]["kind"],"uncertain");
+            response(&mut socket).await;idle(&fixture,EXPORT,&coordinator).await;
+            let sessions=query_import(&fixture,"worker","list",json!({"filter":"all","position":{"kind":"start"}})).await;
+            let sessions=sessions["sessions"].as_array().unwrap();assert_eq!(sessions.len(),1);
+            let worker=sessions[0]["id"].as_str().unwrap().to_owned();
+            let count=usize::from(method=="uploadAttachment");
+            assert_eq!(fixture.store.list_artifacts(&worker,0,10).await.unwrap().records.len(),count);
+            let records=fixture.store.application_intents(fixture.app.source().unwrap().deployment,id(1),0,128).await.unwrap();
+            assert_eq!(records.len(),count+1);assert_eq!(records.last().unwrap().reference.method,method);
+            let reference=records.last().unwrap().reference.clone();
+            activate_workers(&mut fixture,true,true,true).await;
+            assert_eq!(query_import(&fixture,hub::EXPORT,"task",json!({"taskId":original["taskId"]})).await,original);
+            assert_eq!(control_turn(&fixture,&listener,&coordinator,json!({"operation":"advance","taskId":original["taskId"]})).await,original);
+            assert_eq!(fixture.store.list_artifacts(&worker,0,10).await.unwrap().records.len(),count);
+            assert_eq!(fixture.store.application_intents(fixture.app.source().unwrap().deployment,id(1),0,128).await.unwrap().len(),count+1);
+            assert!(matches!(fixture.store.operation_observation(&reference).await.unwrap().unwrap().outcome,OperationOutcome::Unknown {..}));
+            assert!(tokio::time::timeout(Duration::from_millis(30),listener.accept()).await.is_err());
+            fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
+        }).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn workhub_directory_pages_preserve_choices_and_stale_choice_cannot_create() {
+    tokio::time::timeout(Duration::from_secs(90), async {
+        let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+        let names=(0..9).map(|n|format!("project-{n}-{}","长目录".repeat(15))).collect::<Vec<_>>();
+        for name in &names { std::fs::create_dir(fixture.workspace.join(name)).unwrap(); }
+        activate_workers(&mut fixture,true,true,true).await;
+        let ready=resolve(&fixture,selection(&fixture).await,Uuid::new_v4()).await;
+        let coordinator=ready["session"]["id"].as_str().unwrap().to_owned();
+        let roots=control_turn(&fixture,&listener,&coordinator,json!({"operation":"directories","worker":"worker","location":{"kind":"roots"}})).await;
+        let mut after=Value::Null;let mut seen=Vec::new();let mut choice=Value::Null;
+        loop {
+            let page=control_turn(&fixture,&listener,&coordinator,json!({"operation":"directories","worker":"worker","location":{"kind":"children","selection":roots["roots"][0]["selection"],"after":after}})).await;
+            assert!(page.to_string().encode_utf16().count()<=7000);
+            let rows=page["children"].as_array().unwrap();assert!(rows.len()<=4);
+            for row in rows { let name=row["selection"]["segments"][0].as_str().unwrap();seen.push(name.to_owned());assert!(row["nameExcerpt"].as_str().unwrap().len()<name.len());choice=row["selection"].clone(); }
+            after=page["after"].clone();if after.is_null(){break;}
+            assert_eq!(after,seen.last().unwrap().as_str());
+        }
+        assert_eq!(seen,names);
+        let last=names.last().unwrap();
+        std::fs::rename(fixture.workspace.join(last),fixture.workspace.join("moved")).unwrap();
+        std::fs::create_dir(fixture.workspace.join(last)).unwrap();
+        let rejected=control_turn(&fixture,&listener,&coordinator,json!({"operation":"route","worker":"worker","target":{"kind":"new","title":"Stale workspace","workspace":choice},"note":"Cannot use replacement directory","model":fixture.selection().await})).await;
+        assert_eq!(rejected["status"]["kind"],"preparing");assert_eq!(rejected["status"]["state"]["kind"],"rejected");assert_eq!(rejected["status"]["state"]["reason"],"workspace_unavailable");
+        assert!(query_import(&fixture,"worker","list",json!({"filter":"all","position":{"kind":"start"}})).await["sessions"].as_array().unwrap().is_empty());
+        fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn workhub_unrecorded_upload_requires_original_capture_after_sql_recovery() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+        activate_workers(&mut fixture,true,true,true).await;
+        let worker=worker_session(&fixture).await;
+        let ready=resolve(&fixture,selection(&fixture).await,Uuid::new_v4()).await;
+        let coordinator=ready["session"]["id"].as_str().unwrap().to_owned();
+        let uploaded=attachments::upload(&fixture,&coordinator,"original.txt",b"original bytes",Uuid::new_v4()).await.unwrap();
+        let raw=rusqlite::Connection::open(fixture.root.join(maka_event_log::root::ROOT_DATABASE)).unwrap();
+        raw.execute_batch("CREATE TRIGGER hold_upload BEFORE INSERT ON application_operations WHEN json_extract(NEW.request_json,'$.method')='uploadAttachment' BEGIN SELECT RAISE(ABORT, 'fixture reservation unavailable'); END;").unwrap();
+        fixture.mutation(2,"send",json!({"sessionId":coordinator,"message":"Use my file","attachments":[uploaded["attachment"]["id"]],"model":fixture.selection().await}),Uuid::new_v4()).await.unwrap();
+        let (mut socket,_)=listener.accept().await.unwrap();request(&mut socket).await;
+        task_response(&mut socket,json!({"operation":"route","worker":"worker","target":{"kind":"existing","sessionId":worker},"note":"Transfer original bytes","model":fixture.selection().await})).await;
+        let (mut socket,_)=listener.accept().await.unwrap();assert!(is_coordinator(&request(&mut socket).await));response(&mut socket).await;idle(&fixture,EXPORT,&coordinator).await;
+        let task=first_task(&fixture).await;
+        let original=query_import(&fixture,hub::EXPORT,"task",json!({"taskId":task})).await;
+        assert_eq!(original["status"]["state"]["kind"],"original_capture_required");
+        let intents=fixture.store.application_intents(fixture.app.source().unwrap().deployment,id(1),0,128).await.unwrap();assert_eq!(intents.len(),1);
+        let reference=intents[0].reference.clone();assert_eq!(reference.method,"uploadAttachment");assert!(fixture.store.operation_observation(&reference).await.unwrap().is_none());
+        raw.execute_batch("DROP TRIGGER hold_upload;").unwrap();drop(raw);
+        assert_eq!(control_turn(&fixture,&listener,&coordinator,json!({"operation":"advance","taskId":task})).await,original);
+        assert!(fixture.store.operation_observation(&reference).await.unwrap().is_none());
+        assert!(fixture.store.list_artifacts(&worker,0,10).await.unwrap().records.is_empty());
+        assert_eq!(fixture.store.application_intents(fixture.app.source().unwrap().deployment,id(1),0,128).await.unwrap().len(),1);
+        assert!(tokio::time::timeout(Duration::from_millis(30),listener.accept()).await.is_err());
+        fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
     }).await.unwrap();
 }

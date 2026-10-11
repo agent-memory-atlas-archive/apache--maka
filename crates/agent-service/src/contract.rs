@@ -210,7 +210,7 @@ pub struct DirectorySelection {
     #[schemars(with = "String", regex(pattern = "^sha256:[a-f0-9]{64}$"))]
     pub directory_identity: DirectoryIdentity,
 }
-#[derive(Deserialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "AgentDirectories")]
 pub enum Directories {

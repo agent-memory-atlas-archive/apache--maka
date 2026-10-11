@@ -1208,6 +1208,13 @@ export type AgentRejection =
   | 'closed';
 export type WorkHubTaskStatus =
   | {
+      stage: WorkHubPreparationStage;
+      operation: string;
+      sessionId?: string | null;
+      state: WorkHubPreparationState;
+      kind: 'preparing';
+    }
+  | {
       kind: 'pending';
     }
   | {
@@ -1231,6 +1238,35 @@ export type WorkHubTaskStatus =
       messageId: string;
       progress?: AgentWork | null;
       kind: 'queued';
+    };
+export type WorkHubPreparationStage =
+  | {
+      kind: 'create';
+    }
+  | {
+      index: number;
+      total: number;
+      kind: 'attachment';
+    }
+  | {
+      kind: 'delivery';
+    };
+export type WorkHubPreparationState =
+  | {
+      kind: 'pending';
+    }
+  | {
+      kind: 'unavailable';
+    }
+  | {
+      kind: 'uncertain';
+    }
+  | {
+      kind: 'original_capture_required';
+    }
+  | {
+      reason: string;
+      kind: 'rejected';
     };
 export type AgentWork =
   | {
