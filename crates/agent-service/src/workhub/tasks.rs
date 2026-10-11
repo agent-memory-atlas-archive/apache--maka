@@ -98,6 +98,9 @@ enum Input {
         control_id: String,
     },
     Workers,
+    Executors {
+        worker: String,
+    },
     Assignments {
         after: Option<String>,
     },
@@ -113,8 +116,9 @@ enum Input {
         worker: String,
         target: Target,
         note: String,
-        model: crate::ModelSelection,
+        model: Option<crate::ModelSelection>,
         thinking_level: Option<maka_runtime::execution::ThinkingLevel>,
+        executor: Option<crate::executor::Selection>,
     },
     Wait {
         task_id: String,
@@ -127,6 +131,21 @@ enum Input {
         task_id: String,
     },
 }
+#[derive(Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DeliveryMethod {
+    #[default]
+    Send,
+    Execute,
+}
+impl DeliveryMethod {
+    fn method(self) -> &'static str {
+        match self {
+            Self::Send => "send",
+            Self::Execute => "execute",
+        }
+    }
+}
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Assignment {
@@ -135,6 +154,8 @@ struct Assignment {
     worker: String,
     binding: String,
     operation: Uuid,
+    #[serde(default)]
+    delivery: DeliveryMethod,
     input: Value,
     target: Target,
     attachments: Vec<Transfer>,
@@ -192,7 +213,7 @@ pub(super) fn prepare(
         vec![ToolRegistration {
         definition: ToolDefinition {
             provider: None, name: NAME.into(),
-            description: "Coordinate work using the explicitly selected Agent services. List workers and sessions before routing. Directories reads that worker’s published choices; pass complete selections to a new target. Route targets an existing session or creates a new one, transfers the original user attachments, then sends the original text and your note. Creation/upload preparations are not worker execution. Sessions browses the live catalog in ID order, returning display excerpts and an after cursor; pass that cursor unchanged to continue. Changes before the cursor require a fresh browse. Route preserves the original user request and adds your note. Admission is not completion. Inspect the returned taskId after uncertain replies; advance only resumes that same frozen dispatch and never redirects it. Wait observes an admitted task until it completes, needs input, pauses, or becomes unavailable; use it to receive the result during this conversation. Inspect returns bounded original answer pages; continue with its exact cursor. Control freezes stop/resume on that task's observed work; shared delivery cannot control the whole Run. Use controls and inspect_control after a missing reply, or advance_control for the same original operation. A requested stop is not confirmed termination. Preparation receipts stay with the original task. Unknown or an original resource capture requirement never authorizes a new route or recapture.".into(),
+            description: "Coordinate work using the explicitly selected Agent services. List workers and sessions before routing. Executors lists a worker’s explicitly configured service backends; select either model/thinkingLevel or executor/settings when routing, never both. Executor service routing currently accepts text and uses its own model settings; it does not use Host model credentials. Executor tasks cannot resume as native model invocations. Directories reads that worker’s published choices; pass complete selections to a new target. Route targets an existing session or creates a new one, transfers the original user attachments, then sends the original text and your note. Creation/upload preparations are not worker execution. Sessions browses the live catalog in ID order, returning display excerpts and an after cursor; pass that cursor unchanged to continue. Changes before the cursor require a fresh browse. Route preserves the original user request and adds your note. Admission is not completion. Inspect the returned taskId after uncertain replies; advance only resumes that same frozen dispatch and never redirects it. Wait observes an admitted task until it completes, needs input, pauses, or becomes unavailable; use it to receive the result during this conversation. Inspect returns bounded original answer pages; continue with its exact cursor. Control freezes stop/resume on that task's observed work; shared delivery cannot control the whole Run. Use controls and inspect_control after a missing reply, or advance_control for the same original operation. A requested stop is not confirmed termination. Preparation receipts stay with the original task. Unknown or an original resource capture requirement never authorizes a new route or recapture.".into(),
             input_schema: schemars::schema_for!(Input).into(), output_schema: None, freeform: None,
         },
         nesting: ToolNesting::DirectOnly, semantics: ToolSemantics::ExclusiveStep,
@@ -383,6 +404,32 @@ impl Hub {
             Input::Workers => Ok(
                 serde_json::json!({"workers":self.tasks.workers.iter().map(|(name,binding)| serde_json::json!({"name":name,"available":binding.is_some()})).collect::<Vec<_>>()}),
             ),
+            Input::Executors { worker } => {
+                self.tasks
+                    .workers
+                    .get(&worker)
+                    .and_then(Option::as_ref)
+                    .ok_or("workhub_worker_unavailable")?;
+                let request = self.tasks.services.request(
+                    Identity::Agent {
+                        invocation: context.invocation,
+                        operation_id: Some(context.operation_id),
+                    },
+                    cancellation,
+                )?;
+                self.observe_request(&request, async {
+                    request
+                        .call(
+                            &worker,
+                            0,
+                            "executors".into(),
+                            serde_json::json!({}),
+                            Attachments::default(),
+                        )?
+                        .await
+                })
+                .await
+            }
             Input::Directories { worker, location } => {
                 self.tasks
                     .workers
@@ -447,6 +494,7 @@ impl Hub {
                 note,
                 model,
                 thinking_level,
+                executor,
             } => {
                 let id = task_id(&context.invocation, &context.operation_id);
                 // A same-tool replay reads its original decision before today's capabilities.
@@ -478,6 +526,28 @@ impl Hub {
                     if note.trim().is_empty() || note.len() > 16 * 1024 {
                         return Err("workhub_route_invalid".into());
                     }
+                    let (delivery, mut input) = match (model, executor) {
+                        (Some(model), None) => (
+                            DeliveryMethod::Send,
+                            serde_json::json!({"model":model,"thinkingLevel":thinking_level}),
+                        ),
+                        (None, Some(executor)) if thinking_level.is_none() => {
+                            if content
+                                .attachments
+                                .as_ref()
+                                .is_some_and(|files| !files.is_empty())
+                            {
+                                return Ok(
+                                    serde_json::json!({"kind":"rejected","reason":"executor_attachments_unsupported"}),
+                                );
+                            }
+                            (
+                                DeliveryMethod::Execute,
+                                serde_json::json!({"executor":executor}),
+                            )
+                        }
+                        _ => return Err("workhub_execution_selection_invalid".into()),
+                    };
                     let attachments = self
                         .transfers(
                             &context.invocation,
@@ -497,13 +567,15 @@ impl Hub {
                             serde_json::json!({"kind":"rejected","reason":"input_too_large"}),
                         );
                     }
+                    input["message"] = serde_json::json!(message);
                     let assignment = Assignment {
                         source: context.invocation,
                         tool_operation: context.operation_id,
                         worker,
                         binding: binding.execution_basis().into(),
                         operation: child_id(&id),
-                        input: serde_json::json!({"message":message,"model":model,"thinkingLevel":thinking_level}),
+                        delivery,
+                        input,
                         target,
                         attachments,
                     };
@@ -604,7 +676,7 @@ impl Hub {
             || binding.provider().instance() != &original.namespace
             || binding.export() != original.export
             || binding.contract() != &original.contract
-            || original.method != "send"
+            || original.method != assignment.delivery.method()
             || original.operation != assignment.operation
         {
             return Err("workhub_original_source_changed".into());
@@ -753,10 +825,12 @@ impl Hub {
             };
             let mut input = assignment.input.clone();
             input["sessionId"] = serde_json::json!(delivery.session_id);
-            input["attachments"] = serde_json::json!(delivery.attachments);
+            if matches!(assignment.delivery, DeliveryMethod::Send) {
+                input["attachments"] = serde_json::json!(delivery.attachments);
+            }
             let reply = match self.dispatch(&request, Call {
                 worker: &assignment.worker, binding: &assignment.binding,
-                operation: assignment.operation, method: "send", input: &input, attachment: None,
+                operation: assignment.operation, method: assignment.delivery.method(), input: &input, attachment: None,
             }, advance).await? {
                 DispatchObservation::Pending => None,
                 DispatchObservation::Unavailable => return encode_task(id, &assignment, TaskStatus::Unavailable),

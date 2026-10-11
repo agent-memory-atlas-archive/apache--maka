@@ -147,6 +147,14 @@ export const configurations = {
     title: 'AgentConfiguration',
     type: 'object',
     properties: {
+      executors: {
+        description: 'Explicit service backends; discovery does not authorize execution.',
+        type: 'array',
+        items: {
+          $ref: '#/$defs/AgentServiceExecutor',
+        },
+        maxItems: 8,
+      },
       skillLibrary: {
         description:
           'Explicit Library import for immutable skill input preparation and metadata.\nThis does not select model tools or confer a service grant.',
@@ -193,6 +201,22 @@ export const configurations = {
     additionalProperties: false,
     required: ['permissions', 'workspaceRoots', 'maxActiveRuns', 'maxSteps', 'tools'],
     $defs: {
+      AgentServiceExecutor: {
+        type: 'object',
+        properties: {
+          name: {
+            type: 'string',
+            pattern: '^[a-zA-Z][a-zA-Z0-9._:-]{0,127}$',
+          },
+          import: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 256,
+          },
+        },
+        additionalProperties: false,
+        required: ['name', 'import'],
+      },
       AgentWorkspacePermissions: {
         type: 'object',
         properties: {
@@ -346,6 +370,14 @@ export const configurations = {
         type: 'object',
         additionalProperties: false,
         properties: {
+          executors: {
+            type: 'array',
+            items: {
+              $ref: '#/$defs/AgentServiceExecutor',
+            },
+            description: 'Explicit service backends; discovery does not authorize execution.',
+            maxItems: 8,
+          },
           skillLibrary: {
             type: ['string', 'null'],
             description:
@@ -391,6 +423,22 @@ export const configurations = {
           },
         },
         required: ['permissions', 'workspaceRoots', 'maxActiveRuns', 'maxSteps', 'tools'],
+      },
+      AgentServiceExecutor: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          name: {
+            type: 'string',
+            pattern: '^[a-zA-Z][a-zA-Z0-9._:-]{0,127}$',
+          },
+          import: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 256,
+          },
+        },
+        required: ['name', 'import'],
       },
       AgentWorkspacePermissions: {
         type: 'object',

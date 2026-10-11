@@ -271,3 +271,27 @@ UI activate 返回带 component 或 value kind 的 `UiExport`。value 通过普�
 Agent 图片工具使用生成的 `AgentToolImageFrame` 契约及 `result: "image"`，声明为不带输入资源的订阅。逐块 `await emit`：`mimeType`／`totalBytes` 恒定，`offset` 连续，`data` 为带 padding 的 Base64；每块解码后固定 32768 字节，最后一块为正数余量。支持 PNG、JPEG、GIF、WebP，总量 1–5242880 字节、每边 1–2000 像素。全部发送后返回 `{ kind: "complete" }`；将 complete 作为事件发送、仅 EOF、失败返回、取消或未确认清理均不能发布图片。Agent 校验实际字节并写入原不可变工具产物，路径／产物 ID／类似图片的 JSON 不提供权限。JSON 工具须显式选择 `result: "json"`，结果仍按 JSON 处理。
 
 终端 `ui.terminal.contextMenu` 在 `background` 对象旁提供可见的「⋯」入口，支持右击与 Shift+F10。菜单 `content` 使用普通按钮，方向键选择，Esc 或外部点击关闭，接受操作后返回原焦点。可选 `copy_selection_label` 只在打开手势捕获到有界原生选区时提供复制项，实际复制仍要求物理操作。原生视图的命名输入上限为 256，保留 64 个子 slot、1 MiB 回调和编译时限。
+
+### Agent Executor 服务
+
+`contracts.executor` 是只有 `execute` mutation 的普通 Host 服务。`ExecutorExecute`
+包含原 invocation、conversation key、正文、工作区路径、指令及后端自己的模型／思考设置。
+这些字段只描述工作，不授予文件、进程或其它服务权限；相应 import 和 grant 必须独立声明。
+实际工作与资源结算后才能返回 `ExecutorOutcome`。当前契约只传递文本输入与最终结果，尚未包含
+流式事件或附件资源。
+
+包 manifest 声明该 export（JavaScript 入口必须包含 realm），普通 `activate` 返回
+`{ executor: { contract: contracts.executor, service: ['backend'] } }`，导出的 `backend.execute`
+接收 `ExecutorExecute`，返回例如 `{ status: 'completed', text: input.message }`。
+
+消费方原生 Agent 显式声明匹配契约的 import，并配置
+`executors: [{ name: "external", import: "backend" }]`；组合将 `backend` 绑定到实际 provider，
+另行授予该 Agent origin/consumer 对该 provider 的 `execute` 与 recovery。
+`agent.executors({})` 仅列出配置名称，实际运行使用
+`agent.execute({ sessionId, message, executor: { executor: "external", settings: { model: "provider-model" } } })`。
+它复用原 Session、队列、stop、work 和历史，不读取 Host 模型凭据；后端自己解释模型设置。
+替换执行 binding 不能消费原排队输入，不确定结果不重发，也不能当成原生模型 invocation 恢复。
+WorkHub 可发现后端，并在 `route` 中以 executor 选择替代 model/thinkingLevel。
+
+默认 composer 目前仍展示 Host 模型。Executor 选择通过显式服务或 WorkHub 操作完成；普通产品
+来源需要另行声明 provider、Agent import 和后端 grant。

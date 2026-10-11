@@ -40,6 +40,10 @@ pub use permissions::*;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentConfiguration")]
 pub struct Configuration {
+    /// Explicit service backends; discovery does not authorize execution.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 8))]
+    pub executors: Vec<crate::executor::ServiceExecutor>,
     /// Explicit Library import for immutable skill input preparation and metadata.
     /// This does not select model tools or confer a service grant.
     #[serde(default)]
@@ -312,6 +316,26 @@ pub struct Send {
     pub session_id: String,
     #[schemars(length(max = 65536))]
     pub message: String,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "AgentExecutorsRead")]
+pub struct ExecutorsRead {}
+#[derive(Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "AgentExecutors")]
+pub struct Executors {
+    pub executors: Vec<String>,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentExecute")]
+pub struct Execute {
+    #[schemars(length(min = 1, max = 128))]
+    pub session_id: String,
+    #[schemars(length(min = 1, max = 65536))]
+    pub message: String,
+    pub executor: crate::executor::Selection,
 }
 #[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -971,6 +995,14 @@ pub fn contract() -> Contract {
                 (
                     "send".into(),
                     method::<Send, SendResult>(MethodMode::Mutation),
+                ),
+                (
+                    "execute".into(),
+                    method::<Execute, SendResult>(MethodMode::Mutation),
+                ),
+                (
+                    "executors".into(),
+                    method::<ExecutorsRead, Executors>(MethodMode::Query),
                 ),
                 (
                     "uploadAttachment".into(),

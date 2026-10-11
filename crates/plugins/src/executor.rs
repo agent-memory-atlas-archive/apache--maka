@@ -203,8 +203,9 @@ pub struct Request {
     pub settings: maka_runtime::executor::Settings,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "ExecutorOutcome")]
 pub enum Outcome {
     Completed {
         text: String,
@@ -220,7 +221,7 @@ pub enum Outcome {
     },
 }
 impl Outcome {
-    fn validate(&self) -> Result<(), Error> {
+    pub fn validate(&self) -> Result<(), Error> {
         let size = serde_json::to_vec(self)
             .map_err(|error| Error::Invalid(error.to_string()))?
             .len();
@@ -233,6 +234,8 @@ impl Outcome {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("executor outcome is unknown")]
+    Unknown,
     #[error("executor registration retired")]
     Retired,
     #[error("execution cancelled by caller")]
@@ -268,6 +271,23 @@ pub trait Provider: Send + Sync {
     ) -> BoxFuture<'static, Result<Outcome, Error>>;
 }
 
+/// Captures one admitted backend without requiring a contribution registry.
+/// Implementations must retain the original execution owner through settlement.
+pub trait Backend: Send {
+    fn admit_execution(&self, request: Request) -> Result<Admitted, Error>;
+}
+pub struct Admitted {
+    pub identity: maka_runtime::executor::Binding,
+    pub execution: Box<dyn Execution>,
+}
+pub trait Execution: Send {
+    fn execute(
+        self: Box<Self>,
+        output: Arc<dyn OutputSink>,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Settlement>;
+}
+
 pub struct Executor {
     pub id: ExecutorId,
     pub display_name: String,
@@ -289,7 +309,33 @@ pub struct Call {
 /// Keep this value alive until the Host commits the terminal execution fact.
 pub struct Settlement {
     pub result: Result<Outcome, Error>,
-    _lease: CallGuard,
+    _lease: Box<dyn Send>,
+}
+impl Settlement {
+    /// The actual admitted owner remains alive through the canonical terminal commit.
+    pub fn new(result: Result<Outcome, Error>, owner: impl Send + 'static) -> Self {
+        Self {
+            result,
+            _lease: Box::new(owner),
+        }
+    }
+}
+impl Backend for Binding {
+    fn admit_execution(&self, request: Request) -> Result<Admitted, Error> {
+        Ok(Admitted {
+            identity: self.identity()?,
+            execution: Box::new(self.admit(request)?),
+        })
+    }
+}
+impl Execution for Call {
+    fn execute(
+        self: Box<Self>,
+        output: Arc<dyn OutputSink>,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Settlement> {
+        Box::pin((*self).execute(output, cancellation))
+    }
 }
 impl Binding {
     pub fn capabilities(&self) -> Capabilities {
@@ -416,7 +462,7 @@ impl Call {
             Err(error) => {
                 return Settlement {
                     result: Err(error),
-                    _lease: self.lease,
+                    _lease: Box::new(self.lease),
                 };
             }
         };
@@ -441,7 +487,7 @@ impl Call {
             result = &mut execution => {
                 return Settlement {
                     result: settle(result, &self.contribution.owner, scope.as_ref()).await,
-                    _lease: self.lease,
+                    _lease: Box::new(self.lease),
                 };
             },
         };
@@ -466,7 +512,7 @@ impl Call {
         drop(closed);
         Settlement {
             result: settle(result, &self.contribution.owner, scope.as_ref()).await,
-            _lease: self.lease,
+            _lease: Box::new(self.lease),
         }
     }
 }

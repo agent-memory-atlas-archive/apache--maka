@@ -107,6 +107,7 @@ impl Owner {
         mut message: MessageInput,
         workspace: Option<crate::contract::Workspace>,
         parent: &Scope,
+        tools: Vec<String>,
     ) -> Result<Input, String> {
         if parent.cancellation.is_cancelled() {
             return Err("agent_skill_call_cancelled".into());
@@ -136,11 +137,19 @@ impl Owner {
         };
         let input = serde_json::to_value(SkillToolRequest {
             workspace,
-            tools: self.tools.names(),
+            tools: tools.clone(),
             input: Prepare {
                 message: message.text.clone(),
-                load_tool: library.load.clone(),
-                search_tool: library.search.clone(),
+                load_tool: library
+                    .load
+                    .as_ref()
+                    .filter(|name| tools.contains(name))
+                    .cloned(),
+                search_tool: library
+                    .search
+                    .as_ref()
+                    .filter(|name| tools.contains(name))
+                    .cloned(),
             },
         })
         .map_err(|_| "agent_skill_preparation_invalid")?;
@@ -195,7 +204,7 @@ impl Owner {
             .map_err(|_| "agent_skill_preparation_invalid")?;
         if record.metadata_prompt.len() > 18_000
             || !maka_runtime::archive::valid_projection_digest(&record.revision)
-            || required_tools.iter().any(|tool| !self.tools.contains(tool))
+            || required_tools.iter().any(|tool| !tools.contains(tool))
         {
             return Err("agent_skill_preparation_invalid".into());
         }

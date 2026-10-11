@@ -340,3 +340,45 @@ the complete 1 MiB input before copying. Values and frames share the 32 MiB reta
 budget. No old untagged activation shape is accepted.
 
 Selected Agent image tools use the generated `AgentToolImageFrame` contract and `result: "image"`. Declare a subscription without input resources. Emit `chunk` frames with invariant `mimeType`/`totalBytes`, contiguous `offset`, and padded Base64 `data`: exactly 32768 decoded bytes per chunk except the final positive remainder. Supported MIME types are PNG, JPEG, GIF and WebP; total bytes must be 1–5242880 and dimensions 1–2000. Await each `emit` and return `{ kind: "complete" }` only after all chunks. Emitting `complete`, EOF, a failed return, cancellation or unconfirmed cleanup cannot publish an image. The Agent verifies owned bytes and creates the original immutable tool artifact; paths, artifact IDs and image-shaped JSON never grant image access. JSON tools explicitly select `result: "json"` and remain JSON.
+
+### Agent Executor services
+
+`contracts.executor` is an ordinary Host service with one `execute` mutation. Its
+`ExecutorExecute` input carries text, the original invocation, conversation key,
+workspace path, instructions and executor-owned model/thinking settings. These
+values describe work; filesystem, process and other service access still require
+independent bindings and grants. Return `ExecutorOutcome` only after the actual
+work has settled. The current contract carries a final result and text input;
+streaming events and attachment resources are not part of this version.
+
+Declare the service export in the package manifest, including the JavaScript
+realm, and publish it normally:
+
+```ts
+import { contracts, type ExecutorExecute, type ExecutorOutcome } from '@maka-agent/plugin-sdk';
+
+export function activate() {
+  return { executor: { contract: contracts.executor, service: ['backend'] } };
+}
+export const backend = {
+  execute(input: ExecutorExecute): ExecutorOutcome {
+    return { status: 'completed', text: input.message };
+  },
+};
+```
+
+The consuming native Agent declares an import with that exact contract and selects
+it with `executors: [{ name: "external", import: "backend" }]`. The composition
+binds `backend` to the provider export and explicitly grants the Agent origin and
+consumer `execute` plus recovery on that provider. `agent.executors({})` lists
+configured names; `agent.execute({ sessionId, message, executor: { executor:
+"external", settings: { model: "provider-model" } } })` uses the same original
+Session, queue, stop, work and history as model runs, without Host model credentials.
+The provider's settings belong to that provider. Replaced execution bindings cannot
+consume already queued input, and an uncertain external result is never resent or
+resumed as a native model invocation. WorkHub exposes executor discovery and accepts
+this selection in `route` instead of `model`/`thinkingLevel`.
+
+The stock composer still presents Host models. Executor selection is currently an
+explicit service/WorkHub operation; the ordinary product source must declare the
+additional provider, Agent import and backend grant.

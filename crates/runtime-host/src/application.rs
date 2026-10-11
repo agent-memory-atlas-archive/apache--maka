@@ -210,10 +210,20 @@ impl Service {
 }
 
 /// An exact consumer/provider registration, never a JSON or name-based grant.
-pub struct Binding(Capability<Service>, Arc<Contract>, Arc<str>);
+pub struct Binding(
+    Capability<Service>,
+    Arc<Contract>,
+    Arc<str>,
+    Arc<maka_plugin_core::package::PackageRef>,
+);
 impl Clone for Binding {
     fn clone(&self) -> Self {
-        Self(self.0.clone(), self.1.clone(), self.2.clone())
+        Self(
+            self.0.clone(),
+            self.1.clone(),
+            self.2.clone(),
+            self.3.clone(),
+        )
     }
 }
 impl Binding {
@@ -229,6 +239,10 @@ impl Binding {
     }
     pub fn provider(&self) -> &Activation {
         self.0.provider()
+    }
+    /// Immutable package of the captured registration, not the desired provider.
+    pub fn package(&self) -> &maka_plugin_core::package::PackageRef {
+        &self.3
     }
     /// Comparable execution facts of this exact provider and captured imports.
     /// Opaque native providers make this digest activation-specific. Equality

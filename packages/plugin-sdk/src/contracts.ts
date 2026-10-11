@@ -7760,6 +7760,344 @@ export const contracts = {
           },
           resources: {},
         },
+        execute: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentExecute',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              message: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 65536,
+              },
+              executor: {
+                $ref: '#/$defs/AgentExecutorSelection',
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'message', 'executor'],
+            $defs: {
+              AgentExecutorSelection: {
+                type: 'object',
+                properties: {
+                  executor: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  settings: {
+                    $ref: '#/$defs/ExecutorSettings',
+                  },
+                },
+                additionalProperties: false,
+                required: ['executor', 'settings'],
+              },
+              ExecutorSettings: {
+                description:
+                  'Executor-owned model selection, independent of Host model connections.',
+                type: 'object',
+                properties: {
+                  model: {
+                    type: ['string', 'null'],
+                  },
+                  thinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentSendResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  reason: {
+                    $ref: '#/$defs/AgentSkillInputRejection',
+                  },
+                  skills: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/SkillInvocationResult',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'sessionId', 'reason'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  invocationId: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'started',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'sessionId', 'invocationId'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  messageId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'queued',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'sessionId', 'messageId', 'revision'],
+              },
+            ],
+            $defs: {
+              AgentSkillInputRejection: {
+                type: 'string',
+                enum: ['skills_unavailable', 'input_too_large'],
+              },
+              SkillInvocationResult: {
+                type: 'object',
+                properties: {
+                  loaded: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/LoadedSkill',
+                    },
+                  },
+                  failed: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/SkillInvocationFailure',
+                    },
+                  },
+                  receipts: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/SkillInvocationReceipt',
+                    },
+                  },
+                },
+                additionalProperties: false,
+                required: ['loaded', 'failed', 'receipts'],
+              },
+              LoadedSkill: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['id', 'name'],
+              },
+              SkillInvocationFailure: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/SkillRequestFailure',
+                  },
+                  {
+                    $ref: '#/$defs/SkillOverflowFailure',
+                  },
+                ],
+              },
+              SkillRequestFailure: {
+                type: 'object',
+                properties: {
+                  request: {
+                    type: 'string',
+                  },
+                  reason: {
+                    $ref: '#/$defs/SkillFailureReason',
+                  },
+                },
+                additionalProperties: false,
+                required: ['request', 'reason'],
+              },
+              SkillFailureReason: {
+                type: 'string',
+                enum: [
+                  'invalid_name',
+                  'not_found',
+                  'disabled',
+                  'host_incompatible',
+                  'resolution_failed',
+                ],
+              },
+              SkillOverflowFailure: {
+                type: 'object',
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/TooManyRequests',
+                  },
+                  requestLimit: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['reason', 'requestLimit'],
+              },
+              TooManyRequests: {
+                type: 'string',
+                enum: ['too_many_requests'],
+              },
+              SkillInvocationReceipt: {
+                description:
+                  'Boolean wire discriminants are validated here, not retained as mutable\nbusiness fields beside a contradictory enum variant.',
+                anyOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      invocation: {
+                        $ref: '#/$defs/SkillInvocationMode',
+                      },
+                      request: {
+                        type: 'string',
+                      },
+                      success: {
+                        const: true,
+                      },
+                      ref: {
+                        type: 'string',
+                      },
+                      id: {
+                        type: 'string',
+                      },
+                      name: {
+                        type: 'string',
+                      },
+                      scope: {
+                        $ref: '#/$defs/SkillScope',
+                      },
+                      source: {
+                        $ref: '#/$defs/SkillSource',
+                      },
+                      truncated: {
+                        type: 'boolean',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: [
+                      'invocation',
+                      'request',
+                      'success',
+                      'ref',
+                      'id',
+                      'name',
+                      'scope',
+                      'source',
+                      'truncated',
+                    ],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      invocation: {
+                        $ref: '#/$defs/SkillInvocationMode',
+                      },
+                      request: {
+                        type: 'string',
+                      },
+                      success: {
+                        const: false,
+                      },
+                      reason: {
+                        $ref: '#/$defs/SkillFailureReason',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['invocation', 'request', 'success', 'reason'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      invocation: {
+                        const: 'explicit',
+                      },
+                      success: {
+                        const: false,
+                      },
+                      reason: {
+                        $ref: '#/$defs/TooManyRequests',
+                      },
+                      requestLimit: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['invocation', 'success', 'reason', 'requestLimit'],
+                  },
+                ],
+              },
+              SkillInvocationMode: {
+                type: 'string',
+                enum: ['explicit', 'model_tool'],
+              },
+              SkillScope: {
+                type: 'string',
+                enum: ['project', 'workspace', 'user', 'custom'],
+              },
+              SkillSource: {
+                type: 'string',
+                enum: ['maka', 'agents', 'legacy', 'custom'],
+              },
+            },
+          },
+          resources: {},
+        },
         execution: {
           mode: 'query',
           input: {
@@ -7855,6 +8193,31 @@ export const contracts = {
                 ],
               },
             },
+          },
+          resources: {},
+        },
+        executors: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentExecutorsRead',
+            type: 'object',
+            additionalProperties: false,
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentExecutors',
+            type: 'object',
+            properties: {
+              executors: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                },
+              },
+            },
+            additionalProperties: false,
+            required: ['executors'],
           },
           resources: {},
         },
@@ -13595,6 +13958,155 @@ export const contracts = {
                 required: ['invocationId', 'offset'],
               },
             },
+          },
+          resources: {},
+        },
+      },
+    },
+  },
+  executor: {
+    name: 'maka.agent.Executor',
+    version: 1,
+    transport: 'remote',
+    interface: {
+      kind: 'service',
+      methods: {
+        execute: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'ExecutorExecute',
+            description:
+              'Observation and text only; no path, invocation or conversation key is authority.',
+            type: 'object',
+            properties: {
+              invocation: {
+                $ref: '#/$defs/Invocation',
+              },
+              conversationKey: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 256,
+              },
+              message: {
+                type: 'string',
+                maxLength: 65536,
+              },
+              cwd: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 4096,
+              },
+              instructions: {
+                type: ['string', 'null'],
+                maxLength: 65536,
+              },
+              settings: {
+                $ref: '#/$defs/ExecutorSettings',
+              },
+            },
+            additionalProperties: false,
+            required: ['invocation', 'conversationKey', 'message', 'cwd', 'settings'],
+            $defs: {
+              Invocation: {
+                type: 'object',
+                properties: {
+                  session_id: {
+                    type: 'string',
+                  },
+                  turn_id: {
+                    type: 'string',
+                  },
+                  run_id: {
+                    type: 'string',
+                  },
+                  invocation_id: {
+                    type: 'string',
+                  },
+                },
+                required: ['session_id', 'turn_id', 'run_id', 'invocation_id'],
+              },
+              ExecutorSettings: {
+                description:
+                  'Executor-owned model selection, independent of Host model connections.',
+                type: 'object',
+                properties: {
+                  model: {
+                    type: ['string', 'null'],
+                  },
+                  thinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'ExecutorOutcome',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  text: {
+                    type: 'string',
+                  },
+                  status: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['status', 'text'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  reason: {
+                    type: ['string', 'null'],
+                  },
+                  status: {
+                    type: 'string',
+                    const: 'cancelled',
+                  },
+                },
+                additionalProperties: false,
+                required: ['status'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  code: {
+                    type: ['string', 'null'],
+                  },
+                  recoverable: {
+                    type: 'boolean',
+                    default: false,
+                  },
+                  status: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['status', 'message'],
+              },
+            ],
           },
           resources: {},
         },

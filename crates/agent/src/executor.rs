@@ -20,7 +20,7 @@
 mod output;
 
 use crate::{Engine, RunError, RunningInvocation};
-use maka_plugins::executor::{Binding, Error, Outcome, Request};
+use maka_plugins::executor::{Backend, Binding, Error, Outcome, Request};
 use maka_runtime::{
     event::{EventWrite, Fact, InvocationInput, InvocationOutcome, RuntimeEvent},
     execution::InvocationConfiguration,
@@ -29,18 +29,18 @@ use maka_runtime::{
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
-pub struct ExecutorInput {
+pub struct ExecutorInput<B = Binding> {
     pub request: Request,
-    pub binding: Binding,
+    pub binding: B,
     pub configuration: InvocationConfiguration,
     pub request_fingerprint: Option<String>,
     pub source_messages: Vec<RootSourceMessage>,
 }
 
 impl Engine {
-    pub async fn start_executor(
+    pub async fn start_executor<B: Backend>(
         &self,
-        input: ExecutorInput,
+        input: ExecutorInput<B>,
         cancellation: CancellationToken,
     ) -> Result<RunningInvocation, RunError> {
         if input.configuration.model.is_some() || input.configuration.cwd != input.request.cwd {
@@ -50,14 +50,15 @@ impl Engine {
         }
         maka_runtime::message::validate_sources(&input.request.content, &input.source_messages)
             .map_err(|reason| RunError::InvalidInput(reason.into()))?;
-        let identity = input
+        let admitted = input
             .binding
-            .identity()
+            .admit_execution(input.request.clone())
             .map_err(|error| RunError::InvalidInput(error.to_string()))?;
-        let call = input
-            .binding
-            .admit(input.request.clone())
-            .map_err(|error| RunError::InvalidInput(error.to_string()))?;
+        let identity = admitted.identity;
+        identity
+            .validate()
+            .map_err(|error| RunError::InvalidInput(error.into()))?;
+        let call = admitted.execution;
         let inner = self.0.clone();
         self.start_owned(
             input.request.invocation.clone(),
@@ -95,7 +96,12 @@ impl Engine {
                     invocation.clone(),
                     cancellation.clone(),
                 ));
-                let settlement = call.execute(output.clone(), cancellation.clone()).await;
+                let mut settlement = call.execute(output.clone(), cancellation.clone()).await;
+                if let Ok(value) = &settlement.result
+                    && let Err(error) = value.validate()
+                {
+                    settlement.result = Err(error);
+                }
                 if matches!(&settlement.result, Err(Error::CleanupUnconfirmed)) {
                     crate::cleanup::unconfirmed();
                 }
@@ -136,7 +142,7 @@ fn outcome(result: &Result<Outcome, Error>, cancellation: &CancellationToken) ->
             message: Some(message.chars().take(2048).collect()),
         },
         Err(error) => InvocationOutcome::Failed {
-            class: if matches!(error, Error::CleanupUnconfirmed) {
+            class: if matches!(error, Error::CleanupUnconfirmed | Error::Unknown) {
                 "outcome_unknown"
             } else {
                 "executor"

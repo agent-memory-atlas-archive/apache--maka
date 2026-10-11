@@ -29,6 +29,10 @@ use maka_event_log::{
 };
 use maka_runtime::event::{EventWrite, Fact, InvocationInput, InvocationOutcome, RuntimeEvent};
 
+pub(super) enum PreparedRun {
+    Model(Box<RunInput>),
+    Executor(Box<maka_agent::ExecutorInput<crate::executor::Backend>>),
+}
 impl Owner {
     pub fn activated(self: &Arc<Self>) {
         let owner = self.clone();
@@ -194,7 +198,6 @@ impl Owner {
             }
             let result = match prepared {
                 Ok((input, basis)) => self
-                    .engine
                     .start(input, self.stop.child_token())
                     .await
                     .map(|running| (running, basis)),
@@ -219,13 +222,19 @@ impl Owner {
         &self,
         entry: &PendingMessageAdmission,
         invocation: Invocation,
-    ) -> Result<(RunInput, MessageBasis), String> {
+    ) -> Result<(PreparedRun, MessageBasis), String> {
         let basis: MessageBasis = serde_json::from_value(entry.execution.basis.clone())
             .map_err(|_| "agent_message_basis_invalid")?;
-        if basis.tools != self.tool_basis
-            || basis.internal_tools != self.internal_tools
-            || basis.internal_bindings != self.internal_bindings
-        {
+        let tools_changed = if basis.executor.is_some() {
+            !basis.tools.is_empty()
+                || !basis.internal_tools.is_empty()
+                || !basis.internal_bindings.is_empty()
+        } else {
+            basis.tools != self.tool_basis
+                || basis.internal_tools != self.internal_tools
+                || basis.internal_bindings != self.internal_bindings
+        };
+        if tools_changed {
             return Err("agent_tools_changed".into());
         }
         let session = self.session(&invocation.session_id).await?;
@@ -238,36 +247,36 @@ impl Owner {
             &self.managed_worktrees,
         )
         .await?;
-        let source = crate::model::Source::restore(
-            self.configuration.clone(),
-            self.credentials.clone(),
-            basis.model.clone(),
-            invocation.session_id.clone(),
-            self.revision.clone(),
-        )
-        .map_err(public_error)?;
-        let prepared = source.capture().await.map_err(public_error)?;
+        let backend = match (&basis.model, &basis.executor) {
+            (Some(model), None) => {
+                let source = crate::model::Source::restore(
+                    self.configuration.clone(),
+                    self.credentials.clone(),
+                    model.clone(),
+                    invocation.session_id.clone(),
+                    self.revision.clone(),
+                )
+                .map_err(public_error)?;
+                let prepared = source.capture().await.map_err(public_error)?;
+                PreparedBackend::Model(Box::new((source, prepared)))
+            }
+            (None, Some(executor)) => {
+                PreparedBackend::Executor(Box::new(self.executors.restore(executor)?))
+            }
+            _ => return Err("agent_message_basis_invalid".into()),
+        };
         Ok((
-            self.input(
-                invocation,
-                source,
-                prepared,
-                basis.clone(),
-                entry.source.clone(),
-            )?,
+            self.input(invocation, backend, basis.clone(), entry.source.clone())?,
             basis,
         ))
     }
     pub(super) fn input(
         &self,
         invocation: Invocation,
-        source: crate::model::Source,
-        prepared: maka_agent::PreparedModel,
+        backend: PreparedBackend,
         basis: MessageBasis,
         delivered: RootSourceMessage,
-    ) -> Result<RunInput, String> {
-        let binding = source.accepted.binding.clone();
-        let thinking_level = source.accepted.thinking_level;
+    ) -> Result<PreparedRun, String> {
         let system_prompt = match (
             basis.behavior.clone(),
             skills::prompt(&delivered.message.content)?,
@@ -283,40 +292,79 @@ impl Owner {
         if let Some(prompt) = &system_prompt {
             prompt.validate().map_err(|_| "agent_prompt_invalid")?;
         }
-        Ok(RunInput {
-            model_source: Some(Arc::new(source)),
-            model_revision: Some(prepared.revision),
-            provider_id: prepared.provider_id,
-            invocation,
-            context: prepared.context,
-            provider: prepared.provider,
-            provider_options: prepared.options,
-            main_output_limit: prepared.main_output_limit,
-            supports_vision: prepared.supports_vision,
-            request_fingerprint: Some(basis.fingerprint),
-            configuration: InvocationConfiguration {
-                cwd: basis.workspace.path,
-                workspace_identity: Some(basis.workspace.identity),
-                workspace_origin: WorkspaceOrigin::Selected,
-                sandbox_mode: SandboxMode::WorkspaceWrite,
-                approval_policy: ApprovalPolicy::OnRequest,
-                boundary_revision: 0,
-                collaboration_mode: CollaborationMode::Agent,
-                orchestration_mode: BehaviorId::default(),
-                tool_mode: ToolMode::Direct,
-                model: Some(binding),
-                thinking_level,
-                system_prompt,
-                tool_composition: None,
-            },
-            work: RunWork::Message {
-                message: delivered.message.content.clone(),
-                source_messages: vec![delivered],
-                tools: self.tools.clone(),
-                max_steps: basis.max_steps,
-                allow_prior_unknown: false,
-            },
+        let mut configuration = InvocationConfiguration {
+            cwd: basis.workspace.path,
+            workspace_identity: Some(basis.workspace.identity),
+            workspace_origin: WorkspaceOrigin::Selected,
+            sandbox_mode: SandboxMode::WorkspaceWrite,
+            approval_policy: ApprovalPolicy::OnRequest,
+            boundary_revision: 0,
+            collaboration_mode: CollaborationMode::Agent,
+            orchestration_mode: BehaviorId::default(),
+            tool_mode: ToolMode::Direct,
+            model: None,
+            thinking_level: None,
+            system_prompt,
+            tool_composition: None,
+        };
+        Ok(match backend {
+            PreparedBackend::Model(value) => {
+                let (source, prepared) = *value;
+                configuration.model = Some(source.accepted.binding.clone());
+                configuration.thinking_level = source.accepted.thinking_level;
+                PreparedRun::Model(Box::new(RunInput {
+                    model_source: Some(Arc::new(source)),
+                    model_revision: Some(prepared.revision),
+                    provider_id: prepared.provider_id,
+                    invocation,
+                    context: prepared.context,
+                    provider: prepared.provider,
+                    provider_options: prepared.options,
+                    main_output_limit: prepared.main_output_limit,
+                    supports_vision: prepared.supports_vision,
+                    request_fingerprint: Some(basis.fingerprint),
+                    configuration,
+                    work: RunWork::Message {
+                        message: delivered.message.content.clone(),
+                        source_messages: vec![delivered],
+                        tools: self.tools.clone(),
+                        max_steps: basis.max_steps,
+                        allow_prior_unknown: false,
+                    },
+                }))
+            }
+            PreparedBackend::Executor(backend) => {
+                let backend = *backend;
+                configuration.thinking_level = backend.accepted.selection.settings.thinking_level;
+                PreparedRun::Executor(Box::new(maka_agent::ExecutorInput {
+                    request: maka_plugins::executor::Request {
+                        conversation_key: invocation.session_id.clone(),
+                        invocation,
+                        content: delivered.message.content.clone(),
+                        cwd: configuration.cwd.clone(),
+                        instructions: configuration
+                            .system_prompt
+                            .as_ref()
+                            .map(|prompt| prompt.text.clone()),
+                        settings: backend.accepted.selection.settings.clone(),
+                    },
+                    binding: backend,
+                    configuration,
+                    request_fingerprint: Some(basis.fingerprint),
+                    source_messages: vec![delivered],
+                }))
+            }
         })
+    }
+    pub(super) async fn start(
+        &self,
+        input: PreparedRun,
+        cancellation: CancellationToken,
+    ) -> Result<RunningInvocation, RunError> {
+        match input {
+            PreparedRun::Model(input) => self.engine.start(*input, cancellation).await,
+            PreparedRun::Executor(input) => self.engine.start_executor(*input, cancellation).await,
+        }
     }
     async fn fail_pending(
         &self,

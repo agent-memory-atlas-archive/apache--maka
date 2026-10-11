@@ -856,7 +856,12 @@ impl Owner {
                 let digest = maka_runtime::artifact::content_digest(
                     &serde_json::to_vec(&basis).map_err(|e| e.to_string())?,
                 );
-                Ok(Binding(capability, Arc::new(contract), digest.into()))
+                Ok(Binding(
+                    capability,
+                    Arc::new(contract),
+                    digest.into(),
+                    Arc::new(instance.package.clone()),
+                ))
             })
             .collect()
     }

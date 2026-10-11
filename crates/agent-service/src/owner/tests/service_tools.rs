@@ -1436,7 +1436,7 @@ async fn admitted_message_keeps_original_model_workspace_and_dispatcher_when_ope
     let encoded = serde_json::to_string(&queued[0].execution.basis).unwrap();
     assert!(!encoded.contains("private-fixture-key"));
     let basis: MessageBasis = serde_json::from_str(&encoded).unwrap();
-    assert_eq!(basis.model.binding.model, "fixture-model");
+    assert_eq!(basis.model.unwrap().binding.model, "fixture-model");
     assert_eq!(
         basis.workspace,
         fixture
@@ -1566,10 +1566,11 @@ async fn skill_preparation_parent_scope_owns_work_after_observer_loss_and_cleanu
             let parent = scope(&f.issuer, true);
             let owner = f.owner.clone();
             let request = parent.clone();
-            let observer =
-                tokio::spawn(
-                    async move { owner.prepare_skills("hello".into(), None, &request).await },
-                );
+            let observer = tokio::spawn(async move {
+                owner
+                    .prepare_skills("hello".into(), None, &request, vec![])
+                    .await
+            });
             probe.entered.acquire().await.unwrap().forget();
             observer.abort();
             assert!(matches!(observer.await, Err(error) if error.is_cancelled()));

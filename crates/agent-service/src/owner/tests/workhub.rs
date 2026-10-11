@@ -35,6 +35,7 @@ async fn activate_worker_mode(
     granted: bool,
     behavior: WorkerBehavior,
 ) {
+    let external = matches!(behavior, WorkerBehavior::External);
     let denied_query = match &behavior {
         WorkerBehavior::DeniedQuery(method) => Some(*method),
         _ => None,
@@ -67,9 +68,28 @@ async fn activate_worker_mode(
             let base = package(true);
             let mut manifest = base.manifest().clone();
             manifest.id = "worker".into();
+            if external {
+                manifest
+                    .application
+                    .as_mut()
+                    .unwrap()
+                    .entries
+                    .get_mut(&EntryTarget::Host)
+                    .unwrap()
+                    .imports
+                    .insert(
+                        "executor".into(),
+                        Import {
+                            contract: crate::executor::contract(),
+                            cardinality: Cardinality::One,
+                        },
+                    );
+            }
             if !matches!(
                 behavior,
-                WorkerBehavior::Returned | WorkerBehavior::DeniedQuery(_)
+                WorkerBehavior::Returned
+                    | WorkerBehavior::DeniedQuery(_)
+                    | WorkerBehavior::External
             ) {
                 manifest
                     .application
@@ -100,6 +120,19 @@ async fn activate_worker_mode(
             node.configuration
                 .values
                 .insert("maxSteps".into(), json!(2));
+            if external {
+                node.configuration.values.insert(
+                    "executors".into(),
+                    json!([{"name":"external","import":"executor"}]),
+                );
+                node.bindings.insert(
+                    "executor".into(),
+                    vec![Target::Instance {
+                        path: vec!["executor".into()],
+                        export: "executor".into(),
+                    }],
+                );
+            }
             composition.instances.insert("worker".into(), node);
         }
         for package in &mut packages {
@@ -200,6 +233,29 @@ async fn activate_worker_mode(
         if let Some(worker) = worker_package {
             packages.push(worker);
         }
+        if external {
+            let package=Package::new(BTreeMap::from([
+                (MANIFEST_FILE.into(),serde_json::to_vec(&json!({"schemaVersion":2,"id":"fixture-executor","application":{"entries":{"host":{
+                    "implementation":{"kind":"javascript","module":"executor.mjs","realm":"shared"},"configuration":{"type":"object","additionalProperties":false},"imports":{},
+                    "exports":{"executor":{"contract":crate::executor::contract(),"availability":"required"}}
+                }}}})).unwrap()),
+                ("executor.mjs".into(),format!(r#"export function activate(){{return {{executor:{{contract:{},service:['backend']}}}};}} export const backend={{execute(input){{return {{status:'completed',text:input.message+' / '+input.settings.model}};}}}};"#,serde_json::to_string(&crate::executor::contract()).unwrap()).into_bytes())
+            ])).unwrap();
+            composition.instances.insert(
+                "executor".into(),
+                Node {
+                    key: Uuid::from_u128(22),
+                    package: package.application_ref().into(),
+                    use_package: PackageUse::Entry,
+                    configuration: Default::default(),
+                    parameters: Default::default(),
+                    disabled: false,
+                    overrides: vec![],
+                    bindings: BTreeMap::new(),
+                },
+            );
+            packages.push(package);
+        }
         fixture
             .store
             .commit_application(
@@ -216,7 +272,7 @@ async fn activate_worker_mode(
     crate::provide(&mut native).unwrap();
     if !matches!(
         behavior,
-        WorkerBehavior::Returned | WorkerBehavior::DeniedQuery(_)
+        WorkerBehavior::Returned | WorkerBehavior::DeniedQuery(_) | WorkerBehavior::External
     ) {
         native
             .insert(
@@ -253,7 +309,7 @@ async fn activate_worker_mode(
             fixture.issuer.clone(),
             Some(Arc::new(
                 maka_application_bridge::transport::PeerPolicy::with_native_grants(if granted {
-                    vec![maka_application_bridge::transport::NativeGrant {
+                    let mut grants = vec![maka_application_bridge::transport::NativeGrant {
                         origin: id(1),
                         consumer: id(1),
                         provider: id(21),
@@ -265,6 +321,8 @@ async fn activate_worker_mode(
                             "uploadAttachment",
                             "send",
                             "execution",
+                            "execute",
+                            "executors",
                             "work",
                             "observe",
                             "watch",
@@ -278,7 +336,18 @@ async fn activate_worker_mode(
                         .map(str::to_owned)
                         .collect(),
                         recovery: true,
-                    }]
+                    }];
+                    if external {
+                        grants.push(maka_application_bridge::transport::NativeGrant {
+                            origin: id(21),
+                            consumer: id(21),
+                            provider: id(22),
+                            export: "executor".into(),
+                            methods: ["execute".into()].into_iter().collect(),
+                            recovery: true,
+                        });
+                    }
+                    grants
                 } else {
                     vec![]
                 })
@@ -836,6 +905,7 @@ async fn workhub_selected_worker_requires_independent_native_dispatch_grant() {
 #[derive(Clone)]
 enum WorkerBehavior {
     Returned,
+    External,
     OneSessionPage,
     DeniedQuery(&'static str),
     ChangedObservation(&'static str, Arc<std::sync::atomic::AtomicUsize>),
@@ -1436,6 +1506,40 @@ async fn workhub_unrecorded_upload_requires_original_capture_after_sql_recovery(
         assert!(fixture.store.operation_observation(&reference).await.unwrap().is_none());
         assert!(fixture.store.list_artifacts(&worker,0,10).await.unwrap().records.is_empty());
         assert_eq!(fixture.store.application_intents(fixture.app.source().unwrap().deployment,id(1),0,128).await.unwrap().len(),1);
+        assert!(tokio::time::timeout(Duration::from_millis(30),listener.accept()).await.is_err());
+        fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn workhub_routes_external_executor_through_original_worker_and_recovers_answer() {
+    tokio::time::timeout(Duration::from_secs(60),async {
+        let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+        activate_worker_mode(&mut fixture,true,true,true,WorkerBehavior::External).await;
+        let worker=worker_session(&fixture).await;
+        let ready=resolve(&fixture,selection(&fixture).await,Uuid::new_v4()).await;
+        let coordinator=ready["session"]["id"].as_str().unwrap().to_owned();
+        let choices=control_turn(&fixture,&listener,&coordinator,json!({"operation":"executors","worker":"worker"})).await;
+        assert_eq!(choices,json!({"executors":["external"]}));
+        fixture.send(&coordinator).await.unwrap();
+        let (mut socket,_)=listener.accept().await.unwrap();request(&mut socket).await;
+        task_response(&mut socket,json!({"operation":"route","worker":"worker","target":{"kind":"existing","sessionId":worker},"note":"Use the explicit backend","executor":{"executor":"external","settings":{"model":"external-model"}}})).await;
+        let (mut socket,_)=listener.accept().await.unwrap();let input=request(&mut socket).await;
+        assert!(is_coordinator(&input));let routed=tool_value(&input);assert_eq!(routed["status"]["kind"],"started");
+        task_response(&mut socket,json!({"operation":"wait","taskId":routed["taskId"]})).await;
+        let (mut socket,_)=listener.accept().await.unwrap();let input=request(&mut socket).await;
+        let task=tool_value(&input);assert_eq!(task["status"]["progress"]["execution"]["state"],"completed");
+        let answer=task["status"]["progress"]["answer"]["text"].as_str().unwrap();
+        assert!(answer.contains("Original user request:\nHello"));assert!(answer.contains("Use the explicit backend"));assert!(answer.ends_with(" / external-model"));
+        response(&mut socket).await;idle(&fixture,EXPORT,&coordinator).await;idle(&fixture,"worker",&worker).await;
+        for (consumer,provider) in [(1,21),(21,22)] {
+            let intents=fixture.store.application_intents(fixture.app.source().unwrap().deployment,id(consumer),0,128).await.unwrap();
+            assert_eq!(intents.len(),1);assert_eq!(intents[0].reference.namespace,id(provider));assert_eq!(intents[0].reference.method,"execute");
+        }
+        activate_worker_mode(&mut fixture,false,true,true,WorkerBehavior::External).await;
+        let restored=query_import(&fixture,hub::EXPORT,"task",json!({"taskId":task["taskId"]})).await;
+        assert_eq!(restored,task);
         assert!(tokio::time::timeout(Duration::from_millis(30),listener.accept()).await.is_err());
         fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
     }).await.unwrap();

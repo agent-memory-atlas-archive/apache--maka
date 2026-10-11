@@ -47,6 +47,8 @@ mod history_search;
 
 #[path = "tests/execution.rs"]
 mod execution;
+#[path = "tests/executor.rs"]
+mod executor;
 
 #[path = "tests/workhub.rs"]
 mod workhub;
@@ -478,6 +480,7 @@ impl Fixture {
             maka_config::oauth::enrollment::LoginCompletion::Committed(_)
         ));
         let mut settings = Configuration {
+            executors: vec![],
             skill_library: tooling
                 .as_ref()
                 .and_then(service_tools::Setup::skill_import),

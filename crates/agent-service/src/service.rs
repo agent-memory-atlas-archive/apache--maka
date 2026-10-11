@@ -401,6 +401,25 @@ impl Handler for Agent {
                     let operation = context.operation().ok_or("agent_mutation_required")?;
                     encode(owner.send(input, operation, context.scope()).await?)
                 }
+                "executors" => {
+                    let _: ExecutorsRead = decode(input)?;
+                    encode(Executors {
+                        executors: owner
+                            .settings
+                            .executors
+                            .iter()
+                            .map(|choice| choice.name.clone())
+                            .collect(),
+                    })
+                }
+                "execute" => {
+                    let operation = context.operation().ok_or("agent_mutation_required")?;
+                    encode(
+                        owner
+                            .execute(decode(input)?, operation, context.scope())
+                            .await?,
+                    )
+                }
                 "execution" => encode(owner.execution(decode(input)?).await?),
                 "resume" => {
                     let operation = context.operation().ok_or("agent_mutation_required")?;

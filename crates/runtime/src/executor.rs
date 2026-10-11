@@ -22,8 +22,9 @@ mod output;
 pub use output::Output;
 
 /// Executor-owned model selection, independent of Host model connections.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "ExecutorSettings")]
 pub struct Settings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,

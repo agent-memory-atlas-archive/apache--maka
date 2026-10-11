@@ -1,0 +1,480 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use super::*;
+use crate::executor;
+use maka_plugin_core::runtime::Published;
+use maka_runtime_host::application::{Context, Handler, NativeOwner};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[derive(Clone, Copy)]
+enum Behavior {
+    Returned,
+    Held,
+    Lost,
+    Unsettled,
+}
+struct Probe {
+    behavior: Behavior,
+    calls: AtomicUsize,
+    entered: Arc<Semaphore>,
+    cancelled: Arc<Semaphore>,
+    release: Arc<Semaphore>,
+}
+impl Probe {
+    fn new(behavior: Behavior) -> Arc<Self> {
+        Arc::new(Self {
+            behavior,
+            calls: AtomicUsize::new(0),
+            entered: Arc::new(Semaphore::new(0)),
+            cancelled: Arc::new(Semaphore::new(0)),
+            release: Arc::new(Semaphore::new(0)),
+        })
+    }
+}
+impl Handler for Probe {
+    fn call(
+        &self,
+        method: String,
+        input: Value,
+        context: Context,
+    ) -> BoxFuture<'static, Result<Value, String>> {
+        assert_eq!(method, "execute");
+        assert!(context.operation().is_some());
+        let Identity::Agent { invocation, .. } = &context.scope().identity else {
+            panic!("native Agent identity required");
+        };
+        assert_eq!(
+            input["invocation"],
+            serde_json::to_value(invocation).unwrap()
+        );
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let (behavior, entered, cancelled, release) = (
+            self.behavior,
+            self.entered.clone(),
+            self.cancelled.clone(),
+            self.release.clone(),
+        );
+        Box::pin(async move {
+            entered.add_permits(1);
+            match behavior {
+                Behavior::Returned => {}
+                Behavior::Lost => return Err("fixture lost executor reply".into()),
+                Behavior::Held => tokio::select! {
+                    permit=release.acquire() => permit.unwrap().forget(),
+                    ()=context.scope().cancellation.cancelled() => return Ok(json!({"status":"cancelled","reason":"stopped"})),
+                },
+                Behavior::Unsettled => {
+                    context.scope().cancellation.cancelled().await;
+                    cancelled.add_permits(1);
+                    release.acquire().await.unwrap().forget();
+                }
+            }
+            Ok(json!({"status":"completed","text":input["message"]}))
+        })
+    }
+}
+impl NativeOwner for Probe {
+    fn close(&self) -> BoxFuture<'static, Result<(), String>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+async fn activate(fixture: &mut Fixture, install: bool, probe: Option<Arc<Probe>>, granted: bool) {
+    let source = fixture.app.source().unwrap().clone();
+    fixture.app.shutdown().await.unwrap();
+    if install {
+        let mut settings = fixture.owner.settings.clone();
+        settings.executors = vec![executor::ServiceExecutor {
+            name: "external".into(),
+            import: "executor".into(),
+        }];
+        let (mut input, mut packages) = input(&settings);
+        let mut manifest = packages[0].manifest().clone();
+        manifest
+            .application
+            .as_mut()
+            .unwrap()
+            .entries
+            .get_mut(&EntryTarget::Host)
+            .unwrap()
+            .imports
+            .insert(
+                "executor".into(),
+                Import {
+                    contract: executor::contract(),
+                    cardinality: Cardinality::One,
+                },
+            );
+        let provider = Package::new(BTreeMap::from([(
+            MANIFEST_FILE.into(),
+            serde_json::to_vec(&manifest).unwrap(),
+        )]))
+        .unwrap();
+        input.instances.get_mut("provider").unwrap().package = provider.application_ref().into();
+        input
+            .instances
+            .get_mut("provider")
+            .unwrap()
+            .bindings
+            .insert(
+                "executor".into(),
+                vec![Target::Instance {
+                    path: vec!["executor".into()],
+                    export: "executor".into(),
+                }],
+            );
+        packages[0] = provider;
+        let implementation = if probe.is_some() {
+            json!({"kind":"native","implementation":"fixture.executor"})
+        } else {
+            json!({"kind":"javascript","module":"executor.mjs","realm":"shared"})
+        };
+        let mut files=BTreeMap::from([(MANIFEST_FILE.into(),serde_json::to_vec(&json!({"schemaVersion":2,"id":"fixture-executor","application":{"entries":{"host":{
+            "implementation":implementation,"configuration":{"type":"object","additionalProperties":false},"imports":{},
+            "exports":{"executor":{"contract":executor::contract(),"availability":"required"}}
+        }}}})).unwrap())]);
+        if probe.is_none() {
+            files.insert("executor.mjs".into(),format!(r#"export function activate(){{return {{executor:{{contract:{},service:['backend']}}}};}} export const backend={{execute(input){{return {{status:'completed',text:input.message+' / '+input.settings.model+' / '+input.settings.thinkingLevel}};}}}};"#,serde_json::to_string(&executor::contract()).unwrap()).into_bytes());
+        }
+        let package = Package::new(files).unwrap();
+        input.instances.insert(
+            "executor".into(),
+            Node {
+                key: Uuid::from_u128(21),
+                package: package.application_ref().into(),
+                use_package: PackageUse::Entry,
+                configuration: Default::default(),
+                parameters: Default::default(),
+                disabled: false,
+                overrides: vec![],
+                bindings: BTreeMap::new(),
+            },
+        );
+        packages.push(package);
+        fixture
+            .store
+            .commit_application(source.deployment, source.revision, input, vec![], packages)
+            .await
+            .unwrap();
+    }
+    let mut native = NativeRegistry::default();
+    maka_settings_service::provide(&mut native).unwrap();
+    let captured = Arc::new(StdMutex::new(None));
+    let capture = captured.clone();
+    native
+        .insert(
+            IMPLEMENTATION.into(),
+            Arc::new(move |context, configuration| {
+                let capture = capture.clone();
+                Box::pin(async move {
+                    let services = context.services();
+                    let owner = Owner::open(context, configuration).await.unwrap();
+                    *capture.lock().unwrap() = Some((owner.clone(), services));
+                    let agent = Arc::new(Agent(owner));
+                    NativeActivation {
+                        owner: agent.clone(),
+                        exports: Ok(BTreeMap::from([(
+                            EXPORT.into(),
+                            Published {
+                                contract: contract(),
+                                value: agent as Arc<dyn Handler>,
+                            },
+                        )])),
+                    }
+                })
+            }),
+        )
+        .unwrap();
+    if let Some(probe) = probe {
+        native
+            .insert(
+                "fixture.executor".into(),
+                Arc::new(move |_, _| {
+                    let probe = probe.clone();
+                    Box::pin(async move {
+                        NativeActivation {
+                            owner: probe.clone(),
+                            exports: Ok(BTreeMap::from([(
+                                "executor".into(),
+                                Published {
+                                    contract: executor::contract(),
+                                    value: probe as Arc<dyn Handler>,
+                                },
+                            )])),
+                        }
+                    })
+                }),
+            )
+            .unwrap();
+    }
+    let policy = maka_application_bridge::transport::PeerPolicy::with_native_grants(if granted {
+        vec![maka_application_bridge::transport::NativeGrant {
+            origin: id(1),
+            consumer: id(1),
+            provider: id(21),
+            export: "executor".into(),
+            methods: ["execute".into()].into_iter().collect(),
+            recovery: true,
+        }]
+    } else {
+        vec![]
+    })
+    .unwrap();
+    fixture.app = Application::start_from_store(
+        fixture.store.clone(),
+        source.deployment,
+        native,
+        fixture.issuer.clone(),
+        Arc::new(Grant(fixture.issuer.clone(), Some(Arc::new(policy)))),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    fixture.app.ready().await.unwrap();
+    let (owner, services) = captured.lock().unwrap().take().unwrap();
+    fixture.owner = owner;
+    fixture.services = services;
+}
+fn input_for(session: &str, message: &str) -> Value {
+    json!({"sessionId":session,"message":message,"executor":{"executor":"external","settings":{"model":"backend-model","thinkingLevel":"high"}}})
+}
+async fn work(fixture: &Fixture, session: &str, accepted: &Value) -> Value {
+    fixture.query("work",json!({"sessionId":session,"target":{"kind":"invocation","invocationId":accepted["invocationId"]}})).await.unwrap()
+}
+
+#[tokio::test]
+async fn executor_service_javascript_uses_original_engine_and_read_only_restart() {
+    tokio::time::timeout(Duration::from_secs(40), async {
+        let mut fixture = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+        activate(&mut fixture, true, None, true).await;
+        let session = fixture.create("External").await;
+        let input = input_for(&session, "original 外部 text");
+        let operation = Uuid::new_v4();
+        let accepted = fixture
+            .mutation(2, "execute", input.clone(), operation)
+            .await
+            .unwrap();
+        assert_eq!(accepted["kind"], "started");
+        fixture.drained().await;
+        let observed = work(&fixture, &session, &accepted).await;
+        assert_eq!(observed["execution"]["state"], "completed");
+        assert_eq!(
+            observed["answer"]["text"],
+            "original 外部 text / backend-model / high"
+        );
+        let records = fixture
+            .store
+            .application_intents(fixture.app.source().unwrap().deployment, id(1), 0, 128)
+            .await
+            .unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].reference.namespace, id(21));
+        assert_eq!(records[0].reference.method, "execute");
+        let configuration = fixture
+            .store
+            .invocation_configuration(&Invocation {
+                session_id: session.clone(),
+                turn_id: observed["execution"]["turnId"].as_str().unwrap().into(),
+                run_id: observed["execution"]["runId"].as_str().unwrap().into(),
+                invocation_id: accepted["invocationId"].as_str().unwrap().into(),
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(configuration.model.is_none());
+        let prefix = fixture
+            .store
+            .run_prefix(
+                &session,
+                observed["execution"]["runId"].as_str().unwrap(),
+                None,
+                32,
+                65536,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(prefix.events.iter().all(|row| !matches!(
+            row.event.fact,
+            maka_runtime::event::Fact::ModelRequested { .. }
+        )));
+        let binding = prefix
+            .events
+            .iter()
+            .find_map(|row| match &row.event.fact {
+                maka_runtime::event::Fact::ExecutorStarted { binding, .. } => Some(binding),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(binding.package_id, "fixture-executor");
+        assert_eq!(binding.entry_id, "host");
+        let current = fixture
+            .services
+            .imports()
+            .find(|(name, _)| *name == "executor")
+            .unwrap()
+            .1[0]
+            .clone();
+        assert_eq!(binding.activation, current.provider().epoch().to_string());
+        activate(&mut fixture, false, None, true).await;
+        assert_eq!(work(&fixture, &session, &accepted).await, observed);
+        assert_eq!(
+            fixture
+                .mutation(2, "execute", input, operation)
+                .await
+                .unwrap(),
+            accepted
+        );
+        fixture.drained().await;
+        assert_eq!(
+            fixture
+                .store
+                .application_intents(fixture.app.source().unwrap().deployment, id(1), 0, 128)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn executor_service_queue_freezes_original_backend_and_requires_current_grant() {
+    for granted in [false, true] {
+        tokio::time::timeout(Duration::from_secs(40),async {
+            let mut fixture=Fixture::new("http://127.0.0.1:9/v1",1,None).await;
+            let probe=Probe::new(Behavior::Held);activate(&mut fixture,true,Some(probe.clone()),granted).await;
+            let session=fixture.create("Queue").await;
+            let first=fixture.mutation(2,"execute",input_for(&session,"first"),Uuid::new_v4()).await.unwrap();
+            if granted {
+                probe.entered.acquire().await.unwrap().forget();
+                let queued=fixture.mutation(2,"execute",input_for(&session,"second"),Uuid::new_v4()).await.unwrap();
+                assert_eq!(queued["kind"],"queued");assert_eq!(probe.calls.load(Ordering::SeqCst),1);
+                probe.release.add_permits(2);fixture.drained().await;
+                assert_eq!(probe.calls.load(Ordering::SeqCst),2);
+                let second=fixture.query("work",json!({"sessionId":session,"target":{"kind":"message","messageId":queued["messageId"]}})).await.unwrap();
+                assert_eq!(second["answer"]["text"],"second");assert_eq!(work(&fixture,&session,&first).await["answer"]["text"],"first");
+            } else {
+                fixture.drained().await;assert_eq!(probe.calls.load(Ordering::SeqCst),0);
+                assert_eq!(work(&fixture,&session,&first).await["execution"]["state"],"failed");
+            }
+            fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
+        }).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn executor_service_unknown_is_not_resent_or_resumed_as_a_model() {
+    tokio::time::timeout(Duration::from_secs(40),async {
+        let mut fixture=Fixture::new("http://127.0.0.1:9/v1",1,None).await;
+        let probe=Probe::new(Behavior::Lost);activate(&mut fixture,true,Some(probe.clone()),true).await;
+        let session=fixture.create("Unknown").await;let input=input_for(&session,"once");let operation=Uuid::new_v4();
+        let accepted=fixture.mutation(2,"execute",input.clone(),operation).await.unwrap();fixture.drained().await;
+        let observed=work(&fixture,&session,&accepted).await;assert_eq!(observed["execution"]["state"],"failed");
+        assert_eq!(fixture.mutation(2,"execute",input,operation).await.unwrap(),accepted);assert_eq!(probe.calls.load(Ordering::SeqCst),1);
+        let resumed=fixture.mutation(2,"resume",json!({"sessionId":session,"sourceInvocationId":accepted["invocationId"],"sourceHighWater":observed["execution"]["highWater"],"model":fixture.selection().await}),Uuid::new_v4()).await.unwrap();
+        assert_eq!(resumed,json!({"kind":"parked","reason":"source_not_resumable"}));
+        let replacement=Probe::new(Behavior::Returned);
+        activate(&mut fixture,false,Some(replacement.clone()),true).await;
+        assert_eq!(work(&fixture,&session,&accepted).await,observed);
+        fixture.drained().await;assert_eq!(replacement.calls.load(Ordering::SeqCst),0);
+        let originals=fixture.store.application_intents(fixture.app.source().unwrap().deployment,id(1),0,128).await.unwrap();assert_eq!(originals.len(),1);
+        let receipt=fixture.store.operation_observation(&originals[0].reference).await.unwrap().unwrap();assert!(matches!(receipt.outcome,OperationOutcome::Unknown{..}));
+        fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn executor_service_pending_message_never_adopts_reactivated_backend() {
+    tokio::time::timeout(Duration::from_secs(40),async {
+        let mut fixture=Fixture::new("http://127.0.0.1:9/v1",1,None).await;
+        let probe=Probe::new(Behavior::Held);activate(&mut fixture,true,Some(probe.clone()),true).await;
+        let session=fixture.create("Frozen queue").await;
+        fixture.mutation(2,"execute",input_for(&session,"first"),Uuid::new_v4()).await.unwrap();
+        probe.entered.acquire().await.unwrap().forget();
+        let queued=fixture.mutation(2,"execute",input_for(&session,"frozen"),Uuid::new_v4()).await.unwrap();
+        assert_eq!(queued["kind"],"queued");
+        let replacement=Probe::new(Behavior::Returned);activate(&mut fixture,false,Some(replacement.clone()),true).await;
+        fixture.drained().await;
+        assert_eq!(probe.calls.load(Ordering::SeqCst),1);assert_eq!(replacement.calls.load(Ordering::SeqCst),0);
+        let observed=fixture.query("work",json!({"sessionId":session,"target":{"kind":"message","messageId":queued["messageId"]}})).await.unwrap();
+        assert_eq!(observed["execution"]["state"],"failed");assert!(observed["answer"].is_null());
+        fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn executor_service_cancelled_unsettled_callback_keeps_actual_capacity() {
+    tokio::time::timeout(Duration::from_secs(40), async {
+        let mut fixture = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+        let probe = Probe::new(Behavior::Unsettled);
+        activate(&mut fixture, true, Some(probe.clone()), true).await;
+        let session = fixture.create("Unsettled").await;
+        let accepted = fixture
+            .mutation(2, "execute", input_for(&session, "blocked"), Uuid::new_v4())
+            .await
+            .unwrap();
+        probe.entered.acquire().await.unwrap().forget();
+        let stopped = fixture
+            .mutation(
+                2,
+                "stop",
+                json!({"sessionId":session,"invocationId":accepted["invocationId"]}),
+                Uuid::new_v4(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(stopped["requested"], true);
+        probe.cancelled.acquire().await.unwrap().forget();
+        fixture.drained().await;
+        assert_eq!(fixture.owner.permits.available_permits(), 0);
+        assert_eq!(
+            fixture.owner.runs.lock().await.controls[&session].failure,
+            Some("agent_cleanup_unconfirmed")
+        );
+        assert!(
+            fixture
+                .app
+                .client()
+                .snapshot()
+                .instances
+                .iter()
+                .any(|instance| instance.activation.instance() == &id(21) && instance.calls > 0)
+        );
+        probe.release.add_permits(1);
+        while fixture
+            .app
+            .client()
+            .snapshot()
+            .instances
+            .iter()
+            .any(|instance| instance.activation.instance() == &id(21) && instance.calls > 0)
+        {
+            tokio::task::yield_now().await;
+        }
+        assert!(fixture.app.shutdown().await.is_err());
+        fixture.config.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
+}

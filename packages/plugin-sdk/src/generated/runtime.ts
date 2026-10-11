@@ -86,6 +86,11 @@ export type RuntimeProtocol =
   | ReadText
   | TextChunk
   | AgentConfiguration
+  | AgentExecute
+  | AgentExecutorsRead
+  | AgentExecutors
+  | ExecutorExecute
+  | ExecutorOutcome
   | WorkHubResolve
   | WorkHubCoordinator
   | WorkHubConfiguration
@@ -1184,6 +1189,30 @@ export type AgentWorkspaceAccess = 'read_only' | 'workspace_write';
 export type AgentToolInput = 'json' | 'skill';
 export type AgentToolResult = 'json' | 'image';
 export type AgentToolConfirmation = 'required' | 'preapproved';
+export type ThinkingLevel =
+  | 'off'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max'
+  | 'ultra';
+export type ExecutorOutcome =
+  | {
+      text: string;
+      status: 'completed';
+    }
+  | {
+      reason?: string | null;
+      status: 'cancelled';
+    }
+  | {
+      message: string;
+      code?: string | null;
+      recoverable?: boolean;
+      status: 'failed';
+    };
 export type WorkHubCoordinator =
   | {
       kind: 'missing';
@@ -1558,15 +1587,6 @@ export type SettingsModelsPage =
       next: SettingsModelCursor | null;
       kind: 'ready';
     };
-export type ThinkingLevel =
-  | 'off'
-  | 'minimal'
-  | 'low'
-  | 'medium'
-  | 'high'
-  | 'xhigh'
-  | 'max'
-  | 'ultra';
 export type SettingsDefaultModel =
   | {
       kind: 'none';
@@ -4321,6 +4341,51 @@ export interface TextChunk {
 }
 export interface AgentConfiguration {
   /**
+   * Explicit service backends; discovery does not authorize execution.
+   *
+   * @maxItems 8
+   */
+  executors?:
+    | []
+    | [AgentServiceExecutor]
+    | [AgentServiceExecutor, AgentServiceExecutor]
+    | [AgentServiceExecutor, AgentServiceExecutor, AgentServiceExecutor]
+    | [AgentServiceExecutor, AgentServiceExecutor, AgentServiceExecutor, AgentServiceExecutor]
+    | [
+        AgentServiceExecutor,
+        AgentServiceExecutor,
+        AgentServiceExecutor,
+        AgentServiceExecutor,
+        AgentServiceExecutor,
+      ]
+    | [
+        AgentServiceExecutor,
+        AgentServiceExecutor,
+        AgentServiceExecutor,
+        AgentServiceExecutor,
+        AgentServiceExecutor,
+        AgentServiceExecutor,
+      ]
+    | [
+        AgentServiceExecutor,
+        AgentServiceExecutor,
+        AgentServiceExecutor,
+        AgentServiceExecutor,
+        AgentServiceExecutor,
+        AgentServiceExecutor,
+        AgentServiceExecutor,
+      ]
+    | [
+        AgentServiceExecutor,
+        AgentServiceExecutor,
+        AgentServiceExecutor,
+        AgentServiceExecutor,
+        AgentServiceExecutor,
+        AgentServiceExecutor,
+        AgentServiceExecutor,
+        AgentServiceExecutor,
+      ];
+  /**
    * Explicit Library import for immutable skill input preparation and metadata.
    * This does not select model tools or confer a service grant.
    */
@@ -4383,6 +4448,10 @@ export interface AgentConfiguration {
    */
   tools: AgentServiceTool[];
 }
+export interface AgentServiceExecutor {
+  name: string;
+  import: string;
+}
 export interface AgentWorkspacePermissions {
   access: AgentWorkspaceAccess;
   requestPermissions: boolean;
@@ -4426,6 +4495,44 @@ export interface DisplayText {
   translations?: {
     [k: string]: string | undefined;
   };
+}
+export interface AgentExecute {
+  sessionId: string;
+  message: string;
+  executor: AgentExecutorSelection;
+}
+export interface AgentExecutorSelection {
+  executor: string;
+  settings: ExecutorSettings;
+}
+/**
+ * Executor-owned model selection, independent of Host model connections.
+ */
+export interface ExecutorSettings {
+  model?: string | null;
+  thinkingLevel?: ThinkingLevel | null;
+}
+export interface AgentExecutorsRead {}
+export interface AgentExecutors {
+  executors: string[];
+}
+/**
+ * Observation and text only; no path, invocation or conversation key is authority.
+ */
+export interface ExecutorExecute {
+  invocation: Invocation;
+  conversationKey: string;
+  message: string;
+  cwd: string;
+  instructions?: string | null;
+  settings: ExecutorSettings;
+}
+export interface Invocation {
+  session_id: string;
+  turn_id: string;
+  run_id: string;
+  invocation_id: string;
+  [k: string]: unknown | undefined;
 }
 export interface WorkHubResolve {
   /**
@@ -6477,13 +6584,6 @@ export interface HostActivation {
 export interface HostObservation {
   source: Identity2;
   operation?: RecoveryRef | null;
-}
-export interface Invocation {
-  session_id: string;
-  turn_id: string;
-  run_id: string;
-  invocation_id: string;
-  [k: string]: unknown | undefined;
 }
 export interface OperationObservation {
   reference: RecoveryRef;

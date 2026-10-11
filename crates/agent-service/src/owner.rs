@@ -71,11 +71,28 @@ struct MessageBasis {
     internal_bindings: BTreeMap<String, Option<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     behavior: Option<SystemPrompt>,
-    model: crate::model::AcceptedModel,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    model: Option<crate::model::AcceptedModel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    executor: Option<crate::executor::Accepted>,
     workspace: Workspace,
     fingerprint: String,
     tools: Vec<crate::tools::SelectedTool>,
     max_steps: usize,
+}
+enum Selection {
+    Model(ModelSelection, Option<ThinkingLevel>),
+    Executor(crate::executor::Selection),
+}
+struct Submission {
+    id: String,
+    text: String,
+    attachments: Vec<String>,
+    selection: Selection,
+}
+enum PreparedBackend {
+    Model(Box<(crate::model::Source, maka_agent::PreparedModel)>),
+    Executor(Box<crate::executor::Backend>),
 }
 struct Control {
     invocation: Invocation,
@@ -107,6 +124,7 @@ pub(crate) struct Owner {
     tools: maka_tools::ToolCatalog,
     tool_basis: Vec<crate::tools::SelectedTool>,
     skills: Option<skills::Library>,
+    executors: crate::executor::Executors,
     runs: Mutex<Runs>,
     permits: Arc<Semaphore>,
     upload_capacity: Arc<Semaphore>,
@@ -199,6 +217,7 @@ impl Owner {
             }
         });
         let skills = skills::Library::select(&context, &settings, revision.clone())?;
+        let executors = crate::executor::Executors::capture(&context, &settings.executors)?;
         // Acquire the only asynchronous persistent child last. No fallible
         // export preparation remains after the actual native owner is created.
         let configuration = Arc::new(
@@ -225,6 +244,7 @@ impl Owner {
             tools,
             tool_basis,
             skills,
+            executors,
             runs: Mutex::default(),
             workers,
             stop,
@@ -463,6 +483,48 @@ impl Owner {
             thinking_level,
             attachments,
         } = input;
+        self.submit(
+            Submission {
+                id,
+                text,
+                attachments,
+                selection: Selection::Model(selection, thinking_level),
+            },
+            operation,
+            parent,
+        )
+        .await
+    }
+    pub async fn execute(
+        self: &Arc<Self>,
+        input: Execute,
+        operation: &maka_plugin_core::operation::RecoveryRef,
+        parent: &maka_plugins::call::Scope,
+    ) -> Result<SendResult, String> {
+        self.submit(
+            Submission {
+                id: input.session_id,
+                text: input.message,
+                attachments: vec![],
+                selection: Selection::Executor(input.executor),
+            },
+            operation,
+            parent,
+        )
+        .await
+    }
+    async fn submit(
+        self: &Arc<Self>,
+        input: Submission,
+        operation: &maka_plugin_core::operation::RecoveryRef,
+        parent: &maka_plugins::call::Scope,
+    ) -> Result<SendResult, String> {
+        let Submission {
+            id,
+            text,
+            attachments,
+            selection,
+        } = input;
         if (text.trim().is_empty() && attachments.is_empty()) || text.len() > 64 * 1024 {
             return Err("agent_message_invalid".into());
         }
@@ -491,30 +553,55 @@ impl Owner {
         if session.archived {
             return Err("agent_session_configuration_changed".into());
         }
-        let (source, prepared) = crate::model::Source::select(
-            self.configuration.clone(),
-            self.credentials.clone(),
-            selection,
-            thinking_level,
-            id.clone(),
-            self.revision.clone(),
-        )
-        .await
-        .map_err(public_error)?;
+        let backend = match selection {
+            Selection::Model(selection, thinking_level) => PreparedBackend::Model(Box::new(
+                crate::model::Source::select(
+                    self.configuration.clone(),
+                    self.credentials.clone(),
+                    selection,
+                    thinking_level,
+                    id.clone(),
+                    self.revision.clone(),
+                )
+                .await
+                .map_err(public_error)?,
+            )),
+            Selection::Executor(selection) => {
+                PreparedBackend::Executor(Box::new(self.executors.select(selection)?))
+            }
+        };
+        let (model, executor) = match &backend {
+            PreparedBackend::Model(value) => (Some(value.0.accepted.clone()), None),
+            PreparedBackend::Executor(value) => (None, Some(value.accepted.clone())),
+        };
         workspace::validate(
             &self.workspace_roots,
             &session.configuration.workspace,
             &self.managed_worktrees,
         )
         .await?;
+        let external = executor.is_some();
         let basis = MessageBasis {
-            internal_tools: self.internal_tools.clone(),
-            internal_bindings: self.internal_bindings.clone(),
+            internal_tools: if external {
+                vec![]
+            } else {
+                self.internal_tools.clone()
+            },
+            internal_bindings: if external {
+                BTreeMap::new()
+            } else {
+                self.internal_bindings.clone()
+            },
             behavior: self.behavior.clone(),
-            model: source.accepted.clone(),
+            model,
+            executor,
             workspace: session.configuration.workspace.clone(),
             fingerprint: operation.fingerprint.clone(),
-            tools: self.tool_basis.clone(),
+            tools: if external {
+                vec![]
+            } else {
+                self.tool_basis.clone()
+            },
             max_steps: self.settings.max_steps,
         };
         let identity = self.operation_id(operation);
@@ -532,6 +619,11 @@ impl Owner {
                 unprepared.clone(),
                 Some(session.configuration.workspace.clone()),
                 parent,
+                if basis.executor.is_some() {
+                    vec![]
+                } else {
+                    self.tools.names()
+                },
             )
             .await?
         {
@@ -604,19 +696,13 @@ impl Owner {
             }
         }
         let permit = permit.expect("new worker owns capacity");
-        let input = self.input(
-            invocation.clone(),
-            source,
-            prepared,
-            basis.clone(),
-            delivered,
-        )?;
+        let input = self.input(invocation.clone(), backend, basis.clone(), delivered)?;
         self.store
             .admit_message(admission)
             .await
             .map_err(|_| "agent_admission_failed")?;
         let cancellation = self.stop.child_token();
-        let running = match self.engine.start(input, cancellation.clone()).await {
+        let running = match self.start(input, cancellation.clone()).await {
             Ok(running) => running,
             Err(error) => {
                 if error.is_cleanup_unconfirmed() {

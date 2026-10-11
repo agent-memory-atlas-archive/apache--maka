@@ -23,6 +23,7 @@ use maka_event_log::message_queue::{MessageQueue, QueueCommand, QueueEdit};
 impl MessageBasis {
     fn same_execution(&self, other: &Self) -> bool {
         self.model == other.model
+            && self.executor == other.executor
             && self.internal_tools == other.internal_tools
             && self.internal_bindings == other.internal_bindings
             && self.behavior == other.behavior
@@ -176,6 +177,9 @@ impl Owner {
                 }
                 content.text = message;
                 let unprepared = content;
+                let basis: MessageBasis =
+                    serde_json::from_value(entry.expect("targeted update").execution.basis.clone())
+                        .map_err(|_| "agent_message_basis_invalid")?;
                 let (message, required_tools) = match self
                     .prepare_skills(
                         unprepared.clone(),
@@ -186,6 +190,11 @@ impl Owner {
                                 .workspace,
                         ),
                         parent,
+                        if basis.executor.is_some() {
+                            vec![]
+                        } else {
+                            self.tools.names()
+                        },
                     )
                     .await?
                 {
@@ -211,7 +220,7 @@ impl Owner {
                     entry.expect("targeted promotion").execution.basis.clone(),
                 )
                 .map_err(|_| "agent_message_basis_invalid")?;
-                if !basis.same_execution(&control.basis) {
+                if control.basis.executor.is_some() || !basis.same_execution(&control.basis) {
                     return rejected(QueueRejection::ExecutionChanged);
                 }
                 QueueEdit::Promote {

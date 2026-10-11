@@ -591,7 +591,7 @@ async fn thinking_choices_reach_requests_and_queued_policy_cannot_steer_another_
         assert_eq!(pending.len(), 2);
         for (entry, level) in pending.iter().zip([Off, Low]) {
             let basis: MessageBasis = serde_json::from_value(entry.execution.basis.clone()).unwrap();
-            assert_eq!(basis.model.thinking_level, Some(level));
+            assert_eq!(basis.model.unwrap().thinking_level, Some(level));
         }
         let queue = fixture.query("queue", json!({"sessionId":session})).await.unwrap();
         let rejected = fixture.mutation(2, "editQueue", json!({"sessionId":session,"expectedRevision":queue["revision"],"edit":{"kind":"promote","messageId":pending[0].source.message.message_id}}), Uuid::new_v4()).await.unwrap();

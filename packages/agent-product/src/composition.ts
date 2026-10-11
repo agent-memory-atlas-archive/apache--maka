@@ -1006,6 +1006,8 @@ export function workhubComposition(configuration: CompositionConfiguration): App
         'uploadAttachment',
         'send',
         'execution',
+        'execute',
+        'executors',
         'work',
         'observe',
         'watch',

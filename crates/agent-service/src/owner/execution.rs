@@ -261,6 +261,9 @@ impl Owner {
         else {
             return Ok(parked(Reason::SourceNotResumable));
         };
+        if configuration.model.is_none() {
+            return Ok(parked(Reason::SourceNotResumable));
+        }
         let workspace = &session.configuration.workspace;
         if configuration.cwd != workspace.path
             || configuration.workspace_identity.as_ref() != Some(&workspace.identity)
@@ -289,7 +292,8 @@ impl Owner {
                 .behavior
                 .as_ref()
                 .and(configuration.system_prompt.clone()),
-            model: source.accepted.clone(),
+            model: Some(source.accepted.clone()),
+            executor: None,
             workspace: workspace.clone(),
             fingerprint: fingerprint.clone(),
             tools: self.tool_basis.clone(),
