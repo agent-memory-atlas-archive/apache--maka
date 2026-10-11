@@ -123,7 +123,9 @@ pub(super) async fn verify(peer: &mut Peer, client: &Value, document: &Value) {
         json!({"grant":grant["id"],"operation":"wire"}),
     )
     .await;
-    let expected: Vec<Value> = (0..8).map(|index| json!({"id":format!("wire-message-{index}"),"attachments":800,"text":format!("input-{index}\na") + &"\na".repeat(799)})).collect();
+    let expected: Vec<Value> = (0..8)
+        .map(|index| json!({"id":format!("wire-message-{index}"),"attachments":800}))
+        .collect();
     assert_eq!(result["forward"], json!(expected));
     assert_eq!(result["reverse"], result["forward"]);
     assert!(result["forwardPages"].as_u64().unwrap() > 1);

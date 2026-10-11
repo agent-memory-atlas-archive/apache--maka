@@ -19880,6 +19880,301 @@ export const contracts = {
       },
     },
   },
+  protocolProcesses: {
+    name: 'maka.workspace.ProtocolProcesses',
+    version: 1,
+    transport: 'remote',
+    interface: {
+      kind: 'service',
+      methods: {
+        input: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              id: {
+                type: 'string',
+                format: 'uuid',
+              },
+              bytes: {
+                type: ['array', 'null'],
+                items: {
+                  type: 'integer',
+                  format: 'uint8',
+                  minimum: 0,
+                  maximum: 255,
+                },
+                description: 'Null closes stdin. Empty data is a successful zero-byte write.',
+                maxItems: 8192,
+              },
+            },
+            required: ['id'],
+            title: 'ProtocolProcessInput',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              bytes: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+              },
+              closed: {
+                type: 'boolean',
+              },
+            },
+            required: ['bytes', 'closed'],
+            title: 'ProtocolProcessWritten',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          resources: {},
+        },
+        run: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              executable: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 4096,
+              },
+              args: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                },
+                maxItems: 256,
+                default: [],
+              },
+              env: {
+                type: 'object',
+                additionalProperties: {
+                  type: 'string',
+                },
+                default: {},
+              },
+              additionalPermissions: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/Permissions',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+              justification: {
+                type: ['string', 'null'],
+                minLength: 1,
+                maxLength: 2048,
+              },
+            },
+            required: ['executable'],
+            title: 'ProtocolProcessRun',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              Permissions: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  filesystem: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/Rule',
+                    },
+                    maxItems: 32,
+                  },
+                  network: {
+                    $ref: '#/$defs/Network',
+                  },
+                },
+                required: ['filesystem', 'network'],
+              },
+              Rule: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  path: {
+                    type: 'string',
+                  },
+                  scope: {
+                    $ref: '#/$defs/Scope',
+                  },
+                  access: {
+                    $ref: '#/$defs/Access',
+                  },
+                },
+                required: ['path', 'scope', 'access'],
+                description:
+                  'Paths have executor-native meaning. Validate and materialize them on the\nexecution host, never on a remote Desktop. This document alone grants nothing.',
+              },
+              Scope: {
+                type: 'string',
+                enum: ['subtree', 'exact'],
+              },
+              Access: {
+                type: 'string',
+                enum: ['read', 'write', 'deny'],
+                description:
+                  'Equal-path conflict priority is different from authority breadth: deny wins.',
+              },
+              Network: {
+                oneOf: [
+                  {
+                    type: 'string',
+                    enum: ['denied', 'allowed'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      restricted: {
+                        type: 'object',
+                        properties: {
+                          destinations: {
+                            type: 'array',
+                            uniqueItems: true,
+                            items: {
+                              $ref: '#/$defs/Destination',
+                            },
+                            maxItems: 128,
+                          },
+                        },
+                        additionalProperties: false,
+                        required: ['destinations'],
+                      },
+                    },
+                    required: ['restricted'],
+                    additionalProperties: false,
+                  },
+                ],
+              },
+              Destination: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  host: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 253,
+                  },
+                  port: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 1,
+                    maximum: 65535,
+                  },
+                },
+                required: ['host', 'port'],
+                description:
+                  'Destination authority, independent of the upstream proxy used to reach it.\nA domain grant does not authorize its subdomains or other ports.',
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  code: {
+                    type: ['integer', 'null'],
+                    format: 'int32',
+                  },
+                  success: {
+                    type: 'boolean',
+                  },
+                  stopped: {
+                    type: 'boolean',
+                  },
+                  error: {
+                    type: ['string', 'null'],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'exited',
+                  },
+                },
+                required: ['kind', 'success', 'stopped'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+              },
+            ],
+            title: 'ProtocolProcessCompletion',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          progress: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'started',
+                  },
+                },
+                required: ['kind', 'id'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  stream: {
+                    $ref: '#/$defs/ProtocolProcessStream',
+                  },
+                  bytes: {
+                    type: 'array',
+                    items: {
+                      type: 'integer',
+                      format: 'uint8',
+                      minimum: 0,
+                      maximum: 255,
+                    },
+                    maxItems: 8192,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'output',
+                  },
+                },
+                required: ['kind', 'stream', 'bytes'],
+              },
+            ],
+            title: 'ProtocolProcessProgress',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              ProtocolProcessStream: {
+                type: 'string',
+                enum: ['stdout', 'stderr'],
+              },
+            },
+          },
+          resources: {},
+        },
+      },
+    },
+  },
   terminal: {
     name: 'maka.workspace.Terminal',
     version: 1,

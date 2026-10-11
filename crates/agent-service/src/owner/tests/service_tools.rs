@@ -139,6 +139,7 @@ pub(super) struct Setup {
     forms: bool,
     files: Option<&'static str>,
     processes: bool,
+    protocol: bool,
     skills: Option<std::path::PathBuf>,
     bundled_skills: bool,
     standard_sources: bool,
@@ -163,6 +164,7 @@ impl Setup {
             forms: false,
             files: None,
             processes: false,
+            protocol: false,
             skills: None,
             bundled_skills: false,
             standard_sources: false,
@@ -183,6 +185,7 @@ impl Setup {
             forms: false,
             files: None,
             processes: false,
+            protocol: false,
             skills: None,
             bundled_skills: false,
             standard_sources: false,
@@ -209,6 +212,7 @@ impl Setup {
             forms: false,
             files: None,
             processes: false,
+            protocol: false,
             skills: None,
             bundled_skills: false,
             standard_sources: false,
@@ -250,6 +254,12 @@ impl Setup {
     pub(super) fn skill_import(&self) -> Option<String> {
         self.prepare_skills.then(|| "service".into())
     }
+    pub(super) fn protocol() -> Self {
+        Self {
+            protocol: true,
+            ..Self::javascript()
+        }
+    }
     pub(super) fn processes() -> Self {
         Self {
             processes: true,
@@ -267,7 +277,7 @@ impl Setup {
         self
     }
     pub(super) fn selections(&self) -> Vec<contract::ServiceTool> {
-        if self.skills.is_some() && !self.skill_tools {
+        if self.protocol || (self.skills.is_some() && !self.skill_tools) {
             return vec![];
         }
         if self.skills.is_some() {
@@ -310,6 +320,8 @@ impl Setup {
             crate::skills::contract()
         } else if let Some(source) = &self.images {
             source.contract()
+        } else if self.protocol {
+            crate::processes::protocol::contract()
         } else if self.processes {
             crate::processes::contract()
         } else if self.files.is_some() {
@@ -327,6 +339,8 @@ impl Setup {
             crate::skills::EXPORT
         } else if self.images.is_some() {
             "Images"
+        } else if self.protocol {
+            crate::processes::protocol::EXPORT
         } else if self.processes {
             crate::processes::EXPORT
         } else if self.files.is_some() {
@@ -441,6 +455,8 @@ impl Setup {
             json!({"kind":"native","implementation":crate::skills::IMPLEMENTATION})
         } else if let Some(source) = &self.images {
             source.implementation()
+        } else if self.protocol {
+            json!({"kind":"native","implementation":crate::processes::protocol::IMPLEMENTATION})
         } else if self.processes {
             json!({"kind":"native","implementation":crate::processes::IMPLEMENTATION})
         } else if self.files.is_some() {
@@ -455,7 +471,7 @@ impl Setup {
             json!({"kind":"javascript","module":"counter.mjs","realm":"shared"})
         };
         let mut files = BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({"schemaVersion":2,"id":"fixture.counter","application":{"entries":{"host":{
-            "implementation":implementation,"configuration":if self.skills.is_some() { crate::skills::configuration_schema() } else if self.processes { crate::processes::configuration_schema() } else { json!({"type":"object","additionalProperties":false}) },"imports":{},
+            "implementation":implementation,"configuration":if self.skills.is_some() { crate::skills::configuration_schema() } else if self.processes || self.protocol { crate::processes::configuration_schema() } else { json!({"type":"object","additionalProperties":false}) },"imports":{},
             "exports":if self.processes {
                 json!({(self.export()):{"contract":self.contract(),"availability":"required"},
                     "terminal":{"contract":crate::processes::terminal::contract(),"availability":"required"}})
@@ -470,6 +486,7 @@ impl Setup {
             && !self.questions
             && self.files.is_none()
             && !self.processes
+            && !self.protocol
             && self.skills.is_none()
         {
             files.insert("counter.mjs".into(), format!(r#"let effects=0; export function activate(){{return {{Counter:{{contract:{},service:['counter']}}}};}} export const counter={{write({{amount}}){{return {{effects:effects+=amount}};}},read(){{return {{effects}};}}}};"#, serde_json::to_string(&counter_contract()).unwrap()).into_bytes());
@@ -488,7 +505,7 @@ impl Setup {
                         "projectRoots":if self.standard_sources {project_roots.clone()} else {json!([])},
                         "sources":if self.standard_sources {json!([])} else {json!([{"id":"fixture","label":"Fixture","path":path}])}, "manage":false, "preferences":false
                     })).unwrap(), parameters: BTreeMap::new() }
-                } else if self.processes {
+                } else if self.processes || self.protocol {
                     NodeConfiguration { values: serde_json::from_value(json!({
                         "filesystem":{"default":"write","rules":[],"denyGlobs":[]}, "network":"allowed", "helper":null, "sessionOwner":id(1)
                     })).unwrap(), parameters: BTreeMap::new() }
@@ -500,7 +517,7 @@ impl Setup {
             },
         );
         packages.push(package);
-        if self.processes {
+        if self.processes || self.protocol {
             let consumer = &packages[1];
             let mut files = consumer.files().clone();
             let mut manifest = consumer.manifest().clone();
@@ -513,9 +530,18 @@ impl Setup {
                 .unwrap()
                 .imports
                 .insert(
-                    "terminal".into(),
+                    if self.protocol {
+                        "protocol"
+                    } else {
+                        "terminal"
+                    }
+                    .into(),
                     Import {
-                        contract: crate::processes::terminal::contract(),
+                        contract: if self.protocol {
+                            crate::processes::protocol::contract()
+                        } else {
+                            crate::processes::terminal::contract()
+                        },
                         cardinality: Cardinality::One,
                     },
                 );
@@ -525,10 +551,20 @@ impl Setup {
                 let node = input.instances.get_mut(name).unwrap();
                 node.package = consumer.application_ref().into();
                 node.bindings.insert(
-                    "terminal".into(),
+                    if self.protocol {
+                        "protocol"
+                    } else {
+                        "terminal"
+                    }
+                    .into(),
                     vec![Target::Instance {
                         path: vec!["service".into()],
-                        export: "terminal".into(),
+                        export: if self.protocol {
+                            "protocol"
+                        } else {
+                            "terminal"
+                        }
+                        .into(),
                     }],
                 );
             }
@@ -564,7 +600,7 @@ impl Setup {
         if let Some(source) = &self.images {
             source.provide(registry);
         }
-        if self.processes {
+        if self.processes || self.protocol {
             crate::processes::provide(registry).unwrap();
         }
         if self.files.is_some() {
@@ -614,6 +650,12 @@ impl Setup {
                         .into_iter()
                         .map(|tool| tool.method)
                         .chain(self.prepare_skills.then(|| "prepare".into()))
+                        .chain(
+                            self.protocol
+                                .then_some(["run".to_owned(), "input".to_owned()])
+                                .into_iter()
+                                .flatten(),
+                        )
                         .collect(),
                     recovery: true,
                 }]

@@ -92,6 +92,11 @@ export type RuntimeProtocol =
   | ExecutorExecute
   | ExecutorOutcome
   | ExecutorOutput
+  | ProtocolProcessRun
+  | ProtocolProcessInput
+  | ProtocolProcessProgress
+  | ProtocolProcessCompletion
+  | ProtocolProcessWritten
   | WorkHubResolve
   | WorkHubCoordinator
   | WorkHubConfiguration
@@ -1243,6 +1248,47 @@ export type ExecutorOutput =
       isError?: boolean;
       type: 'tool_result';
     };
+export type Scope = 'subtree' | 'exact';
+/**
+ * Equal-path conflict priority is different from authority breadth: deny wins.
+ */
+export type Access = 'read' | 'write' | 'deny';
+export type Network =
+  | ('denied' | 'allowed')
+  | {
+      restricted: {
+        /**
+         * @maxItems 128
+         */
+        destinations: Destination[];
+      };
+    };
+export type ProtocolProcessProgress =
+  | {
+      id: string;
+      kind: 'started';
+    }
+  | {
+      stream: ProtocolProcessStream;
+      /**
+       * @maxItems 8192
+       */
+      bytes: number[];
+      kind: 'output';
+    };
+export type ProtocolProcessStream = 'stdout' | 'stderr';
+export type ProtocolProcessCompletion =
+  | {
+      code?: number | null;
+      success: boolean;
+      stopped: boolean;
+      error?: string | null;
+      kind: 'exited';
+    }
+  | {
+      message: string;
+      kind: 'failed';
+    };
 export type WorkHubCoordinator =
   | {
       kind: 'missing';
@@ -2295,21 +2341,6 @@ export type Decision2 =
       permissions: Permissions;
       scope: Scope2;
       decision: 'allow';
-    };
-export type Scope = 'subtree' | 'exact';
-/**
- * Equal-path conflict priority is different from authority breadth: deny wins.
- */
-export type Access = 'read' | 'write' | 'deny';
-export type Network =
-  | ('denied' | 'allowed')
-  | {
-      restricted: {
-        /**
-         * @maxItems 128
-         */
-        destinations: Destination[];
-      };
     };
 export type Scope2 = 'once' | 'turn' | 'session';
 export type FormValue = string | number | boolean | string[];
@@ -4575,6 +4606,55 @@ export interface Invocation {
   invocation_id: string;
   [k: string]: unknown | undefined;
 }
+export interface ProtocolProcessRun {
+  executable: string;
+  /**
+   * @maxItems 256
+   */
+  args?: string[];
+  env?: {
+    [k: string]: string | undefined;
+  };
+  additionalPermissions?: Permissions | null;
+  justification?: string | null;
+}
+export interface Permissions {
+  /**
+   * @maxItems 32
+   */
+  filesystem: Rule[];
+  network: Network;
+}
+/**
+ * Paths have executor-native meaning. Validate and materialize them on the
+ * execution host, never on a remote Desktop. This document alone grants nothing.
+ */
+export interface Rule {
+  path: string;
+  scope: Scope;
+  access: Access;
+}
+/**
+ * Destination authority, independent of the upstream proxy used to reach it.
+ * A domain grant does not authorize its subdomains or other ports.
+ */
+export interface Destination {
+  host: string;
+  port: number;
+}
+export interface ProtocolProcessInput {
+  id: string;
+  /**
+   * Null closes stdin. Empty data is a successful zero-byte write.
+   *
+   * @maxItems 8192
+   */
+  bytes?: number[] | null;
+}
+export interface ProtocolProcessWritten {
+  bytes: number;
+  closed: boolean;
+}
 export interface WorkHubResolve {
   /**
    * Used only when freezing the first coordinator creation intent.
@@ -5858,30 +5938,6 @@ export interface AgentInteractionRespond {
   sessionId: string;
   requestId: string;
   answer: InteractionAnswer;
-}
-export interface Permissions {
-  /**
-   * @maxItems 32
-   */
-  filesystem: Rule[];
-  network: Network;
-}
-/**
- * Paths have executor-native meaning. Validate and materialize them on the
- * execution host, never on a remote Desktop. This document alone grants nothing.
- */
-export interface Rule {
-  path: string;
-  scope: Scope;
-  access: Access;
-}
-/**
- * Destination authority, independent of the upstream proxy used to reach it.
- * A domain grant does not authorize its subdomains or other ports.
- */
-export interface Destination {
-  host: string;
-  port: number;
 }
 export interface InteractionRecord {
   sessionId: string;

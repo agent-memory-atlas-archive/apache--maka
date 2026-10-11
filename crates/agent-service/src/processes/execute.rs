@@ -101,80 +101,24 @@ impl Processes {
         configuration: SessionConfiguration,
         cancellation: &CancellationToken,
     ) -> Result<Value, ToolError> {
-        let settings = self.settings.clone();
-        let state_root = self.state_root.clone();
-        let captured_configuration = configuration.clone();
-        let mut captured = tokio::task::spawn_blocking(move || {
-            capture(&captured_configuration, &settings, &state_root)
-        })
-        .await
-        .map_err(failed)??;
-        let grants = self
-            .store
-            .permission_grants(
-                &tool.invocation,
-                Some(&tool.tool_use_id()),
-                configuration.boundary_revision,
-            )
-            .await
-            .map_err(persistence)?;
-        let mut sandbox = captured.executor.sandbox().clone();
-        for grant in grants {
-            sandbox = sandbox
-                .with_grant(&grant.permissions, &captured.ceiling)
-                .map_err(failed)?;
-        }
-        if let Some(permissions) = input.additional_permissions.take() {
-            let required = tokio::task::spawn_blocking(move || {
-                maka_fs_tools::workspace::permissions::materialize(permissions)
-            })
-            .await
-            .map_err(failed)?
-            .map_err(failed)?;
-            if !captured.ceiling.permits(&required).map_err(failed)? {
-                return Err(failed(
-                    "Requested access exceeds the process installation or protected workspace boundary",
-                ));
-            }
-            if !sandbox.permits(&required).map_err(failed)? {
-                let grant = crate::permissions::request(
-                    &self.store,
-                    &configuration,
-                    PermissionRequest {
-                        reason: input.justification.take().expect("validated justification"),
-                        command: Some(PermissionCommand {
-                            command: input.command.clone(),
-                            cwd: configuration.workspace.path.clone(),
-                        }),
-                        permissions: required.clone(),
-                    },
-                    tool,
-                    cancellation,
-                )
-                .await?;
-                sandbox = sandbox
-                    .with_grant(&grant.permissions, &captured.ceiling)
-                    .map_err(failed)?;
-            }
-            if !sandbox.permits(&required).map_err(failed)? {
-                return Err(failed(
-                    "Not all requested process permissions were approved; command was not started",
-                ));
-            }
-        }
-        let network = self
-            .configuration
-            .network_configuration()
-            .await
-            .map_err(|_| failed("Process network configuration unavailable"))?;
-        let route =
-            maka_network::Policy::from_host_settings(&network.proxy, network.password.as_deref())
-                .map_err(|_| failed("Process network route unavailable"))?;
-        captured.executor = captured
-            .executor
-            .with_sandbox(sandbox)
-            .with_network_route(route)
-            .with_login_shell(input.login);
+        let requested = input
+            .additional_permissions
+            .take()
+            .map(|permissions| PermissionRequest {
+                reason: input.justification.take().expect("validated justification"),
+                command: Some(PermissionCommand {
+                    command: input.command.clone(),
+                    cwd: configuration.workspace.path.clone(),
+                }),
+                permissions,
+            });
+        let captured = self
+            .prepare(tool, &configuration, requested, cancellation)
+            .await?;
+        let captured = Captured {
+            executor: captured.executor.with_login_shell(input.login),
+            ..captured
+        };
         let compiler = captured.executor.clone();
         let source = input.command.clone();
         let terminal = input.pty;
@@ -266,5 +210,88 @@ impl Processes {
             record
         };
         self.project((*record).clone(), record.state.active()).await
+    }
+}
+
+impl Processes {
+    pub(super) async fn prepare(
+        &self,
+        tool: &ToolCallContext,
+        configuration: &SessionConfiguration,
+        requested: Option<PermissionRequest>,
+        cancellation: &CancellationToken,
+    ) -> Result<Captured, ToolError> {
+        let settings = self.settings.clone();
+        let state_root = self.state_root.clone();
+        let captured_configuration = configuration.clone();
+        let mut captured = tokio::task::spawn_blocking(move || {
+            capture(&captured_configuration, &settings, &state_root)
+        })
+        .await
+        .map_err(failed)??;
+        let grants = self
+            .store
+            .permission_grants(
+                &tool.invocation,
+                Some(&tool.tool_use_id()),
+                configuration.boundary_revision,
+            )
+            .await
+            .map_err(persistence)?;
+        let mut sandbox = captured.executor.sandbox().clone();
+        for grant in grants {
+            sandbox = sandbox
+                .with_grant(&grant.permissions, &captured.ceiling)
+                .map_err(failed)?;
+        }
+        if let Some(requested) = requested {
+            let permissions = requested.permissions;
+            let required = tokio::task::spawn_blocking(move || {
+                maka_fs_tools::workspace::permissions::materialize(permissions)
+            })
+            .await
+            .map_err(failed)?
+            .map_err(failed)?;
+            if !captured.ceiling.permits(&required).map_err(failed)? {
+                return Err(failed(
+                    "Requested access exceeds the process installation or protected workspace boundary",
+                ));
+            }
+            if !sandbox.permits(&required).map_err(failed)? {
+                let grant = crate::permissions::request(
+                    &self.store,
+                    configuration,
+                    PermissionRequest {
+                        reason: requested.reason,
+                        command: requested.command,
+                        permissions: required.clone(),
+                    },
+                    tool,
+                    cancellation,
+                )
+                .await?;
+                sandbox = sandbox
+                    .with_grant(&grant.permissions, &captured.ceiling)
+                    .map_err(failed)?;
+            }
+            if !sandbox.permits(&required).map_err(failed)? {
+                return Err(failed(
+                    "Not all requested process permissions were approved; command was not started",
+                ));
+            }
+        }
+        let network = self
+            .configuration
+            .network_configuration()
+            .await
+            .map_err(|_| failed("Process network configuration unavailable"))?;
+        let route =
+            maka_network::Policy::from_host_settings(&network.proxy, network.password.as_deref())
+                .map_err(|_| failed("Process network route unavailable"))?;
+        captured.executor = captured
+            .executor
+            .with_sandbox(sandbox)
+            .with_network_route(route);
+        Ok(captured)
     }
 }

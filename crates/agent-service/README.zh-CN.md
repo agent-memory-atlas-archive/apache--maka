@@ -71,3 +71,14 @@ worker 会话路由原用户正文和有界说明，并查询或推进该原任�
 worker 重新激活后仍可恢复原接纳/控制回执，但新 binding 不读取旧任务进度。
 取消沿原 native 清理时限处理，未确认清理继续持有 Host 工作及 Root fence。
 跨会话附件转移、新 worker 创建、协调会话结束后的结果通知及 WorkHub 产品界面仍待完成。
+
+`maka.workspace.protocol-processes` 是独立显式原生实现，导出 `protocol`
+（`maka.workspace.ProtocolProcesses` v1），复用 workspace Processes 的安装配置、
+沙箱和权限准备。`run` 直接捕获绝对 executable、argv、env 与已授权会话的目录句柄；
+原 mutation 一直等待实际进程退出，progress 先返回 `started {id}`，随后传递每块最多
+8 KiB 的原始 stdout/stderr 字节。`input {id, bytes}` 等待实际写入；`bytes: null`
+关闭管道后才确认。每次输入都要求同一实际入站 activation 与 Session、活动的 Agent
+operation、当前权限及独立 method grant，句柄本身不授权。原生调用方可持有独立
+NativeRequest 跨轮次复用，但卸载时必须取消并等待 finish。权限变化或会话退休也会
+停止空闲进程；实际终止/reap 后才清理原 Session 资源记录。未知结果查询原 operation。
+该传输尚未提供 ACP 后端或文件／表单回调。

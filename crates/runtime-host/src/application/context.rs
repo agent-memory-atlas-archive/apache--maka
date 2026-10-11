@@ -27,12 +27,18 @@ pub struct Context {
     pub(super) caller: Option<Caller>,
     pub(super) scope: Scope,
     pub(super) consumer: Activation,
+    pub(super) requester: Activation,
     pub(super) operation: Option<RecoveryRef>,
     pub(super) attachments: Attachments,
     pub(super) imports: Arc<BTreeMap<String, Vec<Binding>>>,
     pub(super) dispatch: Weak<Dispatch>,
 }
 impl Context {
+    /// Actual calling activation, captured by dispatch. Resource services may
+    /// bind handles to this identity; possession of it does not grant access.
+    pub fn requester(&self) -> &Activation {
+        &self.requester
+    }
     /// Original policy-authenticated caller, if the embedding supplies one.
     /// Equality is only an additional resource-ownership check, never a grant.
     pub fn caller(&self) -> Option<&Caller> {

@@ -37,6 +37,7 @@ use tokio_util::sync::CancellationToken;
 
 mod control;
 mod execute;
+pub mod protocol;
 pub mod terminal;
 
 pub const IMPLEMENTATION: &str = "maka.workspace.processes";
@@ -128,6 +129,7 @@ pub fn contract() -> Contract {
     }
 }
 pub(crate) fn provide(registry: &mut NativeRegistry) -> Result<(), String> {
+    protocol::provide(registry)?;
     registry.insert(
         IMPLEMENTATION.into(),
         Arc::new(|context, input| {
@@ -172,6 +174,7 @@ struct Processes {
     controllers: Arc<std::sync::Mutex<Vec<terminal::Lease>>>,
     resources: ShellResources,
     drain: CancellationToken,
+    protocol: protocol::Controls,
 }
 impl Processes {
     async fn open(context: NativeContext, input: Value) -> Result<Arc<Self>, String> {
@@ -250,6 +253,7 @@ impl Processes {
             controllers: Arc::default(),
             resources,
             drain,
+            protocol: Default::default(),
         }))
     }
 }

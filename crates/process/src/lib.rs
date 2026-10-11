@@ -223,6 +223,24 @@ impl ShellExecutor {
         self.prepare(command, false)
     }
 
+    /// Capture argv directly while retaining the authorized directory, sandbox
+    /// and network route. Protocol processes must not pass arguments through a shell.
+    pub fn command_program(
+        &self,
+        executable: impl Into<PathBuf>,
+        args: &[String],
+        environment: &std::collections::BTreeMap<String, String>,
+    ) -> Result<Command, ToolError> {
+        let mut command = Command::new(executable, self.cwd.clone());
+        for arg in args {
+            command.arg(arg);
+        }
+        for (key, value) in environment {
+            command.env(key, value);
+        }
+        self.capture(command)
+    }
+
     fn prepare(&self, source: &str, terminal: bool) -> Result<Command, ToolError> {
         self.capture(self.shell.command(&self.cwd, source, terminal, self.login))
     }

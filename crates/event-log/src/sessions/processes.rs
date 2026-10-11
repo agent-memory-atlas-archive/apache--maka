@@ -44,6 +44,53 @@ impl EventLog {
             .await
     }
 
+    /// Invocation-owned protocol admission. Configuration and live execution
+    /// are checked in the same transaction as the original Session resource row.
+    pub async fn admit_session_process_for<T>(
+        &self,
+        invocation: &maka_runtime::event::Invocation,
+        id: Uuid,
+        configuration: &T,
+    ) -> Result<(), StoreError>
+    where
+        T: serde::Serialize + serde::de::DeserializeOwned + Clone + PartialEq + Send + 'static,
+    {
+        self.validate_root()?;
+        super::validate_id(&invocation.session_id)?;
+        let invocation = invocation.clone();
+        let configuration = configuration.clone();
+        self.connection
+            .run(move |connection| {
+                Box::pin(async move {
+                    let mut tx = connection.begin_with("BEGIN IMMEDIATE").await?;
+                    super::retain(&mut tx, &invocation.session_id).await?;
+                    let session: super::SessionRecord<T> =
+                        super::read(&mut tx, &invocation.session_id)
+                            .await?
+                            .ok_or(StoreError::SessionNotFound)?;
+                    let turn = crate::turns::read(&mut tx, &invocation.session_id, None)
+                        .await?
+                        .ok_or_else(|| super::invalid("process invocation unavailable"))?;
+                    if session.archived
+                        || session.configuration != configuration
+                        || turn.invocation != invocation
+                        || matches!(turn.state, crate::turns::InvocationState::Ended { .. })
+                    {
+                        return Err(super::invalid(
+                            "process invocation or configuration changed before admission",
+                        ));
+                    }
+                    sqlx::query("INSERT INTO session_processes(id,session_id) VALUES (?,?)")
+                        .bind(id.to_string())
+                        .bind(&invocation.session_id)
+                        .execute(&mut *tx)
+                        .await?;
+                    tx.commit().await.map_err(StoreError::CommitUnknown)
+                })
+            })
+            .await
+    }
+
     /// Call only after the owned process group/Job and native resources drained.
     pub async fn clean_session_process(&self, id: Uuid) -> Result<(), StoreError> {
         self.validate_root()?;

@@ -133,3 +133,19 @@ Even `NotRecorded` for a journaled resource call requires its original capture:
 `advance` does not recapture bytes or manufacture a replacement operation. That
 state does not prove the original call is finished. Feedback after the coordinator
 ends, external executors and the WorkHub product UI remain unfinished.
+
+`maka.workspace.protocol-processes` is a separate explicit native implementation
+exporting `protocol` (`maka.workspace.ProtocolProcesses` v1). It uses the same
+installation configuration and permission preparation as workspace Processes.
+`run` captures absolute executable/argv/environment and the admitted Session's
+held directory; its mutation stays unresolved until the owned process exits.
+Progress is `started {id}` followed by exact stdout/stderr byte chunks of at most
+8 KiB. `input {id, bytes}` waits for the actual bounded write; `bytes: null`
+closes the pipe before acknowledgement. Each input requires the same incoming
+activation and Session, a live Agent operation, current permissions and its own
+explicit method grant. A handle is never authority. Native callers can retain
+an independent NativeRequest across turns and must cancel and finish it on
+retirement. Session permission changes or retirement stop idle processes too;
+cleanup confirms native termination/reaping before releasing the original
+Session resource row. Lost outcomes use the original operation reference.
+This transport does not itself provide an ACP backend or file/form callbacks.

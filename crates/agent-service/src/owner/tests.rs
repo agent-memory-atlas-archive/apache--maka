@@ -33,6 +33,9 @@ mod files;
 #[path = "tests/processes.rs"]
 mod processes;
 
+#[path = "tests/protocol_processes.rs"]
+mod protocol_processes;
+
 #[path = "tests/terminal.rs"]
 mod terminal;
 

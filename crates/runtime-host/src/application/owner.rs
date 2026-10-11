@@ -1226,6 +1226,7 @@ impl Owner {
                             caller: authenticated_caller,
                             scope: scope.clone(),
                             consumer: execution.provider().clone(),
+                            requester: consumer.clone(),
                             operation: reference.clone(),
                             attachments: attachments.clone(),
                             imports: self.owned[execution.provider().instance()].imports.clone(),

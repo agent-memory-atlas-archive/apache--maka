@@ -106,6 +106,7 @@ impl NativeServices {
             caller: None,
             scope,
             consumer: self.activation.clone(),
+            requester: self.activation.clone(),
             operation: None,
             attachments: Attachments::default(),
             imports: self.imports.clone(),

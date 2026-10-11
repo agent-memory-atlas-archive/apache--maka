@@ -100,7 +100,7 @@ export default async function (ctx) {
       async function scan(reverse) {
         /** @type {Parameters<typeof call.history.read>[0]} */
         const input = { sessionId: 'h', through, position: { kind: reverse ? 'tail' : 'start' } };
-        /** @type {{id:string, attachments:number, text:string}[]} */
+        /** @type {{id:string, attachments:number}[]} */
         let messages = [];
         let pages = 0;
         for (let attempts = 0; attempts < 64; attempts++) {
@@ -113,11 +113,14 @@ export default async function (ctx) {
           pages++;
           const current = page.chunks
             .filter((chunk) => chunk.messageId.startsWith('wire-message-'))
-            .map((chunk) => ({
-              id: chunk.messageId,
-              attachments: chunk.attachments.length,
-              text: chunk.text,
-            }));
+            .map((chunk) => {
+              const index = chunk.messageId.slice('wire-message-'.length);
+              // Check the complete text here: returning both full scans would
+              // exceed the remote method's separate 64 KiB response budget.
+              if (chunk.text !== `input-${index}${'\n↳ a · 1 B'.repeat(800)}`)
+                throw new Error(`history changed the complete text of ${chunk.messageId}`);
+              return { id: chunk.messageId, attachments: chunk.attachments.length };
+            });
           messages = reverse ? [...current, ...messages] : [...messages, ...current];
           const cursor = reverse ? page.before : page.after;
           if (!cursor) return { messages, pages };

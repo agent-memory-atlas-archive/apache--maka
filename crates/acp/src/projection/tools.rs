@@ -93,7 +93,13 @@ impl Projection {
     ) -> Result<Vec<acp::SessionUpdate>, crate::Error> {
         if row["type"] == "tool_activity" {
             let tool_id = required(row, "toolUseId")?;
-            let title: maka_runtime::display::Text = serde_json::from_value(row["title"].clone())?;
+            let Some(title) = serde_json::from_value::<Option<maka_runtime::display::Text>>(
+                row["title"].clone(),
+            )?
+            else {
+                // Presentation-only activity carries no replacement title.
+                return Ok(vec![]);
+            };
             title.validate()?;
             let tool = self.ensure_tool(turn, tool_id)?;
             tool.card.title = MaybeUndefined::Value(title.fallback);
@@ -260,6 +266,23 @@ mod tests {
     #[test]
     fn tool_terminal_requires_durable_result_and_explicit_bounded_presentation() {
         let mut projection = Projection::default();
+        projection.row(&json!({"type":"tool_call","id":"call","turnId":"t","toolName":"Read","displayName":"Original title"})).unwrap();
+        let mut activity = json!({"type":"tool_activity","id":"activity","turnId":"t","toolUseId":"call","toolName":"Read","presentation":"maka.workspace.Files@1/readText"});
+        assert!(projection.row(&activity).unwrap().is_empty());
+        activity["title"] = Value::Null;
+        assert!(projection.row(&activity).unwrap().is_empty());
+        assert_eq!(
+            projection.tools["call"].card.title,
+            MaybeUndefined::Value("Original title".into())
+        );
+        activity["title"] = json!({"fallback":"Read source","translations":{}});
+        let updates = projection.row(&activity).unwrap();
+        assert_eq!(
+            serde_json::to_value(&updates[0]).unwrap()["title"],
+            "Read source"
+        );
+        activity["title"] = json!({"fallback":"","translations":{}});
+        assert!(projection.row(&activity).is_err());
         let event = SessionToolEvent::ToolResult {
             id: "e".into(),
             turn_id: "t".into(),
