@@ -61,3 +61,8 @@
 定向测试：`cargo nextest run -p maka-external-agent` 与
 `cargo nextest run -p maka-runtime-host --test external_agents`。
 被忽略的官方安装测试会实际下载并验证 ACP 初始化，不登录账户。
+
+`Provider` 也接受显式 `ports::Ports`，仅包含进程、私有存储和文件／表单回调。
+`maka-agent-service` 的普通原生 ACP Executor 沿此接口调用，不依赖贡献注册表或
+完整 Host 服务集合；旧管理／设置插件在边界适配原有能力。两条入口共享协议协商、
+会话 journal、配置约束、回调、投影和未知结果不重试规则。

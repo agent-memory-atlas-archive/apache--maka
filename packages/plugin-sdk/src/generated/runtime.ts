@@ -90,6 +90,7 @@ export type RuntimeProtocol =
   | AgentExecutorsRead
   | AgentExecutors
   | ExecutorExecute
+  | AcpExecutorConfiguration
   | ExecutorOutcome
   | ExecutorOutput
   | ProtocolProcessRun
@@ -1204,6 +1205,21 @@ export type ThinkingLevel =
   | 'xhigh'
   | 'max'
   | 'ultra';
+export type Scope = 'subtree' | 'exact';
+/**
+ * Equal-path conflict priority is different from authority breadth: deny wins.
+ */
+export type Access = 'read' | 'write' | 'deny';
+export type Network =
+  | ('denied' | 'allowed')
+  | {
+      restricted: {
+        /**
+         * @maxItems 128
+         */
+        destinations: Destination[];
+      };
+    };
 export type ExecutorOutcome =
   | {
       text: string;
@@ -1247,21 +1263,6 @@ export type ExecutorOutput =
       text: string;
       isError?: boolean;
       type: 'tool_result';
-    };
-export type Scope = 'subtree' | 'exact';
-/**
- * Equal-path conflict priority is different from authority breadth: deny wins.
- */
-export type Access = 'read' | 'write' | 'deny';
-export type Network =
-  | ('denied' | 'allowed')
-  | {
-      restricted: {
-        /**
-         * @maxItems 128
-         */
-        destinations: Destination[];
-      };
     };
 export type ProtocolProcessProgress =
   | {
@@ -4606,17 +4607,24 @@ export interface Invocation {
   invocation_id: string;
   [k: string]: unknown | undefined;
 }
-export interface ProtocolProcessRun {
-  executable: string;
+export interface AcpExecutorConfiguration {
+  agent: AcpAgent;
   /**
-   * @maxItems 256
+   * Requested launch access, still subject to installation limits and consent.
    */
+  permissions?: Permissions | null;
+}
+export interface AcpAgent {
+  id: string;
+  displayName: string;
+  executable: string;
   args?: string[];
+  /**
+   * Ordinary launch settings only. Credentials belong to the agent's login store.
+   */
   env?: {
     [k: string]: string | undefined;
   };
-  additionalPermissions?: Permissions | null;
-  justification?: string | null;
 }
 export interface Permissions {
   /**
@@ -4642,8 +4650,22 @@ export interface Destination {
   host: string;
   port: number;
 }
+export interface ProtocolProcessRun {
+  executable: string;
+  /**
+   * @maxItems 256
+   */
+  args?: string[];
+  env?: {
+    [k: string]: string | undefined;
+  };
+  additionalPermissions?: Permissions | null;
+  justification?: string | null;
+}
 export interface ProtocolProcessInput {
   id: string;
+  additionalPermissions?: Permissions | null;
+  justification?: string | null;
   /**
    * Null closes stdin. Empty data is a successful zero-byte write.
    *

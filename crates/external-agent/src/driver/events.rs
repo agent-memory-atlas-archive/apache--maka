@@ -113,17 +113,17 @@ async fn callback(
     session: &str,
     request: &executor::Request,
     context: &executor::Context,
-    host: &Services,
+    host: &Ports,
 ) -> Result<(), Error> {
     let id = serde_json::Value::String(uuid::Uuid::new_v4().to_string());
     match event {
         Event::Read(input, reply) => reply.respond_with_result(
-            callbacks::read_file(*input, session, context, host)
+            callbacks::read_file(*input, session, context, host, &id)
                 .await
                 .map_err(callback_error),
         )?,
         Event::Write(input, reply) => reply.respond_with_result(
-            callbacks::write_file(*input, session, context, host)
+            callbacks::write_file(*input, session, context, host, &id)
                 .await
                 .map_err(callback_error),
         )?,

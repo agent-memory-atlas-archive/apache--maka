@@ -271,7 +271,7 @@ async fn work(
             let mut command = agent.expect("process setup has an agent").command();
             command.lifetime = process::Lifetime::Invocation;
             let handle = manager.host.processes.spawn(scope.clone(), command.clone()).await.map_err(provider)?;
-            let mut connection = Connection::new(manager.host.clone(), scope, command, handle, false);
+            let mut connection = Connection::new(manager.host.clone().into(), scope, command, handle, false);
             process_owner = Some(connection.owner.clone());
             run(&mut connection, input, send).await
         } => result,

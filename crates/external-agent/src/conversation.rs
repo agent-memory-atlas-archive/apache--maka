@@ -17,11 +17,11 @@
  * under the License.
  */
 
+use crate::ports::Ports;
 use crate::{Agent, Error, digest, driver::Driver, transport::Connection};
 use agent_client_protocol::schema::v1 as acp;
 use maka_plugins::{
     executor,
-    host::Services,
     storage::{Data, Mutation, Store},
 };
 use serde::{Deserialize, Serialize};
@@ -63,11 +63,7 @@ impl Journal {
     pub fn exists(&self) -> bool {
         self.revision.is_some()
     }
-    async fn read(
-        host: &Services,
-        agent: &Agent,
-        request: &executor::Request,
-    ) -> Result<Self, Error> {
+    async fn read(host: &Ports, agent: &Agent, request: &executor::Request) -> Result<Self, Error> {
         let key = format!(
             "conversation/{}",
             digest(&(&agent.id, &request.conversation_key))?
@@ -133,9 +129,9 @@ pub(crate) struct Live {
 
 type Slot = Arc<tokio::sync::Mutex<Option<Live>>>;
 #[derive(Clone)]
-pub(crate) struct Provider {
-    pub agent: Agent,
-    pub host: Services,
+pub struct Provider {
+    pub(crate) agent: Agent,
+    pub(crate) host: Ports,
     conversations: Arc<Mutex<BTreeMap<String, Slot>>>,
 }
 impl Provider {
@@ -158,7 +154,7 @@ impl Provider {
         }
         Ok(())
     }
-    pub fn new(agent: Agent, host: Services) -> Self {
+    pub fn new(agent: Agent, host: Ports) -> Self {
         Self {
             agent,
             host,

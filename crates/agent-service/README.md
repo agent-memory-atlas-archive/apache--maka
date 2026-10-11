@@ -149,3 +149,19 @@ retirement. Session permission changes or retirement stop idle processes too;
 cleanup confirms native termination/reaping before releasing the original
 Session resource row. Lost outcomes use the original operation reference.
 This transport does not itself provide an ACP backend or file/form callbacks.
+
+The native `maka.agent.acp` implementation exports `executor` using the ordinary
+Executor contract. Its configuration contains an ACP `agent` launch description
+and optional requested `permissions`; imports named `processes`, `files`, and
+`forms` must each bind one ProtocolProcesses, Files, and Forms service. Each
+import requires its own Host grant. Launch permissions request Session consent
+within the process installation ceiling. Process input can renew the same
+required permissions in a later invocation. External-agent permission forms do
+not themselves grant Host filesystem or network access.
+
+The adapter checks the real incoming Agent invocation and workspace, derives
+conversation ownership from the actual caller/Session and native deployment
+namespace, and reuses the shared ACP v1/v2 journal and projection. Its native
+owner retains and finishes independent process requests across prompts; accepted
+stdin writes settle even when the SDK stops polling its transport after a reply.
+The ordinary product's backend selector and attachment transport remain pending.

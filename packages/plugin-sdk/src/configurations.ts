@@ -345,6 +345,157 @@ export const configurations = {
       },
     },
   },
+  acpExecutor: {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    title: 'AcpExecutorConfiguration',
+    type: 'object',
+    properties: {
+      agent: {
+        $ref: '#/$defs/AcpAgent',
+      },
+      permissions: {
+        description: 'Requested launch access, still subject to installation limits and consent.',
+        anyOf: [
+          {
+            $ref: '#/$defs/Permissions',
+          },
+          {
+            type: 'null',
+          },
+        ],
+      },
+    },
+    additionalProperties: false,
+    required: ['agent'],
+    $defs: {
+      AcpAgent: {
+        type: 'object',
+        properties: {
+          id: {
+            type: 'string',
+          },
+          displayName: {
+            type: 'string',
+          },
+          executable: {
+            type: 'string',
+          },
+          args: {
+            type: 'array',
+            items: {
+              type: 'string',
+            },
+            default: [],
+          },
+          env: {
+            description:
+              "Ordinary launch settings only. Credentials belong to the agent's login store.",
+            type: 'object',
+            additionalProperties: {
+              type: 'string',
+            },
+            default: {},
+          },
+        },
+        additionalProperties: false,
+        required: ['id', 'displayName', 'executable'],
+      },
+      Permissions: {
+        type: 'object',
+        properties: {
+          filesystem: {
+            type: 'array',
+            items: {
+              $ref: '#/$defs/Rule',
+            },
+            maxItems: 32,
+          },
+          network: {
+            $ref: '#/$defs/Network',
+          },
+        },
+        additionalProperties: false,
+        required: ['filesystem', 'network'],
+      },
+      Rule: {
+        description:
+          'Paths have executor-native meaning. Validate and materialize them on the\nexecution host, never on a remote Desktop. This document alone grants nothing.',
+        type: 'object',
+        properties: {
+          path: {
+            type: 'string',
+          },
+          scope: {
+            $ref: '#/$defs/Scope',
+          },
+          access: {
+            $ref: '#/$defs/Access',
+          },
+        },
+        additionalProperties: false,
+        required: ['path', 'scope', 'access'],
+      },
+      Scope: {
+        type: 'string',
+        enum: ['subtree', 'exact'],
+      },
+      Access: {
+        description: 'Equal-path conflict priority is different from authority breadth: deny wins.',
+        type: 'string',
+        enum: ['read', 'write', 'deny'],
+      },
+      Network: {
+        oneOf: [
+          {
+            type: 'string',
+            enum: ['denied', 'allowed'],
+          },
+          {
+            type: 'object',
+            properties: {
+              restricted: {
+                type: 'object',
+                properties: {
+                  destinations: {
+                    type: 'array',
+                    uniqueItems: true,
+                    items: {
+                      $ref: '#/$defs/Destination',
+                    },
+                    maxItems: 128,
+                  },
+                },
+                additionalProperties: false,
+                required: ['destinations'],
+              },
+            },
+            required: ['restricted'],
+            additionalProperties: false,
+          },
+        ],
+      },
+      Destination: {
+        description:
+          'Destination authority, independent of the upstream proxy used to reach it.\nA domain grant does not authorize its subdomains or other ports.',
+        type: 'object',
+        properties: {
+          host: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 253,
+          },
+          port: {
+            type: 'integer',
+            format: 'uint16',
+            minimum: 1,
+            maximum: 65535,
+          },
+        },
+        additionalProperties: false,
+        required: ['host', 'port'],
+      },
+    },
+  },
   workhub: {
     type: 'object',
     additionalProperties: false,

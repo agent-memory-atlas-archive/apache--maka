@@ -17,11 +17,11 @@
  * under the License.
  */
 
+use crate::ports::Ports;
 use agent_client_protocol::{self as sdk, ConnectTo};
 use futures_util::{sink, stream};
 use maka_plugins::{
     call::Scope,
-    host::Services,
     process::{Command, Handle, Id, Process, Stream},
 };
 use std::{
@@ -42,13 +42,7 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn new(
-        host: Services,
-        scope: Scope,
-        command: Command,
-        handle: Handle,
-        files: bool,
-    ) -> Self {
+    pub fn new(host: Ports, scope: Scope, command: Command, handle: Handle, files: bool) -> Self {
         let (binding, _) = watch::channel(handle.io);
         let owner = Arc::new(Owner {
             host,
@@ -100,7 +94,7 @@ struct OwnerState {
     first: bool,
 }
 pub(crate) struct Owner {
-    host: Services,
+    host: Ports,
     scope: Scope,
     command: Command,
     state: Mutex<OwnerState>,

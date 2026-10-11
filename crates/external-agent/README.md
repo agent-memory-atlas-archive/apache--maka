@@ -78,3 +78,10 @@ Run focused tests with `cargo nextest run -p maka-external-agent` and
 `cargo nextest run -p maka-runtime-host --test external_agents`.
 The ignored official installation test downloads a real release and checks ACP
 initialization without signing in.
+
+`Provider` also accepts explicit `ports::Ports` for process I/O, private storage,
+and file/form callbacks. The ordinary native ACP Executor in `maka-agent-service`
+uses these ports without a contribution registry or a complete Host service
+bundle. The legacy management/setup plugin adapts its existing capabilities at
+that boundary. Both embeddings share the same negotiation, conversation journal,
+configuration fences, callbacks, projection and unknown-outcome rules.

@@ -97,7 +97,7 @@ impl Manager {
         validate(&agents)?;
         let mut providers = BTreeMap::new();
         for agent in &agents {
-            let provider = Provider::new(agent.clone(), host.clone());
+            let provider = Provider::new(agent.clone(), host.clone().into());
             stage(&provider, &owner, staged)?;
             providers.insert(
                 agent.id.clone(),
@@ -252,7 +252,7 @@ impl Manager {
             if state.providers.contains_key(&id) {
                 continue;
             }
-            let provider = Provider::new(agent, self.host.clone());
+            let provider = Provider::new(agent, self.host.clone().into());
             let mut staged = Staged::default();
             if let Err(error) = stage(&provider, &self.owner, &mut staged) {
                 issues.push(format!("{id}: {error}"));

@@ -17,6 +17,7 @@
  * under the License.
  */
 
+use crate::ports::Ports;
 use crate::{
     Error, callbacks,
     conversation::{Journal, Live, State},
@@ -24,7 +25,7 @@ use crate::{
     transport::{Connection, Event, Peer},
 };
 use agent_client_protocol::{self as sdk, schema::v1 as acp};
-use maka_plugins::{executor, host::Services};
+use maka_plugins::executor;
 
 use std::time::Duration;
 
@@ -33,7 +34,7 @@ mod events;
 mod v2;
 
 pub(crate) struct Driver<'a> {
-    host: &'a Services,
+    host: &'a Ports,
     request: &'a executor::Request,
     context: &'a executor::Context,
     projection: Option<Projection>,
@@ -42,7 +43,7 @@ pub(crate) struct Driver<'a> {
 }
 impl<'a> Driver<'a> {
     pub fn new(
-        host: &'a Services,
+        host: &'a Ports,
         request: &'a executor::Request,
         context: &'a executor::Context,
     ) -> Self {

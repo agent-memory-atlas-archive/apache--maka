@@ -23,7 +23,9 @@ mod conversation;
 mod driver;
 mod install;
 pub mod plugin;
+pub mod ports;
 mod projection;
+pub use conversation::Provider;
 mod settings;
 mod setup;
 mod transport;
@@ -34,6 +36,7 @@ use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AcpAgent")]
 pub struct Agent {
     pub id: String,
     pub display_name: String,
@@ -73,7 +76,7 @@ impl Agent {
 }
 
 #[derive(Debug, thiserror::Error)]
-enum Error {
+pub enum Error {
     #[error(transparent)]
     Sdk(#[from] agent_client_protocol::Error),
     #[error(transparent)]

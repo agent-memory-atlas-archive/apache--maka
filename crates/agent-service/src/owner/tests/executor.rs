@@ -119,6 +119,16 @@ impl NativeOwner for Probe {
     }
 }
 async fn activate(fixture: &mut Fixture, install: bool, probe: Option<Arc<Probe>>, granted: bool) {
+    activate_backend(fixture, install, probe, granted, None, &[]).await;
+}
+async fn activate_backend(
+    fixture: &mut Fixture,
+    install: bool,
+    probe: Option<Arc<Probe>>,
+    granted: bool,
+    acp: Option<crate::acp::Configuration>,
+    denied: &[&str],
+) {
     let source = fixture.app.source().unwrap().clone();
     fixture.app.shutdown().await.unwrap();
     if install {
@@ -163,16 +173,94 @@ async fn activate(fixture: &mut Fixture, install: bool, probe: Option<Arc<Probe>
                 }],
             );
         packages[0] = provider;
-        let implementation = if probe.is_some() {
+        let implementation = if acp.is_some() {
+            json!({"kind":"native","implementation":crate::acp::IMPLEMENTATION})
+        } else if probe.is_some() {
             json!({"kind":"native","implementation":"fixture.executor"})
         } else {
             json!({"kind":"javascript","module":"executor.mjs","realm":"shared"})
         };
+        let mut imports = serde_json::Map::new();
+        let mut bindings = BTreeMap::new();
+        if acp.is_some() {
+            for (name, key, implementation, contract, schema, configuration) in [
+                (
+                    "processes",
+                    22,
+                    crate::processes::protocol::IMPLEMENTATION,
+                    crate::processes::protocol::contract(),
+                    serde_json::to_value(schemars::schema_for!(crate::processes::Configuration))
+                        .unwrap(),
+                    json!({"filesystem":{"default":"write","rules":[],"denyGlobs":[]},"network":"allowed","helper":null,"sessionOwner":id(1)}),
+                ),
+                (
+                    "files",
+                    23,
+                    crate::files::IMPLEMENTATION,
+                    crate::files::contract(),
+                    json!({"type":"object","additionalProperties":false}),
+                    json!({}),
+                ),
+                (
+                    "forms",
+                    24,
+                    crate::forms::IMPLEMENTATION,
+                    crate::forms::contract(),
+                    json!({"type":"object","additionalProperties":false}),
+                    json!({}),
+                ),
+            ] {
+                let export = if name == "processes" {
+                    "protocol"
+                } else {
+                    name
+                };
+                imports.insert(
+                    name.into(),
+                    json!({"contract":contract,"cardinality":Cardinality::One}),
+                );
+                bindings.insert(
+                    name.into(),
+                    vec![Target::Instance {
+                        path: vec![name.into()],
+                        export: export.into(),
+                    }],
+                );
+                let package = Package::new(BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({
+                    "schemaVersion":2,"id":format!("fixture-acp-{name}"),"application":{"entries":{"host":{
+                        "implementation":{"kind":"native","implementation":implementation},"configuration":schema,"imports":{},
+                        "exports":{(export):{"contract":contract,"availability":"required"}}
+                    }}}
+                })).unwrap())])).unwrap();
+                input.instances.insert(
+                    name.into(),
+                    Node {
+                        key: Uuid::from_u128(key),
+                        package: package.application_ref().into(),
+                        use_package: PackageUse::Entry,
+                        configuration: NodeConfiguration {
+                            values: serde_json::from_value(configuration).unwrap(),
+                            parameters: BTreeMap::new(),
+                        },
+                        parameters: Default::default(),
+                        disabled: false,
+                        overrides: vec![],
+                        bindings: BTreeMap::new(),
+                    },
+                );
+                packages.push(package);
+            }
+        }
+        let configuration_schema = if acp.is_some() {
+            serde_json::to_value(schemars::schema_for!(crate::acp::Configuration)).unwrap()
+        } else {
+            json!({"type":"object","additionalProperties":false})
+        };
         let mut files=BTreeMap::from([(MANIFEST_FILE.into(),serde_json::to_vec(&json!({"schemaVersion":2,"id":"fixture-executor","application":{"entries":{"host":{
-            "implementation":implementation,"configuration":{"type":"object","additionalProperties":false},"imports":{},
+            "implementation":implementation,"configuration":configuration_schema,"imports":imports,
             "exports":{"executor":{"contract":executor::contract(),"availability":"required"}}
         }}}})).unwrap())]);
-        if probe.is_none() {
+        if probe.is_none() && acp.is_none() {
             files.insert("executor.mjs".into(),format!(r#"export function activate(){{return {{executor:{{contract:{},service:['backend']}}}};}} export const backend={{async execute(input, observation, context){{
                 for (const value of [
                     {{type:'thinking_delta',text:'思考'}},
@@ -191,11 +279,17 @@ async fn activate(fixture: &mut Fixture, install: bool, probe: Option<Arc<Probe>
                 key: Uuid::from_u128(21),
                 package: package.application_ref().into(),
                 use_package: PackageUse::Entry,
-                configuration: Default::default(),
+                configuration: acp
+                    .as_ref()
+                    .map(|c| NodeConfiguration {
+                        values: serde_json::from_value(serde_json::to_value(c).unwrap()).unwrap(),
+                        parameters: BTreeMap::new(),
+                    })
+                    .unwrap_or_default(),
                 parameters: Default::default(),
                 disabled: false,
                 overrides: vec![],
-                bindings: BTreeMap::new(),
+                bindings,
             },
         );
         packages.push(package);
@@ -207,6 +301,12 @@ async fn activate(fixture: &mut Fixture, install: bool, probe: Option<Arc<Probe>
     }
     let mut native = NativeRegistry::default();
     maka_settings_service::provide(&mut native).unwrap();
+    if acp.is_some() {
+        crate::acp::provide(&mut native).unwrap();
+        crate::processes::provide(&mut native).unwrap();
+        crate::files::provide(&mut native).unwrap();
+        crate::forms::provide(&mut native).unwrap();
+    }
     let captured = Arc::new(StdMutex::new(None));
     let capture = captured.clone();
     native
@@ -255,7 +355,7 @@ async fn activate(fixture: &mut Fixture, install: bool, probe: Option<Arc<Probe>
             )
             .unwrap();
     }
-    let policy = maka_application_bridge::transport::PeerPolicy::with_native_grants(if granted {
+    let mut grants = if granted {
         vec![maka_application_bridge::transport::NativeGrant {
             origin: id(1),
             consumer: id(1),
@@ -266,8 +366,29 @@ async fn activate(fixture: &mut Fixture, install: bool, probe: Option<Arc<Probe>
         }]
     } else {
         vec![]
-    })
-    .unwrap();
+    };
+    if acp.is_some() {
+        for (provider, export, methods) in [
+            (22, "protocol", vec!["run", "input"]),
+            (23, "files", vec!["readText", "write"]),
+            (24, "forms", vec!["ask"]),
+        ] {
+            grants.push(maka_application_bridge::transport::NativeGrant {
+                origin: id(21),
+                consumer: id(21),
+                provider: id(provider),
+                export: export.into(),
+                methods: methods
+                    .into_iter()
+                    .filter(|method| !denied.contains(method))
+                    .map(String::from)
+                    .collect(),
+                recovery: true,
+            });
+        }
+    }
+    let policy =
+        maka_application_bridge::transport::PeerPolicy::with_native_grants(grants).unwrap();
     fixture.app = Application::start_from_store(
         fixture.store.clone(),
         source.deployment,
@@ -696,3 +817,7 @@ async fn executor_service_invalid_progress_stops_original_request_without_false_
     .await
     .unwrap();
 }
+
+#[cfg(target_os = "macos")]
+#[path = "executor/acp.rs"]
+mod acp;

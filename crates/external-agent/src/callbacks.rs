@@ -17,17 +17,14 @@
  * under the License.
  */
 
+use crate::ports::Ports;
 use agent_client_protocol::schema::v1 as acp;
 use maka_plugins::{
     execution::{OfferInteraction, Prompt},
     executor::{Context, Request},
     filesystem::{Operation, Write},
-    host::Services,
 };
-use maka_runtime::{
-    capability::{FormField, FormFieldSpec, FormOption, FormResult, FormValue},
-    interaction::InteractionOutcome,
-};
+use maka_runtime::capability::{FormField, FormFieldSpec, FormOption, FormResult, FormValue};
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -60,12 +57,13 @@ pub(crate) async fn read_file(
     input: acp::ReadTextFileRequest,
     session: &str,
     context: &Context,
-    host: &Services,
+    host: &Ports,
+    rpc_id: &Value,
 ) -> Result<acp::ReadTextFileResponse, CallbackError> {
     check_session(&input.session_id, session)?;
     check_path(&input.path)?;
     Ok(acp::ReadTextFileResponse::new(
-        read::text(input, context, host).await?,
+        read::text(input, context, host, rpc_id).await?,
     ))
 }
 
@@ -73,17 +71,20 @@ pub(crate) async fn write_file(
     input: acp::WriteTextFileRequest,
     session: &str,
     context: &Context,
-    host: &Services,
+    host: &Ports,
+    rpc_id: &Value,
 ) -> Result<acp::WriteTextFileResponse, CallbackError> {
     check_session(&input.session_id, session)?;
     let path = check_path(&input.path)?.to_owned();
-    host.files
-        .invoke(
+    host.callbacks
+        .file(
             call(context)?,
+            rpc_id.to_string(),
             Operation::Write(Write {
                 path,
                 content: input.content,
             }),
+            context.cancellation.clone(),
         )
         .await
         .map_err(CallbackError::host)?;
@@ -95,7 +96,7 @@ pub(crate) async fn permission_v1(
     session: &str,
     request: &Request,
     context: &Context,
-    host: &Services,
+    host: &Ports,
     rpc_id: &Value,
 ) -> Result<acp::RequestPermissionResponse, CallbackError> {
     check_session(&input.session_id, session)?;
@@ -113,7 +114,7 @@ pub(crate) async fn permission_v2(
     session: &str,
     request: &Request,
     context: &Context,
-    host: &Services,
+    host: &Ports,
     rpc_id: &Value,
 ) -> Result<agent_client_protocol::schema::v2::RequestPermissionResponse, CallbackError> {
     if input.session_id.to_string() != session {
@@ -184,7 +185,7 @@ async fn permission(
     input: acp::RequestPermissionRequest,
     request: &Request,
     context: &Context,
-    host: &Services,
+    host: &Ports,
     rpc_id: &Value,
 ) -> Result<Option<String>, CallbackError> {
     let title = input
@@ -228,7 +229,7 @@ async fn permission_offer(
     prompt: PermissionPrompt,
     request: &Request,
     context: &Context,
-    host: &Services,
+    host: &Ports,
     rpc_id: &Value,
 ) -> Result<Option<String>, CallbackError> {
     let PermissionPrompt {
@@ -275,53 +276,28 @@ async fn permission_offer(
     if context.cancellation.is_cancelled() {
         return Ok(None);
     }
-    let commands = host
-        .executions
-        .acquire(call(context)?)
+    let result = host
+        .callbacks
+        .form(call(context)?, offer, context.cancellation.clone())
         .await
         .map_err(CallbackError::host)?;
-    // Do not drop the offer future on cancellation: it may already have committed.
-    commands
-        .offer_interaction(offer)
-        .await
-        .map_err(CallbackError::host)?;
-    let result = tokio::select! {
-        biased;
-        _ = context.cancellation.cancelled() => None,
-        result = commands.wait_interaction(operation_id.clone()) => Some(result),
-    };
-    // Close the exact offer on cancellation/errors; answers are never replaced.
-    if result.as_ref().is_none_or(|value| value.is_err()) {
-        commands
-            .close_interaction(operation_id)
-            .await
-            .map_err(CallbackError::host)?;
-    }
     let Some(result) = result else {
         return Ok(None);
     };
-    match result.map_err(CallbackError::host)? {
-        InteractionOutcome::FormAnswer { result, .. } => {
-            result
-                .validate_for_fields(&fields)
-                .map_err(CallbackError::host)?;
-            if let FormResult::Accept { values } = result {
-                let Some(FormValue::String(selected)) = values.get("permission") else {
-                    return Err(CallbackError::host("Permission selection is missing"));
-                };
-                let option = options
-                    .iter()
-                    .find(|option| &option.value == selected)
-                    .ok_or_else(|| CallbackError::host("Unknown permission selection"))?;
-                Ok(Some(option.value.clone()))
-            } else {
-                Ok(None)
-            }
-        }
-        InteractionOutcome::Closure { .. } => Ok(None),
-        _ => Err(CallbackError::host(
-            "Unexpected permission interaction outcome",
-        )),
+    result
+        .validate_for_fields(&fields)
+        .map_err(CallbackError::host)?;
+    if let FormResult::Accept { values } = result {
+        let Some(FormValue::String(selected)) = values.get("permission") else {
+            return Err(CallbackError::host("Permission selection is missing"));
+        };
+        let option = options
+            .iter()
+            .find(|option| &option.value == selected)
+            .ok_or_else(|| CallbackError::host("Unknown permission selection"))?;
+        Ok(Some(option.value.clone()))
+    } else {
+        Ok(None)
     }
 }
 

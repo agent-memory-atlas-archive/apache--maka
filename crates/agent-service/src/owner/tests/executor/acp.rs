@@ -1,0 +1,404 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use super::*;
+
+async fn setup(
+    protocol: u8,
+) -> (
+    Fixture,
+    TcpListener,
+    std::path::PathBuf,
+    crate::acp::Configuration,
+) {
+    let fixture = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+    let control = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let node = tokio::process::Command::new("node")
+        .args(["-p", "process.execPath"])
+        .output()
+        .await
+        .unwrap();
+    assert!(node.status.success());
+    let trace = fixture.workspace.join("acp-requests.jsonl");
+    let configuration = crate::acp::Configuration {
+        agent: maka_external_agent::Agent {
+            id: "test.acp".into(),
+            display_name: "Test ACP".into(),
+            executable: String::from_utf8(node.stdout).unwrap().trim().into(),
+            args: vec![
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../runtime-host/tests/support/acp-agent.mjs")
+                    .to_str()
+                    .unwrap()
+                    .into(),
+                trace.to_str().unwrap().into(),
+                control.local_addr().unwrap().port().to_string(),
+                protocol.to_string(),
+            ],
+            env: BTreeMap::new(),
+        },
+        permissions: Some(maka_sandbox::grant::Permissions {
+            filesystem: vec![],
+            network: maka_sandbox::Network::Allowed,
+        }),
+    };
+    (fixture, control, trace, configuration)
+}
+#[tokio::test]
+async fn native_acp_reuses_process_and_restores_original_conversation() {
+    reuse(1).await;
+}
+#[tokio::test]
+async fn native_acp_v2_reuses_process_and_resumes_original_conversation() {
+    reuse(2).await;
+}
+async fn reuse(protocol: u8) {
+    tokio::time::timeout(Duration::from_secs(90), async {
+        let (mut fixture, control, trace, configuration) = setup(protocol).await;
+        activate_backend(&mut fixture, true, None, true, Some(configuration.clone()), &[]).await;
+        let session = fixture.create("ACP native").await;
+        let accepted = fixture.mutation(2,"execute",json!({"sessionId":session,"message":"first", "executor":{"executor":"external","settings":{}}}),Uuid::new_v4()).await.unwrap();
+        assert_eq!(accepted["kind"],"started");
+        // Network is consented through the original Session interaction, never
+        // granted merely by installing the ACP configuration.
+        let permission = super::super::files::pending(&fixture, &session).await;
+        if protocol == 1 { reject_changed_authority(&fixture, &session).await; }
+        super::super::files::answer(&fixture, &permission, Some("session")).await;
+        let _probe = if protocol != 2 { Some(control.accept().await.unwrap().0) } else { None };
+        let (stream, _) = control.accept().await.unwrap();
+        let mut stream = tokio::io::BufReader::new(stream);
+        let mut pid = String::new();
+        tokio::io::AsyncBufReadExt::read_line(&mut stream, &mut pid).await.unwrap();
+        fixture.drained().await;
+        let observed = work(&fixture,&session,&accepted).await;
+        assert_eq!(observed["execution"]["state"],"completed","{observed}");
+        let second = fixture.mutation(2,"execute",json!({"sessionId":session,"message":"second", "executor":{"executor":"external","settings":{}}}),Uuid::new_v4()).await.unwrap();
+        fixture.drained().await;
+        let observed = work(&fixture,&session,&second).await;
+        assert_eq!(observed["execution"]["state"],"completed","{observed}");
+        let requests = std::fs::read_to_string(&trace).unwrap();
+        let requests:Vec<Value> = requests.lines().map(|line|serde_json::from_str(line).unwrap()).collect();
+        assert_eq!(requests.iter().filter(|v|v["method"]=="spawn").count(),if protocol==2 {1}else{2});
+        assert_eq!(requests.iter().filter(|v|v["method"]=="session/new").count(),1);
+        assert_eq!(requests.iter().filter(|v|v["method"]=="session/prompt").count(),2);
+        assert!(!requests.iter().any(|v|v["method"]=="session/load"));
+        activate_backend(&mut fixture, false, None, true, Some(configuration), &[]).await;
+        assert!(std::process::Command::new("/bin/kill").args(["-0",pid.trim()]).output().unwrap().status.code().is_some_and(|c| c!=0));
+        let third = fixture.mutation(2,"execute",json!({"sessionId":session,"message":"third", "executor":{"executor":"external","settings":{}}}),Uuid::new_v4()).await.unwrap();
+        let _probe = if protocol != 2 { Some(control.accept().await.unwrap().0) } else { None };
+        let (_stream, _) = control.accept().await.unwrap();
+        fixture.drained().await;
+        let observed = work(&fixture,&session,&third).await;
+        assert_eq!(observed["execution"]["state"],"completed","{observed}");
+        let requests = std::fs::read_to_string(&trace).unwrap();
+        let requests:Vec<Value> = requests.lines().map(|line|serde_json::from_str(line).unwrap()).collect();
+        assert_eq!(requests.iter().filter(|v|v["method"]=="session/new").count(),1);
+        assert_eq!(requests.iter().filter(|v|v["method"]==if protocol==2 {"session/resume"}else{"session/load"}).count(),1);
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+
+async fn execute(f: &Fixture, session: &str, text: &str) -> Value {
+    let result = f.mutation(2,"execute",json!({"sessionId":session,"message":text,"executor":{"executor":"external","settings":{}}}),Uuid::new_v4()).await.unwrap();
+    assert_eq!(result["kind"], "started", "{result}");
+    result
+}
+async fn form(f: &Fixture, session: &str) -> maka_runtime::interaction::InteractionRecord {
+    let mut changes = f.store.subscribe_commits();
+    loop {
+        if let Some(record) = f
+            .store
+            .pending_interactions(session)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|r| {
+                matches!(
+                    r.request,
+                    maka_runtime::interaction::InteractionRequest::Form { .. }
+                )
+            })
+        {
+            return record;
+        }
+        tokio::time::timeout(Duration::from_secs(10), changes.changed())
+            .await
+            .expect("ACP form did not arrive")
+            .unwrap();
+    }
+}
+#[tokio::test]
+async fn native_acp_callbacks_have_distinct_writes_and_cancel_the_original_form() {
+    tokio::time::timeout(Duration::from_secs(90), async {
+        let (mut f, control, _trace, configuration) = setup(1).await;
+        activate_backend(&mut f,true,None,true,Some(configuration), &[]).await;
+        let session = f.create("ACP callbacks").await;
+        std::fs::write(f.workspace.join("input.txt"),"fixture contents\n").unwrap();
+        let mut process = None;
+        let mut probe = None;
+        for text in ["callbacks","callbacks","peer-cancel"] {
+            let accepted = execute(&f,&session,text).await;
+            let permission = super::super::files::pending(&f,&session).await;
+            super::super::files::answer(&f,&permission,Some("once")).await;
+            if process.is_none() {
+                probe=Some(control.accept().await.unwrap().0);
+                process=Some(control.accept().await.unwrap().0);
+            }
+            let record = form(&f,&session).await;
+            if text=="peer-cancel" {
+                process.as_mut().unwrap().write_all(b"cancel-permission\n").await.unwrap();
+            } else {
+                f.mutation(2,"respond",json!({"sessionId":session,"requestId":record.request_id,
+                    "answer":{"kind":"form","action":"accept","values":{"permission":"allow-once"}}}),Uuid::new_v4()).await.unwrap();
+            }
+            f.drained().await;
+            let observed=work(&f,&session,&accepted).await;
+            assert_eq!(observed["execution"]["state"],"completed","{observed}");
+            assert_eq!(observed["answer"]["text"],if text=="peer-cancel" {"permission cancelled"}else{"callbacks complete"});
+            assert!(f.store.pending_interactions(&session).await.unwrap().is_empty());
+        }
+        assert_eq!(std::fs::read_to_string(f.workspace.join("written.txt")).unwrap(),"written through Host\n");
+        let writes=f.store.application_intents(f.app.source().unwrap().deployment,id(21),0,128).await.unwrap();
+        let writes=writes.iter().filter(|r|r.reference.namespace==id(23)&&r.reference.method=="write").collect::<Vec<_>>();
+        assert_eq!(writes.len(),3,"identical callbacks remain distinct accepted writes");
+        for write in writes { assert!(matches!(f.store.operation_observation(&write.reference).await.unwrap().unwrap().outcome,OperationOutcome::Returned{..})); }
+        drop(probe);
+        f.app.shutdown().await.unwrap();
+        f.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+#[tokio::test]
+async fn native_acp_does_not_replay_a_prompt_after_process_loss_and_reactivation() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let (mut f, control, trace, configuration) = setup(1).await;
+        activate_backend(&mut f, true, None, true, Some(configuration.clone()), &[]).await;
+        let session = f.create("ACP unknown").await;
+        let first = execute(&f, &session, "lose").await;
+        let permission = super::super::files::pending(&f, &session).await;
+        super::super::files::answer(&f, &permission, Some("session")).await;
+        let (_probe, _) = control.accept().await.unwrap();
+        let (_process, _) = control.accept().await.unwrap();
+        f.drained().await;
+        assert_eq!(
+            work(&f, &session, &first).await["execution"]["state"],
+            "failed"
+        );
+        activate_backend(&mut f, false, None, true, Some(configuration), &[]).await;
+        let second = execute(&f, &session, "must not resend").await;
+        f.drained().await;
+        let observed = work(&f, &session, &second).await;
+        assert_eq!(observed["execution"]["state"], "failed", "{observed}");
+        let requests = std::fs::read_to_string(trace).unwrap();
+        let requests: Vec<Value> = requests
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|v| v["method"] == "session/prompt")
+                .count(),
+            1
+        );
+        assert_eq!(
+            requests.iter().filter(|v| v["method"] == "spawn").count(),
+            2
+        );
+        f.app.shutdown().await.unwrap();
+        f.config.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn native_acp_file_callback_requires_its_own_write_grant() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let (mut f, control, trace, configuration) = setup(1).await;
+        activate_backend(&mut f, true, None, true, Some(configuration), &["write"]).await;
+        let session = f.create("ACP denied write").await;
+        std::fs::write(f.workspace.join("input.txt"), "fixture contents\n").unwrap();
+        let accepted = execute(&f, &session, "callbacks").await;
+        let permission = super::super::files::pending(&f, &session).await;
+        super::super::files::answer(&f, &permission, Some("session")).await;
+        let (_probe, _) = control.accept().await.unwrap();
+        let (_process, _) = control.accept().await.unwrap();
+        f.drained().await;
+        let observed = work(&f, &session, &accepted).await;
+        assert_eq!(observed["execution"]["state"], "failed", "{observed}");
+        assert!(!f.workspace.join("written.txt").exists());
+        assert!(
+            f.store
+                .pending_interactions(&session)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let requests = std::fs::read_to_string(trace).unwrap();
+        let requests: Vec<Value> = requests
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert!(
+            requests
+                .iter()
+                .any(|v| v["id"] == "write-file" && v.get("error").is_some())
+        );
+        f.app.shutdown().await.unwrap();
+        f.config.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
+}
+
+async fn reject_changed_authority(f: &Fixture, session: &str) {
+    let invocation = f
+        .store
+        .session_projection::<SessionConfiguration>(session)
+        .await
+        .unwrap()
+        .unwrap()
+        .root_turn
+        .unwrap()
+        .invocation;
+    for field in ["invocation", "cwd"] {
+        let scope = f
+            .issuer
+            .issue_with(
+                Identity::Agent {
+                    invocation: invocation.clone(),
+                    operation_id: None,
+                },
+                true,
+                CancellationToken::new(),
+            )
+            .unwrap();
+        let mut input = json!({"invocation":invocation,"conversationKey":"untrusted shared key","message":"must not run","cwd":f.workspace,"settings":{}});
+        if field == "invocation" {
+            input["invocation"]["session_id"] = json!("another-session");
+        } else {
+            input["cwd"] = json!("/tmp");
+        }
+        let client = f.app.client();
+        let binding = client
+            .bind(client.activation(&id(1)).unwrap(), "executor".into())
+            .await
+            .unwrap()
+            .remove(0);
+        let prepared = client
+            .prepare_mutation(
+                binding,
+                "execute".into(),
+                input,
+                scope.clone(),
+                Uuid::new_v4(),
+                Attachments::default().into(),
+            )
+            .await
+            .unwrap();
+        let intent = f
+            .store
+            .record_application_intent(
+                prepared.reference().source.clone(),
+                prepared.consumer().instance().clone(),
+                prepared.reference().clone(),
+                Value::Null,
+            )
+            .await
+            .unwrap();
+        let result = client
+            .mutate(prepared, intent)
+            .await
+            .unwrap()
+            .completion()
+            .await;
+        result.cleanup.unwrap();
+        scope.finish().await.unwrap();
+        match result.reply.receipt {
+            Receipt::Recorded {
+                outcome: OperationOutcome::Unknown { diagnostic },
+                cleanup: maka_plugin_core::operation::OperationCleanup::Confirmed,
+            } => assert!(
+                diagnostic.contains("does not match its admitted Session"),
+                "{diagnostic}"
+            ),
+            receipt => panic!("unexpected forged request receipt {receipt:?}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn native_acp_stop_settles_the_actual_process_before_releasing_execution() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let (mut f, control, trace, configuration) = setup(2).await;
+        activate_backend(&mut f, true, None, true, Some(configuration), &[]).await;
+        let session = f.create("ACP stop").await;
+        let accepted = execute(&f, &session, "wait").await;
+        let permission = super::super::files::pending(&f, &session).await;
+        super::super::files::answer(&f, &permission, Some("session")).await;
+        let (process, _) = control.accept().await.unwrap();
+        let mut process = tokio::io::BufReader::new(process);
+        let mut pid = String::new();
+        tokio::io::AsyncBufReadExt::read_line(&mut process, &mut pid)
+            .await
+            .unwrap();
+        let mut waiting = String::new();
+        tokio::io::AsyncBufReadExt::read_line(&mut process, &mut waiting)
+            .await
+            .unwrap();
+        assert_eq!(waiting.trim(), "waiting");
+        let stopped = f
+            .mutation(
+                2,
+                "stop",
+                json!({"sessionId":session,"invocationId":accepted["invocationId"]}),
+                Uuid::new_v4(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(stopped["requested"], true);
+        f.drained().await;
+        assert!(
+            !std::process::Command::new("/bin/kill")
+                .args(["-0", pid.trim()])
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        let observed = work(&f, &session, &accepted).await;
+        assert_eq!(observed["execution"]["state"], "cancelled", "{observed}");
+        assert_eq!(
+            std::fs::read_to_string(trace)
+                .unwrap()
+                .lines()
+                .filter(
+                    |line| serde_json::from_str::<Value>(line).unwrap()["method"]
+                        == "session/prompt"
+                )
+                .count(),
+            1
+        );
+        f.app.shutdown().await.unwrap();
+        f.config.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
+}

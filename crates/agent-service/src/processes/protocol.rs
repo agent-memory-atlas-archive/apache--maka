@@ -47,10 +47,13 @@ pub struct Run {
     pub justification: Option<String>,
 }
 #[derive(Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "ProtocolProcessInput")]
 pub struct Input {
     pub id: Uuid,
+    pub additional_permissions: Option<maka_sandbox::grant::Permissions>,
+    #[schemars(length(min = 1, max = 2048))]
+    pub justification: Option<String>,
     /// Null closes stdin. Empty data is a successful zero-byte write.
     #[schemars(length(max = CHUNK_BYTES))]
     pub bytes: Option<Vec<u8>>,
@@ -354,8 +357,24 @@ impl Processes {
         {
             return Err(failed("Protocol process permissions changed"));
         }
+        let requested = match input.additional_permissions {
+            Some(permissions) => {
+                let reason = input
+                    .justification
+                    .filter(|s| !s.trim().is_empty() && s.len() <= 2048)
+                    .ok_or_else(|| {
+                        failed("Protocol process permissions require a justification")
+                    })?;
+                Some(PermissionRequest {
+                    reason,
+                    command: None,
+                    permissions,
+                })
+            }
+            None => None,
+        };
         let captured = self
-            .prepare(tool, &current, None, &context.scope().cancellation)
+            .prepare(tool, &current, requested, &context.scope().cancellation)
             .await?;
         if !captured
             .executor

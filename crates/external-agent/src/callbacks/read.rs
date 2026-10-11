@@ -17,7 +17,7 @@
  * under the License.
  */
 
-use super::{CallbackError, Context, Operation, Services, acp, call, check_path};
+use super::{CallbackError, Context, Operation, Ports, acp, call, check_path};
 use maka_runtime::read::{ReadInput, ReadPage};
 use std::num::NonZeroUsize;
 
@@ -26,7 +26,8 @@ const MAX_TEXT_BYTES: usize = 512 * 1024;
 pub(super) async fn text(
     input: acp::ReadTextFileRequest,
     context: &Context,
-    host: &Services,
+    host: &Ports,
+    rpc_id: &serde_json::Value,
 ) -> Result<String, CallbackError> {
     if input.line == Some(0) || input.limit == Some(0) {
         return Err(CallbackError::invalid("Line and limit must be positive"));
@@ -49,8 +50,13 @@ pub(super) async fn text(
             return Err(CallbackError::host("Read continuation changed its target"));
         }
         let output = host
-            .files
-            .invoke(call(context)?, Operation::Read(next.clone()))
+            .callbacks
+            .file(
+                call(context)?,
+                rpc_id.to_string(),
+                Operation::Read(next.clone()),
+                context.cancellation.clone(),
+            )
             .await
             .map_err(CallbackError::host)?;
         let page: ReadPage =

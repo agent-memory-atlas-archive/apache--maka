@@ -82,3 +82,14 @@ operation、当前权限及独立 method grant，句柄本身不授权。原生�
 NativeRequest 跨轮次复用，但卸载时必须取消并等待 finish。权限变化或会话退休也会
 停止空闲进程；实际终止/reap 后才清理原 Session 资源记录。未知结果查询原 operation。
 该传输尚未提供 ACP 后端或文件／表单回调。
+
+原生实现 `maka.agent.acp` 通过普通 Executor 契约导出 `executor`，配置包含 ACP
+`agent` 启动描述和可选请求权限 `permissions`。`processes`、`files`、`forms`
+三个 import 分别绑定一个 ProtocolProcesses、Files、Forms 服务，并独立授权。
+启动权限仍须在安装上限内经过 Session 同意；后续 invocation 输入可再次请求所需权限。
+外部代理的权限表单本身不授予 Host 文件或网络权限。
+
+适配器核对真实入站 invocation 与工作区，以实际调用方、Session 和原生部署命名空间
+确定会话归属，复用共享 ACP v1/v2 journal 和投影。原生 owner 跨 prompt 持有并清理
+独立进程请求；SDK 收到回复后暂停传输轮询也不阻止已接纳 stdin 写入结算。
+普通产品后端选择器与附件传输仍待接入。
