@@ -667,13 +667,7 @@ impl<V: ?Sized + 'static> Application<V> {
     }
 
     fn validate_surface(&mut self, mount: &Mount, frame: &Frame<NativeView<V>>) -> Result<()> {
-        let provider = self
-            .runtime
-            .mount_statuses()
-            .into_iter()
-            .find(|status| status.mount == *mount)
-            .ok_or(maka_plugin_core::Error::Retired)?
-            .provider;
+        let provider = self.runtime.mount_provider(mount)?.clone();
         let surface = frame
             .surface
             .as_ref()
@@ -750,11 +744,10 @@ impl<V: ?Sized + 'static> Application<V> {
     }
 
     pub fn is_retiring(&self, mount: &Mount) -> bool {
-        self.runtime
-            .mount_statuses()
-            .iter()
-            .find(|status| status.mount == *mount)
-            .is_none_or(|status| status.phase == Phase::Retiring)
+        !self
+            .runtime
+            .mount_phase(mount)
+            .is_ok_and(|phase| phase != Phase::Retiring)
     }
 
     /// Stop admission and release module registrations. Native adapters must

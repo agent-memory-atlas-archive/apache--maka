@@ -222,6 +222,29 @@ impl<T> Runtime<T> {
             .collect()
     }
 
+    /// Read the original owner directly; rendering must not snapshot every
+    /// mount to inspect one node or walk its parent chain.
+    pub fn mount_phase(&self, mount: &Mount) -> Result<Phase, Error> {
+        Ok(self.mounted(mount)?.phase)
+    }
+
+    pub fn retiring_mounts(&self) -> impl Iterator<Item = Mount> + '_ {
+        self.mounts.iter().filter_map(|(id, mounted)| {
+            (mounted.phase == Phase::Retiring).then_some(Mount {
+                kernel: self.identity,
+                id: *id,
+            })
+        })
+    }
+
+    pub fn mount_parent(&self, mount: &Mount) -> Result<Option<&Mount>, Error> {
+        Ok(self.mounted(mount)?.parent.as_ref())
+    }
+
+    pub fn mount_provider(&self, mount: &Mount) -> Result<&Activation, Error> {
+        Ok(&self.mounted(mount)?.capability.provider)
+    }
+
     fn mounted(&self, mount: &Mount) -> Result<&Mounted<T>, Error> {
         if mount.kernel != self.identity {
             return Err(Error::Retired);

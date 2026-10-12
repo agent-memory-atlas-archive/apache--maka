@@ -556,6 +556,7 @@ impl Presenter {
         self.application
             .capture_actions(&self.root, |target| resources.capture(target))?;
         let observed = self.resources.commit(&self.application, &self.root)?;
+        let has_observations = !observed.is_empty();
         for (mount, input) in observed {
             if !self.application.is_retiring(&mount) {
                 let frame = self.application.frame(&mount)?;
@@ -575,21 +576,24 @@ impl Presenter {
                 }
             }
         }
-        if !self.resources.prepare(&self.application, &self.root)? {
-            self.clear_hover()?;
-            self.scene.clear();
-            self.focus = None;
-            self.drag = None;
-            return Ok(());
+        // Only delivered observations can change the committed scene here.
+        if has_observations {
+            if !self.resources.prepare(&self.application, &self.root)? {
+                self.clear_hover()?;
+                self.scene.clear();
+                self.focus = None;
+                self.drag = None;
+                return Ok(());
+            }
+            // An observation may create a new scene or add scrolling regions.
+            // Capture its actions before applying commands, then initialize the new
+            // native state before paint. New observations remain queued for the next
+            // synchronization, keeping each pass bounded.
+            let resources = &mut self.resources;
+            self.application
+                .capture_actions(&self.root, |target| resources.capture(target))?;
+            self.resources.commit(&self.application, &self.root)?;
         }
-        // An observation may create a new scene or add scrolling regions.
-        // Capture its actions before applying commands, then initialize the new
-        // native state before paint. New observations remain queued for the next
-        // synchronization, keeping each pass bounded.
-        let resources = &mut self.resources;
-        self.application
-            .capture_actions(&self.root, |target| resources.capture(target))?;
-        self.resources.commit(&self.application, &self.root)?;
         self.sync_modal_focus()?;
         self.apply_focus_exits()?;
         if let Some(target) = &self.drag

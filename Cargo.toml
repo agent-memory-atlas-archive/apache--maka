@@ -161,6 +161,9 @@ uuid = { version = "1", features = ["v4", "serde"] }
 [profile.dev]
 # Keep useful backtraces without embedding hundreds of MiB of dependency types.
 debug = "line-tables-only"
+# The interactive product hashes packages and composes JSON scenes in Rust.
+# Keep ordinary `cargo run` responsive while retaining debug checks/backtraces.
+opt-level = 1
 
 [patch.crates-io]
 image-webp = { path = "third-party/image-webp" }

@@ -737,7 +737,7 @@ impl Presenter {
             };
             let frame_current = frame.revision == painted.revision;
             if self.application.is_retiring(&painted.mount)
-                || !frame.view.same_presentation_metadata(&painted.view)
+                || (!frame_current && !frame.view.same_presentation_metadata(&painted.view))
                 || !self
                     .resources
                     .owners

@@ -512,7 +512,31 @@ fn default_product_uses_system_language_and_reopens_without_reauthoring() {
                 "auto"
             );
             store.close().await.unwrap();
-            drop(RootOwner::open(&root.join("host"), &namespaces).unwrap());
+            let host = launch.configuration["hosts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|host| host["location"]["kind"] == "process")
+                .unwrap();
+            let host_id = serde_json::from_value(host["deployment"].clone()).unwrap();
+            let owner =
+                std::sync::Arc::new(RootOwner::open(&root.join("host"), &namespaces).unwrap());
+            let host = maka_event_log::EventLog::for_root(owner).await.unwrap();
+            let source = host.load_application(host_id).await.unwrap().unwrap();
+            assert!(
+                source
+                    .packages
+                    .iter()
+                    .any(|package| package.manifest().id == "maka.agent.agent")
+            );
+            assert!(
+                !source
+                    .packages
+                    .iter()
+                    .any(|package| package.manifest().id == "maka.agent.workspace"),
+                "the Agent Host must not load the terminal workspace package"
+            );
+            host.close().await.unwrap();
         });
     }
 }

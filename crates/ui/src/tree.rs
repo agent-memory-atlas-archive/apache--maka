@@ -434,12 +434,7 @@ impl<V: ?Sized + 'static> Application<V> {
         result
     }
     pub(super) fn provider(&self, mount: &Mount) -> Result<Activation> {
-        self.runtime
-            .mount_statuses()
-            .into_iter()
-            .find(|status| status.mount == *mount)
-            .map(|status| status.provider)
-            .ok_or(maka_plugin_core::Error::Retired.into())
+        Ok(self.runtime.mount_provider(mount)?.clone())
     }
     pub(super) fn mount_depth(&self, mount: &Mount) -> Result<usize> {
         Ok(self.mount_chain(mount)?.len() - 1)
@@ -473,24 +468,13 @@ impl<V: ?Sized + 'static> Application<V> {
         })
     }
     pub(super) fn mount_chain(&self, mount: &Mount) -> Result<Vec<Mount>> {
-        let parents: BTreeMap<_, _> = self
-            .runtime
-            .mount_statuses()
-            .into_iter()
-            .map(|status| (status.mount.id(), (status.mount, status.parent)))
-            .collect();
         let mut current = mount;
         let mut chain = vec![mount.clone()];
-        loop {
-            match parents.get(&current.id()) {
-                Some((owner, Some(parent))) if owner == current => {
-                    chain.push(parent.clone());
-                    current = parent;
-                }
-                Some((owner, None)) if owner == current => return Ok(chain),
-                _ => return Err(maka_plugin_core::Error::Retired.into()),
-            }
+        while let Some(parent) = self.runtime.mount_parent(current)? {
+            chain.push(parent.clone());
+            current = parent;
         }
+        Ok(chain)
     }
     pub(super) fn current<'a>(
         &'a self,
@@ -505,13 +489,7 @@ impl<V: ?Sized + 'static> Application<V> {
             .ok_or_else(|| Error::Invalid("component is absent from the transaction".into()))
     }
     fn subscription(&self, mount: &Mount, update: &Update<V>) -> Result<Option<Subscription>> {
-        let status = self
-            .runtime
-            .mount_statuses()
-            .into_iter()
-            .find(|status| status.mount == *mount)
-            .ok_or(maka_plugin_core::Error::Retired)?;
-        let Some(parent) = status.parent else {
+        let Some(parent) = self.runtime.mount_parent(mount)?.cloned() else {
             return Ok(None);
         };
         let view = self.current(&parent, update)?;
@@ -1018,22 +996,13 @@ impl<V: ?Sized + 'static> Application<V> {
     /// Removed/faulted mounts remain fenced until the renderer supplies real
     /// resource close acknowledgements. Leaves precede parents for settlement.
     pub fn retiring_mounts(&self) -> Vec<Mount> {
-        let statuses = self.runtime.mount_statuses();
-        let parents: BTreeMap<_, _> = statuses
-            .iter()
-            .map(|status| (status.mount.id(), status.parent.as_ref().map(Mount::id)))
-            .collect();
-        let mut mounts: Vec<_> = statuses
-            .into_iter()
-            .filter(|status| status.phase == Phase::Retiring)
-            .map(|status| status.mount)
-            .collect();
+        let mut mounts: Vec<_> = self.runtime.retiring_mounts().collect();
         mounts.sort_by_key(|mount| {
             let mut depth = 0;
-            let mut id = mount.id();
-            while let Some(Some(parent)) = parents.get(&id) {
+            let mut current = mount;
+            while let Ok(Some(parent)) = self.runtime.mount_parent(current) {
                 depth += 1;
-                id = *parent;
+                current = parent;
             }
             std::cmp::Reverse(depth)
         });

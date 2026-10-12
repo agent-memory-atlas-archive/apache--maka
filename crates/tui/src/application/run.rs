@@ -142,7 +142,7 @@ pub fn run(
                 return Err(error);
             }
             presenter.present(scene.expect("successful paint"));
-            if event::poll(Duration::from_millis(30)).map_err(|e| e.to_string())? {
+            if event::poll(Duration::from_millis(16)).map_err(|e| e.to_string())? {
                 let input = event::read().map_err(|e| e.to_string())?;
                 if exit_key.ready(Some(&input), Instant::now()) {
                     return Ok(true);

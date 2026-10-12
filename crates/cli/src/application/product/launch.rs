@@ -258,15 +258,65 @@ async fn prepare(
             return Err("original launcher connection input changed".into());
         }
         let packages = decode_packages(preparation.packages)?;
+        let mut declarations = maka_plugin_core::package::Packages::default();
+        for package in &packages {
+            declarations.insert(
+                package.application_ref(),
+                package
+                    .manifest()
+                    .application
+                    .as_ref()
+                    .ok_or("missing application declaration")?
+                    .clone(),
+            )?;
+        }
+        // Persist each source's complete expanded package closure, including
+        // structural templates and disabled instances. Host startup must not
+        // read and validate every bundled UI package merely because the same
+        // distribution also contains the terminal product.
+        let selected = |input: &Input,
+                        observations: &[RemoteObservation]|
+         -> Result<Vec<Package>, HostError> {
+            let remote = observations
+                .iter()
+                .map(|observation| {
+                    (
+                        observation.capability.clone(),
+                        observation.declaration.clone(),
+                    )
+                })
+                .collect();
+            let plan = maka_plugin_core::plan::Plan::prepare(input, &declarations, &remote)?;
+            let required: std::collections::BTreeSet<_> = plan
+                .instances()
+                .values()
+                .map(|instance| &instance.package)
+                .collect();
+            Ok(packages
+                .iter()
+                .filter(|package| required.contains(&package.application_ref()))
+                .cloned()
+                .collect())
+        };
+        let host_packages = selected(&preparation.sources.host, &[])?;
+        let management_packages = selected(&preparation.sources.management_host, &[])?;
+        let ui_packages = selected(&preparation.sources.ui, &preparation.sources.remote_exports)?;
         let host_store = open(root, false, Some(domain)).await?;
         let result = async {
-            ensure(&host_store, host, &preparation.sources.host, &[], &packages).await?;
+            ensure(
+                &host_store,
+                host,
+                &preparation.sources.host,
+                &[],
+                &host_packages,
+            )
+            .await?;
             ensure(
                 store,
                 management,
                 &preparation.sources.management_host,
                 &[],
-                &packages,
+                &management_packages,
             )
             .await?;
             ensure(
@@ -274,7 +324,7 @@ async fn prepare(
                 record.deployment,
                 &preparation.sources.ui,
                 &preparation.sources.remote_exports,
-                &packages,
+                &ui_packages,
             )
             .await?;
             store.complete_application_launch(record.deployment).await?;

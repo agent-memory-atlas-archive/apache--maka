@@ -320,16 +320,12 @@ impl Builder<'_> {
                                 .into(),
                         ));
                     }
-                    let entry = declaration
-                        .entries
-                        .get(&self.target)
-                        .ok_or_else(|| {
-                            Error::Composition(format!(
-                                "package {} has no {:?} entry",
-                                package.id, self.target
-                            ))
-                        })?
-                        .clone();
+                    let entry = declaration.entries.get(&self.target).ok_or_else(|| {
+                        Error::Composition(format!(
+                            "package {} has no {:?} entry",
+                            package.id, self.target
+                        ))
+                    })?;
                     crate::validate_value(&entry.configuration, &configuration)?;
                     let exports = entry
                         .exports
