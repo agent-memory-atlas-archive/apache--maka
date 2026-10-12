@@ -19,7 +19,7 @@
 
 //! Read-only facts from actual captured Host registrations.
 use super::{Endpoints, wire};
-use crate::Result;
+use crate::application::Result;
 use maka_plugin_core::{
     composition::InstanceId,
     contract::{Contract, Interface, Transport},
@@ -56,18 +56,18 @@ impl Selection {
     }
 }
 impl Catalogue {
-    pub(crate) fn captured(endpoints: &Endpoints) -> Self {
+    pub fn captured(endpoints: &Endpoints) -> Self {
         Self {
             endpoints: endpoints.descriptions(),
         }
     }
-    pub(crate) fn epochs(&self) -> BTreeMap<String, Option<Uuid>> {
+    pub fn epochs(&self) -> BTreeMap<String, Option<Uuid>> {
         self.endpoints
             .iter()
             .map(|(name, description)| (name.clone(), description.registration_epoch))
             .collect()
     }
-    pub(crate) fn check_names<'a>(&self, names: impl Iterator<Item = &'a String>) -> Result<()> {
+    pub fn check_names<'a>(&self, names: impl Iterator<Item = &'a String>) -> Result<()> {
         if !self.endpoints.keys().eq(names) {
             return Err("Host endpoint catalogue differs from configured selections".into());
         }
@@ -96,7 +96,7 @@ impl Catalogue {
         catalogue.validate()?;
         Ok((catalogue, reader.inner))
     }
-    pub(super) fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         if self.endpoints.is_empty() || self.endpoints.len() > 128 {
             return Err("invalid Host endpoint catalogue".into());
         }

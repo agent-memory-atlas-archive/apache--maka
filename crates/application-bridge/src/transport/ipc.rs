@@ -21,21 +21,10 @@
 use super::{native, wire};
 use crate::Result;
 use futures_util::future::BoxFuture;
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct Hello {
-    pub nonce: Uuid,
-}
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct Accepted {
-    pub nonce: Uuid,
-}
+use wire::{Accepted, Hello};
 
 /// Only the trusted launcher constructs this from its actual child bootstrap.
 /// The address and nonce stay fixed; a lost Host is never retargeted by alias.

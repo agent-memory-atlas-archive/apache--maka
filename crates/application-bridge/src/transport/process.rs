@@ -26,7 +26,7 @@ use maka_event_log::{
 };
 use maka_plugin_core::{composition::InstanceId, deployment::DeploymentRef};
 use maka_runtime_host::{
-    application::{Application, Client, NativeRegistry},
+    application::{Application, NativeRegistry},
     ipc::LocalListener,
 };
 use serde::{Deserialize, Serialize};
@@ -425,7 +425,7 @@ pub async fn serve(native: NativeRegistry) -> Result<()> {
         Ok(application) => {
             let result = async {
                 let client = application.client();
-                let endpoints = start_endpoints(&client, &bootstrap.endpoints).await?;
+                let endpoints = Endpoints::start(&client, &bootstrap.endpoints).await?;
                 let server = Server::new(client.clone(), policy, endpoints)?;
                 let ready = Event::Ready {
                     nonce: bootstrap.nonce,
@@ -441,13 +441,13 @@ pub async fn serve(native: NativeRegistry) -> Result<()> {
                             command = input.read_bounded::<Command>(BOOTSTRAP_LIMIT) => {
                                 match command {
                                     Ok(Command::Epochs { nonce }) if nonce == bootstrap.nonce => {
-                                        let result = capture_endpoints(&client, &bootstrap.endpoints).await.map(|endpoints| endpoints.epochs());
+                                        let result = Endpoints::capture(&client, &bootstrap.endpoints).await.map(|endpoints| endpoints.epochs());
                                         if let Err(error) = wire::write(&mut output, &Event::Epochs { nonce, result }).await {
                                             control_error = Some(error); break;
                                         }
                                     }
                                     Ok(Command::Capture { nonce }) if nonce == bootstrap.nonce => {
-                                        let result = capture_endpoints(&client, &bootstrap.endpoints).await;
+                                        let result = Endpoints::capture(&client, &bootstrap.endpoints).await;
                                         let result = match result {
                                             Ok(endpoints) => {
                                                 let catalogue = Catalogue::captured(&endpoints);
@@ -551,38 +551,6 @@ fn capture_reply(nonce: Uuid, result: Result<Catalogue>) -> Event {
             result: Err("Host captured catalogue exceeds control frame limit".into()),
         },
     }
-}
-pub(crate) async fn start_endpoints(
-    client: &Client,
-    selections: &BTreeMap<String, HostEndpoint>,
-) -> Result<Endpoints> {
-    // Reject malformed selectors and grants before waiting for initialization.
-    // These observations own no jobs; all initializers belong to Application.
-    drop(capture_endpoints(client, selections).await?);
-    for consumer in selections
-        .values()
-        .map(|endpoint| &endpoint.consumer)
-        .collect::<BTreeSet<_>>()
-    {
-        // A failed consumer can yield only a declaration in the final capture.
-        // Closing or invalid configuration still fails that exact owner request.
-        let _ = client.ready_instance(consumer).await;
-    }
-    capture_endpoints(client, selections).await
-}
-pub(crate) async fn capture_endpoints(
-    client: &Client,
-    selections: &BTreeMap<String, HostEndpoint>,
-) -> Result<Endpoints> {
-    let mut endpoints = Endpoints::empty();
-    for (name, selection) in selections {
-        let captured = client
-            .capture_import(selection.consumer.clone(), selection.import.clone())
-            .await?;
-        endpoints.insert(name.clone(), captured, selection.grant.clone())?;
-    }
-    endpoints.validate()?;
-    Ok(endpoints)
 }
 async fn drain_server(server: &Server) {
     let mut reported = BTreeSet::new();

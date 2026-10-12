@@ -36,7 +36,7 @@ use maka_plugin_core::{
     plan::{Plan, Provider, RemoteCapability, RemoteExports},
 };
 use maka_ui::actions::RemoteService;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::OsString,
@@ -67,34 +67,7 @@ pub struct Host {
     #[serde(default)]
     pub native: Vec<crate::transport::NativeGrant>,
 }
-/// One trusted exposure through an explicit Host consumer and declared import.
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct HostEndpoint {
-    pub consumer: InstanceId,
-    pub import: String,
-    pub grant: Grant,
-}
-impl HostEndpoint {
-    pub(crate) fn validate(&self) -> Result<()> {
-        if self.consumer.0.is_empty()
-            || self.consumer.0.len() > 32
-            || self.consumer.0.iter().any(Uuid::is_nil)
-            || self.import.is_empty()
-            || self.import.len() > 256
-            || self.grant.methods.is_empty()
-            || self.grant.methods.len() > 64
-            || self
-                .grant
-                .methods
-                .iter()
-                .any(|method| method.is_empty() || method.len() > 256)
-        {
-            return Err("invalid Host endpoint selection or grant".into());
-        }
-        Ok(())
-    }
-}
+pub use maka_runtime_host::application::transport::HostEndpoint;
 /// Explicit executor location chosen by the trusted launcher. Cohost borrows
 /// the already owned UI Store; it never opens a filesystem Root.
 #[derive(Clone, Deserialize)]
@@ -109,12 +82,7 @@ pub enum HostLocation {
     Cohost {},
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Grant {
-    pub methods: BTreeSet<String>,
-    pub recovery: bool,
-}
+pub use maka_runtime_host::application::transport::Grant;
 pub(crate) fn valid_domain(domain: &str) -> bool {
     domain.len() == 64
         && domain
@@ -519,7 +487,7 @@ impl Connections {
         let app = application.as_ref().unwrap();
         let client = app.client();
         let endpoints =
-            crate::transport::process::start_endpoints(&client, &configuration.endpoints).await?;
+            crate::transport::Endpoints::start(&client, &configuration.endpoints).await?;
         let actual = crate::transport::Server::new(client, policy, endpoints)?;
         let catalogue = actual.catalogue();
         *server = Some(actual.clone());

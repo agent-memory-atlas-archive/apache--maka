@@ -18,7 +18,7 @@
  */
 
 //! Original native request custody on an authenticated physical connector.
-use super::{Call, Peers, Reply, Selection, Source, policy::PeerApproval};
+use super::{Call, Peers, Reply, Selection, Source};
 use crate::Result;
 use futures_util::{FutureExt, future::BoxFuture};
 use maka_event_log::applications::intents::RecordedIntent;
@@ -26,6 +26,7 @@ use maka_plugin_core::{
     contract::{Interface, MethodMode},
     operation::{OperationReply, Receipt},
 };
+use maka_runtime_host::application::transport::PeerApproval;
 use maka_ui::actions::*;
 use std::{
     panic::AssertUnwindSafe,
@@ -36,6 +37,19 @@ use tokio::{
     sync::{Notify, OwnedSemaphorePermit, Semaphore},
 };
 use tokio_util::sync::CancellationToken;
+
+/// Capture the original UI caller, outside guest-supplied action JSON.
+pub fn capture_source(value: &ServiceSource) -> Result<Source> {
+    Ok(Source {
+        deployment: value
+            .deployment()
+            .ok_or("persisted UI source required")?
+            .clone(),
+        consumer: value.consumer().instance().clone(),
+        mount: value.mount().id(),
+        request: value.request_id(),
+    })
+}
 
 pub trait Channel: AsyncRead + AsyncWrite + Unpin + Send + 'static {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> Channel for T {}
@@ -274,7 +288,7 @@ impl Session {
             .ok_or("persisted UI source required")?;
         self.approval
             .check(deployment, request.source.consumer().instance())?;
-        let source = Source::try_from(
+        let source = capture_source(
             &state
                 .request
                 .as_ref()

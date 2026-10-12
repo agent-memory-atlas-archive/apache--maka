@@ -18,11 +18,43 @@
  */
 
 //! One captured endpoint set; declarations never become executable bindings.
+use super::Grant;
 use super::{Description, Endpoint};
-use crate::{Grant, Result};
-use maka_runtime_host::application::CapturedImport;
-use std::collections::BTreeMap;
+use crate::application::Result;
+use crate::application::{CapturedImport, Client};
+use maka_plugin_core::composition::InstanceId;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
+use uuid::Uuid;
 
+/// One trusted exposure through an explicit Host consumer and declared import.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostEndpoint {
+    pub consumer: InstanceId,
+    pub import: String,
+    pub grant: Grant,
+}
+impl HostEndpoint {
+    pub fn validate(&self) -> Result<()> {
+        if self.consumer.0.is_empty()
+            || self.consumer.0.len() > 32
+            || self.consumer.0.iter().any(Uuid::is_nil)
+            || self.import.is_empty()
+            || self.import.len() > 256
+            || self.grant.methods.is_empty()
+            || self.grant.methods.len() > 64
+            || self
+                .grant
+                .methods
+                .iter()
+                .any(|method| method.is_empty() || method.len() > 256)
+        {
+            return Err("invalid Host endpoint selection or grant".into());
+        }
+        Ok(())
+    }
+}
 pub struct Endpoints(BTreeMap<String, Entry>);
 enum Entry {
     Ready(Endpoint),
@@ -39,15 +71,44 @@ impl From<BTreeMap<String, Endpoint>> for Endpoints {
     }
 }
 impl Endpoints {
-    pub(crate) fn empty() -> Self {
+    pub async fn start(
+        client: &Client,
+        selections: &BTreeMap<String, HostEndpoint>,
+    ) -> Result<Endpoints> {
+        // Reject malformed selectors and grants before waiting for initialization.
+        // These observations own no jobs; all initializers belong to Application.
+        drop(Self::capture(client, selections).await?);
+        for consumer in selections
+            .values()
+            .map(|endpoint| &endpoint.consumer)
+            .collect::<BTreeSet<_>>()
+        {
+            // A failed consumer can yield only a declaration in the final capture.
+            // Closing or invalid configuration still fails that exact owner request.
+            let _ = client.ready_instance(consumer).await;
+        }
+        Self::capture(client, selections).await
+    }
+    pub async fn capture(
+        client: &Client,
+        selections: &BTreeMap<String, HostEndpoint>,
+    ) -> Result<Endpoints> {
+        let mut endpoints = Endpoints::empty();
+        for (name, selection) in selections {
+            selection.validate()?;
+            let captured = client
+                .capture_import(selection.consumer.clone(), selection.import.clone())
+                .await?;
+            endpoints.insert(name.clone(), captured, selection.grant.clone())?;
+        }
+        endpoints.validate()?;
+        Ok(endpoints)
+    }
+
+    fn empty() -> Self {
         Self(BTreeMap::new())
     }
-    pub(crate) fn insert(
-        &mut self,
-        name: String,
-        import: CapturedImport,
-        grant: Grant,
-    ) -> Result<()> {
+    fn insert(&mut self, name: String, import: CapturedImport, grant: Grant) -> Result<()> {
         let entry = match import {
             CapturedImport::Ready(binding) => Entry::Ready(Endpoint::new(binding, grant)?),
             CapturedImport::Unavailable {
@@ -87,7 +148,7 @@ impl Endpoints {
             Entry::Unavailable(_) => None,
         }
     }
-    pub(crate) fn epochs(&self) -> BTreeMap<String, Option<uuid::Uuid>> {
+    pub fn epochs(&self) -> BTreeMap<String, Option<uuid::Uuid>> {
         self.0
             .iter()
             .map(|(name, entry)| {

@@ -17,21 +17,12 @@
  * under the License.
  */
 
-//! Private, single-invocation channels across independent Application owners.
-//! The trusted embedding authenticates each channel before selecting its Peer;
-//! this module never treats caller observations or credentials in JSON as trust.
-mod catalogue;
-mod client;
-mod endpoints;
+//! UI adapters and trusted process bootstrap for the shared Application transport.
 pub mod ipc;
 pub mod native;
-mod policy;
 pub mod process;
-mod server;
-mod wire;
-pub use catalogue::{Catalogue, Description, Selection};
-pub use client::Call;
-pub use endpoints::Endpoints;
-pub use policy::{Endpoint, NativeGrant, Peer, PeerPolicy, Peers};
-pub use server::Server;
-pub use wire::{Reply, Source};
+use maka_runtime_host::application::transport::wire;
+pub use maka_runtime_host::application::transport::{
+    Call, Catalogue, Description, Endpoint, Endpoints, NativeGrant, Peer, PeerPolicy, Peers, Reply,
+    Selection, Server, Source,
+};

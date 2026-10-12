@@ -26,6 +26,7 @@ mod native_context;
 pub mod operations;
 mod owner;
 mod resource_ingress;
+pub mod transport;
 pub use caller::Caller;
 pub use context::Context;
 pub use native_context::{NativeContext, NativePersistence, NativeRequest, NativeServices};

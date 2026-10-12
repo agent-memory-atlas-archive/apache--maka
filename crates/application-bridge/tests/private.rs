@@ -1712,7 +1712,12 @@ async fn native_caller_preserves_original_mount_across_requests_and_rejects_reop
             0
         );
         let captured = source.lock().unwrap().clone().unwrap();
-        assert_eq!(Source::try_from(&captured).unwrap().mount, root.id());
+        assert_eq!(
+            maka_application_bridge::transport::native::capture_source(&captured)
+                .unwrap()
+                .mount,
+            root.id()
+        );
     }
     ui.retire(&root).unwrap();
     ui.close(&root, Ok(())).unwrap();

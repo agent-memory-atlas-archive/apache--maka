@@ -18,8 +18,10 @@
  */
 
 //! Private invocation evidence from a trusted launcher or authenticated acceptor.
+use super::Grant;
 use super::wire::Source;
-use crate::{Grant, Result};
+use crate::application::Result;
+use crate::application::{Binding, Caller, Invocation, Policy, RecoveryInvocation};
 use maka_event_log::applications::intents::CallerConfirmation;
 use maka_plugin_core::{
     composition::InstanceId,
@@ -27,7 +29,6 @@ use maka_plugin_core::{
     deployment::DeploymentRef,
 };
 use maka_plugins::call::{Identity, Issuer, Scope};
-use maka_runtime_host::application::{Binding, Caller, Invocation, Policy, RecoveryInvocation};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -53,12 +54,12 @@ impl Peer {
                 .iter()
                 .any(|id| id.0.is_empty() || id.0.len() > 64 || id.0.iter().any(uuid::Uuid::is_nil))
         {
-            return Err("invalid approved UI consumers".into());
+            return Err("invalid approved peer consumers".into());
         }
         Ok(Self { source, consumers })
     }
 }
-/// One trusted controller's exact-source approvals for its original UI deployment.
+/// One trusted controller's exact-source approvals for its original caller deployment.
 /// Updating this set never changes an endpoint or acknowledges request cleanup.
 pub struct Peers {
     origin: DeploymentRef,
@@ -70,13 +71,14 @@ struct Approvals {
     latest: u64,
     tickets: BTreeMap<u64, Arc<PeerApproval>>,
 }
-pub(super) struct PeerApproval {
+/// An opaque ticket for this controller's original approval and incarnation.
+pub struct PeerApproval {
     peer: Peer,
     incarnation: Arc<()>,
     active: AtomicBool,
 }
 impl PeerApproval {
-    pub(super) fn check(&self, source: &DeploymentRef, consumer: &InstanceId) -> Result<()> {
+    pub fn check(&self, source: &DeploymentRef, consumer: &InstanceId) -> Result<()> {
         if !self.active.load(Ordering::Acquire)
             || *source != self.peer.source
             || !self.peer.consumers.contains(consumer)
@@ -85,7 +87,7 @@ impl PeerApproval {
         }
         Ok(())
     }
-    pub(super) fn live(&self) -> Result<()> {
+    pub fn live(&self) -> Result<()> {
         self.active
             .load(Ordering::Acquire)
             .then_some(())
@@ -186,18 +188,18 @@ impl Peers {
         peers.extend(peer);
         Ok(peers)
     }
-    pub(crate) fn check_update(&self, peer: Option<Peer>, retain: &BTreeSet<u64>) -> Result<()> {
+    pub fn check_update(&self, peer: Option<Peer>, retain: &BTreeSet<u64>) -> Result<()> {
         let current = self.approved.lock().unwrap();
         self.prepare(&current, Self::updated(&current, peer, retain)?)?;
         Ok(())
     }
-    pub(crate) fn update(&self, peer: Option<Peer>, retain: &BTreeSet<u64>) -> Result<()> {
+    pub fn update(&self, peer: Option<Peer>, retain: &BTreeSet<u64>) -> Result<()> {
         let mut current = self.approved.lock().unwrap();
         let next = self.prepare(&current, Self::updated(&current, peer, retain)?)?;
         Self::publish(&mut current, next);
         Ok(())
     }
-    pub(super) fn resolve(
+    pub fn resolve(
         &self,
         source: &DeploymentRef,
         consumer: &InstanceId,

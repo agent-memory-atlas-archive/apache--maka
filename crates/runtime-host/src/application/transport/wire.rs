@@ -18,7 +18,7 @@
  */
 
 //! Bounded frames; payload chunks are raw bytes, never expanded JSON arrays.
-use crate::Result;
+use crate::application::Result;
 use maka_event_log::applications::intents::CallerConfirmation;
 use maka_plugin_core::{
     composition::InstanceId,
@@ -31,7 +31,18 @@ use std::io::Write;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use uuid::Uuid;
 
-pub(super) const FRAME_LIMIT: usize = 2 * 1024 * 1024;
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Hello {
+    pub nonce: Uuid,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Accepted {
+    pub nonce: Uuid,
+}
+
+pub const FRAME_LIMIT: usize = 2 * 1024 * 1024;
 /// Observations supplied by the caller adapter, never transport authentication.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -41,20 +52,6 @@ pub struct Source {
     /// Original mount, captured by the trusted UI adapter rather than action JSON.
     pub mount: Uuid,
     pub request: Uuid,
-}
-impl TryFrom<&maka_ui::actions::ServiceSource> for Source {
-    type Error = String;
-    fn try_from(value: &maka_ui::actions::ServiceSource) -> Result<Self> {
-        Ok(Self {
-            deployment: value
-                .deployment()
-                .ok_or("persisted UI source required")?
-                .clone(),
-            consumer: value.consumer().instance().clone(),
-            mount: value.mount().id(),
-            request: value.request_id(),
-        })
-    }
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -124,13 +121,10 @@ impl Write for Bounded {
         Ok(())
     }
 }
-pub(super) async fn write<W: AsyncWrite + Unpin, T: Serialize>(
-    writer: &mut W,
-    value: &T,
-) -> Result<()> {
+pub async fn write<W: AsyncWrite + Unpin, T: Serialize>(writer: &mut W, value: &T) -> Result<()> {
     write_bounded(writer, value, FRAME_LIMIT).await
 }
-pub(super) async fn write_bounded<W: AsyncWrite + Unpin, T: Serialize>(
+pub async fn write_bounded<W: AsyncWrite + Unpin, T: Serialize>(
     writer: &mut W,
     value: &T,
     limit: usize,
@@ -143,21 +137,21 @@ pub(super) async fn write_bounded<W: AsyncWrite + Unpin, T: Serialize>(
     writer.write_all(&buffer).await.map_err(|e| e.to_string())?;
     writer.flush().await.map_err(|e| e.to_string())
 }
-pub(super) fn encode_bounded<T: Serialize>(value: &T, limit: usize) -> Result<Vec<u8>> {
+pub fn encode_bounded<T: Serialize>(value: &T, limit: usize) -> Result<Vec<u8>> {
     let mut buffer = Bounded(Vec::new(), limit.min(FRAME_LIMIT));
     serde_json::to_writer(&mut buffer, value).map_err(|e| e.to_string())?;
     Ok(buffer.0)
 }
 /// Keeps partial prefix/body custody across select cancellation.
-pub(super) struct Reader<R> {
-    pub(super) inner: BufReader<R>,
+pub struct Reader<R> {
+    pub inner: BufReader<R>,
     prefix: [u8; 4],
     prefix_read: usize,
     body: Vec<u8>,
     body_read: usize,
 }
 impl<R: AsyncRead + Unpin> Reader<R> {
-    pub(super) fn new(inner: R) -> Self {
+    pub fn new(inner: R) -> Self {
         Self {
             inner: BufReader::new(inner),
             prefix: [0; 4],
@@ -166,10 +160,10 @@ impl<R: AsyncRead + Unpin> Reader<R> {
             body_read: 0,
         }
     }
-    pub(super) async fn read<T: DeserializeOwned>(&mut self) -> Result<T> {
+    pub async fn read<T: DeserializeOwned>(&mut self) -> Result<T> {
         self.read_bounded(FRAME_LIMIT).await
     }
-    pub(super) async fn read_bounded<T: DeserializeOwned>(&mut self, limit: usize) -> Result<T> {
+    pub async fn read_bounded<T: DeserializeOwned>(&mut self, limit: usize) -> Result<T> {
         while self.prefix_read < 4 {
             let n = self
                 .inner
@@ -240,11 +234,11 @@ mod tests {
     }
     #[tokio::test]
     async fn near_limit_input_and_descriptors_use_separate_real_frames() {
+        use crate::application::ResourceDescriptor;
         use maka_plugin_core::{
             composition::InstanceId, contract::ResourceType, deployment::DeploymentRef,
         };
         use maka_plugins::call::ResourceEncoding;
-        use maka_runtime_host::application::ResourceDescriptor;
         use std::collections::BTreeMap;
         let open = Open {
             endpoint: "business".into(),

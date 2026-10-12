@@ -19,14 +19,13 @@
 
 //! Trusted local connections between separate UI and Host deployment owners.
 mod connections;
-mod gateway;
 pub mod stdio;
 pub mod transport;
 mod updates;
 pub use connections::{
     Configuration, Connections, Grant, Host, HostEndpoint, HostExecutable, HostLocation,
 };
-pub use gateway::{GATEWAY, with_gateway};
+pub use maka_runtime_host::application::transport::{GATEWAY, with_gateway};
 pub use updates::{ApprovedUpdate, Updates};
 /// Compiled fixed-UI-target management availability for explicit cohost entries.
 pub const UI_DEPLOYMENT_MANAGER: &str = "maka.application.ui-management";

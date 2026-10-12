@@ -17,9 +17,9 @@
  * under the License.
  */
 
-use crate::Result;
+use crate::application::Result;
+use crate::application::{NativeActivation, NativeOwner, NativeRegistry};
 use futures_util::future::BoxFuture;
-use maka_runtime_host::application::{NativeActivation, NativeOwner, NativeRegistry};
 use serde::Deserialize;
 use std::{collections::BTreeMap, sync::Arc};
 

@@ -22,11 +22,11 @@ use super::{
     Selection,
     wire::{self, Control, Open, Reader, Reply, Source},
 };
-use crate::Result;
+use crate::application::Result;
+use crate::application::{RESOURCE_CHUNK_LIMIT, ResourceDescriptor};
 use maka_event_log::applications::intents::RecordedIntent;
 use maka_plugin_core::operation::RecoveryRef;
 use maka_plugins::call::{Attachments, ResourceEncoding};
-use maka_runtime_host::application::{RESOURCE_CHUNK_LIMIT, ResourceDescriptor};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
@@ -129,7 +129,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Call<R, W> {
     pub async fn start(&mut self) -> Result<()> {
         self.start_unless(|| false).await
     }
-    pub(super) async fn start_unless(&mut self, cancelled: impl Fn() -> bool) -> Result<()> {
+    pub async fn start_unless(&mut self, cancelled: impl Fn() -> bool) -> Result<()> {
         if self.phase != Phase::New {
             return Err("remote call is not new".into());
         }
@@ -287,7 +287,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Call<R, W> {
             None => Ok(()),
         }
     }
-    pub(super) async fn drain(&mut self) -> Result<Option<Reply>> {
+    pub async fn drain(&mut self) -> Result<Option<Reply>> {
         match self.phase {
             Phase::Closed => return Ok(None),
             Phase::New => {

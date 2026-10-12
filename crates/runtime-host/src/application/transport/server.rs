@@ -20,17 +20,14 @@
 //! The connection owns reception and observations; Application owns execution.
 use super::{
     catalogue::Catalogue,
-    ipc::{Accepted, Hello},
     policy::{Peers, PolicyOwner},
-    wire::{self, Control, Open, Reader, Reply},
+    wire::{self, Accepted, Control, Hello, Open, Reader, Reply},
 };
-use crate::Result;
+use crate::application::Result;
+use crate::application::{Client, QueryCompletion, RESOURCE_CHUNK_LIMIT, ResourceDescriptor};
 use futures_util::FutureExt;
 use maka_plugin_core::contract::{Interface, MethodMode};
 use maka_plugins::call::Scope;
-use maka_runtime_host::application::{
-    Client, QueryCompletion, RESOURCE_CHUNK_LIMIT, ResourceDescriptor,
-};
 use std::{
     collections::BTreeMap,
     panic::AssertUnwindSafe,
@@ -82,7 +79,7 @@ impl Server {
     pub fn catalogue(&self) -> Catalogue {
         Catalogue::captured(&self.endpoints.lock().unwrap())
     }
-    pub(crate) fn replace_endpoints(&self, endpoints: super::Endpoints) -> Result<()> {
+    pub fn replace_endpoints(&self, endpoints: super::Endpoints) -> Result<()> {
         endpoints.validate()?;
         let gate = self.admission.lock().unwrap();
         if *gate {
@@ -489,7 +486,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Session<R, W> {
                                 }
                                 self.observe(accepted.completion()).await
                             }
-                            Err(diagnostic) => maka_runtime_host::application::MutationCompletion {
+                            Err(diagnostic) => crate::application::MutationCompletion {
                                 reply: maka_plugin_core::operation::OperationReply {
                                     reference,
                                     receipt: maka_plugin_core::operation::Receipt::Unavailable {

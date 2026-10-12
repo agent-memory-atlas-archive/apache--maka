@@ -81,7 +81,7 @@ impl OwnedHost {
     pub(super) async fn registrations_changed(&mut self) -> Result<bool> {
         let current = match &mut self.owner {
             HostOwner::Process { control, .. } => control.epochs().await?,
-            HostOwner::Cohost { application, .. } => crate::transport::process::capture_endpoints(
+            HostOwner::Cohost { application, .. } => crate::transport::Endpoints::capture(
                 &application
                     .as_ref()
                     .ok_or("cohost is not initialized")?
@@ -104,7 +104,7 @@ impl OwnedHost {
                 captured,
                 ..
             } => {
-                let endpoints = crate::transport::process::capture_endpoints(
+                let endpoints = crate::transport::Endpoints::capture(
                     &application
                         .as_ref()
                         .ok_or("cohost is not initialized")?
