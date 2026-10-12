@@ -27,6 +27,8 @@ From the repository root, run `just run` or `just run --help`. Development build
 
 [Source](src/main.rs) · [Cargo manifest](Cargo.toml)
 
+The first installation asks for workspace trust inside the TUI, before starting the Host or enabling project skills and tools. Tab or the arrow keys select an action; Enter confirms and Esc exits. The initial selection is Exit. Confirmation keeps the same terminal screen while the product initializes. Reopening uses the saved installation without asking again.
+
 ## Product recovery and URL installation
 
 Close the product UI and its local Host before changing an owned Root from the CLI. Both commands default to `~/.maka/application`; select another installation with `--root DIRECTORY`.

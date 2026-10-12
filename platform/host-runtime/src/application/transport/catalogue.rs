@@ -44,6 +44,8 @@ pub struct Description {
 #[serde(deny_unknown_fields)]
 pub struct Catalogue {
     endpoints: BTreeMap<String, Description>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    startup_error: Option<String>,
 }
 #[derive(Clone, Debug)]
 pub struct Selection {
@@ -59,8 +61,14 @@ impl Catalogue {
     pub fn captured(endpoints: &Endpoints) -> Self {
         Self {
             endpoints: endpoints.descriptions(),
+            startup_error: endpoints.startup_error.clone(),
         }
     }
+    /// Diagnostic only; endpoint registration and admission stay independent.
+    pub fn startup_error(&self) -> Option<&str> {
+        self.startup_error.as_deref()
+    }
+
     pub fn epochs(&self) -> BTreeMap<String, Option<Uuid>> {
         self.endpoints
             .iter()
@@ -97,7 +105,13 @@ impl Catalogue {
         Ok((catalogue, reader.inner))
     }
     pub fn validate(&self) -> Result<()> {
-        if self.endpoints.is_empty() || self.endpoints.len() > 128 {
+        if self.endpoints.is_empty()
+            || self.endpoints.len() > 128
+            || self
+                .startup_error
+                .as_ref()
+                .is_some_and(|error| error.len() > 64 * 1024)
+        {
             return Err("invalid Host endpoint catalogue".into());
         }
         for (name, description) in &self.endpoints {

@@ -105,6 +105,8 @@ enum Event {
     },
     Closed {
         nonce: Uuid,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
     },
     Captured {
         nonce: Uuid,
@@ -178,9 +180,11 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Control<R, W> {
                 self.phase = Phase::Started;
                 Ok(catalogue)
             }
-            Event::Closed { nonce } if nonce == self.nonce => {
+            Event::Closed { nonce, error } if nonce == self.nonce => {
                 self.phase = Phase::Closed;
-                Err("Host closed before publishing its original registrations".into())
+                Err(error.unwrap_or_else(|| {
+                    "Host closed before publishing its original registrations".into()
+                }))
             }
             _ => Err("Host control did not publish its original registrations".into()),
         }
@@ -325,7 +329,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Control<R, W> {
                 }
             };
             match event {
-                Event::Closed { nonce } if nonce == self.nonce => {
+                Event::Closed { nonce, .. } if nonce == self.nonce => {
                     self.phase = Phase::Closed;
                     return Ok(());
                 }
@@ -402,6 +406,7 @@ pub async fn serve(
                 &mut output,
                 &Event::Closed {
                     nonce: bootstrap.nonce,
+                    error: Some(startup_diagnostic(&error)),
                 },
             )
             .await?;
@@ -533,6 +538,7 @@ pub async fn serve(
         &mut output,
         &Event::Closed {
             nonce: bootstrap.nonce,
+            error: result.as_ref().err().map(|error| startup_diagnostic(error)),
         },
     )
     .await?;
@@ -543,6 +549,10 @@ pub async fn serve(
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
     result
+}
+fn startup_diagnostic(error: &str) -> String {
+    // At most 64 KiB before JSON escaping, including non-ASCII diagnostics.
+    error.chars().take(16 * 1024).collect()
 }
 fn capture_reply(nonce: Uuid, result: Result<Catalogue>) -> Event {
     let event = Event::Captured { nonce, result };
@@ -616,7 +626,7 @@ mod tests {
             )
             .await
             .unwrap();
-            wire::write(&mut child_writer, &Event::Closed { nonce })
+            wire::write(&mut child_writer, &Event::Closed { nonce, error: None })
                 .await
                 .unwrap();
         });
@@ -632,6 +642,65 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+        peer.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_bootstrap_returns_original_error_and_confirms_cleanup() {
+        let nonce = Uuid::new_v4();
+        let consumer = InstanceId(vec![Uuid::new_v4()]);
+        let bootstrap = Bootstrap {
+            root: "/unused/host".into(),
+            state_domain: None,
+            deployment: Uuid::new_v4(),
+            namespaces: RootNamespaces {
+                ownership: "/unused/owners".into(),
+                control: "/unused/control".into(),
+            },
+            source: DeploymentRef {
+                state_domain: "a".repeat(64),
+                deployment: Uuid::new_v4(),
+                revision: 1,
+            },
+            consumers: [consumer.clone()].into(),
+            endpoints: [(
+                "agent".into(),
+                HostEndpoint {
+                    consumer,
+                    import: "agent".into(),
+                    grant: maka_host_runtime::application::transport::Grant {
+                        methods: ["read".into()].into(),
+                        recovery: false,
+                    },
+                },
+            )]
+            .into(),
+            native: vec![],
+            address: "/unused/address".into(),
+            nonce,
+        };
+        let (writer, child_reader) = tokio::io::duplex(4096);
+        let (mut child_writer, reader) = tokio::io::duplex(4096);
+        let mut control = Control::new(reader, writer, nonce).unwrap();
+        let peer = tokio::spawn(async move {
+            let mut reader = wire::Reader::new(child_reader);
+            assert_eq!(reader.read::<Bootstrap>().await.unwrap().nonce, nonce);
+            wire::write(
+                &mut child_writer,
+                &Event::Closed {
+                    nonce,
+                    error: Some("original Host State Root identity changed".into()),
+                },
+            )
+            .await
+            .unwrap();
+        });
+        assert_eq!(
+            control.start(&bootstrap).await.unwrap_err(),
+            "original Host State Root identity changed"
+        );
+        assert!(control.phase == Phase::Closed);
+        control.close().await.unwrap();
         peer.await.unwrap();
     }
 

@@ -56,7 +56,10 @@ impl HostEndpoint {
     }
 }
 #[derive(Clone)]
-pub struct Endpoints(BTreeMap<String, Entry>);
+pub struct Endpoints {
+    entries: BTreeMap<String, Entry>,
+    pub(super) startup_error: Option<String>,
+}
 #[derive(Clone)]
 enum Entry {
     Ready(Endpoint),
@@ -64,12 +67,13 @@ enum Entry {
 }
 impl From<BTreeMap<String, Endpoint>> for Endpoints {
     fn from(endpoints: BTreeMap<String, Endpoint>) -> Self {
-        Self(
-            endpoints
+        Self {
+            entries: endpoints
                 .into_iter()
                 .map(|(name, endpoint)| (name, Entry::Ready(endpoint)))
                 .collect(),
-        )
+            startup_error: None,
+        }
     }
 }
 impl Endpoints {
@@ -103,12 +107,16 @@ impl Endpoints {
                 .await?;
             endpoints.insert(name.clone(), captured, selection.grant.clone())?;
         }
+        endpoints.startup_error = client.snapshot().startup_error;
         endpoints.validate()?;
         Ok(endpoints)
     }
 
     fn empty() -> Self {
-        Self(BTreeMap::new())
+        Self {
+            entries: BTreeMap::new(),
+            startup_error: None,
+        }
     }
     fn insert(&mut self, name: String, import: CapturedImport, grant: Grant) -> Result<()> {
         let entry = match import {
@@ -127,16 +135,16 @@ impl Endpoints {
                 })
             }
         };
-        if self.0.insert(name, entry).is_some() {
+        if self.entries.insert(name, entry).is_some() {
             return Err("duplicate Application endpoint".into());
         }
         Ok(())
     }
     pub(super) fn validate(&self) -> Result<()> {
-        if self.0.is_empty()
-            || self.0.len() > 128
+        if self.entries.is_empty()
+            || self.entries.len() > 128
             || self
-                .0
+                .entries
                 .keys()
                 .any(|name| name.is_empty() || name.len() > 256)
         {
@@ -145,13 +153,13 @@ impl Endpoints {
         Ok(())
     }
     pub(super) fn get(&self, name: &str) -> Option<&Endpoint> {
-        match self.0.get(name)? {
+        match self.entries.get(name)? {
             Entry::Ready(endpoint) => Some(endpoint),
             Entry::Unavailable(_) => None,
         }
     }
     pub fn epochs(&self) -> BTreeMap<String, Option<uuid::Uuid>> {
-        self.0
+        self.entries
             .iter()
             .map(|(name, entry)| {
                 (
@@ -165,7 +173,7 @@ impl Endpoints {
             .collect()
     }
     pub(super) fn descriptions(&self) -> BTreeMap<String, Description> {
-        self.0
+        self.entries
             .iter()
             .map(|(name, entry)| {
                 (

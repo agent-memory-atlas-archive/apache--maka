@@ -399,9 +399,12 @@ impl Presenter {
         let root = match application.mount_bootstrap(props) {
             Ok(root) => root,
             Err(error) => {
-                if let Some(initial) = application.deployment_status().error {
-                    eprintln!("application activation failed: {}", sanitize(&initial));
-                }
+                let error = match application.deployment_status().error {
+                    Some(initial) => {
+                        Error::Invalid(format!("application activation failed: {initial}; {error}"))
+                    }
+                    None => error,
+                };
                 // This presenter has not created a terminal or renderer resources.
                 // Retain the foreground application until its actual modules close.
                 let mut reported = std::collections::BTreeSet::new();

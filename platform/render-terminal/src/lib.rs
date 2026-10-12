@@ -22,4 +22,5 @@
 pub mod application;
 mod editor;
 pub mod markdown;
+pub mod startup;
 mod terminal;

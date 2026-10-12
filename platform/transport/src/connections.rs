@@ -197,6 +197,7 @@ pub struct Connections {
     prepared: Vec<PreparedHost>,
     hosts: Vec<OwnedHost>,
     registrations: Vec<RemoteService>,
+    startup_errors: Vec<String>,
     phase: Phase,
 }
 impl Connections {
@@ -303,6 +304,7 @@ impl Connections {
             prepared,
             hosts: Vec::new(),
             registrations: Vec::new(),
+            startup_errors: Vec::new(),
             phase: Phase::Prepared,
         })
     }
@@ -323,7 +325,12 @@ impl Connections {
             let host = prepared.configuration;
             let catalogue = self
                 .start_selected(host.clone(), prepared.consumers, self.source.clone())
-                .await?;
+                .await
+                .map_err(|error| format!("Host {}: {error}", host.name))?;
+            if let Some(error) = catalogue.startup_error() {
+                self.startup_errors
+                    .push(format!("Host {}: {error}", host.name));
+            }
             let owned = self.hosts.last_mut().unwrap();
             catalogue.check_names(host.endpoints.keys())?;
             owned.epochs = catalogue.epochs();
@@ -505,6 +512,10 @@ impl Connections {
     pub fn source(&self) -> &DeploymentRef {
         &self.source
     }
+    pub fn startup_errors(&self) -> &[String] {
+        &self.startup_errors
+    }
+
     pub fn registrations(&self) -> Vec<RemoteService> {
         self.registrations.clone()
     }

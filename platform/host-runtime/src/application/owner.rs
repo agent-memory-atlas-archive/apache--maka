@@ -438,7 +438,15 @@ impl Owner {
         Ok(true)
     }
     fn fail_initialization(&mut self, id: InstanceId, error: String) {
-        self.startup_error.get_or_insert(error);
+        let path = self
+            .runtime
+            .desired()
+            .instances()
+            .get(&id)
+            .map(|instance| instance.path.join("/"))
+            .unwrap_or_else(|| format!("{id:?}"));
+        self.startup_error
+            .get_or_insert_with(|| diagnostic(&format!("plugin {path}: {error}")));
         self.initialization_failures.insert(id.clone());
         if let Some(activation) = self.activations.get(&id) {
             for retired in self.runtime.retire(activation).expect("owned activation") {

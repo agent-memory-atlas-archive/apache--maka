@@ -27,6 +27,8 @@
 
 [源码](src/main.rs) · [Cargo 配置](Cargo.toml)
 
+首次安装会在 TUI 内确认工作目录信任，然后才启动 Host、启用项目技能与工具。Tab 或方向键选择，Enter 确认，Esc 退出；默认选中退出。确认后在同一终端画面中初始化并进入产品。再次打开使用已保存的安装，不重复询问。
+
 ## 产品恢复与 URL 安装
 
 通过 CLI 修改已有 Root 前，先关闭该产品的 UI 和本地 Host。两个命令默认使用 `~/.maka/application`；可用 `--root DIRECTORY` 选择其他安装。

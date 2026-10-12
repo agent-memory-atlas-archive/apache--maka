@@ -35,12 +35,7 @@ use maka_plugin_core::{
 use maka_transport::{Configuration, HostLocation};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{
-    collections::BTreeMap,
-    io::{IsTerminal, Write},
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{collections::BTreeMap, io::IsTerminal, path::PathBuf, sync::Arc};
 use uuid::Uuid;
 
 #[derive(Args, Default)]
@@ -88,6 +83,7 @@ impl Launch {
         }
         let root = super::root_path(self.root.clone())?;
         let store = Arc::new(open(root.clone(), true, None).await?);
+        let mut startup = None;
         let result = async {
             let existing = store.application_launch().await?.is_some();
             if existing && (self.workspace.is_some() || self.locale.is_some() || self.light
@@ -97,19 +93,28 @@ impl Launch {
             let configuration = match self.configuration {
                 Some(path) => Some(read_json(&path)?),
                 None if existing => None,
-                None => Some(standard_configuration(root, self.workspace, self.locale, self.light, self.trust_workspace).await?),
+                None => match standard_configuration(root, self.workspace, self.locale, self.light, self.trust_workspace, &mut startup).await? {
+                    Some(configuration) => Some(configuration),
+                    None => return Ok(None),
+                },
             };
-            prepare(&store, configuration, self.product.unwrap_or(Product::Agent)).await
+            prepare(&store, configuration, self.product.unwrap_or(Product::Agent)).await.map(Some)
         }.await;
         let (deployment, configuration) = match result {
-            Ok(value) => value,
+            Ok(Some(value)) => value,
+            Ok(None) => {
+                store.drain().await;
+                return Ok(());
+            }
             Err(error) => {
                 store.drain().await;
                 return Err(error);
             }
         };
-        eprintln!("Opening product…");
-        run_tui(store, deployment, configuration).await
+        if startup.is_none() {
+            eprintln!("Opening product…");
+        }
+        run_tui(store, deployment, configuration, startup).await
     }
 }
 async fn standard_configuration(
@@ -118,7 +123,8 @@ async fn standard_configuration(
     locale: Option<String>,
     light: bool,
     trusted: bool,
-) -> Result<Value, HostError> {
+    startup: &mut Option<maka_render_terminal::startup::Startup>,
+) -> Result<Option<Value>, HostError> {
     let workspace = std::fs::canonicalize(workspace.unwrap_or(std::env::current_dir()?))?;
     if !workspace.is_dir() {
         return Err("workspace must be a directory".into());
@@ -131,28 +137,12 @@ async fn standard_configuration(
             .filter(|value| *value != "auto")
             .map(str::to_owned)
             .unwrap_or_else(maka_ui_runtime::locale::system);
-        let accepted = tokio::task::spawn_blocking(move || -> Result<bool, std::io::Error> {
-            eprintln!("Maka workspace: {}", shown.display().to_string().escape_debug());
-            let language = language.to_ascii_lowercase();
-            if language.starts_with("zh") {
-                if language.contains("hant") || language.contains("tw") || language.contains("hk") || language.contains("mo") {
-                    eprintln!("信任此目錄以修改檔案和執行沙箱命令？命令可以讀取目錄外的檔案，但網路存取已停用。專案和使用者技能目錄將啟用。");
-                    eprint!("繼續 [y/N]：");
-                } else {
-                    eprintln!("信任此目录以修改文件和执行沙箱命令？命令可以读取目录外的文件，但网络访问已禁用。项目和用户技能目录将启用。");
-                    eprint!("继续 [y/N]：");
-                }
-            } else {
-                eprintln!("Trust this directory for file changes and sandboxed commands? Commands may read files outside it; their network access is disabled. Project and user skill directories are enabled.");
-                eprint!("Continue [y/N]: ");
-            }
-            std::io::stderr().flush()?;
-            let mut answer = String::new();
-            std::io::stdin().read_line(&mut answer)?;
-            Ok(matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes"))
-        }).await??;
-        if !accepted {
-            return Err("workspace was not trusted; no product was installed".into());
+        *startup = tokio::task::spawn_blocking(move || {
+            maka_render_terminal::startup::Startup::confirm(&shown, &language, light)
+        })
+        .await??;
+        if startup.is_none() {
+            return Ok(None);
         }
     }
     let options = serde_json::json!({
@@ -162,7 +152,7 @@ async fn standard_configuration(
         "locale": locale.unwrap_or_else(|| "auto".into()),
         "scheme": if light { "light" } else { "dark" },
     });
-    super::installation(options).await
+    super::installation(options).await.map(Some)
 }
 
 pub(super) async fn open(

@@ -207,7 +207,7 @@ impl Command {
                     .transpose()?
                     .unwrap_or_default();
                 let store = Arc::new(open_store(args.root).await?);
-                run_tui(store, args.deployment, configuration).await?;
+                run_tui(store, args.deployment, configuration, None).await?;
             }
         }
         Ok(())
@@ -287,6 +287,7 @@ async fn run_tui(
     store: Arc<maka_event_log::EventLog>,
     deployment: uuid::Uuid,
     configuration: maka_transport::Configuration,
+    startup: Option<maka_render_terminal::startup::Startup>,
 ) -> Result<(), HostError> {
     // Keep the foreground VM on one dedicated blocking owner, with
     // no deeply nested CLI async stack under V8 initialization.
@@ -330,6 +331,7 @@ async fn run_tui(
         store.drain().await;
         return Err(error.into());
     }
+    let startup_errors = connections.startup_errors().to_vec();
     let source = connections.source().clone();
     let registrations = connections.registrations();
     let foreground_store = store.clone();
@@ -347,6 +349,7 @@ async fn run_tui(
             return Err(error.into());
         }
     };
+    let terminal_errors = startup_errors.clone();
     let result = tokio::task::spawn_blocking(move || -> Result<(), HostError> {
         maka_render_terminal::application::run(
             foreground_store,
@@ -355,6 +358,8 @@ async fn run_tui(
             scheduler,
             updates,
             maka_ui_js::execution(Default::default()),
+            startup,
+            terminal_errors,
         )
         .map_err(Into::into)
     })
@@ -367,6 +372,16 @@ async fn run_tui(
     }
     connections.lock().await.drain().await;
     store.drain().await;
-    result??;
-    Ok(())
+    match result? {
+        Ok(()) => Ok(()),
+        Err(error)
+            if startup_errors.is_empty()
+                || startup_errors
+                    .iter()
+                    .all(|cause| error.to_string().contains(cause)) =>
+        {
+            Err(error)
+        }
+        Err(error) => Err(format!("{}\nUI activation: {error}", startup_errors.join("\n")).into()),
+    }
 }

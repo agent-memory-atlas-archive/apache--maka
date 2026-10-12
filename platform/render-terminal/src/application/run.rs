@@ -29,6 +29,7 @@ use std::{
 /// Run on the foreground thread inside a multithreaded Tokio runtime.
 /// Accepted service workers remain owned after the terminal surface closes.
 /// 在前台线程运行；关闭界面后仍等待真实服务执行与资源回执。
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     store: std::sync::Arc<maka_event_log::EventLog>,
     source: maka_plugin_core::deployment::DeploymentRef,
@@ -36,6 +37,8 @@ pub fn run(
     scheduler: tokio::runtime::Handle,
     mut updates: maka_transport::Updates,
     execution: maka_ui_runtime::ExecutionOptions,
+    startup: Option<crate::startup::Startup>,
+    mut startup_errors: Vec<String>,
 ) -> Result<(), String> {
     let mut presenter = scheduler
         .block_on(Presenter::start_from_store(
@@ -48,15 +51,35 @@ pub fn run(
             execution,
         ))
         .map_err(|e| sanitize(&e.to_string()))?;
-    let mut guard = terminal::Guard::new();
+    let (mut guard, previous_screen) = match startup {
+        Some(startup) => (startup.guard, Some(startup.screen)),
+        None => (terminal::Guard::new(), None),
+    };
     let mut failure = None;
-    let mut screen = match guard.setup("an interactive terminal is required") {
+    let mut screen = match previous_screen
+        .map_or_else(|| guard.setup("an interactive terminal is required"), Ok)
+    {
         Ok(screen) => Some(screen),
         Err(error) => {
             failure = Some(sanitize(&error.to_string()));
             None
         }
     };
+    if startup_errors.is_empty()
+        && let Some(error) = presenter.deployment_status().error
+    {
+        startup_errors.push(error);
+    }
+    if !startup_errors.is_empty()
+        && let Some(screen) = screen.as_mut()
+    {
+        let diagnostic = startup_errors.join("\n\n");
+        match crate::startup::issues(screen, &diagnostic) {
+            Ok(true) => {}
+            Ok(false) => failure = Some(diagnostic),
+            Err(error) => failure = Some(format!("{diagnostic}\n{error}")),
+        }
+    }
     let mut reported = BTreeSet::new();
     let mut exit_key = ExitKey::default();
     loop {

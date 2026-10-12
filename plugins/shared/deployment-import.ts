@@ -159,7 +159,7 @@ export function importView<N extends Node>(
                   readOnly: busy || !!confirmation,
                   disabled: false,
                   autoFocus: false,
-                  softWrap: false,
+                  softWrap: presentation.target === 'tui',
                   terminalRows: { min: 1, max: 2 },
                   submit: 'primary_enter',
                   command: null,

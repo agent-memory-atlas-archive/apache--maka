@@ -468,3 +468,115 @@ fn bundled_ui_authoring_installs_and_reloads_original_source_without_replaying()
         store.shutdown().await.unwrap();
     });
 }
+
+#[test]
+#[ignore = "starts the standard product and its real Host in a native PTY"]
+fn first_install_trust_uses_one_terminal_and_cancel_has_no_product_effects() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("ui");
+    let workspace = directory.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let args = [
+        "application",
+        "launch",
+        "--root",
+        root.to_str().unwrap(),
+        "--workspace",
+        workspace.to_str().unwrap(),
+        "--locale",
+        "en",
+    ];
+    let mut cancelled = Pty::spawn(&args);
+    cancelled.wait_for("Trust this workspace?");
+    assert!(cancelled.screen.snapshot().unwrap().alternate_screen);
+    assert!(!root.join("host").exists());
+    cancelled.send(b"\r");
+    cancelled.finish();
+    assert!(!cancelled.screen.snapshot().unwrap().alternate_screen);
+    assert!(!root.join("host").exists());
+    let mut tui = Pty::spawn(&args);
+    tui.wait_for("Trust this workspace?");
+    tui.send(b"\t\r");
+    tui.wait_until_with_timeout(
+        |screen| screen.contains("Settings"),
+        Duration::from_secs(60),
+    );
+    assert!(tui.screen.snapshot().unwrap().alternate_screen);
+    // No alternate-screen teardown between confirmation and the actual product.
+    assert!(!tui.output.windows(8).any(|bytes| bytes == b"\x1b[?1049l"));
+    tui.send(b"\x11");
+    tui.finish();
+    assert!(!tui.screen.snapshot().unwrap().alternate_screen);
+    let mut reopened = Pty::spawn(&["application", "launch", "--root", root.to_str().unwrap()]);
+    reopened.wait_until_with_timeout(
+        |screen| screen.contains("Settings"),
+        Duration::from_secs(30),
+    );
+    assert!(!String::from_utf8_lossy(&reopened.output).contains("Trust this workspace?"));
+    reopened.send(b"\x11");
+    reopened.finish();
+}
+
+#[test]
+#[ignore = "checks a failed standard product startup in a native PTY"]
+fn first_install_failure_keeps_original_host_error_after_terminal_restoration() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("ui");
+    let workspace = directory.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let mut tui = Pty::spawn(&[
+        "application",
+        "launch",
+        "--root",
+        root.to_str().unwrap(),
+        "--workspace",
+        workspace.to_str().unwrap(),
+        "--locale",
+        "en",
+    ]);
+    tui.wait_for("Trust this workspace?");
+    // The selected path disappears while the user reads the prompt. Its Host
+    // initializer must fail, and that concrete failure must survive the UI error.
+    std::fs::remove_dir(&workspace).unwrap();
+    tui.send(b"\t\r");
+    tui.wait_until_with_timeout(
+        |screen| screen.contains("Host local: plugin"),
+        Duration::from_secs(60),
+    );
+    let startup = tui.screen.snapshot().unwrap();
+    assert!(startup.alternate_screen);
+    assert!(
+        startup.screen.contains("skills_configuration_invalid")
+            || startup
+                .screen
+                .contains("agent_workspace_configuration_invalid")
+    );
+    tui.send(b"\x11");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        tui.read();
+        if let Some(status) = tui.child.try_wait().unwrap() {
+            tui.read();
+            assert!(!status.success());
+            break;
+        }
+        assert!(Instant::now() < deadline, "failed startup did not settle");
+    }
+    let snapshot = tui.screen.snapshot().unwrap();
+    assert!(!snapshot.alternate_screen);
+    assert!(
+        snapshot.screen.contains("Host local: plugin"),
+        "{}",
+        snapshot.screen
+    );
+    assert!(
+        snapshot.screen.contains("skills_configuration_invalid")
+            || snapshot
+                .screen
+                .contains("agent_workspace_configuration_invalid"),
+        "{}",
+        snapshot.screen
+    );
+    let output = String::from_utf8_lossy(&tui.output);
+    assert!(output.rfind("Host local: plugin").unwrap() > output.rfind("\x1b[?1049l").unwrap());
+}
