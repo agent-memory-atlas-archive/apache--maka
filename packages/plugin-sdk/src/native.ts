@@ -351,6 +351,11 @@ export const nativeImplementations = /* @__PURE__ */ (() => ({
     configuration: configurations.workspaceProcesses,
     exports: { protocol: contracts.protocolProcesses },
   },
+  uiAuthoring: {
+    implementation: 'maka.application.authoring',
+    configuration: { type: 'object', properties: {}, required: [], additionalProperties: false },
+    exports: { Authoring: contracts.uiAuthoring },
+  },
   workspaceWeb: {
     implementation: 'maka.workspace.web',
     configuration: configurations.workspaceWeb,

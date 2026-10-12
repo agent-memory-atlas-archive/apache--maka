@@ -35,6 +35,8 @@ const entries = uiEntries({
     history: one(sdk.contracts.callerHistory),
     reader: one(sdk.contracts.textReader),
     composer: one(own.composerContract),
+    footer: one(own.composerFooterContract),
+    authoring: one(own.uiAuthoringContract),
     palette: one(own.paletteContract),
     directories: one(own.directoryPickerContract),
     projects: one(own.projectsContract),

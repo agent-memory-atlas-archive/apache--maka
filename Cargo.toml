@@ -85,6 +85,7 @@ license = "Apache-2.0"
 publish = false
 
 [workspace.dependencies]
+maka-ui-authoring = { path = "plugins/application/authoring/native" }
 maka-agent-facts = { path = "plugins/agent/facts" }
 maka-packages = { path = "platform/packages" }
 maka-agent-ports = { path = "plugins/agent/ports" }

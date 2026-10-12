@@ -29,6 +29,7 @@ use maka_plugin_core::deployment::management::{
 };
 use serde::Deserialize;
 
+mod authoring;
 mod composition;
 mod settings;
 
@@ -264,6 +265,15 @@ impl Manager {
             Ok(package) => package,
             Err(_) => return rejected(ManagementRejection::InvalidBundle),
         };
+        self.install_package(request.expected_revision, package, metadata)
+            .await
+    }
+    async fn install_package(
+        &self,
+        expected_revision: u64,
+        package: Package,
+        metadata: maka_plugin_core::deployment::management::ManagedDeployment,
+    ) -> Result<Value> {
         let reference = package.application_ref();
         let mut loaded = self
             .store
@@ -279,7 +289,7 @@ impl Manager {
             loaded.packages.push(package);
         }
         self.commit(
-            request.expected_revision,
+            expected_revision,
             loaded.source.input,
             loaded.source.remote_exports,
             loaded.packages,
@@ -321,6 +331,15 @@ impl Manager {
             Ok(document) => document,
             Err(error) => return rejected_diagnostic(ManagementRejection::InvalidDocument, error),
         };
+        self.replace_document(request.expected_revision, document, metadata)
+            .await
+    }
+    async fn replace_document(
+        &self,
+        expected_revision: u64,
+        document: DeploymentDocument,
+        metadata: maka_plugin_core::deployment::management::ManagedDeployment,
+    ) -> Result<Value> {
         if document.input.environment != self.environment
             || (self.environment.location == ExecutionLocation::Host
                 && !document.remote_exports.is_empty())
@@ -356,7 +375,7 @@ impl Manager {
             })
             .collect::<Result<Vec<_>>>()?;
         self.commit(
-            request.expected_revision,
+            expected_revision,
             document.input,
             document.remote_exports,
             packages,
@@ -469,6 +488,9 @@ impl Handler for Manager {
                 "editComposition" => manager.edit_composition(input).await,
                 "setEnabled" => manager.set_enabled(input).await,
                 "install" => manager.install(input, context).await,
+                "installSource" => manager.install_source(input).await,
+                "readPackage" => manager.read_package(input).await,
+                "replaceSource" => manager.replace_source(input).await,
                 "replace" => manager.replace(input, context).await,
                 _ => Err("unknown deployment management method".into()),
             }

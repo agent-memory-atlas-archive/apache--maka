@@ -330,6 +330,9 @@ export function workhubRoot<N extends Node>(
       ui.box(
         'workhub-root',
         [
+          ui.box('authoring-background', [presentation.slot('authoring', 'authoring', {}, {})], {
+            visible: false,
+          }),
           ui.box(
             'workhub-navigation',
             [

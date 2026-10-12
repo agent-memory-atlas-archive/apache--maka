@@ -314,3 +314,118 @@ fn bundled_product_launch_recovers_partial_commits_without_reauthoring() {
         store.close().await.unwrap();
     });
 }
+
+#[test]
+#[ignore = "real foreground request processing and source reload in a native PTY"]
+fn bundled_ui_authoring_installs_and_reloads_original_source_without_replaying() {
+    use maka_capabilities::storage::{Data, Mutation, Namespace};
+    use maka_event_log::EventLog;
+    use maka_packages::Package;
+    use maka_plugin_core::{composition::InstanceId, scope::Scope};
+    use std::{collections::BTreeMap, sync::Arc};
+    let directory = tempfile::tempdir().unwrap();
+    let workspace = directory.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let host = directory.path().join("host");
+    let ui = directory.path().join("ui");
+    let configuration = directory.path().join("configuration.json");
+    std::fs::write(&configuration,serde_json::to_vec(&json!({
+        "presentation":"tui","locale":"en","scheme":"dark","hostRoot":host,
+        "agent":{"workspaceRoots":[{"label":"Workspace","path":workspace}],"maxActiveRuns":1,"maxSteps":4,"tools":[],"permissions":{"access":"read_only","requestPermissions":true}}
+    })).unwrap()).unwrap();
+    let mut first = Pty::spawn(&[
+        "application",
+        "launch",
+        "--root",
+        ui.to_str().unwrap(),
+        "--configuration",
+        configuration.to_str().unwrap(),
+    ]);
+    first.wait_until_with_timeout(
+        |screen| screen.contains("Settings"),
+        Duration::from_secs(60),
+    );
+    first.send(b"\x11");
+    first.finish();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let namespaces = RootNamespaces::for_current_account().unwrap();
+    let namespace = Namespace::new("maka.application.authoring", Scope::Profile).unwrap();
+    let ids = ["a".repeat(64), "b".repeat(64)];
+    let (deployment,prefix)=runtime.block_on(async {
+        let store=EventLog::for_root(Arc::new(RootOwner::open(&ui,&namespaces).unwrap())).await.unwrap();
+        let launch=store.application_launch().await.unwrap().unwrap();
+        let loaded=store.load_application(launch.deployment).await.unwrap().unwrap();
+        let host_id=launch.configuration["hosts"].as_array().unwrap().iter().find(|v|v["name"]=="local").unwrap()["deployment"].as_str().unwrap().parse().unwrap();
+        let footer=loaded.packages.iter().find(|p|p.manifest().id=="maka.agent.composer-footer").unwrap();
+        let mut files=footer.files().clone();
+        files.get_mut("tui.js").unwrap().extend_from_slice(b"\n// runtime authored footer\n");
+        let authored=Package::new(files.clone()).unwrap().application_ref();
+        let files:BTreeMap<_,_>=files.into_iter().map(|(path,bytes)|(path,String::from_utf8(bytes).unwrap())).collect();
+        let mut input=serde_json::to_value(&loaded.source.input).unwrap();
+        input["instances"]["composer-footer"]["package"]=json!({"source":"pinned","package":authored});
+        input["instances"]["workspace"]["configuration"]["values"]["locale"]=json!("zh-CN");
+        let mut packages:Vec<_>=loaded.packages.iter().map(Package::application_ref).collect();packages.push(authored);
+        let commands=[
+            json!({"method":"installSource","input":{"expectedRevision":1,"files":files}}),
+            json!({"method":"replaceSource","input":{"expectedRevision":2,"document":{"input":input,"remoteExports":loaded.source.remote_exports,"packages":packages}}})
+        ];
+        let deployment=launch.deployment;
+        store.shutdown().await.unwrap();drop(store);
+        let store=EventLog::for_root(Arc::new(RootOwner::open(&host,&namespaces).unwrap())).await.unwrap();
+        let source=store.load_application(host_id).await.unwrap().unwrap().source;
+        let instance=InstanceId(vec![source.input.instances["ui-authoring"].key]);
+        let prefix=maka_host_runtime::storage::instance_prefix(&source.reference.state_domain,host_id,&instance);
+        // Seed accepted intents while the fixture Host is closed. The foreground,
+        // management commits, journals and hot reload below are the shipped path.
+        let mut mutations=vec![Mutation{key:format!("{prefix}queue"),expected_revision:None,data:Data::Present(json!(ids))}];
+        for (id,command) in ids.iter().zip(commands) {mutations.push(Mutation{key:format!("{prefix}request/{id}"),expected_revision:None,data:Data::Present(json!({"session":"fixture","request":{"id":id,"command":command},"state":{"status":"queued"}}))});}
+        store.plugin_data_batch(&namespace,mutations).await.unwrap();
+        store.shutdown().await.unwrap();
+        (deployment,prefix)
+    });
+    let mut resumed = Pty::spawn(&["application", "launch", "--root", ui.to_str().unwrap()]);
+    resumed.wait_until_with_timeout(|screen| screen.contains("设置"), Duration::from_secs(45));
+    // Let the reload's recovery callback publish its original receipt before exit.
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while Instant::now() < deadline {
+        resumed.read();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    resumed.send(b"\x11");
+    resumed.finish();
+    runtime.block_on(async {
+        let store = EventLog::for_root(Arc::new(RootOwner::open(&host, &namespaces).unwrap()))
+            .await
+            .unwrap();
+        for id in &ids {
+            let record = store
+                .plugin_data(&namespace, &format!("{prefix}request/{id}"))
+                .await
+                .unwrap()
+                .unwrap();
+            let state = &record.data.value().unwrap()["state"];
+            assert_eq!(state["status"], "completed", "{state}");
+            assert_eq!(
+                state["outcome"]["reply"]["receipt"]["outcome"]["value"]["status"], "committed",
+                "{state}"
+            );
+        }
+        store.shutdown().await.unwrap();
+        let store = EventLog::for_root(Arc::new(RootOwner::open(&ui, &namespaces).unwrap()))
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .read_application_metadata(deployment)
+                .await
+                .unwrap()
+                .unwrap()
+                .source
+                .reference
+                .revision,
+            3,
+            "exactly one commit per requested edit"
+        );
+        store.shutdown().await.unwrap();
+    });
+}

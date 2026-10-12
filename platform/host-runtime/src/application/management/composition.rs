@@ -70,7 +70,10 @@ fn candidate_key(candidate: &BindingCandidate) -> &str {
     }
 }
 impl Manager {
-    async fn source_at(&self, source: Option<DeploymentRef>) -> Result<LoadedDeployment> {
+    pub(super) async fn source_at(
+        &self,
+        source: Option<DeploymentRef>,
+    ) -> Result<LoadedDeployment> {
         let source = match source {
             Some(source) => source,
             None => self.metadata().await?.source.reference,

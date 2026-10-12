@@ -3278,17 +3278,42 @@ function frame<N extends Node>(
                           ),
                         ]
                       : []),
-                    ui.box('composer-navigation', [composer], {
-                      terminal: { shrink: true },
-                      focusShortcuts: [
-                        {
-                          key: 'up',
-                          modifiers: [],
-                          child: 'queue',
-                          enabled: queueProps.rows.length > 0,
-                        },
+                    ui.box(
+                      'composer-navigation',
+                      [
+                        composer,
+                        ui.box(
+                          'composer-footer',
+                          [
+                            presentation.slot(
+                              'footer',
+                              'footer',
+                              {
+                                sessionId: state.selected?.id ?? null,
+                                dataSource: state.selected?.dataSource ?? null,
+                                running: !!state.run,
+                                theme,
+                                locale,
+                              },
+                              {},
+                            ),
+                          ],
+                          { terminal: { basis: 1, shrink: false }, scroll: 'none' },
+                        ),
                       ],
-                    }),
+                      {
+                        gap: 0,
+                        terminal: { shrink: true },
+                        focusShortcuts: [
+                          {
+                            key: 'up',
+                            modifiers: [],
+                            child: 'queue',
+                            enabled: queueProps.rows.length > 0,
+                          },
+                        ],
+                      },
+                    ),
                   ],
                   {
                     gap: 0,
@@ -3965,6 +3990,19 @@ function frame<N extends Node>(
       target === 'desktop'
         ? { kind: 'window', binding: 'surface', title: 'maka', width: 1100, height: 760 }
         : { kind: 'terminal', binding: 'surface' };
+  if (!state.embedding.embedded)
+    out.frame.view = presentation.paint(theme).box(
+      'workspace-with-authoring',
+      [
+        out.frame.view,
+        presentation
+          .paint(theme)
+          .box('authoring-background', [presentation.slot('authoring', 'authoring', {}, {})], {
+            visible: false,
+          }),
+      ],
+      { terminal: { grow: 1 }, style: { width: fill, height: fill } },
+    );
   out.actions = actions;
   out.events = events;
   out.subscriptions = [

@@ -20,6 +20,7 @@
 //! Factories compiled into the Maka product; composition decides activation.
 use maka_host_runtime::application::NativeRegistry;
 pub fn provide(registry: &mut NativeRegistry) -> Result<(), String> {
+    maka_ui_authoring::provide(registry)?;
     maka_agent_native::provide(registry)?;
     maka_acp_native::provide(registry)?;
     maka_files_native::provide(registry)?;

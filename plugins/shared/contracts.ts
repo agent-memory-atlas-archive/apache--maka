@@ -1052,6 +1052,17 @@ export const permissionApprovalContract = component(
     }),
   },
 );
+export const uiAuthoringContract = component('maka.application.AuthoringWorker', object({}));
+export const composerFooterContract = component(
+  'maka.agent.ComposerFooter',
+  object({
+    sessionId: { anyOf: [string, { type: 'null' }] },
+    dataSource: { anyOf: [{ $ref: '#/$defs/AgentDataSource' }, { type: 'null' }] },
+    running: { type: 'boolean' },
+    theme: { $ref: '#/$defs/Theme' },
+    locale,
+  }),
+);
 export const composerContract = component(
   'maka.agent.Composer',
   object({

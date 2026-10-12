@@ -33,6 +33,7 @@ For a new package, follow [Quickstart](references/quickstart.md). It covers a si
 Read the guide relevant to the change:
 
 - [Host services and Agent tools](references/tools-and-input.md): handlers, scoped calls and tool selection.
+- [Runtime UI authoring](references/runtime-ui.md): read, install and update the connected UI; customize the composer footer.
 - [UI components](references/terminal-apps.md): callbacks, native scenes, editors and input.
 - [State and authority](references/state-and-authority.md): data ownership, mutation receipts and cancellation.
 - [Native Rust](references/native-rust.md): definitions, registration and resource lifetime.

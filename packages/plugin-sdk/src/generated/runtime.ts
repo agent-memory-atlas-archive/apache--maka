@@ -20,6 +20,9 @@
 // Generated from Rust runtime schemas. Run npm run schema:generate -w @maka-agent/plugin-sdk.
 
 export type RuntimeProtocol =
+  | UiAuthoringCommand
+  | UiAuthoringClaim
+  | UiAuthoringState
   | CompositionInput
   | Deployment
   | DeploymentRead
@@ -287,6 +290,68 @@ export type RuntimeProtocol =
   | ResourceMetadata
   | MarkdownTextInput
   | MarkdownTextResult;
+export type UiAuthoringCommand =
+  | {
+      method: 'instances';
+      input: DeploymentInstances;
+      [k: string]: unknown | undefined;
+    }
+  | {
+      method: 'readDocument';
+      input: DeploymentDocumentRead;
+      [k: string]: unknown | undefined;
+    }
+  | {
+      method: 'readPackage';
+      input: PackageSourceRead;
+      [k: string]: unknown | undefined;
+    }
+  | {
+      method: 'installSource';
+      input: PackageSourceInstall;
+      [k: string]: unknown | undefined;
+    }
+  | {
+      method: 'replaceSource';
+      input: DeploymentSourceReplace;
+      [k: string]: unknown | undefined;
+    }
+  | {
+      method: 'editComposition';
+      input: CompositionEdit;
+      [k: string]: unknown | undefined;
+    }
+  | {
+      method: 'configure';
+      input: InstanceConfigure;
+      [k: string]: unknown | undefined;
+    }
+  | {
+      method: 'bindingCandidates';
+      input: BindingCandidatesRead;
+      [k: string]: unknown | undefined;
+    }
+  | {
+      method: 'packageSettings';
+      input: PackageSettingsRead;
+      [k: string]: unknown | undefined;
+    };
+/**
+ * A fixed committed source for continuation; no runtime or permission claim.
+ */
+export type DeploymentInstances =
+  | {
+      kind: 'start';
+    }
+  | {
+      source: DeploymentRef;
+      after?: InstanceId | null;
+      kind: 'continue';
+    };
+/**
+ * Hierarchical, stable source keys. Display aliases never become data identities.
+ */
+export type InstanceId = string[];
 export type ExecutionLocation = 'host' | 'ui';
 export type PresentationTarget = 'tui' | 'desktop';
 /**
@@ -318,10 +383,6 @@ export type Target =
       export: string;
       kind: 'remote';
     };
-/**
- * Hierarchical, stable source keys. Display aliases never become data identities.
- */
-export type InstanceId = string[];
 export type Transport = 'local' | 'remote';
 export type Interface =
   | {
@@ -364,77 +425,6 @@ export type CaptureOutput =
     };
 export type Availability = 'required' | 'optional';
 /**
- * A fixed committed source for continuation; no runtime or permission claim.
- */
-export type DeploymentInstances =
-  | {
-      kind: 'start';
-    }
-  | {
-      source: DeploymentRef;
-      after?: InstanceId | null;
-      kind: 'continue';
-    };
-export type SettingKind =
-  | 'text'
-  | 'number'
-  | 'boolean'
-  | 'object'
-  | 'array'
-  | 'null'
-  | 'unsupported';
-export type SettingValue =
-  | {
-      text: string;
-      kind: 'text';
-    }
-  | {
-      text: string;
-      kind: 'number';
-    }
-  | {
-      value: boolean;
-      kind: 'boolean';
-    }
-  | {
-      kind: 'null';
-    };
-export type BindingConsumer =
-  | {
-      name: string;
-      kind: 'root';
-    }
-  | {
-      package: PackageRef;
-      kind: 'package';
-    };
-export type BindingCandidate =
-  | {
-      key: string;
-      label: string;
-      target: Target;
-      kind: 'bound';
-    }
-  | {
-      key: string;
-      label: string;
-      package: PackageRef;
-      export: string;
-      kind: 'package';
-    };
-export type Cardinality =
-  | {
-      kind: 'one';
-    }
-  | {
-      kind: 'optional';
-    }
-  | {
-      min: number;
-      max: number;
-      kind: 'many';
-    };
-/**
  * One atomic patch to the original source, not a saved plan or draft registry.
  */
 export type CompositionChange =
@@ -460,6 +450,79 @@ export type CompositionChange =
   | {
       name: string;
       kind: 'remove';
+    };
+export type SettingValue =
+  | {
+      text: string;
+      kind: 'text';
+    }
+  | {
+      text: string;
+      kind: 'number';
+    }
+  | {
+      value: boolean;
+      kind: 'boolean';
+    }
+  | {
+      kind: 'null';
+    };
+export type BindingConsumer =
+  | {
+      name: string;
+      kind: 'root';
+    }
+  | {
+      package: PackageRef;
+      kind: 'package';
+    };
+export type UiAuthoringState =
+  | {
+      status: 'queued';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      status: 'claimed';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      outcome: unknown;
+      status: 'completed';
+      [k: string]: unknown | undefined;
+    };
+export type SettingKind =
+  | 'text'
+  | 'number'
+  | 'boolean'
+  | 'object'
+  | 'array'
+  | 'null'
+  | 'unsupported';
+export type BindingCandidate =
+  | {
+      key: string;
+      label: string;
+      target: Target;
+      kind: 'bound';
+    }
+  | {
+      key: string;
+      label: string;
+      package: PackageRef;
+      export: string;
+      kind: 'package';
+    };
+export type Cardinality =
+  | {
+      kind: 'one';
+    }
+  | {
+      kind: 'optional';
+    }
+  | {
+      min: number;
+      max: number;
+      kind: 'many';
     };
 /**
  * A deterministic refusal is a recorded business result. Uncertain SQL/worker
@@ -4544,6 +4607,52 @@ export type MarkdownTextResult =
       kind: 'too_large';
     };
 
+export interface DeploymentRef {
+  stateDomain: string;
+  deployment: string;
+  revision: number;
+}
+export interface DeploymentDocumentRead {
+  source: DeploymentRef;
+  offset: number;
+}
+export interface PackageSourceRead {
+  source: DeploymentRef;
+  package: PackageRef;
+  path?: string | null;
+  offset: number;
+}
+export interface PackageRef {
+  id: string;
+  revision: string;
+}
+export interface PackageSourceInstall {
+  expectedRevision: number;
+  /**
+   * UTF-8 package files, including maka.extension.json. Bytes determine identity.
+   */
+  files: {
+    [k: string]: string | undefined;
+  };
+}
+export interface DeploymentSourceReplace {
+  expectedRevision: number;
+  document: DeploymentDocument;
+}
+/**
+ * Source document edited by one native buffer, never a second desired plan.
+ */
+export interface DeploymentDocument {
+  input: CompositionInput;
+  /**
+   * @maxItems 128
+   */
+  remoteExports: RemoteObservation[];
+  /**
+   * @maxItems 128
+   */
+  packages: PackageRef[];
+}
 /**
  * Durable deployment input. Plans are derived and never persisted as overrides.
  */
@@ -4574,10 +4683,6 @@ export interface CompositionNode {
   disabled?: boolean;
   overrides?: Override[];
 }
-export interface PackageRef {
-  id: string;
-  revision: string;
-}
 export interface Configuration {
   values?: {
     [k: string]: unknown | undefined;
@@ -4607,16 +4712,6 @@ export interface Override {
     [k: string]: Target[] | undefined;
   };
   disabled?: boolean | null;
-}
-export interface Deployment {
-  reference: DeploymentRef;
-  input: CompositionInput;
-  remoteExports: RemoteObservation[];
-}
-export interface DeploymentRef {
-  stateDomain: string;
-  deployment: string;
-  revision: number;
 }
 /**
  * A static compatibility observation, never a remote registration or grant.
@@ -4675,6 +4770,147 @@ export interface ResourceType {
 export interface Capture {
   input: unknown;
   output: CaptureOutput;
+}
+export interface CompositionEdit {
+  expectedRevision: number;
+  edits: CompositionChange[];
+}
+export interface SettingChange {
+  /**
+   * @minItems 1
+   * @maxItems 16
+   */
+  path:
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ];
+  /**
+   * None removes the field; all other fields retain their original source.
+   */
+  value?: SettingValue | null;
+}
+export interface InstanceConfigure {
+  expectedRevision: number;
+  instance: InstanceId;
+  /**
+   * @minItems 1
+   * @maxItems 32
+   */
+  changes: [SettingChange, ...SettingChange[]];
+}
+export interface BindingCandidatesRead {
+  source?: DeploymentRef | null;
+  consumer: BindingConsumer;
+  import: string;
+  includePackages: boolean;
+  after?: string | null;
+}
+export interface PackageSettingsRead {
+  source: DeploymentRef;
+  package: PackageRef;
+  path: string[];
+  after?: string | null;
+  changes: SettingChange[];
+}
+export interface UiAuthoringClaim {
+  request?: UiAuthoringRequest | null;
+}
+export interface UiAuthoringRequest {
+  id: string;
+  command: UiAuthoringCommand;
+}
+export interface Deployment {
+  reference: DeploymentRef;
+  input: CompositionInput;
+  remoteExports: RemoteObservation[];
 }
 export interface DeploymentRead {}
 export interface PackageInstall {
@@ -4747,24 +4983,6 @@ export interface InstanceSetEnabled {
   expectedRevision: number;
   instance: InstanceId;
   enabled: boolean;
-}
-/**
- * Source document edited by one native buffer, never a second desired plan.
- */
-export interface DeploymentDocument {
-  input: CompositionInput;
-  /**
-   * @maxItems 128
-   */
-  remoteExports: RemoteObservation[];
-  /**
-   * @maxItems 128
-   */
-  packages: PackageRef[];
-}
-export interface DeploymentDocumentRead {
-  source: DeploymentRef;
-  offset: number;
 }
 export interface InstanceSettingsRead {
   source: DeploymentRef;
@@ -5060,124 +5278,6 @@ export interface SettingField {
         SettingValue,
       ];
 }
-export interface InstanceConfigure {
-  expectedRevision: number;
-  instance: InstanceId;
-  /**
-   * @minItems 1
-   * @maxItems 32
-   */
-  changes: [SettingChange, ...SettingChange[]];
-}
-export interface SettingChange {
-  /**
-   * @minItems 1
-   * @maxItems 16
-   */
-  path:
-    | [string]
-    | [string, string]
-    | [string, string, string]
-    | [string, string, string, string]
-    | [string, string, string, string, string]
-    | [string, string, string, string, string, string]
-    | [string, string, string, string, string, string, string]
-    | [string, string, string, string, string, string, string, string]
-    | [string, string, string, string, string, string, string, string, string]
-    | [string, string, string, string, string, string, string, string, string, string]
-    | [string, string, string, string, string, string, string, string, string, string, string]
-    | [
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-      ]
-    | [
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-      ]
-    | [
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-      ]
-    | [
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-      ]
-    | [
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-      ];
-  /**
-   * None removes the field; all other fields retain their original source.
-   */
-  value?: SettingValue | null;
-}
-export interface BindingCandidatesRead {
-  source?: DeploymentRef | null;
-  consumer: BindingConsumer;
-  import: string;
-  includePackages: boolean;
-  after?: string | null;
-}
 export interface BindingCandidatesPage {
   source: DeploymentRef;
   configuration: {
@@ -5186,13 +5286,6 @@ export interface BindingCandidatesPage {
   current: Target[];
   candidates: BindingCandidate[];
   next?: string | null;
-}
-export interface PackageSettingsRead {
-  source: DeploymentRef;
-  package: PackageRef;
-  path: string[];
-  after?: string | null;
-  changes: SettingChange[];
 }
 export interface PackageSettingsPage {
   source: DeploymentRef;
@@ -5206,10 +5299,6 @@ export interface ManagedImport {
   name: string;
   contract: string;
   cardinality: Cardinality;
-}
-export interface CompositionEdit {
-  expectedRevision: number;
-  edits: CompositionChange[];
 }
 export interface DeploymentDocumentChunk {
   source: DeploymentRef;

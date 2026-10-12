@@ -69,6 +69,35 @@ pub struct DeploymentDocument {
     pub packages: Vec<PackageRef>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PackageSourceInstall {
+    pub expected_revision: u64,
+    /// UTF-8 package files, including maka.extension.json. Bytes determine identity.
+    pub files: BTreeMap<String, String>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PackageSourceRead {
+    pub source: DeploymentRef,
+    pub package: PackageRef,
+    pub path: Option<String>,
+    pub offset: usize,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PackageSourceChunk {
+    pub paths: Vec<String>,
+    pub text: Option<String>,
+    pub next: Option<usize>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeploymentSourceReplace {
+    pub expected_revision: u64,
+    pub document: DeploymentDocument,
+}
+
 pub const MAX_DOCUMENT_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -199,6 +228,22 @@ pub fn deployment_manager_contract() -> Contract {
                     method::<DeploymentRead, ManagedDeployment>(MethodMode::Query),
                 ),
                 ("install".into(), install),
+                (
+                    "installSource".into(),
+                    method::<PackageSourceInstall, ManagementResult<PackageInstalled>>(
+                        MethodMode::Mutation,
+                    ),
+                ),
+                (
+                    "readPackage".into(),
+                    method::<PackageSourceRead, PackageSourceChunk>(MethodMode::Query),
+                ),
+                (
+                    "replaceSource".into(),
+                    method::<DeploymentSourceReplace, ManagementResult<DeploymentRef>>(
+                        MethodMode::Mutation,
+                    ),
+                ),
                 (
                     "bindingCandidates".into(),
                     method::<BindingCandidatesRead, BindingCandidatesPage>(MethodMode::Query),

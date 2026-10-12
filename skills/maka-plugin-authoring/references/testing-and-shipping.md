@@ -65,3 +65,5 @@ In a checkout, run the relevant crate tests and SDK/product type checks. Product
 tests build once before running. To build another product artifact concurrently,
 use `node products/maka/bundle/scripts/build.mjs --output PATH` with a separate
 directory; two writers must not share `dist`.
+
+For an Agent changing its connected foreground, use [Runtime UI authoring](runtime-ui.md). Its text package and document commands reuse the deployment manager’s validation and revision checks; the original operation receipt remains the evidence for the edit.

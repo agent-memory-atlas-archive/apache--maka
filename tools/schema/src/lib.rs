@@ -33,6 +33,9 @@ pub fn catalog() -> Value {
     use composition::PresentationTarget;
     let mut g = SchemaGenerator::default();
     let roots = vec![
+        root::<maka_ui_authoring::contract::Command>(&mut g),
+        root::<maka_ui_authoring::contract::Claim>(&mut g),
+        root::<maka_ui_authoring::contract::State>(&mut g),
         root::<composition::Input>(&mut g),
         root::<maka_plugin_core::deployment::Deployment>(&mut g),
         root::<maka_plugin_core::deployment::management::DeploymentRead>(&mut g),
@@ -358,6 +361,7 @@ pub fn catalog() -> Value {
         "receiptReader": maka_plugin_core::operation::receipt_reader_contract(),
         "desktopSurface": maka_ui_runtime::surface_contract(PresentationTarget::Desktop),
         "terminalSurface": maka_ui_runtime::surface_contract(PresentationTarget::Tui),
+        "uiAuthoring": maka_ui_authoring::contract::contract(),
         "workspaceWeb": maka_web_api::contract(),
         "workspaceJev": maka_workspace_api::jev::contract(),
     });
@@ -394,6 +398,7 @@ pub fn catalog() -> Value {
         "workspaceFiles": maka_workspace_api::files::native(),
         "workspaceProcesses": maka_workspace_api::processes::native(),
         "protocolProcesses": maka_workspace_api::protocol::native(),
+        "uiAuthoring": maka_ui_authoring::contract::native(),
         "workspaceWeb": maka_web_api::native(),
         "workspaceJev": maka_workspace_api::jev::native(),
         "skillLibrary": maka_skills_api::native(),

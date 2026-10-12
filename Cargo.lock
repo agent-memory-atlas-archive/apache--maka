@@ -8436,6 +8436,7 @@ dependencies = [
  "maka-agent-api",
  "maka-agent-facts",
  "maka-agent-ports",
+ "maka-capabilities",
  "maka-computer-use",
  "maka-config",
  "maka-event-log",
@@ -9019,6 +9020,7 @@ dependencies = [
  "maka-processes-native",
  "maka-settings-native",
  "maka-skills-native",
+ "maka-ui-authoring",
  "maka-web",
 ]
 
@@ -9170,6 +9172,7 @@ dependencies = [
  "maka-settings-native",
  "maka-skills-api",
  "maka-transport",
+ "maka-ui-authoring",
  "maka-ui-runtime",
  "maka-web-api",
  "maka-workspace-api",
@@ -9360,6 +9363,23 @@ dependencies = [
  "tokio-tungstenite 0.29.0",
  "tokio-util",
  "uuid",
+]
+
+[[package]]
+name = "maka-ui-authoring"
+version = "0.2.0"
+dependencies = [
+ "futures-util",
+ "maka-capabilities",
+ "maka-event-log",
+ "maka-host-runtime",
+ "maka-plugin-core",
+ "schemars 1.2.2",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

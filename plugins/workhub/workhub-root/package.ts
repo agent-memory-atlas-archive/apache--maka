@@ -27,6 +27,7 @@ const entries = uiEntries({
   imports: {
     workhub: one(sdk.contracts.workhubCoordinator),
     coordinator: one(own.workspaceContract),
+    authoring: one(own.uiAuthoringContract),
     worker: one(own.workspaceContract),
     directories: one(own.directoryPickerContract),
     reading: one(sdk.contracts.readingArea),

@@ -82,6 +82,9 @@ export const packageNames = [
   'image-viewer',
   'image',
   'composer',
+  'composer-footer',
+  'ui-authoring',
+  'ui-authoring-gateway',
   'navigation',
   'timeline',
   'tool-details',
@@ -119,6 +122,7 @@ export type PackageName = (typeof packageNames)[number];
 const baseInstanceNames = [
   ...packageNames,
   'recovery-reading',
+  'ui-authoring-worker',
   'interface-deployment',
   'service-deployment',
   'host-deployment-gateway',
@@ -190,6 +194,7 @@ function settingsComposition(
   });
   const remote = (
     name:
+      | 'ui-authoring'
       | 'agent'
       | 'settings'
       | 'receipts'
@@ -524,6 +529,9 @@ function settingsComposition(
               'readDocument',
               'replace',
               'install',
+              'installSource',
+              'readPackage',
+              'replaceSource',
             ],
             false,
           ),
@@ -549,6 +557,9 @@ function settingsComposition(
               'readDocument',
               'replace',
               'install',
+              'installSource',
+              'readPackage',
+              'replaceSource',
             ],
             false,
           ),
@@ -684,12 +695,26 @@ function workspaceComposition(configuration: CompositionConfiguration): Applicat
         : {}),
       ...(webMethods.length ? { web: [local('workspace-web', 'web')] } : {}),
       ...(skillCalls.length ? { skills: [local('skills', 'skills')] } : {}),
+      ui: [local('ui-authoring', 'Authoring')],
       ...(asksForms ? { forms: [local('forms', 'forms')] } : {}),
       ...(asksQuestions ? { questions: [local('questions', 'questions')] } : {}),
       ...(fileMethods.length ? { files: [local('workspace-files', 'files')] } : {}),
       ...(processMethods.length ? { processes: [local('workspace-processes', 'processes')] } : {}),
     },
   );
+  host.instances['ui-authoring'] = node('ui-authoring');
+  host.instances['ui-authoring-gateway'] = node(
+    'ui-authoring-gateway',
+    {},
+    { requests: [local('ui-authoring', 'Authoring')] },
+  );
+  remoteExports.push({
+    capability: { deployment: 'local', instance: [keys['ui-authoring']], export: 'Authoring' },
+    declaration: { contract: contracts.uiAuthoring, availability: 'required' },
+  });
+  Object.assign(connections.hosts.find((host) => host.name === 'local')!.endpoints, {
+    uiAuthoring: expose('ui-authoring-gateway', 'requests', ['watch', 'claim', 'complete'], true),
+  });
   if (asksForms || executors.length) host.instances.forms = node('forms');
   if (asksQuestions) host.instances.questions = node('questions');
   if (fileMethods.length || executors.length)
@@ -834,6 +859,8 @@ function workspaceComposition(configuration: CompositionConfiguration): Applicat
         reader: [local('reader', 'Reader')],
         history: [local('history', 'History')],
         composer: [local('composer', 'Composer')],
+        footer: [local('composer-footer', 'Footer')],
+        authoring: [local('ui-authoring-worker', 'Worker')],
         ...(configuration.presentation === 'tui'
           ? {
               rows: [local('rows', 'Rows')],
@@ -1033,6 +1060,28 @@ function workspaceComposition(configuration: CompositionConfiguration): Applicat
       },
     ),
     composer: node('composer', {}, { editor: [local('editor', 'Textarea')] }),
+    'composer-footer': node('composer-footer'),
+    'ui-authoring-worker': node(
+      'ui-authoring',
+      {},
+      {
+        requests: [remote('ui-authoring', 'Authoring')],
+        management: [
+          {
+            kind: 'remote',
+            deployment: 'manager',
+            instance: [keys['deployment-manager']],
+            export: 'Management',
+          },
+        ],
+        managerReceipts: [
+          { kind: 'remote', deployment: 'manager', instance: [keys.receipts], export: 'Receipts' },
+        ],
+        receipts: [remote('receipts', 'Receipts')],
+        history: [local('history', 'History')],
+      },
+      'ui-authoring-worker',
+    ),
     ...(configuration.presentation === 'tui'
       ? {
           rows: node('rows'),
@@ -1117,6 +1166,7 @@ function workspaceComposition(configuration: CompositionConfiguration): Applicat
     });
   }
   if (
+    configuration.agent.tools.some((tool) => tool.import === 'ui') ||
     asksForms ||
     asksQuestions ||
     fileMethods.length ||
@@ -1126,6 +1176,18 @@ function workspaceComposition(configuration: CompositionConfiguration): Applicat
   )
     Object.assign(connections.hosts.find((host) => host.name === 'local')!, {
       native: [
+        ...(configuration.agent.tools.some((tool) => tool.import === 'ui')
+          ? [
+              {
+                origin: [keys.agent],
+                consumer: [keys.agent],
+                provider: [keys['ui-authoring']],
+                export: 'Authoring',
+                methods: ['submit', 'result'],
+                recovery: true,
+              },
+            ]
+          : []),
         ...executors.flatMap((executor) => [
           ...(configuration.executorProcesses?.setupDirectory
             ? [
@@ -1426,6 +1488,7 @@ export function workhubComposition(
         { kind: 'remote', deployment: 'local', instance: [keys.workhub], export: 'workhub' },
       ],
       coordinator: [local('coordinator-workspace', 'Workspace')],
+      authoring: [local('ui-authoring-worker', 'Worker')],
       worker: [local('workspace', 'Workspace')],
       directories: [local('coordinator-directory-picker', 'DirectoryPicker')],
       reading: [local('reading-area', 'ReadingArea')],
