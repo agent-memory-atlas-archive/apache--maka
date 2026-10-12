@@ -98,19 +98,16 @@ mod tests {
 
     #[test]
     fn identity_tracks_execution_contract_but_not_display_or_json_spelling() {
-        let mut offer = serde_json::from_value::<super::super::Manifest>(json!({
-            "registrationId":"r","offers":[{"offerId":"desktop_browser",
+        let mut offer = serde_json::from_value::<Offer>(json!({
+                "offerId":"desktop_browser",
                 "version":"1","affinity":"session","hostPathAccess":"none","label":"Browser",
                 "tools":[
                     {"serverId":"browser","name":"a","inputSchema":{"type":"object",
                         "properties":{"x":{"enum":[1,0]}}}},
                     {"serverId":"browser","name":"b","inputSchema":{"type":"object"}}
                 ]
-            }]
         }))
-        .unwrap()
-        .offers
-        .remove(0);
+        .unwrap();
         let id = ContractId::of(&offer);
         assert!(id.as_str().ends_with("_desktop_browser"));
         assert!(id.as_str().len() <= 128);

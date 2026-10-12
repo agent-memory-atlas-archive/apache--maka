@@ -53,8 +53,7 @@ pub struct Repository {
 }
 impl Repository {
     pub fn new(storage: Arc<dyn Store>, entry_id: &str) -> Result<Self, Error> {
-        maka_plugins::composition::Entry::new(entry_id)
-            .map_err(|error| invalid(error.to_string()))?;
+        maka_plugins::identifier(entry_id).map_err(|error| invalid(error.to_string()))?;
         Ok(Self {
             storage,
             prefix: format!("scheduled-tasks:{}:{entry_id}:", entry_id.len()),

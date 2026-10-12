@@ -17,65 +17,10 @@
  * under the License.
  */
 
-//! Built-in automatic names for the first submitted user message of a new Session.
-//! Disable the `maka.session-title` Profile entry to opt out. The Host owns the
-//! single auxiliary model attempt, usage, cancellation and canonical name CAS;
-//! this plugin supplies only the prompt. It stores no duplicate Session state.
+//! Bounded title prompt policy for an authorized auxiliary model call.
+use maka_plugins::{llm::Generate, session::title::Policy};
 
-use futures_util::future::BoxFuture;
-use maka_plugins::{
-    composition::Scope,
-    contributions::Staged,
-    kernel::{Plugin, PluginContext},
-    llm::Generate,
-    session::title::{NAME, Policy, SessionTitlePolicy},
-};
-use serde_json::Value;
-use std::sync::Arc;
-
-pub const ID: &str = "maka.session-title";
-
-pub struct Builtin;
-impl Plugin for Builtin {
-    fn description(&self) -> Option<maka_plugins::kernel::Description> {
-        Some(maka_plugins::kernel::Description {
-            name: maka_plugins::terminal_ui::Text::localized(
-                "Conversation titles",
-                "会话标题",
-                "對話標題",
-            ),
-            summary: Some(maka_plugins::terminal_ui::Text::localized(
-                "Give conversations names that are easy to find.",
-                "为会话生成便于查找的标题。",
-                "為對話產生便於尋找的標題。",
-            )),
-        })
-    }
-
-    fn validate(&self, _: &Scope, config: &Value) -> Result<(), maka_plugins::Error> {
-        if config.is_null() || config.as_object().is_some_and(|value| value.is_empty()) {
-            Ok(())
-        } else {
-            Err(maka_plugins::Error::Invalid(
-                "session-title has no instance configuration".into(),
-            ))
-        }
-    }
-    fn supports_scope(&self, scope: &Scope) -> bool {
-        *scope == Scope::Profile
-    }
-    fn activate(&self, _: PluginContext, _: Value) -> BoxFuture<'static, Result<Staged, String>> {
-        Box::pin(async {
-            let mut staged = Staged::default();
-            staged
-                .insert(NAME, SessionTitlePolicy(Arc::new(Title)))
-                .map_err(|error| error.to_string())?;
-            Ok(staged)
-        })
-    }
-}
-
-struct Title;
+pub struct Title;
 impl Policy for Title {
     fn prepare(&self, text: &str) -> Option<Generate> {
         let text = text.trim();

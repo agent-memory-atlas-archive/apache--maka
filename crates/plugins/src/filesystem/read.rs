@@ -24,7 +24,6 @@ mod scoped;
 use super::directory::Directory;
 use crate::{
     Error,
-    fiber::Context,
     filesystem::entries::{DirectoryPage, Entry, FilePage, Kind, ListFiles, ReadFile},
 };
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
@@ -137,11 +136,10 @@ impl ReadRoot {
     }
     pub fn bind_authorized(
         &self,
-        owner: Context,
-        cancellation: CancellationToken,
+        scope: &crate::call::Scope,
         authorization: Arc<dyn ReadAuthorization>,
     ) -> ReadDirectory {
-        let mut view = self.bind(owner, cancellation);
+        let mut view = self.bind_scope(scope);
         view.authorization = Some(authorization);
         view
     }
@@ -168,61 +166,17 @@ impl ReadRoot {
         self.files = Some(Arc::new(files));
         Ok(self)
     }
-    /// Bind an embedding-authorized root to one callback or plugin lifetime.
-    pub fn bind(&self, owner: Context, cancellation: CancellationToken) -> ReadDirectory {
-        ReadDirectory {
-            root: self.directory.clone(),
-            files: self.files.clone(),
-            owner: ReadOwner::Instance(owner),
-            cancellation,
-            authorization: None,
-            open_files: self.open_files.clone(),
-        }
-    }
     /// Bind an already authorized root to the original application call. The
     /// scope supplies cancellation and worker custody, never filesystem access.
     pub fn bind_scope(&self, scope: &crate::call::Scope) -> ReadDirectory {
         ReadDirectory {
             root: self.directory.clone(),
             files: self.files.clone(),
-            owner: ReadOwner::Call(scope.clone()),
+            owner: ReadOwner(scope.clone()),
             cancellation: scope.cancellation.clone(),
             authorization: None,
             open_files: self.open_files.clone(),
         }
-    }
-}
-
-/// Explicitly shared, non-secret input mounts configured by the embedding.
-/// This is not the Host state directory or an ambient home-directory grant.
-#[derive(Clone, Default)]
-pub struct ReadRoots(pub BTreeMap<String, ReadRoot>);
-impl ReadRoots {
-    pub fn bind(&self, owner: Context) -> ReadInputs {
-        ReadInputs {
-            roots: self.clone(),
-            owner,
-        }
-    }
-}
-#[derive(Clone)]
-pub struct ReadInputs {
-    roots: ReadRoots,
-    owner: Context,
-}
-impl ReadInputs {
-    pub fn names(&self) -> Result<Vec<String>, Error> {
-        let _lease = self.owner.resource_call()?;
-        Ok(self.roots.0.keys().cloned().collect())
-    }
-    pub fn open(&self, name: &str) -> Result<Option<ReadDirectory>, Error> {
-        let _lease = self.owner.resource_call()?;
-        let cancellation = self.owner.stopping()?;
-        Ok(self
-            .roots
-            .0
-            .get(name)
-            .map(|root| root.bind(self.owner.clone(), cancellation)))
     }
 }
 
@@ -238,70 +192,32 @@ pub struct ReadDirectory {
     open_files: Arc<tokio::sync::Semaphore>,
 }
 #[derive(Clone)]
-enum ReadOwner {
-    Instance(Context),
-    Call(crate::call::Scope),
-}
-enum ReadLease {
-    Instance(crate::fiber::CallGuard),
-    Call(crate::call::Ticket),
-}
-impl ReadLease {
-    fn start(&mut self) {
-        if let Self::Call(ticket) = self {
-            ticket.start();
-        }
-    }
-    fn complete(self) {
-        match self {
-            Self::Instance(guard) => drop(guard),
-            Self::Call(ticket) => ticket.complete(Ok(())),
-        }
-    }
-}
+struct ReadOwner(crate::call::Scope);
 impl ReadOwner {
-    fn admit(&self) -> Result<ReadLease, ReadError> {
-        match self {
-            Self::Instance(owner) => owner
-                .resource_call()
-                .map(ReadLease::Instance)
-                .map_err(|_| ReadError::Retired),
-            Self::Call(scope) => scope
-                .resources
-                .reserve()
-                .map(ReadLease::Call)
-                .map_err(|_| ReadError::Retired),
-        }
+    fn admit(&self) -> Result<crate::call::Ticket, ReadError> {
+        self.0.resources.reserve().map_err(|_| ReadError::Retired)
     }
     fn spawn_resource<F>(
         &self,
-        label: &str,
         task: impl FnOnce(CancellationToken) -> F,
     ) -> Result<tokio::sync::oneshot::Receiver<Result<(), String>>, ReadError>
     where
         F: Future<Output = Result<(), String>> + Send + 'static,
     {
-        match self {
-            Self::Instance(owner) => owner
-                .spawn_resource(label, task)
-                .map_err(|_| ReadError::Retired),
-            Self::Call(scope) => {
-                use futures_util::FutureExt;
-                let mut ticket = scope.resources.reserve().map_err(|_| ReadError::Retired)?;
-                let future = task(scope.cancellation.clone());
-                let (send, receive) = tokio::sync::oneshot::channel();
-                ticket.start();
-                tokio::spawn(async move {
-                    let result = std::panic::AssertUnwindSafe(future)
-                        .catch_unwind()
-                        .await
-                        .unwrap_or_else(|_| Err("read resource worker panicked".into()));
-                    ticket.complete(result.clone());
-                    let _ = send.send(result);
-                });
-                Ok(receive)
-            }
-        }
+        use futures_util::FutureExt;
+        let mut ticket = self.admit()?;
+        let future = task(self.0.cancellation.clone());
+        let (send, receive) = tokio::sync::oneshot::channel();
+        ticket.start();
+        tokio::spawn(async move {
+            let result = std::panic::AssertUnwindSafe(future)
+                .catch_unwind()
+                .await
+                .unwrap_or_else(|_| Err("read resource worker panicked".into()));
+            ticket.complete(result.clone());
+            let _ = send.send(result);
+        });
+        Ok(receive)
     }
 }
 impl ReadDirectory {
@@ -341,7 +257,7 @@ impl ReadDirectory {
             if let Some(ticket) = ticket {
                 ticket.complete(Ok(()));
             }
-            lease.complete();
+            lease.complete(Ok(()));
             Ok(result)
         })
         .await
@@ -597,21 +513,28 @@ fn invalid(error: impl ToString) -> ReadError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{composition::Scope, fiber::Fiber};
+    async fn scope() -> crate::call::Scope {
+        crate::call::Issuer::default()
+            .admit(
+                crate::call::Identity::Remote {
+                    request_id: uuid::Uuid::new_v4(),
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap()
+    }
 
     #[tokio::test]
     async fn reads_keep_mount_boundaries_and_end_with_the_callback_or_owner() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(directory.path().join("allowed"), b"abcdef").unwrap();
         std::fs::write(directory.path().join("private"), b"secret").unwrap();
-        let owner = Fiber::new("example.reader", "reader", Scope::Profile).unwrap();
-        owner.begin_loading().unwrap();
-        owner.ready().unwrap();
-        owner.publish().unwrap();
+        let owner = scope().await;
         let root = ReadRoot::open(directory.path()).await.unwrap();
         let restricted = root.clone().select(["allowed".into()].into()).unwrap();
-        let cancellation = CancellationToken::new();
-        let view = restricted.bind(owner.context(), cancellation.clone());
+        let cancellation = owner.cancellation.clone();
+        let view = restricted.bind_scope(&owner);
         let read = |path: &str| ReadFile {
             path: path.into(),
             offset: 0,
@@ -634,7 +557,7 @@ mod tests {
                 .unwrap(),
             ))
             .unwrap()
-            .bind(owner.context(), cancellation.clone());
+            .bind_scope(&owner);
         assert!(protected.read(read("private")).await.is_err());
         assert_eq!(protected.read(read("allowed")).await.unwrap().bytes, b"abc");
         assert!(matches!(
@@ -665,7 +588,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["allowed"]
         );
-        let workspace = root.bind(owner.context(), cancellation.clone());
+        let workspace = root.bind_scope(&owner);
         assert!(workspace.read(read("../private")).await.is_err());
         #[cfg(unix)]
         {
@@ -701,7 +624,7 @@ mod tests {
                 .clone()
                 .select(["alias".into()].into())
                 .unwrap()
-                .bind(owner.context(), cancellation.clone());
+                .bind_scope(&owner);
             assert!(
                 selected_alias.read(read("alias")).await.is_err(),
                 "selection must constrain link targets too"
@@ -725,21 +648,17 @@ mod tests {
             view.read(read("allowed")).await,
             Err(ReadError::Retired)
         ));
-        let published =
-            ReadRoots(BTreeMap::from([("notes".into(), restricted)])).bind(owner.context());
-        let independent = published.open("notes").unwrap().unwrap();
+        owner.finish().await.unwrap();
+        let independent_owner = scope().await;
+        let independent = restricted.bind_scope(&independent_owner);
         assert_eq!(
             independent.read(read("allowed")).await.unwrap().bytes,
             b"abc"
         );
-        owner
-            .shutdown(tokio::time::Instant::now() + std::time::Duration::from_secs(1))
-            .await
-            .unwrap();
+        independent_owner.finish().await.unwrap();
         assert!(matches!(
             independent.read(read("allowed")).await,
             Err(ReadError::Retired)
         ));
-        assert!(matches!(published.names(), Err(Error::Retired)));
     }
 }

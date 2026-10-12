@@ -21,11 +21,22 @@
 //! adapter writes these records; plugin business state uses separate storage.
 
 use crate::{EventLog, StoreError};
-use maka_plugins::{call::Identity, fiber, storage::Namespace};
+use maka_plugins::{call::Identity, storage::Namespace};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{Connection, Row};
 use uuid::Uuid;
+
+/// Durable observation of the original resource owner; never a live grant.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Owner {
+    pub package_id: String,
+    pub entry_id: String,
+    pub scope: maka_runtime::scope::Scope,
+    pub activation: String,
+    pub generation: u64,
+}
 
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", content = "input", rename_all = "snake_case")]
@@ -59,7 +70,7 @@ pub enum Operation {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Request {
     pub source: Identity,
-    pub owner: fiber::Identity,
+    pub owner: Owner,
     pub boundary: maka_plugins::authorization::Boundary,
     pub operation: Operation,
 }

@@ -19,10 +19,8 @@
 
 use base64::Engine;
 use futures_util::future::BoxFuture;
-use maka_plugins::{
-    contributions::Staged,
-    kernel::{Plugin, PluginContext},
-    model::{self, Confirmation, Context, Error, Lifetime, ProviderAdapter, Request, Session},
+use maka_plugins::model::{
+    self, Confirmation, Context, Error, Lifetime, ProviderAdapter, Request, Session,
 };
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::Arc};
@@ -40,34 +38,6 @@ pub const ADAPTER: &str = "codex-responses";
 #[derive(Default)]
 pub struct Codex(maka_responses::Adapter);
 
-impl Codex {
-    pub fn stage(&self) -> Result<Staged, maka_plugins::Error> {
-        let mut staged = Staged::default();
-        staged.insert("chatgpt", self.definition()?)?;
-        Ok(staged)
-    }
-}
-impl Plugin for Codex {
-    fn description(&self) -> Option<maka_plugins::kernel::Description> {
-        Some(maka_plugins::kernel::Description {
-            name: maka_plugins::terminal_ui::Text::localized(
-                "Codex subscription",
-                "Codex 订阅",
-                "Codex 訂閱",
-            ),
-            summary: Some(maka_plugins::terminal_ui::Text::localized(
-                "Use models through your Codex account.",
-                "通过 Codex 账户使用模型。",
-                "透過 Codex 帳戶使用模型。",
-            )),
-        })
-    }
-
-    fn activate(&self, _: PluginContext, _: Value) -> BoxFuture<'static, Result<Staged, String>> {
-        let staged = self.stage().map_err(|error| error.to_string());
-        Box::pin(async { staged })
-    }
-}
 impl ProviderAdapter for Codex {
     fn supports_item_acceptance(&self) -> bool {
         self.0.supports_item_acceptance()

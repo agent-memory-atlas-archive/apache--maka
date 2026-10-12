@@ -8218,9 +8218,15 @@ for (const target of ['desktop', 'tui']) {
           node.key ===
           (target === 'tui' ? 'catalog-filter-label-needs_you' : 'catalog-filter-needs_you'),
       );
-    assert.equal(label().text ?? label().label, 'Needs You (49)');
+    assert.equal(
+      label().text ?? label().label,
+      target === 'tui' ? 'Needs you · 49' : 'Needs You (49)',
+    );
     client.query('catalog', { ...page, revision: 'background-2', needsYouCount: 48 });
-    assert.equal(label().text ?? label().label, 'Needs You (48)');
+    assert.equal(
+      label().text ?? label().label,
+      target === 'tui' ? 'Needs you · 48' : 'Needs You (48)',
+    );
     assert.deepEqual(retained(), original);
     const beforeFailure = structuredClone(client.state.catalog);
     client.complete(subscription, { status: 'failed', reason: 'offline' });
@@ -8239,7 +8245,7 @@ for (const target of ['desktop', 'tui']) {
       'late original cannot mutate replacement',
     );
     client.query('catalog', { ...page, revision: 'reconnected', needsYouCount: 0 });
-    assert.equal(label().text ?? label().label, 'Needs You (0)');
+    assert.equal(label().text ?? label().label, target === 'tui' ? 'Needs you' : 'Needs You (0)');
     assert.deepEqual(retained(), original);
   });
 }

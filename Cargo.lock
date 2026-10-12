@@ -8265,7 +8265,6 @@ dependencies = [
  "maka-event-log",
  "maka-plugins",
  "maka-runtime",
- "maka-tool-catalog",
  "schemars 1.2.2",
  "serde",
  "serde_json",
@@ -8285,7 +8284,6 @@ dependencies = [
  "futures-util",
  "maka-plugins",
  "maka-runtime",
- "maka-tool-catalog",
  "schemars 1.2.2",
  "serde",
  "serde_json",
@@ -8353,12 +8351,10 @@ dependencies = [
  "cua-driver-core",
  "cua-driver-sdk",
  "cursor-overlay",
- "futures-util",
  "libc",
  "maka-js-runtime",
  "maka-plugins",
  "maka-runtime",
- "maka-tool-catalog",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
@@ -8514,7 +8510,6 @@ dependencies = [
  "futures-util",
  "maka-plugins",
  "maka-runtime",
- "maka-tool-catalog",
  "schemars 1.2.2",
  "serde",
  "serde_json",
@@ -8533,7 +8528,6 @@ dependencies = [
  "maka-event-log",
  "maka-plugins",
  "maka-runtime",
- "maka-tool-catalog",
  "schemars 1.2.2",
  "serde",
  "serde_json",
@@ -8541,7 +8535,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
- "tokio-util",
  "uuid",
 ]
 
@@ -8549,13 +8542,9 @@ dependencies = [
 name = "maka-insights"
 version = "0.2.0"
 dependencies = [
- "futures-util",
- "jiff",
  "maka-plugins",
- "maka-runtime",
  "serde",
  "serde_json",
- "uuid",
 ]
 
 [[package]]
@@ -8590,16 +8579,13 @@ dependencies = [
  "deno_web",
  "deno_webidl",
  "futures-util",
- "maka-network",
  "maka-plugins",
  "maka-runtime",
- "reqwest",
  "serde",
  "serde_json",
  "sys_traits",
  "thiserror 2.0.20",
  "tokio",
- "tokio-tungstenite 0.29.0",
  "tokio-util",
 ]
 
@@ -8608,7 +8594,6 @@ name = "maka-model"
 version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
- "chrono",
  "deno_core",
  "futures-util",
  "hyper",
@@ -8621,7 +8606,6 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "thiserror 2.0.20",
  "tokio",
  "tokio-rustls",
@@ -8690,10 +8674,8 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-util",
- "unicode-width",
  "uuid",
  "windows-sys 0.61.2",
- "yaml-rust2",
 ]
 
 [[package]]
@@ -8824,7 +8806,6 @@ dependencies = [
  "tokio",
  "tokio-tungstenite 0.29.0",
  "tokio-util",
- "url",
  "uuid",
  "windows-sys 0.61.2",
 ]
@@ -8857,7 +8838,6 @@ dependencies = [
  "maka-event-log",
  "maka-plugins",
  "maka-runtime",
- "maka-tool-catalog",
  "schemars 1.2.2",
  "serde",
  "serde_json",
@@ -8910,9 +8890,7 @@ dependencies = [
 name = "maka-session-title"
 version = "0.2.0"
 dependencies = [
- "futures-util",
  "maka-plugins",
- "serde_json",
 ]
 
 [[package]]
@@ -8943,7 +8921,6 @@ dependencies = [
  "libc",
  "maka-plugins",
  "maka-runtime",
- "maka-tool-catalog",
  "schemars 1.2.2",
  "serde",
  "serde_json",
@@ -8960,13 +8937,11 @@ name = "maka-tool-catalog"
 version = "0.2.0"
 dependencies = [
  "jsonschema 0.56.0",
- "maka-plugins",
  "maka-runtime",
  "schemars 1.2.2",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
- "tokio",
  "tokio-util",
 ]
 
@@ -8977,7 +8952,6 @@ dependencies = [
  "futures-util",
  "maka-event-log",
  "maka-js-runtime",
- "maka-plugins",
  "maka-runtime",
  "maka-tool-catalog",
  "schemars 1.2.2",
@@ -9081,7 +9055,6 @@ dependencies = [
  "futures-util",
  "maka-plugins",
  "maka-runtime",
- "maka-tool-catalog",
  "schemars 1.2.2",
  "serde",
  "serde_json",
@@ -9096,10 +9069,8 @@ dependencies = [
 name = "maka-workhub"
 version = "0.2.0"
 dependencies = [
- "futures-util",
  "maka-plugins",
  "maka-runtime",
- "maka-tool-catalog",
  "schemars 1.2.2",
  "serde",
  "serde_json",

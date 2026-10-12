@@ -18,35 +18,21 @@
  */
 
 use super::Error;
-use maka_plugins::{
-    call::Scope,
-    filesystem::{
-        self,
-        entries::{self, Kind, Operation, Output},
-    },
-};
+use maka_plugins::filesystem::entries::{self, Kind, Operation, Output};
 use std::sync::Arc;
 
-/// Domain adapter: the publication algorithm is identical for private files and
-/// user-authorized files. Only private data carries a native directory handle.
+/// Publication operates through the embedding's pinned directory and owned workers.
 #[derive(Clone)]
 pub(super) struct Directory {
     root: Arc<Root>,
     prefix: String,
 }
-enum Root {
-    Private {
-        directory: cap_std::fs::Dir,
-        cancellation: tokio_util::sync::CancellationToken,
-        resources: Option<Arc<maka_plugins::call::Resources>>,
-        // Every queued/active worker must exclude another publisher, even when
-        // the Publisher and the future awaiting this operation have been dropped.
-        _lock: Arc<super::io::PublicationLock>,
-    },
-    Granted {
-        files: Arc<dyn filesystem::Files>,
-        call: Scope,
-    },
+struct Root {
+    directory: cap_std::fs::Dir,
+    cancellation: tokio_util::sync::CancellationToken,
+    resources: Option<Arc<maka_plugins::call::Resources>>,
+    // Every queued worker retains publication exclusion even after observer loss.
+    _lock: Arc<super::io::PublicationLock>,
 }
 impl Directory {
     pub fn private(
@@ -56,18 +42,12 @@ impl Directory {
         lock: Arc<super::io::PublicationLock>,
     ) -> Self {
         Self {
-            root: Arc::new(Root::Private {
+            root: Arc::new(Root {
                 directory,
                 cancellation,
                 resources,
                 _lock: lock,
             }),
-            prefix: String::new(),
-        }
-    }
-    pub fn granted(files: Arc<dyn filesystem::Files>, call: Scope) -> Self {
-        Self {
-            root: Arc::new(Root::Granted { files, call }),
             prefix: String::new(),
         }
     }
@@ -85,53 +65,30 @@ impl Directory {
         }
     }
     async fn invoke(&self, operation: Operation) -> Result<Output, Error> {
-        match self.root.as_ref() {
-            Root::Private {
-                cancellation,
-                resources,
-                ..
-            } => {
-                if cancellation.is_cancelled() {
-                    return Err(Error::Cancelled);
-                }
-                let mut ticket = resources
-                    .as_ref()
-                    .map(|resources| resources.reserve().map_err(|_| Error::Cancelled))
-                    .transpose()?;
-                let root = self.root.clone();
-                tokio::task::spawn_blocking(move || {
-                    let Root::Private {
-                        directory,
-                        cancellation,
-                        ..
-                    } = root.as_ref()
-                    else {
-                        unreachable!()
-                    };
-                    if let Some(ticket) = &mut ticket {
-                        ticket.start();
-                    }
-                    let result = entries::execute(directory, operation, cancellation, None);
-                    drop(root);
-                    if let Some(ticket) = ticket {
-                        ticket.complete(Ok(()));
-                    }
-                    result
-                })
-                .await
-                .map_err(|e| Error::OutcomeUnknown(e.to_string()))?
-                .map_err(Into::into)
-            }
-            Root::Granted { files, call } => {
-                match files
-                    .invoke(call.clone(), filesystem::Operation::Entries(operation))
-                    .await?
-                {
-                    filesystem::Output::Entries(output) => Ok(output),
-                    _ => Err(Error::Invalid("Invalid filesystem output".into())),
-                }
-            }
+        if self.root.cancellation.is_cancelled() {
+            return Err(Error::Cancelled);
         }
+        let mut ticket = self
+            .root
+            .resources
+            .as_ref()
+            .map(|resources| resources.reserve().map_err(|_| Error::Cancelled))
+            .transpose()?;
+        let root = self.root.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Some(ticket) = &mut ticket {
+                ticket.start();
+            }
+            let result = entries::execute(&root.directory, operation, &root.cancellation, None);
+            drop(root);
+            if let Some(ticket) = ticket {
+                ticket.complete(Ok(()));
+            }
+            result
+        })
+        .await
+        .map_err(|e| Error::OutcomeUnknown(e.to_string()))?
+        .map_err(Into::into)
     }
     pub async fn open(&self, name: &str) -> Result<Self, Error> {
         let path = self.path(name);

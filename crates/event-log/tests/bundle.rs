@@ -22,7 +22,8 @@ use maka_event_log::{
     bundle::BundleError,
     sessions::{PluginSession, SessionCopy},
 };
-use maka_plugins::{composition::Scope, storage::Namespace};
+use maka_plugins::storage::Namespace;
+use maka_runtime::scope::Scope;
 use maka_runtime::session::CopyPurpose;
 use serde_json::json;
 use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};

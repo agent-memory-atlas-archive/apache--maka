@@ -25,7 +25,6 @@ publish.workspace = true
 
 [dependencies]
 maka-plugins.workspace = true
-maka-tool-catalog.workspace = true
 maka-runtime.workspace = true
 serde.workspace = true
 schemars.workspace = true
@@ -34,7 +33,6 @@ sha2.workspace = true
 thiserror.workspace = true
 futures-util.workspace = true
 tokio.workspace = true
-tokio-util.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]

@@ -37,7 +37,7 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Serialize, Deserialize)]
-pub(super) struct Selection {
+pub struct Selection {
     operation: String,
     source: Invocation,
     content: MessageInput,
@@ -50,8 +50,8 @@ struct Choice {
     label: String,
 }
 
-impl crate::plugin::Manager {
-    pub(super) async fn selection(
+impl crate::Manager {
+    pub async fn selection(
         &self,
         operation: String,
         source: Invocation,

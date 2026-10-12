@@ -27,11 +27,11 @@ use maka_graph::{
     store::Store as _,
 };
 use maka_plugins::{
-    composition::Scope,
     execution::Submit,
     storage::{Mutation, Namespace, Page, Record, Scan, Store, StoreError},
 };
 use maka_runtime::event::Invocation;
+use maka_runtime::scope::Scope;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},

@@ -100,8 +100,8 @@ pub trait Processes: Send + Sync {
     /// Cleanup by owner remains allowed after the call binding expires.
     fn close(&self, id: Id) -> BoxFuture<'_, Result<(), Error>>;
 }
-/// Fiber owns the process, not this view. Dropping a view does not terminate an
-/// instance-owned process; close explicitly or let Fiber retirement clean it up.
+/// The native owner retains the process through physical settlement. Dropping
+/// this view does not terminate it; close explicitly or retire its owner.
 pub trait Process: Send + Sync {
     fn write(&self, bytes: Vec<u8>) -> BoxFuture<'_, Result<(), Error>>;
     fn end_input(&self) -> BoxFuture<'_, Result<(), Error>>;

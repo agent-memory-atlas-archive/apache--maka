@@ -28,7 +28,6 @@ cua-driver-sdk.workspace = true
 cua-driver-core = { git = "https://github.com/maka-agent/cua", rev = "79c9b58a1b61f66ae966635c464e54cb2c8151d6" }
 maka-plugins.workspace = true
 maka-runtime.workspace = true
-maka-tool-catalog.workspace = true
 maka-js-runtime.workspace = true
 serde.workspace = true
 schemars.workspace = true
@@ -36,7 +35,6 @@ uuid.workspace = true
 libc.workspace = true
 reqwest.workspace = true
 base64 = "0.22.1"
-futures-util.workspace = true
 cursor-overlay = { git = "https://github.com/maka-agent/cua", rev = "79c9b58a1b61f66ae966635c464e54cb2c8151d6", features = ["theme-authoring"] }
 sha2.workspace = true
 tempfile.workspace = true

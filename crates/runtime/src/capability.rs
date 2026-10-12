@@ -33,23 +33,10 @@ pub use form::{
     FormField, FormFieldSpec, FormFormat, FormInput, FormOption, FormRequester, FormResult,
     FormValue,
 };
-mod frame;
-pub use frame::{AdmissionEvidence, CallSource, ClientFrame, HostFrame};
 pub use result::{CallResult, ContentBlock};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Manifest {
-    pub registration_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
-    pub offers: Vec<Offer>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub services: Option<Vec<ServiceOffer>>,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -70,13 +57,6 @@ pub struct Offer {
 #[serde(rename_all = "snake_case")]
 pub enum Admission {
     Mcp,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ServiceOffer {
-    pub service_id: String,
-    pub version: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -138,17 +118,4 @@ pub enum ToolActivityKind {
     Explore,
     Browser,
     Tool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RegistrationResult {
-    pub registration_id: String,
-    pub revision: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UnregisterInput {
-    pub registration_id: String,
 }

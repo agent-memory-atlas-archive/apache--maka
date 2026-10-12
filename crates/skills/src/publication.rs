@@ -31,9 +31,7 @@ use directory::Directory;
 mod journal;
 pub mod receipt;
 mod tree;
-mod user;
 pub use tree::Tree;
-pub(crate) use user::{UserFiles, UserStore};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

@@ -17,11 +17,7 @@
  * under the License.
  */
 
-use maka_plugins::{
-    composition::Scope,
-    fiber::Fiber,
-    filesystem::{OpenFile, ReadRoot},
-};
+use maka_plugins::filesystem::{OpenFile, ReadRoot};
 use maka_runtime::import::Content;
 use maka_session_import::{Error, codex};
 use serde_json::{Value, json};
@@ -30,22 +26,24 @@ use tokio_util::sync::CancellationToken;
 async fn read(bytes: &[u8], id: &str) -> Result<maka_session_import::Transcript, Error> {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join("rollout"), bytes).unwrap();
-    let fiber = Fiber::new("example.importer", "importer", Scope::Profile).unwrap();
-    fiber.begin_loading().unwrap();
-    fiber.ready().unwrap();
-    fiber.publish().unwrap();
+    let owner = maka_plugins::call::Issuer::default()
+        .admit(
+            maka_plugins::call::Identity::Remote {
+                request_id: uuid::Uuid::new_v4(),
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
     let root = ReadRoot::open(directory.path()).await.unwrap();
     let file = root
-        .bind(fiber.context(), CancellationToken::new())
+        .bind_scope(&owner)
         .open_file(OpenFile::from("rollout".to_owned()))
         .await
         .unwrap();
     let result = codex::read(&file, id).await;
     file.close().await.unwrap();
-    fiber
-        .shutdown(tokio::time::Instant::now() + std::time::Duration::from_secs(2))
-        .await
-        .unwrap();
+    owner.finish().await.unwrap();
     result
 }
 fn lines(values: Vec<Value>) -> Vec<u8> {

@@ -104,7 +104,8 @@ async fn copy(
 #[tokio::test]
 async fn removal_does_not_treat_revision_history_as_management_authority() {
     use maka_event_log::sessions::{PluginSession, RemovalAuthority, RemoveFamilyResult};
-    use maka_plugins::{composition::Scope, storage::Namespace};
+    use maka_plugins::storage::Namespace;
+    use maka_runtime::scope::Scope;
     let temp = tempfile::tempdir().unwrap();
     let log = EventLog::open(&temp.path().join("authority.sqlite"))
         .await
@@ -203,7 +204,8 @@ async fn removal_does_not_treat_revision_history_as_management_authority() {
 #[tokio::test]
 async fn family_removal_freezes_one_atomic_plan_and_does_not_rearchive_restored_dependents() {
     use maka_event_log::sessions::{PluginSession, RemoveFamilyResult, SessionRetirement};
-    use maka_plugins::{composition::Scope, storage::Namespace};
+    use maka_plugins::storage::Namespace;
+    use maka_runtime::scope::Scope;
     use maka_runtime::session::CopyPurpose;
     use sqlx::Connection;
     let temp = tempfile::tempdir().unwrap();
@@ -1191,7 +1193,7 @@ async fn draft_abandonment_serializes_with_acceptance_and_preserves_identity_aft
         session_id: "discarded".into(),
         creator: maka_plugins::storage::Namespace::new(
             "external.workflow",
-            maka_plugins::composition::Scope::Profile,
+            maka_runtime::scope::Scope::Profile,
         )
         .unwrap(),
         fingerprint: "new-root".into(),

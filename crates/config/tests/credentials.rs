@@ -26,10 +26,10 @@ use std::sync::Arc;
 #[tokio::test]
 async fn plugin_vault_isolates_namespaces_and_retains_cas_through_deletion_and_reopen() {
     use maka_plugins::{
-        composition::Scope,
         credentials::{Write, WriteResult},
         storage::Namespace,
     };
+    use maka_runtime::scope::Scope;
     let temp = tempfile::tempdir().unwrap();
     let owner = Arc::new(
         RootOwner::create(

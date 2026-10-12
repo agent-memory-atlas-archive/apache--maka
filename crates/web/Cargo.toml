@@ -25,7 +25,6 @@ publish.workspace = true
 [dependencies]
 maka-plugins.workspace = true
 maka-runtime.workspace = true
-maka-tool-catalog.workspace = true
 futures-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true

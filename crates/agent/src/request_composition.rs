@@ -19,74 +19,64 @@
 
 use crate::{RunError, RunInput};
 use maka_model::prompt::Message;
-use maka_plugins::prompt::Resolved;
 use maka_runtime::composition::{FrozenComposition, RequestComposition};
 use maka_tools::RequestTools;
 use std::sync::Arc;
-use tokio_util::sync::CancellationToken;
 
 pub(super) struct Surface {
     pub adapter: maka_plugins::model::Binding,
     pub max_output_tokens: Option<u64>,
-    prompt: Resolved,
+    system: Option<String>,
     pub evidence: Arc<FrozenComposition>,
 }
 
 impl Surface {
-    pub async fn capture(
+    pub fn capture(
         tools: &RequestTools<'_>,
         models: &maka_model::ModelExecutor,
         input: &RunInput,
         source: &maka_event_log::context::ModelContextSource,
-        cancellation: &CancellationToken,
         prior_unknown_notice: Option<&str>,
     ) -> Result<Self, RunError> {
-        let mut prompt = tools
-            .prompt(
-                input
-                    .configuration
-                    .system_prompt
-                    .as_ref()
-                    .map(|prompt| prompt.text.as_str()),
-                input.invocation.clone(),
-                cancellation.clone(),
-            )
-            .await?;
+        let mut system = input
+            .configuration
+            .system_prompt
+            .as_ref()
+            .map(|prompt| prompt.text.clone());
+        let mut sources = input
+            .configuration
+            .system_prompt
+            .as_ref()
+            .map(|prompt| prompt.sources.clone())
+            .unwrap_or_default();
         if let Some(notice) = prior_unknown_notice {
-            let system = prompt.system.get_or_insert_with(String::new);
+            let system = system.get_or_insert_with(String::new);
             if !system.is_empty() {
                 system.push_str("\n\n");
             }
             system.push_str(notice);
         }
-        if let Some(base) = &input.configuration.system_prompt {
-            for source in &base.sources {
-                if !prompt.sources.contains(source) {
-                    prompt.sources.push(source.clone());
-                }
-            }
-        }
         let adapter = models.binding(&input.provider)?;
-        prompt.sources.push(adapter.source().clone());
+        sources.push(adapter.source().clone());
         if let Some(source) = &input.model_revision {
-            prompt.sources.push(source.clone());
+            sources.push(source.clone());
         }
         let max_output_tokens = crate::auto_context::output_limit(input, source)?;
         let evidence = RequestComposition {
-            system_prompt: prompt.system.clone(),
-            dynamic_context: prompt.contexts.clone(),
+            system_prompt: system.clone(),
+            dynamic_context: Vec::new(),
             tool_catalog_digest: tools.catalog_digest().into(),
             tools: tools.definitions(),
             provider_options: Some(input.provider_options.clone()),
             max_output_tokens,
-            sources: prompt.sources.clone(),
+            sources: sources.clone(),
         }
         .freeze()
         .map_err(|error| RunError::Internal(error.into()))?;
         Ok(Self {
             adapter,
             max_output_tokens,
-            prompt,
+            system,
             evidence: Arc::new(evidence),
         })
     }
@@ -95,7 +85,7 @@ impl Surface {
         if matches!(history.first(), Some(Message::System { .. })) {
             history.remove(0);
         }
-        if let Some(system) = &self.prompt.system {
+        if let Some(system) = &self.system {
             history.insert(
                 0,
                 Message::System {
@@ -104,7 +94,6 @@ impl Surface {
                 },
             );
         }
-        history.extend(self.prompt.contexts.iter().cloned().map(Message::user));
         history
     }
 }

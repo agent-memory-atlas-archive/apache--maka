@@ -264,7 +264,7 @@ pub(super) async fn run(
     }
     .await;
     // Runtime, module globals and pending promises have left scope before cleanup
-    // acknowledgements. Host resource leases are managed by the Fiber above us.
+    // acknowledgements. Host resource leases remain with the original application owner.
     if let Err(error) = &result {
         health.fail(error.clone());
     }

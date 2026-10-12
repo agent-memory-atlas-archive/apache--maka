@@ -24,15 +24,15 @@ use serde::Serialize;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct Feedback {
-    id: String,
-    state: State,
+pub struct Feedback {
+    pub id: String,
+    pub state: State,
     #[serde(skip_serializing_if = "Option::is_none")]
-    result_preview: Option<String>,
+    pub result_preview: Option<String>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
-enum State {
+pub enum State {
     Accepted,
     Running,
     WaitingForUser,
@@ -43,7 +43,7 @@ enum State {
 }
 
 impl Assignments {
-    pub(super) async fn feedback(&self, ids: Vec<String>) -> Result<Vec<Feedback>, Error> {
+    pub async fn feedback(&self, ids: Vec<String>) -> Result<Vec<Feedback>, Error> {
         if ids.len() > 32 || ids.iter().any(|id| id.is_empty() || id.len() > 256) {
             return Err(invalid(
                 "Feedback accepts at most 32 bounded assignment IDs",

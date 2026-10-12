@@ -24,11 +24,11 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(super) struct Request {
-    expected_turn_id: String,
-    message_id: String,
-    content: MessageInput,
-    placement: Placement,
+pub struct Request {
+    pub expected_turn_id: String,
+    pub message_id: String,
+    pub content: MessageInput,
+    pub placement: Placement,
 }
 #[derive(Deserialize, Serialize)]
 struct Intent {
@@ -36,7 +36,7 @@ struct Intent {
     request: Enqueue,
 }
 
-pub(super) async fn submit(
+pub async fn submit(
     repository: &Repository,
     commands: &dyn Commands,
     session: String,

@@ -101,10 +101,3 @@ pub struct GovernanceItem {
     pub needs_review: bool,
     pub manageable: bool,
 }
-
-impl GovernanceItem {
-    pub(crate) fn is_builtin(&self) -> bool {
-        self.reference.starts_with("workspace:legacy:")
-            && self.source_type == GovernanceSourceType::Bundled
-    }
-}

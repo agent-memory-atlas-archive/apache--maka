@@ -25,7 +25,6 @@ mod cron;
 pub mod delivery;
 pub mod owner;
 pub mod plan;
-pub mod plugin;
 pub mod repository;
 pub mod schedule;
 pub mod task;

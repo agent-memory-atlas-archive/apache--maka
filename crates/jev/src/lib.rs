@@ -19,5 +19,4 @@
 
 //! Configurable Jev structured decisions through scoped plugin calls.
 pub mod decision;
-pub mod plugin;
 pub mod settings;

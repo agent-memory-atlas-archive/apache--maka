@@ -22,7 +22,7 @@ use maka_event_log::{
     effects::{Operation, Outcome as EffectOutcome, Request},
     usage::{AuxiliarySource, Origin, Outcome, Query},
 };
-use maka_plugins::{authorization::Boundary, call::Identity, fiber, llm::Generate};
+use maka_plugins::{authorization::Boundary, call::Identity, llm::Generate};
 use maka_runtime::{execution::ModelBinding, model::ModelUsage, scope::Scope};
 use uuid::Uuid;
 
@@ -31,7 +31,7 @@ fn request() -> Request {
         source: Identity::Remote {
             request_id: Uuid::new_v4(),
         },
-        owner: fiber::Identity {
+        owner: maka_event_log::effects::Owner {
             package_id: "external-model-client".into(),
             entry_id: "entry".into(),
             scope: Scope::Profile,

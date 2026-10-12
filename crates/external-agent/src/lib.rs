@@ -21,12 +21,10 @@
 mod callbacks;
 mod conversation;
 mod driver;
-mod install;
-pub mod plugin;
+pub mod install;
 pub mod ports;
 mod projection;
 pub use conversation::Provider;
-mod settings;
 pub mod setup;
 mod transport;
 

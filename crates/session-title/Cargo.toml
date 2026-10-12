@@ -24,5 +24,3 @@ publish.workspace = true
 
 [dependencies]
 maka-plugins.workspace = true
-futures-util.workspace = true
-serde_json.workspace = true

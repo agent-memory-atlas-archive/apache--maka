@@ -18,7 +18,8 @@
  */
 
 use maka_event_log::{EventLog, StoreError, sessions::PluginSession};
-use maka_plugins::{composition::Scope, storage::Namespace};
+use maka_plugins::storage::Namespace;
+use maka_runtime::scope::Scope;
 use serde_json::{Value, json};
 
 #[tokio::test]

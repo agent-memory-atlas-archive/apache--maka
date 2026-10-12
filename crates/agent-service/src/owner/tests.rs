@@ -1523,8 +1523,9 @@ async fn disabled_selected_connection_does_not_use_an_authenticated_default_or_o
 #[tokio::test]
 async fn tool_source_uses_original_agent_grant_and_frozen_canonical_fields() {
     use maka_event_log::sessions::PluginSession;
-    use maka_plugins::{composition::Scope as StorageScope, storage::Namespace};
+    use maka_plugins::storage::Namespace;
     use maka_runtime::import::{Content, Record, Source};
+    use maka_runtime::scope::Scope as StorageScope;
     let fixture = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
     let seed = fixture.create("Tool source").await;
     let configuration = fixture.owner.session(&seed).await.unwrap().configuration;

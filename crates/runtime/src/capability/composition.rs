@@ -21,7 +21,8 @@ use super::{ContractId, Identity, Offer};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Frozen selection evidence, not credentials, publication residency, or grants.
+/// Historical selection evidence retained in durable execution records.
+/// These values cannot register capabilities or grant live access.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClientComposition {

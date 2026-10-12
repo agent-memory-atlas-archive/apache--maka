@@ -17,9 +17,11 @@
  * under the License.
  */
 
-use super::{Connection, Duration, Error, Output, Progress, provider};
+use super::{Error, Output, Progress, provider};
+use crate::transport::Connection;
 use crate::transport::Event;
 use agent_client_protocol as sdk;
+use std::time::Duration;
 
 pub(super) async fn initialize(
     connection: &mut Connection,

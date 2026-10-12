@@ -119,7 +119,7 @@ impl RunTools {
         cancellation: CancellationToken,
     ) -> Result<RequestTools<'_>, ToolError> {
         self.code.check()?;
-        let (current, captured, context) = self
+        let current = self
             .availability
             .capture(
                 self.model.clone(),
@@ -128,24 +128,16 @@ impl RunTools {
                 cancellation,
             )
             .await?;
-        let mut request = self.request(current, captured, context);
-        request.cwd = cwd.into();
-        Ok(request)
+        Ok(self.request(current))
     }
 
     /// Handoff seals settled history and Host capabilities, not a new model step.
-    /// Dynamic plugins are sampled afresh by the successor after restoration.
+    /// Live bindings are sampled afresh by the successor after restoration.
     pub fn handoff_definitions(&self) -> Vec<ToolDefinition> {
-        self.request(self.availability.clone(), None, Default::default())
-            .definitions()
+        self.request(self.availability.clone()).definitions()
     }
 
-    fn request(
-        &self,
-        current: Availability,
-        captured: Option<maka_plugins::contributions::Captured>,
-        context: maka_plugins::prompt::Resolved,
-    ) -> RequestTools<'_> {
+    fn request(&self, current: Availability) -> RequestTools<'_> {
         let digest = current.digest();
         let direct = if self.mode == ToolMode::CodeMode {
             current.direct_only()
@@ -159,9 +151,6 @@ impl RunTools {
         };
         let described = availability.snapshot();
         RequestTools {
-            cwd: String::new(),
-            context,
-            captured: captured.map(Arc::new),
             finished: Arc::new(AtomicBool::new(false)),
             digest,
             direct,
@@ -181,9 +170,6 @@ impl RunTools {
 /// Search settlement affects future captures, never this request or its retries.
 #[derive(Clone)]
 pub struct RequestTools<'a> {
-    cwd: String,
-    context: maka_plugins::prompt::Resolved,
-    captured: Option<Arc<maka_plugins::contributions::Captured>>,
     finished: Arc<AtomicBool>,
     digest: String,
     direct: ToolCatalog,
@@ -201,68 +187,6 @@ impl<'a> RequestTools<'a> {
 
     pub fn catalog_digest(&self) -> &str {
         &self.digest
-    }
-
-    pub async fn prompt(
-        &self,
-        base: Option<&str>,
-        invocation: Invocation,
-        cancellation: CancellationToken,
-    ) -> Result<maka_plugins::prompt::Resolved, ToolError> {
-        let request = maka_plugins::prompt::Request {
-            tools: self
-                .catalog
-                .definitions()
-                .chain(self.direct.definitions())
-                .map(|tool| tool.name.clone())
-                .collect(),
-            target: maka_plugins::prompt::Target::ModelStep {
-                invocation,
-                cwd: self.cwd.clone(),
-            },
-            cancellation,
-        };
-        let mut prompt = maka_plugins::prompt::resolve(
-            self.captured.as_deref(),
-            base,
-            request,
-            self.catalog.workspace(),
-        )
-        .await
-        .map_err(|error| ToolError::Failed(error.to_string()))?;
-        if prompt
-            .contexts
-            .iter()
-            .chain(&self.context.contexts)
-            .map(String::len)
-            .sum::<usize>()
-            > 64 * 1024
-        {
-            return Err(ToolError::Failed("request context exceeds 64 KiB".into()));
-        }
-        prompt
-            .contexts
-            .extend(self.context.contexts.iter().cloned());
-        prompt.sources.extend(self.context.sources.iter().cloned());
-        if let Some(captured) = &self.captured {
-            for (name, entry) in captured.typed::<crate::plugins::PluginTool>().entries {
-                if !self.catalog.contains(&name) && !self.direct.contains(&name) {
-                    continue;
-                }
-                let definition = serde_json::to_string(entry.value.definition())
-                    .expect("validated tool definition");
-                prompt.sources.push(
-                    maka_plugins::prompt::source(
-                        &entry,
-                        maka_runtime::composition::SourceKind::Tool,
-                        &name,
-                        &definition,
-                    )
-                    .map_err(|error| ToolError::Failed(error.to_string()))?,
-                );
-            }
-        }
-        Ok(prompt)
     }
 
     pub fn definitions(&self) -> Vec<ToolDefinition> {

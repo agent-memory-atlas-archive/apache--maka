@@ -19,7 +19,7 @@
 
 //! Per-request projection of explicitly registered tools. A projection can
 //! narrow availability or replace its own handler/descriptor, never add a name.
-pub use crate::plugins::BindingRequest;
+
 use crate::{CatalogError, ToolCatalog, catalog::RegisteredTool};
 use maka_runtime::tools::{
     ProviderTool, ToolError, ToolHandler, ToolNesting, ToolPreparer, ToolSemantics,
@@ -141,4 +141,16 @@ impl ToolCatalog {
         }
         Ok(())
     }
+}
+
+#[derive(Clone)]
+pub struct BindingRequest {
+    /// Frozen behavior identity for visibility decisions, never authority.
+    pub behavior: Option<maka_runtime::execution::BehaviorId>,
+    pub model: Option<maka_runtime::tools::ModelToolContext>,
+    pub invocation: maka_runtime::event::Invocation,
+    pub cwd: String,
+    /// Effective catalog, already restricted by the Host's tool ceiling.
+    pub tools: BTreeSet<String>,
+    pub cancellation: tokio_util::sync::CancellationToken,
 }

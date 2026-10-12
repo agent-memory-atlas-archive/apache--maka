@@ -30,7 +30,6 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
-maka-tool-catalog.workspace = true
 schemars.workspace = true
 url = "2.5.8"
 

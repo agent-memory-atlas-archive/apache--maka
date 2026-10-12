@@ -21,7 +21,8 @@ use maka_event_log::{
     EventLog, StoreError,
     sessions::{ImportState, PluginSession, SessionCopy, SessionCopyResult},
 };
-use maka_plugins::{composition::Scope, storage::Namespace};
+use maka_plugins::storage::Namespace;
+use maka_runtime::scope::Scope;
 use maka_runtime::{
     event::{
         EventWrite, Fact, Invocation, InvocationInput, InvocationOutcome, LogScope, RuntimeEvent,

@@ -34,7 +34,6 @@ mod handoff_compaction;
 mod image_projection;
 mod lifetime;
 mod model_interruption;
-mod plugin_composition;
 mod pruning;
 mod session_import;
 mod stale_pruning;

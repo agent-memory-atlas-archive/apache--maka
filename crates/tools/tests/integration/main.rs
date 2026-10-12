@@ -22,7 +22,6 @@ mod cells;
 mod child_image;
 mod commit_faults;
 mod large_child_output;
-mod plugins;
 mod preflight;
 
 mod support {

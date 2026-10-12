@@ -19,8 +19,7 @@
 
 //! Plan intent and model-reported progress. Neither is Host execution authority.
 mod artifact;
-mod owner;
-pub mod plugin;
+pub mod owner;
 pub mod repository;
 mod transition;
 pub use artifact::{Artifact, Complexity, Step};

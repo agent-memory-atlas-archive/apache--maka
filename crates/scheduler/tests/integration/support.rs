@@ -19,10 +19,8 @@
 
 use futures_util::future::BoxFuture;
 use maka_event_log::{EventLog, StoreError as LogError};
-use maka_plugins::{
-    composition::Scope,
-    storage::{Mutation, Namespace, Record, Store, StoreError},
-};
+use maka_plugins::storage::{Mutation, Namespace, Record, Store, StoreError};
+use maka_runtime::scope::Scope;
 use std::sync::Arc;
 
 pub struct SqlStore(pub Arc<EventLog>);

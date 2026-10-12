@@ -22,7 +22,6 @@ use maka_plugins::{
     authorization::{Capability, Id, Target},
     background::BackgroundWork,
     execution::{CommandError, Progress},
-    host::Services,
     usage,
 };
 use maka_runtime::event::Invocation;
@@ -53,13 +52,19 @@ impl BackgroundWork for Owner {
     }
 }
 impl Owner {
-    pub fn new(host: Services) -> Arc<Self> {
+    pub fn new(
+        storage: Arc<dyn maka_plugins::storage::Store>,
+        executions: Arc<dyn maka_plugins::execution::Access>,
+        authorizations: Arc<dyn maka_plugins::authorization::Access>,
+        preferences: Arc<dyn maka_plugins::preferences::Preferences>,
+        usage: Arc<dyn usage::Usage>,
+    ) -> Arc<Self> {
         Arc::new(Self {
-            repo: Repository(host.storage),
-            executions: host.executions,
-            authorizations: host.authorizations,
-            preferences: host.preferences,
-            usage: host.usage,
+            repo: Repository(storage),
+            executions,
+            authorizations,
+            preferences,
+            usage,
             gate: Mutex::new(()),
             pending: AtomicBool::new(true),
             wake: Notify::new(),

@@ -18,28 +18,28 @@
  */
 
 //! WorkHub business state and decisions. Host owns execution and authorization.
-mod access;
-mod assignment;
-mod candidates;
-mod control;
-mod coordinator;
-mod decision;
-mod feedback;
-mod model_repair;
-mod observation;
-mod plugin;
-mod queue;
-mod recovery;
-mod repository;
-mod results;
-mod selection;
+pub mod access;
+pub mod assignment;
+pub mod candidates;
+pub mod control;
+pub mod coordinator;
+pub mod decision;
+pub mod feedback;
+pub mod manager;
+pub mod model_repair;
+pub mod observation;
+pub mod queue;
+pub mod recovery;
+pub mod repository;
+pub mod results;
+pub mod selection;
 
 use access::Access;
 use coordinator::Coordinator;
 use repository::Repository;
 
 #[derive(Debug, thiserror::Error)]
-enum Error {
+pub enum Error {
     #[error(transparent)]
     Execution(#[from] maka_plugins::execution::CommandError),
     #[error(transparent)]
@@ -55,4 +55,4 @@ fn invalid(error: impl ToString) -> Error {
     Error::Invalid(error.to_string())
 }
 
-pub use plugin::{Builtin, ID};
+pub use manager::Manager;

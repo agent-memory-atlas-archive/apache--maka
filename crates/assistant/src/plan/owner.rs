@@ -24,7 +24,6 @@ use maka_plugins::{
     authorization::{Capability, Id, Target},
     background::BackgroundWork,
     execution::{CommandError, Commands, Observation, Progress},
-    host::Services,
 };
 use maka_runtime::event::{Invocation, InvocationOutcome};
 use sha2::{Digest, Sha256};
@@ -35,7 +34,7 @@ use std::sync::{
 use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 
-pub(super) struct Owner {
+pub struct Owner {
     pub storage: Arc<dyn maka_plugins::storage::Store>,
     pub executions: Arc<dyn maka_plugins::execution::Access>,
     authorizations: Arc<dyn maka_plugins::authorization::Access>,
@@ -56,11 +55,16 @@ impl BackgroundWork for Owner {
 }
 
 impl Owner {
-    pub fn new(host: Services, entry: String) -> Arc<Self> {
+    pub fn new(
+        storage: Arc<dyn maka_plugins::storage::Store>,
+        executions: Arc<dyn maka_plugins::execution::Access>,
+        authorizations: Arc<dyn maka_plugins::authorization::Access>,
+        entry: String,
+    ) -> Arc<Self> {
         Arc::new(Self {
-            storage: host.storage,
-            executions: host.executions,
-            authorizations: host.authorizations,
+            storage,
+            executions,
+            authorizations,
             entry,
             gate: Mutex::new(()),
             pending: AtomicBool::new(true),

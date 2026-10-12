@@ -19,7 +19,8 @@
 
 use super::*;
 use maka_event_log::sessions::PluginSession;
-use maka_plugins::{composition::Scope as StorageScope, storage::Namespace};
+use maka_plugins::storage::Namespace;
+use maka_runtime::scope::Scope as StorageScope;
 use maka_runtime::{
     event::{Fact, ToolOutcome},
     import::{Content, Record, Source},

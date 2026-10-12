@@ -26,7 +26,6 @@ publish.workspace = true
 [dependencies]
 maka-runtime.workspace = true
 maka-plugins.workspace = true
-maka-tool-catalog.workspace = true
 futures-util.workspace = true
 tokio.workspace = true
 thiserror.workspace = true

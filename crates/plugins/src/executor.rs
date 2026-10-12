@@ -17,8 +17,6 @@
  * under the License.
  */
 
-pub mod terminal;
-use crate::{contributions::Contribution, fiber::CallGuard};
 use futures_util::future::BoxFuture;
 use maka_runtime::{
     event::Invocation,
@@ -26,7 +24,7 @@ use maka_runtime::{
     input::MessageInput,
 };
 use serde::{Deserialize, Serialize};
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
@@ -64,7 +62,7 @@ pub struct Cursor {
     pub query: String,
     pub generation: uuid::Uuid,
     pub revision: u64,
-    pub scope: crate::composition::Scope,
+    pub scope: maka_runtime::scope::Scope,
     pub offset: u64,
 }
 impl Search {
@@ -114,83 +112,11 @@ pub enum SearchResult {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Query {
     #[serde(default)]
-    pub scope: crate::composition::Scope,
+    pub scope: maka_runtime::scope::Scope,
     #[serde(default)]
     pub query: String,
     #[serde(default)]
     pub cursor: Option<Cursor>,
-}
-
-/// Embedding query; plugins receive `Executors` bound to their own scope.
-pub fn search(
-    catalog: &crate::contributions::Catalog,
-    scope: &crate::composition::Scope,
-    query: Search,
-) -> Result<SearchResult, crate::Error> {
-    query.validate()?;
-    let snapshot = catalog.snapshot::<Executor>(scope);
-    let generation = catalog.generation();
-    if query.cursor.as_ref().is_some_and(|cursor| {
-        cursor.query != query.query
-            || cursor.generation != generation
-            || cursor.revision != snapshot.revision
-            || &cursor.scope != scope
-    }) {
-        return Ok(SearchResult::Stale);
-    }
-    let offset = query.cursor.as_ref().map_or(0, |cursor| cursor.offset);
-    let original_query = query.query.clone();
-    let query = query.query.to_lowercase();
-    let terms: Vec<_> = query.split_whitespace().collect();
-    let mut page = Choices {
-        revision: snapshot.revision,
-        executors: Vec::new(),
-        complete: true,
-        next_cursor: None,
-    };
-    let mut bytes = 0;
-    let mut matched = 0;
-    for entry in snapshot.entries.into_values() {
-        let executor = &entry.value;
-        let haystack = format!("{} {}", executor.id.as_str(), executor.display_name).to_lowercase();
-        if !terms.iter().all(|term| haystack.contains(term)) {
-            continue;
-        }
-        matched += 1;
-        if matched <= offset {
-            continue;
-        }
-        let choice = Choice {
-            id: executor.id.clone(),
-            display_name: executor.display_name.clone(),
-            capabilities: executor.capabilities,
-        };
-        let size = serde_json::to_vec(&choice)
-            .map_err(|error| crate::Error::Invalid(error.to_string()))?
-            .len();
-        if page.executors.len() == 50 || bytes + size > 46 * 1024 {
-            if page.executors.is_empty() {
-                return Err(crate::Error::Invalid(
-                    "Executor choice exceeds the search page byte budget".into(),
-                ));
-            }
-            page.complete = false;
-            page.next_cursor = Some(Cursor {
-                query: original_query,
-                generation,
-                revision: snapshot.revision,
-                scope: scope.clone(),
-                offset: offset + page.executors.len() as u64,
-            });
-            break;
-        }
-        bytes += size;
-        page.executors.push(choice);
-    }
-    if offset > matched {
-        return Ok(SearchResult::Stale);
-    }
-    Ok(SearchResult::Page { page })
 }
 
 #[derive(Clone)]
@@ -288,24 +214,6 @@ pub trait Execution: Send {
     ) -> BoxFuture<'static, Settlement>;
 }
 
-pub struct Executor {
-    pub id: ExecutorId,
-    pub display_name: String,
-    pub capabilities: Capabilities,
-    pub provider: Arc<dyn Provider>,
-}
-
-pub struct Binding {
-    session: String,
-    contribution: Contribution<Executor>,
-    calls: Option<crate::call::Issuer>,
-}
-pub struct Call {
-    request: Request,
-    contribution: Contribution<Executor>,
-    lease: CallGuard,
-    calls: Option<crate::call::Issuer>,
-}
 /// Keep this value alive until the Host commits the terminal execution fact.
 pub struct Settlement {
     pub result: Result<Outcome, Error>,
@@ -318,257 +226,5 @@ impl Settlement {
             result,
             _lease: Box::new(owner),
         }
-    }
-}
-impl Backend for Binding {
-    fn admit_execution(&self, request: Request) -> Result<Admitted, Error> {
-        Ok(Admitted {
-            identity: self.identity()?,
-            execution: Box::new(self.admit(request)?),
-        })
-    }
-}
-impl Execution for Call {
-    fn execute(
-        self: Box<Self>,
-        output: Arc<dyn OutputSink>,
-        cancellation: CancellationToken,
-    ) -> BoxFuture<'static, Settlement> {
-        Box::pin((*self).execute(output, cancellation))
-    }
-}
-impl Binding {
-    pub fn capabilities(&self) -> Capabilities {
-        self.contribution.value.capabilities
-    }
-    pub fn with_calls(mut self, calls: crate::call::Issuer) -> Self {
-        self.calls = Some(calls);
-        self
-    }
-    pub fn is_effective(&self) -> bool {
-        self.contribution.is_effective()
-    }
-    pub fn identity(&self) -> Result<maka_runtime::executor::Binding, Error> {
-        let identity = self
-            .contribution
-            .owner
-            .identity()
-            .map_err(|_| Error::Retired)?;
-        Ok(maka_runtime::executor::Binding {
-            executor_id: self.contribution.value.id.clone(),
-            package_id: identity.package_id,
-            entry_id: identity.entry_id,
-            activation: identity.activation,
-        })
-    }
-    pub fn new(session: String, contribution: Contribution<Executor>) -> Result<Self, Error> {
-        maka_runtime::interaction::entity_id(&session)
-            .map_err(|error| Error::Invalid(error.into()))?;
-        if contribution
-            .owner
-            .identity()
-            .map_err(|_| Error::Retired)?
-            .scope
-            == crate::composition::Scope::DesktopUi
-        {
-            return Err(Error::Invalid("desktop-ui cannot provide executors".into()));
-        }
-        if let crate::composition::Scope::Session(scope) = contribution
-            .owner
-            .identity()
-            .map_err(|_| Error::Retired)?
-            .scope
-            && scope != session
-        {
-            return Err(Error::Invalid("executor belongs to another Session".into()));
-        }
-        Ok(Self {
-            session,
-            contribution,
-            calls: None,
-        })
-    }
-    pub fn admit(&self, request: Request) -> Result<Call, Error> {
-        request
-            .settings
-            .validate()
-            .map_err(|error| Error::Invalid(error.into()))?;
-        if request.invocation.session_id != self.session
-            || request.conversation_key.is_empty()
-            || request.conversation_key.len() > 256
-            || request.content.text_bytes() > 64 * 1024
-            || !std::path::Path::new(&request.cwd).is_absolute()
-            || request.cwd.len() > 4096
-            || request.cwd.contains('\0')
-            || request
-                .instructions
-                .as_ref()
-                .is_some_and(|text| text.len() > 64 * 1024)
-        {
-            return Err(Error::Invalid(
-                "invalid or cross-Session execution request".into(),
-            ));
-        }
-        if !self.contribution.value.capabilities.attachments
-            && request
-                .content
-                .attachments
-                .as_ref()
-                .is_some_and(|items| !items.is_empty())
-        {
-            return Err(Error::Invalid(
-                "executor does not support attachments".into(),
-            ));
-        }
-        let lease = self.contribution.admit().map_err(|_| Error::Retired)?;
-        Ok(Call {
-            request,
-            contribution: self.contribution.clone(),
-            lease,
-            calls: self.calls.clone(),
-        })
-    }
-}
-impl Call {
-    pub async fn execute(
-        self,
-        output: Arc<dyn OutputSink>,
-        cancellation: CancellationToken,
-    ) -> Settlement {
-        let token = cancellation.child_token();
-        let closed = token.clone().drop_guard();
-        let admitted = match self.calls.as_ref() {
-            Some(issuer) => tokio::select! {
-                biased;
-                _ = token.cancelled() => Err(Error::Cancelled),
-                _ = self.contribution.retired() => Err(Error::Retired),
-                result = issuer.admit(
-                    crate::call::Identity::Agent {
-                        invocation: self.request.invocation.clone(),
-                        operation_id: None,
-                    },
-                    token.clone(),
-                ) => result.map(Some).map_err(|error| match error {
-                    maka_runtime::tools::ToolError::Persistence(message) => Error::Persistence(message),
-                    maka_runtime::tools::ToolError::CleanupUnconfirmed(_) => Error::CleanupUnconfirmed,
-                    _ if token.is_cancelled() => Error::Cancelled,
-                    other => Error::Provider(other.to_string()),
-                }),
-            },
-            None => Ok(None),
-        };
-        let scope = match admitted {
-            Ok(scope) => scope,
-            Err(error) => {
-                return Settlement {
-                    result: Err(error),
-                    _lease: Box::new(self.lease),
-                };
-            }
-        };
-        let context = Context {
-            call: scope.clone(),
-            cancellation: token.clone(),
-            output: Arc::new(CheckedOutput {
-                sink: output,
-                cancellation: token.clone(),
-                capabilities: self.contribution.value.capabilities,
-            }),
-        };
-        let mut execution = self
-            .contribution
-            .value
-            .provider
-            .execute(self.request, context);
-        let result = tokio::select! {
-            biased;
-            _ = cancellation.cancelled() => Err(Error::Cancelled),
-            _ = self.contribution.retired() => Err(Error::Retired),
-            result = &mut execution => {
-                return Settlement {
-                    result: settle(result, &self.contribution.owner, scope.as_ref()).await,
-                    _lease: Box::new(self.lease),
-                };
-            },
-        };
-        token.cancel();
-        // Signalling precedes waiting. The Fiber independently signals owned
-        // processes, so cleanup never depends on execute returning first.
-        let result = match tokio::time::timeout(Duration::from_secs(5), execution).await {
-            Ok(Err(Error::CleanupUnconfirmed)) => {
-                self.contribution
-                    .owner
-                    .cleanup_failed("executor cleanup is unconfirmed".into());
-                Err(Error::CleanupUnconfirmed)
-            }
-            Ok(_) => result,
-            Err(_) => {
-                self.contribution
-                    .owner
-                    .cleanup_failed("executor ignored cancellation; cleanup is unconfirmed".into());
-                Err(Error::CleanupUnconfirmed)
-            }
-        };
-        drop(closed);
-        Settlement {
-            result: settle(result, &self.contribution.owner, scope.as_ref()).await,
-            _lease: Box::new(self.lease),
-        }
-    }
-}
-async fn settle(
-    mut result: Result<Outcome, Error>,
-    owner: &crate::fiber::Context,
-    scope: Option<&crate::call::Scope>,
-) -> Result<Outcome, Error> {
-    if let Some(scope) = scope
-        && scope.finish().await.is_err()
-    {
-        result = Err(Error::CleanupUnconfirmed);
-    }
-    if owner.cleanup_failure().is_some() {
-        result = Err(Error::CleanupUnconfirmed);
-    }
-    if matches!(result, Err(Error::CleanupUnconfirmed)) {
-        owner.cleanup_failed("executor cleanup is unconfirmed".into());
-    }
-    result.and_then(|outcome| {
-        outcome.validate()?;
-        Ok(outcome)
-    })
-}
-struct CheckedOutput {
-    sink: Arc<dyn OutputSink>,
-    cancellation: CancellationToken,
-    capabilities: Capabilities,
-}
-impl OutputSink for CheckedOutput {
-    fn emit(&self, output: Output) -> BoxFuture<'_, Result<(), Error>> {
-        Box::pin(async move {
-            if self.cancellation.is_cancelled() {
-                return Err(Error::Cancelled);
-            }
-            output
-                .validate()
-                .map_err(|error| Error::Invalid(error.into()))?;
-            match &output {
-                Output::ThinkingDelta { .. } if !self.capabilities.thinking => {
-                    return Err(Error::Invalid(
-                        "executor did not declare thinking output".into(),
-                    ));
-                }
-                Output::ToolStart { .. }
-                | Output::ToolProgress { .. }
-                | Output::ToolResult { .. }
-                    if !self.capabilities.tool_activity =>
-                {
-                    return Err(Error::Invalid(
-                        "executor did not declare tool activity".into(),
-                    ));
-                }
-                _ => {}
-            }
-            self.sink.emit(output).await
-        })
     }
 }

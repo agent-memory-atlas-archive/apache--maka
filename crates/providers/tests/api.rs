@@ -17,12 +17,7 @@
  * under the License.
  */
 
-use maka_plugins::{
-    composition::Scope,
-    contributions::Catalog,
-    fiber::Fiber,
-    provider::{Binding, Connection, Identity, Resolve},
-};
+use maka_plugins::provider::{Connection, Definition, Resolve};
 use maka_providers::api::ApiProviders;
 use maka_runtime::{
     configuration::{ApiProtocol, ModelInfo, ModelOverride},
@@ -36,33 +31,11 @@ mod discovery;
 #[path = "api/effects.rs"]
 mod effects;
 
-fn registry() -> (Catalog, Fiber, maka_plugins::Registration) {
-    // Bundled code receives no additional authority from its distribution identity.
-    let owner = Fiber::new("external.copy", "external.entry", Scope::Profile).unwrap();
-    owner.begin_loading().unwrap();
-    owner.ready().unwrap();
-    owner.publish().unwrap();
-    let catalog = Catalog::default();
-    let registration = catalog
-        .register(&owner.context(), ApiProviders.stage().unwrap())
-        .unwrap();
-    (catalog, owner, registration)
+fn binding(name: &str) -> Definition {
+    ApiProviders::definition(name).unwrap()
 }
-fn binding(catalog: &Catalog, name: &str) -> Binding {
-    Binding::resolve(
-        &Identity {
-            package_id: "external.copy".into(),
-            entry_id: "external.entry".into(),
-            scope: Scope::Profile,
-            name: name.into(),
-        },
-        catalog,
-    )
-    .unwrap()
-}
-fn request(binding: &Binding, id: &str, overrides: ModelOverride) -> Resolve {
+fn request(binding: &Definition, id: &str, overrides: ModelOverride) -> Resolve {
     let configuration = binding
-        .definition()
         .configure(json!({"baseUrl":"https://relay.test/v1"}))
         .unwrap();
     Resolve {
@@ -79,10 +52,9 @@ fn request(binding: &Binding, id: &str, overrides: ModelOverride) -> Resolve {
 
 #[tokio::test]
 async fn public_provider_binding_preserves_protocol_contracts_and_explicit_policy() {
-    let (catalog, _owner, _registration) = registry();
     for name in ["ollama", "localai"] {
-        let binding = binding(&catalog, name);
-        assert!(binding.definition().descriptor().anonymous);
+        let binding = binding(name);
+        assert!(binding.descriptor().anonymous);
         let connection = request(&binding, "custom", ModelOverride::default()).connection;
         let credentials = binding
             .authorize(connection, None, "session".into())
@@ -92,8 +64,8 @@ async fn public_provider_binding_preserves_protocol_contracts_and_explicit_polic
             matches!(credentials, maka_plugins::model::Credentials::RequestHeaders(headers) if headers.is_empty())
         );
     }
-    let required = binding(&catalog, "openai");
-    assert!(!required.definition().descriptor().anonymous);
+    let required = binding("openai");
+    assert!(!required.descriptor().anonymous);
     assert!(
         required
             .authorize(
@@ -109,7 +81,7 @@ async fn public_provider_binding_preserves_protocol_contracts_and_explicit_polic
         ("moonshot-global", true),
         ("alibaba-token-plan", true),
     ] {
-        let binding = binding(&catalog, name);
+        let binding = binding(name);
         let input = request(
             &binding,
             "custom",
@@ -162,7 +134,7 @@ async fn public_provider_binding_preserves_protocol_contracts_and_explicit_polic
             "anthropic-messages",
         ),
     ] {
-        let binding = binding(&catalog, name);
+        let binding = binding(name);
         let mut input = request(
             &binding,
             "future-model",
@@ -182,8 +154,7 @@ async fn public_provider_binding_preserves_protocol_contracts_and_explicit_polic
 
 #[tokio::test]
 async fn account_metadata_and_reply_capacity_survive_plugin_policy_resolution() {
-    let (catalog, _owner, _registration) = registry();
-    let anthropic = binding(&catalog, "anthropic");
+    let anthropic = binding("anthropic");
     let mut input = request(
         &anthropic,
         "claude-sonnet-4-5",
@@ -201,7 +172,7 @@ async fn account_metadata_and_reply_capacity_survive_plugin_policy_resolution() 
     assert_eq!(model.main_output_limit, Some(2976));
     input.overrides.as_mut().unwrap().max_output_tokens = Some(1000);
     assert!(anthropic.prepare(input).await.is_err());
-    let openai = binding(&catalog, "openai");
+    let openai = binding("openai");
     for (id, label) in [("gpt-6-sol", "GPT-6 Sol"), ("gpt-6-luna", "GPT-6 Luna")] {
         let mut input = request(&openai, id, ModelOverride::default());
         input.thinking_level = Some(Max);
@@ -253,8 +224,7 @@ async fn account_metadata_and_reply_capacity_survive_plugin_policy_resolution() 
 
 #[tokio::test]
 async fn catalog_metadata_and_execution_share_provider_facts_and_explicit_overrides() {
-    let (catalog, _owner, _registration) = registry();
-    let binding = binding(&catalog, "openai");
+    let binding = binding("openai");
     for (reported, overrides) in [
         (ModelInfo::new("gpt-5.2"), ModelOverride::default()),
         (
@@ -293,8 +263,7 @@ async fn catalog_metadata_and_execution_share_provider_facts_and_explicit_overri
 
 #[tokio::test]
 async fn selectable_thinking_choices_respect_native_encoder_and_invalid_default() {
-    let (catalog, _owner, _registration) = registry();
-    let binding = binding(&catalog, "anthropic-compatible");
+    let binding = binding("anthropic-compatible");
     let mut input = request(
         &binding,
         "future-model",

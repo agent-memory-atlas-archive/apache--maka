@@ -19,8 +19,6 @@
 
 use maka_plugins::{
     call::{Resources, Ticket},
-    composition::Scope,
-    fiber::Fiber,
     filesystem::{OpenFile, ReadAuthorization, ReadError, ReadRoot},
 };
 use maka_runtime::import::Content;
@@ -71,16 +69,20 @@ async fn read(
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("transcript");
     std::fs::write(&path, bytes).unwrap();
-    let fiber = Fiber::new("example.importer", "importer", Scope::Profile).unwrap();
-    fiber.begin_loading().unwrap();
-    fiber.ready().unwrap();
-    fiber.publish().unwrap();
+    let owner = maka_plugins::call::Issuer::default()
+        .admit(
+            maka_plugins::call::Identity::Remote {
+                request_id: uuid::Uuid::new_v4(),
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
     let root = ReadRoot::open(directory.path()).await.unwrap();
     let resources = Arc::new(Resources::default());
     let view = match replacement {
         Some(bytes) => root.bind_authorized(
-            fiber.context(),
-            CancellationToken::new(),
+            &owner,
             Arc::new(Rewrite {
                 path,
                 bytes,
@@ -88,7 +90,7 @@ async fn read(
                 resources: resources.clone(),
             }),
         ),
-        None => root.bind(fiber.context(), CancellationToken::new()),
+        None => root.bind_scope(&owner),
     };
     let file = view
         .open_file(OpenFile::from("transcript".to_owned()))
@@ -97,10 +99,7 @@ async fn read(
     let result = claude::read(&file, "selected").await;
     file.close().await.unwrap();
     resources.finish().await.unwrap();
-    fiber
-        .shutdown(tokio::time::Instant::now() + std::time::Duration::from_secs(2))
-        .await
-        .unwrap();
+    owner.finish().await.unwrap();
     result
 }
 

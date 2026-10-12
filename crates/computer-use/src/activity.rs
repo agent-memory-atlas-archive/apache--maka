@@ -17,7 +17,7 @@
  * under the License.
  */
 
-//! Computer-use wording belongs to this plugin, not the generic transcript renderer.
+//! Computer-use activity wording.
 use crate::protocol::*;
 use maka_runtime::display::Text;
 
@@ -37,23 +37,6 @@ fn clean(text: &str, max: usize) -> String {
         }
     }
     output
-}
-
-pub(crate) fn call(name: &str, input: &serde_json::Value) -> Text {
-    if name == "cua_reset" {
-        return Text::localized(
-            "Reset computer session",
-            "重置电脑操作环境",
-            "重設電腦操作環境",
-        );
-    }
-    if let Some(title) = input["title"].as_str() {
-        let title = clean(title, 256);
-        if !title.is_empty() {
-            return Text::plain(title);
-        }
-    }
-    Text::localized("Use computer", "操作电脑", "操作電腦")
 }
 
 pub(crate) fn command(command: &Command, bound_target: Option<&str>) -> Text {
@@ -153,10 +136,6 @@ mod tests {
     use super::*;
     #[test]
     fn actions_have_localized_titles_without_input_text_or_untrusted_controls() {
-        let input = serde_json::json!({"title":"查看\n应用\u{1b}\u{202e}"});
-        let title = call("cua_repl", &input);
-        assert_eq!(title.fallback, "查看 应用");
-        title.validate().unwrap();
         let action: Command = serde_json::from_value(serde_json::json!({"method":"action","handle":{"kind":"app","id":"private"},"action":{"kind":"typeText","text":"password-must-not-enter-activity"}})).unwrap();
         let title = command(&action, Some("Calculator"));
         assert_eq!(title.resolve("zh-CN"), "输入文本 · Calculator");

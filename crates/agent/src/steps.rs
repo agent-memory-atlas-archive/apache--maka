@@ -236,17 +236,13 @@ pub(super) async fn run(
                     "unknown prior tool is missing from model context".into(),
                 ));
             }
-            let surface = Arc::new(
-                crate::request_composition::Surface::capture(
-                    &request_tools,
-                    &inner.model,
-                    input,
-                    &source,
-                    cancellation,
-                    unknown_notice.as_deref(),
-                )
-                .await?,
-            );
+            let surface = Arc::new(crate::request_composition::Surface::capture(
+                &request_tools,
+                &inner.model,
+                input,
+                &source,
+                unknown_notice.as_deref(),
+            )?);
             let initial_high_water = source.source_evidence.high_water;
             let result = model_attempt::execute(
                 inner,

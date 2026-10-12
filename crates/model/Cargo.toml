@@ -31,12 +31,10 @@ tokio-tungstenite.workspace = true
 maka-plugins.workspace = true
 maka-responses.workspace = true
 base64 = "0.22.1"
-chrono.workspace = true
 maka-runtime.workspace = true
 maka-js-runtime.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sha2.workspace = true
 reqwest = { workspace = true, features = ["form"] }
 maka-network.workspace = true
 thiserror.workspace = true

@@ -73,7 +73,7 @@ impl Recall {
                     };
                     let namespace = maka_plugins::storage::Namespace::new(
                         crate::IMPLEMENTATION,
-                        maka_plugins::composition::Scope::Profile,
+                        maka_runtime::scope::Scope::Profile,
                     )
                     .map_err(failed)?;
                     let copied = recall

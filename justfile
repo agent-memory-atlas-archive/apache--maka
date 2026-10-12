@@ -56,7 +56,7 @@ test *args:
     cargo nextest run --locked --workspace "$@"
 
 test-js:
-    node --test scripts/*.test.mjs scripts/rust/*.test.mjs packages/plugin-sdk/tests/*.test.mjs packages/cli/tests/*.test.mjs
+    node --test scripts/*.test.mjs scripts/rust/*.test.mjs packages/cli/tests/*.test.mjs
     npm --workspace @maka-agent/product test
 
 licenses:

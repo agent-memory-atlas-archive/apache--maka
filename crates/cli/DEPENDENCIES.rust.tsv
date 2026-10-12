@@ -598,19 +598,13 @@ maka-agent-service@0.2.0		X
 maka-agent@0.2.0		X															
 maka-application-bridge@0.2.0		X															
 maka-assistant@0.2.0		X															
-maka-background-health@0.2.0		X															
 maka-cli@0.2.0		X															
-maka-client-capability@0.2.0		X															
-maka-client@0.2.0		X															
 maka-computer-use@0.2.0		X															
 maka-config@0.2.0		X															
 maka-desktop@0.2.0		X															
 maka-event-log@0.2.0		X															
 maka-external-agent@0.2.0		X															
 maka-fs-tools@0.2.0		X															
-maka-goal@0.2.0		X															
-maka-graph@0.2.0		X															
-maka-insights@0.2.0		X															
 maka-jev@0.2.0		X															
 maka-js-runtime@0.2.0		X															
 maka-model@0.2.0		X															
@@ -619,7 +613,6 @@ maka-plugin-core@0.2.0		X
 maka-plugins@0.2.0		X															
 maka-presentation@0.2.0		X															
 maka-process@0.2.0		X															
-maka-protocol@0.2.0		X															
 maka-providers@0.2.0		X															
 maka-responses@0.2.0		X															
 maka-runtime-host@0.2.0		X															
@@ -627,18 +620,14 @@ maka-runtime@0.2.0		X
 maka-sandbox@0.2.0		X															
 maka-scheduler@0.2.0		X															
 maka-session-import@0.2.0		X															
-maka-session-recap@0.2.0		X															
-maka-session-title@0.2.0		X															
 maka-settings-service@0.2.0		X															
 maka-skills@0.2.0		X															
 maka-tool-catalog@0.2.0		X															
 maka-tools@0.2.0		X															
-maka-transport@0.2.0		X															
 maka-tui@0.2.0		X															
 maka-ui-gpui@0.2.0		X															
 maka-ui@0.2.0		X															
 maka-web@0.2.0		X															
-maka-workhub@0.2.0		X															
 malloc_buf@0.0.6											X						
 markdown@1.0.0											X						
 markup5ever_rcdom@0.3.0		X									X						

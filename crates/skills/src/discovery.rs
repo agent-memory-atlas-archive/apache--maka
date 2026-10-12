@@ -25,8 +25,7 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
-pub(crate) mod artifact;
-mod origin;
+pub(crate) mod origin;
 mod source;
 mod sources;
 pub use origin::{Origin, OriginFailure, OriginStatus};

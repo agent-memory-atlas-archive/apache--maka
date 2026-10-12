@@ -17,7 +17,7 @@
  * under the License.
  */
 
-use super::{Binding, Connection, Context, Error, authentication::Credential};
+use super::{Connection, Context, Definition, Error, authentication::Credential};
 use maka_runtime::configuration::{ModelInfo, ModelOverride};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -42,15 +42,14 @@ pub struct Verification {
     pub request_body_overlay: Option<serde_json::Value>,
 }
 
-impl Binding {
+impl Definition {
     fn validate_inspection(
         &self,
         connection: &Connection,
         credential: Option<&Credential>,
         headers: &BTreeMap<String, String>,
     ) -> Result<(), Error> {
-        self.definition()
-            .validate_configuration(&connection.configuration)?;
+        self.validate_configuration(&connection.configuration)?;
         if let Some(credential) = credential {
             credential.validate().map_err(Error::Invalid)?;
         }
@@ -64,7 +63,7 @@ impl Binding {
         request: Discovery,
         context: Context,
     ) -> Result<Vec<ModelInfo>, Error> {
-        if !self.definition().descriptor.discovery {
+        if !self.descriptor.discovery {
             return Err(Error::Unavailable);
         }
         self.validate_inspection(
@@ -72,12 +71,7 @@ impl Binding {
             request.credential.as_ref(),
             &request.request_headers,
         )?;
-        let _call = self.admit()?;
-        let models = self
-            .definition()
-            .implementation
-            .discover(request, context)
-            .await?;
+        let models = self.implementation.discover(request, context).await?;
         if models.len() > 2048
             || serde_json::to_vec(&models)
                 .map_err(|_| Error::Invalid("invalid model inventory".into()))?
@@ -106,10 +100,6 @@ impl Binding {
         if let Some(overlay) = &request.request_body_overlay {
             maka_runtime::configuration::validation::overlay(overlay).map_err(Error::Invalid)?;
         }
-        let _call = self.admit()?;
-        self.definition()
-            .implementation
-            .verify(request, context)
-            .await
+        self.implementation.verify(request, context).await
     }
 }

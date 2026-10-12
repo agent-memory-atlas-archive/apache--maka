@@ -17,23 +17,21 @@
  * under the License.
  */
 
-//! Provider contributions compose authentication, discovery and model adapters.
+//! Compiled provider policy for authentication, discovery and model adapters.
 //! Credentials and connections belong to Host, not to the contribution catalog.
 pub mod authentication;
-mod binding;
-mod login;
-pub use login::AuthenticationCall;
+mod refresh;
+pub use refresh::RefreshCall;
 mod inspection;
 pub use inspection::{Discovery, Verification};
-pub mod catalog;
 pub mod configuration;
 
 use crate::model::{Credentials, Transport};
 use authentication::{Authenticate, Credential, Interaction};
-pub use binding::{Binding, Identity, RefreshCall};
 pub use configuration::{Connection, Descriptor, Model, Resolve};
 use futures_util::future::BoxFuture;
 use maka_runtime::configuration::ModelInfo;
+pub use maka_runtime::provider::Identity;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -218,7 +216,6 @@ impl Definition {
         self.validate_configuration(&connection.configuration)?;
         credential.validate().map_err(Error::Invalid)?;
         Ok(RefreshCall {
-            call: None,
             implementation: self.implementation.clone(),
             connection,
             credential,

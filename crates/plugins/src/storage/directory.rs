@@ -19,7 +19,7 @@
 
 //! Private files share the KV namespace, not the Host's entire state directory.
 use super::{Namespace, StoreError};
-use crate::fiber::Context;
+use crate::call::Scope;
 use cap_fs_ext::DirExt;
 use cap_std::{ambient_authority, fs::Dir};
 use sha2::{Digest, Sha256};
@@ -42,10 +42,11 @@ impl Directories {
         ))
     }
 
-    /// Bind the package/scope namespace from the Host-issued Fiber identity.
-    pub fn bind(&self, owner: Context) -> Result<Directory, crate::Error> {
-        let identity = owner.identity()?;
-        let namespace = Namespace::new(identity.package_id, identity.scope)?;
+    /// The trusted embedding selects the namespace and admitted call together.
+    pub fn bind(&self, namespace: &Namespace, owner: Scope) -> Result<Directory, crate::Error> {
+        if owner.cancellation.is_cancelled() {
+            return Err(crate::Error::Retired);
+        }
         // Hash the framed identity, not platform-sensitive path components.
         let identity = serde_json::to_vec(&(namespace.package(), namespace.scope()))
             .expect("namespace serialization");
@@ -66,12 +67,12 @@ pub struct Directory {
     parent: Arc<Dir>,
     path: std::path::PathBuf,
     name: String,
-    owner: Context,
+    owner: Scope,
 }
 
 impl Directory {
     /// The same namespace as private-file operations, borrowed read-only by
-    /// native algorithms; it retains the owning plugin's lifetime.
+    /// native algorithms; it retains the original call's lifetime.
     pub async fn read_only(&self) -> Result<crate::filesystem::ReadDirectory, StoreError> {
         let path = self.path.join(&self.name);
         let root = self
@@ -82,11 +83,10 @@ impl Directory {
             })
             .await?
             .map_err(|error| StoreError::Unavailable(error.to_string()))?;
-        let cancellation = self.owner.stopping().map_err(|_| StoreError::Retired)?;
-        Ok(root.bind(self.owner.clone(), cancellation))
+        Ok(root.bind_scope(&self.owner))
     }
 
-    /// Run blocking file work under a lifecycle lease. Dropping the reply does
+    /// Run blocking file work under the original call scope. Dropping the reply does
     /// not abandon the worker; retirement waits for it to settle. The callback
     /// must finish its work before returning, not leak handles to unowned tasks.
     /// Long reads must observe the retirement token; mutations must settle any
@@ -96,32 +96,31 @@ impl Directory {
         T: Send + 'static,
         F: FnOnce(&Dir, &CancellationToken) -> T + Send + 'static,
     {
-        let lease = self
+        if self.owner.cancellation.is_cancelled() {
+            return Err(StoreError::Retired);
+        }
+        let mut ticket = self
             .owner
-            .resource_call()
+            .resources
+            .reserve()
             .map_err(|_| StoreError::Retired)?;
         let parent = self.parent.clone();
         let name = self.name.clone();
-        let result = self
-            .owner
-            .spawn_resource("plugin private files", move |retiring| async move {
-                tokio::task::spawn_blocking(move || {
-                    let _lease = lease;
-                    if retiring.is_cancelled() {
-                        return Err(StoreError::Retired);
-                    }
-                    let directory = child(&parent, &name)
-                        .map_err(|error| StoreError::Unavailable(error.to_string()))?;
-                    Ok(operation(&directory, &retiring))
-                })
-                .await
-                .map_err(|error| error.to_string())
-            })
-            .map_err(|_| StoreError::Retired)?;
-        result
-            .await
-            .map_err(|error| StoreError::OutcomeUnknown(error.to_string()))?
-            .map_err(StoreError::OutcomeUnknown)?
+        let retiring = self.owner.cancellation.clone();
+        tokio::task::spawn_blocking(move || {
+            ticket.start();
+            let result = if retiring.is_cancelled() {
+                Err(StoreError::Retired)
+            } else {
+                child(&parent, &name)
+                    .map_err(|error| StoreError::Unavailable(error.to_string()))
+                    .map(|directory| operation(&directory, &retiring))
+            };
+            ticket.complete(Ok(()));
+            result
+        })
+        .await
+        .map_err(|error| StoreError::OutcomeUnknown(error.to_string()))?
     }
 }
 
@@ -140,35 +139,43 @@ fn child(parent: &Dir, name: &str) -> io::Result<Dir> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{composition::Scope, fiber::Fiber};
+    use maka_runtime::scope::Scope as NamespaceScope;
     use std::time::Duration;
 
-    fn owner(package: &str, entry: &str, scope: Scope) -> Fiber {
-        let fiber = Fiber::new(package, entry, scope).unwrap();
-        fiber.begin_loading().unwrap();
-        fiber.ready().unwrap();
-        fiber.publish().unwrap();
-        fiber
+    async fn scope() -> crate::call::Scope {
+        crate::call::Issuer::default()
+            .admit(
+                crate::call::Identity::Remote {
+                    request_id: uuid::Uuid::new_v4(),
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
     async fn namespaces_survive_generations_and_lost_replies_do_not_abandon_writes() {
         let root = tempfile::tempdir().unwrap();
         let directories = Directories::open(root.path()).unwrap();
-        let first = owner("example.notes", "first", Scope::Profile);
-        let files = directories.bind(first.context()).unwrap();
+        let first = scope().await;
+        let namespace = Namespace::new("example.notes", NamespaceScope::Profile).unwrap();
+        let files = directories.bind(&namespace, first.clone()).unwrap();
         files
             .run(|dir, _| dir.write("state", b"old"))
             .await
             .unwrap()
             .unwrap();
 
-        for (package, scope) in [
-            ("example.other", Scope::Profile),
-            ("example.notes", Scope::Session("one".into())),
+        for (package, namespace_scope) in [
+            ("example.other", NamespaceScope::Profile),
+            ("example.notes", NamespaceScope::Session("one".into())),
         ] {
-            let other = owner(package, "other", scope);
-            let isolated = directories.bind(other.context()).unwrap();
+            let other = scope().await;
+            let isolated_namespace = Namespace::new(package, namespace_scope).unwrap();
+            let isolated = directories
+                .bind(&isolated_namespace, other.clone())
+                .unwrap();
             assert!(
                 !isolated
                     .run(|dir, _| dir.try_exists("state"))
@@ -176,13 +183,10 @@ mod tests {
                     .unwrap()
                     .unwrap()
             );
-            other
-                .shutdown(tokio::time::Instant::now() + Duration::from_secs(2))
-                .await
-                .unwrap();
+            other.finish().await.unwrap();
         }
-        let same = owner("example.notes", "second", Scope::Profile);
-        let shared = directories.bind(same.context()).unwrap();
+        let same = scope().await;
+        let shared = directories.bind(&namespace, same.clone()).unwrap();
         assert_eq!(
             shared
                 .run(|dir, _| dir.read("state"))
@@ -230,7 +234,7 @@ mod tests {
         });
         entered.await.unwrap();
         waiter.abort();
-        first.retire();
+        first.cancellation.cancel();
         assert!(matches!(
             reader.await.unwrap().unwrap(),
             Err(crate::filesystem::entries::Error::Cancelled)
@@ -239,21 +243,21 @@ mod tests {
             files.run(|_, _| ()).await,
             Err(StoreError::Retired)
         ));
-        assert_eq!(first.context().active_calls(), 1);
+        assert!(!first.resources.is_idle());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), first.finish())
+                .await
+                .is_err()
+        );
         release.send(()).unwrap();
-        first
-            .shutdown(tokio::time::Instant::now() + Duration::from_secs(2))
-            .await
-            .unwrap();
-        same.shutdown(tokio::time::Instant::now() + Duration::from_secs(2))
-            .await
-            .unwrap();
+        first.finish().await.unwrap();
+        same.finish().await.unwrap();
 
         let reopened = Directories::open(root.path()).unwrap();
-        let next = owner("example.notes", "third", Scope::Profile);
+        let next = scope().await;
         assert_eq!(
             reopened
-                .bind(next.context())
+                .bind(&namespace, next.clone())
                 .unwrap()
                 .run(|dir, _| dir.read("state"))
                 .await
@@ -265,9 +269,7 @@ mod tests {
             files.run(|_, _| ()).await,
             Err(StoreError::Retired)
         ));
-        next.shutdown(tokio::time::Instant::now() + Duration::from_secs(2))
-            .await
-            .unwrap();
+        next.finish().await.unwrap();
     }
 
     #[cfg(unix)]
@@ -279,8 +281,9 @@ mod tests {
         assert!(Directories::open(root.path()).is_err());
         std::fs::remove_file(root.path().join("plugin-data")).unwrap();
         let directories = Directories::open(root.path()).unwrap();
-        let fiber = owner("example.notes", "notes", Scope::Profile);
-        let files = directories.bind(fiber.context()).unwrap();
+        let owner = scope().await;
+        let namespace = Namespace::new("example.notes", NamespaceScope::Profile).unwrap();
+        let files = directories.bind(&namespace, owner.clone()).unwrap();
         std::os::unix::fs::symlink(
             outside.path(),
             root.path().join("plugin-data").join(&files.name),
@@ -293,9 +296,6 @@ mod tests {
                 .is_err()
         );
         assert!(!outside.path().join("state").exists());
-        fiber
-            .shutdown(tokio::time::Instant::now() + Duration::from_secs(2))
-            .await
-            .unwrap();
+        owner.finish().await.unwrap();
     }
 }

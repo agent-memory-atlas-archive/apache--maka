@@ -39,16 +39,6 @@ pub struct SourceCatalog {
     pub publication: QuerySnapshot,
 }
 impl SourceCatalog {
-    pub(crate) fn bundled_origin(&self, reference: &str) -> Option<&super::Origin> {
-        if !reference.starts_with("workspace:legacy:") {
-            return None;
-        }
-        self.publication
-            .origins
-            .get(reference)
-            .filter(|origin| matches!(origin.status, OriginStatus::Bundled { .. }))
-    }
-
     pub fn installed_managed_sources(&self) -> BTreeSet<String> {
         let mut installed = self.publication.occupied.clone();
         for skill in &self.publication.discovery.inventory {

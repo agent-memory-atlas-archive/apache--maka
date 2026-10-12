@@ -20,7 +20,7 @@
 mod output;
 
 use crate::{Engine, RunError, RunningInvocation};
-use maka_plugins::executor::{Backend, Binding, Error, Outcome, Request};
+use maka_plugins::executor::{Backend, Error, Outcome, Request};
 use maka_runtime::{
     event::{EventWrite, Fact, InvocationInput, InvocationOutcome, RuntimeEvent},
     execution::InvocationConfiguration,
@@ -29,7 +29,7 @@ use maka_runtime::{
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
-pub struct ExecutorInput<B = Binding> {
+pub struct ExecutorInput<B> {
     pub request: Request,
     pub binding: B,
     pub configuration: InvocationConfiguration,

@@ -19,11 +19,11 @@
 
 use super::*;
 use maka_plugins::{
-    composition::Scope,
     session::history::{Page, Position, SourceField, SourceFormat, SourcePosition, SourceRole},
     storage::Namespace,
 };
 use maka_runtime::import::{Content, Record, Source};
+use maka_runtime::scope::Scope;
 
 #[tokio::test]
 async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossing_sessions() {

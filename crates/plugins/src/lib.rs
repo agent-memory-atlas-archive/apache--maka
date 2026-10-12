@@ -17,24 +17,18 @@
  * under the License.
  */
 
-//! Plugin composition and lifecycle contracts, independent of business policy.
+//! Native capability ports, scoped resource ownership, and immutable application packages.
 
 pub mod authorization;
 pub mod background;
 pub mod call;
-pub mod client;
 pub mod client_capability;
-pub mod composition;
 pub mod computer;
-pub mod contributions;
 pub mod credentials;
 pub mod execution;
 pub mod executor;
-pub mod fiber;
 pub mod filesystem;
-pub mod host;
 pub mod http;
-pub mod kernel;
 pub mod llm;
 pub mod model;
 pub mod package;
@@ -42,46 +36,20 @@ pub mod permissions;
 pub mod preferences;
 pub mod pricing;
 pub mod process;
-pub mod prompt;
 pub mod provider;
-mod registration;
 pub mod remote;
 pub mod revision;
-pub use registration::Registration;
-pub mod input;
-pub mod services;
 pub mod session;
 pub mod storage;
 pub mod terminal;
-pub mod terminal_ui;
 pub mod usage;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
-    #[error("plugin instance is retired or not effective")]
+    #[error("capability scope is retired")]
     Retired,
-    #[error("invalid plugin lifecycle transition: {0}")]
-    Lifecycle(&'static str),
-    #[error("plugin cleanup has not completed before the deadline")]
-    CleanupPending,
-    #[error("plugin cleanup failed: {0:?}")]
-    Cleanup(Vec<String>),
-    #[error("plugin service is already registered: {0}")]
-    DuplicateService(String),
-    #[error("plugin service has a different Rust type: {0}")]
-    ServiceType(String),
-    #[error("plugin contribution conflicts with an existing or reserved name: {0}")]
-    ContributionConflict(String),
-    #[error("invalid plugin composition: {0}")]
+    #[error("invalid capability or package data: {0}")]
     Invalid(String),
-    #[error("composition entry not found: {0}")]
-    MissingEntry(String),
-    #[error("duplicate composition entry: {0}")]
-    DuplicateEntry(String),
-    #[error("composition entries cannot move between roots")]
-    CrossRoot,
-    #[error("composition entry cannot contain itself")]
-    DependencyCycle,
 }
 
 pub(crate) fn name(value: &str) -> Result<(), Error> {
@@ -94,7 +62,7 @@ pub(crate) fn name(value: &str) -> Result<(), Error> {
     Ok(())
 }
 
-/// Validate a stable package or composition Entry identifier.
+/// Validate a stable package or entry identifier.
 pub fn identifier(value: &str) -> Result<(), Error> {
     if value.len() > 128
         || !value.as_bytes().first().is_some_and(u8::is_ascii_lowercase)

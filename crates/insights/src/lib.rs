@@ -17,5 +17,4 @@
  * under the License.
  */
 
-pub mod plugin;
-mod preferences;
+pub mod preferences;

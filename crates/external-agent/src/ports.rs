@@ -17,16 +17,16 @@
  * under the License.
  */
 
-//! Narrow host ports shared by ordinary service and legacy plugin embeddings.
+//! Narrow host ports shared by ordinary service embeddings.
 use futures_util::future::BoxFuture;
 use maka_plugins::{
     call::{ReadResource, Scope},
-    execution::{Access, OfferInteraction},
-    filesystem::{Files, Operation, Output},
+    execution::OfferInteraction,
+    filesystem::{Operation, Output},
     process::Processes,
     storage::Store,
 };
-use maka_runtime::{capability::FormResult, interaction::InteractionOutcome};
+use maka_runtime::capability::FormResult;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -63,72 +63,4 @@ pub trait Callbacks: Send + Sync {
         offer: OfferInteraction,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<Option<FormResult>, String>>;
-}
-impl From<maka_plugins::host::Services> for Ports {
-    fn from(host: maka_plugins::host::Services) -> Self {
-        Self {
-            processes: host.processes,
-            storage: host.storage,
-            callbacks: Arc::new(Legacy {
-                files: host.files,
-                executions: host.executions,
-            }),
-        }
-    }
-}
-struct Legacy {
-    files: Arc<dyn Files>,
-    executions: Arc<dyn Access>,
-}
-impl Callbacks for Legacy {
-    fn file(
-        &self,
-        scope: Scope,
-        _: String,
-        operation: Operation,
-        _: CancellationToken,
-    ) -> BoxFuture<'_, Result<Output, String>> {
-        Box::pin(async move {
-            self.files
-                .invoke(scope, operation)
-                .await
-                .map_err(|e| e.to_string())
-        })
-    }
-    fn form(
-        &self,
-        scope: Scope,
-        offer: OfferInteraction,
-        cancellation: CancellationToken,
-    ) -> BoxFuture<'_, Result<Option<FormResult>, String>> {
-        Box::pin(async move {
-            let operation = offer.operation_id.clone();
-            let commands = self
-                .executions
-                .acquire(scope)
-                .await
-                .map_err(|e| e.to_string())?;
-            // An accepted offer must settle even if cancellation arrives.
-            commands
-                .offer_interaction(offer)
-                .await
-                .map_err(|e| e.to_string())?;
-            let result = tokio::select! {
-                biased;
-                () = cancellation.cancelled() => None,
-                result = commands.wait_interaction(operation.clone()) => Some(result),
-            };
-            if result.as_ref().is_none_or(|r| r.is_err()) {
-                commands
-                    .close_interaction(operation)
-                    .await
-                    .map_err(|e| e.to_string())?;
-            }
-            match result.transpose().map_err(|e| e.to_string())? {
-                Some(InteractionOutcome::FormAnswer { result, .. }) => Ok(Some(result)),
-                None | Some(InteractionOutcome::Closure { .. }) => Ok(None),
-                _ => Err("Unexpected permission interaction outcome".into()),
-            }
-        })
-    }
 }

@@ -245,6 +245,26 @@ fn clip(value: String, chars: usize) -> (String, bool) {
     (value[..end].to_owned(), true)
 }
 
+pub fn native(
+    model: &maka_runtime::tools::ModelToolContext,
+) -> Option<maka_runtime::tools::ProviderTool> {
+    use maka_runtime::tools::{ProviderTool, ProviderToolProtocol};
+    let protocol = model.provider_tools?;
+    if model.capabilities.web_search != Some(true) {
+        return None;
+    }
+    Some(match protocol {
+        ProviderToolProtocol::OpenaiResponses => ProviderTool {
+            id: "openai.web_search".into(),
+            args: serde_json::json!({"searchContextSize":"medium"}),
+        },
+        ProviderToolProtocol::AnthropicMessages => ProviderTool {
+            id: "anthropic.web_search_20250305".into(),
+            args: serde_json::json!({"maxUses":8}),
+        },
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,24 +302,4 @@ mod tests {
             .is_err()
         );
     }
-}
-
-pub fn native(
-    model: &maka_runtime::tools::ModelToolContext,
-) -> Option<maka_runtime::tools::ProviderTool> {
-    use maka_runtime::tools::{ProviderTool, ProviderToolProtocol};
-    let protocol = model.provider_tools?;
-    if model.capabilities.web_search != Some(true) {
-        return None;
-    }
-    Some(match protocol {
-        ProviderToolProtocol::OpenaiResponses => ProviderTool {
-            id: "openai.web_search".into(),
-            args: serde_json::json!({"searchContextSize":"medium"}),
-        },
-        ProviderToolProtocol::AnthropicMessages => ProviderTool {
-            id: "anthropic.web_search_20250305".into(),
-            args: serde_json::json!({"maxUses":8}),
-        },
-    })
 }

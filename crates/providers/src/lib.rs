@@ -17,7 +17,7 @@
  * under the License.
  */
 
-//! Bundled model providers, implemented through the public plugin contracts.
+//! Compiled model providers with explicit definitions for native service owners.
 pub mod api;
 pub mod codex;
 mod facts;

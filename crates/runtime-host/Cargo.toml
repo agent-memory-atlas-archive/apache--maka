@@ -51,7 +51,6 @@ hyper-util = { version = "0.1.20", features = ["tokio"] }
 http-body-util = "0.1.5"
 tokio-tungstenite.workspace = true
 thiserror.workspace = true
-url = "2"
 time = { version = "0.3.55", features = ["formatting", "macros"] }
 tokio = { workspace = true, features = ["net", "process"] }
 tokio-util.workspace = true

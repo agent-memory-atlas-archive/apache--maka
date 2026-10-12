@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct Choice {
+pub struct Choice {
     pub revision: Option<u64>,
     pub authorization: authorization::Target,
     pub name: String,
@@ -49,7 +49,7 @@ struct Selected {
 }
 
 impl Assignments {
-    pub(super) async fn model_choice(&self, operation: &str) -> Result<Choice, Error> {
+    pub async fn model_choice(&self, operation: &str) -> Result<Choice, Error> {
         let assignment = self.model_assignment(operation).await?;
         let choice = self
             .repository
@@ -82,7 +82,7 @@ impl Assignments {
         Ok(assignment)
     }
 
-    pub(super) async fn select_model(
+    pub async fn select_model(
         &self,
         operation: &str,
         expected_revision: Option<u64>,
@@ -151,7 +151,7 @@ impl Assignments {
         }
     }
 
-    pub(super) async fn restore_or_create_root(
+    pub async fn restore_or_create_root(
         &self,
         commands: &dyn Commands,
         request: &CreateRoot,

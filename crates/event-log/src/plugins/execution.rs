@@ -23,11 +23,11 @@ use crate::{
     message_admissions::{PendingMessageAdmission, insert},
 };
 use maka_plugins::{
-    composition::Scope,
     execution::{Observation, Progress, Receipt, Submit},
     storage::Namespace,
 };
 use maka_runtime::message::{MessageDisposition, Placement};
+use maka_runtime::scope::Scope;
 use sha2::{Digest, Sha256};
 use sqlx::{Connection, SqliteConnection};
 

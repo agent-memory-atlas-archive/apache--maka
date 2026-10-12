@@ -24,11 +24,11 @@ use maka_config::{
 use maka_event_log::root::{RootNamespaces, RootOwner};
 use maka_plugins::{
     authorization::{Capability, Request, Target},
-    composition::Scope,
     execution::SessionBoundary,
     storage::Namespace,
 };
 use maka_runtime::execution::{SandboxMode, WorkspaceIdentity};
+use maka_runtime::scope::Scope;
 use std::sync::Arc;
 use uuid::Uuid;
 

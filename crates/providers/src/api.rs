@@ -17,17 +17,13 @@
  * under the License.
  */
 
-//! Bundled API providers use the same registration and secret contracts as plugins.
+//! Compiled API provider policies use explicit definitions and credential contracts.
 use crate::facts::{self, AuthKind, ProviderFacts};
 use futures_util::future::BoxFuture;
-use maka_plugins::{
-    contributions::Staged,
-    kernel::{Plugin, PluginContext},
-    provider::{Connection, Definition, Descriptor, Error, Model, Provider, Resolve},
-};
+use maka_plugins::provider::{Connection, Definition, Descriptor, Error, Model, Provider, Resolve};
 use maka_runtime::configuration::{ApiProtocol as Wire, ModelInfo, ModelOverride};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 use std::sync::Arc;
 mod authentication;
 mod discovery;
@@ -106,40 +102,6 @@ impl ApiProviders {
             .filter(|(_, facts)| !facts.retired && facts.auth_kind != AuthKind::OauthToken)
             .map(|(name, _)| name.clone())
             .collect())
-    }
-
-    pub fn stage(&self) -> Result<Staged, String> {
-        let mut staged = Staged::default();
-        for (id, facts) in facts::all().map_err(|error| error.to_string())? {
-            if facts.retired || facts.auth_kind == AuthKind::OauthToken {
-                continue;
-            }
-            staged
-                .insert(id.clone(), ApiProvider { id, facts }.definition()?)
-                .map_err(|error| error.to_string())?;
-        }
-        Ok(staged)
-    }
-}
-impl Plugin for ApiProviders {
-    fn description(&self) -> Option<maka_plugins::kernel::Description> {
-        Some(maka_plugins::kernel::Description {
-            name: maka_plugins::terminal_ui::Text::localized(
-                "API connections",
-                "API 连接",
-                "API 連線",
-            ),
-            summary: Some(maka_plugins::terminal_ui::Text::localized(
-                "Connect API providers and custom model services.",
-                "连接 API 提供方和自定义模型服务。",
-                "連接 API 提供者與自訂模型服務。",
-            )),
-        })
-    }
-
-    fn activate(&self, _: PluginContext, _: Value) -> BoxFuture<'static, Result<Staged, String>> {
-        let result = self.stage();
-        Box::pin(async { result })
     }
 }
 

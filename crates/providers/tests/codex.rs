@@ -19,14 +19,9 @@
 
 use futures_util::future::BoxFuture;
 use maka_plugins::{
-    composition::Scope,
-    contributions::Catalog,
-    fiber::Fiber,
     http,
     model::{Connect, Credentials, Error as ModelError, Socket, Transport},
-    provider::{
-        Binding, Connection, Context, Error, Provider, Resolve, authentication::Credential,
-    },
+    provider::{Connection, Context, Error, Provider, Resolve, authentication::Credential},
 };
 use maka_providers::codex::Codex;
 use serde_json::json;
@@ -161,28 +156,7 @@ async fn device_login_preserves_region_and_http_failures_without_echoing_respons
 async fn sent_refresh_settles_after_cancellation_and_unknown_reply_is_never_retried() {
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         for fail in [false, true] {
-            let catalog = Catalog::default();
-            let owner = Fiber::new(
-                "example.subscription",
-                "example.subscription",
-                Scope::Profile,
-            )
-            .unwrap();
-            owner.begin_loading().unwrap();
-            owner.ready().unwrap();
-            owner.publish().unwrap();
-            let registration = catalog
-                .register(&owner.context(), Codex::default().stage().unwrap())
-                .unwrap();
-            let binding = Binding::new(
-                "chatgpt".into(),
-                catalog
-                    .snapshot(&Scope::Profile)
-                    .entries
-                    .remove("chatgpt")
-                    .unwrap(),
-            )
-            .unwrap();
+            let binding = Codex::default().definition().unwrap();
             let transport = Arc::new(Exchange {
                 started: Notify::new(),
                 release: Notify::new(),
@@ -201,14 +175,10 @@ async fn sent_refresh_settles_after_cancellation_and_unknown_reply_is_never_retr
                 cancellation: cancellation.clone(),
                 interaction: None,
             };
-            let running = binding.clone();
-            let refresh =
-                tokio::spawn(
-                    async move { running.refresh(connection(), credential(), context).await },
-                );
+            let running = binding.prepare_refresh(connection(), credential()).unwrap();
+            let refresh = tokio::spawn(async move { running.run(context).await });
             transport.started.notified().await;
             cancellation.cancel();
-            drop(registration);
             transport.release.notify_one();
             let result = refresh.await.unwrap();
             if fail {
@@ -218,17 +188,7 @@ async fn sent_refresh_settles_after_cancellation_and_unknown_reply_is_never_retr
                 assert!(replacement.refresh_at.is_some_and(|at| at > 0));
                 let secret: serde_json::Value = serde_json::from_str(&replacement.secret).unwrap();
                 assert_eq!(secret["refresh_token"], "replacement-refresh");
-                assert!(matches!(
-                    binding
-                        .authorize(connection(), Some(replacement.clone()), "session".into())
-                        .await,
-                    Err(Error::Unavailable)
-                ));
-                let _registration = catalog
-                    .register(&owner.context(), Codex::default().stage().unwrap())
-                    .unwrap();
-                let restored = Binding::resolve(binding.identity(), &catalog).unwrap();
-                let Credentials::RequestHeaders(headers) = restored
+                let Credentials::RequestHeaders(headers) = binding
                     .authorize(connection(), Some(replacement), "session".into())
                     .await
                     .unwrap()

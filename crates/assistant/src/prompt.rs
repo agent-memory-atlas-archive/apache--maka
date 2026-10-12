@@ -22,23 +22,6 @@ use maka_runtime::execution::SystemPrompt;
 
 pub mod workspace;
 
-pub(super) async fn resolve(
-    snapshot: Snapshot,
-    workspace: maka_plugins::filesystem::ReadDirectory,
-    global: Option<maka_plugins::filesystem::ReadDirectory>,
-) -> SystemPrompt {
-    if !snapshot.workspace_instructions {
-        return compose(snapshot);
-    }
-    let fragment = workspace::resolve(workspace, global).await;
-    let mut prompt = compose(snapshot);
-    if !fragment.is_empty() {
-        prompt.text.push_str("\n\n");
-        prompt.text.push_str(&fragment);
-    }
-    prompt
-}
-
 // Main-session identity and response contract; child and Summary purposes own
 // their distinct instructions. Static text keeps the request prefix stable.
 const MAIN: &str = r#"You are Maka, an AI agent operating on the user's machine. You help by reading files, running commands, editing code, and answering questions.

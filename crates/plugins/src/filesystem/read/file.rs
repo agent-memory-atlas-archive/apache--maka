@@ -128,7 +128,7 @@ impl PinnedFile {
         let source = view.cancellation.clone();
         let completion = view
             .owner
-            .spawn_resource("read-only file", move |stop| async move {
+            .spawn_resource(move |stop| async move {
                 tokio::select! {
                     _ = source.cancelled() => {},
                     _ = closing.cancelled() => {},
@@ -257,7 +257,19 @@ impl PinnedReader<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{composition::Scope, fiber::Fiber, filesystem::ReadRoot};
+    use crate::filesystem::ReadRoot;
+    async fn scope() -> crate::call::Scope {
+        crate::call::Issuer::default()
+            .admit(
+                crate::call::Identity::Remote {
+                    request_id: uuid::Uuid::new_v4(),
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap()
+    }
+
     use std::io::Write;
 
     #[tokio::test]
@@ -266,13 +278,10 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("source");
         std::fs::write(&path, b"abcdef").unwrap();
-        let owner = Fiber::new("example.reader", "reader", Scope::Profile).unwrap();
-        owner.begin_loading().unwrap();
-        owner.ready().unwrap();
-        owner.publish().unwrap();
+        let owner = scope().await;
         let root = ReadRoot::open(directory.path()).await.unwrap();
-        let cancellation = CancellationToken::new();
-        let view = root.bind(owner.context(), cancellation.clone());
+        let cancellation = owner.cancellation.clone();
+        let view = root.bind_scope(&owner);
         let open = || OpenFile::from("source".to_owned());
         let file = view.open_file(open()).await.unwrap();
         std::fs::OpenOptions::new()
@@ -319,10 +328,22 @@ mod tests {
         ));
 
         let mut files = Vec::new();
-        for _ in 0..32 {
+        // The root's handle budget is shared across independently admitted
+        // calls; each call also has its own smaller worker budget.
+        let mut owners = Vec::new();
+        for _ in 0..8 {
             files.push(view.open_file(open()).await.unwrap());
         }
-        let other_view = root.bind(owner.context(), CancellationToken::new());
+        for _ in 0..3 {
+            let owner = scope().await;
+            let view = root.bind_scope(&owner);
+            for _ in 0..8 {
+                files.push(view.open_file(open()).await.unwrap());
+            }
+            owners.push(owner);
+        }
+        let other_owner = scope().await;
+        let other_view = root.bind_scope(&other_owner);
         assert!(other_view.open_file(open()).await.is_err());
         files.pop().unwrap().close().await.unwrap();
         let recovered = other_view.open_file(open()).await.unwrap();
@@ -358,10 +379,8 @@ mod tests {
         first_close.await.unwrap().unwrap();
         second_close.await.unwrap().unwrap();
         assert!(recovered.is_released());
-        owner
-            .shutdown(tokio::time::Instant::now() + std::time::Duration::from_secs(2))
-            .await
-            .unwrap();
+        owner.finish().await.unwrap();
+        other_owner.finish().await.unwrap();
         assert!(matches!(
             recovered.read(ReadRange::default()).await,
             Err(ReadError::Retired)
@@ -370,5 +389,8 @@ mod tests {
             file.close().await.unwrap();
         }
         recovered.close().await.unwrap();
+        for owner in owners {
+            owner.finish().await.unwrap();
+        }
     }
 }

@@ -21,10 +21,8 @@ use maka_event_log::{
     EventLog, StoreError,
     effects::{Operation, Outcome, Request},
 };
-use maka_plugins::{
-    authorization::Id, call::Identity, composition::Scope, fiber::Fiber, filesystem,
-    storage::Namespace,
-};
+use maka_plugins::{authorization::Id, call::Identity, filesystem, storage::Namespace};
+use maka_runtime::scope::Scope;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -33,12 +31,17 @@ async fn recovery_preserves_completed_effects_and_fences_uncertain_late_results(
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("log.sqlite");
     let log = EventLog::open(&path).await.unwrap();
-    let fiber = Fiber::new("example.external", "instance", Scope::Profile).unwrap();
     let request = || Request {
         source: Identity::Background {
             grant: Id(Uuid::new_v4()),
         },
-        owner: fiber.context().identity().unwrap(),
+        owner: maka_event_log::effects::Owner {
+            package_id: "example.external".into(),
+            entry_id: "instance".into(),
+            scope: Scope::Profile,
+            activation: "original".into(),
+            generation: 1,
+        },
         boundary: maka_plugins::authorization::Boundary::Profile,
         operation: Operation::File(filesystem::Operation::Write(filesystem::Write {
             path: "file".into(),

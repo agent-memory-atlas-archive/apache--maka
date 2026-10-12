@@ -21,11 +21,8 @@ mod bundle;
 mod io;
 mod manifest;
 mod path;
-mod yaml;
 pub use io::PackageIoError;
-pub use manifest::{
-    ClientEntrypoint, CompositionFile, Dependency, HostEntrypoint, Manifest, VmMode,
-};
+pub use manifest::Manifest;
 pub use path::validate_path;
 
 use sha2::{Digest, Sha256};
@@ -50,24 +47,6 @@ pub struct Package {
 }
 
 impl Package {
-    pub fn composition(&self) -> Result<Vec<crate::composition::Operation>, Error> {
-        let Some(composition) = &self.manifest.composition else {
-            return Ok(Vec::new());
-        };
-        let bytes = self
-            .file(&composition.patch)
-            .expect("validated composition entry");
-        let value = yaml::parse(bytes)?;
-        let operations: Vec<crate::composition::Operation> = serde_json::from_value(value)
-            .map_err(|error| Error::Invalid(format!("composition patch: {error}")))?;
-        if operations.len() > 4096 {
-            return Err(Error::Invalid(
-                "composition patch exceeds 4096 operations".into(),
-            ));
-        }
-        Ok(operations)
-    }
-
     pub fn new(files: BTreeMap<String, Vec<u8>>) -> Result<Self, Error> {
         if files.is_empty() || files.len() > MAX_FILES {
             return Err(Error::Invalid("package must contain 1..=256 files".into()));
@@ -98,26 +77,17 @@ impl Package {
             .map_err(|error| Error::Invalid(format!("manifest: {error}")))?;
         manifest.validate()?;
         for entry in manifest
-            .runtime
+            .application
             .iter()
-            .map(|entry| &entry.entry)
-            .chain(manifest.client.iter().map(|entry| &entry.entry))
-            .chain(manifest.composition.iter().map(|entry| &entry.patch))
-            .chain(
-                manifest
-                    .application
-                    .iter()
-                    .flat_map(|application| application.entries.values())
-                    .filter_map(|entry| match &entry.implementation {
-                        maka_plugin_core::package::Implementation::JavaScript {
-                            module, ..
-                        } => Some(module),
-                        maka_plugin_core::package::Implementation::Native { .. } => None,
-                    }),
-            )
+            .flat_map(|application| application.entries.values())
         {
-            if !files.contains_key(entry) {
-                return Err(Error::Invalid(format!("package entry is missing: {entry}")));
+            if let maka_plugin_core::package::Implementation::JavaScript { module, .. } =
+                &entry.implementation
+                && !files.contains_key(module)
+            {
+                return Err(Error::Invalid(format!(
+                    "package entry is missing: {module}"
+                )));
             }
         }
         let digest = content_digest(&files);
@@ -223,6 +193,11 @@ mod tests {
         let mut missing = files.clone();
         missing.remove("desktop.mjs");
         assert!(Package::new(missing).is_err());
+        let mut old = files.clone();
+        let mut manifest: serde_json::Value = serde_json::from_slice(&old[MANIFEST_FILE]).unwrap();
+        manifest["schemaVersion"] = json!(1);
+        old.insert(MANIFEST_FILE.into(), serde_json::to_vec(&manifest).unwrap());
+        assert!(Package::new(old).is_err());
         let mut mixed = files;
         let mut manifest: serde_json::Value =
             serde_json::from_slice(&mixed[MANIFEST_FILE]).unwrap();
@@ -238,7 +213,6 @@ mod tests {
             .unwrap(),
         )]))
         .unwrap();
-        assert!(structural.manifest().runtime.is_none());
         assert!(
             structural
                 .manifest()
@@ -253,7 +227,7 @@ mod tests {
     #[test]
     fn package_pins_exact_bytes_and_rejects_cross_platform_path_aliases() {
         let manifest = serde_json::to_vec(&json!({
-            "schemaVersion":1,"id":"graph","runtime":{"entry":"index.mjs","sdkVersion":1,"vm":"dedicated"}
+            "schemaVersion":2,"id":"graph","application":{"entries":{"host":{"implementation":{"kind":"native","implementation":"example.host"},"configuration":{"type":"object"}}}}
         })).unwrap();
         let files = BTreeMap::from([
             (MANIFEST_FILE.into(), manifest),
@@ -268,10 +242,6 @@ mod tests {
         let mut corrupt: serde_json::Value = serde_json::from_slice(&bundle).unwrap();
         corrupt["files"][0]["content"] = json!("Y29ycnVwdA==");
         assert!(Package::from_bundle(&serde_json::to_vec(&corrupt).unwrap()).is_err());
-        assert_eq!(
-            package.manifest().runtime.as_ref().unwrap().vm,
-            VmMode::Dedicated
-        );
         let mut updated = files.clone();
         updated.insert(
             "index.mjs".into(),

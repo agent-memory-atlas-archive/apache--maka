@@ -18,5 +18,4 @@
  */
 
 //! Session recaps owned by a native plugin, using authorized Host history and models.
-pub mod plugin;
-mod recap;
+pub mod recap;

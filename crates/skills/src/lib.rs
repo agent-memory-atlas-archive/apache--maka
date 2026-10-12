@@ -24,7 +24,6 @@ mod discovery;
 mod document;
 mod fields;
 mod invocation;
-pub mod plugin;
 pub mod publication;
 mod resources;
 pub use resources::Resources;

@@ -21,11 +21,9 @@ use super::support::{context, invocation};
 use futures_util::future::BoxFuture;
 use maka_agent::{ExecutorInput, RunError};
 use maka_event_log::EventLog;
-use maka_plugins::{
-    composition::Scope,
-    contributions::{Catalog, Staged},
-    executor::{Binding, Capabilities, Context, Error, Executor, Outcome, Provider, Request},
-    fiber::Fiber,
+use maka_plugins::executor::{
+    Admitted, Backend, Context, Error, Execution, Outcome, OutputSink, Provider, Request,
+    Settlement,
 };
 use maka_runtime::{
     event::{Fact, Invocation, InvocationOutcome},
@@ -38,6 +36,44 @@ use std::{
 };
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
+
+struct NativeBackend(Arc<dyn Provider>);
+impl Backend for NativeBackend {
+    fn admit_execution(&self, request: Request) -> Result<Admitted, Error> {
+        Ok(Admitted {
+            identity: maka_runtime::executor::Binding {
+                executor_id: "example".to_owned().try_into().unwrap(),
+                package_id: "example".into(),
+                entry_id: "example".into(),
+                activation: "native-test".into(),
+            },
+            execution: Box::new(NativeExecution(self.0.clone(), request)),
+        })
+    }
+}
+struct NativeExecution(Arc<dyn Provider>, Request);
+impl Execution for NativeExecution {
+    fn execute(
+        self: Box<Self>,
+        output: Arc<dyn OutputSink>,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Settlement> {
+        Box::pin(async move {
+            let result = self
+                .0
+                .execute(
+                    self.1,
+                    Context {
+                        cancellation,
+                        output,
+                        call: None,
+                    },
+                )
+                .await;
+            Settlement::new(result, self.0)
+        })
+    }
+}
 
 struct Adapter {
     started: Arc<Semaphore>,
@@ -90,40 +126,15 @@ async fn external_backend_uses_canonical_admission_settlement_and_never_enters_m
             .unwrap(),
     );
     let engine = context::engine(log.clone());
-    let catalog = Catalog::default();
-    let fiber = Fiber::new("example", "example", Scope::Profile).unwrap();
-    fiber.begin_loading().unwrap();
-    fiber.ready().unwrap();
-    fiber.publish().unwrap();
     let started = Arc::new(Semaphore::new(0));
     let retained = Arc::new(Mutex::new(None));
-    let mut staged = Staged::default();
-    staged
-        .insert(
-            "example",
-            Executor {
-                id: "example".to_owned().try_into().unwrap(),
-                display_name: "Example".into(),
-                capabilities: Capabilities {
-                    thinking: true,
-                    ..Default::default()
-                },
-                provider: Arc::new(Adapter {
-                    started: started.clone(),
-                    retained: retained.clone(),
-                }),
-            },
-        )
-        .unwrap();
-    let registration = catalog.register(&fiber.context(), staged).unwrap();
+    let adapter = Arc::new(Adapter {
+        started: started.clone(),
+        retained: retained.clone(),
+    });
     for id in ["complete", "wait"] {
         let mut configuration = invocation::configuration(ToolMode::Direct);
         configuration.model = None;
-        let contribution = catalog
-            .snapshot::<Executor>(&Scope::Profile)
-            .entries
-            .remove("example")
-            .unwrap();
         let input = ExecutorInput {
             request: Request {
                 invocation: Invocation {
@@ -141,7 +152,7 @@ async fn external_backend_uses_canonical_admission_settlement_and_never_enters_m
                 cwd: configuration.cwd.clone(),
                 instructions: None,
             },
-            binding: Binding::new("session".into(), contribution).unwrap(),
+            binding: NativeBackend(adapter.clone()),
             configuration,
             request_fingerprint: Some(id.into()),
             source_messages: vec![],
@@ -172,11 +183,6 @@ async fn external_backend_uses_canonical_admission_settlement_and_never_enters_m
             Err(Error::Cancelled)
         ));
     }
-    drop(registration);
-    fiber
-        .shutdown(tokio::time::Instant::now() + Duration::from_secs(1))
-        .await
-        .unwrap();
     engine.drain().await;
     let prefix = log.prefix(100, 1024 * 1024).await.unwrap();
     for row in &prefix.events {
@@ -297,33 +303,12 @@ async fn unconfirmed_executor(sql_failure: bool) {
             .unwrap(),
     );
     let engine = context::engine(log.clone());
-    let catalog = Catalog::default();
-    let fiber = Fiber::new("cleanup.fixture", "cleanup.fixture", Scope::Profile).unwrap();
-    fiber.begin_loading().unwrap();
-    fiber.ready().unwrap();
-    fiber.publish().unwrap();
-    let mut staged = Staged::default();
-    staged
-        .insert(
-            "cleanup.fixture",
-            Executor {
-                id: "cleanup.fixture".to_owned().try_into().unwrap(),
-                display_name: "Cleanup fixture".into(),
-                capabilities: Default::default(),
-                provider: Arc::new(CleanupFault {
-                    log: log.clone(),
-                    sql_failure,
-                }),
-            },
-        )
-        .unwrap();
-    let registration = catalog.register(&fiber.context(), staged).unwrap();
-    let configuration = invocation::configuration(ToolMode::Direct);
-    let contribution = catalog
-        .snapshot::<Executor>(&Scope::Profile)
-        .entries
-        .remove("cleanup.fixture")
-        .unwrap();
+    let adapter = Arc::new(CleanupFault {
+        log: log.clone(),
+        sql_failure,
+    });
+    let mut configuration = invocation::configuration(ToolMode::Direct);
+    configuration.model = None;
     let running = engine
         .start_executor(
             ExecutorInput {
@@ -340,7 +325,7 @@ async fn unconfirmed_executor(sql_failure: bool) {
                     cwd: configuration.cwd.clone(),
                     instructions: None,
                 },
-                binding: Binding::new("session".into(), contribution).unwrap(),
+                binding: NativeBackend(adapter),
                 configuration,
                 request_fingerprint: Some("original cleanup request".into()),
                 source_messages: vec![],
@@ -356,7 +341,6 @@ async fn unconfirmed_executor(sql_failure: bool) {
         "terminal SQL failure cannot clear original executor cleanup failure"
     );
     engine.drain().await;
-    drop(registration);
 }
 #[tokio::test]
 async fn executor_cleanup_failure_is_independent_of_ordinary_terminal_verdict() {

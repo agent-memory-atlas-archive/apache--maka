@@ -92,7 +92,10 @@ fn packages(directory: &std::path::Path, poisoned: bool) -> Vec<String> {
 fn standard_launch_requires_a_terminal_and_help_and_operator_commands_remain_available() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("unused-root");
-    let help = Command::new(env!("CARGO_BIN_EXE_maka")).output().unwrap();
+    let help = Command::new(env!("CARGO_BIN_EXE_maka"))
+        .arg("--help")
+        .output()
+        .unwrap();
     assert!(help.status.success());
     assert!(String::from_utf8_lossy(&help.stdout).contains("application"));
     assert!(!help.stdout.contains(&0x1b));

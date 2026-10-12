@@ -244,7 +244,7 @@ async fn native_web_request_binding_tracks_settings_provider_capabilities_and_pr
         let capture = |protocol, capable| {
             let available = &available; let invocation = invocation.clone(); let cwd = f.workspace.to_str().unwrap().to_owned();
             async move { available.capture(Some(maka_runtime::tools::ModelToolContext { model: "fixture-model".into(), provider_tools: protocol,
-                capabilities: maka_runtime::configuration::ModelCapabilities { web_search: Some(capable), ..Default::default() } }), invocation, cwd, CancellationToken::new()).await.unwrap().0.all() }
+                capabilities: maka_runtime::configuration::ModelCapabilities { web_search: Some(capable), ..Default::default() } }), invocation, cwd, CancellationToken::new()).await.unwrap().all() }
         };
         save(&f, Value::Null, true).await;
         for (protocol, expected) in [(maka_runtime::tools::ProviderToolProtocol::OpenaiResponses, "openai.web_search"), (maka_runtime::tools::ProviderToolProtocol::AnthropicMessages, "anthropic.web_search_20250305")] {

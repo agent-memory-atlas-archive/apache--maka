@@ -654,8 +654,9 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
 
 #[tokio::test]
 async fn oversized_tool_metadata_returns_accepted_window_without_consuming_its_boundary() {
-    use maka_plugins::{composition::Scope, storage::Namespace};
+    use maka_plugins::storage::Namespace;
     use maka_runtime::import::{Content, Record, Source};
+    use maka_runtime::scope::Scope;
     let temp = tempfile::tempdir().unwrap();
     let log = EventLog::open(&temp.path().join("tool-budget.sqlite"))
         .await
@@ -765,8 +766,9 @@ async fn oversized_tool_metadata_returns_accepted_window_without_consuming_its_b
 #[tokio::test]
 async fn bounded_history_windows_cover_sparse_rows_both_directions_and_validate_real_positions() {
     use maka_plugins::session::history::Cursor;
-    use maka_plugins::{composition::Scope, storage::Namespace};
+    use maka_plugins::storage::Namespace;
     use maka_runtime::import::{Content, Record, Source};
+    use maka_runtime::scope::Scope;
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("windows.sqlite");
     let log = EventLog::open(&path).await.unwrap();
@@ -1414,11 +1416,11 @@ async fn message_material_labels_and_time_survive_exact_paging_and_text_cache_up
 #[tokio::test]
 async fn thinking_windows_preserve_field_order_bytes_and_explicit_body_only_reads() {
     use maka_plugins::{
-        composition::Scope,
         session::history::{Cursor, HistoryField},
         storage::Namespace,
     };
     use maka_runtime::import::{Content, Record, Source};
+    use maka_runtime::scope::Scope;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("thinking.sqlite");
     let log = EventLog::open(&path).await.unwrap();

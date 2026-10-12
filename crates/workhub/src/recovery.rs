@@ -40,10 +40,10 @@ pub struct Failure {
     pub message: String,
     pub retrying: bool,
 }
-impl crate::plugin::Manager {
+impl crate::Manager {
     /// Replays frozen decisions, never repeats candidate selection. Revoked consent
     /// pauses the decision; explicitly remembering a new grant may wake it again.
-    pub(super) async fn recover_decisions(&self) -> Result<Report, Error> {
+    pub async fn recover_decisions(&self) -> Result<Report, Error> {
         let mut report = Report::default();
         for work in self.assignments.repository.pending().await? {
             let (id, result) = match work {

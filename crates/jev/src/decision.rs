@@ -18,15 +18,12 @@
  */
 
 use crate::settings::{Repository, Secrets, Settings};
-use futures_util::future::BoxFuture;
-use maka_plugins::{call, http, preferences::Preferences, services::method};
+use maka_plugins::{call, http, preferences::Preferences};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
-/// Consumers inject this Service and forward their admitted scope.
-pub const SERVICE: &str = "maka.jev.evaluate";
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "JevEvaluation")]
@@ -271,36 +268,6 @@ impl Jev {
         result
     }
 }
-impl method::Method<Evaluation, EvaluationResult> for Jev {
-    fn call(
-        &self,
-        input: Evaluation,
-        context: method::Context,
-    ) -> BoxFuture<'_, Result<EvaluationResult, method::Error>> {
-        Box::pin(async move {
-            let scope = context.invocation.ok_or_else(|| {
-                method::Error::Invalid("Jev requires an admitted caller scope".into())
-            })?;
-            let evaluation = self.evaluate(&scope, input);
-            tokio::pin!(evaluation);
-            let result = tokio::select! {
-                biased;
-                _ = context.cancellation.cancelled() => {
-                    scope.cancellation.cancel();
-                    evaluation.await
-                },
-                result = &mut evaluation => result,
-            };
-            result.map_err(|e| {
-                if e.outcome_unknown() {
-                    method::Error::OutcomeUnknown(e.to_string())
-                } else {
-                    method::Error::Failed(e.to_string())
-                }
-            })
-        })
-    }
-}
 fn network(e: http::Error) -> Error {
     match e {
         http::Error::Denied => Error::Denied,
@@ -382,10 +349,7 @@ mod tests {
     use super::*;
     use crate::settings::{Repository, Settings};
     use futures_util::future::BoxFuture;
-    use maka_plugins::{
-        call, composition::Scope, credentials, fiber::Fiber, http, preferences, services::Services,
-        storage,
-    };
+    use maka_plugins::{call, credentials, http, preferences, storage};
     use serde_json::{Value, json};
     use std::{
         collections::VecDeque,
@@ -561,41 +525,15 @@ mod tests {
         )
     }
     #[tokio::test]
-    async fn callers_share_typed_and_json_service_and_retirement_rejects_old_handle() {
+    async fn evaluation_preserves_headers_usage_and_child_scope_cleanup() {
         let (jev, t, _) = backend();
-        let fiber = Fiber::new("maka.jev", "maka.jev", Scope::Profile).unwrap();
-        fiber.begin_loading().unwrap();
-        fiber.ready().unwrap();
-        fiber.publish().unwrap();
-        let services = Services::default().view();
-        let registration = services
-            .register_method(&fiber.context(), SERVICE, Arc::new(jev))
-            .unwrap();
-        let handle = services.method(SERVICE).unwrap().unwrap();
-        assert!(
-            handle
-                .call::<_, EvaluationResult>(input(), None, CancellationToken::new())
-                .await
-                .is_err()
-        );
-        assert!(t.calls.lock().unwrap().is_empty());
         let parent = scope().await;
         let body = reply(&t, 200, answer());
-        let output: EvaluationResult = handle
-            .call(input(), Some(parent.clone()), CancellationToken::new())
-            .await
-            .unwrap();
+        let output = jev.evaluate(&parent, input()).await.unwrap();
         assert_eq!(output.usage.input_tokens, 15);
         assert_eq!(body.closes.load(Ordering::SeqCst), 1);
         reply(&t, 200, answer());
-        let wire: Value = handle
-            .call(
-                serde_json::to_value(input()).unwrap(),
-                Some(parent.clone()),
-                CancellationToken::new(),
-            )
-            .await
-            .unwrap();
+        let wire = serde_json::to_value(jev.evaluate(&parent, input()).await.unwrap()).unwrap();
         assert_eq!(wire["answers"]["done"]["noul"], 0.8);
         {
             let calls = t.calls.lock().unwrap();
@@ -620,17 +558,6 @@ mod tests {
             assert!(calls[0].0.cancellation.is_cancelled());
         }
         assert!(!parent.cancellation.is_cancelled());
-        drop(registration);
-        assert!(matches!(
-            handle
-                .call::<_, EvaluationResult>(
-                    input(),
-                    Some(parent.clone()),
-                    CancellationToken::new()
-                )
-                .await,
-            Err(maka_plugins::services::method::Error::Retired)
-        ));
         parent.finish().await.unwrap();
     }
     #[tokio::test]
@@ -675,25 +602,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn service_cancellation_and_timeout_preserve_uncertain_post_outcomes() {
-        use maka_plugins::services::method::{Context, Error as ServiceError, Method};
+    async fn cancellation_and_timeout_preserve_uncertain_post_outcomes() {
         let (jev, transport, _) = backend();
         let parent = scope().await;
-        let cancel = CancellationToken::new();
-        let request = jev.call(
-            input(),
-            Context {
-                configuration: vec![],
-                cancellation: cancel.clone(),
-                invocation: Some(parent.clone()),
-            },
-        );
+        let request = jev.evaluate(&parent, input());
         let cancellation = async {
             transport.started.notified().await;
-            cancel.cancel();
+            parent.cancellation.cancel();
         };
         let (result, ()) = tokio::join!(request, cancellation);
-        assert!(matches!(result, Err(ServiceError::OutcomeUnknown(_))));
+        assert!(result.unwrap_err().outcome_unknown());
         assert!(
             transport.calls.lock().unwrap()[0]
                 .0
@@ -702,17 +620,12 @@ mod tests {
         );
         parent.finish().await.unwrap();
         let parent = scope().await;
-        let result = jev
-            .call(
-                input(),
-                Context {
-                    configuration: vec![],
-                    cancellation: CancellationToken::new(),
-                    invocation: Some(parent.clone()),
-                },
-            )
-            .await;
-        assert!(matches!(result, Err(ServiceError::OutcomeUnknown(_))));
+        assert!(
+            jev.evaluate(&parent, input())
+                .await
+                .unwrap_err()
+                .outcome_unknown()
+        );
         parent.finish().await.unwrap();
     }
 

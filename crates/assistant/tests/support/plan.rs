@@ -21,11 +21,11 @@ use futures_util::future::BoxFuture;
 use maka_assistant::plan::{Artifact, Command, Request, Snapshot, Step};
 use maka_event_log::EventLog;
 use maka_plugins::{
-    composition::Scope,
     execution::Receipt,
     storage::{Mutation, Namespace, Page, Record, Scan, Store, StoreError},
 };
 use maka_runtime::event::Invocation;
+use maka_runtime::scope::Scope;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},

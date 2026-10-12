@@ -21,7 +21,6 @@
 use crate::Agent;
 use maka_plugins::{
     call::Scope,
-    host::Services,
     http,
     storage::{Data, Directory, Mutation, Store, StoreError},
 };
@@ -162,7 +161,8 @@ impl Control {
 /// Install or verify the immutable current-platform release in plugin private
 /// storage. The caller owns admission and saving the returned Agent configuration.
 pub async fn antigravity(
-    host: &Services,
+    storage: &dyn Store,
+    http: &dyn http::Client,
     data: &Directory,
     call: Scope,
     cancellation: &CancellationToken,
@@ -176,7 +176,7 @@ pub async fn antigravity(
     let key = format!("install/{}", release.destination());
     // Private files are writable by the external process. Only Host KV may
     // anchor executable identity; cache-side metadata cannot confer trust.
-    let record = host.storage.read(key.clone()).await?;
+    let record = storage.read(key.clone()).await?;
     let anchor = record
         .as_ref()
         .and_then(|row| row.data.value())
@@ -210,22 +210,14 @@ pub async fn antigravity(
     }
     .await;
     let result = match result {
-        Ok(()) => install(host, data, call, &release, &staging, &control).await,
+        Ok(()) => install(http, data, call, &release, &staging, &control).await,
         Err(error) => Err(error),
     };
     let result = match result {
         // Once files have been published, finish the accepted KV commit even
         // when caller cancellation arrives. A crash before it causes a fresh
         // official download on retry, never adoption of an unanchored cache.
-        Ok(receipt) => {
-            save_receipt(
-                host.storage.as_ref(),
-                key,
-                record.map(|row| row.revision),
-                receipt,
-            )
-            .await
-        }
+        Ok(receipt) => save_receipt(storage, key, record.map(|row| row.revision), receipt).await,
         Err(error) => Err(error),
     };
     // Only this attempt's UUID directory is removed. No concurrent install's
@@ -250,7 +242,7 @@ pub async fn antigravity(
 }
 
 async fn install(
-    host: &Services,
+    http: &dyn http::Client,
     data: &Directory,
     call: Scope,
     release: &Release,
@@ -258,7 +250,7 @@ async fn install(
     control: &Control,
 ) -> Result<archive::Receipt, Error> {
     let response = control
-        .wait(host.http.request(
+        .wait(http.request(
             call,
             http::Request {
                 url: release.url.clone(),

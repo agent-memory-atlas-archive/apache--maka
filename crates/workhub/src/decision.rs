@@ -107,8 +107,8 @@ pub(super) struct Record {
     resolved: Resolved,
 }
 
-impl super::plugin::Manager {
-    pub(super) async fn configure_creation(
+impl crate::Manager {
+    pub async fn configure_creation(
         &self,
         creation: Creation,
         revision: Option<u64>,
@@ -127,7 +127,7 @@ impl super::plugin::Manager {
             .await
     }
 
-    pub(super) async fn candidates(&self) -> Result<crate::candidates::Candidates, Error> {
+    pub async fn candidates(&self) -> Result<crate::candidates::Candidates, Error> {
         let coordinator = self
             .coordinator
             .session_id()
@@ -143,7 +143,7 @@ impl super::plugin::Manager {
         Ok(result)
     }
 
-    pub(super) async fn decide(
+    pub async fn decide(
         &self,
         operation: String,
         source: Invocation,

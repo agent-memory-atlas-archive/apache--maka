@@ -20,7 +20,6 @@
 //! Validated tool contributions and immutable request catalogues.
 pub mod availability;
 mod catalog;
-pub mod plugins;
 pub mod request;
 pub use catalog::*;
 pub use maka_runtime::tools::{

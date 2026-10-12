@@ -19,8 +19,9 @@
 
 use super::*;
 use maka_event_log::sessions::PluginSession;
-use maka_plugins::{composition::Scope as StorageScope, storage::Namespace};
+use maka_plugins::storage::Namespace;
 use maka_runtime::import::{Content, Record, Source};
+use maka_runtime::scope::Scope as StorageScope;
 
 #[tokio::test]
 async fn history_search_preserves_empty_batches_and_exact_cursors_with_original_authority() {

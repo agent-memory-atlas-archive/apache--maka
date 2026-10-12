@@ -98,21 +98,9 @@ impl Availability {
         invocation: maka_runtime::event::Invocation,
         cwd: String,
         cancellation: tokio_util::sync::CancellationToken,
-    ) -> Result<
-        (
-            Self,
-            Option<maka_plugins::contributions::Captured>,
-            maka_plugins::prompt::Resolved,
-        ),
-        ToolError,
-    > {
-        let captured = self.catalog.capture_plugins();
-        let mut catalog = match &captured {
-            Some(captured) => self.catalog.resolve_captured(captured),
-            None => Ok(self.catalog.clone()),
-        }
-        .map_err(|error| ToolError::Failed(error.to_string()))?;
-        let request = crate::plugins::BindingRequest {
+    ) -> Result<Self, ToolError> {
+        let mut catalog = self.catalog.clone();
+        let request = crate::request::BindingRequest {
             behavior: self.behavior.clone(),
             model,
             invocation,
@@ -120,28 +108,19 @@ impl Availability {
             tools: catalog.names().into_iter().collect(),
             cancellation,
         };
-        catalog.bind_native_request(request.clone()).await?;
-        let context = if let Some(captured) = &captured {
-            catalog.bind_request(captured, request).await?
-        } else {
-            Default::default()
-        };
+        catalog.bind_native_request(request).await?;
         // Only the complete, successfully bound catalog is authoritative here.
-        // Base and nested-only views would erase live plugin/DirectOnly names.
+        // Base and nested-only views would erase live DirectOnly names.
         self.loaded
             .0
             .lock()
             .unwrap()
             .retain(|name| catalog.contains(name));
-        Ok((
-            Self {
-                catalog,
-                behavior: self.behavior.clone(),
-                loaded: self.loaded.clone(),
-            },
-            captured,
-            context,
-        ))
+        Ok(Self {
+            catalog,
+            behavior: self.behavior.clone(),
+            loaded: self.loaded.clone(),
+        })
     }
 
     pub fn new(catalog: ToolCatalog, loaded: LoadedTools) -> Self {

@@ -19,7 +19,8 @@
 
 use super::validate_id;
 use crate::{EventLog, StoreError};
-use maka_plugins::{composition::Scope, storage::Namespace};
+use maka_plugins::storage::Namespace;
+use maka_runtime::scope::Scope;
 use sqlx::{Row, SqliteConnection};
 
 /// Host-bound creation identity, not a caller-provided authorization credential.

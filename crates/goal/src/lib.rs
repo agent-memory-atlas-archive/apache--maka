@@ -17,6 +17,5 @@
  * under the License.
  */
 
-mod goal;
-mod owner;
-pub mod plugin;
+pub mod goal;
+pub mod owner;

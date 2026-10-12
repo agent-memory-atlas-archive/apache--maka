@@ -17,7 +17,8 @@
  * under the License.
  */
 
-use crate::{Error, composition::Scope, identifier};
+use crate::{Error, identifier};
+use maka_runtime::scope::Scope;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

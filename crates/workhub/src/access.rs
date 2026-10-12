@@ -71,7 +71,7 @@ impl Access {
         Ok(self.executions.restore(self.id(target).await?).await?)
     }
 
-    pub(super) async fn remembered(&self, target: &Target) -> Result<Option<Id>, Error> {
+    pub async fn remembered(&self, target: &Target) -> Result<Option<Id>, Error> {
         Ok(self.repository.read(&key(target)?).await?.map(|(_, id)| id))
     }
 

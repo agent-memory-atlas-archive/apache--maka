@@ -376,8 +376,9 @@ async fn copied_image_ownership_survives_transfer_without_importing_parent_catal
 
 #[tokio::test]
 async fn a_copied_frozen_upload_exports_its_current_consumption_without_source_history() {
-    use maka_plugins::{composition::Scope, storage::Namespace};
+    use maka_plugins::storage::Namespace;
     use maka_runtime::attachment::{AttachmentKind, AttachmentRef};
+    use maka_runtime::scope::Scope;
     let dir = tempfile::tempdir().unwrap();
     let source = EventLog::open(&dir.path().join("source.sqlite"))
         .await

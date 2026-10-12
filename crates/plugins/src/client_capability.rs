@@ -20,39 +20,13 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-pub trait Clients: Send + Sync {
-    /// User/Background calls need an explicit Notifications grant. No delivery
-    /// retry is implicit: an uncertain acknowledgement is a domain decision.
-    /// Cancellation withdraws an unadmitted offer; an admitted delivery settles.
-    fn notify(
-        &self,
-        call: crate::call::Scope,
-        input: Notification,
-    ) -> futures_util::future::BoxFuture<'_, Result<(), maka_runtime::tools::ToolError>>;
-    fn tools(
-        &self,
-        call: crate::call::Scope,
-    ) -> futures_util::future::BoxFuture<
-        '_,
-        Result<Vec<maka_runtime::tools::ToolDefinition>, maka_runtime::tools::ToolError>,
-    >;
-    fn call(
-        &self,
-        call: crate::call::Scope,
-        input: Call,
-    ) -> futures_util::future::BoxFuture<'_, Result<Value, maka_runtime::tools::ToolError>>;
-}
-
-/// A tool selected from the call scope's frozen Client Capability catalog.
+/// Durable input evidence for an admitted client tool effect.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Call {
     pub name: String,
     pub input: Map<String, Value>,
 }
-
-pub const NOTIFICATION_SERVICE: &str = "maka_notifications";
-pub const NOTIFICATION_VERSION: &str = "1";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

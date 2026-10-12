@@ -48,9 +48,7 @@ pub(crate) struct RegisteredTool {
 pub struct ToolCatalog {
     pub(crate) entries: Arc<BTreeMap<String, Arc<RegisteredTool>>>,
     pub(super) discovery: bool,
-    pub(crate) plugins: Option<crate::plugins::Source>,
     pub(crate) request_bindings: Arc<Vec<crate::request::Group>>,
-    pub(crate) workspace: Option<maka_plugins::filesystem::ReadRoot>,
 }
 
 impl ToolCatalog {
@@ -120,8 +118,6 @@ impl ToolCatalog {
         Ok(Self {
             entries: Arc::new(entries),
             discovery: false,
-            plugins: None,
-            workspace: None,
             request_bindings: Arc::default(),
         })
     }
@@ -130,15 +126,6 @@ impl ToolCatalog {
     pub fn with_discovery(mut self) -> Self {
         self.discovery = true;
         self
-    }
-
-    pub fn with_workspace(mut self, workspace: maka_plugins::filesystem::ReadRoot) -> Self {
-        self.workspace = Some(workspace);
-        self
-    }
-
-    pub fn workspace(&self) -> Option<&maka_plugins::filesystem::ReadRoot> {
-        self.workspace.as_ref()
     }
 
     pub(super) fn select(&self, keep: impl Fn(&str) -> bool) -> Self {
@@ -151,8 +138,6 @@ impl ToolCatalog {
                     .collect(),
             ),
             discovery: self.discovery,
-            plugins: self.plugins.clone(),
-            workspace: self.workspace.clone(),
             request_bindings: self.request_bindings.clone(),
         }
     }
@@ -178,8 +163,6 @@ impl ToolCatalog {
                     .collect(),
             ),
             discovery: self.discovery,
-            plugins: self.plugins.clone(),
-            workspace: self.workspace.clone(),
             request_bindings: self.request_bindings.clone(),
         }
     }

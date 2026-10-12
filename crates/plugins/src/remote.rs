@@ -21,32 +21,12 @@
 //! an Agent invocation or inherits its permissions.
 pub mod executor_session;
 pub mod projects;
-use crate::fiber::Identity;
 use futures_util::future::BoxFuture;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ClientIdentity {
-    pub entry_id: String,
-    pub extension_id: String,
-    pub activation: String,
-    pub content_digest: String,
-    pub client_digest: String,
-}
-
-/// A registration identity, not a name that can silently resolve to new code.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Target {
-    pub entry_id: String,
-    pub activation: String,
-    pub registration: Uuid,
-}
 
 #[derive(Clone)]
 pub struct Caller {
@@ -140,43 +120,7 @@ pub enum Error {
 }
 
 pub trait Method: Send + Sync {
-    /// An isolated terminal presenter is created once per Remote document.
-    /// Opening must only reserve ownership and queue initialization, never
-    /// execute UI code or wait for it. Ordinary Rust methods need no factory.
-    fn page_factory(&self) -> Option<Arc<dyn crate::terminal_ui::presenter::Factory>> {
-        None
-    }
     fn call(&self, input: Value, caller: Caller) -> BoxFuture<'static, Result<Value, Error>>;
-}
-pub trait StreamProvider: Send + Sync {
-    fn open(
-        &self,
-        input: Value,
-        caller: Caller,
-    ) -> BoxFuture<'static, Result<Box<dyn Stream>, Error>>;
-}
-pub trait Stream: Send + Sync {
-    /// One pending read is enforced by the Host. EOF does not replace close.
-    fn next(&self) -> BoxFuture<'_, Result<Option<Value>, Error>>;
-    /// Must signal pending reads and resources synchronously, without waiting.
-    fn cancel(&self);
-    fn close(self: Box<Self>) -> BoxFuture<'static, Result<(), Error>>;
-}
-
-pub enum Handler {
-    Method(Arc<dyn Method>),
-    Stream(Arc<dyn StreamProvider>),
-}
-
-pub struct Endpoint {
-    pub access: Access,
-    /// Typed source metadata; it does not grant membership in any terminal app.
-    pub observation: Option<crate::terminal_ui::presenter::ObservationRole>,
-    /// Present when a plugin frontend may bind this endpoint by package bytes.
-    pub content_digest: Option<String>,
-    pub handler: Handler,
-    registration: Uuid,
-    terminal_view: Option<crate::terminal_ui::Descriptor>,
 }
 #[derive(Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -187,69 +131,6 @@ pub enum Access {
     /// The Host must additionally authorize caller-supplied filesystem paths.
     HostPaths,
 }
-impl Endpoint {
-    pub fn new(content_digest: String, handler: Handler) -> Self {
-        Self {
-            access: Access::Granted,
-            observation: None,
-            content_digest: Some(content_digest),
-            handler,
-            registration: Uuid::new_v4(),
-            terminal_view: None,
-        }
-    }
-    /// An application/CLI endpoint does not require a plugin frontend bundle.
-    pub fn standalone(handler: Handler) -> Self {
-        Self {
-            access: Access::Granted,
-            observation: None,
-            content_digest: None,
-            handler,
-            registration: Uuid::new_v4(),
-            terminal_view: None,
-        }
-    }
-    pub(crate) fn with_registration(mut self, registration: Uuid) -> Self {
-        self.registration = registration;
-        self
-    }
-    pub fn requiring_host_paths(mut self) -> Self {
-        self.access = Access::HostPaths;
-        self
-    }
-    pub fn with_terminal_view(
-        mut self,
-        descriptor: crate::terminal_ui::Descriptor,
-    ) -> Result<Self, crate::Error> {
-        descriptor.validate()?;
-        if !matches!(self.handler, Handler::Method(_)) {
-            return Err(crate::Error::Invalid(
-                "Terminal views require a Remote method".into(),
-            ));
-        }
-        self.terminal_view = Some(descriptor);
-        Ok(self)
-    }
-    pub fn terminal_view(&self) -> Option<&crate::terminal_ui::Descriptor> {
-        matches!(self.handler, Handler::Method(_))
-            .then_some(self.terminal_view.as_ref())
-            .flatten()
-    }
-    pub fn target(&self, owner: &Identity) -> Target {
-        Target {
-            entry_id: owner.entry_id.clone(),
-            activation: owner.activation.clone(),
-            registration: self.registration,
-        }
-    }
-}
-
-pub fn key(package_id: &str, method: &str) -> Result<String, crate::Error> {
-    crate::identifier(package_id)?;
-    crate::identifier(method)?;
-    Ok(format!("{package_id}/{method}"))
-}
-
 pub fn validate_payload(value: &Value) -> Result<(), Error> {
     let bytes = serde_json::to_vec(value).map_err(|error| Error::Invalid(error.to_string()))?;
     if bytes.len() > 64 * 1024 {

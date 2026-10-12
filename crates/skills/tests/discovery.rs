@@ -29,26 +29,25 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
-fn owner() -> maka_plugins::fiber::Fiber {
-    let owner = maka_plugins::fiber::Fiber::new(
-        "example.discovery",
-        "reader",
-        maka_plugins::composition::Scope::Profile,
-    )
-    .unwrap();
-    owner.begin_loading().unwrap();
-    owner.ready().unwrap();
-    owner.publish().unwrap();
-    owner
+async fn owner() -> maka_plugins::call::Scope {
+    maka_plugins::call::Issuer::default()
+        .admit(
+            maka_plugins::call::Identity::Remote {
+                request_id: uuid::Uuid::new_v4(),
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap()
 }
 async fn view(
-    owner: &maka_plugins::fiber::Fiber,
+    owner: &maka_plugins::call::Scope,
     path: &Path,
 ) -> maka_plugins::filesystem::ReadDirectory {
     maka_plugins::filesystem::ReadRoot::open(path)
         .await
         .unwrap()
-        .bind(owner.context(), CancellationToken::new())
+        .bind_scope(owner)
 }
 
 fn skill(path: &Path, name: &str, requirements: &str, body: &str) -> Vec<u8> {
@@ -104,7 +103,7 @@ async fn snapshot_precedence_preferences_and_capabilities_preserve_selected_iden
         "required-tools: 42\r\n",
         "invalid",
     );
-    let owner = owner();
+    let owner = owner().await;
     let project_files = view(&owner, &project).await;
     let workspace_files = view(&owner, &workspace).await;
     let home_files = view(&owner, &home).await;
@@ -283,10 +282,10 @@ async fn snapshot_precedence_preferences_and_capabilities_preserve_selected_iden
         authoring
             .files
             .iter()
-            .find(|(path, _)| *path == "references/sdk/host.ts")
+            .find(|(path, _)| *path == "references/sdk/index.ts")
             .unwrap()
             .1,
-        include_bytes!("../../../packages/plugin-sdk/src/host.ts")
+        include_bytes!("../../../packages/plugin-sdk/src/index.ts")
     );
     assert!(
         authoring
@@ -445,7 +444,7 @@ async fn discovery_reads_only_contained_regular_files_and_reports_source_failure
         &root.join("skills/EmptyCase"),
         &root.join("skills/empty-alias"),
     );
-    let owner = owner();
+    let owner = owner().await;
     let root_files = view(&owner, &root).await;
     let governance =
         maka_skills::governance_catalog(&root_files, &root_files, None, &CancellationToken::new())
@@ -581,7 +580,7 @@ async fn linked_resources_freeze_with_the_skill_and_preserve_paging_and_containm
     fs::write(directory.join(".maka/private.txt"), "private").unwrap();
     #[cfg(unix)]
     std::os::unix::fs::symlink(temporary.path(), directory.join("references/escape")).unwrap();
-    let owner = owner();
+    let owner = owner().await;
     let files = view(&owner, &project).await;
     let published_files = view(&owner, &published).await;
     let sources = Source::standard(Some(&files), &published_files, None);
@@ -675,7 +674,7 @@ async fn linked_resources_freeze_with_the_skill_and_preserve_paging_and_containm
         .load("authoring")
         .is_err()
     );
-    owner.retire();
+    owner.finish().await.unwrap();
     assert!(
         loaded
             .skill

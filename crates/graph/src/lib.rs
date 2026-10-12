@@ -23,7 +23,6 @@ pub mod control;
 pub mod coordinator;
 pub mod decision;
 pub mod owner;
-pub mod plugin;
 pub mod projection;
 pub mod repository;
 pub mod schedule;

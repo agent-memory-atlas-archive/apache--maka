@@ -122,7 +122,7 @@ impl Transport for Script {
         Box::pin(async { panic!("unexpected WebSocket") })
     }
 }
-fn input(binding: &Binding, base: &str) -> Discovery {
+fn input(binding: &Definition, base: &str) -> Discovery {
     let mut connection = request(binding, "future", ModelOverride::default()).connection;
     connection.configuration = json!({"baseUrl":base});
     Discovery {
@@ -137,7 +137,6 @@ fn input(binding: &Binding, base: &str) -> Discovery {
 
 #[tokio::test]
 async fn public_binding_uses_declared_paths_filters_envelopes_and_model_protocols() {
-    let (catalog, _owner, _registration) = registry();
     for (provider, suffix, body, expected_path, expected_id) in [
         (
             "google",
@@ -196,7 +195,7 @@ async fn public_binding_uses_declared_paths_filters_envelopes_and_model_protocol
             "anthropic/claude-future",
         ),
     ] {
-        let binding = binding(&catalog, provider);
+        let binding = binding(provider);
         let script = Script::new([body]);
         let mut discovery = input(&binding, &format!("https://relay.test{suffix}"));
         if provider == "vercel" {
@@ -229,8 +228,7 @@ async fn public_binding_uses_declared_paths_filters_envelopes_and_model_protocol
 
 #[tokio::test]
 async fn paginated_inventories_preserve_metadata_and_reject_cycles_or_incomplete_results() {
-    let (catalog, _owner, _registration) = registry();
-    let cohere = binding(&catalog, "cohere");
+    let cohere = binding("cohere");
     let script = Script::new([
         json!({"models":[{"name":"old","is_deprecated":true},{"name":"embed","endpoints":["embed"]}],"next_page_token":"next/+"}),
         json!({"models":[{"name":"future","endpoints":["chat"],"context_length":8192}]}),
@@ -269,7 +267,7 @@ async fn paginated_inventories_preserve_metadata_and_reject_cycles_or_incomplete
         "raw page limits apply even when deduplication would shrink the result"
     );
 
-    let cloudflare = binding(&catalog, "cloudflare-workers-ai");
+    let cloudflare = binding("cloudflare-workers-ai");
     let script = Script::new([
         json!({"success":true,"result":[{"name":"@cf/future"}]}),
         json!({"success":true,"result":[]}),
@@ -297,7 +295,7 @@ async fn paginated_inventories_preserve_metadata_and_reject_cycles_or_incomplete
         Err(Error::Invalid(_))
     ));
 
-    let fireworks = binding(&catalog, "fireworks-ai");
+    let fireworks = binding("fireworks-ai");
     let script = Script::new([
         json!({"accounts":[{"name":"accounts/owned"},{"name":"accounts/owned"}]}),
         json!({"models":[{"name":"accounts/owned/models/future","contextLength":32768,"supportsTools":true}]}),
@@ -322,8 +320,7 @@ async fn paginated_inventories_preserve_metadata_and_reject_cycles_or_incomplete
 
 #[tokio::test]
 async fn discovery_cancellation_and_failures_release_the_body_without_publishing_partial_models() {
-    let (catalog, _owner, _registration) = registry();
-    let binding = binding(&catalog, "openai");
+    let binding = binding("openai");
     for (status, size, stall) in [
         (401, 0, true),
         (200, 4 * 1024 * 1024 + 1, false),

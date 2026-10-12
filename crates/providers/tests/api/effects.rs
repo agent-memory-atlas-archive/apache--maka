@@ -89,7 +89,6 @@ fn credential() -> Option<Credential> {
 
 #[tokio::test]
 async fn verification_keeps_protocol_fields_and_rejects_conflicting_customization_before_io() {
-    let (catalog, _owner, _registration) = registry();
     for (name, protocol, suffix, path) in [
         (
             "openai-compatible",
@@ -110,7 +109,7 @@ async fn verification_keeps_protocol_fields_and_rejects_conflicting_customizatio
             "/v1/messages",
         ),
     ] {
-        let binding = binding(&catalog, name);
+        let binding = binding(name);
         let mut input = request(
             &binding,
             "future",
@@ -185,7 +184,6 @@ async fn verification_keeps_protocol_fields_and_rejects_conflicting_customizatio
 
 #[tokio::test]
 async fn discovery_survives_persistence_and_verification_does_not_require_streaming() {
-    let (catalog, _owner, _registration) = registry();
     let transport = Arc::new(Exchange::default());
     let context = Context {
         transport: transport.clone(),
@@ -193,7 +191,7 @@ async fn discovery_survives_persistence_and_verification_does_not_require_stream
         interaction: None,
     };
     for (name, id) in [("openai", "gpt-5.2"), ("anthropic", "claude-sonnet-future")] {
-        let binding = binding(&catalog, name);
+        let binding = binding(name);
         let mut input = request(&binding, id, ModelOverride::default());
         let inventory = binding
             .discover(
@@ -245,7 +243,7 @@ async fn discovery_survives_persistence_and_verification_does_not_require_stream
             );
         }
     }
-    let anonymous = binding(&catalog, "localai");
+    let anonymous = binding("localai");
     let input = request(&anonymous, "custom", ModelOverride::default());
     anonymous
         .discover(
@@ -284,7 +282,7 @@ async fn discovery_survives_persistence_and_verification_does_not_require_stream
             );
         }
     }
-    let binding = binding(&catalog, "ollama-cloud");
+    let binding = binding("ollama-cloud");
     let input = request(&binding, "custom", ModelOverride::default());
     assert!(binding.prepare(input.clone()).await.is_err());
     binding

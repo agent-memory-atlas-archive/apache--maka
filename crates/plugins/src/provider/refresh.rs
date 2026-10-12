@@ -16,36 +16,30 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-use crate::{
-    Error,
-    fiber::{Context, Effect},
-};
 
-/// Revocation is synchronous; calls already admitted retain their Fiber lease.
-#[must_use]
-pub struct Registration {
-    owner: Context,
-    effect: Option<u64>,
+use super::Error;
+
+/// A single admitted refresh. It owns the provider instance until settlement.
+pub struct RefreshCall {
+    pub(super) implementation: std::sync::Arc<dyn super::Provider>,
+    pub(super) connection: super::Connection,
+    pub(super) credential: super::authentication::Credential,
 }
-impl Registration {
-    pub(crate) fn new(owner: &Context, effect: Effect) -> Result<Self, Error> {
-        let effect = owner.own_effect(effect).map_err(|effect| {
-            drop(effect);
-            Error::Retired
-        })?;
-        Ok(Self {
-            owner: owner.clone(),
-            effect: Some(effect),
-        })
-    }
-    pub(crate) fn retain(mut self) {
-        self.effect.take();
-    }
-}
-impl Drop for Registration {
-    fn drop(&mut self) {
-        if let Some(id) = self.effect.take() {
-            drop(self.owner.take_effect(id));
-        }
+
+impl RefreshCall {
+    pub async fn run(
+        self,
+        context: super::Context,
+    ) -> Result<super::authentication::Credential, Error> {
+        let Self {
+            implementation,
+            connection,
+            credential,
+        } = self;
+        let credential = implementation
+            .refresh(connection, credential, context)
+            .await?;
+        credential.validate().map_err(Error::Invalid)?;
+        Ok(credential)
     }
 }

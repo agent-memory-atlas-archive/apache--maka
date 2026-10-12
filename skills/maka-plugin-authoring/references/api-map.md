@@ -30,12 +30,10 @@ copied from this build's `packages/plugin-sdk/src/`; read them as source when ne
 | Exact public service/component contracts | `sdk/contracts.ts` |
 | Native configuration schemas | `sdk/configurations.ts` |
 
-The separate `sdk/host.ts` entry and its referenced registration APIs belong to the
-older Host SDK still used by legacy adapters. They are not the application entry ABI.
-For the current runtime use the root definitions above and `maka application schema`.
+Use the root definitions above and `maka application schema`.
 The schema command emits contracts/configurations plus declaration schemas from the
 same Rust types that validate actual runtime calls.
 
 A TypeScript type is useful during authoring; runtime Rust still validates JSON,
 resource slots, contract compatibility, budgets and permissions. Do not infer support
-for an undeclared method from a similarly named legacy interface.
+for an undeclared method.

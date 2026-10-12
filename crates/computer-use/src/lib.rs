@@ -32,7 +32,6 @@ mod identity;
 #[cfg(target_os = "macos")]
 mod macos;
 mod observation;
-pub mod plugin;
 pub mod protocol;
 mod session;
 
