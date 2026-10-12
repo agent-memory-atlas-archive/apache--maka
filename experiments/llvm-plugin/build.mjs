@@ -51,6 +51,7 @@ await run(wasmLd, [
   '--export=maka_plugin_free',
   '--export=maka_plugin_invoke',
   '--initial-memory=131072',
+  '--max-memory=67108864',
   '-o',
   wasm,
 ]);

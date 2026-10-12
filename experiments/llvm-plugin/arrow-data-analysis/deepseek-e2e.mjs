@@ -43,7 +43,7 @@ if (!apiKey) {
       function: {
         name: tool.name,
         description: tool.description,
-        parameters: tool.parameters,
+        parameters: tool.parameters.jsonSchema ?? tool.parameters,
       },
     };
     const first = await chat(baseUrl, apiKey, {

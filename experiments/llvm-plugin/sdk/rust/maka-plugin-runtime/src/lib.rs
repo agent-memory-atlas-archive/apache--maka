@@ -71,6 +71,11 @@ macro_rules! export_plugin {
         pub extern "C" fn maka_plugin_free(_ptr: u32, _size: u32) {}
 
         #[unsafe(no_mangle)]
+        pub extern "C" fn maka_plugin_reset() {
+            $crate::reset();
+        }
+
+        #[unsafe(no_mangle)]
         pub extern "C" fn maka_plugin_invoke(ptr: u32, len: u32) -> u64 {
             let input = unsafe { core::slice::from_raw_parts(ptr as *const u8, len as usize) };
             $crate::pack($invoke(input))
@@ -94,4 +99,10 @@ pub fn alloc(size: u32) -> u32 {
     };
     let base = core::ptr::addr_of!(HEAP) as usize as u32;
     base.saturating_add(offset)
+}
+
+/// Reclaim the bump arena after the host has consumed the invocation result.
+/// The host invokes this only after input and output buffers are no longer in use.
+pub fn reset() {
+    NEXT.store(0, Ordering::Relaxed);
 }

@@ -22,6 +22,9 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { MakaCompositionLoader } from '@maka/runtime/plugin-composition-loader';
+import { PluginToolService } from '@maka/runtime/plugin-tool-service';
+import { Context } from '@maka/runtime/plugin-kernel';
 import { WasmPluginRuntime, createWasmPluginPackage } from '../server/wasm-plugin-runtime.js';
 import { decodeExtensionPackageManifest } from '../server/extension-package-manifest.js';
 import { TrustedPluginPackageLoader } from '../server/plugin-package-loader.js';
@@ -42,7 +45,20 @@ test('loads the versioned Wasm tool ABI in an isolated worker', async () => {
         await runtime.invoke('echo', { value: 'hello' }, new AbortController().signal),
         { from: 'wasm' },
       );
-      assert.equal(createWasmPluginPackage(runtime).packageId, 'llvm-echo');
+      const pkg = createWasmPluginPackage(runtime);
+      assert.equal(pkg.packageId, 'llvm-echo');
+      const pluginRoot = new Context();
+      const tools = new PluginToolService(pluginRoot);
+      const composition = new MakaCompositionLoader({ root: pluginRoot });
+      await composition.install(pkg);
+      await composition.create('profile', { id: 'llvm-entry', packageId: pkg.packageId });
+      const tool = tools.resolve('model-session', []).tools[0];
+      assert.ok(tool);
+      assert.equal(tool.name, 'llvm_echo');
+      assert.deepEqual((tool.parameters as { readonly jsonSchema?: unknown }).jsonSchema, {
+        type: 'object',
+      });
+      await composition.remove('llvm-entry');
     } finally {
       await runtime.close();
     }
@@ -72,7 +88,44 @@ test('loads the versioned Wasm tool ABI in an isolated worker', async () => {
   }
 });
 
-function fixtureWasm(): Uint8Array {
+test('rejects an unbounded Wasm memory before starting the guest', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'maka-wasm-plugin-memory-'));
+  try {
+    const entry = join(root, 'plugin.wasm');
+    await writeFile(entry, fixtureWasm(false));
+    await assert.rejects(
+      () => WasmPluginRuntime.load(entry, 'llvm-echo'),
+      /maximum within its size limit/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('restarts the worker after an in-flight invocation is aborted', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'maka-wasm-plugin-abort-'));
+  try {
+    const entry = join(root, 'plugin.wasm');
+    await writeFile(entry, fixtureWasm(true, true));
+    const runtime = await WasmPluginRuntime.load(entry, 'llvm-echo');
+    try {
+      const controller = new AbortController();
+      const invocation = runtime.invoke('echo', { value: 'busy' }, controller.signal);
+      setTimeout(() => controller.abort(), 1);
+      await assert.rejects(invocation, /aborted/u);
+      assert.deepEqual(
+        await runtime.invoke('echo', { value: 'after-restart' }, new AbortController().signal),
+        { from: 'wasm' },
+      );
+    } finally {
+      await runtime.close();
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+function fixtureWasm(boundedMemory = true, busy = false): Uint8Array {
   const manifest =
     '{"abiVersion":1,"packageId":"llvm-echo","contributions":[{"id":"echo","kind":"tool","tool":{"name":"llvm_echo","description":"LLVM IR tool","parameters":{"type":"object"}}}]}';
   const result = '{"from":"wasm"}';
@@ -104,7 +157,7 @@ function fixtureWasm(): Uint8Array {
     ...funcType([0x7f, 0x7f], [0x7e]),
   ]);
   const functions = section(3, [...uleb(5), 0, 0, 2, 3, 4]);
-  const memory = section(5, [1, 0, 1]);
+  const memory = section(5, boundedMemory ? [1, 1, 1, 128, 8] : [1, 0, 1]);
   const exports = section(7, [
     ...uleb(6),
     ...name('memory'),
@@ -126,13 +179,39 @@ function fixtureWasm(): Uint8Array {
     0x00,
     4,
   ]);
+  const invoke = busy
+    ? body(
+        [
+          0x41,
+          ...sleb(100_000_000),
+          0x21,
+          2,
+          0x03,
+          0x40,
+          0x20,
+          2,
+          0x41,
+          1,
+          0x6b,
+          0x22,
+          2,
+          0x0d,
+          0,
+          0x0b,
+          0x42,
+          ...sleb(packedResult),
+          0x0b,
+        ],
+        [[1, 0x7f]],
+      )
+    : body([0x42, ...sleb(packedResult), 0x0b]);
   const code = section(10, [
     ...uleb(5),
     ...body([0x41, ...sleb(manifestPtr), 0x0b]),
     ...body([0x41, ...sleb(manifest.length), 0x0b]),
     ...body([0x41, ...sleb(4096), 0x0b]),
     ...body([0x0b]),
-    ...body([0x42, ...sleb(packedResult), 0x0b]),
+    ...invoke,
   ]);
   const data = section(11, [
     ...uleb(2),
@@ -157,8 +236,19 @@ function fixtureWasm(): Uint8Array {
   ]);
 }
 
-function body(instructions: number[]): number[] {
-  return [...uleb(instructions.length + 1), 0, ...instructions];
+function body(
+  instructions: number[],
+  locals: readonly (readonly [number, number])[] = [],
+): number[] {
+  const localDeclarations = [
+    ...uleb(locals.length),
+    ...locals.flatMap(([count, type]) => [...uleb(count), type]),
+  ];
+  return [
+    ...uleb(localDeclarations.length + instructions.length),
+    ...localDeclarations,
+    ...instructions,
+  ];
 }
 
 function dataSegment(pointer: number, value: string): number[] {

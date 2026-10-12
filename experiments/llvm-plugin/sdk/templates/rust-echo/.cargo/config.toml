@@ -22,6 +22,8 @@ rustflags = [
   "-C", "link-arg=--export=maka_plugin_manifest_len",
   "-C", "link-arg=--export=maka_plugin_alloc",
   "-C", "link-arg=--export=maka_plugin_free",
+  "-C", "link-arg=--export=maka_plugin_reset",
   "-C", "link-arg=--export=maka_plugin_invoke",
   "-C", "link-arg=--initial-memory=262144",
+  "-C", "link-arg=--max-memory=67108864",
 ]

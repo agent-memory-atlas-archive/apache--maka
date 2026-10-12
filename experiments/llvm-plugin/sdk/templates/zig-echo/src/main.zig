@@ -21,7 +21,7 @@ var heap: [64 * 1024]u8 = undefined;
 var next_heap: u32 = 0;
 
 export fn maka_plugin_manifest_ptr() u32 {
-    return @intCast(@intFromPtr(&manifest));
+    return @intCast(@intFromPtr(manifest.ptr));
 }
 
 export fn maka_plugin_manifest_len() u32 {
@@ -38,7 +38,11 @@ export fn maka_plugin_alloc(size: u32) u32 {
 
 export fn maka_plugin_free(_ptr: u32, _size: u32) void {}
 
+export fn maka_plugin_reset() void {
+    next_heap = 0;
+}
+
 export fn maka_plugin_invoke(_input_ptr: u32, _input_len: u32) u64 {
-    const ptr: u64 = @intCast(@intFromPtr(&result));
+    const ptr: u64 = @intCast(@intFromPtr(result.ptr));
     return (ptr << 32) | result.len;
 }

@@ -42,14 +42,23 @@ else await buildZig(template, output);
 console.log(`built ${join(output, 'plugin.wasm')}`);
 
 async function buildRust(templateRoot, outputRoot) {
-  await run('cargo', [
-    'build',
-    '--manifest-path',
-    join(templateRoot, 'Cargo.toml'),
-    '--target',
-    'wasm32-unknown-unknown',
-    '--release',
-  ]);
+  await run(
+    'cargo',
+    [
+      'build',
+      '--manifest-path',
+      join(templateRoot, 'Cargo.toml'),
+      '--target',
+      'wasm32-unknown-unknown',
+      '--release',
+    ],
+    {
+      env: {
+        ...process.env,
+        RUSTFLAGS: appendRustFlags(process.env.RUSTFLAGS),
+      },
+    },
+  );
   const cargoManifest = await readFile(join(templateRoot, 'Cargo.toml'), 'utf8');
   const packageName = cargoManifest.match(/^name\s*=\s*"([^"]+)"/m)?.[1];
   if (!packageName) throw new Error(`Cargo package name is missing in ${templateRoot}`);
@@ -57,6 +66,10 @@ async function buildRust(templateRoot, outputRoot) {
     join(templateRoot, 'target/wasm32-unknown-unknown/release', `${packageName}.wasm`),
     join(outputRoot, 'plugin.wasm'),
   );
+}
+
+function appendRustFlags(existing) {
+  return [existing, '-C', 'link-arg=--max-memory=67108864'].filter(Boolean).join(' ');
 }
 
 async function buildC(templateRoot, outputRoot) {
@@ -93,7 +106,9 @@ async function buildZig(templateRoot, outputRoot) {
     '--export=maka_plugin_manifest_len',
     '--export=maka_plugin_alloc',
     '--export=maka_plugin_free',
+    '--export=maka_plugin_reset',
     '--export=maka_plugin_invoke',
+    '-Wl,--max-memory=67108864',
     '-femit-bin=' + join(outputRoot, 'plugin.wasm'),
   ]);
 }
@@ -107,8 +122,10 @@ function linkerArguments(object, output) {
     '--export=maka_plugin_manifest_len',
     '--export=maka_plugin_alloc',
     '--export=maka_plugin_free',
+    '--export=maka_plugin_reset',
     '--export=maka_plugin_invoke',
     '--initial-memory=262144',
+    '--max-memory=67108864',
     '-o',
     output,
   ];

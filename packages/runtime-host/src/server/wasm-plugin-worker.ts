@@ -33,6 +33,7 @@ interface WasmExports {
   readonly maka_plugin_manifest_len: () => number;
   readonly maka_plugin_alloc: (size: number) => number;
   readonly maka_plugin_free: (ptr: number, size: number) => void;
+  readonly maka_plugin_reset?: () => void;
   readonly maka_plugin_invoke: (ptr: number, len: number) => bigint;
   readonly maka_plugin_init?: () => number;
 }
@@ -118,11 +119,12 @@ function invoke(wasm: WasmExports, input: string): unknown {
       throw new Error('Wasm plugin output size is invalid');
     }
     const response = JSON.parse(readUtf8(wasm.memory, outputPtr, outputLen)) as unknown;
-    checkMemory(wasm.memory);
     return response;
   } finally {
     wasm.maka_plugin_free(inputPtr, encoded.byteLength);
     if (outputPtr && outputLen) wasm.maka_plugin_free(outputPtr, outputLen);
+    wasm.maka_plugin_reset?.();
+    checkMemory(wasm.memory);
   }
 }
 

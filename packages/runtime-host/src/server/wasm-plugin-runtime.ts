@@ -19,6 +19,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { Worker } from 'node:worker_threads';
+import { jsonSchema } from 'ai';
 import type { Context } from '@maka/runtime/plugin-kernel';
 import type { PluginToolService } from '@maka/runtime/plugin-tool-service';
 import type { MakaPluginPackage, MakaPluginContribution } from '@maka/runtime/plugin-runtime';
@@ -26,9 +27,11 @@ import type { MakaTool } from '@maka/runtime/tool-runtime';
 
 export const WASM_PLUGIN_ABI = 'maka:plugin/runtime@1' as const;
 const MAX_WASM_BYTES = 8 * 1024 * 1024;
+const MAX_MEMORY_BYTES = 64 * 1024 * 1024;
 const INVOCATION_TIMEOUT_MS = 30_000;
 const INITIALIZATION_TIMEOUT_MS = 10_000;
 const WASM_MANIFEST_MAX_TOOLS = 64;
+const WASM_PAGE_BYTES = 64 * 1024;
 
 export interface WasmPluginToolManifest {
   readonly name: string;
@@ -63,20 +66,26 @@ interface PendingInvocation {
 }
 
 export class WasmPluginRuntime {
-  readonly #worker: Worker;
+  #worker: Worker;
+  readonly #wasmBytes: Uint8Array;
+  readonly #packageId: string;
   readonly #manifest: WasmPluginManifest;
   readonly #pending = new Map<number, PendingInvocation>();
   #nextId = 1;
   #closed = false;
+  #restart?: Promise<void>;
 
-  private constructor(worker: Worker, manifest: WasmPluginManifest) {
+  private constructor(
+    worker: Worker,
+    wasmBytes: Uint8Array,
+    packageId: string,
+    manifest: WasmPluginManifest,
+  ) {
     this.#worker = worker;
+    this.#wasmBytes = wasmBytes;
+    this.#packageId = packageId;
     this.#manifest = manifest;
-    worker.on('message', (message: WorkerResponse) => this.#onMessage(message));
-    worker.on('error', (error) => this.#fail(toError(error)));
-    worker.on('exit', (code) => {
-      if (code !== 0) this.#fail(new Error(`Wasm plugin worker exited with code ${code}`));
-    });
+    this.#attachWorker(worker);
   }
 
   static async load(entry: string, packageId: string): Promise<WasmPluginRuntime> {
@@ -84,19 +93,10 @@ export class WasmPluginRuntime {
     if (bytes.byteLength === 0 || bytes.byteLength > MAX_WASM_BYTES) {
       throw new Error('Wasm plugin entry exceeds its size limit');
     }
-    const worker = new Worker(new URL('./wasm-plugin-worker.js', import.meta.url), {
-      execArgv: process.execArgv.filter((argument) => !argument.startsWith('--input-type')),
-      workerData: { wasmBytes: new Uint8Array(bytes) },
-    });
-    try {
-      const manifest = await waitForManifest(worker);
-      const decoded = decodeWasmPluginManifest(manifest, packageId);
-      const runtime = new WasmPluginRuntime(worker, decoded);
-      return runtime;
-    } catch (error) {
-      await worker.terminate();
-      throw error;
-    }
+    validateWasmMemoryLimits(bytes);
+    const wasmBytes = new Uint8Array(bytes);
+    const { worker, manifest } = await startWasmWorker(wasmBytes, packageId);
+    return new WasmPluginRuntime(worker, wasmBytes, packageId, manifest);
   }
 
   get manifest(): WasmPluginManifest {
@@ -104,6 +104,7 @@ export class WasmPluginRuntime {
   }
 
   async invoke(toolId: string, input: unknown, signal: AbortSignal): Promise<unknown> {
+    await this.#restart;
     if (this.#closed) throw new Error('Wasm plugin runtime is closed');
     if (signal.aborted) throw new Error('Wasm plugin invocation was aborted');
     const encoded = JSON.stringify({ kind: 'tool', toolId, input });
@@ -113,11 +114,11 @@ export class WasmPluginRuntime {
     const id = this.#nextId++;
     return await new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.#fail(new Error('Wasm plugin invocation timed out'));
+        this.#recover(new Error('Wasm plugin invocation timed out'));
       }, INVOCATION_TIMEOUT_MS);
       const abort = (): void => {
         signal.removeEventListener('abort', abort);
-        this.#fail(new Error('Wasm plugin invocation was aborted'));
+        this.#recover(new Error('Wasm plugin invocation was aborted'));
       };
       const pending = {
         resolve,
@@ -148,6 +149,7 @@ export class WasmPluginRuntime {
     }
     this.#pending.clear();
     await this.#worker.terminate();
+    await this.#restart;
   }
 
   #onMessage(message: WorkerResponse): void {
@@ -168,13 +170,140 @@ export class WasmPluginRuntime {
   #fail(error: Error): void {
     if (this.#closed) return;
     this.#closed = true;
+    this.#rejectPending(error);
+    void this.#worker.terminate();
+  }
+
+  #attachWorker(worker: Worker): void {
+    worker.on('message', (message: WorkerResponse) => {
+      if (this.#worker === worker) this.#onMessage(message);
+    });
+    worker.on('error', (error) => {
+      if (this.#worker === worker && !this.#restart) this.#fail(toError(error));
+    });
+    worker.on('exit', (code) => {
+      if (this.#worker === worker && !this.#restart && code !== 0) {
+        this.#fail(new Error(`Wasm plugin worker exited with code ${code}`));
+      }
+    });
+  }
+
+  #recover(error: Error): void {
+    if (this.#closed || this.#restart) return;
+    this.#rejectPending(error);
+    const previous = this.#worker;
+    const recovery = (async (): Promise<void> => {
+      await previous.terminate();
+      if (this.#closed) return;
+      const next = await startWasmWorker(this.#wasmBytes, this.#packageId);
+      if (this.#closed) {
+        await next.worker.terminate();
+        return;
+      }
+      this.#worker = next.worker;
+      this.#attachWorker(next.worker);
+    })();
+    const completed = recovery.catch((restartError) => {
+      this.#fail(toError(restartError));
+    });
+    let tracked: Promise<void>;
+    tracked = completed.finally(() => {
+      if (this.#restart === tracked) this.#restart = undefined;
+    });
+    this.#restart = tracked;
+  }
+
+  #rejectPending(error: Error): void {
     for (const pending of this.#pending.values()) {
       clearTimeout(pending.timer);
       pending.cleanup();
       pending.reject(error);
     }
     this.#pending.clear();
-    void this.#worker.terminate();
+  }
+}
+
+function validateWasmMemoryLimits(bytes: Uint8Array): void {
+  if (
+    bytes.length < 8 ||
+    bytes[0] !== 0x00 ||
+    bytes[1] !== 0x61 ||
+    bytes[2] !== 0x73 ||
+    bytes[3] !== 0x6d ||
+    bytes[4] !== 0x01 ||
+    bytes[5] !== 0x00 ||
+    bytes[6] !== 0x00 ||
+    bytes[7] !== 0x00
+  ) {
+    throw new Error('Wasm plugin binary header is invalid');
+  }
+  let offset = 8;
+  let memorySectionSeen = false;
+  while (offset < bytes.length) {
+    const sectionId = bytes[offset++];
+    const sectionLength = readWasmU32(bytes, offset);
+    offset = sectionLength.next;
+    const sectionEnd = offset + sectionLength.value;
+    if (sectionEnd > bytes.length) throw new Error('Wasm plugin section is truncated');
+    if (sectionId === 5) {
+      if (memorySectionSeen) throw new Error('Wasm plugin has multiple memory sections');
+      memorySectionSeen = true;
+      const count = readWasmU32(bytes, offset);
+      offset = count.next;
+      if (count.value !== 1) throw new Error('Wasm plugin must define exactly one memory');
+      const flags = readWasmU32(bytes, offset);
+      offset = flags.next;
+      if ((flags.value & 0x04) !== 0) throw new Error('Wasm plugin memory64 is unsupported');
+      const minimum = readWasmU32(bytes, offset);
+      offset = minimum.next;
+      const maximum = (flags.value & 0x01) === 0 ? undefined : readWasmU32(bytes, offset);
+      if (maximum) offset = maximum.next;
+      const maxPages = Math.floor(MAX_MEMORY_BYTES / WASM_PAGE_BYTES);
+      if (minimum.value > maxPages || maximum?.value === undefined) {
+        throw new Error('Wasm plugin memory must have a maximum within its size limit');
+      }
+      if (maximum.value > maxPages || minimum.value > maximum.value) {
+        throw new Error('Wasm plugin memory maximum exceeds its size limit');
+      }
+      if (offset !== sectionEnd) throw new Error('Wasm plugin memory section is invalid');
+    }
+    offset = sectionEnd;
+  }
+  if (!memorySectionSeen) throw new Error('Wasm plugin must define a memory section');
+}
+
+function readWasmU32(
+  bytes: Uint8Array,
+  start: number,
+): { readonly value: number; readonly next: number } {
+  let value = 0;
+  let shift = 0;
+  let offset = start;
+  while (offset < bytes.length && shift <= 28) {
+    const byte = bytes[offset++];
+    value += (byte & 0x7f) * 2 ** shift;
+    if ((byte & 0x80) === 0) return { value, next: offset };
+    shift += 7;
+  }
+  throw new Error('Wasm plugin integer is invalid');
+}
+
+async function startWasmWorker(
+  wasmBytes: Uint8Array,
+  packageId: string,
+): Promise<{ readonly worker: Worker; readonly manifest: WasmPluginManifest }> {
+  const worker = new Worker(new URL('./wasm-plugin-worker.js', import.meta.url), {
+    // The worker has no need for the caller's test-runner or V8 flags. An
+    // explicit empty policy also avoids inheriting flags Worker rejects.
+    execArgv: [],
+    workerData: { wasmBytes },
+  });
+  try {
+    const manifest = await waitForManifest(worker);
+    return { worker, manifest: decodeWasmPluginManifest(manifest, packageId) };
+  } catch (error) {
+    await worker.terminate();
+    throw error;
   }
 }
 
@@ -207,7 +336,7 @@ function wasmTool(
   return {
     name: contribution.tool.name,
     description: contribution.tool.description,
-    parameters: contribution.tool.parameters,
+    parameters: jsonSchema(contribution.tool.parameters),
     ...(contribution.tool.displayName === undefined
       ? {}
       : { displayName: contribution.tool.displayName }),

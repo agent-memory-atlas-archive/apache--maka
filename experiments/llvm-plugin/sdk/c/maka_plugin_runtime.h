@@ -33,6 +33,7 @@ uint32_t maka_plugin_manifest_ptr(void);
 uint32_t maka_plugin_manifest_len(void);
 uint32_t maka_plugin_alloc(uint32_t size);
 void maka_plugin_free(uint32_t ptr, uint32_t size);
+void maka_plugin_reset(void);
 uint64_t maka_plugin_invoke(uint32_t input_ptr, uint32_t input_len);
 
 static inline uint64_t maka_plugin_pack(uint32_t ptr, uint32_t len) {

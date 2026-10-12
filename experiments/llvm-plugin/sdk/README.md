@@ -25,7 +25,9 @@ JSON framing and isolation, while the guest only needs to expose a manifest,
 an allocator, and one JSON-producing function.
 
 The templates return static JSON to keep the examples dependency-free. A real
-plugin can replace the response helper with its own JSON encoder.
+plugin can replace the response helper with its own JSON encoder. Guest memory
+must declare a maximum no larger than 64 MiB; the Host rejects an unbounded or
+oversized memory before instantiation.
 
 ## Build the templates
 
@@ -46,3 +48,8 @@ backend and `wasm-ld`, and Zig needs a Wasm-capable Zig installation.
 The Rust and C helpers intentionally do not expose Node, filesystem, network,
 or Maka Context objects. Adding those capabilities requires a new explicit
 protocol instead of extending this raw JSON call with host pointers.
+
+`maka_plugin_reset` is an optional export. When present, the Host calls it
+after it has consumed an invocation result. The Rust helper uses it to reset
+its bump arena, so repeated calls do not exhaust the 64 KiB helper heap. A
+guest that manages memory with another allocator can omit the export.

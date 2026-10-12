@@ -41,6 +41,8 @@ void maka_plugin_free(uint32_t ptr, uint32_t size) {
   (void)size;
 }
 
+void maka_plugin_reset(void) { next_heap = 0; }
+
 uint64_t maka_plugin_invoke(uint32_t input_ptr, uint32_t input_len) {
   (void)input_ptr;
   (void)input_len;
