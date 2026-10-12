@@ -20,6 +20,28 @@
 use super::*;
 use maka_event_log::root::{RootNamespaces, RootOwner};
 use serde_json::json;
+use unicode_width::UnicodeWidthStr;
+
+fn click(tui: &mut Pty, label: &str) {
+    tui.wait_for(label);
+    let screen = tui.screen.snapshot().unwrap().screen;
+    let (row, line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, line)| line.contains(label))
+        .unwrap();
+    let column = line[..line.find(label).unwrap()].width() + 2;
+    tui.send(
+        format!(
+            "\x1b[<0;{};{}M\x1b[<0;{};{}m",
+            column,
+            row + 1,
+            column,
+            row + 1
+        )
+        .as_bytes(),
+    );
+}
 
 #[test]
 #[ignore = "starts the bundled product and its real Host in a native PTY"]
@@ -584,26 +606,6 @@ fn first_install_failure_keeps_original_host_error_after_terminal_restoration() 
 #[test]
 #[ignore = "starts the bundled product and checks connection settings in a native PTY"]
 fn bundled_connections_search_scroll_click_and_chatgpt_credentials() {
-    fn click(tui: &mut Pty, label: &str) {
-        tui.wait_for(label);
-        let screen = tui.screen.snapshot().unwrap().screen;
-        let (row, line) = screen
-            .lines()
-            .enumerate()
-            .find(|(_, line)| line.contains(label))
-            .unwrap();
-        let column = line[..line.find(label).unwrap()].chars().count() + 2;
-        tui.send(
-            format!(
-                "\x1b[<0;{};{}M\x1b[<0;{};{}m",
-                column,
-                row + 1,
-                column,
-                row + 1
-            )
-            .as_bytes(),
-        );
-    }
     let directory = tempfile::tempdir().unwrap();
     let workspace = directory.path().join("workspace");
     std::fs::create_dir(&workspace).unwrap();
@@ -689,4 +691,61 @@ fn bundled_connections_search_scroll_click_and_chatgpt_credentials() {
     );
     tui.send(b"\x11");
     tui.finish();
+}
+
+#[test]
+#[ignore = "checks live language changes and persistence in the real product PTY"]
+fn bundled_language_switch_updates_and_remains_responsive() {
+    let directory = tempfile::tempdir().unwrap();
+    let workspace = directory.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let configuration = directory.path().join("installation.json");
+    let ui = directory.path().join("ui");
+    std::fs::write(&configuration, serde_json::to_vec(&json!({
+        "presentation":"tui", "locale":"en", "scheme":"dark", "hostRoot":directory.path().join("host"),
+        "agent":{"workspaceRoots":[{"label":"Workspace","path":workspace}], "maxActiveRuns":1,"maxSteps":4,"tools":[],"permissions":{"access":"read_only","requestPermissions":true}}
+    })).unwrap()).unwrap();
+    let mut tui = Pty::spawn(&[
+        "application",
+        "launch",
+        "--root",
+        ui.to_str().unwrap(),
+        "--configuration",
+        configuration.to_str().unwrap(),
+    ]);
+    tui.wait_until_with_timeout(|s| s.contains("Settings"), Duration::from_secs(60));
+    tui.send(b"\x0b");
+    tui.wait_for("Commands");
+    tui.send(b"Settings");
+    tui.wait_for("› Settings");
+    tui.send(b"\r");
+    click(&mut tui, "Models");
+    click(&mut tui, "Model connections");
+    tui.wait_for("No connections yet.");
+    click(&mut tui, "Add connection");
+    tui.wait_for("ChatGPT Subscription");
+    tui.send(b"\x1b");
+    tui.wait_for("Add connection");
+    tui.send(b"\x1b");
+    click(&mut tui, "Interface");
+    click(&mut tui, "Language");
+    click(&mut tui, "简体中文");
+    tui.wait_until_with_timeout(|s| s.contains("语言"), Duration::from_secs(3));
+    click(&mut tui, "语言");
+    click(&mut tui, "繁體中文");
+    tui.wait_until_with_timeout(|s| s.contains("語言"), Duration::from_secs(3));
+    click(&mut tui, "語言");
+    click(&mut tui, "English");
+    tui.wait_for("Language");
+    click(&mut tui, "Language");
+    click(&mut tui, "简体中文");
+    tui.wait_until_with_timeout(|s| s.contains("语言"), Duration::from_secs(3));
+    tui.send(b"\x11");
+    tui.finish();
+    assert!(!String::from_utf8_lossy(&tui.output).contains("invalid UI action"));
+    let mut reopened = Pty::spawn(&["application", "launch", "--root", ui.to_str().unwrap()]);
+    reopened.wait_until_with_timeout(|s| s.contains("设置"), Duration::from_secs(30));
+    reopened.send(b"\x11");
+    reopened.finish();
+    assert!(!String::from_utf8_lossy(&reopened.output).contains("invalid UI action"));
 }

@@ -1,6 +1,6 @@
 {
   "inputs": {
-    "Cargo.lock": "d200f7a177b175a05a0ce714a1bfb3c498cb45c98e017d3fb93bae753eb7a9b1",
+    "Cargo.lock": "d508ac1e7441a318509711c9194a39b0035a28d6257448e1178555834c7369de",
     "Cargo.toml": "83d55b86f5c48c71bc65ff6f3a235d166e56c050ffcc1027fe390a836aee3a11",
     "package-lock.json": "a5af15aca21fabe0e1bdd48784167df4dc81cee17777d54861dcbd641168a4eb",
     "package.json": "38baf3beeb5876849ca16e31868d59bfaee769f260c7555b4a8a1847b92e28a1",
@@ -361,7 +361,7 @@
     "products/maka/bundle/scripts/build.mjs": "db11d8cd6f29ef7ead087261848568da1ad3889a870a89f23fa969449d769d47",
     "products/maka/bundle/src/composition.ts": "806ada8289d2f2ee094e340f0c6f5d21ee7250c7ff842e26e5ca1278f05a7c36",
     "products/maka/bundle/src/installation.ts": "25908ab7c6a6416fa2c452e9f25840cb9c542c6b99a7eb28ea71725adf220738",
-    "products/maka/cli/Cargo.toml": "50aea4203385088386bad07d93d93a68b647953f693e616ca200a4bb37b90ea7",
+    "products/maka/cli/Cargo.toml": "dff55e4f17eecb5107b75c179e0077f122409503993d19bd24c70e5c9380ffba",
     "products/maka/cli/build.rs": "98452274bb0f20fa55fda5a20313f81740e759652aa4227fba0b0de5e3f4cc29",
     "products/maka/cli/build/product.rs": "02555a9bd0181080a061fe35b1b1caabec6c2dc338a35923b49f59f010892a6c",
     "products/maka/desktop/Cargo.toml": "6c1bdac5c0eb0d3f205005af94837fac3abb904441d9e8fa2096469ab606ac8e",

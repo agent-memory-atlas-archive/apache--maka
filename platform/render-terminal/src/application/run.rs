@@ -21,10 +21,7 @@ use super::{Presenter, registry, sanitize};
 use crate::terminal;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use serde_json::json;
-use std::{
-    collections::BTreeSet,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 /// Run on the foreground thread inside a multithreaded Tokio runtime.
 /// Accepted service workers remain owned after the terminal surface closes.
@@ -80,7 +77,6 @@ pub fn run(
             Err(error) => failure = Some(format!("{diagnostic}\n{error}")),
         }
     }
-    let mut reported = BTreeSet::new();
     let mut exit_key = ExitKey::default();
     loop {
         if failure.is_some()
@@ -90,24 +86,22 @@ pub fn run(
         {
             updates.stop();
             if let Err(error) = presenter.retire() {
-                report(&mut reported, &error.to_string());
+                presenter.report(&error);
             }
         }
         match updates.poll(&presenter.application) {
             Ok(Some(update)) => {
                 if let Err(error) = presenter.adopt_prepared(update.prepared, update.registrations)
                 {
-                    report(&mut reported, &error.to_string());
+                    presenter.report(&error);
                 }
             }
             Ok(None) => {}
-            Err(error) => report(&mut reported, &error),
+            Err(error) => presenter.report(&error),
         }
         if let Err(error) = presenter.pump() {
             let error = sanitize(&error.to_string());
-            if reported.insert(error.clone()) {
-                eprintln!("{error}");
-            }
+            presenter.report(&error);
             failure.get_or_insert(error);
         }
         if failure.is_some()
@@ -117,7 +111,7 @@ pub fn run(
             if (failure.is_some() || !presenter.requires_surface_replacement())
                 && let Err(error) = presenter.retire()
             {
-                report(&mut reported, &error.to_string());
+                presenter.report(&error);
             }
             if let super::SurfaceState::Retiring { cleanup: None, .. } = &presenter.surface {
                 let original = presenter.surface();
@@ -127,7 +121,7 @@ pub fn run(
                 exit_key = ExitKey::default();
                 let cleanup = guard.finish().map_err(|e| sanitize(&e.to_string()));
                 if let Err(error) = presenter.surface_closed(&original, cleanup) {
-                    report(&mut reported, &error.to_string());
+                    presenter.report(&error);
                     failure.get_or_insert(sanitize(&error.to_string()));
                 }
             }
@@ -143,7 +137,7 @@ pub fn run(
                 },
                 Ok(false) => std::thread::sleep(Duration::from_millis(10)),
                 Err(error) => {
-                    report(&mut reported, &error.to_string());
+                    presenter.report(&error);
                     failure = Some(sanitize(&error.to_string()));
                 }
             }
@@ -174,7 +168,7 @@ pub fn run(
                 }
                 if is_copy(&input) {
                     if let Err(error) = presenter.copy(&mut std::io::stdout().lock()) {
-                        report(&mut reported, &error.to_string());
+                        presenter.report(&error);
                     }
                     return Ok(false);
                 }
@@ -194,7 +188,7 @@ pub fn run(
                 }
                 presenter.input(input).map_err(|e| e.to_string())?;
                 if let Err(error) = presenter.flush_clipboard(&mut std::io::stdout().lock()) {
-                    report(&mut reported, &error.to_string());
+                    presenter.report(&error);
                 }
             }
             Ok(false)
@@ -217,24 +211,24 @@ pub fn run(
     // for a service/terminal cleanup receipt. Hard process exit is not recovery.
     loop {
         if let Err(error) = presenter.pump() {
-            report(&mut reported, &error.to_string());
+            presenter.report(&error);
         }
         if presenter.can_shutdown() {
             match presenter.shutdown() {
-                Ok(()) => return failure.map_or(Ok(()), Err),
-                Err(error) => report(&mut reported, &error.to_string()),
+                Ok(()) => {
+                    for diagnostic in &presenter.reported {
+                        if failure.as_ref() != Some(diagnostic) {
+                            eprintln!("{diagnostic}");
+                        }
+                    }
+                    return failure.map_or(Ok(()), Err);
+                }
+                Err(error) => presenter.report(&error),
             }
         }
         std::thread::sleep(Duration::from_millis(10));
     }
 }
-fn report(reported: &mut BTreeSet<String>, message: &str) {
-    let message = sanitize(message);
-    if reported.insert(message.clone()) {
-        eprintln!("{message}");
-    }
-}
-
 fn is_copy(event: &Event) -> bool {
     matches!(event,Event::Key(key) if key.kind!=KeyEventKind::Release && matches!(key.code,KeyCode::Char('c'|'C')) && key.modifiers==KeyModifiers::CONTROL|KeyModifiers::SHIFT)
 }

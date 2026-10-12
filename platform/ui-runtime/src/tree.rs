@@ -97,7 +97,6 @@ pub(super) struct Update<V: ?Sized> {
     emitted: usize,
     pub deadline: Instant,
     bytes: usize,
-    touched: usize,
     actions: Vec<actions::Prepared<V>>,
     cancellations: Vec<(Mount, String)>,
     decision: InputDecision,
@@ -112,17 +111,17 @@ impl<V: ?Sized> Update<V> {
             emitted: 0,
             deadline: Instant::now() + slice,
             bytes: 0,
-            touched: 0,
             actions: Vec::new(),
             cancellations: Vec::new(),
             decision: InputDecision::default(),
         }
     }
+    // Global presentation changes can visit every retained component. Bound
+    // actual work through the shared deadline and byte budget, not visit count.
     pub fn step(&mut self, depth: usize) -> Result<()> {
-        self.touched += 1;
-        if depth > 32 || self.touched > 64 {
+        if depth > 32 {
             return Err(Error::Invalid(
-                "component update exceeds mount/depth limits".into(),
+                "component mount depth limit exceeded".into(),
             ));
         }
         Ok(())

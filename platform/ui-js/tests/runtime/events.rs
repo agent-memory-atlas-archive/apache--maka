@@ -667,3 +667,92 @@ fn lifecycle_outputs_cannot_decide_input_and_payload_cannot_forge_its_origin() {
     );
     close_all(&mut app, &root);
 }
+
+#[test]
+fn presentation_change_updates_a_wide_retained_tree_atomically() {
+    let timer = timer();
+    let (mut input, mut packages) =
+        support::composed_fixture(support::CHILD_UPDATE, support::PARENT_EVENT);
+    let original = packages.pop().unwrap();
+    let source = std::str::from_utf8(original.file("index.mjs").unwrap()).unwrap();
+    let mut declaration = original.manifest().application.clone().unwrap();
+    let leaf = support::package("dynamic.leaf", declaration.clone(), Some(source.into()));
+    let contract = declaration.entries[&EntryTarget::Desktop].exports["Counter"]
+        .contract
+        .clone();
+    declaration
+        .entries
+        .get_mut(&EntryTarget::Desktop)
+        .unwrap()
+        .imports
+        .insert(
+            "leaf".into(),
+            Import {
+                contract,
+                cardinality: Cardinality::One,
+            },
+        );
+    let counter = support::package(
+        "dynamic.counter",
+        declaration,
+        Some(format!(
+            r#"{source}
+        const originalFrame=frame;
+        frame=state=>{{
+            const out=originalFrame(state);
+            out.frame.view.children.push(...Array.from({{length:40}},(_,i)=>({{
+                kind:'component',key:'leaf-'+i,binding:'leaf',member:0,on:{{}},props:{{label:state.label,initial:i}}
+            }})));
+            return out;
+        }};
+    "#
+        )),
+    );
+    input.instances.get_mut("counter").unwrap().package = counter.application_ref().into();
+    input.instances.get_mut("counter").unwrap().bindings.insert(
+        "leaf".into(),
+        vec![Target::Instance {
+            path: vec!["leaf".into()],
+            export: "Counter".into(),
+        }],
+    );
+    input
+        .instances
+        .insert("leaf".into(), support::node(&leaf, 4));
+    packages.extend([counter, leaf]);
+    let mut app = application(&input, packages, &timer);
+    let root = app.mount_launch(json!({})).unwrap();
+    let groups: Vec<_> = ["left", "right"]
+        .into_iter()
+        .map(|key| app.child_mount(&root, key).unwrap().clone())
+        .collect();
+    let children: Vec<_> = groups
+        .iter()
+        .flat_map(|group| {
+            (0..40).map(|i| {
+                app.child_mount(group, &format!("leaf-{i}"))
+                    .unwrap()
+                    .clone()
+            })
+        })
+        .collect();
+    for version in 1..=3 {
+        app.dispatch(&root, version - 1, "parent", Value::Null)
+            .unwrap();
+        for (i, child) in children.iter().enumerate() {
+            assert_eq!(
+                app.child_mount(&groups[i / 40], &format!("leaf-{}", i % 40))
+                    .unwrap(),
+                child
+            );
+            let frame = app.frame(child).unwrap();
+            assert_eq!(frame.revision, version);
+            assert_eq!(
+                frame.state["label"],
+                format!("{} {version}", if i < 40 { "Left" } else { "Right" })
+            );
+            assert_eq!(frame.state["count"], i % 40);
+        }
+    }
+    close_all(&mut app, &root);
+}

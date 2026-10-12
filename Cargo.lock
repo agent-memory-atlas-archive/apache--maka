@@ -8467,6 +8467,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "unicode-width",
  "uuid",
  "windows 0.62.2",
  "windows-sys 0.61.2",

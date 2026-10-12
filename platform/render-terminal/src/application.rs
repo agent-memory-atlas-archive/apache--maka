@@ -996,10 +996,12 @@ impl Presenter {
         crate::terminal::copy(writer, &text).map_err(|error| Error::Invalid(error.to_string()))?;
         Ok(true)
     }
-    fn report(&mut self, error: &Error) {
-        let diagnostic: String = sanitize(&error.to_string()).chars().take(2048).collect();
-        if self.reported.len() < 64 && self.reported.insert(diagnostic.clone()) {
-            eprintln!("{diagnostic}");
+    fn report(&mut self, error: &impl std::fmt::Display) {
+        // stdout and stderr may be the same physical terminal. The runner
+        // publishes diagnostics only after restoring it, outside frame diffing.
+        if self.reported.len() < 64 {
+            self.reported
+                .insert(sanitize(&error.to_string()).chars().take(2048).collect());
         }
     }
     pub fn pump(&mut self) -> maka_ui_runtime::Result<()> {
