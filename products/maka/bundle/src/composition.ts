@@ -34,7 +34,7 @@ import {
 import { welcomeMark } from '../../../../plugins/shared/welcome.js';
 export { installation } from './installation.js';
 export const packageNames = [
-  'workspace',
+  'agent-screen',
   'workhub-root',
   'workhub',
   'recovery',
@@ -583,10 +583,10 @@ function settingsComposition(
 export function composition(configuration: CompositionConfiguration): ApplicationSources {
   return configuration.coordinator
     ? workhubComposition(configuration, 'sessions')
-    : workspaceComposition(configuration);
+    : agentComposition(configuration);
 }
 
-function workspaceComposition(configuration: CompositionConfiguration): ApplicationSources {
+function agentComposition(configuration: CompositionConfiguration): ApplicationSources {
   const { keys } = configuration;
   const { host, managementHost, ui, remoteExports, connections, local, remote, node, expose } =
     settingsComposition(configuration, 'gateway');
@@ -840,8 +840,8 @@ function workspaceComposition(configuration: CompositionConfiguration): Applicat
     });
   }
   Object.assign(ui.instances, {
-    workspace: node(
-      'workspace',
+    'agent-screen': node(
+      'agent-screen',
       {
         locale: configuration.locale,
         terminals: !!configuration.processes,
@@ -1139,7 +1139,7 @@ function workspaceComposition(configuration: CompositionConfiguration): Applicat
     ),
     ...(configuration.presentation === 'tui' ? { diff: node('diff') } : {}),
   });
-  ui.launch = local('workspace', 'Workspace');
+  ui.launch = local('agent-screen', 'AgentScreen');
   remoteExports.unshift({
     capability: { deployment: 'local', instance: [keys.agent], export: 'agent' },
     declaration: { contract: contracts.agent, availability: 'required' },
@@ -1337,8 +1337,8 @@ export function workhubComposition(
   if (!configuration.coordinator)
     throw new Error('WorkHub requires an explicit coordinator Agent configuration');
   const { keys, packages } = configuration;
-  const worker = workspaceComposition(configuration);
-  const coordinator = workspaceComposition({
+  const worker = agentComposition(configuration);
+  const coordinator = agentComposition({
     ...configuration,
     agent: configuration.coordinator,
     processes: configuration.coordinatorProcesses,
@@ -1487,9 +1487,9 @@ export function workhubComposition(
       workhub: [
         { kind: 'remote', deployment: 'local', instance: [keys.workhub], export: 'workhub' },
       ],
-      coordinator: [local('coordinator-workspace', 'Workspace')],
+      coordinator: [local('coordinator-agent-screen', 'AgentScreen')],
       authoring: [local('ui-authoring-worker', 'Worker')],
-      worker: [local('workspace', 'Workspace')],
+      worker: [local('agent-screen', 'AgentScreen')],
       directories: [local('coordinator-directory-picker', 'DirectoryPicker')],
       reading: [local('reading-area', 'ReadingArea')],
       source: [local('source-text', 'SourceText')],
@@ -1521,7 +1521,7 @@ export function workhubComposition(
       history: [local('history', 'History')],
     },
   };
-  worker.ui.instances.workspace!.bindings!.subagentSettings = [
+  worker.ui.instances['agent-screen']!.bindings!.subagentSettings = [
     local('subagent-settings', 'SubagentSettings'),
   ];
   worker.ui.launch = local('workhub-root', 'WorkHub');

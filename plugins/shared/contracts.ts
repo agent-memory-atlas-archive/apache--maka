@@ -414,15 +414,15 @@ const component = (
   transport: 'local',
   interface: { kind: 'component', props: withDefs(props), events, captures },
 });
-export interface WorkspaceProps {
+export interface AgentScreenProps {
   workhub?: boolean;
   embedded?: boolean;
   fixed?: boolean;
   session?: { request: number; id: string };
 }
 export const workhubRootContract = component('maka.workhub.Workspace', object({}));
-export const workspaceContract = component(
-  'maka.agent.Workspace',
+export const agentScreenContract = component(
+  'maka.agent.AgentScreen',
   object(
     {
       workhub: { type: 'boolean' },

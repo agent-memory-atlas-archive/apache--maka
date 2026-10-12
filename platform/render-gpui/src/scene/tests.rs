@@ -349,7 +349,7 @@ fn packaged_session_navigation_renders_bounded_pages_and_keeps_controls_accessib
     );
     let output = std::process::Command::new("node").args(["--input-type=module","-e",r#"
         import {component as directory} from './products/maka/bundle/dist/packages/navigation/desktop.js';
-        import {component as workspace,activate as configure} from './products/maka/bundle/dist/packages/workspace/desktop.js';
+        import {component as agentScreen,activate as configure} from './products/maka/bundle/dist/packages/agent-screen/desktop.js';
         import {activate} from './products/maka/bundle/dist/packages/appearance/desktop.js';
         const frames=[];
         function find(node,key) {
@@ -362,9 +362,9 @@ fn packaged_session_navigation_renders_bounded_pages_and_keeps_controls_accessib
           configure({locale});
           const values={appearance:[activate({scheme}).Appearance.value]};
           const sessions=Array.from({length:32},(_,i)=>({id:'conversation-'+i,title:'Conversation '+i,labels:[],revision:1,updatedAt:1,archived:false,activity:i===0?'working':i===1?'waiting':'idle',workspace:{identity:'workspace',directoryIdentity:'directory',path:'/workspace'}}));
-          const initial=workspace.mount({},values).frame.state;
+          const initial=agentScreen.mount({},values).frame.state;
           const state={...initial,restoring:false,pending:status==='busy'?{catalog:{kind:'list',generation:initial.catalogGeneration}}:{},catalogFailed:status==='failed',catalog:{revision:'fixture',sessions,before:'before',after:'after'}};
-          const panel=find(workspace.update(state,{},values).frame.view,'navigation-panel');
+          const panel=find(agentScreen.update(state,{},values).frame.view,'navigation-panel');
           const slot=panel.children.findIndex(node=>node.key==='navigation');
           panel.children[slot]=directory.mount(panel.children[slot].props,{}).frame.view;
           frames.push(panel);

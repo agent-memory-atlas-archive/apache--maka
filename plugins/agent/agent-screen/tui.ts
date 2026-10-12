@@ -18,9 +18,9 @@
  */
 
 import { presentations } from '../../shared/view.js';
-import { workspace } from './index.js';
-import { workspaceContract } from '../../shared/contracts.js';
-export let component: ReturnType<typeof workspace>;
+import { agentScreen } from './index.js';
+import { agentScreenContract } from '../../shared/contracts.js';
+export let component: ReturnType<typeof agentScreen>;
 export function activate(configuration: {
   locale: string;
   terminals?: boolean;
@@ -30,7 +30,7 @@ export function activate(configuration: {
   web?: boolean;
   jev?: boolean;
 }) {
-  component = workspace(
+  component = agentScreen(
     presentations.tui,
     configuration.locale,
     configuration.terminals === true,
@@ -41,6 +41,6 @@ export function activate(configuration: {
     configuration.jev === true,
   );
   return {
-    Workspace: { kind: 'component', contract: workspaceContract, component: ['component'] },
+    AgentScreen: { kind: 'component', contract: agentScreenContract, component: ['component'] },
   };
 }

@@ -4,7 +4,7 @@
   "deployment-settings": "plugins/application/deployment-settings",
   "deployment": "plugins/application/deployment",
   "workhub-root": "plugins/workhub/workhub-root",
-  "workspace": "plugins/agent/workspace",
+  "agent-screen": "plugins/agent/agent-screen",
   "apps": "plugins/application/apps",
   "skill-library": "plugins/skills/skill-library",
   "terminal-panel": "plugins/workspace/terminal-panel",

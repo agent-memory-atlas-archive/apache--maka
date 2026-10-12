@@ -118,10 +118,10 @@ for (const target of ['tui', 'desktop']) {
   });
 }
 
-test('TUI Workspace mounts a one-row footer with session context and keeps one authoring worker', async () => {
-  const workspace = await import('../dist/packages/workspace/tui.js');
+test('TUI AgentScreen mounts a one-row footer with session context and keeps one authoring worker', async () => {
+  const agentScreen = await import('../dist/packages/agent-screen/tui.js');
   const appearance = await import('../dist/packages/appearance/tui.js');
-  workspace.activate({ locale: 'en' });
+  agentScreen.activate({ locale: 'en' });
   const values = { appearance: [appearance.activate({ scheme: 'dark' }).Appearance.value] };
   const nodes = (node) =>
     node && typeof node === 'object'
@@ -130,7 +130,7 @@ test('TUI Workspace mounts a one-row footer with session context and keeps one a
           ...Object.values(node).flatMap((v) => (Array.isArray(v) ? v.flatMap(nodes) : nodes(v))),
         ]
       : [];
-  const view = workspace.component.mount({}, values).frame.view;
+  const view = agentScreen.component.mount({}, values).frame.view;
   const footer = nodes(view).find((node) => node.key === 'composer-footer');
   assert.deepEqual(footer.layout, { basis: 1, shrink: false });
   const slot = footer.children[0];
@@ -141,7 +141,7 @@ test('TUI Workspace mounts a one-row footer with session context and keeps one a
     nodes(view).filter((node) => node.kind === 'component' && node.binding === 'authoring').length,
     1,
   );
-  const embedded = workspace.component.mount({ embedded: true }, values).frame.view;
+  const embedded = agentScreen.component.mount({ embedded: true }, values).frame.view;
   assert.equal(
     nodes(embedded).filter((node) => node.kind === 'component' && node.binding === 'authoring')
       .length,

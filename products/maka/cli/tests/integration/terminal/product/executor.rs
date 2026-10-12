@@ -27,7 +27,7 @@ fn replace_manifest(package: &Package, manifest: Value) -> Package {
 }
 
 #[test]
-#[ignore = "opt-in real Agent, JS executor, production Workspace and foreground PTY"]
+#[ignore = "opt-in real Agent, JS executor, production AgentScreen and foreground PTY"]
 fn executor_selection_and_composer_reach_production_timeline_before_backend_completion() {
     let (dist, mut packages) = built_packages();
     let refs = packages
@@ -117,14 +117,14 @@ fn executor_selection_and_composer_reach_production_timeline_before_backend_comp
         .as_array_mut()
         .unwrap()
         .push(json!({"capability":remote_control,"declaration":required(&control)}));
-    let workspace_contract = serde_json::to_value(
-        &packages["workspace"]
+    let screen_contract = serde_json::to_value(
+        &packages["agent-screen"]
             .manifest()
             .application
             .as_ref()
             .unwrap()
             .entries[&maka_plugin_core::package::EntryTarget::Tui]
-            .exports["Workspace"]
+            .exports["AgentScreen"]
             .contract,
     )
     .unwrap();
@@ -143,14 +143,14 @@ fn executor_selection_and_composer_reach_production_timeline_before_backend_comp
     let ui_package=Package::new(BTreeMap::from([
         (MANIFEST_FILE.into(),serde_json::to_vec(&json!({"schemaVersion":2,"id":"fixture.executor.ui","application":{"entries":{"tui":{
             "implementation":{"kind":"javascript","module":"ui.mjs","realm":"shared"},"scene":{"name":"maka.tui.scene","version":1},"configuration":{"type":"object","additionalProperties":false},
-            "imports":{"workspace":one(&workspace_contract),"agent":one(&agent_contract),"control":one(&control),"surface":one(&surface)},
-            "exports":{"App":required(&workspace_contract)}
+            "imports":{"agentScreen":one(&screen_contract),"agent":one(&agent_contract),"control":one(&control),"surface":one(&surface)},
+            "exports":{"App":required(&screen_contract)}
         }}}})).unwrap()),
-        ("ui.mjs".into(),format!("export function activate(){{return {{App:{{kind:'component',contract:{workspace_contract},component:['app']}}}};}}\n{}",include_str!("executor-ui.js")).into_bytes())
+        ("ui.mjs".into(),format!("export function activate(){{return {{App:{{kind:'component',contract:{screen_contract},component:['app']}}}};}}\n{}",include_str!("executor-ui.js")).into_bytes())
     ])).unwrap();
     graph["ui"]["instances"]["fixture"] = json!({"key":Uuid::new_v4(),"package":{"source":"pinned","package":ui_package.application_ref()},"usePackage":"entry","configuration":{"values":{}},"bindings":{
-        "workspace":[local("workspace","Workspace")],"surface":[local("surface","Surface")],
-        "agent":graph["ui"]["instances"]["workspace"]["bindings"]["agent"],
+        "agentScreen":[local("agent-screen","AgentScreen")],"surface":[local("surface","Surface")],
+        "agent":graph["ui"]["instances"]["agent-screen"]["bindings"]["agent"],
         "control":[{"kind":"remote","deployment":"local","instance":[provider_key],"export":"control"}]
     }});
     graph["ui"]["launch"] = local("fixture", "App");
@@ -224,7 +224,7 @@ fn executor_selection_and_composer_reach_production_timeline_before_backend_comp
             String::from_utf8_lossy(&tui.output)
         );
     }
-    // The fixture's create receipt precedes Workspace's observed Session. Wait
+    // The fixture's create receipt precedes AgentScreen's observed Session. Wait
     // for its actual composer before using footer coordinates; the home action
     // has the same label at a different position.
     tui.wait_until(|screen| screen.contains("Message…") && screen.contains("Execution backend"));

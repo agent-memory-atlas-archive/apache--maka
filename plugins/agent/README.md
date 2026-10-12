@@ -30,4 +30,4 @@ This family owns Agent behavior and its user interface. Leaf `package.ts` files 
 - [assistant](assistant/README.md), [goal](goal/README.md), [graph](graph/README.md), [scheduler](scheduler/engine/README.md), [insights](insights/README.md), [session-import](session-import/README.md), [session-recap](session-recap/README.md) and [session-title](session-title/README.md) own their respective features.
 - [acp-executor](acp-executor/native/README.md) connects external ACP agents through explicit process and callback services.
 
-UI packages such as `workspace`, `composer` and `timeline` consume these contracts. Product assembly belongs to [products/maka](../../products/maka/README.md).
+UI packages such as `agent-screen`, `composer` and `timeline` consume these contracts. Product assembly belongs to [products/maka](../../products/maka/README.md).

@@ -22,8 +22,8 @@ import * as own from '../../shared/contracts.js';
 import { one, uiEntries } from '../../shared/package.js';
 
 const entries = uiEntries({
-  contract: own.workspaceContract,
-  export: 'Workspace',
+  contract: own.agentScreenContract,
+  export: 'AgentScreen',
   imports: {
     agent: one(sdk.contracts.agent),
     reading: one(sdk.contracts.readingArea),
@@ -98,7 +98,7 @@ for (const target of ['desktop', 'tui'] as const)
   );
 export default {
   schemaVersion: 2,
-  id: 'maka.agent.workspace',
-  displayName: 'workspace',
+  id: 'maka.agent.agent-screen',
+  displayName: 'Agent screen',
   application: { entries },
 };

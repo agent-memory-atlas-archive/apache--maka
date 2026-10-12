@@ -29,14 +29,14 @@ Available commands are `instances`, `readDocument`, `readPackage`, `installSourc
 
 ## Install and bind a footer
 
-The TUI Workspace has a required `footer` component import with contract `maka.agent.ComposerFooter`. The default `composer-footer` instance exports `Footer` and renders an empty line immediately below the composer. Its props are `sessionId`, `dataSource`, `running`, `theme` and `locale`. The container reserves one terminal row. Render a single line, do not open another surface, and use declared service imports for effects. Metrics and their calculations belong to your plugin.
+The TUI AgentScreen has a required `footer` component import with contract `maka.agent.ComposerFooter`. The default `composer-footer` instance exports `Footer` and renders an empty line immediately below the composer. Its props are `sessionId`, `dataSource`, `running`, `theme` and `locale`. The container reserves one terminal row. Render a single line, do not open another surface, and use declared service imports for effects. Metrics and their calculations belong to your plugin.
 
 1. Read the current document and the installed `composer-footer` package. Preserve the exact `Footer` contract and the entry's scene declaration. Author a replacement JavaScript entry, keeping its published contract equal to the manifest. Bundle any SDK imports before installation; the guest has no Node APIs.
 2. Submit `installSource` with `{expectedRevision, files}`. `files` maps relative paths to UTF-8 text and must include `maka.extension.json` plus every referenced module. This runs the normal package loader and source validation. Save the returned immutable package reference and new source revision from the recorded manager result.
 3. Read that new source document. Change `input.instances["composer-footer"].package` to `{source: "pinned", package: newPackageReference}`. Preserve its `key`, all other instance identities, the launch target and unrelated bindings. Keep the new reference in `document.packages`.
 4. Submit `replaceSource` with `{expectedRevision: newSource.revision, document}`. The foreground observes the committed source and reloads the affected components. Check the original result and visible output. A conflict requires reading the latest source and reconsidering the edit; do not overwrite a newer document.
 
-Alternatively insert a new component instance and update the Workspace's `footer` binding in one `editComposition` command. WorkHub contains worker and coordinator Workspaces; the default shared footer instance serves both, and each mounted component receives its own session props. Bind separately when the two views need different footers. Use the actual names and bindings from the current document.
+Alternatively insert a new component instance and update the AgentScreen's `footer` binding in one `editComposition` command. WorkHub contains worker and coordinator AgentScreen components; the default shared footer instance serves both, and each mounted component receives its own session props. Bind separately when the two views need different footers. Use the actual names and bindings from the current document.
 
 A minimal module can embed the exact copied contract as `contract` and export:
 

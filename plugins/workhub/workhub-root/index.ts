@@ -33,7 +33,7 @@ import type {
   WorkHubTaskEntry,
   WorkHubTasks,
 } from '../../../packages/plugin-sdk/src/index.js';
-import { workhubRootContract, type Theme, type WorkspaceProps } from '../../shared/contracts.js';
+import { workhubRootContract, type Theme, type AgentScreenProps } from '../../shared/contracts.js';
 import { copy, resolveLocale, type Copy } from '../../shared/locale.js';
 import { sameValue } from '../../shared/value.js';
 import {
@@ -69,8 +69,8 @@ interface State {
   original: RecoveryRef | null;
   cleanup: boolean;
   coordinator: WorkHubCoordinator | null;
-  coordinatorSelection: WorkspaceProps['session'];
-  workerSelection: WorkspaceProps['session'];
+  coordinatorSelection: AgentScreenProps['session'];
+  workerSelection: AgentScreenProps['session'];
   directories: boolean;
   entries: WorkHubTasks | null;
   pageAfter: string | null;
@@ -387,13 +387,13 @@ export function workhubRoot<N extends Node>(
             ...(state.coordinatorSelection
               ? [
                   presentation.slot(
-                    'coordinator-workspace',
+                    'coordinator-agent-screen',
                     'coordinator',
                     {
                       embedded: true,
                       fixed: true,
                       session: state.coordinatorSelection,
-                    } satisfies WorkspaceProps,
+                    } satisfies AgentScreenProps,
                     {},
                   ),
                 ]
@@ -429,13 +429,13 @@ export function workhubRoot<N extends Node>(
           ]),
           page('sessions', [
             presentation.slot(
-              'worker-workspace',
+              'worker-agent-screen',
               'worker',
               {
                 embedded: true,
                 workhub: true,
                 ...(state.workerSelection ? { session: state.workerSelection } : {}),
-              } satisfies WorkspaceProps,
+              } satisfies AgentScreenProps,
               { workhub: 'workhub' },
             ),
           ]),
@@ -677,7 +677,7 @@ export function workhubRoot<N extends Node>(
         }
       } else if (
         event.kind === 'component' &&
-        event.child === 'worker-workspace' &&
+        event.child === 'worker-agent-screen' &&
         event.name === 'workhub'
       ) {
         state.route = 'coordinator';

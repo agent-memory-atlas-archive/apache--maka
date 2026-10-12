@@ -363,7 +363,7 @@ fn bundled_ui_authoring_installs_and_reloads_original_source_without_replaying()
         let files:BTreeMap<_,_>=files.into_iter().map(|(path,bytes)|(path,String::from_utf8(bytes).unwrap())).collect();
         let mut input=serde_json::to_value(&loaded.source.input).unwrap();
         input["instances"]["composer-footer"]["package"]=json!({"source":"pinned","package":authored});
-        input["instances"]["workspace"]["configuration"]["values"]["locale"]=json!("zh-CN");
+        input["instances"]["agent-screen"]["configuration"]["values"]["locale"]=json!("zh-CN");
         let mut packages:Vec<_>=loaded.packages.iter().map(Package::application_ref).collect();packages.push(authored);
         let commands=[
             json!({"method":"installSource","input":{"expectedRevision":1,"files":files}}),

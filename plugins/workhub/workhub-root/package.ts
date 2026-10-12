@@ -26,9 +26,9 @@ const entries = uiEntries({
   export: 'WorkHub',
   imports: {
     workhub: one(sdk.contracts.workhubCoordinator),
-    coordinator: one(own.workspaceContract),
+    coordinator: one(own.agentScreenContract),
     authoring: one(own.uiAuthoringContract),
-    worker: one(own.workspaceContract),
+    worker: one(own.agentScreenContract),
     directories: one(own.directoryPickerContract),
     reading: one(sdk.contracts.readingArea),
     source: one(sdk.contracts.sourceText),
@@ -52,7 +52,7 @@ for (const target of ['desktop', 'tui'] as const)
   );
 export default {
   schemaVersion: 2,
-  id: 'maka.workhub.workspace',
+  id: 'maka.workhub.root',
   displayName: 'workhub-root',
   application: { entries },
 };

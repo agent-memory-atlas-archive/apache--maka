@@ -18,7 +18,7 @@
  */
 
 // The fixture only creates a Session and releases the backend. Selection, settings,
-// composer submission and timeline use the shipped Workspace.
+// composer submission and timeline use the shipped AgentScreen.
 function action(key, method, input, binding = 'agent') {
   return { key, binding, member: 0, method, input, resources: {} };
 }
@@ -53,8 +53,8 @@ function frame(state, actions = []) {
           },
           {
             kind: 'component',
-            key: 'workspace',
-            binding: 'workspace',
+            key: 'agent-screen',
+            binding: 'agentScreen',
             member: 0,
             props: {
               embedded: true,

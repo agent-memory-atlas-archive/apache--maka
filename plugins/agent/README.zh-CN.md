@@ -30,4 +30,4 @@
 - [assistant](assistant/README.zh-CN.md)、[goal](goal/README.zh-CN.md)、[graph](graph/README.zh-CN.md)、[scheduler](scheduler/engine/README.zh-CN.md)、[insights](insights/README.zh-CN.md)、[session-import](session-import/README.zh-CN.md)、[session-recap](session-recap/README.zh-CN.md) 和 [session-title](session-title/README.zh-CN.md)管理各自功能。
 - [acp-executor](acp-executor/native/README.zh-CN.md)通过显式进程与回调服务连接外部 ACP Agent。
 
-`workspace`、`composer`、`timeline` 等 UI 包消费这些契约。产品组装位于 [products/maka](../../products/maka/README.zh-CN.md)。
+`agent-screen`、`composer`、`timeline` 等 UI 包消费这些契约。产品组装位于 [products/maka](../../products/maka/README.zh-CN.md)。

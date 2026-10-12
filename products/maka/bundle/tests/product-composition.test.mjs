@@ -252,9 +252,9 @@ test('WorkHub product authors two independent Agent graphs with explicit native 
       );
       assert.equal(host.instances['workspace-processes'], undefined);
       assert.deepEqual(ui.launch, { kind: 'instance', path: ['workhub-root'], export: 'WorkHub' });
-      assert.equal(ui.instances.workspace.bindings.agent[0].instance[0], keys.agent);
+      assert.equal(ui.instances['agent-screen'].bindings.agent[0].instance[0], keys.agent);
       assert.equal(
-        ui.instances['coordinator-workspace'].bindings.agent[0].instance[0],
+        ui.instances['coordinator-agent-screen'].bindings.agent[0].instance[0],
         keys.workhub,
       );
       assert.equal(
