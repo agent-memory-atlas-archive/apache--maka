@@ -56,9 +56,7 @@ export function active(state: State) {
 export function busy(state: State) {
   return (
     !!state.current ||
-    Object.values(state.pending).some((r) =>
-      ['providers', 'review', 'reviewCatalog'].includes(r.kind),
-    )
+    Object.values(state.pending).some((r) => ['review', 'reviewCatalog'].includes(r.kind))
   );
 }
 

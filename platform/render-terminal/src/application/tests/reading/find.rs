@@ -144,7 +144,7 @@ fn source_reveal_uses_offscreen_wrapped_bytes_and_waits_for_actual_second_flush(
     assert_eq!(state(&presenter).scrolls["reading"].offset, 0);
     settle(&mut presenter, 10, 6);
     assert_eq!(observation(&presenter)["pendingCommand"], 1);
-    assert_eq!(state(&presenter).scrolls["reading"].offset, 15);
+    assert_eq!(state(&presenter).scrolls["reading"].offset, 16);
     let buffer = settle(&mut presenter, 10, 6);
     assert_eq!(buffer[(4, 2)].symbol(), "t");
     assert_eq!(
@@ -215,13 +215,13 @@ fn reveal_recomputes_after_resize_before_acknowledging_original_byte() {
         json!({"kind":"reveal_source","path":["long"],"offset":125}),
     );
     settle(&mut presenter, 10, 6);
-    assert_eq!(state(&presenter).scrolls["reading"].offset, 10);
+    assert_eq!(state(&presenter).scrolls["reading"].offset, 11);
     assert_eq!(observation(&presenter)["pendingCommand"], 1);
     settle(&mut presenter, 5, 6);
-    assert_eq!(state(&presenter).scrolls["reading"].offset, 23);
+    assert_eq!(state(&presenter).scrolls["reading"].offset, 29);
     assert_eq!(observation(&presenter)["pendingCommand"], 1);
     let buffer = settle(&mut presenter, 5, 6);
-    assert_eq!(buffer[(0, 2)].symbol(), "5");
+    assert_eq!(buffer[(1, 2)].symbol(), "5");
     assert_eq!(
         observation(&presenter)["receipt"],
         json!({"sequence":1,"status":"applied"})

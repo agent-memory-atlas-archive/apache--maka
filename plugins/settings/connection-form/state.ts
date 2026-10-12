@@ -27,6 +27,7 @@ import type {
   SettingsConnectionDetail,
   SettingsProvider,
 } from '../../../packages/plugin-sdk/src/index.js';
+import { type Search } from '../search.js';
 import { type Copy } from '../../shared/locale.js';
 import { type PageState } from '../../shared/page-shell.js';
 
@@ -69,7 +70,7 @@ export interface Field {
 }
 
 export type Request =
-  | { kind: 'providers' }
+  | { kind: 'providers'; offset: number }
   | { kind: 'read'; field: FieldName; captured: EditorObservation; attempt: number }
   | { kind: 'mutate' }
   | { kind: 'receipt'; reference: RecoveryRef }
@@ -86,7 +87,7 @@ export interface State extends PageState {
   catalogRevision: number;
   provider: SettingsProvider | null;
   providers: SettingsProvider[];
-  providerNext: number | null;
+  search: Search;
   providerActive: number;
   providerFocus: ReadingCommand | null;
   providersFailed: boolean;

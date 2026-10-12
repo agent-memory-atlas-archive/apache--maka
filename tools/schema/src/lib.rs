@@ -187,6 +187,9 @@ pub fn catalog() -> Value {
         root::<maka_settings_native::contract::ConnectionDetail>(&mut g),
         root::<maka_settings_native::contract::ProvidersRead>(&mut g),
         root::<maka_settings_native::contract::ProvidersPage>(&mut g),
+        root::<maka_settings_native::contract::LoginCredential>(&mut g),
+        root::<maka_settings_native::contract::LoginPrompt>(&mut g),
+        root::<maka_settings_native::contract::CredentialLoginResult>(&mut g),
         root::<maka_settings_native::contract::SaveCredential>(&mut g),
         root::<maka_settings_native::contract::CredentialSaveResult>(&mut g),
         root::<maka_agent_facts::configuration::CreateCatalogConnectionInput>(&mut g),
@@ -355,6 +358,7 @@ pub fn catalog() -> Value {
         "executorSetup": maka_agent_api::executor::setup::contract(),
         "terminal": maka_workspace_api::terminal::contract(),
         "settings": maka_settings_native::contract::contract(),
+        "settingsAuthentication": maka_settings_native::contract::authentication_contract(),
         "textReader": text::reader_contract(),
         "callerHistory": maka_ui_runtime::operations::caller_history_contract(),
         "deploymentManager": maka_plugin_core::deployment::management::deployment_manager_contract(),
@@ -406,6 +410,7 @@ pub fn catalog() -> Value {
         "questions": maka_interactions_api::questions::native(),
         "forms": maka_interactions_api::forms::native(),
         "settings": maka_settings_native::native(),
+        "settingsAuthentication": maka_settings_native::native_authentication(),
     });
     json!({
         "schema": {

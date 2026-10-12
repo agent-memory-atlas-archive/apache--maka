@@ -31,7 +31,8 @@ import type {
   ConnectionVersionBasis,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { connectionsContract, type ConnectionsProps } from '../../shared/contracts.js';
-import { compactLabel } from '../../shared/view.js';
+import { searchState, searchEvent, matches, type Search } from '../search.js';
+import { compactLabel, pixels } from '../../shared/view.js';
 import { pageHeader, withPageShell, type PageState } from '../../shared/page-shell.js';
 import { copy } from '../../shared/locale.js';
 import { tuiText } from '../../shared/tui-locale.js';
@@ -39,7 +40,13 @@ import { fill, output, type Presentation, type Node } from '../../shared/view.js
 interface State extends PageState {
   revision: number;
   serial: number;
-  pending: { key: string; kind: 'page' | 'detail'; basis: ConnectionVersionBasis | null } | null;
+  pending: {
+    key: string;
+    kind: 'page' | 'detail';
+    basis: ConnectionVersionBasis | null;
+    append: boolean;
+  } | null;
+  search: Search;
   detailRoute: 'credential' | 'form';
   route: 'catalog' | 'credential' | 'form';
   detail: Extract<SettingsConnectionDetail, { kind: 'ready' }> | null;
@@ -57,10 +64,11 @@ function request(
   kind: 'page' | 'detail',
   input: unknown,
   basis: ConnectionVersionBasis | null = null,
+  append = false,
 ): Action[] {
   if (state.pending) return [];
   const key = 'connections-' + ++state.serial;
-  state.pending = { key, kind, basis };
+  state.pending = { key, kind, basis, append };
   state.failed = false;
   return [
     {
@@ -80,6 +88,8 @@ function page(state: State, more = false) {
     more && state.catalogRevision !== null && state.next !== null
       ? { kind: 'continue', revision: state.catalogRevision, offset: state.next }
       : { kind: 'start' },
+    null,
+    more,
   );
 }
 function frame<N extends Node>(
@@ -92,7 +102,13 @@ function frame<N extends Node>(
   const target = presentation.target;
   const ui = presentation.paint(props.theme),
     text = copy(props.locale);
-  const rows = state.connections.map((connection, at) => {
+  const matched = state.connections
+    .map((connection, at) => ({ connection, at }))
+    .filter(({ connection }) =>
+      matches(state.search, connection.name, connection.slug, connection.provider.name),
+    );
+  // Bound the scene separately from the searchable catalog's 1,024 entries.
+  const rows = matched.slice(0, 128).flatMap(({ connection, at }) => {
     const id = connection.basis.connectionId;
     const selected = state.selected === id;
     const actions = [
@@ -138,30 +154,59 @@ function frame<N extends Node>(
           )
         : item;
     }
-    return ui.box(
-      'connection-' + id,
-      [
-        ui.text('name-' + id, compactLabel(connection.name, 100), 16, props.theme.text, 550),
-        ui.text(
-          'provider-' + id,
-          connection.provider.name + ' · ' + connection.slug,
-          13,
-          props.theme.muted,
-        ),
-        ui.box('connection-actions-' + id, actions, {
-          visible: connection.editable,
-          row: true,
-          gap: 8,
-        }),
-      ],
-      { gap: 6, padding: 16, surface: true, style: { width: fill } },
-    );
+    return [
+      ui.box(
+        'connection-' + id,
+        [
+          ui.text('name-' + id, compactLabel(connection.name, 100), 16, props.theme.text, 550),
+          ui.text(
+            'provider-' + id,
+            connection.provider.name + ' · ' + connection.slug,
+            13,
+            props.theme.muted,
+          ),
+          ui.box('connection-actions-' + id, actions, {
+            visible: connection.editable,
+            row: true,
+            gap: 8,
+          }),
+        ],
+        { gap: 6, padding: 16, surface: true, style: { width: fill } },
+      ),
+    ];
   });
   const catalog = ui.box(
     'connections',
     [
       ...(state.route === 'catalog'
         ? pageHeader(presentation, state, props, events, text.settings, 'back', false)
+        : []),
+      ui.box(
+        'connection-query-box',
+        [
+          presentation.slot(
+            'connection-query',
+            'input',
+            {
+              appearance: props.theme.input,
+              accessibilityLabel: text.searchConnections,
+              placeholder: text.searchConnections,
+              autoFocus: true,
+              tabIndex: 1,
+              readOnly: false,
+              disabled: state.route !== 'catalog',
+            },
+            { changed: 'connection-query' },
+          ),
+        ],
+        { gap: 0, style: { width: fill, height: pixels(36) } },
+      ),
+      ...(matched.length > 128
+        ? [ui.text('search-limit', text.refineConnectionSearch, 13, props.theme.muted)]
+        : []),
+      ...(state.search.error ? [ui.text('search-error', text[state.search.error])] : []),
+      ...(!rows.length && state.search.query && !state.pending
+        ? [ui.text('no-matches', text.noSearchResults)]
         : []),
       ...(state.pending ? [ui.text('loading', text.connecting, 13, props.theme.muted)] : []),
       ...(state.failed
@@ -187,15 +232,25 @@ function frame<N extends Node>(
       ui.box(
         'page-actions',
         [
+          ...(target === 'tui' &&
+          state.selected &&
+          state.connections.some((c) => c.basis.connectionId === state.selected && c.editable)
+            ? [
+                ui.button(
+                  'open-' +
+                    state.connections.findIndex((c) => c.basis.connectionId === state.selected),
+                  text.credentials,
+                  !!state.pending,
+                ),
+              ]
+            : []),
           ui.button(
             'create',
             text.createConnection,
             !!state.pending || state.catalogRevision === null,
             true,
           ),
-          ...(state.next !== null
-            ? [ui.button('more', text.moreConnections, !!state.pending)]
-            : []),
+
           ui.button(
             'refresh',
             target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.refreshConnections,
@@ -262,6 +317,7 @@ export function connections<N extends Node>(
           revision: 0,
           serial: 0,
           pending: null,
+          search: searchState(),
           detailRoute: 'credential',
           route: 'catalog',
           detail: null,
@@ -290,7 +346,17 @@ export function connections<N extends Node>(
           input = input.event as ComponentInput;
         const actions: Action[] = [],
           events: Emission[] = [];
-        if (input.kind === 'action' && input.key === state.pending?.key) {
+        if (searchEvent(state.search, input, 'connection-query', actions)) {
+          const first = state.connections.find((c) =>
+            matches(state.search, c.name, c.slug, c.provider.name),
+          );
+          state.selected = first?.basis.connectionId ?? null;
+          if (state.selected)
+            state.focus = {
+              sequence: (state.focus?.sequence ?? 0) + 1,
+              target: { kind: 'reveal_child', key: 'select-' + state.selected },
+            };
+        } else if (input.kind === 'action' && input.key === state.pending?.key) {
           const pending = state.pending;
           state.pending = null;
           const result = input.event as ActionOutcome;
@@ -303,20 +369,24 @@ export function connections<N extends Node>(
               state.catalogRevision = null;
               actions.push(...page(state));
             } else {
-              state.connections = resultPage.connections;
+              state.connections = pending.append
+                ? [...state.connections, ...resultPage.connections]
+                : resultPage.connections;
               state.catalogRevision = resultPage.revision;
               state.next = resultPage.next;
               state.defaultTarget = resultPage.defaultTarget;
-              if (
-                !state.connections.some(
-                  (connection) => connection.basis.connectionId === state.selected,
+              const visible = state.connections
+                .filter((connection) =>
+                  matches(state.search, connection.name, connection.slug, connection.provider.name),
                 )
-              )
-                state.selected = state.connections[0]?.basis.connectionId ?? null;
-              if (presentation.target === 'tui' && state.selected)
+                .slice(0, 128);
+              if (!visible.some((connection) => connection.basis.connectionId === state.selected))
+                state.selected = visible[0]?.basis.connectionId ?? null;
+              if (state.next !== null) actions.push(...page(state, true));
+              if (presentation.target === 'tui' && state.selected && !pending.append)
                 state.focus = {
                   sequence: (state.focus?.sequence ?? 0) + 1,
-                  target: { kind: 'focus_item', key: 'select-' + state.selected },
+                  target: { kind: 'reveal_child', key: 'select-' + state.selected },
                 };
             }
           } else {
@@ -355,13 +425,14 @@ export function connections<N extends Node>(
             state.detail = null;
             state.route = 'form';
             state.mount++;
-          } else if (input.key === 'more' && !state.pending && state.next !== null) {
-            actions.push(...page(state, true));
           } else if (!state.pending && input.key.startsWith('select-')) {
             const connection = state.connections.find(
               (connection) => connection.basis.connectionId === input.key.slice(7),
             );
-            if (connection) {
+            if (
+              connection &&
+              matches(state.search, connection.name, connection.slug, connection.provider.name)
+            ) {
               state.selected = connection.basis.connectionId;
               if ((input.event as { kind?: string }).kind === 'submit' && connection.editable) {
                 state.detailRoute = 'form';

@@ -25,6 +25,8 @@ const entries = uiEntries({
   contract: own.connectionsContract,
   export: 'Connections',
   imports: {
+    input: one(sdk.contracts.textInput),
+    reader: one(sdk.contracts.textReader),
     reading: one(sdk.contracts.readingArea),
     settings: one(sdk.contracts.settings),
     credential: one(own.credentialContract),

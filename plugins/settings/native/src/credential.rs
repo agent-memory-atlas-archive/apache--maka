@@ -75,7 +75,7 @@ pub(crate) async fn save(
     input: Value,
     context: Context,
 ) -> Result<Value, String> {
-    let operation = context.operation().ok_or("settings_mutation_required")?;
+    context.operation().ok_or("settings_mutation_required")?;
     let Ok(request) = serde_json::from_value::<SaveCredential>(input) else {
         return rejected(CredentialRejection::InvalidInput);
     };
@@ -106,6 +106,87 @@ pub(crate) async fn save(
     if secret.len() != bytes || secret.chars().any(char::is_control) {
         return rejected(CredentialRejection::InvalidSecret);
     }
+    enroll(
+        store,
+        request,
+        AuthenticationInput {
+            method: "api-key".into(),
+            input: json!({"apiKey":secret}),
+        },
+        context,
+        false,
+    )
+    .await
+}
+
+struct LoginInteraction(Context);
+impl provider::authentication::Interaction for LoginInteraction {
+    fn open_external(
+        &self,
+        url: String,
+        user_code: Option<String>,
+    ) -> BoxFuture<'_, Result<(), provider::Error>> {
+        Box::pin(async move {
+            let user_code = user_code.unwrap_or_default();
+            if url != "https://auth.openai.com/codex/device" || user_code.len() > 1024 {
+                return Err(provider::Error::Invalid("invalid login prompt".into()));
+            }
+            self.0
+                .emit(
+                    serde_json::to_value(LoginPrompt { url, user_code })
+                        .map_err(|_| provider::Error::Unavailable)?,
+                )
+                .await
+                .map_err(|_| provider::Error::Cancelled)
+        })
+    }
+}
+
+pub(crate) async fn login(
+    store: &Arc<ConfigurationStore>,
+    input: Value,
+    context: Context,
+) -> Result<Value, String> {
+    context.operation().ok_or("settings_mutation_required")?;
+    let Ok(input) = serde_json::from_value::<LoginCredential>(input) else {
+        return rejected(CredentialRejection::InvalidInput);
+    };
+    let Ok(definition) = connections::definition(&input.expected.provider) else {
+        return rejected(CredentialRejection::ProviderUnavailable);
+    };
+    if !definition
+        .descriptor()
+        .authentication
+        .iter()
+        .any(|method| method.id == input.method && method.interactive)
+    {
+        return rejected(CredentialRejection::AuthenticationUnavailable);
+    }
+    enroll(
+        store,
+        SaveCredential {
+            expected: input.expected,
+            expected_credential: input.expected_credential,
+        },
+        AuthenticationInput {
+            method: input.method,
+            input: json!({}),
+        },
+        context,
+        true,
+    )
+    .await
+}
+
+async fn enroll(
+    store: &Arc<ConfigurationStore>,
+    request: SaveCredential,
+    authentication: AuthenticationInput,
+    context: Context,
+    interactive: bool,
+) -> Result<Value, String> {
+    let operation = context.operation().ok_or("settings_mutation_required")?;
+    let definition = connections::definition(&request.expected.provider)?;
     let attempt_id = format!(
         "settings-{:x}",
         Sha256::digest(serde_json::to_vec(operation).map_err(|_| "settings_operation_invalid")?)
@@ -117,10 +198,7 @@ pub(crate) async fn save(
             configuration: request.expected.configuration.clone(),
         },
         expected_credential: request.expected_credential,
-        authentication: AuthenticationInput {
-            method: "api-key".into(),
-            input: json!({"apiKey":secret}),
-        },
+        authentication,
     };
     if input.validate().is_err() {
         return rejected(CredentialRejection::InvalidInput);
@@ -154,6 +232,39 @@ pub(crate) async fn save(
             });
         }
     };
+    let transport = if interactive {
+        let network = ticket.network_configuration();
+        let policy =
+            maka_network::Policy::from_host_settings(&network.proxy, network.password.as_deref())
+                .map_err(|_| "settings_network_unavailable")?;
+        maka_model::provider_transport(&policy).map_err(|_| "settings_network_unavailable")?
+    } else {
+        Arc::new(NoNetwork) as Arc<dyn Transport>
+    };
+    let provider_context = provider::Context {
+        transport,
+        cancellation: context.scope().cancellation.clone(),
+        interaction: interactive.then(|| {
+            Arc::new(LoginInteraction(context)) as Arc<dyn provider::authentication::Interaction>
+        }),
+    };
+    authenticate(
+        ticket,
+        definition,
+        authentication,
+        provider_context,
+        interactive,
+    )
+    .await
+}
+
+async fn authenticate(
+    ticket: Box<maka_config::oauth::enrollment::PreparedLogin>,
+    definition: provider::Definition,
+    authentication: AuthenticationInput,
+    provider_context: provider::Context,
+    interactive: bool,
+) -> Result<Value, String> {
     if !ticket
         .claim()
         .await
@@ -173,22 +284,42 @@ pub(crate) async fn save(
                 method: authentication.method,
                 input: authentication.input,
             },
-            provider::Context {
-                transport: Arc::new(NoNetwork),
-                cancellation: context.scope().cancellation.clone(),
-                interaction: None,
-            },
+            provider_context,
         )
         .await;
     let credential = match credential {
         Ok(credential) => credential,
-        Err(_) => {
+        Err(error) => {
+            if matches!(error, provider::Error::OutcomeUnknown) {
+                return Err("settings_effect_unknown".into());
+            }
             ticket
-                .finish_failure(Phase::Failed {
-                    failure: Failure::AuthorizationFailed,
+                .finish_failure(if matches!(error, provider::Error::Cancelled) {
+                    Phase::Cancelled
+                } else {
+                    Phase::Failed {
+                        failure: Failure::AuthorizationFailed,
+                    }
                 })
                 .await
                 .map_err(|_| "settings_effect_unknown")?;
+            if interactive {
+                let (reason, message) = match error {
+                    provider::Error::Cancelled => (LoginFailure::Cancelled, String::new()),
+                    provider::Error::AuthenticationRequired => {
+                        (LoginFailure::Expired, String::new())
+                    }
+                    provider::Error::Transport(_) | provider::Error::Http(_) => {
+                        (LoginFailure::Transport, String::new())
+                    }
+                    provider::Error::Rejected(message) => (
+                        LoginFailure::Authentication,
+                        message.chars().take(512).collect(),
+                    ),
+                    _ => (LoginFailure::Authentication, String::new()),
+                };
+                return connections::encode(CredentialLoginResult::Failed { reason, message });
+            }
             return rejected(CredentialRejection::Authentication);
         }
     };
@@ -210,3 +341,6 @@ pub(crate) async fn save(
         LoginCompletion::SlugTaken => rejected(CredentialRejection::SlugTaken),
     }
 }
+
+#[cfg(test)]
+mod tests;

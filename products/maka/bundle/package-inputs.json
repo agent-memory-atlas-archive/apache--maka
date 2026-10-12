@@ -61,6 +61,7 @@
   "markdown": "plugins/ui/markdown",
   "input": "plugins/ui/input",
   "settings": "plugins/settings/settings",
+  "settings-authentication": "plugins/settings/authentication",
   "history": "plugins/application/history",
   "surface": "plugins/ui/surface",
   "editor": "plugins/ui/editor",

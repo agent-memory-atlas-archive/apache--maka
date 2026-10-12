@@ -172,6 +172,18 @@ impl Handler for Settings {
                 "connections" => super::connections::page(&store, input).await,
                 "connection" => super::connections::detail(&store, input).await,
                 "providers" => super::connections::providers(input),
+                "provider" => {
+                    let identity =
+                        serde_json::from_value(input).map_err(|_| "settings_input_invalid")?;
+                    let descriptor = super::connections::definition(&identity)?
+                        .descriptor()
+                        .clone();
+                    super::connections::encode(Provider {
+                        identity,
+                        descriptor,
+                    })
+                }
+                "loginCredential" => super::credential::login(&store, input, context).await,
                 "create" => {
                     context.operation().ok_or("settings_mutation_required")?;
                     let Ok(mut input) =

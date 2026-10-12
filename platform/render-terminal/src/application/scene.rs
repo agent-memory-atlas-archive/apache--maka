@@ -98,6 +98,19 @@ pub(super) fn compile_with_inputs(
         .map(|view| view.with_root_visibility(visible))
 }
 impl super::Widget for Node {
+    fn cancel_pointer(&self, state: &mut dyn std::any::Any) {
+        state
+            .downcast_mut::<super::scroll::SceneState>()
+            .unwrap()
+            .scrollbar_drag = None;
+    }
+    fn pointer_capture(&self, state: &dyn std::any::Any) -> bool {
+        state
+            .downcast_ref::<super::scroll::SceneState>()
+            .unwrap()
+            .scrollbar_drag
+            .is_some()
+    }
     fn scene(&self) -> Option<&Node> {
         Some(self)
     }
@@ -108,6 +121,7 @@ impl super::Widget for Node {
     }
     fn deactivate(&self, state: &mut dyn std::any::Any) {
         let state = state.downcast_mut::<super::scroll::SceneState>().unwrap();
+        state.scrollbar_drag = None;
         state.dialogs.clear();
         state.focus.clear();
     }

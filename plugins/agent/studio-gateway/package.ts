@@ -29,6 +29,7 @@ export default {
         ...native(sdk.nativeImplementations.gateway),
         imports: {
           settings: one(sdk.contracts.settings),
+          authentication: one(sdk.contracts.settingsAuthentication),
         },
       },
     },

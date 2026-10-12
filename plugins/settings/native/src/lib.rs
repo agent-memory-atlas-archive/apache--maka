@@ -31,50 +31,61 @@ use std::sync::Arc;
 pub const IMPLEMENTATION: &str = "maka.settings";
 pub const EXPORT: &str = "Settings";
 pub fn provide(registry: &mut NativeRegistry) -> Result<(), String> {
-    registry.insert(
-        IMPLEMENTATION.into(),
-        Arc::new(|context, input| {
-            Box::pin(async move {
-                let opened = async {
-                    if input != serde_json::json!({}) {
-                        return Err("settings_configuration_invalid".to_owned());
+    for (implementation, export, contract) in [
+        (IMPLEMENTATION, EXPORT, contract::contract()),
+        (
+            "maka.settings.authentication",
+            "Authentication",
+            contract::authentication_contract(),
+        ),
+    ] {
+        registry.insert(
+            implementation.into(),
+            Arc::new(move |context, input| {
+                let contract = contract.clone();
+                Box::pin(async move {
+                    let opened = async {
+                        if input != serde_json::json!({}) {
+                            return Err("settings_configuration_invalid".to_owned());
+                        }
+                        let persistence = context
+                            .persistence()
+                            .ok_or("settings_requires_persistence")?;
+                        let root = persistence
+                            .store()
+                            .owned_root()
+                            .map_err(|_| "settings_root_unavailable")?;
+                        let store = maka_config::ConfigurationStore::for_root(root)
+                            .await
+                            .map_err(|_| "settings_store_unavailable")?;
+                        Ok::<_, String>(Arc::new(service::Settings {
+                            configuration: Arc::new(store),
+                            log: persistence.store().clone(),
+                        }))
                     }
-                    let persistence = context
-                        .persistence()
-                        .ok_or("settings_requires_persistence")?;
-                    let root = persistence
-                        .store()
-                        .owned_root()
-                        .map_err(|_| "settings_root_unavailable")?;
-                    let store = maka_config::ConfigurationStore::for_root(root)
-                        .await
-                        .map_err(|_| "settings_store_unavailable")?;
-                    Ok::<_, String>(Arc::new(service::Settings {
-                        configuration: Arc::new(store),
-                        log: persistence.store().clone(),
-                    }))
-                }
-                .await;
-                match opened {
-                    Ok(owner) => NativeActivation {
-                        exports: Ok(std::collections::BTreeMap::from([(
-                            EXPORT.into(),
-                            maka_plugin_core::runtime::Published {
-                                contract: contract::contract(),
-                                value: owner.clone()
-                                    as Arc<dyn maka_host_runtime::application::Handler>,
-                            },
-                        )])),
-                        owner,
-                    },
-                    Err(error) => NativeActivation {
-                        exports: Err(error),
-                        owner: Arc::new(Uninitialized),
-                    },
-                }
-            })
-        }),
-    )
+                    .await;
+                    match opened {
+                        Ok(owner) => NativeActivation {
+                            exports: Ok(std::collections::BTreeMap::from([(
+                                export.into(),
+                                maka_plugin_core::runtime::Published {
+                                    contract,
+                                    value: owner.clone()
+                                        as Arc<dyn maka_host_runtime::application::Handler>,
+                                },
+                            )])),
+                            owner,
+                        },
+                        Err(error) => NativeActivation {
+                            exports: Err(error),
+                            owner: Arc::new(Uninitialized),
+                        },
+                    }
+                })
+            }),
+        )?;
+    }
+    Ok(())
 }
 struct Uninitialized;
 impl NativeOwner for Uninitialized {
@@ -93,5 +104,13 @@ pub fn native() -> maka_plugin_core::package::NativeDefinition {
         IMPLEMENTATION,
         serde_json::json!({"type":"object","properties":{},"required":[],"additionalProperties":false}),
         [(EXPORT, contract::contract())],
+    )
+}
+
+pub fn native_authentication() -> maka_plugin_core::package::NativeDefinition {
+    maka_plugin_core::package::NativeDefinition::new(
+        "maka.settings.authentication",
+        serde_json::json!({"type":"object","properties":{},"required":[],"additionalProperties":false}),
+        [("Authentication", contract::authentication_contract())],
     )
 }

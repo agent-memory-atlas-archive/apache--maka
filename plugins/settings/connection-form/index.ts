@@ -22,6 +22,7 @@ import { connectionFormContract, type ConnectionFormProps } from '../../shared/c
 import { withPageShell } from '../../shared/page-shell.js';
 import { type Node, type Presentation } from '../../shared/view.js';
 import { handleEvent } from './events.js';
+import { searchState } from '../search.js';
 import { request } from './operations.js';
 import { names, type SettingsValidation, type State } from './state.js';
 import { frame } from './view.js';
@@ -42,7 +43,7 @@ export function connectionForm<N extends Node>(
           catalogRevision: props.catalogRevision,
           provider: null,
           providers: [],
-          providerNext: null,
+          search: searchState(),
           providerActive: 0,
           providerFocus: null,
           providersFailed: false,
@@ -78,7 +79,9 @@ export function connectionForm<N extends Node>(
         };
         const actions: Action[] = [];
         if (!props.connection)
-          request(state, actions, { kind: 'providers' }, 'settings', 'providers', { offset: 0 });
+          request(state, actions, { kind: 'providers', offset: 0 }, 'settings', 'providers', {
+            offset: 0,
+          });
         return frame(presentation, state, props, actions);
       },
       update(state, props) {

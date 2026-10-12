@@ -38,15 +38,9 @@ pub(crate) fn encode(value: impl Serialize) -> Result<Value, String> {
     Ok(value)
 }
 pub(crate) fn definition(identity: &Identity) -> Result<Definition, String> {
-    if identity.package_id != maka_providers::api::ID
-        || identity.entry_id != maka_providers::api::ID
-        || identity.scope != Scope::Profile
-    {
-        return Err("settings_provider_unavailable".into());
-    }
-    maka_providers::api::ApiProviders::definition(&identity.name)
-        .map_err(|_| "settings_provider_unavailable".into())
+    maka_providers::definition(identity).map_err(|_| "settings_provider_unavailable".into())
 }
+
 pub(crate) async fn page(store: &ConfigurationStore, input: Value) -> Result<Value, String> {
     let input: ConnectionsRead =
         serde_json::from_value(input).map_err(|_| "settings_input_invalid")?;
@@ -126,20 +120,29 @@ pub(crate) async fn detail(store: &ConfigurationStore, input: Value) -> Result<V
 pub(crate) fn providers(input: Value) -> Result<Value, String> {
     let input: ProvidersRead =
         serde_json::from_value(input).map_err(|_| "settings_input_invalid")?;
-    let names =
-        maka_providers::api::ApiProviders::names().map_err(|_| "settings_provider_unavailable")?;
-    if input.offset >= names.len() && input.offset != 0 {
+    let mut identities = vec![Identity {
+        package_id: maka_providers::codex::ID.into(),
+        entry_id: maka_providers::codex::ID.into(),
+        scope: Scope::Profile,
+        name: "chatgpt".into(),
+    }];
+    identities.extend(
+        maka_providers::api::ApiProviders::names()
+            .map_err(|_| "settings_provider_unavailable")?
+            .into_iter()
+            .map(|name| Identity {
+                package_id: maka_providers::api::ID.into(),
+                entry_id: maka_providers::api::ID.into(),
+                scope: Scope::Profile,
+                name,
+            }),
+    );
+    if input.offset >= identities.len() && input.offset != 0 {
         return Err("settings_cursor_invalid".into());
     }
     let mut providers = Vec::new();
     let mut next = None;
-    for (offset, name) in names.into_iter().enumerate().skip(input.offset) {
-        let identity = Identity {
-            package_id: maka_providers::api::ID.into(),
-            entry_id: maka_providers::api::ID.into(),
-            scope: Scope::Profile,
-            name,
-        };
+    for (offset, identity) in identities.into_iter().enumerate().skip(input.offset) {
         let descriptor = definition(&identity)?.descriptor().clone();
         providers.push(Provider {
             identity,

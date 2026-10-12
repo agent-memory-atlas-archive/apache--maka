@@ -48,6 +48,7 @@ import {
   utf8Bytes,
 } from './operations.js';
 import { formPanes, type FieldName, type SettingsValidation, type State } from './state.js';
+import { searchEvent, matchesProvider } from '../search.js';
 import { frame } from './view.js';
 
 export function handleEvent<N extends Node>(
@@ -63,7 +64,17 @@ export function handleEvent<N extends Node>(
   state.revision++;
   const actions: Action[] = [],
     events: Emission[] = [];
-  if (input.kind === 'component' && input.child.startsWith('field-')) {
+  if (
+    !state.provider &&
+    !state.baseline &&
+    searchEvent(state.search, input, 'provider-query', actions)
+  ) {
+    state.providerActive = state.providers.findIndex((p) => matchesProvider(state.search, p));
+    state.providerFocus = {
+      sequence: (state.providerFocus?.sequence ?? 0) + 1,
+      target: { kind: 'reveal_child', key: 'provider-' + state.providerActive },
+    };
+  } else if (input.kind === 'component' && input.child.startsWith('field-')) {
     const name = input.child.slice(6) as FieldName,
       field = state.fields[name];
     if (!field) return frame(presentation, state, props);
@@ -90,14 +101,16 @@ export function handleEvent<N extends Node>(
       if (outcome.status !== 'succeeded') state.providersFailed = true;
       else {
         const page = outcome.value as SettingsProvidersPage;
-        state.providers = page.providers;
-        state.providerNext = page.next;
-        state.providerActive = 0;
-        if (target === 'tui' && state.providers.length)
-          state.providerFocus = {
-            sequence: (state.providerFocus?.sequence ?? 0) + 1,
-            target: { kind: 'focus_item', key: 'provider-0' },
-          };
+        state.providers = r.offset === 0 ? page.providers : [...state.providers, ...page.providers];
+        if (page.next !== null && !state.provider)
+          request(
+            state,
+            actions,
+            { kind: 'providers', offset: page.next },
+            'settings',
+            'providers',
+            { offset: page.next },
+          );
       }
     } else if (r.kind === 'read') {
       const current = state.current;
@@ -307,24 +320,26 @@ export function handleEvent<N extends Node>(
       } else if (key === 'field-next')
         state.pane = Math.min(state.pane + 1, formPanes(state).length - 1);
       else if (key === 'field-previous') state.pane = Math.max(0, state.pane - 1);
-      else if (key === 'provider-refresh' && !state.provider && !state.baseline)
-        request(state, actions, { kind: 'providers' }, 'settings', 'providers', {
+      else if (
+        key === 'provider-refresh' &&
+        !state.provider &&
+        !state.baseline &&
+        !Object.values(state.pending).some((r) => r.kind === 'providers')
+      )
+        request(state, actions, { kind: 'providers', offset: 0 }, 'settings', 'providers', {
           offset: 0,
         });
-      else if (key === 'provider-more' && !state.provider && !state.baseline) {
-        if (state.providerNext !== null)
-          request(state, actions, { kind: 'providers' }, 'settings', 'providers', {
-            offset: state.providerNext,
-          });
-      } else if (/^provider-(0|[1-9][0-9]*)$/.test(key) && !state.provider && !state.baseline) {
+      else if (/^provider-(0|[1-9][0-9]*)$/.test(key) && !state.provider && !state.baseline) {
         const provider = state.providers[Number(key.slice(9))];
-        if (provider) {
+        if (provider && matchesProvider(state.search, provider)) {
           state.providerActive = Number(key.slice(9));
           if (target === 'tui' && (input.event as { kind?: string }).kind !== 'submit')
             return frame(presentation, state, props, actions, events);
           state.provider = provider;
+          state.search.pending = null;
           for (const name of ['name', 'slug', 'endpoint', 'models'] as FieldName[]) {
-            state.fields[name].enabled = true;
+            state.fields[name].enabled =
+              name !== 'endpoint' || !!provider.descriptor.customEndpoint;
             prefill(state, name);
           }
         }

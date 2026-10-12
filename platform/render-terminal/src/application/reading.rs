@@ -212,6 +212,12 @@ fn state_mut(state: &mut dyn Any) -> &mut SceneState {
         .expect("reading scene owner")
 }
 impl Widget for Reading {
+    fn cancel_pointer(&self, state: &mut dyn Any) {
+        self.node.cancel_pointer(state);
+    }
+    fn pointer_capture(&self, state: &dyn Any) -> bool {
+        self.node.pointer_capture(state)
+    }
     fn scene(&self) -> Option<&Node> {
         Some(&self.node)
     }
@@ -467,6 +473,7 @@ impl Widget for Reading {
         }
     }
     fn deactivate(&self, state: &mut dyn Any) {
+        state_mut(state).scrollbar_drag = None;
         state_mut(state).dialogs.clear();
         state_mut(state).focus.clear();
         let reading = state_mut(state).reading.as_mut().unwrap();

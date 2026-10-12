@@ -156,7 +156,10 @@ pub(super) async fn authenticate(
             &context,
             "https://auth.openai.com/api/accounts/deviceauth/usercode",
             json!({"client_id": CLIENT_ID}),
-        ) => response?.decode()?,
+        ) => response.map_err(|error| match error {
+            Error::OutcomeUnknown => Error::Transport("device authorization service unavailable".into()),
+            other => other,
+        })?.decode()?,
     };
     if device.device_auth_id.is_empty()
         || device.device_auth_id.len() > 1024

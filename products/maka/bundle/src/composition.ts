@@ -110,6 +110,7 @@ export const packageNames = [
   'models',
   'model-default',
   'settings',
+  'settings-authentication',
   'connections',
   'credential',
   'connection-form',
@@ -197,6 +198,7 @@ function settingsComposition(
       | 'ui-authoring'
       | 'agent'
       | 'settings'
+      | 'settings-authentication'
       | 'receipts'
       | 'workspace-processes'
       | 'workspace-web'
@@ -237,6 +239,7 @@ function settingsComposition(
         'host-deployment-gateway',
       ),
       settings: node('settings'),
+      'settings-authentication': node('settings-authentication'),
       'skill-outcomes': node('skill-outcomes'),
       receipts: node('receipts'),
       'recovery-gateway': node(
@@ -252,6 +255,7 @@ function settingsComposition(
         {},
         {
           settings: [local('settings', 'Settings')],
+          authentication: [local('settings-authentication', 'Authentication')],
         },
       ),
     },
@@ -403,6 +407,8 @@ function settingsComposition(
           settings: [remote('settings', 'Settings')],
           credential: [local('credential', 'Credential')],
           form: [local('connection-form', 'ConnectionForm')],
+          input: [local('input', 'TextInput')],
+          reader: [local('reader', 'Reader')],
           reading: [local('reading-area', 'ReadingArea')],
         },
       ),
@@ -411,6 +417,7 @@ function settingsComposition(
         {},
         {
           settings: [remote('settings', 'Settings')],
+          authentication: [remote('settings-authentication', 'Authentication')],
           secret: [local('input', 'SecretInput')],
           receipts: [remote('receipts', 'Receipts')],
           history: [local('history', 'History')],
@@ -488,6 +495,14 @@ function settingsComposition(
   remoteExports.push({
     capability: { deployment: 'local', instance: [keys.settings], export: 'Settings' },
     declaration: { contract: contracts.settings, availability: 'required' },
+  });
+  remoteExports.push({
+    capability: {
+      deployment: 'local',
+      instance: [keys['settings-authentication']],
+      export: 'Authentication',
+    },
+    declaration: { contract: contracts.settingsAuthentication, availability: 'required' },
   });
   remoteExports.push(
     {
@@ -570,6 +585,12 @@ function settingsComposition(
             gateway,
             'settings',
             Object.keys(contracts.settings.interface.methods),
+            true,
+          ),
+          authentication: expose(
+            gateway,
+            'authentication',
+            Object.keys(contracts.settingsAuthentication.interface.methods),
             true,
           ),
           skillOutcomes: expose('recovery-gateway', 'skillOutcomes', ['read'], true),

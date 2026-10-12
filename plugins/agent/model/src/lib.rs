@@ -278,6 +278,13 @@ impl ModelReservation {
     }
 }
 
+/// A provider login uses the same proxy routing and HTTP implementation as model requests.
+pub fn provider_transport(
+    policy: &maka_network::Policy,
+) -> Result<Arc<dyn maka_agent_ports::model::Transport>, ModelError> {
+    network::Pool::default().get(policy)
+}
+
 impl ModelExecutor {
     /// Acquire atomically without queuing ahead of foreground work. Retaining
     /// one of two available slots leaves room for a foreground request.

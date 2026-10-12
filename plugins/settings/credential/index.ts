@@ -30,6 +30,9 @@ import type {
   CredentialVaultQueryResult,
   ConnectionCredentialTarget,
   SettingsCredentialSaveResult,
+  SettingsProvider,
+  SettingsLoginPrompt,
+  SettingsCredentialLoginResult,
   SettingsConnectionDetail,
   ConnectionVersionBasis,
   CredentialMutationResult,
@@ -51,6 +54,7 @@ import {
 
 type Request =
   | { kind: 'status' }
+  | { kind: 'provider' }
   | { kind: 'reviewConnection'; basis: ConnectionVersionBasis; retried: boolean }
   | { kind: 'reviewStatus'; target: ConnectionCredentialTarget }
   | { kind: 'mutate' }
@@ -58,7 +62,7 @@ type Request =
   | { kind: 'history'; after: number }
   | { kind: 'earlier'; reference: RecoveryRef; cursor: number };
 interface Current {
-  kind: 'save' | 'delete';
+  kind: 'save' | 'delete' | 'login';
   captured: EditorObservation | null;
   reference: RecoveryRef | null;
 }
@@ -75,6 +79,11 @@ interface State extends PageState {
   reviewed: { target: ConnectionCredentialTarget; status: CredentialStatus } | null;
   status: CredentialStatus | null;
   statusFailed: boolean;
+  provider: SettingsProvider | null;
+  providerFailed: boolean;
+  loginPrompt: SettingsLoginPrompt | null;
+  loginMessage: string;
+  cancelling: boolean;
   observation: EditorObservation | null;
   command: EditorCommand | null;
   commandSequence: number;
@@ -120,7 +129,7 @@ function busy(state: State) {
     !!state.current ||
     !!state.command ||
     Object.values(state.pending).some((r) =>
-      ['status', 'reviewConnection', 'reviewStatus'].includes(r.kind),
+      ['status', 'provider', 'reviewConnection', 'reviewStatus'].includes(r.kind),
     )
   );
 }
@@ -134,6 +143,9 @@ function canSave(state: State, props: CredentialProps) {
     !state.confirmation &&
     fresh(state, props) &&
     !!state.status &&
+    !!state.provider?.descriptor.authentication.some(
+      (method) => method.id === 'api-key' && !method.interactive,
+    ) &&
     !!state.observation?.snapshot.text.bytes &&
     !state.observation.snapshot.marked
   );
@@ -191,10 +203,44 @@ function save(state: State, props: CredentialProps, actions: Action[]) {
     },
   );
 }
+function login(state: State, props: CredentialProps, method: string, actions: Action[]) {
+  if (
+    busy(state) ||
+    !fresh(state, props) ||
+    state.confirmation ||
+    state.historyOpen ||
+    !state.status ||
+    !state.provider?.descriptor.authentication.some((m) => m.id === method && m.interactive)
+  )
+    return;
+  state.current = { kind: 'login', captured: null, reference: null };
+  state.loginPrompt = null;
+  state.loginMessage = '';
+  state.cancelling = false;
+  state.notice = 'loginStarting';
+  request(state, actions, { kind: 'mutate' }, 'authentication', 'loginCredential', {
+    expected: state.target,
+    expectedCredential: basis(state.status),
+    method,
+  });
+}
 function known(state: State, value: unknown, events: Emission[]) {
   const current = state.current!;
-  if (current.kind === 'save') {
-    const result = value as SettingsCredentialSaveResult;
+  if (current.kind === 'save' || current.kind === 'login') {
+    const result = value as SettingsCredentialLoginResult;
+    if (result.kind === 'failed' && current.kind === 'login') {
+      state.notice = {
+        cancelled: 'loginCancelled',
+        expired: 'loginExpired',
+        transport: 'loginTransportFailed',
+        authentication: 'loginFailed',
+      }[result.reason] as keyof Copy;
+      state.loginMessage = result.message;
+      state.loginPrompt = null;
+      state.current = null;
+      state.cancelling = false;
+      return true;
+    }
     if (result.kind === 'saved') {
       if (
         result.connection.connectionId !== state.target.connectionId ||
@@ -203,14 +249,16 @@ function known(state: State, value: unknown, events: Emission[]) {
       )
         return false;
       state.finished = true; // Saving changes connection revision; never guess its next basis.
-      state.notice = 'keySaved';
-      const captured = current.captured!;
-      state.command = {
-        owner: captured.snapshot.text.owner,
-        sequence: ++state.commandSequence,
-        basedOn: captured.revision,
-        edit: { kind: 'reset', text: '' },
-      };
+      state.notice = current.kind === 'login' ? 'loginSaved' : 'keySaved';
+      state.loginPrompt = null;
+      const captured = current.captured;
+      if (captured)
+        state.command = {
+          owner: captured.snapshot.text.owner,
+          sequence: ++state.commandSequence,
+          basedOn: captured.revision,
+          edit: { kind: 'reset', text: '' },
+        };
       events.push({ name: 'changed', value: {} });
     } else if (result.kind === 'rejected') {
       state.notice = ['connection_changed', 'credential_changed', 'attempt_conflict'].includes(
@@ -236,6 +284,8 @@ function known(state: State, value: unknown, events: Emission[]) {
     } else return false;
   }
   state.current = null;
+  state.loginPrompt = null;
+  state.cancelling = false;
   return true;
 }
 function receipt(state: State, reply: OperationReply, events: Emission[]) {
@@ -264,7 +314,10 @@ function earlierLabel(entry: Earlier, text: Copy): string {
   if (receipt?.kind !== 'recorded' || receipt.outcome.kind !== 'returned')
     return text.historyUnknown;
   const result = receipt.outcome.value as SettingsCredentialSaveResult | CredentialMutationResult;
-  if (entry.reference.method === 'saveCredential' && result.kind === 'saved')
+  if (
+    ['saveCredential', 'loginCredential'].includes(entry.reference.method) &&
+    result.kind === 'saved'
+  )
     return text.historySaved + ' ' + result.connection.slug;
   if (
     entry.reference.method === 'deleteCredential' &&
@@ -285,14 +338,20 @@ function frame<N extends Node>(
   const target = presentation.target;
   const ui = presentation.paint(props.theme),
     text = copy(props.locale);
+  const apiKey = !!state.provider?.descriptor.authentication.some(
+    (method) => method.id === 'api-key' && !method.interactive,
+  );
   const pendingStatus = Object.values(state.pending).some((r) => r.kind === 'status');
-  const status = state.statusFailed
-    ? text.keyUnavailable
-    : pendingStatus || !state.status
-      ? text.keyLoading
-      : state.status.configured
-        ? text.keyConfigured
-        : text.keyAbsent;
+  const status =
+    state.notice === 'loginSaved' || state.notice === 'keySaved'
+      ? text.keyConfigured
+      : state.statusFailed
+        ? text.keyUnavailable
+        : pendingStatus || !state.status
+          ? text.keyLoading
+          : state.status.configured
+            ? text.keyConfigured
+            : text.keyAbsent;
   const canReview =
     !busy(state) && !state.confirmation && props.target.connectionId === state.target.connectionId;
   const form = ui.box(
@@ -332,13 +391,56 @@ function frame<N extends Node>(
             { changed: 'changed', submitted: 'submitted' },
           ),
         ],
-        { style: { width: fill, height: pixels(44), shrink: 0 } },
+        { visible: apiKey, style: { width: fill, height: pixels(44), shrink: 0 } },
       ),
-      ...(target === 'desktop' ? [ui.text('help', text.keyHelp, 13, props.theme.muted)] : []),
+      ...(apiKey && target === 'desktop'
+        ? [ui.text('help', text.keyHelp, 13, props.theme.muted)]
+        : []),
+      ...(state.providerFailed
+        ? [
+            ui.text('provider-error', text.providersUnavailable),
+            ui.button('refresh-provider', text.refreshConnections, busy(state)),
+          ]
+        : []),
+      ...(state.loginPrompt
+        ? [
+            ui.text('login-help', text.loginInstructions, 14),
+            ui.button('login-url', state.loginPrompt.url, false, false, {}, state.loginPrompt.url),
+            ui.button(
+              'login-code',
+              state.loginPrompt.userCode,
+              false,
+              true,
+              {},
+              state.loginPrompt.userCode,
+            ),
+            ui.text('login-copy-help', text.loginCopyHelp, 12, props.theme.muted),
+          ]
+        : []),
       ui.box(
         'actions',
         [
-          ui.button('save', text.saveKey, !canSave(state, props), true),
+          ...(apiKey ? [ui.button('save', text.saveKey, !canSave(state, props), true)] : []),
+          ...(state.provider?.descriptor.authentication
+            .filter((method) => method.interactive)
+            .map((method) =>
+              ui.button(
+                'login-' + method.id,
+                method.label,
+                busy(state) || !fresh(state, props) || !state.status || !!state.confirmation,
+                true,
+              ),
+            ) ?? []),
+          ...(state.current?.kind === 'login' &&
+          Object.values(state.pending).some((r) => r.kind === 'mutate')
+            ? [
+                ui.button(
+                  'login-cancel',
+                  state.cancelling ? text.loginCancelling : text.cancel,
+                  state.cancelling,
+                ),
+              ]
+            : []),
           ...(basis(state.status)
             ? [
                 ui.button(
@@ -364,6 +466,9 @@ function frame<N extends Node>(
         { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
       ),
       ...(state.notice ? [ui.text('notice', text[state.notice], 13, props.theme.muted)] : []),
+      ...(state.loginMessage
+        ? [ui.text('login-error-detail', state.loginMessage, 13, props.theme.muted)]
+        : []),
       ...(state.confirmation && state.confirmation !== 'rebase'
         ? [
             ui.text(
@@ -574,6 +679,11 @@ export function credential<N extends Node>(
           reviewed: null,
           status: null,
           statusFailed: false,
+          provider: null,
+          providerFailed: false,
+          loginPrompt: null,
+          loginMessage: '',
+          cancelling: false,
           observation: null,
           command: null,
           commandSequence: 0,
@@ -591,6 +701,14 @@ export function credential<N extends Node>(
         };
         const actions: Action[] = [];
         readStatus(state, actions);
+        request(
+          state,
+          actions,
+          { kind: 'provider' },
+          'authentication',
+          'provider',
+          state.target.provider,
+        );
         return frame(presentation, state, props, actions);
       },
       update(state, props) {
@@ -602,12 +720,22 @@ export function credential<N extends Node>(
           input = { ...input, key: state.historyOpen ? 'history-back' : 'review-cancel' };
         state.revision++;
         const actions: Action[] = [],
-          events: Emission[] = [];
+          events: Emission[] = [],
+          cancel: string[] = [];
         if (input.kind === 'action') {
           const r = state.pending[input.key];
           if (!r) return frame(presentation, state, props);
-          delete state.pending[input.key];
           const result = input.event as ActionOutcome;
+          if (
+            r.kind === 'mutate' &&
+            state.current?.kind === 'login' &&
+            result.status === 'updated'
+          ) {
+            state.loginPrompt = result.value as SettingsLoginPrompt;
+            state.notice = 'loginWaiting';
+            return frame(presentation, state, props);
+          }
+          delete state.pending[input.key];
           if (r.kind === 'mutate') {
             if (result.status === 'operation') receipt(state, result.reply, events);
             else if (result.status === 'not_accepted') {
@@ -660,6 +788,13 @@ export function credential<N extends Node>(
               state.reviewPage = 0;
               state.confirmation = 'rebase';
             } else state.notice = 'keyUnavailable';
+          } else if (r.kind === 'provider') {
+            const provider =
+              result.status === 'succeeded' ? (result.value as SettingsProvider) : null;
+            if (provider && sameValue(provider.identity, state.target.provider)) {
+              state.provider = provider;
+              state.providerFailed = false;
+            } else state.providerFailed = true;
           } else if (r.kind === 'status') {
             const value =
               result.status === 'succeeded' ? (result.value as CredentialVaultQueryResult) : null;
@@ -675,8 +810,12 @@ export function credential<N extends Node>(
               state.earlier = page
                 .filter(
                   (entry) =>
-                    entry.reference.contract.name === 'maka.settings.Settings' &&
-                    ['saveCredential', 'deleteCredential'].includes(entry.reference.method),
+                    ['maka.settings.Settings', 'maka.settings.Authentication'].includes(
+                      entry.reference.contract.name,
+                    ) &&
+                    ['saveCredential', 'deleteCredential', 'loginCredential'].includes(
+                      entry.reference.method,
+                    ),
                 )
                 .map((entry) => ({
                   cursor: entry.cursor,
@@ -710,7 +849,30 @@ export function credential<N extends Node>(
             }
           } else if (input.name === 'submitted') save(state, props, actions);
         } else if (input.kind === 'raw') {
-          if (input.key === 'save') save(state, props, actions);
+          if (
+            input.key === 'login-cancel' &&
+            state.current?.kind === 'login' &&
+            !state.cancelling
+          ) {
+            cancel.push(
+              ...Object.entries(state.pending)
+                .filter(([, r]) => r.kind === 'mutate')
+                .map(([key]) => key),
+            );
+            state.cancelling = true;
+            state.notice = 'loginCancelling';
+          } else if (input.key.startsWith('login-'))
+            login(state, props, input.key.slice(6), actions);
+          else if (input.key === 'refresh-provider' && !busy(state))
+            request(
+              state,
+              actions,
+              { kind: 'provider' },
+              'authentication',
+              'provider',
+              state.target.provider,
+            );
+          else if (input.key === 'save') save(state, props, actions);
           else if (input.key === 'refresh-status') readStatus(state, actions);
           else if (input.key === 'review') review(state, props, actions);
           else if (input.key === 'review-next' && state.confirmation === 'rebase')
@@ -802,7 +964,9 @@ export function credential<N extends Node>(
               );
           }
         }
-        return frame(presentation, state, props, actions, events);
+        const out = frame(presentation, state, props, actions, events);
+        out.cancel = cancel;
+        return out;
       },
     },
     () => 'back',

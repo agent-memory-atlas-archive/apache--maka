@@ -35748,6 +35748,406 @@ export const contracts = {
       },
     },
   },
+  settingsAuthentication: {
+    name: 'maka.settings.Authentication',
+    version: 1,
+    transport: 'remote',
+    interface: {
+      kind: 'service',
+      methods: {
+        loginCredential: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsCredentialLogin',
+            type: 'object',
+            properties: {
+              expected: {
+                $ref: '#/$defs/ConnectionCredentialTarget',
+              },
+              expectedCredential: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/CredentialVersionBasis',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+              method: {
+                type: 'string',
+                maxLength: 128,
+              },
+            },
+            additionalProperties: false,
+            required: ['expected', 'expectedCredential', 'method'],
+            $defs: {
+              ConnectionCredentialTarget: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  slug: {
+                    type: 'string',
+                  },
+                  provider: {
+                    $ref: '#/$defs/Identity',
+                  },
+                  configuration: {
+                    type: 'object',
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision', 'slug', 'provider', 'configuration'],
+              },
+              Identity: {
+                description:
+                  'Durable recipient, not a registration lease. Re-loading the same package can\nrestore it; another package, Entry or scope cannot inherit its credentials.',
+                type: 'object',
+                properties: {
+                  packageId: {
+                    type: 'string',
+                  },
+                  entryId: {
+                    type: 'string',
+                  },
+                  scope: {
+                    type: 'string',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['packageId', 'entryId', 'scope', 'name'],
+              },
+              CredentialVersionBasis: {
+                type: 'object',
+                properties: {
+                  locator: {
+                    $ref: '#/$defs/CredentialLocator',
+                  },
+                  credentialId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['locator', 'credentialId', 'revision'],
+              },
+              CredentialLocator: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      connectionId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        $ref: '#/$defs/ConnectionCredentialKind',
+                      },
+                      scope: {
+                        type: 'string',
+                        const: 'connection',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['scope', 'connectionId', 'kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        $ref: '#/$defs/PasswordKind',
+                      },
+                      scope: {
+                        type: 'string',
+                        const: 'network_proxy',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['scope', 'kind'],
+                  },
+                ],
+              },
+              ConnectionCredentialKind: {
+                type: 'string',
+                enum: ['provider', 'request_headers'],
+              },
+              PasswordKind: {
+                type: 'string',
+                enum: ['password'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsCredentialLoginResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  connection: {
+                    $ref: '#/$defs/ConnectionIdentity',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'saved',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'connection'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/SettingsCredentialRejection',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'reason'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/SettingsLoginFailure',
+                  },
+                  message: {
+                    type: 'string',
+                    maxLength: 512,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'reason', 'message'],
+              },
+            ],
+            $defs: {
+              ConnectionIdentity: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  slug: {
+                    type: 'string',
+                  },
+                  provider: {
+                    $ref: '#/$defs/Identity',
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'slug', 'provider'],
+              },
+              Identity: {
+                description:
+                  'Durable recipient, not a registration lease. Re-loading the same package can\nrestore it; another package, Entry or scope cannot inherit its credentials.',
+                type: 'object',
+                properties: {
+                  packageId: {
+                    type: 'string',
+                  },
+                  entryId: {
+                    type: 'string',
+                  },
+                  scope: {
+                    type: 'string',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['packageId', 'entryId', 'scope', 'name'],
+              },
+              SettingsCredentialRejection: {
+                type: 'string',
+                enum: [
+                  'invalid_input',
+                  'invalid_secret',
+                  'secret_unavailable',
+                  'provider_unavailable',
+                  'authentication_unavailable',
+                  'attempt_conflict',
+                  'connection_changed',
+                  'credential_changed',
+                  'capacity',
+                  'slug_taken',
+                  'authentication',
+                ],
+              },
+              SettingsLoginFailure: {
+                type: 'string',
+                enum: ['cancelled', 'expired', 'transport', 'authentication'],
+              },
+            },
+          },
+          progress: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsLoginPrompt',
+            type: 'object',
+            properties: {
+              url: {
+                type: 'string',
+                maxLength: 2048,
+              },
+              userCode: {
+                type: 'string',
+                maxLength: 1024,
+              },
+            },
+            additionalProperties: false,
+            required: ['url', 'userCode'],
+          },
+          resources: {},
+        },
+        provider: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'Identity',
+            description:
+              'Durable recipient, not a registration lease. Re-loading the same package can\nrestore it; another package, Entry or scope cannot inherit its credentials.',
+            type: 'object',
+            properties: {
+              packageId: {
+                type: 'string',
+              },
+              entryId: {
+                type: 'string',
+              },
+              scope: {
+                type: 'string',
+              },
+              name: {
+                type: 'string',
+              },
+            },
+            additionalProperties: false,
+            required: ['packageId', 'entryId', 'scope', 'name'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsProvider',
+            type: 'object',
+            properties: {
+              identity: {
+                $ref: '#/$defs/Identity',
+              },
+              descriptor: {
+                $ref: '#/$defs/Descriptor',
+              },
+            },
+            additionalProperties: false,
+            required: ['identity', 'descriptor'],
+            $defs: {
+              Identity: {
+                description:
+                  'Durable recipient, not a registration lease. Re-loading the same package can\nrestore it; another package, Entry or scope cannot inherit its credentials.',
+                type: 'object',
+                properties: {
+                  packageId: {
+                    type: 'string',
+                  },
+                  entryId: {
+                    type: 'string',
+                  },
+                  scope: {
+                    type: 'string',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['packageId', 'entryId', 'scope', 'name'],
+              },
+              Descriptor: {
+                type: 'object',
+                properties: {
+                  label: {
+                    type: 'string',
+                  },
+                  customEndpoint: {
+                    description: 'Offers a user-selected endpoint instead of a named service.',
+                    type: 'boolean',
+                    default: false,
+                  },
+                  configurationSchema: true,
+                  configurationDefaults: true,
+                  authentication: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/Method',
+                    },
+                  },
+                  anonymous: {
+                    description:
+                      "Whether the provider supports a connection without a stored credential.\nPresentation metadata; authorization remains the provider's decision.",
+                    type: 'boolean',
+                  },
+                  discovery: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'label',
+                  'customEndpoint',
+                  'configurationSchema',
+                  'configurationDefaults',
+                  'authentication',
+                  'anonymous',
+                  'discovery',
+                ],
+              },
+              Method: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  label: {
+                    type: 'string',
+                  },
+                  inputSchema: {
+                    description:
+                      'Secret-bearing form input never enters the connection configuration.',
+                  },
+                  interactive: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['id', 'label', 'inputSchema', 'interactive'],
+              },
+            },
+          },
+          resources: {},
+        },
+      },
+    },
+  },
   textReader: {
     name: 'maka.text.Reader',
     version: 1,

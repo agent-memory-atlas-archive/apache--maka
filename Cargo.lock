@@ -9237,12 +9237,17 @@ dependencies = [
  "maka-config",
  "maka-event-log",
  "maka-host-runtime",
+ "maka-model",
+ "maka-network",
  "maka-plugin-core",
  "maka-providers",
  "schemars 1.2.2",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

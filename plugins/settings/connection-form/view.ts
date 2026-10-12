@@ -34,6 +34,7 @@ import {
   type Node,
   type Presentation,
 } from '../../shared/view.js';
+import { matchesProvider } from '../search.js';
 import { busy, canRemove, canSave, fresh, sameConnection } from './operations.js';
 import { formPanes, names, type FieldName, type State } from './state.js';
 
@@ -60,6 +61,7 @@ export function frame<N extends Node>(
   const ui = presentation.paint(props.theme),
     text = copy(props.locale);
   const locked = busy(state);
+  const loadingProviders = Object.values(state.pending).some((r) => r.kind === 'providers');
   const identity: Identity | undefined =
     state.baseline?.target.provider ?? state.provider?.identity;
   const panes = formPanes(state);
@@ -117,34 +119,65 @@ export function frame<N extends Node>(
       ...(!fresh(state, props)
         ? [ui.text('form-target-changed', text.connectionChanged, 13, props.theme.muted)]
         : []),
+      // Keep the original search owner alive while its captured read settles.
+      ui.box(
+        'provider-search',
+        [
+          ui.text('provider-heading', text.chooseProvider, 16, props.theme.text, 550),
+          ui.box(
+            'provider-query-box',
+            [
+              presentation.slot(
+                'provider-query',
+                'input',
+                {
+                  appearance: props.theme.input,
+                  accessibilityLabel: text.searchProviders,
+                  placeholder: text.searchProviders,
+                  autoFocus: true,
+                  tabIndex: 1,
+                  readOnly: false,
+                  disabled: !!state.provider || !!state.baseline,
+                },
+                { changed: 'provider-query' },
+              ),
+            ],
+            { gap: 0, style: { width: fill, height: pixels(36) } },
+          ),
+          ...(state.search.error ? [ui.text('search-error', text[state.search.error])] : []),
+        ],
+        { visible: !state.baseline && !state.provider, gap: target === 'tui' ? 1 : 16 },
+      ),
       ...(!state.baseline && !state.provider
         ? [
-            ui.text('provider-heading', text.chooseProvider, 16, props.theme.text, 550),
             ui.box(
               'provider-actions',
               [
                 ui.button(
                   'provider-refresh',
                   target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.refreshConnections,
-                  locked,
+                  locked || loadingProviders,
                   false,
                   target === 'tui' ? { background: 0 } : {},
                   undefined,
                   text.refreshConnections,
                 ),
-                ...(state.providerNext !== null
-                  ? [ui.button('provider-more', text.moreProviders, locked)]
-                  : []),
               ],
               { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
             ),
-            ...(Object.values(state.pending).some((r) => r.kind === 'providers')
+            ...(loadingProviders
               ? [ui.text('provider-loading', text.connecting, 13, props.theme.muted)]
               : []),
             ...(state.providersFailed
               ? [ui.text('provider-failed', text.providersUnavailable)]
               : []),
-            ...(state.providers.length === 0 && !locked && !state.providersFailed
+            ...(!locked &&
+            !loadingProviders &&
+            state.providers.length > 0 &&
+            !state.providers.some((p) => matchesProvider(state.search, p))
+              ? [ui.text('providers-no-matches', text.noSearchResults)]
+              : []),
+            ...(state.providers.length === 0 && !loadingProviders && !state.providersFailed
               ? [ui.text('providers-empty', text.noProviders)]
               : []),
             presentation.reading(
@@ -153,29 +186,33 @@ export function frame<N extends Node>(
                 command: state.providerFocus,
                 content: ui.box(
                   'provider-rows',
-                  state.providers.map((provider, at) =>
-                    ui.item
-                      ? ui.item(
-                          'provider-' + at,
-                          ui.text(
-                            'provider-label-' + at,
-                            provider.descriptor.label,
-                            14,
-                            props.theme.text,
-                            400,
-                            { truncate: true },
-                          ),
-                          state.providerActive === at,
-                          locked,
-                          { followFocus: true, submit: true },
-                        )
-                      : ui.button('provider-' + at, provider.descriptor.label, locked),
+                  state.providers.flatMap((provider, at) =>
+                    !matchesProvider(state.search, provider)
+                      ? []
+                      : [
+                          ui.item
+                            ? ui.item(
+                                'provider-' + at,
+                                ui.text(
+                                  'provider-label-' + at,
+                                  provider.descriptor.label,
+                                  14,
+                                  props.theme.text,
+                                  400,
+                                  { truncate: true },
+                                ),
+                                state.providerActive === at,
+                                locked,
+                                { followFocus: true, submit: true },
+                              )
+                            : ui.button('provider-' + at, provider.descriptor.label, locked),
+                        ],
                   ),
                   {
                     focusGroup: target === 'tui',
                     scroll: 'manual',
                     gap: target === 'tui' ? 0 : 8,
-                    terminal: { grow: 1, basis: 8, shrink: true },
+                    terminal: { grow: 1, basis: 0 },
                     style: { width: fill, height: pixels(240), minHeight: 0 },
                   },
                 ),
@@ -344,7 +381,7 @@ export function frame<N extends Node>(
     ],
     {
       visible: !state.historyOpen && !state.confirmation,
-      scroll: target === 'tui' ? 'anchor' : 'none',
+      scroll: target === 'tui' && (state.provider || state.baseline) ? 'anchor' : 'none',
       gap: target === 'desktop' ? 16 : 1,
       terminal: { grow: 1 },
     },

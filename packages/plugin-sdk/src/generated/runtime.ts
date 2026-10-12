@@ -166,6 +166,9 @@ export type RuntimeProtocol =
   | SettingsConnectionDetail
   | SettingsProvidersRead
   | SettingsProvidersPage
+  | SettingsCredentialLogin
+  | SettingsLoginPrompt
+  | SettingsCredentialLoginResult
   | SettingsSaveCredential
   | SettingsCredentialSaveResult
   | CreateCatalogConnectionInput
@@ -2583,7 +2586,7 @@ export type SettingsConnectionDetail =
       enabledModelCount: number;
       kind: 'ready';
     };
-export type SettingsCredentialSaveResult =
+export type SettingsCredentialLoginResult =
   | {
       connection: ConnectionIdentity;
       kind: 'saved';
@@ -2591,6 +2594,11 @@ export type SettingsCredentialSaveResult =
   | {
       reason: SettingsCredentialRejection;
       kind: 'rejected';
+    }
+  | {
+      reason: SettingsLoginFailure;
+      message: string;
+      kind: 'failed';
     };
 export type SettingsCredentialRejection =
   | 'invalid_input'
@@ -2604,6 +2612,16 @@ export type SettingsCredentialRejection =
   | 'capacity'
   | 'slug_taken'
   | 'authentication';
+export type SettingsLoginFailure = 'cancelled' | 'expired' | 'transport' | 'authentication';
+export type SettingsCredentialSaveResult =
+  | {
+      connection: ConnectionIdentity;
+      kind: 'saved';
+    }
+  | {
+      reason: SettingsCredentialRejection;
+      kind: 'rejected';
+    };
 export type ApiProtocol = 'openai-chat' | 'openai-responses' | 'anthropic-messages';
 export type ModelModality = 'text' | 'image' | 'audio' | 'pdf' | 'video';
 export type RelayServiceTier = 'fast';
@@ -7878,14 +7896,23 @@ export interface Method2 {
   };
   interactive: boolean;
 }
-export interface SettingsSaveCredential {
+export interface SettingsCredentialLogin {
   expected: ConnectionCredentialTarget;
   expectedCredential: CredentialVersionBasis | null;
+  method: string;
+}
+export interface SettingsLoginPrompt {
+  url: string;
+  userCode: string;
 }
 export interface ConnectionIdentity {
   connectionId: string;
   slug: string;
   provider: Identity;
+}
+export interface SettingsSaveCredential {
+  expected: ConnectionCredentialTarget;
+  expectedCredential: CredentialVersionBasis | null;
 }
 export interface CreateCatalogConnectionInput {
   expectedCatalogRevision: number;

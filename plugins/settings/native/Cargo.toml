@@ -31,8 +31,15 @@ maka-event-log.workspace = true
 maka-plugin-core.workspace = true
 maka-host-runtime.workspace = true
 maka-providers.workspace = true
+maka-model.workspace = true
+maka-network.workspace = true
 futures-util.workspace = true
 schemars.workspace = true
 sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+tokio-util.workspace = true
+tempfile.workspace = true

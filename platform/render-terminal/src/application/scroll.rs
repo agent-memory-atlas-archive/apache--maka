@@ -31,6 +31,7 @@ pub(super) struct SceneState {
     pub dialogs: BTreeMap<String, std::rc::Rc<super::dialog::Opening>>,
     pub reading: Option<super::reading::ReadingState>,
     pub scrolls: BTreeMap<String, ScrollState>,
+    pub scrollbar_drag: Option<(String, Placement)>,
     pub focus: BTreeMap<String, maka_ui_runtime::focus::FocusOnReveal>,
 }
 #[derive(Default)]
@@ -341,6 +342,44 @@ impl SceneState {
         let Some(viewport) = &state.presented else {
             return false;
         };
+        if let Event::Mouse(mouse) = event {
+            use crossterm::event::MouseButton;
+            if mouse.kind == MouseEventKind::Up(MouseButton::Left) {
+                return self.scrollbar_drag.take().is_some();
+            }
+            let captured = self
+                .scrollbar_drag
+                .as_ref()
+                .is_some_and(|(drag_key, area)| drag_key == key && *area == viewport.area);
+            let hit = viewport.end() > 0
+                && viewport.area.width > 1
+                && viewport.area.contains((mouse.column, mouse.row).into())
+                && i64::from(mouse.column) == viewport.area.right() - 1;
+            if (mouse.kind == MouseEventKind::Down(MouseButton::Left) && hit)
+                || (mouse.kind == MouseEventKind::Drag(MouseButton::Left) && captured)
+            {
+                let row = (i64::from(mouse.row) - viewport.area.y)
+                    .clamp(0, i64::from(viewport.area.height.saturating_sub(1)))
+                    as u64;
+                let next = (row * u64::from(viewport.end())
+                    / u64::from(viewport.area.height.saturating_sub(1).max(1)))
+                    as u32;
+                self.scrollbar_drag = Some((key.to_owned(), viewport.area));
+                let delta = i64::from(next) - i64::from(state.offset);
+                state.offset = next;
+                state.intent += 1;
+                if let Some(reading) = self
+                    .reading
+                    .as_mut()
+                    .filter(|reading| reading.root_key == key)
+                {
+                    reading.scope.touch();
+                    reading.scrolled(delta);
+                    reading.cancel();
+                }
+                return true;
+            }
+        }
         let delta = match event {
             Event::Mouse(mouse) => match mouse.kind {
                 MouseEventKind::ScrollUp => -3,

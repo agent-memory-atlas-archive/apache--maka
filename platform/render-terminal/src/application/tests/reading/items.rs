@@ -200,7 +200,7 @@ fn grouped_items_directory_arrows_reveal_without_activating_a_destination() {
 }
 
 #[test]
-fn grouped_items_pointer_hover_does_not_select_and_second_line_activates() {
+fn grouped_items_pointer_hover_does_not_select_and_second_line_submits() {
     let (_runtime, mut p, _) = plain();
     draw(&mut p, 24, 6);
     let initial = p.application.frame(&p.root).unwrap().revision;
@@ -221,7 +221,7 @@ fn grouped_items_pointer_hover_does_not_select_and_second_line_activates() {
     mouse(&mut p, MouseEventKind::Down(MouseButton::Left), 4, 2);
     draw(&mut p, 24, 6);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-0");
-    assert_eq!(observation(&p), json!({"kind":"activate"}));
+    assert_eq!(observation(&p), json!({"kind":"submit"}));
     p.input(key(KeyCode::Down)).unwrap();
     draw(&mut p, 24, 6);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-1");
@@ -295,7 +295,7 @@ fn grouped_items_reveal_through_entirely_clipped_nested_scrollers() {
         point.x + 2,
         point.y + 1,
     );
-    assert_eq!(observation(&p), json!({"kind":"activate"}));
+    assert_eq!(observation(&p), json!({"kind":"submit"}));
     shared.borrow_mut()["children"][1]["visible"] = json!(false);
     let revision = p.application.frame(&p.root).unwrap().revision;
     p.application
@@ -824,5 +824,28 @@ fn item_space_submission_is_explicit_and_focus_remains_activation() {
     assert_eq!(p.focus.as_ref().unwrap().key, "item-1");
     p.input(key(KeyCode::Char(' '))).unwrap();
     assert_eq!(observation(&p), json!({"kind":"activate"}));
+    close(&mut p);
+}
+
+#[test]
+fn list_scrollbar_paints_tracks_clicks_and_captures_drag_outside() {
+    let (_runtime, mut p, _) = native((0..30).map(item).collect());
+    let first = draw(&mut p, 24, 8);
+    assert_eq!(first[(23, 0)].symbol(), "█");
+    assert_eq!(first[(23, 7)].symbol(), "│");
+    mouse(&mut p, MouseEventKind::ScrollDown, 2, 2);
+    draw(&mut p, 24, 8);
+    assert_eq!(state(&p).scrolls["reading"].offset, 3);
+    mouse(&mut p, MouseEventKind::Down(MouseButton::Left), 23, 7);
+    let end = draw(&mut p, 24, 8);
+    let viewport = state(&p).scrolls["reading"].presented.as_ref().unwrap();
+    assert_eq!(viewport.offset, viewport.end());
+    assert_eq!(end[(23, 7)].symbol(), "█");
+    assert!(p.drag.is_some());
+    mouse(&mut p, MouseEventKind::Drag(MouseButton::Left), 30, 0);
+    draw(&mut p, 24, 8);
+    assert_eq!(state(&p).scrolls["reading"].offset, 0);
+    mouse(&mut p, MouseEventKind::Up(MouseButton::Left), 30, 0);
+    assert!(p.drag.is_none());
     close(&mut p);
 }

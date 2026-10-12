@@ -391,4 +391,9 @@ export const nativeImplementations = /* @__PURE__ */ (() => ({
     configuration: { type: 'object', properties: {}, required: [], additionalProperties: false },
     exports: { Settings: contracts.settings },
   },
+  settingsAuthentication: {
+    implementation: 'maka.settings.authentication',
+    configuration: { type: 'object', properties: {}, required: [], additionalProperties: false },
+    exports: { Authentication: contracts.settingsAuthentication },
+  },
 }))();

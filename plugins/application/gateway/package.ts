@@ -43,6 +43,7 @@ export default {
           web: { contract: sdk.contracts.workspaceWeb, cardinality: { kind: 'optional' } },
           skills: { contract: sdk.contracts.skillLibrary, cardinality: { kind: 'optional' } },
           settings: one(sdk.contracts.settings),
+          authentication: one(sdk.contracts.settingsAuthentication),
         },
       },
     },

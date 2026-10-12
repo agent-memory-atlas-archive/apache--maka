@@ -840,7 +840,10 @@ impl Presenter {
                     submit,
                     submit_space,
                     ..
-                } if matches!(event, Event::Key(key) if (submit && key.code == KeyCode::Enter) || (submit_space && key.code == KeyCode::Char(' '))) => {
+                } if matches!(event, Event::Key(key) if (submit && key.code == KeyCode::Enter) || (submit_space && key.code == KeyCode::Char(' ')))
+                    || (submit
+                        && matches!(event, Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left))) =>
+                {
                     "submit"
                 }
                 paint::TargetKind::Item { .. } => "activate",

@@ -227,22 +227,94 @@ pub enum CredentialRejection {
     SlugTaken,
     Authentication,
 }
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "SettingsCredentialLogin")]
+pub struct LoginCredential {
+    pub expected: maka_agent_facts::configuration::ConnectionCredentialTarget,
+    #[serde(deserialize_with = "Option::deserialize")]
+    #[schemars(
+        with = "maka_plugin_core::wire_schema::RequiredNullable<maka_agent_facts::configuration::CredentialVersionBasis>"
+    )]
+    pub expected_credential: Option<maka_agent_facts::configuration::CredentialVersionBasis>,
+    #[schemars(length(max = 128))]
+    pub method: String,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "SettingsLoginPrompt")]
+pub struct LoginPrompt {
+    #[schemars(length(max = 2048))]
+    pub url: String,
+    #[schemars(length(max = 1024))]
+    pub user_code: String,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "SettingsCredentialLoginResult")]
+pub enum CredentialLoginResult {
+    Saved {
+        connection: maka_agent_facts::oauth::ConnectionIdentity,
+    },
+    Rejected {
+        reason: CredentialRejection,
+    },
+    Failed {
+        reason: LoginFailure,
+        #[schemars(length(max = 512))]
+        message: String,
+    },
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename = "SettingsLoginFailure")]
+pub enum LoginFailure {
+    Cancelled,
+    Expired,
+    Transport,
+    Authentication,
+}
+fn schema<T: JsonSchema>(contract: schemars::generate::Contract) -> serde_json::Value {
+    let settings =
+        schemars::generate::SchemaSettings::default().with(|settings| settings.contract = contract);
+    serde_json::to_value(settings.into_generator().into_root_schema_for::<T>())
+        .expect("settings schema")
+}
+fn method<I: JsonSchema, O: JsonSchema>(mode: MethodMode) -> Method {
+    Method {
+        progress: None,
+        mode,
+        input: schema::<I>(schemars::generate::Contract::Deserialize),
+        output: schema::<O>(schemars::generate::Contract::Serialize),
+        resources: BTreeMap::new(),
+    }
+}
+pub fn authentication_contract() -> Contract {
+    Contract {
+        name: "maka.settings.Authentication".into(),
+        version: 1,
+        transport: Transport::Remote,
+        interface: Interface::Service {
+            methods: BTreeMap::from([
+                (
+                    "provider".into(),
+                    method::<maka_agent_facts::provider::Identity, Provider>(MethodMode::Query),
+                ),
+                (
+                    "loginCredential".into(),
+                    Method {
+                        progress: Some(schema::<LoginPrompt>(
+                            schemars::generate::Contract::Serialize,
+                        )),
+                        ..method::<LoginCredential, CredentialLoginResult>(MethodMode::Mutation)
+                    },
+                ),
+            ]),
+        },
+    }
+}
+
 pub fn contract() -> Contract {
-    fn schema<T: JsonSchema>(contract: schemars::generate::Contract) -> serde_json::Value {
-        let settings = schemars::generate::SchemaSettings::default()
-            .with(|settings| settings.contract = contract);
-        serde_json::to_value(settings.into_generator().into_root_schema_for::<T>())
-            .expect("settings schema")
-    }
-    fn method<I: JsonSchema, O: JsonSchema>(mode: MethodMode) -> Method {
-        Method {
-            progress: None,
-            mode,
-            input: schema::<I>(schemars::generate::Contract::Deserialize),
-            output: schema::<O>(schemars::generate::Contract::Serialize),
-            resources: BTreeMap::new(),
-        }
-    }
     Contract {
         name: "maka.settings.Settings".into(),
         version: 1,

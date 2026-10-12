@@ -1625,20 +1625,25 @@ impl Presenter {
                         })
                     })
                     .collect::<maka_ui_runtime::Result<Vec<_>>>()?;
-                let flow = super::layout::measured(
-                    wide.map_or(*direction, |wide| wide.direction),
-                    inner.width,
-                    if *scroll == super::scene::ScrollPolicy::None {
-                        Some(inner.height)
-                    } else {
-                        None
-                    },
-                    *gap,
-                    node.layout().wrap,
-                    &layouts,
-                    |index, width| self.measure(mount, children[index], width, measurements),
-                )?;
                 let scrolling = *scroll != super::scene::ScrollPolicy::None;
+                let measure_flow = |width| {
+                    super::layout::measured(
+                        wide.map_or(*direction, |wide| wide.direction),
+                        width,
+                        if scrolling { None } else { Some(inner.height) },
+                        *gap,
+                        node.layout().wrap,
+                        &layouts,
+                        |index, width| self.measure(mount, children[index], width, measurements),
+                    )
+                };
+                let mut flow = measure_flow(inner.width)?;
+                let scrollbar = scrolling && flow.size.1 > inner.height && inner.width > 1;
+                let mut content_area = inner;
+                if scrollbar {
+                    content_area.bounds.width -= 1;
+                    flow = measure_flow(content_area.width)?;
+                }
                 let viewport = if scrolling {
                     let identities: Vec<_> = children
                         .iter()
@@ -1732,12 +1737,48 @@ impl Presenter {
                     };
                     let area = Placement::new(
                         relative.translated(inner.x, inner.y - i64::from(offset)),
-                        inner.visible(),
+                        content_area.visible(),
                     );
                     self.paint_node(mount, child, area, buffer, scene, &mut pass)?;
                     if reading_children {
                         scene.scope.as_mut().unwrap().child = previous_child;
                     }
+                }
+                if scrollbar && let Some(viewport) = &viewport {
+                    let bar = Placement::new(
+                        CellRect::new(inner.right() - 1, inner.y, 1, inner.height),
+                        inner.visible(),
+                    );
+                    let height = u64::from(inner.height);
+                    let thumb = (height * height / u64::from(viewport.content)).max(1);
+                    let top =
+                        u64::from(offset) * (height - thumb) / u64::from(viewport.end().max(1));
+                    for y in 0..bar.visible().height {
+                        let row = bar.visible().y + y;
+                        let logical = (i64::from(row) - inner.y) as u64;
+                        let active = (top..top + thumb).contains(&logical);
+                        buffer[(bar.visible().x, row)]
+                            .set_char(if active { '█' } else { '│' })
+                            .set_style(Style::default().fg(if active {
+                                Color::Gray
+                            } else {
+                                Color::DarkGray
+                            }));
+                    }
+                    scene.targets.push(Target {
+                        identity: TargetIdentity {
+                            mount: mount.clone(),
+                            key: key.clone(),
+                            owner: self.resources.owners[&mount.id()].identity.clone(),
+                            scope: scene.input_scope.clone(),
+                        },
+                        revision: self.application.frame(mount)?.revision,
+                        area: bar,
+                        tab_index: -1,
+                        autofocus: false,
+                        kind: TargetKind::Scroll,
+                        ancestors: scene.ancestry.clone(),
+                    });
                 }
                 if scrolling || scoped {
                     scene.ancestry.pop();

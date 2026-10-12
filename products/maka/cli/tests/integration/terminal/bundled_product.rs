@@ -580,3 +580,113 @@ fn first_install_failure_keeps_original_host_error_after_terminal_restoration() 
     let output = String::from_utf8_lossy(&tui.output);
     assert!(output.rfind("Host local: plugin").unwrap() > output.rfind("\x1b[?1049l").unwrap());
 }
+
+#[test]
+#[ignore = "starts the bundled product and checks connection settings in a native PTY"]
+fn bundled_connections_search_scroll_click_and_chatgpt_credentials() {
+    fn click(tui: &mut Pty, label: &str) {
+        tui.wait_for(label);
+        let screen = tui.screen.snapshot().unwrap().screen;
+        let (row, line) = screen
+            .lines()
+            .enumerate()
+            .find(|(_, line)| line.contains(label))
+            .unwrap();
+        let column = line[..line.find(label).unwrap()].chars().count() + 2;
+        tui.send(
+            format!(
+                "\x1b[<0;{};{}M\x1b[<0;{};{}m",
+                column,
+                row + 1,
+                column,
+                row + 1
+            )
+            .as_bytes(),
+        );
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let workspace = directory.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let configuration = directory.path().join("installation.json");
+    let ui = directory.path().join("ui");
+    std::fs::write(&configuration, serde_json::to_vec(&json!({
+        "presentation":"tui", "locale":"en", "scheme":"dark", "hostRoot":directory.path().join("host"),
+        "agent":{"workspaceRoots":[{"label":"Workspace","path":workspace}], "maxActiveRuns":1,"maxSteps":4,"tools":[],"permissions":{"access":"read_only","requestPermissions":true}}
+    })).unwrap()).unwrap();
+    let mut tui = Pty::spawn(&[
+        "application",
+        "launch",
+        "--root",
+        ui.to_str().unwrap(),
+        "--configuration",
+        configuration.to_str().unwrap(),
+    ]);
+    tui.wait_until_with_timeout(|s| s.contains("Settings"), Duration::from_secs(60));
+    tui.send(b"\x0b");
+    tui.wait_for("Commands");
+    tui.send(b"Settings");
+    tui.wait_for("› Settings");
+    tui.send(b"\r");
+    click(&mut tui, "Models");
+    click(&mut tui, "Model connections");
+    tui.wait_for("No connections yet.");
+    click(&mut tui, "Add connection");
+    tui.wait_until(|s| {
+        s.contains("ChatGPT Subscription") && s.contains('█') && !s.contains("Connecting")
+    });
+    let size = libc::winsize {
+        ws_row: 20,
+        ws_col: 64,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    assert_eq!(
+        unsafe {
+            libc::ioctl(
+                tui.master.as_ref().unwrap().as_raw_fd(),
+                libc::TIOCSWINSZ,
+                &size,
+            )
+        },
+        0
+    );
+    tui.screen
+        .resize(TerminalSize::new(64, 20).unwrap())
+        .unwrap();
+    tui.frames.resize();
+    tui.wait_until(|s| s.contains("ChatGPT Subscription") && s.contains('█'));
+    let before = tui.screen.snapshot().unwrap().screen;
+    let row = before
+        .lines()
+        .position(|line| line.contains("ChatGPT Subscription"))
+        .unwrap();
+    let line = before.lines().nth(row).unwrap();
+    let column = line[..line.find("ChatGPT Subscription").unwrap()]
+        .chars()
+        .count()
+        + 2;
+    tui.send(format!("\x1b[<65;{};{}M", column, row + 2).as_bytes());
+    tui.wait_until(|s| !s.contains("ChatGPT Subscription"));
+    click(&mut tui, "Search providers");
+    tui.send(b"chatgpt");
+    tui.wait_until(|s| s.contains("ChatGPT Subscription") && !s.contains("Anthropic"));
+    click(&mut tui, "ChatGPT Subscription");
+    tui.wait_for("Next field");
+    click(&mut tui, "Next field");
+    tui.wait_for("Connection ID");
+    tui.send(b"chatgpt-test");
+    tui.wait_for("chatgpt-test");
+    click(&mut tui, "Save connection");
+    tui.wait_until(|s| s.contains("Search connections") && s.contains("chatgpt-test"));
+    click(&mut tui, "Credentials");
+    tui.wait_for("Sign in with ChatGPT");
+    assert!(
+        !tui.screen
+            .snapshot()
+            .unwrap()
+            .screen
+            .contains("Enter an API key")
+    );
+    tui.send(b"\x11");
+    tui.finish();
+}
