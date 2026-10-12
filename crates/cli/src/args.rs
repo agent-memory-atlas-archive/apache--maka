@@ -19,7 +19,7 @@
 
 use clap::{Args, Parser, Subcommand};
 use maka_event_log::EventLog;
-use maka_runtime_host::server::HostError;
+use maka_runtime_host::HostError;
 use std::{net::SocketAddr, path::PathBuf};
 
 use crate::{candidate, code, serve};

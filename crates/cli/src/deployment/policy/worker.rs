@@ -24,7 +24,7 @@ use crate::{
 };
 use clap::Args;
 use maka_event_log::root::FileLease;
-use maka_runtime_host::server::HostError;
+use maka_runtime_host::HostError;
 use semver::Version;
 use std::{path::Path, process::Stdio, sync::Arc};
 

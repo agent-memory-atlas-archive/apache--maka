@@ -25,7 +25,7 @@ use maka_runtime::configuration::policy::{
     NetworkProxy, PrivacyPolicy, RuntimePolicyMutationResult,
     network_update::{CredentialUpdate, Update, UpdateResult},
 };
-use maka_runtime_host::server::HostError;
+use maka_runtime_host::HostError;
 use serde::Deserialize;
 use std::{
     io::Read,

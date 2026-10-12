@@ -24,7 +24,7 @@ use crate::host_client::RetirementResult;
 use crate::host_client::{HostClient, LiveHost};
 use clap::Args;
 use maka_event_log::root::{self, FileLease, RootNamespaces, RootOwner};
-use maka_runtime_host::server::HostError;
+use maka_runtime_host::HostError;
 use serde::Serialize;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use uuid::Uuid;

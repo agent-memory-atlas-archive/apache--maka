@@ -39,7 +39,7 @@ pub struct Configuration {
     /// Explicit ceilings for a request's selected project. An observation grants no access.
     #[serde(default)]
     #[schemars(length(max = 8))]
-    pub project_roots: Vec<maka_runtime_host::server::DirectoryRootSpec>,
+    pub project_roots: Vec<maka_runtime_host::DirectoryRootSpec>,
     /// Include the immutable skill instructions and resources shipped with this build.
     #[serde(default)]
     pub bundled: bool,

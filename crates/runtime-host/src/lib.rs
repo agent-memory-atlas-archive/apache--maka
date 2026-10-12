@@ -17,17 +17,14 @@
  * under the License.
  */
 
-pub mod access_delivery;
 pub mod application;
-mod controllers;
-mod execution;
+mod directories;
 pub mod http;
 pub mod ipc;
 pub mod oauth;
-pub mod plugins;
 pub mod recovery;
 pub mod sandbox;
-pub mod server;
-pub mod session;
 pub mod shell;
-pub mod transcript;
+
+pub use directories::DirectoryRootSpec;
+pub type HostError = Box<dyn std::error::Error + Send + Sync>;

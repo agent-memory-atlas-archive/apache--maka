@@ -20,7 +20,7 @@
 //! One observation deadline, including blocking cleanup in a finite CLI command.
 //! The worker is the command itself, not a controller or a second state authority.
 
-use maka_runtime_host::server::HostError;
+use maka_runtime_host::HostError;
 use serde::Serialize;
 use std::{future::Future, io::Write, process::Stdio, time::Duration};
 use tokio::{io::AsyncReadExt, time::Instant};

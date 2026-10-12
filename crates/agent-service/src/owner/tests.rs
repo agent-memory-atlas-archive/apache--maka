@@ -513,7 +513,7 @@ impl Fixture {
             assistant: None,
             scheduled_tasks: false,
             recall: false,
-            import_roots: vec![maka_runtime_host::server::DirectoryRootSpec {
+            import_roots: vec![maka_runtime_host::DirectoryRootSpec {
                 label: "Import sources".into(),
                 path: workspace.clone(),
             }],
@@ -526,11 +526,11 @@ impl Fixture {
                 request_permissions: true,
             },
             workspace_roots: vec![
-                maka_runtime_host::server::DirectoryRootSpec {
+                maka_runtime_host::DirectoryRootSpec {
                     label: "Workspace".into(),
                     path: workspace.clone(),
                 },
-                maka_runtime_host::server::DirectoryRootSpec {
+                maka_runtime_host::DirectoryRootSpec {
                     label: "Other workspace".into(),
                     path: other_workspace,
                 },

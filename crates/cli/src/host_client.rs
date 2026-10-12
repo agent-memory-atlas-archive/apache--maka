@@ -18,12 +18,12 @@
  */
 
 use maka_runtime_host::{
+    HostError,
     application::host::{
         Client, Pairing, Status,
         discovery::{self, Discovery},
     },
     ipc::{self, LocalStream},
-    server::HostError,
 };
 use std::{
     num::{NonZeroU16, NonZeroU32},

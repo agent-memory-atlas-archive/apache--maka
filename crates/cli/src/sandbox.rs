@@ -19,7 +19,7 @@
 
 use maka_process::{PipeEvent, ProcessOutcome, ShellExecutor, Termination};
 use maka_runtime::shell_run::PipeStream;
-use maka_runtime_host::server::HostError;
+use maka_runtime_host::HostError;
 use maka_sandbox::Sandbox;
 use std::{io::Read, path::PathBuf, process::ExitCode, time::Duration};
 use tokio::io::AsyncWriteExt;

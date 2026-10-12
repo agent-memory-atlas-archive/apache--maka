@@ -849,14 +849,7 @@ fn private_host_recovery_failure_closes_original_sql_owner_without_publishing_re
                 .success()
         );
     });
-    let root = RootOwner::open(&f.host_path(), &f.namespaces).unwrap();
-    assert!(
-        f.timer
-            .block_on(maka_runtime_host::server::Host::open(root))
-            .is_err()
-    );
-    // The shared recovery boundary also waits for legacy Host's original SQL
-    // owner; a returned startup error is not merely a request to drop it later.
+    // Failed startup released the original application SQL owner.
     drop(RootOwner::open(&f.host_path(), &f.namespaces).unwrap());
     f.cleanup();
 }

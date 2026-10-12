@@ -19,7 +19,7 @@
 
 use super::Deployment;
 use maka_event_log::root::{FileLease, RootOwner};
-use maka_runtime_host::server::HostError;
+use maka_runtime_host::HostError;
 use std::sync::Arc;
 
 #[derive(Clone, Copy, PartialEq, Eq)]

@@ -20,6 +20,7 @@
 use super::{RootId, activation};
 use clap::Args;
 use maka_runtime_host::{
+    HostError,
     application::{
         host::{
             VERSION,
@@ -27,7 +28,6 @@ use maka_runtime_host::{
         },
         transport::wire,
     },
-    server::HostError,
 };
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};

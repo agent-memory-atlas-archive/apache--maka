@@ -19,7 +19,7 @@
 
 use super::*;
 use maka_fs_tools::workspace::MARKER_FILE;
-use maka_runtime_host::server::DirectoryRootSpec;
+use maka_runtime_host::DirectoryRootSpec;
 
 async fn publish(fixture: &mut Fixture, roots: Vec<DirectoryRootSpec>) {
     let policy = Arc::new(Grant(fixture.issuer.clone(), None));

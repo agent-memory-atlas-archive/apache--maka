@@ -19,8 +19,8 @@
 
 use crate::{args::Root, host_client::HostClient};
 use clap::{Args, Subcommand};
+use maka_runtime_host::HostError;
 pub(super) use maka_runtime_host::application::host::Pairing;
-use maka_runtime_host::server::HostError;
 
 #[derive(Subcommand)]
 pub(super) enum Access {

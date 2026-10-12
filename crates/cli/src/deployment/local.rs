@@ -20,7 +20,7 @@
 use super::{activation, directory, store};
 use maka_event_log::root::{self, FileLease, RootNamespaces, RootOwner};
 use maka_process::detached::{self, Child};
-use maka_runtime_host::server::HostError;
+use maka_runtime_host::HostError;
 use maka_runtime_host::{
     application::host::{Client, discovery},
     ipc,

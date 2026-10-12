@@ -23,7 +23,7 @@ pub(super) mod worker;
 use super::{Deployment, RootId, directory, service, store};
 use clap::{Args, ValueEnum};
 use maka_event_log::root::FileLease;
-use maka_runtime_host::server::HostError;
+use maka_runtime_host::HostError;
 use serde::{Deserialize, Serialize};
 use std::{path::Path, sync::Arc};
 pub(super) use storage::{read, write};

@@ -93,13 +93,6 @@ impl Output {
         self.0.state.lock().unwrap().replay.clone()
     }
 
-    pub fn stream(&self) -> PtyStream {
-        PtyStream {
-            output: self.clone(),
-            sequence: self.0.state.lock().unwrap().replay.sequence,
-        }
-    }
-
     pub fn attach(&self) -> (PtyReplay, PtyStream) {
         let replay = self.replay();
         let sequence = replay.sequence;

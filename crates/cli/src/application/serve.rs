@@ -19,7 +19,7 @@
 
 //! Compiled product availability for the shared private Host process.
 use clap::Args;
-use maka_runtime_host::{application::NativeRegistry, server::HostError};
+use maka_runtime_host::{HostError, application::NativeRegistry};
 #[derive(Args)]
 pub(crate) struct Serve {}
 pub(super) fn native() -> Result<NativeRegistry, HostError> {

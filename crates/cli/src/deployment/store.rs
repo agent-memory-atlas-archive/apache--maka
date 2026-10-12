@@ -23,7 +23,7 @@ use maka_event_log::{
     connection::{ConnectionAuthority, OwnedConnection},
     root::{FileLease, RootOwner},
 };
-use maka_runtime_host::server::HostError;
+use maka_runtime_host::HostError;
 use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
 use std::{fs::File, path::Path, sync::Arc};
 

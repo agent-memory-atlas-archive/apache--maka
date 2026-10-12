@@ -17,7 +17,7 @@
  * under the License.
  */
 
-use maka_runtime_host::server::HostError;
+use maka_runtime_host::HostError;
 use tokio_util::sync::CancellationToken;
 
 pub(super) struct Signals(tokio::task::JoinHandle<()>);

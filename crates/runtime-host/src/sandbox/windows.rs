@@ -37,7 +37,17 @@ const ACCOUNT_SLOTS: usize = 8;
 pub use provision::{Operation, Provision};
 
 use maka_event_log::root::FileLease;
-pub use maka_protocol::sandbox_setup::Status;
+/// Installation state, not a claim that every filesystem policy is supported.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Status {
+    NotRequired,
+    NotConfigured,
+    SetupRequired,
+    Ready,
+    Removing,
+    Busy,
+}
 use maka_sandbox::Network;
 use maka_sandbox::windows::{
     Account, AccountId, Credential, ExecutionJob, NetworkRules, Password, ReadGroup,

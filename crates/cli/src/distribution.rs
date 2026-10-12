@@ -23,7 +23,7 @@ mod target;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use clap::Args;
 use maka_event_log::root::{RootNamespaces, private_directory};
-use maka_runtime_host::server::HostError;
+use maka_runtime_host::HostError;
 use reqwest::{Client, Url};
 use semver::Version;
 use serde::{Deserialize, Serialize};

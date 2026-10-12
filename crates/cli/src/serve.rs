@@ -18,8 +18,8 @@
  */
 
 use maka_runtime_host::{
+    HostError,
     application::host::{Host, LifecycleMode, Options, websocket::WebSocketListener},
-    server::HostError,
 };
 use serde_json::json;
 use std::{path::Path, sync::Arc, time::Duration};
@@ -29,7 +29,7 @@ pub(super) async fn run(
     path: &Path,
     websocket: Option<std::net::SocketAddr>,
     expected_root: Option<&str>,
-) -> Result<(), maka_runtime_host::server::HostError> {
+) -> Result<(), maka_runtime_host::HostError> {
     use maka_event_log::root::{ROOT_MARKER, RootNamespaces, RootOwner};
     let namespaces = RootNamespaces::for_current_account()?;
     let owner = if path.join(ROOT_MARKER).exists() {
@@ -152,8 +152,7 @@ fn watch_shutdown(
     }
 }
 
-pub(super) fn home_directory()
--> Result<Option<std::path::PathBuf>, maka_runtime_host::server::HostError> {
+pub(super) fn home_directory() -> Result<Option<std::path::PathBuf>, maka_runtime_host::HostError> {
     #[cfg(unix)]
     let instructions = std::env::var_os("HOME")
         .filter(|home| !home.is_empty())

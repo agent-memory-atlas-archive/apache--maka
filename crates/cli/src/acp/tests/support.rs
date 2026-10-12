@@ -63,7 +63,7 @@ impl Fixture {
             RootOwner::open(&root, &namespaces).unwrap(),
             Default::default(),
             crate::application::Roots::Configured(Some(vec![
-                maka_runtime_host::server::DirectoryRootSpec {
+                maka_runtime_host::DirectoryRootSpec {
                     label: "Test".into(),
                     path: workspace.to_str().unwrap().into(),
                 },

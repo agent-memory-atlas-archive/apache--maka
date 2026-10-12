@@ -8313,7 +8313,6 @@ dependencies = [
  "maka-acp",
  "maka-agent-service",
  "maka-application-bridge",
- "maka-client",
  "maka-computer-use",
  "maka-config",
  "maka-event-log",
@@ -8322,12 +8321,10 @@ dependencies = [
  "maka-plugin-core",
  "maka-plugins",
  "maka-process",
- "maka-protocol",
  "maka-runtime",
  "maka-runtime-host",
  "maka-sandbox",
  "maka-settings-service",
- "maka-transport",
  "maka-tui",
  "maka-ui",
  "reqwest",
@@ -8345,26 +8342,6 @@ dependencies = [
  "uuid",
  "windows 0.62.2",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "maka-client"
-version = "0.2.0"
-dependencies = [
- "base64 0.22.1",
- "libc",
- "maka-client-capability",
- "maka-event-log",
- "maka-protocol",
- "maka-transport",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror 2.0.20",
- "tokio",
- "tokio-util",
- "url",
- "uuid",
 ]
 
 [[package]]
@@ -8850,34 +8827,18 @@ dependencies = [
 name = "maka-runtime-host"
 version = "0.2.0"
 dependencies = [
- "agent-client-protocol",
- "async-compression",
  "base64 0.22.1",
- "cap-fs-ext",
- "cap-std",
  "futures-util",
  "getrandom 0.4.3",
- "hmac 0.12.1",
  "http-body-util",
  "hyper",
  "hyper-util",
- "jiff",
  "jsonschema 0.56.0",
  "libc",
  "maka-agent",
- "maka-assistant",
- "maka-background-health",
- "maka-client",
- "maka-client-capability",
- "maka-computer-use",
  "maka-config",
  "maka-event-log",
- "maka-external-agent",
  "maka-fs-tools",
- "maka-goal",
- "maka-graph",
- "maka-insights",
- "maka-jev",
  "maka-js-runtime",
  "maka-model",
  "maka-network",
@@ -8885,19 +8846,8 @@ dependencies = [
  "maka-plugins",
  "maka-presentation",
  "maka-process",
- "maka-protocol",
- "maka-providers",
  "maka-runtime",
  "maka-sandbox",
- "maka-scheduler",
- "maka-session-import",
- "maka-session-recap",
- "maka-session-title",
- "maka-skills",
- "maka-tools",
- "maka-transport",
- "maka-web",
- "maka-workhub",
  "reqwest",
  "rusqlite",
  "schemars 1.2.2",
@@ -8909,10 +8859,8 @@ dependencies = [
  "thiserror 2.0.20",
  "time",
  "tokio",
- "tokio-rustls",
  "tokio-tungstenite 0.29.0",
  "tokio-util",
- "unicode-normalization",
  "url",
  "uuid",
  "windows-sys 0.61.2",
@@ -9078,20 +9026,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "uuid",
-]
-
-[[package]]
-name = "maka-transport"
-version = "0.2.0"
-dependencies = [
- "futures-util",
- "maka-protocol",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "tokio",
- "tokio-tungstenite 0.29.0",
- "tokio-util",
 ]
 
 [[package]]

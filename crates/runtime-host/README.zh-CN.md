@@ -21,6 +21,8 @@
 
 `application::Application` 与 UI 使用同一个 plugin-core 组合和生命周期内核，执行服务部署。
 输入是不可变应用包与显式 native implementation registry，不默认启用内置业务。
+CLI Host、TUI 与 ACP 均通过公共 Host 端点使用该运行时，Agent 与 Settings 是显式原生服务。
+旧 Operation/Kernel 服务端已删除。
 
 `Application::adopt_committed` 允许可信应用 root 所有者在同一 State Root 中接纳确切的
 已提交版本。完整候选先通过静态校验，再进入内核；拒绝其他来源和更早版本，最多同时读取
@@ -31,9 +33,8 @@
 不变实例保留原始来源、native context 和确切 binding，其准备中及后续 mutation 沿用原始
 receipt reference。变化实例撤销新准入，已接受工作仍由原 owner 结算。替代必须等待真实
 调用资源、module/native close 和最后的 VM shutdown；共享 VM 在仍有模块所有者时保留。
-运行中初始化失败保留无关健康实例，后续已提交版本可以恢复。包入库不等于激活；此 root
-API 尚未提供远程管理权限入口，也尚未让 server 和呈现执行器接入运行中更新。
-现有 server 入口尚未迁移到这个适配器。
+运行中初始化失败保留无关健康实例，后续已提交版本可以恢复。包入库不等于激活，
+也不授予远程管理权限。
 
 owner task 校验整批实际导出后一次发布。JavaScript 服务用 `Captured` 保留实际 receiver/functions，
 运行在不含环境 Host router 或 Deno globals 的 `Vm::scoped`。原生激活提供独立 `NativeOwner`，其真实 close completion
@@ -112,8 +113,8 @@ Ticket 转入原 executor，不能跨 Application 或请求 Scope 使用。UTF-8
 检查。派发前接收 adapter 必须实际持有并清理 partial/frozen 输入；单独
 `Application::shutdown` 不能证明外部接收清空。EOF、timeout 不能确认已接受工作或失败清理。
 
-当前适配器执行 native/JavaScript query、subscription 及持久 mutation；认证网络 ingress、
-live 组合收敛和完整产品接线仍须实现。接收接缝不是完整 transport 或兼容 facade。
+当前适配器执行 native/JavaScript query、subscription 及持久 mutation。公共 Host 提供
+认证 IPC/stdio/WebSocket 入口，并跟随已提交的组合更新。
 
 持久 mutation 要求 `Application::start_from_store`、声明 mutation 方法和显式非 nil 操作 UUID。
 原生调用端先 `Client::prepare_mutation`，在自己的 Root 中通过
@@ -190,9 +191,8 @@ owner 跨业务 turn 保留同一观察 future，忽略已被当前 adopted sour
 只有 `Application` 持有有界 adoption 入口；`Client::retire` 使用独立有界生命周期入口，
 source SQL load 未完成时也可即时撤销。`Snapshot.loading` 报告实际读取/preflight中的确切来源，不产生授权。
 显式 adoption 确认实际 load/preflight/install；
-激活收敛和资源清理独立报告。已接受工作与恢复引用保持原来源。本片接通 same-Root
-原生管理提交到 live Host owner；外部管理服务、UI 端点重新批准以及生产 TUI/Desktop
-更新准入仍待完成。
+激活收敛和资源清理独立报告。已接受工作与恢复引用保持原来源。application bridge
+协调已提交的 Host/UI 来源及前台运行时。
 
 ## 部署管理
 
@@ -218,4 +218,4 @@ SQL、COMMIT、worker 或 cleanup 不确定性仍保原 Unknown/Failed 状态；
 
 契约和类型来自 plugin-core，生成 TS SDK。Host 自动 head adoption 应用已提交来源；
 固定 UI 目标的调用仍使用管理 Host 原 operation namespace 和账本；业务结果中的 source
-指向独立的 UI desired 部署。显式同进程 Host 与前台协调仍需继续接线。
+指向独立的 UI desired 部署。application bridge 负责同进程 Host 与前台来源协调。

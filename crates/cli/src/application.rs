@@ -37,7 +37,7 @@ use maka_plugin_core::{
     plan::{Plan, RemoteExports},
 };
 use maka_plugins::package::Package;
-use maka_runtime_host::server::HostError;
+use maka_runtime_host::HostError;
 use serde::Serialize;
 
 #[derive(Subcommand)]

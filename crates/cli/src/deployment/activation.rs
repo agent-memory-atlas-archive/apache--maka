@@ -23,7 +23,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::Args;
 use maka_event_log::root::{self, FileLease, RootNamespaces, RootOwner};
 use maka_process::detached::{self, Child};
-use maka_runtime_host::server::HostError;
+use maka_runtime_host::HostError;
 use serde::Serialize;
 use std::{
     io::Write,

@@ -191,36 +191,6 @@ impl ShellResources {
             .cloned()
     }
 
-    pub(crate) fn has_session(&self, session: &str) -> bool {
-        self.active
-            .lock()
-            .unwrap()
-            .keys()
-            .any(|(owner, _)| owner == session)
-    }
-
-    /// Caller fences Session admission, so no resource can appear during drain.
-    pub(crate) async fn stop_session(&self, session: &str) -> Result<()> {
-        let handles: Vec<_> = self
-            .active
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|((owner, _), _)| owner == session)
-            .map(|(_, handle)| handle.clone())
-            .collect();
-        for handle in &handles {
-            handle.stop();
-        }
-        for mut handle in handles {
-            handle
-                .drained()
-                .await
-                .map_err(|error| ShellError::Io(std::io::Error::other(error.to_string())))?;
-        }
-        Ok(())
-    }
-
     /// Coalesced wakeups only; bytes and cursors remain in each shared PTY ring.
     pub fn subscribe_output(&self) -> watch::Receiver<()> {
         self.output_changes.subscribe()

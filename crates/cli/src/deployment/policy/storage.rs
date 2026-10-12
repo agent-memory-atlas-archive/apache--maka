@@ -20,7 +20,7 @@
 use super::{Deployment, Record};
 use crate::deployment::{store, updates};
 use maka_event_log::{StoreError, root::FileLease};
-use maka_runtime_host::server::HostError;
+use maka_runtime_host::HostError;
 use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
 use std::{path::Path, sync::Arc};
 

@@ -18,7 +18,7 @@
  */
 
 use clap::ValueEnum;
-use maka_runtime_host::server::HostError;
+use maka_runtime_host::HostError;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::File,

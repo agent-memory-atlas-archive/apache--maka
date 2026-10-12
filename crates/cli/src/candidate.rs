@@ -21,8 +21,8 @@ use crate::{args::Root, endpoint::LocalEndpoint};
 use clap::Args;
 use maka_event_log::root::{RootNamespaces, RootOwner};
 use maka_runtime_host::{
+    HostError,
     application::host::{LifecycleMode, Options},
-    server::HostError,
 };
 use std::{
     io::{BufRead, Read},

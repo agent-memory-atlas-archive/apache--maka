@@ -83,10 +83,6 @@ impl ShellHandle {
         self.pty.as_ref().map(|pty| pty.output.attach())
     }
 
-    pub(crate) fn stream(&self) -> Option<PtyStream> {
-        self.pty.as_ref().map(|pty| pty.output.stream())
-    }
-
     pub fn latest(&self) -> Update {
         self.snapshot.borrow().clone()
     }

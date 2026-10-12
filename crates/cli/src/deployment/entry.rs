@@ -19,7 +19,7 @@
 
 use super::{RootId, directory, store};
 use clap::Args;
-use maka_runtime_host::server::HostError;
+use maka_runtime_host::HostError;
 
 #[derive(Args)]
 pub(crate) struct ServiceRun {

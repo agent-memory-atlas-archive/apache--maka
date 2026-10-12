@@ -20,7 +20,7 @@
 use super::{Admission, Deployment, RootId, directory, service, store, updates};
 use crate::host_client::{HostClient, LiveHost};
 use clap::Args;
-use maka_runtime_host::server::HostError;
+use maka_runtime_host::HostError;
 use serde::Serialize;
 use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
 use std::path::{Path, PathBuf};

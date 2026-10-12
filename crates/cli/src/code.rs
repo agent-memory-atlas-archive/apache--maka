@@ -105,7 +105,7 @@ impl ToolExecutor for LocalTools {
     }
 }
 
-pub(super) async fn run(args: Args) -> Result<(), maka_runtime_host::server::HostError> {
+pub(super) async fn run(args: Args) -> Result<(), maka_runtime_host::HostError> {
     let (sandbox_mode, approval_policy) = if args.dangerously_bypass_approvals_and_sandbox {
         (SandboxMode::DangerFullAccess, ApprovalPolicy::Never)
     } else {

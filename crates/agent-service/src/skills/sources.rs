@@ -115,13 +115,13 @@ pub(super) fn home(
     Ok(standard(root, Path::new(path), None))
 }
 pub(super) fn projects(
-    specs: Vec<maka_runtime_host::server::DirectoryRootSpec>,
+    specs: Vec<maka_runtime_host::DirectoryRootSpec>,
     private: &Path,
 ) -> Result<Vec<Arc<PublishedDirectory>>, String> {
     if specs.len() > 8 {
         return Err("skills_configuration_invalid".into());
     }
-    maka_runtime_host::server::DirectoryRootSpec::normalize(specs)
+    maka_runtime_host::DirectoryRootSpec::normalize(specs)
         .map_err(|_| "skills_configuration_invalid")?
         .into_iter()
         .map(|spec| {
@@ -240,7 +240,7 @@ mod tests {
         Library::open(
             Configuration {
                 home: Some(home.to_str().unwrap().into()),
-                project_roots: vec![maka_runtime_host::server::DirectoryRootSpec {
+                project_roots: vec![maka_runtime_host::DirectoryRootSpec {
                     label: "Projects".into(),
                     path: projects,
                 }],

@@ -20,7 +20,7 @@
 use super::{Admission, Deployment, RootId, activation, directory, service, store, update};
 use clap::Args;
 use maka_event_log::root::{self, FileLease};
-use maka_runtime_host::server::HostError;
+use maka_runtime_host::HostError;
 use serde::Serialize;
 use std::sync::Arc;
 use uuid::Uuid;

@@ -19,7 +19,7 @@
 
 use clap::Args as ClapArgs;
 use maka_event_log::root::RootNamespaces;
-use maka_runtime_host::server::HostError;
+use maka_runtime_host::HostError;
 use std::{path::PathBuf, time::Duration};
 use tokio_util::sync::CancellationToken;
 

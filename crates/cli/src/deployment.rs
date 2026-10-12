@@ -49,7 +49,7 @@ pub(super) use update::{Expected, Update};
 
 use clap::{Args, ValueEnum};
 use maka_event_log::root::{self, FileLease, RootLocation, RootNamespaces, RootOwner};
-use maka_runtime_host::server::{DirectoryRootSpec, HostError};
+use maka_runtime_host::{DirectoryRootSpec, HostError};
 use serde::{Deserialize, Serialize};
 use std::{
     net::SocketAddr,

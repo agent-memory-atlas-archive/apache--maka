@@ -20,7 +20,7 @@
 use super::{decode_integrity, regular_file, target::Target};
 use flate2::read::GzDecoder;
 use maka_event_log::root::private_directory;
-use maka_runtime_host::server::HostError;
+use maka_runtime_host::HostError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{

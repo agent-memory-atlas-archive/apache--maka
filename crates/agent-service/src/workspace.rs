@@ -22,7 +22,7 @@ use maka_fs_tools::{
     directory,
     workspace::{self, directory::PublishedDirectory},
 };
-use maka_runtime_host::server::DirectoryRootSpec;
+use maka_runtime_host::DirectoryRootSpec;
 use std::{path::Path, sync::Arc};
 
 pub(crate) const PAGE_BYTES: usize = 48 * 1024;

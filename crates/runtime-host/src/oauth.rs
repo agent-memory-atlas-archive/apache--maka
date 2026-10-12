@@ -19,7 +19,7 @@
 
 use maka_config::oauth::ProviderCredential;
 use maka_model::ModelError;
-use maka_plugins::provider::{Binding, Connection, Context, Identity};
+use maka_plugins::provider::{Connection, Context, Identity};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -27,29 +27,20 @@ use std::{
 use tokio::sync::{Mutex as AsyncMutex, watch};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
-enum RefreshProvider {
-    Contribution(Binding),
-    Native {
-        identity: Identity,
-        definition: Arc<maka_plugins::provider::Definition>,
-    },
+struct RefreshProvider {
+    identity: Identity,
+    definition: Arc<maka_plugins::provider::Definition>,
 }
 impl RefreshProvider {
     fn identity(&self) -> &Identity {
-        match self {
-            Self::Contribution(binding) => binding.identity(),
-            Self::Native { identity, .. } => identity,
-        }
+        &self.identity
     }
     fn prepare_refresh(
         &self,
         connection: Connection,
         credential: maka_runtime::provider::Credential,
     ) -> Result<maka_plugins::provider::RefreshCall, maka_plugins::provider::Error> {
-        match self {
-            Self::Contribution(binding) => binding.prepare_refresh(connection, credential),
-            Self::Native { definition, .. } => definition.prepare_refresh(connection, credential),
-        }
+        self.definition.prepare_refresh(connection, credential)
     }
 }
 
@@ -87,13 +78,6 @@ impl Authority {
             entries: Mutex::new(HashMap::new()),
             workers,
             shutdown,
-        }
-    }
-
-    /// Only call after the exact deletion committed under Host admission.
-    pub(crate) fn forget_connection(&self, id: &str) {
-        if let Some(generation) = self.entries.lock().unwrap().remove(id) {
-            generation.superseded.cancel();
         }
     }
 
@@ -147,17 +131,6 @@ impl Authority {
 }
 
 impl Credential {
-    /// Each logical request supplies its pinned provider and proxy transport.
-    /// Sharing a refresh never substitutes another request's configuration.
-    pub(crate) async fn resolve(
-        &self,
-        provider: Binding,
-        context: Context,
-    ) -> Result<ProviderCredential, ModelError> {
-        self.resolve_provider(RefreshProvider::Contribution(provider), context)
-            .await
-    }
-
     /// Use the same durable refresh owner for compiled native provider policy.
     pub async fn resolve_native(
         &self,
@@ -166,7 +139,7 @@ impl Credential {
         context: Context,
     ) -> Result<ProviderCredential, ModelError> {
         self.resolve_provider(
-            RefreshProvider::Native {
+            RefreshProvider {
                 identity,
                 definition,
             },
@@ -279,13 +252,11 @@ mod tests {
     };
     use maka_event_log::root::{RootNamespaces, RootOwner};
     use maka_plugins::{
-        contributions::{Catalog, Staged},
-        fiber::Fiber,
         http,
         model::{Connect, Credentials, Socket, Transport},
         provider::{Definition, Descriptor, Error, Model, Provider, Resolve},
     };
-    use maka_runtime::{configuration::*, provider::Credential as Envelope, scope::Scope};
+    use maka_runtime::{configuration::*, provider::Credential as Envelope};
     use serde_json::json;
     use tokio::sync::oneshot;
 
@@ -408,31 +379,18 @@ mod tests {
         temp: tempfile::TempDir,
         store: Arc<ConfigurationStore>,
         snapshot: ProviderCredential,
-        provider: Binding,
-        _owner: Fiber,
-        _registration: maka_plugins::Registration,
+        identity: Identity,
+        definition: Arc<Definition>,
     }
     impl Fixture {
         async fn resolve(
             &self,
             credential: &Credential,
             context: Context,
-            native: bool,
         ) -> Result<ProviderCredential, ModelError> {
-            if native {
-                let definition = Arc::new(
-                    Definition::new(
-                        self.provider.definition().descriptor().clone(),
-                        Arc::new(RefreshProvider),
-                    )
-                    .unwrap(),
-                );
-                credential
-                    .resolve_native(self.provider.identity().clone(), definition, context)
-                    .await
-            } else {
-                credential.resolve(self.provider.clone(), context).await
-            }
+            credential
+                .resolve_native(self.identity.clone(), self.definition.clone(), context)
+                .await
         }
         async fn new() -> Self {
             let temp = tempfile::tempdir().unwrap();
@@ -445,44 +403,31 @@ mod tests {
             )
             .unwrap();
             let store = Arc::new(ConfigurationStore::for_root(Arc::new(root)).await.unwrap());
-            let owner = Fiber::new("external.account", "entry", Scope::Profile).unwrap();
-            owner.begin_loading().unwrap();
-            owner.ready().unwrap();
-            owner.publish().unwrap();
-            let catalog = Catalog::default();
-            let mut staged = Staged::default();
-            staged
-                .insert(
-                    "account",
-                    Definition::new(
-                        Descriptor {
-                            label: "External account".into(),
-                            custom_endpoint: false,
-                            configuration_schema: json!({"type":"object"}),
-                            configuration_defaults: json!({}),
-                            authentication: vec![],
-                            anonymous: false,
-                            discovery: false,
-                        },
-                        Arc::new(RefreshProvider),
-                    )
-                    .unwrap(),
+            let identity = Identity {
+                package_id: "external.account".into(),
+                entry_id: "entry".into(),
+                scope: maka_runtime::scope::Scope::Profile,
+                name: "account".into(),
+            };
+            let definition = Arc::new(
+                Definition::new(
+                    Descriptor {
+                        label: "External account".into(),
+                        custom_endpoint: false,
+                        configuration_schema: json!({"type":"object"}),
+                        configuration_defaults: json!({}),
+                        authentication: vec![],
+                        anonymous: false,
+                        discovery: false,
+                    },
+                    Arc::new(RefreshProvider),
                 )
-                .unwrap();
-            let registration = catalog.register(&owner.context(), staged).unwrap();
-            let provider = Binding::new(
-                "account".into(),
-                catalog
-                    .snapshot(&Scope::Profile)
-                    .entries
-                    .remove("account")
-                    .unwrap(),
-            )
-            .unwrap();
+                .unwrap(),
+            );
             let LoginPreparation::Ready(login) = store.prepare_oauth_login(
                 serde_json::from_value(json!({
                     "attemptId":"fixture-login",
-                    "target":{"kind":"create","provider":provider.identity(),"configuration":{},"slug":"account","name":"Account"},
+                    "target":{"kind":"create","provider":identity,"configuration":{},"slug":"account","name":"Account"},
                     "expectedCredential":null,"authentication":{"method":"fixture","input":{}}
                 })).unwrap()
             ).await.unwrap() else { panic!("fixture login") };
@@ -507,9 +452,8 @@ mod tests {
                 temp,
                 store,
                 snapshot,
-                provider,
-                _owner: owner,
-                _registration: registration,
+                identity,
+                definition,
             }
         }
         async fn sql(&self) -> sqlx::SqliteConnection {
@@ -527,18 +471,18 @@ mod tests {
     async fn refresh_is_single_flight_across_cancelled_waiters_and_retains_spent_grants_during_drain()
      {
         tokio::time::timeout(std::time::Duration::from_secs(15), async {
-            for native in [false, true] {
+            {
                 let fixture = Fixture::new().await;
                 let workers = TaskTracker::new();
                 let stop = CancellationToken::new();
                 let authority = Authority::new(workers.clone(), stop.clone());
                 let binding = authority.bind(fixture.snapshot.clone()).unwrap();
                 let (context, admitted, reply) = exchange();
-                let mut abandoned = Box::pin(fixture.resolve(&binding, context.clone(), native));
+                let mut abandoned = Box::pin(fixture.resolve(&binding, context.clone()));
                 assert!(poll!(abandoned.as_mut()).is_pending());
                 assert_eq!(admitted.await.unwrap(), b"old");
                 let mut waiters = (0..16)
-                    .map(|_| Box::pin(fixture.resolve(&binding, context.clone(), native)))
+                    .map(|_| Box::pin(fixture.resolve(&binding, context.clone())))
                     .collect::<Vec<_>>();
                 for waiter in &mut waiters {
                     assert!(poll!(waiter.as_mut()).is_pending());
@@ -562,7 +506,7 @@ mod tests {
                 assert!(authority.bind(fixture.snapshot.clone()).is_err());
                 let next = authority.bind(current).unwrap();
                 let (context, admitted, reply) = exchange();
-                let mut resolving = Box::pin(fixture.resolve(&next, context, native));
+                let mut resolving = Box::pin(fixture.resolve(&next, context));
                 assert!(poll!(resolving.as_mut()).is_pending());
                 assert_eq!(
                     admitted.await.unwrap(),
@@ -612,17 +556,17 @@ mod tests {
                 let authority = Authority::new(workers.clone(), CancellationToken::new());
                 let binding = authority.bind(fixture.snapshot.clone()).unwrap();
                 let (context, admitted, reply) = exchange();
-                let mut resolving = Box::pin(binding.resolve(fixture.provider.clone(), context.clone()));
+                let mut resolving = Box::pin(fixture.resolve(&binding, context.clone()));
                 assert!(poll!(resolving.as_mut()).is_pending());
                 assert_eq!(admitted.await.unwrap(), b"old");
                 assert!(reply.send(envelope("rotated", None)).is_ok());
                 assert!(resolving.await.is_err());
                 assert_eq!(fixture.snapshot.current_generation().await.unwrap().unwrap().basis(), fixture.snapshot.basis());
                 sqlx::query("DROP TRIGGER fail_rotation").execute(&mut sql).await.unwrap();
-                let current = binding.resolve(fixture.provider.clone(), context.clone()).await.unwrap();
+                let current = fixture.resolve(&binding, context.clone()).await.unwrap();
                 assert!(current.credential() == &envelope("rotated", None));
                 fixture.store.delete_credential(DeleteCredentialInput { expected_connection: Some(current.target().clone()), expected: current.basis().clone() }).await.unwrap();
-                assert!(binding.resolve(fixture.provider.clone(), context).await.is_err());
+                assert!(fixture.resolve(&binding, context).await.is_err());
                 assert!(fixture.snapshot.current_generation().await.unwrap().is_none());
                 workers.close();
                 workers.wait().await;

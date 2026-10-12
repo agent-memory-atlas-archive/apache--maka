@@ -28,7 +28,6 @@ members = [
     "crates/application-bridge",
     "crates/background-health",
     "crates/cli",
-    "crates/client",
     "crates/client-capability",
     "crates/config",
     "crates/desktop",
@@ -61,7 +60,6 @@ members = [
     "crates/skills",
     "crates/tool-catalog",
     "crates/tools",
-    "crates/transport",
     "crates/tui",
     "crates/ui",
     "crates/ui-gpui",
@@ -101,7 +99,6 @@ maka-agent = { path = "crates/agent" }
 maka-agent-service = { path = "crates/agent-service" }
 maka-assistant = { path = "crates/assistant" }
 maka-background-health = { path = "crates/background-health" }
-maka-client = { path = "crates/client" }
 maka-client-capability = { path = "crates/client-capability" }
 maka-config = { path = "crates/config" }
 maka-computer-use = { path = "crates/computer-use" }
@@ -133,7 +130,6 @@ maka-session-title = { path = "crates/session-title" }
 maka-skills = { path = "crates/skills" }
 maka-tool-catalog = { path = "crates/tool-catalog" }
 maka-tools = { path = "crates/tools" }
-maka-transport = { path = "crates/transport" }
 maka-tui = { path = "crates/tui" }
 maka-ui = { path = "crates/ui" }
 maka-ui-gpui = { path = "crates/ui-gpui" }

@@ -19,7 +19,7 @@
 
 //! Reconcile abandoned execution facts before any Root workers or activations.
 
-use crate::server::HostError;
+use crate::HostError;
 use maka_event_log::EventLog;
 
 /// Requires the original exclusive Root owner and no live execution workers.

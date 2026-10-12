@@ -20,7 +20,7 @@
 use super::{Deployment, ExistingDeployment, Install, activation};
 use crate::{access, host_client::LiveHost};
 use clap::Args;
-use maka_runtime_host::server::HostError;
+use maka_runtime_host::HostError;
 use serde::Serialize;
 
 #[derive(Args)]

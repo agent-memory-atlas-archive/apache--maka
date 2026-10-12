@@ -77,11 +77,11 @@ pub struct Configuration {
     pub permissions: WorkspacePermissions,
     /// Installation-published directories, captured without creating workspace markers.
     #[schemars(length(max = 8))]
-    pub workspace_roots: Vec<maka_runtime_host::server::DirectoryRootSpec>,
+    pub workspace_roots: Vec<maka_runtime_host::DirectoryRootSpec>,
     /// Explicit read-only roots for user-selected conversation sources.
     #[serde(default)]
     #[schemars(length(max = 8))]
-    pub import_roots: Vec<maka_runtime_host::server::DirectoryRootSpec>,
+    pub import_roots: Vec<maka_runtime_host::DirectoryRootSpec>,
     #[schemars(range(min = 1, max = 16))]
     pub max_active_runs: usize,
     #[schemars(range(min = 1, max = 16))]

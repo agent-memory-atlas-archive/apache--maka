@@ -22,8 +22,9 @@
 `application::Application` runs a service deployment using the same plugin-core
 composition and lifecycle kernel as the UI. It accepts immutable application
 packages and an explicit native implementation registry; it does not activate
-built-in business plugins by default. The existing server entry point has not
-yet migrated to this adapter.
+built-in business plugins by default. CLI Host serving, the TUI and ACP use this
+application runtime through the public Host endpoint; Agent and Settings are
+explicit native services. The former Operation/Kernel server has been removed.
 
 `Application::adopt_committed` lets the trusted root owner adopt an exact committed
 revision in its existing State Root. It validates the full candidate before kernel
@@ -46,9 +47,7 @@ its dependent consumers. Independent pending and loading instances continue.
 `initialization_failures` identifies failed initializers and blocked dependents for
 that desired source; their cleanup remains separately owned. The source cannot
 become effective, and only a later committed revision permits another attempt.
-Package storage does not imply
-activation. This owner API does not provide a remote management grant or migrate
-the server and presentation executors to live updates.
+Package storage does not imply activation or grant remote management access.
 
 The owner task publishes an entire validated export batch. JavaScript services
 retain actual receiver/functions through `Captured`, in `Vm::scoped` realms
@@ -98,7 +97,7 @@ slots resolve only within this request's actual attachments. Revocation blocks
 new reads. Saved contexts expire before callback completion is reported, without
 retaining snapshots. Native read/metadata panics record Scope cleanup failure,
 even if JavaScript catches the rejection; unrelated modules remain runnable.
-The public application SDK types come from the actual Rust ABI; initialization grants remain required work.
+The public application SDK types come from the actual Rust ABI.
 
 Policy receives a borrowed `Invocation` with named consumer, provider, Scope,
 contract, method, input and attachment fields; this observation is not a new grant.
@@ -170,9 +169,8 @@ partial/frozen input before dispatch and must drain it before server shutdown;
 An EOF or timeout cannot acknowledge accepted work or failed physical cleanup.
 
 This adapter executes native and JavaScript queries/subscriptions with resources,
-and durable mutations with request-local snapshots. Authenticated network ingress,
-live composition reconciliation and complete product integration remain required
-work. The receiving seam is not a completed transport or a compatibility facade.
+and durable mutations with request-local snapshots. The public Host supplies
+authenticated IPC/stdio/WebSocket ingress and follows committed composition updates.
 
 Durable mutations require `Application::start_from_store`, a declared mutation
 method and an explicit non-nil operation UUID. Native callers first use
@@ -288,9 +286,8 @@ separate bounded lifecycle ingress and remains immediate while a source SQL load
 is pending. `Snapshot.loading` reports the exact source being read/preflighted and grants no
 access. Explicit adoption acknowledges its actual load/preflight/install;
 activation convergence and resource cleanup remain independent. Accepted work and
-original recovery references keep their original source. This wires same-Root
-native management commits to the live Host owner; external management services,
-UI endpoint reapproval and production TUI/Desktop update admission remain pending.
+original recovery references keep their original source. The application bridge
+coordinates committed Host and UI sources with the foreground runtime.
 
 ## Deployment management
 
@@ -327,5 +324,5 @@ actual Scope ticket until its resource drops and worker completes.
 The contract and types live in plugin-core and generate the TS SDK. Host automatic
 head adoption applies committed sources. A fixed UI target uses the management
 Host's original operation namespace and journal; its returned deployment reference
-identifies the distinct UI desired source. Explicit cohosting and foreground
-coordination remain separate integration work.
+identifies the distinct UI desired source. The application bridge owns cohosting
+and foreground source coordination.

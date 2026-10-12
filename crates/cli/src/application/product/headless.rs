@@ -21,11 +21,11 @@ use super::{HostError, Input, Product, author, installation, launch, packages, s
 use base64::{Engine, engine::general_purpose::STANDARD};
 use maka_event_log::{EventLog, applications::launch::Launch, root::RootOwner};
 use maka_runtime_host::{
+    DirectoryRootSpec,
     application::{
         host::{Host, Options},
         transport::{HostEndpoint, NativeGrant},
     },
-    server::DirectoryRootSpec,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -38,14 +38,14 @@ pub(crate) enum Roots {
     Configured(Option<Vec<DirectoryRootSpec>>),
 }
 fn directories(roots: Option<Vec<DirectoryRootSpec>>) -> Result<Vec<DirectoryRootSpec>, HostError> {
-    Ok(DirectoryRootSpec::normalize(match roots {
+    DirectoryRootSpec::normalize(match roots {
         Some(roots) => roots,
         None => vec![DirectoryRootSpec {
             label: "~".into(),
             path: crate::serve::home_directory()?
                 .ok_or("public Host needs a home directory or explicit project directories")?,
         }],
-    })?)
+    })
 }
 
 #[derive(Serialize, Deserialize)]

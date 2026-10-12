@@ -18,7 +18,7 @@
  */
 
 use clap::Args;
-use maka_runtime_host::server::{DirectoryRootSpec, HostError};
+use maka_runtime_host::{DirectoryRootSpec, HostError};
 
 #[derive(Args)]
 pub(super) struct Directories {
@@ -52,13 +52,8 @@ impl Directories {
         // Reuse the Host's label, duplicate and containment rules. Existing
         // deployment reads deliberately do not require old paths to exist:
         // this command must be able to replace an unavailable directory.
-        tokio::task::spawn_blocking(move || {
-            selected
-                .map(DirectoryRootSpec::normalize)
-                .transpose()
-                .map_err(|error| error.message.into())
-        })
-        .await?
+        tokio::task::spawn_blocking(move || selected.map(DirectoryRootSpec::normalize).transpose())
+            .await?
     }
 }
 
