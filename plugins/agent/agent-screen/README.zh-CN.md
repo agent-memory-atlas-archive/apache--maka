@@ -28,8 +28,9 @@
 | `actions.ts` | 可用命令与明确的服务调用意图 |
 | `results.ts` | 查询结果、修改回执及实时事件 |
 | `messages.ts` | 有界实时文本和时间线展示投影 |
-| `events.ts` | 同一候选帧事务内的输入路由 |
-| `frame.ts` | 子组件组合、对话/composer、对话框及订阅 |
+| `events.ts`、`component-events.ts`、`raw-events.ts` | 同一候选帧事务内的统一路由、子组件回调和原始命令 |
+| `frame.ts` | 根组合、对话框及订阅 |
+| `conversation-view.ts` | 对话、输入区和 footer |
 | `navigation-view.ts`、`header-view.ts`、`pages-view.ts` | 导航、标题栏和保留状态的产品页面 |
 | `tui.ts`、`desktop.ts`、`package.ts` | 展示目标适配和插件声明 |
 

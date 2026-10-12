@@ -1,0 +1,684 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+import type { Action, RowsProps } from '../../../packages/plugin-sdk/src/index.js';
+import type { Theme } from '../../shared/contracts.js';
+import { copy } from '../../shared/locale.js';
+import { tuiText } from '../../shared/tui-locale.js';
+import { sameValue } from '../../shared/value.js';
+import { fill, pixels, type Node, type Presentation } from '../../shared/view.js';
+
+import { attachmentFiles, attachmentSummary, pasteView } from '../../shared/attachments.js';
+
+import { draftReady, draftStatuses } from '../../shared/drafts.js';
+
+import {
+  canExecute,
+  catalogPending,
+  conversationRoute,
+  executionPending,
+  mutationPending,
+  reviewTarget,
+  rootCommands,
+} from './actions.js';
+import { headerView } from './header-view.js';
+import { messages, turnTimings, utf8Bytes } from './messages.js';
+import { type State } from './state.js';
+
+export function conversationView<N extends Node>(
+  presentation: Presentation<N>,
+  state: State,
+  theme: Theme,
+  locale: string,
+  navigation: N,
+  actions: Action[],
+) {
+  const currentPage = state.pages.at(-1);
+  const target = presentation.target,
+    text = copy(locale),
+    ui = presentation.paint(theme),
+    busy = mutationPending(state);
+  const catalogBusy = busy || catalogPending(state);
+  const timelineMessages = messages(state);
+  const timeline = presentation.slot(
+    'timeline',
+    'timeline',
+    {
+      theme,
+      locale,
+      messages: timelineMessages,
+      timings: turnTimings(state, timelineMessages),
+      copyRequest: target === 'tui' && !state.image ? state.copyRequest : null,
+      browse: state.browse,
+      markReadEnabled:
+        !!state.selected?.hasUnread &&
+        !state.selected.archived &&
+        !busy &&
+        conversationRoute(state) &&
+        state.dialog === null &&
+        !state.source &&
+        !state.image,
+      search:
+        target === 'tui' && state.searchOpen && state.selected
+          ? { sessionId: state.selected.id, epoch: state.epoch, through: state.latestKnown }
+          : null,
+      source: state.source
+        ? {
+            kind: state.source.field === 'body' ? 'message' : state.source.field,
+            fields: state.source.fields,
+            format: state.source.format ?? 'text',
+            ready: state.source.ready,
+            key: `${state.source.field}-${state.source.through}-${state.source.chunk.sequence}-${state.source.chunk.offset}`,
+            text: state.source.chunk.text,
+            atStart: state.source.chunk.offset === 0,
+            atEnd:
+              state.source.chunk.offset + utf8Bytes(state.source.chunk.text) ===
+              state.source.chunk.totalBytes,
+            loading: state.source.loading,
+            failed: state.source.failed,
+            navigation: state.source.landing.sequence,
+            landing: state.source.landing.edge,
+          }
+        : null,
+      loading: state.loading,
+      older: !!state.window?.page.before,
+      newer: !!state.window?.page.after,
+      latest:
+        !!state.window &&
+        (!state.window.latest ||
+          state.latestKnown > state.window.page.through ||
+          state.live.some(
+            (fragment) =>
+              fragment.closedAt !== null && fragment.closedAt <= state.window!.page.through,
+          )),
+      landing: state.landing,
+      toolContext:
+        state.selected && state.window && state.window.page.through > 0
+          ? { sessionId: state.selected.id, through: state.window.page.through }
+          : null,
+      liveTools:
+        state.window?.latest && state.run
+          ? [
+              ...new Set(
+                state.window.page.chunks.flatMap((chunk) =>
+                  chunk.turnId === state.run!.turnId && chunk.tool ? [chunk.tool.toolUseId] : [],
+                ),
+              ),
+            ]
+          : [],
+      waitingTools: state.window?.latest
+        ? (state.interactions?.entries ?? [])
+            .filter(
+              (entry) =>
+                !(
+                  state.interaction?.record?.requestId === entry.requestId &&
+                  state.interaction.record.outcome
+                ),
+            )
+            .flatMap((entry) => (entry.toolUseId === null ? [] : [entry.toolUseId]))
+        : [],
+      live: !!state.run && !!state.window?.latest,
+    },
+    {
+      older: 'older',
+      newer: 'newer',
+      latest: 'latest',
+      markRead: 'mark-read',
+      source: 'source',
+      toolSource: 'tool-source',
+      fileContext: 'fileContext',
+      messageCopy: 'messageCopy',
+      viewImage: 'view-image',
+      sourceFirst: 'source-first',
+      sourcePrevious: 'source-previous',
+      sourceNext: 'source-next',
+      sourceLast: 'source-last',
+      sourceBack: 'source-back',
+      sourceRetry: 'source-retry',
+      sourceField: 'source-field',
+      tailReady: 'tail-ready',
+      searchClosed: 'search-closed',
+      browseClosed: 'browse-closed',
+    },
+  );
+  const imageViewer = presentation.slot(
+    'image-viewer',
+    'imageViewer',
+    {
+      theme,
+      locale,
+      image: state.image,
+      active: !!state.image && conversationRoute(state),
+    },
+    { closed: 'image-closed' },
+  );
+  const attached = attachmentFiles(
+    state.attachments,
+    state.selected?.id,
+    state.selected?.dataSource,
+  );
+  const attachmentsDisabled =
+    !state.selected ||
+    !draftReady(state.drafts, state.selected) ||
+    busy ||
+    state.loading ||
+    !!state.attachments.paste;
+  const attachmentsButton = ui.button(
+    'attachments-open',
+    `${text.attachmentTitle}${attached.length ? ` (${attached.length})` : ''}`,
+    attachmentsDisabled,
+  );
+  const composer = presentation.slot(
+    'composer',
+    'composer',
+    {
+      context: state.selected?.id ?? null,
+      dataSource: state.selected?.dataSource ?? null,
+      attachments: state.attachments.files,
+      drafts: draftStatuses(state.drafts),
+      theme,
+      locale,
+      busy:
+        busy ||
+        !!state.attachments.paste ||
+        executionPending(state) ||
+        (target === 'tui' && !!state.run && !state.queue),
+      filePaste:
+        target === 'tui' &&
+        state.selected &&
+        !state.selected.archived &&
+        conversationRoute(state) &&
+        !state.dialog &&
+        !state.source &&
+        !state.image &&
+        !state.loading &&
+        (!busy || !!state.attachments.paste) &&
+        (!state.attachments.paste ||
+          (state.attachments.paste.observed.context === state.selected.id &&
+            sameValue(state.attachments.paste.observed.dataSource, state.selected.dataSource)))
+          ? {
+              context: state.selected.id,
+              maxFiles: Math.min(8 - attached.length, 64 - state.attachments.files.length),
+            }
+          : null,
+      fileCommand: state.attachments.paste?.command ?? null,
+      running: !!state.run,
+      enabled:
+        !!state.selected &&
+        !state.selected.archived &&
+        canExecute(state) &&
+        !state.loading &&
+        state.notice !== 'unavailable',
+      command: state.command,
+      autoFocus: !state.searchOpen && state.browse === null,
+      hasAttachments: attached.length > 0,
+    },
+    {
+      send: 'send',
+      stop: 'stop',
+      attachments: 'attachments',
+      changed: 'draft',
+      files: 'files',
+      checkpoint: 'checkpoint',
+      draftCheck: 'draft-check',
+    },
+  );
+  const queueProps: RowsProps = {
+    terminal: theme.terminal,
+    entry: state.queue?.entries.at(-1)?.messageId ?? null,
+    revision: state.queue?.revision ?? 0,
+    rows: (state.queue?.entries ?? []).map((entry): RowsProps['rows'][number] => {
+      const lane = state.queue!.entries.filter((row) => row.kind === entry.kind);
+      const index = lane.findIndex((row) => row.messageId === entry.messageId);
+      const enabled = !busy && !executionPending(state);
+      const up = {
+        key: 'up',
+        label: theme.ascii ? '^' : '↑',
+        enabled: enabled && index > 0,
+      };
+      const down = {
+        key: 'down',
+        label: theme.ascii ? 'v' : '↓',
+        enabled: enabled && index + 1 < lane.length,
+      };
+      const edit = { key: 'edit', label: theme.ascii ? 'e' : '✎', enabled };
+      const retract = {
+        key: 'retract',
+        label: theme.ascii ? 'x' : '×',
+        enabled,
+      };
+      return {
+        key: entry.messageId,
+        text: ` ${entry.kind === 'steering' ? (theme.ascii ? '^' : '↗') : entry.kind === 'in_flight' ? (theme.ascii ? '...' : '…') : theme.ascii ? '+' : '↳'} ${entry.preview}`,
+        actions:
+          entry.kind === 'in_flight'
+            ? []
+            : entry.kind === 'followup'
+              ? [
+                  {
+                    key: 'promote',
+                    label: theme.ascii ? '^' : '↗',
+                    enabled: enabled && !!state.run,
+                  },
+                  up,
+                  down,
+                  edit,
+                  retract,
+                ]
+              : [up, down, edit, retract],
+      };
+    }),
+    shortcuts: [
+      { key: 'enter', modifiers: [], input: 'edit', enabled: true },
+      { key: 'e', modifiers: [], input: 'edit', enabled: true },
+      { key: 's', modifiers: [], input: 'promote', enabled: true },
+      { key: 'delete', modifiers: [], input: 'retract', enabled: true },
+      { key: 'x', modifiers: [], input: 'retract', enabled: true },
+      { key: 'up', modifiers: ['alt'], input: 'up', enabled: true },
+      { key: 'down', modifiers: ['alt'], input: 'down', enabled: true },
+    ],
+    maxRows: 3,
+    compactBelow: { height: 12, maxRows: 1 },
+    tabIndex: 2,
+    foreground: theme.text,
+    muted: theme.muted,
+    selected: theme.selected,
+    hovered: theme.surface,
+    scrollbar: {
+      thumb: theme.ascii ? '#' : '┃',
+      track: theme.ascii ? '|' : '│',
+      thumbColor: theme.text,
+      trackColor: theme.border,
+    },
+  };
+  const status = state.notice
+    ? text[state.notice]
+    : state.run
+      ? state.run.state === 'waiting_for_user'
+        ? text.waiting
+        : text.working
+      : state.selected?.archived
+        ? text.archivedConversation
+        : '';
+  const title = ui.text(
+    'title',
+    (currentPage && state.pageChrome[currentPage]?.title) ||
+      (state.pages.at(-1) === 'scheduler'
+        ? text.scheduleTitle
+        : state.pages.at(-1) === 'recall'
+          ? text.recallTitle
+          : state.pages.at(-1) === 'apps'
+            ? text.appsTitle
+            : state.pages.at(-1) === 'imports'
+              ? text.importsTitle
+              : state.pages.at(-1) === 'projects'
+                ? text.projectsTitle
+                : state.pages.at(-1) === 'settings'
+                  ? tuiText(locale, 'route-settings')
+                  : state.pages.at(-1) === 'connections'
+                    ? text.settings
+                    : state.pages.at(-1) === 'deployment'
+                      ? text.deploymentTitle
+                      : (state.selected?.title ?? tuiText(locale, 'route-agent-screen'))),
+    17,
+    theme.text,
+    650,
+    {
+      align: target === 'tui' ? 'start' : 'center',
+      width: pixels(0),
+      grow: 1,
+      minWidth: 0,
+      truncate: true,
+    },
+  );
+  const models = presentation.slot(
+    'models',
+    'models',
+    {
+      theme,
+      locale,
+      selection: state.model,
+      executor: state.executor,
+      catalogEpoch: state.catalogEpoch,
+      openRequest: state.modelOpenRequest,
+      busy: busy || executionPending(state) || (target === 'tui' && !!state.run && !state.queue),
+    },
+    {
+      selected: 'model',
+      setup: 'model-setup',
+      connections: 'model-connections',
+      executor: 'executor',
+      backends: 'backends',
+    },
+  );
+
+  const header = headerView(presentation, state, theme, locale, title, models, status);
+  const welcome =
+    !!state.selected &&
+    !state.selected.archived &&
+    !state.loading &&
+    !!state.window &&
+    !state.window.page.chunks.length &&
+    !state.live.length &&
+    !state.run &&
+    !state.source &&
+    !state.image &&
+    !state.searchOpen;
+  const main = ui.box(
+    'main',
+    [
+      ...(target === 'desktop' ? [header] : []),
+      ...(target === 'tui'
+        ? [
+            ui.box(
+              'home',
+              [
+                ui.box('home-top', [], { terminal: { grow: 1 } }),
+                ui.box(
+                  'home-center',
+                  [
+                    ui.box('home-left', [], { terminal: { grow: 1 } }),
+                    ui.box(
+                      'home-content',
+                      [
+                        ui.text('home-title', 'Maka', 24, theme.text, 650, {
+                          align: 'center',
+                        }),
+                        ...(state.place
+                          ? [
+                              ui.text('home-place', state.place, 14, theme.subtle, 400, {
+                                align: 'center',
+                                truncate: true,
+                              }),
+                            ]
+                          : []),
+                        ui.box('home-gap', [], { terminal: { basis: 1 } }),
+                        ...(!canExecute(state)
+                          ? [
+                              ui.text(
+                                'home-setup',
+                                state.hasBackends
+                                  ? text.executionBackend
+                                  : tuiText(
+                                      locale,
+                                      state.modelSetup === 'loading'
+                                        ? 'connections-loading'
+                                        : state.modelSetup === 'unavailable'
+                                          ? 'home-setup-failed'
+                                          : state.modelSetup === 'connect'
+                                            ? 'home-needs-connection'
+                                            : 'home-needs-default',
+                                    ),
+                                14,
+                                state.modelSetup === 'unavailable' ? theme.warning : theme.subtle,
+                                400,
+                                { align: 'center' },
+                              ),
+                            ]
+                          : []),
+                        ui.button(
+                          'home-new',
+                          canExecute(state)
+                            ? '+ ' + tuiText(locale, 'sidebar-new-session') + '   Ctrl+N'
+                            : state.hasBackends
+                              ? text.executionBackend
+                              : tuiText(
+                                  locale,
+                                  state.modelSetup === 'connect'
+                                    ? 'route-connections'
+                                    : 'default-model-title',
+                                ) + '   Ctrl+N',
+                          catalogBusy ||
+                            (!canExecute(state) &&
+                              !state.hasBackends &&
+                              state.modelSetup === 'loading'),
+                          true,
+                          { background: 0 },
+                        ),
+                        ui.button('home-projects', text.projectsTitle, false, false, {
+                          background: 0,
+                        }),
+                        ui.button('home-imports', text.importsTitle, false, false, {
+                          background: 0,
+                        }),
+                      ],
+                      { gap: 0, terminal: { basis: 52, shrink: true } },
+                    ),
+                    ui.box('home-right', [], { terminal: { grow: 1 } }),
+                  ],
+                  { row: true, gap: 0 },
+                ),
+                ui.box('home-bottom', [], { terminal: { grow: 1 } }),
+              ],
+              {
+                gap: 0,
+                visible: !state.selected && !state.embedding.fixed,
+                viewport: true,
+                terminal: { grow: 1 },
+              },
+            ),
+          ]
+        : []),
+      ...(state.selected?.archived && attached.length && !state.source && !state.image
+        ? [ui.box('archived-attachments', [attachmentsButton], { row: true })]
+        : []),
+      ...(target === 'desktop' && state.attachments.paste
+        ? [pasteView(presentation, theme, locale, state.attachments.paste, busy)]
+        : []),
+      ...(target === 'desktop'
+        ? [
+            ui.box(
+              'conversation',
+              [
+                ui.box('retained-timeline', [timeline], {
+                  visible: !state.image,
+                  style: { width: fill, height: fill },
+                  terminal: { grow: 1 },
+                }),
+                imageViewer,
+              ],
+              {
+                style: {
+                  width: fill,
+                  height: pixels(0),
+                  grow: 1,
+                  shrink: 1,
+                  minHeight: 0,
+                },
+              },
+            ),
+            ui.box(
+              'input-area',
+              [...(!state.selected?.archived ? [attachmentsButton] : []), composer],
+              {
+                visible: !state.image && !state.selected?.archived,
+                padding: 24,
+                style: { width: fill, maxWidth: 808, shrink: 0 },
+              },
+            ),
+          ]
+        : [
+            ui.box(
+              'session-body',
+              [
+                ui.box(
+                  'conversation',
+                  [
+                    ui.box(
+                      'welcome-mark',
+                      [
+                        presentation.slot(
+                          'welcome',
+                          'welcome',
+                          {
+                            background: theme.terminal?.background ?? theme.background >>> 8,
+                            foreground: theme.terminal?.foreground ?? theme.text >>> 8,
+                            motion: theme.motion,
+                            ascii: theme.ascii,
+                          },
+                          {},
+                        ),
+                      ],
+                      { visible: welcome, terminal: { grow: 1 } },
+                    ),
+                    ui.box('retained-timeline', [timeline], {
+                      visible: !state.image && !welcome,
+                      style: { width: fill, height: fill },
+                      terminal: { grow: 1 },
+                    }),
+                    imageViewer,
+                  ],
+                  { terminal: { basis: 1, grow: 1 } },
+                ),
+                ...(state.attachments.paste
+                  ? [pasteView(presentation, theme, locale, state.attachments.paste, busy)]
+                  : []),
+                ui.box(
+                  'retained-composer',
+                  [
+                    ...(reviewTarget(state)
+                      ? [
+                          ui.button(
+                            'interaction-open',
+                            `Ctrl G · ${text.reviewRequest}`,
+                            !rootCommands(state, locale, target).some(
+                              (command) => command.kind === 'interaction-open' && !command.disabled,
+                            ),
+                          ),
+                        ]
+                      : []),
+                    presentation.slot('queue', 'rows', queueProps, {
+                      activated: 'queue-action',
+                    }),
+                    ...(queueProps.rows.length && ui.focusButton
+                      ? [
+                          ui.box(
+                            'queue-status',
+                            [
+                              ui.box('queue-status-space', [], {
+                                terminal: { basis: 0, grow: 1 },
+                              }),
+                              ui.focusButton(
+                                'queue-focus',
+                                `${theme.ascii ? '=' : '≡'} ${queueProps.rows.length}`,
+                                'queue',
+                              ),
+                            ],
+                            { row: true, gap: 0 },
+                          ),
+                        ]
+                      : []),
+                    ...(attached.length
+                      ? [
+                          attachmentSummary(
+                            presentation,
+                            theme,
+                            locale,
+                            attached,
+                            attachmentsDisabled,
+                          ),
+                        ]
+                      : []),
+                    ui.box(
+                      'composer-navigation',
+                      [
+                        composer,
+                        ui.box(
+                          'composer-footer',
+                          [
+                            presentation.slot(
+                              'footer',
+                              'footer',
+                              {
+                                sessionId: state.selected?.id ?? null,
+                                dataSource: state.selected?.dataSource ?? null,
+                                running: !!state.run,
+                                theme,
+                                locale,
+                              },
+                              {},
+                            ),
+                          ],
+                          { terminal: { basis: 1, shrink: false }, scroll: 'none' },
+                        ),
+                      ],
+                      {
+                        gap: 0,
+                        terminal: { shrink: true },
+                        focusShortcuts: [
+                          {
+                            key: 'up',
+                            modifiers: [],
+                            child: 'queue',
+                            enabled: queueProps.rows.length > 0,
+                          },
+                        ],
+                      },
+                    ),
+                  ],
+                  {
+                    gap: 0,
+                    visible: !state.source && !state.image && !state.selected?.archived,
+                    terminal: { shrink: true },
+                  },
+                ),
+              ],
+              {
+                gap: 0,
+                visible: !!state.selected,
+                viewport: true,
+                terminal: { grow: 1 },
+              },
+            ),
+            ui.box(
+              'session-metadata',
+              [
+                ui.box('model-metadata', [models], {
+                  terminal: { grow: 1, shrink: true },
+                }),
+                ...(status
+                  ? [
+                      ui.text(
+                        'status',
+                        status,
+                        12,
+                        state.run?.state === 'waiting_for_user' ? theme.warning : theme.muted,
+                      ),
+                    ]
+                  : []),
+              ],
+              { row: true, gap: 1 },
+            ),
+          ]),
+    ],
+    {
+      visible: conversationRoute(state),
+      gap: target === 'tui' ? 0 : undefined,
+      terminal: { grow: 1 },
+      style: {
+        width: target === 'desktop' ? pixels(0) : fill,
+        grow: 1,
+        height: fill,
+        align: 'center',
+        minWidth: 0,
+      },
+    },
+  );
+  return { main, header, attached };
+}

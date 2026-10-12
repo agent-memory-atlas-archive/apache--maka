@@ -50,3 +50,5 @@ node scripts/plugins/build.mjs   --plugin plugins/workspace/workspace-web --outp
 将插件加入 Maka 时，在[产品选择](../products/maka/bundle/package-inputs.json)中添加路径，再在[组合](../products/maka/bundle/src/composition.ts)中添加实例和绑定。新增原生实现还需在[产品注册表](../products/maka/native/README.zh-CN.md)中加入工厂。导入声明依赖，Host 授权决定可以执行哪些调用。
 
 [插件开发 skill](../skills/maka-plugin-authoring/SKILL.md)提供可运行的独立示例，以及服务、UI、状态和原生扩展指南。[SDK](../packages/plugin-sdk/README.zh-CN.md)提供精确契约。
+
+较大的 UI 组件（`application/apps`、`application/deployment`、`agent/scheduler`、`agent/conversation-import`、`settings/insights`、`settings/connection-form`）用 `state.ts` 定义共享状态和局部值类型，`operations.ts` 处理服务意图与结果结算，`view.ts` 构造场景，`events.ts` 处理输入，`index.ts` 负责组件创建和生命周期连接。这些仍是同一组件的普通模块，共用一个状态和发布边界，不增加事件总线或独立 store。小组件可以保留单文件。

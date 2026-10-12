@@ -30,6 +30,8 @@ use maka_plugin_core::deployment::management::{
 use serde::Deserialize;
 
 mod authoring;
+mod download;
+pub use download::download_bundle;
 mod composition;
 mod settings;
 
@@ -489,6 +491,7 @@ impl Handler for Manager {
                 "setEnabled" => manager.set_enabled(input).await,
                 "install" => manager.install(input, context).await,
                 "installSource" => manager.install_source(input).await,
+                "installUrl" => manager.install_url(input, context).await,
                 "readPackage" => manager.read_package(input).await,
                 "replaceSource" => manager.replace_source(input).await,
                 "replace" => manager.replace(input, context).await,

@@ -38,6 +38,7 @@ pub enum Command {
     ReadDocument(DeploymentDocumentRead),
     ReadPackage(PackageSourceRead),
     InstallSource(PackageSourceInstall),
+    InstallUrl(PackageUrlInstall),
     ReplaceSource(DeploymentSourceReplace),
     EditComposition(CompositionEdit),
     Configure(InstanceConfigure),

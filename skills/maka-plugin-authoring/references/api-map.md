@@ -26,8 +26,10 @@ In the bundled skill, `references/sdk/` contains the SDK sources from the same b
 | `Component`, `HostService`, `RequestContext` | `index.ts` |
 | Native terminal and desktop scene helpers | `ui.ts` |
 | Package/composition types, wire values and native props | `generated/runtime.ts` |
-| Public service and component contracts | `contracts.ts` |
+| Public service and component contracts | `contracts.ts` index, then `contracts/<name>.ts` in bundled resources |
 | Native configuration schemas | `configurations.ts` |
 | Native implementation definitions | `native.ts` |
 
 `maka application schema` emits the executable's catalog. In a checkout, `npm --workspace @maka-agent/plugin-sdk run schema:generate` regenerates the SDK through `tools/schema`; `schema:check` checks for drift. Types help authoring, while Rust validates runtime values, resource slots, compatibility and permission.
+
+The bundled contract map is split into one resource per contract to fit the reader’s file budget. Its values come directly from the generated SDK; checkout `contracts.ts` remains the source of truth.

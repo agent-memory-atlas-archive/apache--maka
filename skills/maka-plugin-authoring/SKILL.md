@@ -39,6 +39,7 @@ Read the guide relevant to the change:
 - [Native Rust](references/native-rust.md): definitions, registration and resource lifetime.
 - [Models and execution](references/models-and-execution.md): Agent/provider integration.
 - [Testing and shipping](references/testing-and-shipping.md): package checks, installation and actual runtime tests.
+- [Product source examples](references/product-sources.md): current contracts, complete UI examples and product wiring, with a generated resource index.
 - [API sources](references/api-map.md): exact types and schemas for this build.
 
 Use the SDK root exports and the runtime's `maka application schema` output. Rust declarations generate SDK contracts; hand-editing generated files creates drift. JavaScript entries have no ambient Node APIs. Effects use declared service imports and request-local resources.

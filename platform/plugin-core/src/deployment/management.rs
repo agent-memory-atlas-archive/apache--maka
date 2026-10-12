@@ -46,6 +46,17 @@ pub struct PackageInstall {
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PackageUrlInstall {
+    pub expected_revision: u64,
+    #[schemars(length(min = 1, max = 8192))]
+    pub url: String,
+    /// Optional SHA-256 of the downloaded bundle bytes, from a trusted publisher.
+    #[serde(default)]
+    pub sha256: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PackageInstalled {
     pub source: DeploymentRef,
     pub package: PackageRef,
@@ -187,6 +198,7 @@ pub enum ManagementResult<T> {
 #[serde(rename_all = "snake_case")]
 pub enum ManagementRejection {
     InvalidBundle,
+    DownloadFailed,
     InvalidDocument,
     InvalidSource,
     PackageUnavailable,
@@ -228,6 +240,12 @@ pub fn deployment_manager_contract() -> Contract {
                     method::<DeploymentRead, ManagedDeployment>(MethodMode::Query),
                 ),
                 ("install".into(), install),
+                (
+                    "installUrl".into(),
+                    method::<PackageUrlInstall, ManagementResult<PackageInstalled>>(
+                        MethodMode::Mutation,
+                    ),
+                ),
                 (
                     "installSource".into(),
                     method::<PackageSourceInstall, ManagementResult<PackageInstalled>>(

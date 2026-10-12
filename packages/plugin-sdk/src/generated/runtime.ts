@@ -312,6 +312,11 @@ export type UiAuthoringCommand =
       [k: string]: unknown | undefined;
     }
   | {
+      method: 'installUrl';
+      input: PackageUrlInstall;
+      [k: string]: unknown | undefined;
+    }
+  | {
       method: 'replaceSource';
       input: DeploymentSourceReplace;
       [k: string]: unknown | undefined;
@@ -544,6 +549,7 @@ export type ManagementResultForPackageInstalled =
     };
 export type ManagementRejection =
   | 'invalid_bundle'
+  | 'download_failed'
   | 'invalid_document'
   | 'invalid_source'
   | 'package_unavailable'
@@ -4634,6 +4640,14 @@ export interface PackageSourceInstall {
   files: {
     [k: string]: string | undefined;
   };
+}
+export interface PackageUrlInstall {
+  expectedRevision: number;
+  url: string;
+  /**
+   * Optional SHA-256 of the downloaded bundle bytes, from a trusted publisher.
+   */
+  sha256?: string | null;
 }
 export interface DeploymentSourceReplace {
   expectedRevision: number;

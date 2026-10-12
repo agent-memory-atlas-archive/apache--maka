@@ -121,3 +121,123 @@ fn source_rejection_diagnostics_cannot_execute_terminal_control_sequences() {
         assert!(!root.exists());
     }
 }
+
+#[test]
+fn url_install_commits_validated_bytes_without_changing_the_composition() {
+    use sha2::{Digest, Sha256};
+    use std::{
+        io::{Read, Write},
+        sync::Arc,
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("root");
+    let owner = RootOwner::create(&root, &RootNamespaces::for_current_account().unwrap()).unwrap();
+    let deployment = uuid::Uuid::new_v4();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let input = Input {
+        environment: Environment {
+            location: ExecutionLocation::Host,
+            presentation: None,
+        },
+        instances: BTreeMap::new(),
+        recovery: None,
+        launch: None,
+    };
+    runtime.block_on(async {
+        let store = maka_event_log::EventLog::for_root(Arc::new(owner))
+            .await
+            .unwrap();
+        store
+            .commit_application(deployment, 0, input.clone(), vec![], vec![])
+            .await
+            .unwrap();
+        store.shutdown().await.unwrap();
+    });
+    let package = maka_packages::Package::new(BTreeMap::from([
+        ("maka.extension.json".into(), br#"{"schemaVersion":2,"id":"example.url-cli","application":{"entries":{"host":{"implementation":{"kind":"javascript","module":"host.mjs","realm":"shared"},"configuration":{"type":"object"},"imports":{},"exports":{}}}}}"#.to_vec()),
+        ("host.mjs".into(), b"export function activate() { return {}; }".to_vec()),
+    ])).unwrap();
+    let bytes = package.to_bundle();
+    let digest = format!("{:x}", Sha256::digest(&bytes));
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let url = format!(
+        "http://{}/plugin.maka-plugin",
+        listener.local_addr().unwrap()
+    );
+    let worker = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        loop {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    stream
+                        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                        .unwrap();
+                    let mut request = [0; 8192];
+                    stream.read(&mut request).unwrap();
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        bytes.len()
+                    )
+                    .unwrap();
+                    stream.write_all(&bytes).unwrap();
+                    return;
+                }
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::WouldBlock
+                        && std::time::Instant::now() < deadline =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(10))
+                }
+                Err(error) => panic!("package fixture: {error}"),
+            }
+        }
+    });
+    let output = Command::new(env!("CARGO_BIN_EXE_maka"))
+        .args([
+            "application",
+            "install-url",
+            "--root",
+            root.to_str().unwrap(),
+            "--deployment",
+            &deployment.to_string(),
+            "--url",
+            &url,
+            "--sha256",
+            &digest,
+            "--expected-revision",
+            "1",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    worker.join().unwrap();
+    let installed: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(installed["source"]["revision"], 2);
+    assert_eq!(
+        installed["package"],
+        serde_json::to_value(package.application_ref()).unwrap()
+    );
+    runtime.block_on(async {
+        let owner =
+            RootOwner::open(&root, &RootNamespaces::for_current_account().unwrap()).unwrap();
+        let store = maka_event_log::EventLog::for_root(Arc::new(owner))
+            .await
+            .unwrap();
+        let loaded = store.load_application(deployment).await.unwrap().unwrap();
+        assert_eq!(
+            serde_json::to_value(loaded.source.input).unwrap(),
+            serde_json::to_value(input).unwrap()
+        );
+        assert_eq!(
+            loaded.packages[0].application_ref(),
+            package.application_ref()
+        );
+        store.shutdown().await.unwrap();
+    });
+}

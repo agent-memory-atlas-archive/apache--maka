@@ -69,10 +69,12 @@ pub(crate) struct Launch {
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Preparation {
-    sources: Sources,
+pub(super) struct Preparation {
+    #[serde(default)]
+    pub(super) restore: BTreeMap<Uuid, u64>,
+    pub(super) sources: Sources,
     // Exact immutable files, independent of whatever binary resumes this work.
-    packages: Vec<BTreeMap<String, String>>,
+    pub(super) packages: Vec<BTreeMap<String, String>>,
 }
 
 impl Launch {
@@ -84,12 +86,7 @@ impl Launch {
                 "Maka needs an interactive terminal. Use --help for automation commands.".into(),
             );
         }
-        let root = match &self.root {
-            Some(root) => std::path::absolute(root)?,
-            None => crate::serve::home_directory()?
-                .ok_or("home directory unavailable; select --root")?
-                .join(".maka/application"),
-        };
+        let root = super::root_path(self.root.clone())?;
         let store = Arc::new(open(root.clone(), true, None).await?);
         let result = async {
             let existing = store.application_launch().await?.is_some();
@@ -168,7 +165,7 @@ async fn standard_configuration(
     super::installation(options).await
 }
 
-async fn open(
+pub(super) async fn open(
     root: PathBuf,
     initialize: bool,
     expected_domain: Option<String>,
@@ -190,7 +187,9 @@ async fn open(
     .await??;
     Ok(maka_transport::open_store(Arc::new(owner)).await?)
 }
-fn targets(configuration: &Configuration) -> Result<(PathBuf, String, Uuid, Uuid), HostError> {
+pub(super) fn targets(
+    configuration: &Configuration,
+) -> Result<(PathBuf, String, Uuid, Uuid), HostError> {
     configuration.validate().map_err(HostError::from)?;
     let mut process = None;
     let mut management = None;
@@ -217,7 +216,7 @@ fn targets(configuration: &Configuration) -> Result<(PathBuf, String, Uuid, Uuid
         management.ok_or("product management Host is missing")?,
     ))
 }
-async fn prepare(
+pub(super) async fn prepare(
     store: &EventLog,
     configuration: Option<Value>,
     product: Product,
@@ -256,30 +255,46 @@ async fn prepare(
         )?;
         let host_store = open(root, false, Some(domain)).await?;
         let result = async {
-            ensure(
-                &host_store,
-                host,
-                &preparation.sources.host,
-                &[],
-                &host_packages,
-            )
-            .await?;
-            ensure(
-                store,
-                management,
-                &preparation.sources.management_host,
-                &[],
-                &management_packages,
-            )
-            .await?;
-            ensure(
-                store,
-                record.deployment,
-                &preparation.sources.ui,
-                &preparation.sources.remote_exports,
-                &ui_packages,
-            )
-            .await?;
+            for (target, deployment, input, observations, packages) in [
+                (
+                    &host_store,
+                    host,
+                    &preparation.sources.host,
+                    &[][..],
+                    host_packages.as_slice(),
+                ),
+                (
+                    store,
+                    management,
+                    &preparation.sources.management_host,
+                    &[][..],
+                    management_packages.as_slice(),
+                ),
+                (
+                    store,
+                    record.deployment,
+                    &preparation.sources.ui,
+                    preparation.sources.remote_exports.as_slice(),
+                    ui_packages.as_slice(),
+                ),
+            ] {
+                if preparation.restore.is_empty() {
+                    ensure(target, deployment, input, observations, packages).await?;
+                } else {
+                    super::restore::ensure(
+                        target,
+                        deployment,
+                        *preparation
+                            .restore
+                            .get(&deployment)
+                            .ok_or("restore revision missing")?,
+                        input,
+                        observations,
+                        packages,
+                    )
+                    .await?;
+                }
+            }
             store.complete_application_launch(record.deployment).await?;
             Ok::<_, HostError>(())
         }
@@ -334,6 +349,7 @@ async fn begin(
         }
         let selection = sources.connections.clone();
         let preparation = Preparation {
+            restore: BTreeMap::new(),
             sources,
             packages: packages.values().map(|package| package.files().iter().map(|(path, bytes)| (path.clone(), STANDARD.encode(bytes))).collect()).collect(),
         };

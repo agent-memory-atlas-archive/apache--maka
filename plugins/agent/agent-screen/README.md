@@ -28,8 +28,9 @@
 | `actions.ts` | Available commands and explicit service intents |
 | `results.ts` | Query results, mutation receipts and live deliveries |
 | `messages.ts` | Bounded live text and timeline display projections |
-| `events.ts` | Input routing within one candidate-frame transaction |
-| `frame.ts` | Retained child composition, conversation/composer, dialogs and subscriptions |
+| `events.ts`, `component-events.ts`, `raw-events.ts` | Lifecycle/action routing, child callbacks and raw commands within one candidate-frame transaction |
+| `frame.ts` | Retained root composition, dialogs and subscriptions |
+| `conversation-view.ts` | Conversation, composer and its footer |
 | `navigation-view.ts`, `header-view.ts`, `pages-view.ts` | Navigation, header and retained product pages |
 | `tui.ts`, `desktop.ts`, `package.ts` | Target adapters and package declaration |
 

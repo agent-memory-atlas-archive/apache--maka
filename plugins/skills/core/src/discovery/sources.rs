@@ -196,3 +196,44 @@ pub fn safe_source_id(id: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn authoring_examples_and_each_contract_are_readable_resources() {
+        let bundled = bundled().unwrap();
+        let source = bundled
+            .iter()
+            .find(|source| source.id == "maka-plugin-authoring")
+            .unwrap();
+        let resources =
+            crate::Resources::embedded(source.files, &mut crate::resources::Budget::default())
+                .unwrap();
+        assert!(!resources.fingerprint().0);
+        for (path, _) in source.files {
+            resources
+                .page(
+                    "bundled:maka-plugin-authoring",
+                    &maka_agent_facts::read::ReadInput {
+                        path: (*path).into(),
+                        offset: None,
+                        limit: None,
+                    },
+                )
+                .unwrap_or_else(|error| panic!("{path}: {error}"));
+        }
+        for required in [
+            "references/source-index.md",
+            "references/sdk/contracts/agent.ts",
+            "references/sdk/contracts/deploymentManager.ts",
+            "references/source/plugins/shared/contracts.ts",
+            "references/source/plugins/agent/agent-screen/index.ts",
+        ] {
+            assert!(
+                source.files.iter().any(|(path, _)| *path == required),
+                "{required}"
+            );
+        }
+    }
+}

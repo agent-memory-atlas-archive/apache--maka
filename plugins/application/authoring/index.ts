@@ -39,7 +39,13 @@ interface State {
   halted: boolean;
   wake: boolean;
 }
-const mutations = new Set(['installSource', 'replaceSource', 'editComposition', 'configure']);
+const mutations = new Set([
+  'installSource',
+  'installUrl',
+  'replaceSource',
+  'editComposition',
+  'configure',
+]);
 function value(outcome: ActionOutcome): unknown {
   if (outcome.status === 'succeeded') return outcome.value;
   if (

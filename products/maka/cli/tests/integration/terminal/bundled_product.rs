@@ -428,4 +428,43 @@ fn bundled_ui_authoring_installs_and_reloads_original_source_without_replaying()
         );
         store.shutdown().await.unwrap();
     });
+    let restored = Command::new(env!("CARGO_BIN_EXE_maka"))
+        .args([
+            "application",
+            "restore-defaults",
+            "--root",
+            ui.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        restored.status.success(),
+        "{}",
+        String::from_utf8_lossy(&restored.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&restored.stdout).unwrap();
+    assert_eq!(result["revision"], 4);
+    assert_eq!(result["deployment"], deployment.to_string());
+    let mut restored_ui = Pty::spawn(&["application", "launch", "--root", ui.to_str().unwrap()]);
+    restored_ui.wait_until_with_timeout(
+        |screen| screen.contains("Settings"),
+        Duration::from_secs(45),
+    );
+    restored_ui.send(b"\x11");
+    restored_ui.finish();
+    runtime.block_on(async {
+        let store = EventLog::for_root(Arc::new(RootOwner::open(&host, &namespaces).unwrap()))
+            .await
+            .unwrap();
+        // Restoration changes desired composition; accepted request history survives.
+        for id in &ids {
+            let record = store
+                .plugin_data(&namespace, &format!("{prefix}request/{id}"))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(record.data.value().unwrap()["state"]["status"], "completed");
+        }
+        store.shutdown().await.unwrap();
+    });
 }

@@ -36630,6 +36630,7 @@ export const contracts = {
                 type: 'string',
                 enum: [
                   'invalid_bundle',
+                  'download_failed',
                   'invalid_document',
                   'invalid_source',
                   'package_unavailable',
@@ -36990,6 +36991,7 @@ export const contracts = {
                 type: 'string',
                 enum: [
                   'invalid_bundle',
+                  'download_failed',
                   'invalid_document',
                   'invalid_source',
                   'package_unavailable',
@@ -37124,6 +37126,7 @@ export const contracts = {
                 type: 'string',
                 enum: [
                   'invalid_bundle',
+                  'download_failed',
                   'invalid_document',
                   'invalid_source',
                   'package_unavailable',
@@ -37273,6 +37276,152 @@ export const contracts = {
                 type: 'string',
                 enum: [
                   'invalid_bundle',
+                  'download_failed',
+                  'invalid_document',
+                  'invalid_source',
+                  'package_unavailable',
+                  'execution_environment',
+                  'instance_unavailable',
+                  'parent_disabled',
+                ],
+              },
+            },
+          },
+          resources: {},
+        },
+        installUrl: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'PackageUrlInstall',
+            type: 'object',
+            properties: {
+              expectedRevision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              url: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 8192,
+              },
+              sha256: {
+                description:
+                  'Optional SHA-256 of the downloaded bundle bytes, from a trusted publisher.',
+                type: ['string', 'null'],
+                default: null,
+              },
+            },
+            additionalProperties: false,
+            required: ['expectedRevision', 'url'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'ManagementResultForPackageInstalled',
+            description:
+              "A deterministic refusal is a recorded business result. Uncertain SQL/worker\nfailures remain in the original operation journal's Unknown outcome.",
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  value: {
+                    $ref: '#/$defs/PackageInstalled',
+                  },
+                  status: {
+                    type: 'string',
+                    const: 'committed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['status', 'value'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  currentRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  status: {
+                    type: 'string',
+                    const: 'conflict',
+                  },
+                },
+                additionalProperties: false,
+                required: ['status', 'currentRevision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/ManagementRejection',
+                  },
+                  diagnostic: {
+                    type: ['string', 'null'],
+                    maxLength: 512,
+                  },
+                  status: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                additionalProperties: false,
+                required: ['status', 'reason'],
+              },
+            ],
+            $defs: {
+              PackageInstalled: {
+                type: 'object',
+                properties: {
+                  source: {
+                    $ref: '#/$defs/DeploymentRef',
+                  },
+                  package: {
+                    $ref: '#/$defs/PackageRef',
+                  },
+                },
+                additionalProperties: false,
+                required: ['source', 'package'],
+              },
+              DeploymentRef: {
+                type: 'object',
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['stateDomain', 'deployment', 'revision'],
+              },
+              PackageRef: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['id', 'revision'],
+              },
+              ManagementRejection: {
+                type: 'string',
+                enum: [
+                  'invalid_bundle',
+                  'download_failed',
                   'invalid_document',
                   'invalid_source',
                   'package_unavailable',
@@ -39023,6 +39172,7 @@ export const contracts = {
                 type: 'string',
                 enum: [
                   'invalid_bundle',
+                  'download_failed',
                   'invalid_document',
                   'invalid_source',
                   'package_unavailable',
@@ -39727,6 +39877,7 @@ export const contracts = {
                 type: 'string',
                 enum: [
                   'invalid_bundle',
+                  'download_failed',
                   'invalid_document',
                   'invalid_source',
                   'package_unavailable',
@@ -39852,6 +40003,7 @@ export const contracts = {
                 type: 'string',
                 enum: [
                   'invalid_bundle',
+                  'download_failed',
                   'invalid_document',
                   'invalid_source',
                   'package_unavailable',
@@ -40706,6 +40858,19 @@ export const contracts = {
                     properties: {
                       method: {
                         type: 'string',
+                        const: 'installUrl',
+                      },
+                      input: {
+                        $ref: '#/$defs/PackageUrlInstall',
+                      },
+                    },
+                    required: ['method', 'input'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      method: {
+                        type: 'string',
                         const: 'replaceSource',
                       },
                       input: {
@@ -40906,6 +41071,29 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['expectedRevision', 'files'],
+              },
+              PackageUrlInstall: {
+                type: 'object',
+                properties: {
+                  expectedRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  url: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 8192,
+                  },
+                  sha256: {
+                    description:
+                      'Optional SHA-256 of the downloaded bundle bytes, from a trusted publisher.',
+                    type: ['string', 'null'],
+                    default: null,
+                  },
+                },
+                additionalProperties: false,
+                required: ['expectedRevision', 'url'],
               },
               DeploymentSourceReplace: {
                 type: 'object',
@@ -41924,6 +42112,19 @@ export const contracts = {
                 properties: {
                   method: {
                     type: 'string',
+                    const: 'installUrl',
+                  },
+                  input: {
+                    $ref: '#/$defs/PackageUrlInstall',
+                  },
+                },
+                required: ['method', 'input'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  method: {
+                    type: 'string',
                     const: 'replaceSource',
                   },
                   input: {
@@ -42124,6 +42325,29 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['expectedRevision', 'files'],
+              },
+              PackageUrlInstall: {
+                type: 'object',
+                properties: {
+                  expectedRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  url: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 8192,
+                  },
+                  sha256: {
+                    description:
+                      'Optional SHA-256 of the downloaded bundle bytes, from a trusted publisher.',
+                    type: ['string', 'null'],
+                    default: null,
+                  },
+                },
+                additionalProperties: false,
+                required: ['expectedRevision', 'url'],
               },
               DeploymentSourceReplace: {
                 type: 'object',

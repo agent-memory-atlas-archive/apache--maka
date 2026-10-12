@@ -19,6 +19,8 @@
 
 import type {
   DeploymentRef,
+  EditorObservation,
+  TextareaProps,
   FileObservation,
   PackageInstalled,
 } from '../../packages/plugin-sdk/src/index.js';
@@ -27,22 +29,41 @@ import { copy } from './locale.js';
 import { sameValue } from './value.js';
 import { fill, pixels, type Presentation, type Node } from './view.js';
 
-export interface InstallIntent {
-  source: DeploymentRef;
-  file: FileObservation;
-}
+export type InstallIntent =
+  | { source: DeploymentRef; file: FileObservation }
+  | { source: DeploymentRef; url: string; captured: EditorObservation };
 export interface PackageImport {
   open: boolean;
+  mode: 'file' | 'url';
+  urlObservation: EditorObservation | null;
   observation: FileObservation | null;
   confirmation: InstallIntent | null;
   installed: PackageInstalled | null;
 }
 export function packageImport(): PackageImport {
-  return { open: false, observation: null, confirmation: null, installed: null };
+  return {
+    open: false,
+    mode: 'file',
+    urlObservation: null,
+    observation: null,
+    confirmation: null,
+    installed: null,
+  };
 }
 export function canInstall(importer: PackageImport, busy: boolean, conflict: boolean) {
+  if (busy || conflict) return false;
+  if (importer.mode === 'file')
+    return importer.observation?.phase === 'ready' && !!importer.observation.file;
+  const snapshot = importer.urlObservation?.snapshot;
+  return !!snapshot && !snapshot.marked && snapshot.text.bytes > 0 && snapshot.text.bytes <= 8192;
+}
+export function matchesImport(importer: PackageImport) {
+  const intent = importer.confirmation;
   return (
-    !busy && !conflict && importer.observation?.phase === 'ready' && !!importer.observation.file
+    !!intent &&
+    ('file' in intent
+      ? importer.mode === 'file' && sameValue(intent.file, importer.observation)
+      : importer.mode === 'url' && sameValue(intent.captured, importer.urlObservation))
   );
 }
 export function importView<N extends Node>(
@@ -60,7 +81,12 @@ export function importView<N extends Node>(
     text = copy(props.locale),
     observed = importer.observation;
   const confirmation = importer.confirmation;
-  const file = confirmation?.file.file ?? observed?.file;
+  const file =
+    importer.mode === 'file'
+      ? confirmation && 'file' in confirmation
+        ? confirmation.file.file
+        : observed?.file
+      : undefined;
   const error = observed?.error;
   const failure =
     error === 'limit_exceeded'
@@ -101,6 +127,63 @@ export function importView<N extends Node>(
       ui.box(
         'deployment-import-body',
         [
+          ui.box(
+            'deployment-import-source',
+            [
+              ui.button(
+                'deployment-import-local',
+                text.deploymentChooseFile,
+                busy || !!confirmation,
+                importer.mode === 'file',
+              ),
+              ui.button(
+                'deployment-import-remote',
+                text.deploymentUrl,
+                busy || !!confirmation,
+                importer.mode === 'url',
+              ),
+            ],
+            { row: true, gap: 1, style: { wrap: true } },
+          ),
+          ui.box(
+            'deployment-import-url-owner',
+            [
+              presentation.slot(
+                'deployment-import-url',
+                'editor',
+                {
+                  appearance: props.theme.textarea,
+                  accessibilityLabel: text.deploymentUrl,
+                  placeholder: 'https://example.com/plugin.maka-plugin',
+                  tabIndex: 0,
+                  readOnly: busy || !!confirmation,
+                  disabled: false,
+                  autoFocus: false,
+                  softWrap: false,
+                  terminalRows: { min: 1, max: 2 },
+                  submit: 'primary_enter',
+                  command: null,
+                  menu: {
+                    appearance: props.theme.menu,
+                    labels: {
+                      title: text.edit,
+                      undo: text.undo,
+                      redo: text.redo,
+                      cut: text.cut,
+                      copy: text.copy,
+                      paste: text.paste,
+                      selectAll: text.selectAll,
+                    },
+                  },
+                } satisfies TextareaProps,
+                { changed: 'deployment-import-url-changed' },
+              ),
+            ],
+            { visible: importer.mode === 'url' },
+          ),
+          ...(confirmation && 'url' in confirmation
+            ? [ui.text('deployment-import-url-confirmed', confirmation.url, 13, props.theme.text)]
+            : []),
           // The retained native child owns selection. Confirmation suspends it rather
           // than recreating it; snapshot still captures the exact observed revision.
           ui.box(
@@ -124,7 +207,7 @@ export function importView<N extends Node>(
                 { changed: 'deployment-import-changed' },
               ),
             ],
-            { visible: target === 'tui' || !confirmation },
+            { visible: importer.mode === 'file' && (target === 'tui' || !confirmation) },
           ),
           ...(confirmation && target === 'desktop'
             ? [
@@ -199,7 +282,7 @@ export function importView<N extends Node>(
               ui.button(
                 'deployment-import-confirm',
                 text.confirmDefault,
-                busy || conflict || !sameValue(confirmation.file, observed),
+                busy || conflict || !matchesImport(importer),
                 true,
               ),
               ui.button('deployment-import-cancel', text.cancel, busy),
@@ -284,6 +367,16 @@ export function importView<N extends Node>(
                   14,
                   props.theme.muted,
                 ),
+                ...(confirmation && 'url' in confirmation
+                  ? [
+                      ui.text(
+                        'deployment-import-confirm-url',
+                        confirmation.url,
+                        13,
+                        props.theme.text,
+                      ),
+                    ]
+                  : []),
                 ...(file
                   ? [
                       ui.text(
@@ -311,7 +404,7 @@ export function importView<N extends Node>(
                 ui.button(
                   'deployment-import-confirm',
                   text.confirmDefault,
-                  busy || conflict || !confirmation || !sameValue(confirmation.file, observed),
+                  busy || conflict || !confirmation || !matchesImport(importer),
                   true,
                 ),
               ],

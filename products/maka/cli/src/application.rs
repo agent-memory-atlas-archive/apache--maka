@@ -17,6 +17,7 @@
  * under the License.
  */
 
+mod install;
 mod product;
 mod serve;
 
@@ -43,6 +44,10 @@ use serde::Serialize;
 pub(super) enum Command {
     /// Author an ordinary bundled product without Node or a source checkout.
     Compose(product::Compose),
+    /// Restore the originally installed product composition, preserving identities and stored data.
+    RestoreDefaults(product::Restore),
+    /// Download, validate and install a plugin bundle into an inactive deployment.
+    InstallUrl(install::InstallUrl),
     /// Initialize or reopen an ordinary bundled terminal product.
     Launch(product::Launch),
     /// Check exact package revisions, template overrides, variants and capability bindings.
@@ -142,6 +147,8 @@ impl Command {
     async fn run_inner(self) -> Result<(), HostError> {
         match self {
             Self::Compose(args) => args.run().await?,
+            Self::RestoreDefaults(args) => args.run().await?,
+            Self::InstallUrl(args) => args.run().await?,
             Self::Launch(args) => args.run().await?,
             Self::Serve(args) => serve::run(args).await?,
             Self::Schema => println!("{}", serde_json::to_string(&maka_schema::catalog())?),

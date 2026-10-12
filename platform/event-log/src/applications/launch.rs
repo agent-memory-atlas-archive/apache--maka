@@ -69,6 +69,26 @@ impl EventLog {
         })).await
     }
 
+    /// Prepare restoration while holding the UI Root. The original connection
+    /// authority stays fixed; reopening resumes the exact saved source writes.
+    pub async fn begin_application_restore(
+        &self,
+        deployment: Uuid,
+        pending: Vec<u8>,
+    ) -> Result<(), StoreError> {
+        self.application_domain()?;
+        if pending.is_empty() || pending.len() > MAX_PENDING {
+            return Err(invalid("invalid or oversized restoration preparation"));
+        }
+        self.connection.run(move |connection| Box::pin(async move {
+            let mut tx = connection.begin_with("BEGIN IMMEDIATE").await?;
+            let changed = sqlx::query("UPDATE application_launch SET pending=? WHERE singleton=1 AND deployment=? AND pending IS NULL")
+                .bind(pending).bind(deployment.to_string()).execute(&mut *tx).await?.rows_affected();
+            if changed != 1 { return Err(invalid("launcher changed or already has unfinished work")); }
+            tx.commit().await.map_err(StoreError::CommitUnknown)
+        })).await
+    }
+
     /// Called by the trusted launcher after its original source commits have
     /// been confirmed. Never changes an application head or connection input.
     pub async fn complete_application_launch(&self, deployment: Uuid) -> Result<(), StoreError> {

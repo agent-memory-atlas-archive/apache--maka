@@ -61,3 +61,11 @@ export const footer = {
 ```
 
 The example is a TUI entry; preserve or implement a separate Desktop entry when the package must also load there. Validate the built artifact with the actual CLI as described in [Testing and shipping](testing-and-shipping.md). After a mutation interrupts the UI, its authoring worker recovers the original manager receipt through caller history, rather than dispatching the edit again. Do not remove or replace the active authoring worker or its recovery bindings while relying on this channel to report completion.
+
+## Install a published bundle
+
+For a direct HTTP(S) `.maka-plugin` download, submit `UIRequest` with `method: "installUrl"` and `input: { expectedRevision, url, sha256: null }`. Supply the publisher's SHA-256 instead of `null` when available. Observe the original request using `UIResult`, then use the returned package reference in a composition edit. An install stores validated bytes; enabling an instance and choosing its bindings is a separate explicit edit.
+
+The download is bounded to 32 MiB and 60 seconds, follows at most five redirects without HTTPS downgrade, and uses the UI management process's proxy environment. A revision change during download rejects the stale install. A URL must point to an exported bundle, not a repository or web page.
+
+If the foreground cannot open, close its UI/local Host and run `maka application restore-defaults --root UI_ROOT`. This restores the originally installed Host/management/UI compositions and exact package versions while preserving their instance identities and data. It does not choose a new product or upgrade the installation. Interrupted restoration resumes from its saved preparation.

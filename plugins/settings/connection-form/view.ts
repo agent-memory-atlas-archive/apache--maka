@@ -1,0 +1,545 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+import type {
+  Action,
+  CatalogMutationResult,
+  Emission,
+  Identity,
+} from '../../../packages/plugin-sdk/src/index.js';
+import { type ConnectionFormProps } from '../../shared/contracts.js';
+import { copy, type Copy } from '../../shared/locale.js';
+import { pageHeader } from '../../shared/page-shell.js';
+import {
+  compactLabel,
+  fill,
+  output,
+  pixels,
+  type Node,
+  type Presentation,
+} from '../../shared/view.js';
+import { busy, canRemove, canSave, fresh, sameConnection } from './operations.js';
+import { formPanes, names, type FieldName, type State } from './state.js';
+
+export function fieldLabel(name: FieldName, text: Copy) {
+  return {
+    name: text.connectionName,
+    slug: text.connectionSlug,
+    endpoint: text.connectionEndpoint,
+    models: text.connectionModels,
+    configuration: text.connectionConfiguration,
+    overrides: text.connectionOverrides,
+    overlay: text.connectionOverlay,
+  }[name];
+}
+
+export function frame<N extends Node>(
+  presentation: Presentation<N>,
+  state: State,
+  props: ConnectionFormProps,
+  actions: Action[] = [],
+  events: Emission[] = [],
+) {
+  const target = presentation.target;
+  const ui = presentation.paint(props.theme),
+    text = copy(props.locale);
+  const locked = busy(state);
+  const identity: Identity | undefined =
+    state.baseline?.target.provider ?? state.provider?.identity;
+  const panes = formPanes(state);
+  const currentPane = panes[Math.min(state.pane, panes.length - 1)];
+  const form = ui.box(
+    'form',
+    [
+      ...pageHeader(
+        presentation,
+        state,
+        props,
+        events,
+        state.baseline ? text.editConnection : text.createConnection,
+        'form-back',
+        false,
+      ),
+      ui.box(
+        'form-actions',
+        [
+          ui.button('form-save', text.saveConnection, !canSave(state, props), true),
+          ...(state.current?.reference
+            ? [
+                ui.button(
+                  'form-check',
+                  text.check,
+                  Object.values(state.pending).some(
+                    (r) => r.kind === 'receipt' || r.kind === 'mutate',
+                  ),
+                ),
+              ]
+            : []),
+          ...(state.conflict || !fresh(state, props)
+            ? [
+                ui.button(
+                  'form-review',
+                  text.reviewConnection,
+                  locked || !sameConnection(state, props),
+                ),
+              ]
+            : []),
+          ui.button(
+            'form-history',
+            text.earlierConnectionOperations,
+            false,
+            false,
+            target === 'tui' ? { background: 0, align: 'start' } : {},
+          ),
+        ],
+        { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
+      ),
+      ...(state.baseline
+        ? [ui.button('form-remove', text.removeConnection, !canRemove(state, props))]
+        : []),
+      ...(state.notice ? [ui.text('form-notice', text[state.notice], 13, props.theme.muted)] : []),
+      ...(!fresh(state, props)
+        ? [ui.text('form-target-changed', text.connectionChanged, 13, props.theme.muted)]
+        : []),
+      ...(!state.baseline && !state.provider
+        ? [
+            ui.text('provider-heading', text.chooseProvider, 16, props.theme.text, 550),
+            ui.box(
+              'provider-actions',
+              [
+                ui.button(
+                  'provider-refresh',
+                  target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.refreshConnections,
+                  locked,
+                  false,
+                  target === 'tui' ? { background: 0 } : {},
+                  undefined,
+                  text.refreshConnections,
+                ),
+                ...(state.providerNext !== null
+                  ? [ui.button('provider-more', text.moreProviders, locked)]
+                  : []),
+              ],
+              { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
+            ),
+            ...(Object.values(state.pending).some((r) => r.kind === 'providers')
+              ? [ui.text('provider-loading', text.connecting, 13, props.theme.muted)]
+              : []),
+            ...(state.providersFailed
+              ? [ui.text('provider-failed', text.providersUnavailable)]
+              : []),
+            ...(state.providers.length === 0 && !locked && !state.providersFailed
+              ? [ui.text('providers-empty', text.noProviders)]
+              : []),
+            presentation.reading(
+              'provider-list',
+              {
+                command: state.providerFocus,
+                content: ui.box(
+                  'provider-rows',
+                  state.providers.map((provider, at) =>
+                    ui.item
+                      ? ui.item(
+                          'provider-' + at,
+                          ui.text(
+                            'provider-label-' + at,
+                            provider.descriptor.label,
+                            14,
+                            props.theme.text,
+                            400,
+                            { truncate: true },
+                          ),
+                          state.providerActive === at,
+                          locked,
+                          { followFocus: true, submit: true },
+                        )
+                      : ui.button('provider-' + at, provider.descriptor.label, locked),
+                  ),
+                  {
+                    focusGroup: target === 'tui',
+                    scroll: 'manual',
+                    gap: target === 'tui' ? 0 : 8,
+                    terminal: { grow: 1, basis: 8, shrink: true },
+                    style: { width: fill, height: pixels(240), minHeight: 0 },
+                  },
+                ),
+              },
+              { input: 'provider-input' },
+            ),
+          ]
+        : [
+            ui.box(
+              'provider-summary',
+              [
+                ui.text(
+                  'provider-identity',
+                  compactLabel(identity?.name ?? '', 36),
+                  13,
+                  props.theme.muted,
+                ),
+                ui.button(
+                  'connection-enabled',
+                  state.enabled ? text.connectionEnabled : text.connectionDisabled,
+                  locked,
+                ),
+              ],
+              { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
+            ),
+            ...(target === 'tui'
+              ? [
+                  ui.box(
+                    'field-navigation',
+                    [
+                      ...(state.pane > 0 ? [ui.button('field-previous', text.previousModels)] : []),
+                      ...(state.pane + 1 < panes.length
+                        ? [ui.button('field-next', text.nextField)]
+                        : []),
+                    ],
+                    { row: true, gap: 1, terminal: { wrap: true } },
+                  ),
+                ]
+              : []),
+          ]),
+      ...(state.baseline || state.provider
+        ? [
+            ui.button(
+              'form-advanced',
+              state.advanced ? text.basicSettings : text.advancedSettings,
+              locked,
+            ),
+          ]
+        : []),
+      // All original native owners stay mounted across provider selection, panes and confirmations.
+      ...names.map((name) => {
+        const f = state.fields[name],
+          label = fieldLabel(name, text);
+        const available =
+          !!(state.baseline || state.provider) && (name !== 'slug' || !state.baseline);
+        return ui.box(
+          'pane-' + name,
+          [
+            ui.box(
+              'field-heading-' + name,
+              [
+                ui.text('label-' + name, label, 15, props.theme.text, 550),
+                ...(state.baseline ||
+                ['endpoint', 'configuration', 'overrides', 'overlay'].includes(name)
+                  ? [
+                      ui.button(
+                        'edit-' + name,
+                        (f.enabled
+                          ? state.baseline
+                            ? text.keepSavedField
+                            : text.useDefaultField
+                          : text.replaceField) +
+                          ': ' +
+                          label,
+                        locked ||
+                          (name === 'configuration' && state.fields.endpoint.enabled) ||
+                          (name === 'endpoint' && state.fields.configuration.enabled),
+                      ),
+                    ]
+                  : []),
+              ],
+              { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
+            ),
+            ...(['models', 'overrides', 'overlay'].includes(name)
+              ? [
+                  ui.text(
+                    'replace-help-' + name,
+                    state.baseline ? text.replaceCollectionHelp : text.newCollectionHelp,
+                    12,
+                    props.theme.muted,
+                  ),
+                ]
+              : []),
+            ...(name === 'configuration'
+              ? [ui.text('configuration-help', text.configurationHelp, 12, props.theme.muted)]
+              : []),
+            ...(f.failed
+              ? [
+                  ui.text(
+                    'field-failed-' + name,
+                    state.baseline ? text.fieldPrefillFailed : text.defaultPrefillFailed,
+                    12,
+                    props.theme.muted,
+                  ),
+                  ui.button('empty-' + name, text.replaceFromEmpty, locked),
+                ]
+              : []),
+            ui.box(
+              'owner-pane-' + name,
+              [
+                presentation.slot(
+                  'field-' + name,
+                  name === 'slug' ? 'input' : 'editor',
+                  {
+                    appearance: name === 'slug' ? props.theme.input : props.theme.textarea,
+                    accessibilityLabel: label,
+                    placeholder: text.fieldPlaceholder + label,
+                    readOnly: locked || !f.enabled,
+                    disabled: false,
+                    tabIndex: f.enabled ? 0 : -1,
+                    autoFocus: target === 'tui' && name === currentPane,
+                    command: f.command,
+                    ...(name === 'slug' ? {} : { softWrap: true }),
+                  },
+                  {
+                    changed: 'field-changed',
+                    ...(name === 'slug' ? { submitted: 'field-submitted' } : {}),
+                  },
+                ),
+              ],
+              {
+                visible: f.enabled,
+                gap: 0,
+                style: {
+                  width: fill,
+                  height: pixels(
+                    name === 'slug'
+                      ? 36
+                      : ['configuration', 'overrides', 'overlay'].includes(name)
+                        ? 180
+                        : 72,
+                  ),
+                },
+              },
+            ),
+            ...(!f.enabled
+              ? [
+                  ui.text(
+                    'kept-' + name,
+                    state.baseline ? text.savedFieldKept : text.defaultFieldKept,
+                    12,
+                    props.theme.muted,
+                  ),
+                ]
+              : []),
+          ],
+          {
+            visible:
+              available && panes.includes(name) && (target === 'desktop' || currentPane === name),
+            gap: target === 'desktop' ? 8 : 1,
+            padding: 0,
+            style: { width: fill },
+          },
+        );
+      }),
+    ],
+    {
+      visible: !state.historyOpen && !state.confirmation,
+      scroll: target === 'tui' ? 'anchor' : 'none',
+      gap: target === 'desktop' ? 16 : 1,
+      terminal: { grow: 1 },
+    },
+  );
+  const reviewValue =
+    state.confirmation === 'remove'
+      ? [
+          text.connectionName + ': ' + state.baseline!.name,
+          text.connectionSlug + ': ' + state.baseline!.target.slug,
+          text.connectionProvider + ': ' + state.baseline!.target.provider.name,
+        ].join('\n')
+      : state.reviewed
+        ? JSON.stringify(state.reviewed)
+        : state.reviewedCatalog !== null
+          ? JSON.stringify({
+              catalogRevision: state.reviewedCatalog,
+              provider: state.provider?.identity,
+            })
+          : '';
+  // Full human-readable identity, with bounded terminal lines. Native version
+  // and package internals remain in the frozen request, not confirmation copy.
+  const reviewLines = reviewValue.split(/\r?\n/u).flatMap((line) => {
+    if (state.confirmation === 'remove' && target === 'desktop') return [line];
+    const characters = [...line],
+      lines: string[] = [];
+    for (let at = 0; at < characters.length; at += 36)
+      lines.push(characters.slice(at, at + 36).join(''));
+    return lines.length ? lines : [''];
+  });
+  const pageSize = target === 'tui' ? 7 : 24;
+  const pages = Math.max(1, Math.ceil(reviewLines.length / pageSize));
+  const page = Math.min(state.reviewPage, pages - 1);
+  const confirmation = ui.box(
+    'form-confirmation',
+    [
+      ui.text(
+        'confirm-question',
+        state.confirmation === 'leave'
+          ? state.current
+            ? text.connectionLeaveUnknown
+            : text.discardConnection
+          : state.confirmation === 'remove'
+            ? text.confirmRemoveConnection
+            : text.connectionRebaseHelp,
+        14,
+      ),
+      ui.box(
+        'confirm-actions',
+        [
+          ui.button('form-cancel', text.keepEditing),
+          ...(state.confirmation === 'leave'
+            ? [ui.button('form-discard', text.discard)]
+            : [
+                ...(state.confirmation === 'remove'
+                  ? [
+                      ui.button(
+                        'form-confirm-remove',
+                        text.removeConnection,
+                        !canRemove(state, props),
+                      ),
+                    ]
+                  : [
+                      ui.button(
+                        'form-rebase',
+                        text.useConnection,
+                        (!state.reviewed && state.reviewedCatalog === null) || locked,
+                      ),
+                    ]),
+                ...(page > 0 ? [ui.button('review-prev', text.previousModels)] : []),
+                ...(page + 1 < pages ? [ui.button('review-next', text.moreTarget)] : []),
+              ]),
+        ],
+        { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
+      ),
+      ...(state.confirmation === 'rebase' || state.confirmation === 'remove'
+        ? [
+            ui.text('review-page', page + 1 + ' / ' + pages, 12, props.theme.muted),
+            ...reviewLines
+              .slice(page * pageSize, (page + 1) * pageSize)
+              .map((line, at) => ui.text('review-line-' + at, line, 13)),
+          ]
+        : []),
+    ],
+    { visible: !!state.confirmation, gap: target === 'desktop' ? 12 : 1 },
+  );
+  const earlier = ui.box(
+    'form-earlier',
+    [
+      ui.button(
+        'form-history-back',
+        text.back,
+        false,
+        false,
+        target === 'tui' ? { background: 0, align: 'start' } : {},
+      ),
+      ui.text('earlier-heading', text.earlierConnectionOperations, 20, props.theme.text, 550),
+      ui.text('earlier-help', text.earlierConnectionHelp, 13, props.theme.muted),
+      ui.box(
+        'earlier-actions',
+        [
+          ui.button(
+            'form-history-refresh',
+            target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.refreshConnections,
+            false,
+            false,
+            target === 'tui' ? { background: 0 } : {},
+            undefined,
+            text.refreshConnections,
+          ),
+          ...(state.historyNext !== null
+            ? [ui.button('form-history-more', text.moreOperations)]
+            : []),
+        ],
+        { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
+      ),
+      ...(state.historyFailed ? [ui.text('earlier-failed', text.historyUnavailable)] : []),
+      ...state.earlier.map((entry, at) => {
+        const receipt = entry.result?.receipt;
+        const value =
+          receipt?.kind === 'recorded' && receipt.outcome.kind === 'returned'
+            ? (receipt.outcome.value as CatalogMutationResult)
+            : null;
+        return ui.box(
+          'earlier-entry-' + at,
+          [
+            ui.text(
+              'earlier-result-' + at,
+              value?.kind === 'committed'
+                ? (entry.reference.method === 'remove'
+                    ? text.connectionRemoved
+                    : text.connectionSaved) +
+                    ' ' +
+                    (value.connection?.connectionId ?? '')
+                : value
+                  ? text.historyRejected
+                  : text.historyUnknown,
+              13,
+            ),
+            ui.button(
+              'form-earlier-' + at,
+              text.check,
+              Object.values(state.pending).some(
+                (r) => r.kind === 'earlier' && r.cursor === entry.cursor,
+              ),
+            ),
+          ],
+          { gap: 0 },
+        );
+      }),
+    ],
+    { visible: state.historyOpen, gap: target === 'desktop' ? 12 : 1 },
+  );
+  const out = output(
+    state,
+    ui.box(
+      'connection-form',
+      target !== 'tui'
+        ? [form, confirmation, earlier]
+        : [
+            ui.dialog(
+              'form-auxiliary',
+              state.historyOpen ? text.earlierConnectionOperations : text.editConnection,
+              form,
+              ui.box('form-auxiliary-content', [confirmation, earlier], { gap: 0 }),
+              !!state.confirmation || state.historyOpen,
+              undefined,
+              { width: 72, height: state.confirmation === 'leave' ? 8 : 24 },
+            ),
+          ],
+      {
+        autoFocus: true,
+        shortcuts:
+          target === 'tui'
+            ? [
+                {
+                  key: 'escape',
+                  modifiers: [],
+                  input: state.confirmation
+                    ? 'form-cancel'
+                    : state.historyOpen
+                      ? 'form-history-back'
+                      : 'form-back',
+                  enabled: true,
+                },
+              ]
+            : [],
+        gap: 0,
+        padding: target === 'desktop' ? 24 : props.shell ? 0 : 1,
+        scroll: target === 'tui' ? 'none' : 'anchor',
+        terminal: { grow: 1 },
+        style: { width: fill, height: fill, maxWidth: 760, minWidth: 0, minHeight: 0 },
+      },
+    ),
+    events,
+  );
+  out.actions = actions;
+  return out;
+}

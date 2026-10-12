@@ -26,8 +26,19 @@ use std::{collections::BTreeMap, io::Write, path::PathBuf};
 
 mod headless;
 mod launch;
+mod restore;
 pub(crate) use headless::{Roots, open_host};
 pub(crate) use launch::Launch;
+pub(super) use restore::Restore;
+
+pub(super) fn root_path(root: Option<PathBuf>) -> Result<PathBuf, HostError> {
+    match root {
+        Some(root) => Ok(std::path::absolute(root)?),
+        None => Ok(crate::serve::home_directory()?
+            .ok_or("home directory unavailable; select --root")?
+            .join(".maka/application")),
+    }
+}
 
 #[cfg(maka_embedded_product)]
 struct Bundled {
