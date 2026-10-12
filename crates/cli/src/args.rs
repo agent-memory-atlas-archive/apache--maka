@@ -17,7 +17,7 @@
  * under the License.
  */
 
-use clap::{Args, CommandFactory, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use maka_event_log::EventLog;
 use maka_runtime_host::server::HostError;
 use std::{net::SocketAddr, path::PathBuf};
@@ -27,6 +27,8 @@ use crate::{candidate, code, serve};
 #[derive(Parser)]
 #[command(name = "maka", version, about = "Maka")]
 pub(super) struct Cli {
+    #[command(flatten)]
+    launch: Option<crate::application::Launch>,
     /// Total observation budget for a finite Host operation, including cleanup.
     #[arg(long, global = true, value_parser = clap::value_parser!(u64).range(1..=600_000))]
     timeout_ms: Option<u64>,
@@ -41,7 +43,7 @@ enum Command {
     /// Present the selected plugin product in a native desktop window.
     #[command(disable_help_flag = true)]
     Desktop(crate::desktop::Args),
-    /// Validate a plugin application composition without activating it.
+    /// Author, inspect and run plugin applications.
     #[command(subcommand)]
     Application(crate::application::Command),
     /// Manage the native runtime host.
@@ -144,6 +146,9 @@ impl Cli {
     }
 
     pub(super) async fn run(self) -> Result<std::process::ExitCode, HostError> {
+        if self.command.is_some() && self.launch.is_some() {
+            return Err("product startup options cannot be combined with a CLI command".into());
+        }
         let finite = matches!(&self.command, Some(Command::Host(command)) if !matches!(command,
             HostCommand::Candidate(_) | HostCommand::Serve { .. } | HostCommand::ServiceRun(_)
             | HostCommand::Connect(_)));
@@ -179,8 +184,7 @@ impl Cli {
 
     async fn execute(self) -> Result<std::process::ExitCode, HostError> {
         let Some(command) = self.command else {
-            Self::command().print_help()?;
-            println!();
+            self.launch.unwrap_or_default().run().await?;
             return Ok(std::process::ExitCode::SUCCESS);
         };
         let result = match command {
@@ -254,11 +258,51 @@ impl Cli {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
 
-    #[test]
-    fn entry_requires_explicit_product_source_and_preserves_operator_parsing() {
+    #[tokio::test]
+    async fn entry_launches_the_product_and_preserves_operator_parsing() {
         Cli::command().debug_assert();
         assert!(Cli::try_parse_from(["maka"]).unwrap().command.is_none());
+        assert!(
+            Cli::try_parse_from(["maka", "--root", "/tmp/product", "--locale", "zh-CN"])
+                .unwrap()
+                .command
+                .is_none()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "maka",
+                "--root",
+                "/tmp/product",
+                "host",
+                "status",
+                "--root",
+                "/tmp/host"
+            ])
+            .unwrap()
+            .run()
+            .await
+            .is_err()
+        );
+        let worker = Cli::try_parse_from([
+            "maka",
+            "--operation-worker",
+            "--timeout-ms",
+            "1000",
+            "host",
+            "init",
+            "--root",
+            "/tmp/test-root",
+        ])
+        .unwrap();
+        assert!(worker.launch.is_none());
+        assert!(worker.operation_worker);
+        assert_eq!(worker.timeout_ms, Some(1000));
+        assert!(matches!(
+            worker.command,
+            Some(Command::Host(HostCommand::Init(_)))
+        ));
         assert!(matches!(
             Cli::try_parse_from(["maka", "host", "init", "--root", "/tmp/test-root"])
                 .unwrap()

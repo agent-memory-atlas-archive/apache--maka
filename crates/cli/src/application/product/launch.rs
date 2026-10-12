@@ -43,7 +43,7 @@ use std::{
 };
 use uuid::Uuid;
 
-#[derive(Args)]
+#[derive(Args, Default)]
 pub(crate) struct Launch {
     /// UI State Root (default: ~/.maka/application); reopen its saved product.
     #[arg(long)]

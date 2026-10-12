@@ -36,7 +36,7 @@
 旧界面实际清理；新根不继承旧产品的原生草稿。切换 Host 位置还需明确修改可信连接
 配置，来源中的声明本身不授权访问另一 Host。
 
-直接运行 `maka application launch` 使用随构建提供的普通产品和文件、进程、问答、技能工具。首次启动确认工作目录（`--workspace` 或当前目录）；命令可读取目录外文件、在目录内写入，子进程网络禁用。Host 私有数据和会话权限仍由原服务保护。默认 UI Root 为 `~/.maka/application`，独立 Host Root 为其中的 `host`，自定义主题文件为 `appearance/theme.json`。语言跟随系统或已保存的外观设置，模型连接在应用设置中配置。重开保留原部署、包、授权及用户编辑的来源。
+直接运行 `maka` 使用随构建提供的普通产品和文件、进程、问答、技能工具。首次启动确认工作目录（`--workspace` 或当前目录）；命令可读取目录外文件、在目录内写入，子进程网络禁用。Host 私有数据和会话权限仍由原服务保护。默认 UI Root 为 `~/.maka/application`，独立 Host Root 为其中的 `host`，自定义主题文件为 `appearance/theme.json`。语言跟随系统或已保存的外观设置，模型连接在应用设置中配置。重开保留原部署、包、授权及用户编辑的来源。
 
 WorkHub 在 `application compose` 或首次 `application launch` 加 `--product workhub` 选择。
 安装配置中的 `agent` 配置 worker 会话，另提供同为 `AgentConfiguration` 的 `coordinator`。

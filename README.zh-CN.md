@@ -33,10 +33,10 @@ Maka 通过原生 Rust 终端和桌面呈现器运行插件组合定义的产品
 git clone https://github.com/apache/maka.git
 cd maka
 just setup
-just run application launch
+just run
 ```
 
-`just run application launch` 打开终端产品，首次确认当前工作目录并安装内置工具与技能，后续重开已保存的应用。`just run --help` 查看 CLI 命令。`just build --release` 生成 `target/release/maka`，Windows 下为 `maka.exe`。Node.js 负责构建时打包提供商 SDK，生成的可执行文件在内嵌 V8 中运行 JavaScript。 用 `just run application run --root PATH --deployment UUID --connections FILE` 启动已校验的终端组合，编写和安装方式见[普通 Agent 产品](packages/agent-product/README.zh-CN.md)。
+`just run` 打开终端产品，首次确认当前工作目录并安装内置工具与技能，后续重开已保存的应用。`just run --help` 查看 CLI 命令。`just build --release` 生成 `target/release/maka`，Windows 下为 `maka.exe`。Node.js 负责构建时打包提供商 SDK，生成的可执行文件在内嵌 V8 中运行 JavaScript。 用 `just run application run --root PATH --deployment UUID --connections FILE` 启动已校验的终端组合，编写和安装方式见[普通 Agent 产品](packages/agent-product/README.zh-CN.md)。
 
 ## 目录
 

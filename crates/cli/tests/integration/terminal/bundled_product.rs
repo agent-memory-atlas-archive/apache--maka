@@ -343,23 +343,19 @@ fn bundled_product_launch_recovers_partial_commits_without_reauthoring() {
 
 #[test]
 #[ignore = "starts the standard product and original Host without an installation file"]
-fn standard_product_launch_uses_system_language_and_reopens_without_reauthoring() {
+fn default_product_uses_system_language_and_reopens_without_reauthoring() {
     let directory = tempfile::tempdir().unwrap();
     let workspace = directory.path().join("workspace");
     std::fs::create_dir(&workspace).unwrap();
-    let root = directory.path().join("ui");
     let home = directory.path().join("home");
+    let root = home.join(".maka/application");
     std::fs::create_dir(&home).unwrap();
-    let mut declined = Pty::spawn_with(
-        &["application", "launch", "--root", root.to_str().unwrap()],
-        false,
-        |command| {
-            command
-                .current_dir(&workspace)
-                .env("HOME", &home)
-                .env("LC_ALL", "zh_CN.UTF-8");
-        },
-    );
+    let mut declined = Pty::spawn_with(&[], false, |command| {
+        command
+            .current_dir(&workspace)
+            .env("HOME", &home)
+            .env("LC_ALL", "zh_CN.UTF-8");
+    });
     declined.wait_for_output("继续 [y/N]", Duration::from_secs(10));
     declined.send(b"n\n");
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -373,11 +369,7 @@ fn standard_product_launch_uses_system_language_and_reopens_without_reauthoring(
     }
     assert!(!root.join("host").exists());
     for first in [true, false] {
-        let mut args = vec!["application", "launch", "--root", root.to_str().unwrap()];
-        if first {
-            args.extend(["--workspace", workspace.to_str().unwrap()]);
-        }
-        let mut tui = Pty::spawn_with(&args, false, |command| {
+        let mut tui = Pty::spawn_with(&[], false, |command| {
             command
                 .current_dir(&workspace)
                 .env("HOME", &home)

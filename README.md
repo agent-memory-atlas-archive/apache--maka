@@ -33,10 +33,10 @@ Install Rust stable, Node.js 24 LTS, npm 11.19.0 and [just](https://github.com/c
 git clone https://github.com/apache/maka.git
 cd maka
 just setup
-just run application launch
+just run
 ```
 
-`just run application launch` opens the terminal product. First launch confirms the current workspace and installs the bundled tools and skills; later launches reopen the saved application. Use `just run --help` for CLI commands. `just build --release` produces `target/release/maka` (`maka.exe` on Windows). Node.js bundles provider SDKs at build time; the resulting executable runs its embedded JavaScript in V8. To launch a checked terminal composition, use `just run application run --root PATH --deployment UUID --connections FILE`. Product authoring and installation are described in [the ordinary agent product](packages/agent-product/README.md).
+`just run` opens the terminal product. First launch confirms the current workspace and installs the bundled tools and skills; later launches reopen the saved application. Use `just run --help` for CLI commands. `just build --release` produces `target/release/maka` (`maka.exe` on Windows). Node.js bundles provider SDKs at build time; the resulting executable runs its embedded JavaScript in V8. To launch a checked terminal composition, use `just run application run --root PATH --deployment UUID --connections FILE`. Product authoring and installation are described in [the ordinary agent product](packages/agent-product/README.md).
 
 ## Repository
 

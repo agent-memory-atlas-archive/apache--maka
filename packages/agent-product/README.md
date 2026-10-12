@@ -58,7 +58,7 @@ advanced composition editing.
 
 ## Standard terminal startup
 
-`maka application launch` opens this ordinary composition with bundled file, process, question and skill tools.
+`maka` opens this ordinary composition with bundled file, process, question and skill tools.
 First launch asks to trust the selected workspace (`--workspace`, or the current directory).
 Commands may read outside it, can write within it, and have no subprocess network access.
 The Host still excludes its private data and enforces each Session's permission policy.
@@ -187,7 +187,6 @@ newly bundled package versions. Do not repeat `--configuration` on reopen; edit
 installed sources through the existing management UI or application commands.
 The original Host Root identity is checked under the child’s actual lease.
 
-The bare CLI default remains unchanged pending full TUI experience acceptance.
 Desktop installation currently uses the explicit compose/commit/run path below.
 
 ## Build and author

@@ -21,6 +21,8 @@ mod product;
 mod schema;
 mod serve;
 
+pub(crate) use product::Launch;
+
 use std::{
     io::Read,
     path::{Path, PathBuf},
