@@ -18,92 +18,97 @@
  */
 
 use super::*;
-use crate::{content, observation::Routes};
-
+use crate::{configuration, content};
 impl Foreground {
     pub async fn prepare(
         client: Client,
         peer: Peer,
-        routes: &Routes,
         session: Arc<Session>,
         active: Active,
         capabilities: acp::ClientCapabilities,
         prompt: Prompt,
     ) -> Result<(String, Self), Error> {
+        let preferences = session.preferences.lock().await.clone();
+        let model = configuration::resolve(&client, &preferences).await?;
+        let observation: Observation = client
+            .query("agent", "observe", json!({"sessionId":session.id}))
+            .await?;
+        if observation.session.archived
+            || !matches!(observation.session.activity, SessionActivity::Idle)
+        {
+            return Err("Host session already has active work or is archived".into());
+        }
         let content =
             content::prepare(&client, &session.id, prompt.content, &active.cancel).await?;
-        let subscription = Subscription::open(&client, routes, &session.id).await?;
         if active.cancel.is_cancelled() {
             return Err("Prompt cancelled before admission".into());
         }
-        let turn_id = prompt.turn_id;
-        // Never drop or replay an in-flight admission when cancel arrives.
-        let receipt = client
-            .start_turn_pending(TurnStartInput {
-                session_id: session.id.clone(),
-                turn_id: turn_id.clone(),
-                content,
-                input_selections: Default::default(),
-                input_selection_sources: Default::default(),
-                turn_orchestration: None,
-                max_steps: None,
-            })
-            .await
-            .map_err(|error| format!("Turn {turn_id} admission: {error}"))?;
-        let admitted = receipt.settle().await.map_err(|error| {
-            if matches!(error, maka_client::RequestFailure::Unknown(_)) {
-                // A broken Host connection cannot prove rejection. End the
-                // façade with the original identity, never announce cancellation.
-                eprintln!(
-                    "ACP session {} turn {turn_id} admission unresolved: {error}",
-                    session.id
-                );
-                client.disconnect();
+        let result: SendResult = client.mutate("agent", "send", json!({"sessionId":session.id,"message":content.text,"attachments":content.attachments,"model":model,"thinkingLevel":preferences.thinking}), Attachments::new()).await?;
+        let (target, message) = match result {
+            SendResult::Started { invocation_id, .. } => {
+                (WorkTarget::Invocation { invocation_id }, None)
             }
-            format!("Turn {turn_id} admission: {error}")
-        })?;
-        let turn = match admitted {
-            TurnStartResult::Started { turn, .. } => turn,
-            TurnStartResult::Blocked { message, .. } => return Err(message.into()),
+            SendResult::Queued { message_id, .. } => (
+                WorkTarget::Message {
+                    message_id: message_id.clone(),
+                },
+                Some(message_id),
+            ),
+            SendResult::Rejected { .. } => return Err("Host rejected Agent input".into()),
         };
         let mut foreground = Self {
-            after: subscription.through,
             client,
             peer,
             session,
             active,
-            subscription,
-            turn,
+            target,
+            execution: None,
+            shared: false,
+            cancelled: false,
             projection: Projection::default(),
             capabilities,
-            user: None,
+            after: observation.through,
+            parts: HashMap::new(),
+            user: Vec::new(),
         };
-        if foreground.active.cancel.is_cancelled() {
-            foreground.turn = foreground.stop().await?;
-        }
-        let message = foreground.accepted_message().await;
-        match message {
-            Ok(user) => {
-                let id = user["id"]
-                    .as_str()
-                    .ok_or("User message identity is missing")?
-                    .to_owned();
-                foreground.user = Some(user);
-                Ok((id, foreground))
+        let result = async {
+            foreground.refresh().await?;
+            if let Some(message) = message {
+                return Ok(message);
             }
-            Err(error) => {
-                let settlement = foreground.stop().await;
-                Err(format!("{error}; admission cleanup: {settlement:?}").into())
-            }
-        }
-    }
-
-    async fn accepted_message(&self) -> Result<serde_json::Value, Error> {
-        history::snapshot(&self.client, &self.session.id, self.after)
+            let execution = foreground
+                .execution
+                .as_ref()
+                .ok_or("Accepted invocation has no execution receipt")?;
+            foreground.user = history::read(
+                &foreground.client,
+                &foreground.session.id,
+                None,
+                Some(foreground.after),
+            )
             .await?
             .into_iter()
-            .find(|row| row.value["type"] == "user" && row.value["turnId"] == self.turn.turn_id)
-            .map(|row| row.value)
-            .ok_or_else(|| "Admitted turn has no durable user message".into())
+            .filter(|chunk| {
+                chunk.role == maka_plugins::session::history::Role::User
+                    && chunk.turn_id == execution.turn_id
+            })
+            .collect();
+            foreground
+                .user
+                .first()
+                .map(|chunk| chunk.message_id.clone())
+                .ok_or_else(|| "Accepted invocation has no durable user message".into())
+        }
+        .await;
+        match result {
+            Ok(message) => Ok((message, foreground)),
+            Err(error) => {
+                if let Err(cleanup) = foreground.stop().await {
+                    foreground.peer.stop.cancel();
+                    return Err(format!("{error}; original work cleanup: {cleanup}").into());
+                }
+                Err(error)
+            }
+        }
     }
 }

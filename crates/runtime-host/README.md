@@ -220,7 +220,9 @@ clients verify Root, epoch, source, generation and lifecycle against live status
 Candidate expiry requires both physical connection inactivity and the Application's
 atomic idle fence. Explicit interrupt commits retirement before physical cleanup;
 the original Root remains held until drain. Legacy cooperative connection handoff
-is no longer exposed. ACP entrypoint migration remains in progress.
+is no longer exposed. The ACP entrypoint uses this same public Host and the
+Agent/Settings service contracts; its original invocation receipts and physical
+cleanup remain authoritative.
 
 `Context::mutate` performs the same caller commit and final admission sequence in
 the original Host caller source. Native and JavaScript mutations share execution

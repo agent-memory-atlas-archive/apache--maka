@@ -8793,6 +8793,15 @@ export const contracts = {
               AgentHistoryChunk: {
                 type: 'object',
                 properties: {
+                  attachments: {
+                    description:
+                      'Display metadata only, on the first user-message fragment; no storage capability.',
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/AgentHistoryAttachment',
+                    },
+                    maxItems: 8,
+                  },
                   timing: {
                     anyOf: [
                       {
@@ -8862,6 +8871,31 @@ export const contracts = {
                   'text',
                   'tool',
                 ],
+              },
+              AgentHistoryAttachment: {
+                type: 'object',
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  mimeType: {
+                    type: 'string',
+                  },
+                  bytes: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    $ref: '#/$defs/AttachmentKind',
+                  },
+                },
+                additionalProperties: false,
+                required: ['name', 'mimeType', 'bytes', 'kind'],
+              },
+              AttachmentKind: {
+                type: 'string',
+                enum: ['image', 'pdf', 'doc', 'code', 'other'],
               },
               HistoryTurnTiming: {
                 description:

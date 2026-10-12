@@ -51,7 +51,7 @@ pub struct ModelCursor {
     #[schemars(range(max = 4096))]
     pub model: usize,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "SettingsModelChoice")]
 pub struct ModelChoice {
@@ -67,7 +67,7 @@ pub struct ModelChoice {
     )]
     pub default_thinking_level: Option<maka_runtime::execution::ThinkingLevel>,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "SettingsDefaultModel")]
 pub enum DefaultModel {
@@ -79,7 +79,7 @@ pub enum DefaultModel {
         choice: ModelChoice,
     },
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "SettingsModelsPage")]
 pub enum ModelsPage {

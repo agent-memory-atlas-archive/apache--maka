@@ -18,139 +18,131 @@
  */
 
 mod catalog;
-
+use crate::{Error, client::Client};
 use agent_client_protocol::schema::v2 as acp;
-use maka_client::Client;
-use maka_protocol::session::*;
-use maka_runtime::configuration::Patch;
-use serde::{Deserialize, Serialize};
-use std::path::Path;
+use maka_agent_service::contract::{MetadataResult, Session, WorkspaceAccess};
+use maka_plugins::call::Attachments;
+use maka_runtime::{configuration::ModelSelection, execution::ThinkingLevel};
+use maka_settings_service::contract::{DefaultModel, ModelChoice};
+use serde_json::json;
 
-#[derive(Clone, Copy, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum Selector {
-    Model,
-    ThinkingLevel,
-    CollaborationMode,
-    SandboxMode,
+/// Per-ACP-session choices; immutable model revisions are resolved at each send.
+#[derive(Clone, Default)]
+pub(crate) struct Preferences {
+    pub model: Option<String>,
+    pub thinking: Option<ThinkingLevel>,
 }
-
-pub async fn create(
+fn selected<'a>(
+    preferences: &Preferences,
+    models: &'a catalog::Catalog,
+) -> Result<&'a ModelChoice, Error> {
+    match &preferences.model {
+        Some(id) => models
+            .choices
+            .iter()
+            .find(|choice| catalog::identity(choice) == *id)
+            .ok_or_else(|| "Selected model is unavailable".into()),
+        None => match &models.default {
+            DefaultModel::Ready { choice } => Ok(choice),
+            _ => Err("Configure a default model or select an available model".into()),
+        },
+    }
+}
+pub(crate) async fn resolve(
     client: &Client,
-    id: &str,
-    cwd: &Path,
-) -> Result<SessionCatalogProjection, crate::Error> {
-    // The same omissions as TUI creation let Host resolve persisted defaults.
-    let input = SessionCreateInput {
-        session_id: id.into(),
-        workspace: WorkspaceTarget::HostPath {
-            path: cwd.to_str().ok_or("Workspace path must be UTF-8")?.into(),
-        },
-        target: SessionCreateTarget::Model {
-            model_target: SessionModelTarget::Default,
-        },
-        mode: None,
-        name: None,
-        labels: None,
-        thinking_level: SessionThinkingPreference::ModelDefault,
-        tool_profile: None,
-        sandbox_mode: None,
-        approval_policy: None,
-        collaboration_mode: None,
-        orchestration_mode: None,
-    };
-    Ok(client.create_session(input).await?)
+    preferences: &Preferences,
+) -> Result<ModelSelection, Error> {
+    let models = catalog::read(client).await?;
+    let choice = selected(preferences, &models)?;
+    if preferences
+        .thinking
+        .is_some_and(|level| !choice.thinking_levels.contains(&level))
+    {
+        return Err("Thinking level is unavailable for the current model".into());
+    }
+    Ok(choice.selection.clone())
 }
-
 pub async fn options(
     client: &Client,
-    session: &SessionCatalogProjection,
-) -> Result<Vec<acp::SessionConfigOption>, crate::Error> {
-    let models = catalog::read(client).await?;
-    project(session, &models)
+    session: &Session,
+    preferences: &Preferences,
+) -> Result<Vec<acp::SessionConfigOption>, Error> {
+    project(session, preferences, &catalog::read(client).await?)
 }
-
 fn project(
-    session: &SessionCatalogProjection,
-    models: &[catalog::Model],
-) -> Result<Vec<acp::SessionConfigOption>, crate::Error> {
-    let mut options = Vec::new();
-    let current = catalog::identity(
-        session.llm_connection_id.as_deref().unwrap_or(""),
-        &session.model,
-    );
-    if session.executor_id.is_none() {
-        if models.iter().any(|model| model.id == current) {
-            options.push(select(
-                "model",
-                "Model",
-                acp::SessionConfigOptionCategory::Model,
-                &current,
-                models
-                    .iter()
-                    .map(|model| {
-                        acp::SessionConfigSelectOption::new(model.id.clone(), model.name.clone())
-                    })
-                    .collect(),
-            ));
+    session: &Session,
+    preferences: &Preferences,
+    models: &catalog::Catalog,
+) -> Result<Vec<acp::SessionConfigOption>, Error> {
+    let mut model_choices = vec![acp::SessionConfigSelectOption::new(
+        "default",
+        "Configured default",
+    )];
+    model_choices.extend(models.choices.iter().map(|choice| {
+        acp::SessionConfigSelectOption::new(
+            catalog::identity(choice),
+            format!("{} ({})", choice.label, choice.connection_name),
+        )
+    }));
+    let mut options = vec![
+        acp::SessionConfigOption::select(
+            "model",
+            "Model",
+            preferences.model.as_deref().unwrap_or("default"),
+            model_choices,
+        )
+        .category(acp::SessionConfigOptionCategory::Model),
+    ];
+    if let Ok(choice) = selected(preferences, models)
+        && !choice.thinking_levels.is_empty()
+    {
+        let mut levels = vec![acp::SessionConfigSelectOption::new(
+            "default",
+            "Provider default",
+        )];
+        for level in &choice.thinking_levels {
+            let value = wire(level)?;
+            levels.push(acp::SessionConfigSelectOption::new(value.clone(), value));
         }
-        if let Some(model) = models
-            .iter()
-            .find(|model| model.id == current)
-            .filter(|model| !model.thinking.is_empty())
-        {
-            let mut choices = vec![acp::SessionConfigSelectOption::new(
-                "default",
-                "Provider default",
-            )];
-            for level in &model.thinking {
-                let value = wire(level)?;
-                choices.push(acp::SessionConfigSelectOption::new(value.clone(), value));
-            }
-            options.push(select(
+        options.push(
+            acp::SessionConfigOption::select(
                 "thinking_level",
                 "Thinking level",
-                acp::SessionConfigOptionCategory::ThoughtLevel,
-                &session
-                    .thinking_level
+                preferences
+                    .thinking
                     .map(|level| wire(&level))
                     .transpose()?
                     .unwrap_or_else(|| "default".into()),
-                choices,
-            ));
-        }
-        options.push(select(
-            "collaboration_mode",
-            "Collaboration mode",
-            acp::SessionConfigOptionCategory::Mode,
-            &wire(&session.collaboration_mode)?,
-            choices(&[("agent", "Agent"), ("plan", "Plan")]),
-        ));
+                levels,
+            )
+            .category(acp::SessionConfigOptionCategory::ThoughtLevel),
+        );
     }
-    options.push(select(
-        "sandbox_mode",
-        "Permission mode",
-        acp::SessionConfigOptionCategory::Other("_maka/sandbox_mode".into()),
-        &wire(&session.sandbox_mode)?,
-        choices(&[
-            ("read-only", "Read only"),
-            ("workspace-write", "Workspace write"),
-            ("danger-full-access", "Full access"),
-        ]),
-    ));
+    options.push(
+        acp::SessionConfigOption::select(
+            "sandbox_mode",
+            "Workspace access",
+            wire(&session.permissions.access)?,
+            vec![
+                acp::SessionConfigSelectOption::new("read_only", "Read only"),
+                acp::SessionConfigSelectOption::new("workspace_write", "Workspace write"),
+            ],
+        )
+        .category(acp::SessionConfigOptionCategory::Other(
+            "_maka/sandbox_mode".into(),
+        )),
+    );
     Ok(options)
 }
-
 pub async fn set(
     client: &Client,
-    session: &SessionCatalogProjection,
+    session: &Session,
+    preferences: &mut Preferences,
     request: acp::SetSessionConfigOptionRequest,
-) -> Result<SessionCatalogProjection, crate::Error> {
+) -> Result<Vec<acp::SessionConfigOption>, Error> {
     if request.session_id.0.as_ref() != session.id {
         return Err("Configuration request does not match session".into());
     }
-    let selector: Selector =
-        serde_json::from_value(serde_json::Value::String(request.config_id.to_string()))?;
     let value = request
         .value
         .as_id()
@@ -158,13 +150,13 @@ pub async fn set(
         .0
         .as_ref();
     let models = catalog::read(client).await?;
-    let available = project(session, &models)?;
-    let option = available
+    let options = project(session, preferences, &models)?;
+    let option = options
         .iter()
         .find(|option| option.config_id == request.config_id)
-        .ok_or("Configuration option unavailable for this session")?;
+        .ok_or("Configuration option unavailable")?;
     let acp::SessionConfigKind::Select(select) = &option.kind else {
-        return Err("Configuration is not a select option".into());
+        return Err("Configuration requires a select option".into());
     };
     let acp::SessionConfigSelectOptions::Ungrouped(choices) = &select.options else {
         return Err("Unsupported configuration choices".into());
@@ -175,119 +167,37 @@ pub async fn set(
     {
         return Err("Unsupported configuration value".into());
     }
-    let patch = patch(selector, value, &models)?;
-    match client
-        .update_session_configuration(SessionConfigurationUpdateInput {
-            session_id: session.id.clone(),
-            expected_revision: session.revision,
-            patch,
-        })
-        .await?
-    {
-        SessionUpdateResult::Committed { session } => Ok(*session),
-        SessionUpdateResult::RevisionConflict { .. } => {
-            Err("Session configuration changed; retry with the current session".into())
+    match request.config_id.0.as_ref() {
+        "model" => {
+            preferences.model = (value != "default").then(|| value.to_owned());
+            preferences.thinking = None;
         }
-    }
-}
-
-fn patch(
-    selector: Selector,
-    value: &str,
-    models: &[catalog::Model],
-) -> Result<SessionConfigurationPatch, crate::Error> {
-    let mut patch = SessionConfigurationPatch {
-        model_target: None,
-        executor_target: None,
-        thinking_level: Patch::Keep,
-        sandbox_mode: None,
-        approval_policy: None,
-        collaboration_mode: None,
-        orchestration_mode: None,
-    };
-    let encoded = serde_json::Value::String(value.into());
-    match selector {
-        Selector::Model => {
-            patch.model_target = Some(
-                models
-                    .iter()
-                    .find(|model| model.id == value)
-                    .ok_or("Model unavailable")?
-                    .target
-                    .clone(),
-            );
-            // Thinking from the previous model must not leak into the new model.
-            patch.thinking_level = Patch::Clear;
-        }
-        Selector::ThinkingLevel => {
-            patch.thinking_level = if value == "default" {
-                Patch::Clear
+        "thinking_level" => {
+            preferences.thinking = if value == "default" {
+                None
             } else {
-                Patch::Set(serde_json::from_value(encoded)?)
-            }
+                Some(serde_json::from_value(json!(value))?)
+            };
         }
-        Selector::CollaborationMode => {
-            patch.collaboration_mode = Some(serde_json::from_value(encoded)?)
+        "sandbox_mode" => {
+            let access: WorkspaceAccess = serde_json::from_value(json!(value))?;
+            let mut permissions = session.permissions.clone();
+            permissions.access = access;
+            let result: MetadataResult = client.mutate("agent", "metadata", json!({"sessionId":session.id,"expectedRevision":session.revision,"title":session.title,"labels":session.labels,"permissions":{"settings":permissions,"revokeGrants":false}}), Attachments::new()).await?;
+            return match result {
+                MetadataResult::Committed { session } => project(&session, preferences, &models),
+                _ => {
+                    Err("Session metadata changed or was rejected; read the current session".into())
+                }
+            };
         }
-        Selector::SandboxMode => patch.sandbox_mode = Some(serde_json::from_value(encoded)?),
+        _ => return Err("Unsupported configuration option".into()),
     }
-    Ok(patch)
+    project(session, preferences, &models)
 }
-
-fn wire(value: &impl Serialize) -> Result<String, crate::Error> {
+fn wire(value: &impl serde::Serialize) -> Result<String, Error> {
     serde_json::to_value(value)?
         .as_str()
         .map(str::to_owned)
         .ok_or_else(|| "Configuration value is not a string".into())
-}
-
-fn choices(values: &[(&str, &str)]) -> Vec<acp::SessionConfigSelectOption> {
-    values
-        .iter()
-        .map(|(value, name)| acp::SessionConfigSelectOption::new(*value, *name))
-        .collect()
-}
-
-fn select(
-    id: &str,
-    name: &str,
-    category: acp::SessionConfigOptionCategory,
-    current: &str,
-    options: Vec<acp::SessionConfigSelectOption>,
-) -> acp::SessionConfigOption {
-    acp::SessionConfigOption::select(id, name, current, options).category(category)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn changing_sandbox_does_not_disable_approval_or_accept_unknown_values() {
-        let patch = patch(Selector::SandboxMode, "danger-full-access", &[]).unwrap();
-        assert_eq!(patch.sandbox_mode, Some(SandboxMode::DangerFullAccess));
-        assert_eq!(patch.approval_policy, None);
-        assert!(super::patch(Selector::SandboxMode, "unrestricted", &[]).is_err());
-        assert!(super::patch(Selector::CollaborationMode, "swarm", &[]).is_err());
-    }
-
-    #[test]
-    fn model_change_clears_previous_thinking_and_requires_configured_identity() {
-        let model = catalog::Model {
-            id: catalog::identity("connection", "model"),
-            name: "Model".into(),
-            target: SessionModelTarget::Explicit {
-                connection_id: "connection".into(),
-                connection_slug: "connection".into(),
-                model: "model".into(),
-            },
-            thinking: vec![ThinkingLevel::Low],
-        };
-        let selected = model.id.clone();
-        let models = [model];
-        let patch = patch(Selector::Model, &selected, &models).unwrap();
-        assert_eq!(patch.thinking_level, Patch::Clear);
-        assert_eq!(patch.model_target, Some(models[0].target.clone()));
-        assert!(super::patch(Selector::Model, "model", &models).is_err());
-    }
 }

@@ -17,42 +17,83 @@
  * under the License.
  */
 
-use crate::Error;
+use crate::{Error, client::Client};
 use agent_client_protocol::schema::v2 as acp;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use maka_client::Client;
-use maka_protocol::session::{
-    SessionCatalogProjection, SessionCatalogQueryInput as Query,
-    SessionCatalogQueryResult as ResultPage, SessionStatus,
+use maka_agent_service::contract::{
+    DirectoryPage, DirectorySelection, Session, SessionActivity, SessionPage,
 };
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use serde_json::json;
+use std::path::{Component, Path, PathBuf};
 
-pub(super) fn ensure_idle(session: &SessionCatalogProjection) -> Result<(), Error> {
-    if matches!(
-        session.status,
-        SessionStatus::Running | SessionStatus::WaitingForUser
-    ) || session
-        .live_run_state
-        .as_ref()
-        .is_some_and(|state| !state.running_turn_ids.is_empty())
-    {
-        return Err("Host session has active work outside this ACP request".into());
+pub(super) fn ensure_idle(session: &Session) -> Result<(), Error> {
+    if session.archived || !matches!(session.activity, SessionActivity::Idle) {
+        return Err("Host session is archived or has active work".into());
     }
     Ok(())
 }
-
-pub(super) async fn directory(path: &Path) -> Result<PathBuf, Error> {
-    if !path.is_absolute() {
-        return Err("Workspace cwd must be absolute".into());
+/// A cwd is a path on the Host. Never inspect the ACP client's local filesystem.
+pub(super) fn directory(path: &Path) -> Result<PathBuf, Error> {
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|part| matches!(part, Component::ParentDir))
+    {
+        return Err("Workspace cwd must be an absolute path without parent traversal".into());
     }
-    let path = tokio::fs::canonicalize(path).await?;
-    if !tokio::fs::metadata(&path).await?.is_dir() {
-        return Err("Workspace cwd must be a directory".into());
-    }
-    Ok(path)
+    Ok(path.components().collect())
 }
-
+pub(super) async fn select(client: &Client, cwd: &Path) -> Result<DirectorySelection, Error> {
+    let DirectoryPage::Roots { roots } = client
+        .query("agent", "directories", json!({"kind":"roots"}))
+        .await?
+    else {
+        return Err("Host omitted published workspace roots".into());
+    };
+    let mut current = roots
+        .into_iter()
+        .filter(|root| cwd.starts_with(&root.path))
+        .max_by_key(|root| root.path.len())
+        .ok_or("Workspace cwd is outside published Host roots")?;
+    for _ in 0..65 {
+        if Path::new(&current.path) == cwd {
+            return Ok(current.selection);
+        }
+        let mut after = None;
+        let mut seen = std::collections::HashSet::new();
+        current = loop {
+            let DirectoryPage::Children {
+                children,
+                after: next,
+                ..
+            } = client
+                .query(
+                    "agent",
+                    "directories",
+                    json!({"kind":"children","selection":current.selection,"after":after}),
+                )
+                .await?
+            else {
+                return Err("Host omitted workspace children".into());
+            };
+            if let Some(child) = children
+                .into_iter()
+                .find(|child| cwd.starts_with(&child.path))
+            {
+                break child;
+            }
+            let Some(next) = next else {
+                return Err("Workspace cwd is unavailable in the published Host root".into());
+            };
+            if seen.len() >= 4096 || !seen.insert(next.clone()) {
+                return Err("Directory pagination exceeded its limit".into());
+            }
+            after = Some(next);
+        };
+    }
+    Err("Workspace cwd exceeds the supported directory depth".into())
+}
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Cursor {
@@ -60,16 +101,15 @@ struct Cursor {
     cursor: String,
     cwd: Option<PathBuf>,
 }
-
 pub(super) async fn read(
     client: &Client,
     request: acp::ListSessionsRequest,
 ) -> Result<acp::ListSessionsResponse, Error> {
-    let cwd = match request.cwd {
-        Some(path) => Some(directory(path.as_ref()).await?),
-        None => None,
-    };
-    let query = if let Some(cursor) = request.cursor {
+    let cwd = request
+        .cwd
+        .map(|path| directory(path.as_ref()))
+        .transpose()?;
+    let position = if let Some(cursor) = request.cursor {
         let token = cursor.to_string();
         if token.len() > 8192 {
             return Err("ACP session list cursor is too large".into());
@@ -78,49 +118,39 @@ pub(super) async fn read(
         if cursor.cwd != cwd {
             return Err("ACP session list cursor belongs to another cwd filter".into());
         }
-        Query::ListContinue {
-            revision: cursor.revision,
-            cursor: cursor.cursor,
-        }
+        json!({"kind":"after","revision":cursor.revision,"cursor":cursor.cursor})
     } else {
-        Query::ListStart
+        json!({"kind":"start"})
     };
-    let ResultPage::Page {
-        revision,
-        sessions,
-        next_cursor,
-    } = client.session_catalog(query).await?
-    else {
-        return Err("Host session catalog changed; restart pagination".into());
-    };
+    let page: SessionPage = client
+        .query("agent", "list", json!({"filter":"all","position":position}))
+        .await?;
     let mut results = Vec::new();
-    for session in sessions {
-        let path = PathBuf::from(&session.workspace.host_cwd);
-        if !path.is_absolute() {
-            return Err("Host session workspace is not absolute".into());
+    for session in page.sessions {
+        if session.archived {
+            continue;
         }
-        if let Some(filter) = &cwd
-            && &path != filter
-            && tokio::fs::canonicalize(&path).await.as_ref().ok() != Some(filter)
-        {
+        let path = directory(Path::new(&session.workspace.path))?;
+        if cwd.as_ref().is_some_and(|filter| filter != &path) {
             continue;
         }
         results.push(
-            acp::SessionInfo::new(session.id, acp::AbsolutePath::new(path)).title(session.name),
+            acp::SessionInfo::new(session.id, acp::AbsolutePath::new(path)).title(session.title),
         );
     }
-    let next_cursor = next_cursor
+    let next = page
+        .after
         .map(|cursor| {
-            let encoded = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&Cursor {
-                revision,
+            let token = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&Cursor {
+                revision: page.revision,
                 cursor,
                 cwd,
             })?);
-            if encoded.len() > 8192 {
-                return Err("Host session catalog cursor exceeds ACP limit".into());
+            if token.len() > 8192 {
+                return Err("Host session cursor exceeds ACP limit".into());
             }
-            Ok::<_, Error>(acp::SessionListCursor::new(encoded))
+            Ok::<_, Error>(acp::SessionListCursor::new(token))
         })
         .transpose()?;
-    Ok(acp::ListSessionsResponse::new(results).next_cursor(next_cursor))
+    Ok(acp::ListSessionsResponse::new(results).next_cursor(next))
 }

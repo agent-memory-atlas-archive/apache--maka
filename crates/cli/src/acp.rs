@@ -41,8 +41,11 @@ pub(crate) async fn run(args: Args) -> Result<(), HostError> {
             .ok_or("Missing account data directory")?
             .join("runtime-host-rust"),
     };
-    let (client, notifications) = crate::deployment::connect_local(root).await?;
-    let result = maka_acp::serve(client, notifications, stdio.input, stdio.output, stop).await;
+    let client = crate::deployment::connect_local(root).await?;
+    let result = maka_acp::serve(client, stdio.input, stdio.output, stop).await;
     tokio::time::timeout(Duration::from_secs(5), stdio.output_done).await???;
     result
 }
+
+#[cfg(test)]
+mod tests;

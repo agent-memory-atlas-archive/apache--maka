@@ -269,6 +269,16 @@ impl Handler for Agent {
                             chunks: chunks
                                 .into_iter()
                                 .map(|chunk| HistoryChunk {
+                                    attachments: chunk
+                                        .attachments
+                                        .into_iter()
+                                        .map(|attachment| HistoryAttachment {
+                                            name: attachment.name,
+                                            mime_type: attachment.mime_type,
+                                            bytes: attachment.bytes,
+                                            kind: attachment.kind,
+                                        })
+                                        .collect(),
                                     timing: chunk.timing,
                                     field: chunk.field,
                                     message_id: chunk.message_id,

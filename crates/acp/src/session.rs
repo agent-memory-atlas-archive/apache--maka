@@ -17,13 +17,12 @@
  * under the License.
  */
 mod list;
+use crate::client::Client;
 use crate::{Error, configuration, history, projection::Projection, transport::Peer};
 use agent_client_protocol::schema::v2 as acp;
-use maka_client::Client;
-use maka_protocol::{
-    subscription::{SubscriptionOpenInput, TranscriptPolicy},
-    turn::TurnState,
-};
+use maka_agent_service::contract::{Created, Observation};
+use maka_plugins::call::Attachments;
+use serde_json::json;
 use std::{
     collections::HashMap,
     path::Path,
@@ -43,6 +42,7 @@ pub(crate) struct Registry {
 pub(crate) struct Session {
     pub id: String,
     pub gate: Arc<AsyncMutex<()>>,
+    pub preferences: AsyncMutex<configuration::Preferences>,
     active: Mutex<Option<CancellationToken>>,
     closed: AtomicBool,
 }
@@ -56,6 +56,7 @@ impl Session {
         Arc::new(Self {
             id,
             gate: Arc::default(),
+            preferences: AsyncMutex::default(),
             active: Mutex::default(),
             closed: AtomicBool::new(false),
         })
@@ -126,15 +127,20 @@ impl Registry {
         request: acp::NewSessionRequest,
     ) -> Result<acp::NewSessionResponse, Error> {
         unsupported_roots(&request.additional_directories, &request.mcp_servers)?;
-        let cwd = list::directory(request.cwd.as_ref()).await?;
+        let cwd = list::directory(request.cwd.as_ref())?;
         let _creation = self.creation.lock().await;
         if peer.stop.is_cancelled() {
             return Err("ACP transport closed".into());
         }
         self.capacity()?;
-        let id = uuid::Uuid::new_v4().to_string();
-        let session = configuration::create(client, &id, &cwd).await?;
-        let options = configuration::options(client, &session).await?;
+        let selection = list::select(client, &cwd).await?;
+        let Created::Created { session } = client.mutate("agent", "create", json!({"title":"New session","labels":[],"workspace":{"kind":"directory","selection":selection}}), Attachments::new()).await? else {
+            return Err("Host rejected session creation".into());
+        };
+        let id = session.id.clone();
+        let options =
+            configuration::options(client, &session, &configuration::Preferences::default())
+                .await?;
         if peer.stop.is_cancelled() {
             return Err("ACP transport closed".into());
         }
@@ -158,7 +164,7 @@ impl Registry {
         {
             return Err("Unsupported replay cursor".into());
         }
-        let cwd = list::directory(request.cwd.as_ref()).await?;
+        let cwd = list::directory(request.cwd.as_ref())?;
         let _creation = self.creation.lock().await;
         let id = request.session_id.to_string();
         let existing = self.sessions.lock().unwrap().get(&id).cloned();
@@ -167,15 +173,17 @@ impl Registry {
         }
         let local = existing.unwrap_or_else(|| Session::new(id.clone()));
         let active = local.enter(&peer.stop)?;
-        let session = client
-            .session(&id)
-            .await?
-            .ok_or("Host session does not exist")?;
+        let observation: Observation = client
+            .query("agent", "observe", json!({"sessionId":id}))
+            .await?;
+        let session = observation.session;
         list::ensure_idle(&session)?;
-        if list::directory(Path::new(&session.workspace.host_cwd)).await? != cwd {
+        if list::directory(Path::new(&session.workspace.path))? != cwd {
             return Err("Resume cwd differs from Host session workspace".into());
         }
-        let options = configuration::options(client, &session).await?;
+        let options =
+            configuration::options(client, &session, &local.preferences.lock().await.clone())
+                .await?;
         if request.replay_from.is_some() {
             replay(client, peer, &id, &active.cancel).await?;
         }
@@ -222,13 +230,14 @@ impl Registry {
     ) -> Result<acp::SetSessionConfigOptionResponse, Error> {
         let local = self.get(&request.session_id.to_string())?;
         let _active = local.enter(&peer.stop)?;
-        let session = client
-            .session(&local.id)
-            .await?
-            .ok_or("Host session does not exist")?;
-        list::ensure_idle(&session)?;
-        let updated = configuration::set(client, &session, request).await?;
-        let options = configuration::options(client, &updated).await?;
+        let observation: Observation = client
+            .query("agent", "observe", json!({"sessionId":local.id}))
+            .await?;
+        list::ensure_idle(&observation.session)?;
+        let mut preferences = local.preferences.lock().await;
+        let options =
+            configuration::set(client, &observation.session, &mut preferences, request).await?;
+        drop(preferences);
         peer.update(
             &local.id,
             acp::SessionUpdate::ConfigOptionUpdate(acp::ConfigOptionUpdate::new(options.clone())),
@@ -252,44 +261,19 @@ async fn replay(
     id: &str,
     cancel: &CancellationToken,
 ) -> Result<(), Error> {
-    let opened = client
-        .open_subscription(SubscriptionOpenInput {
-            session_id: id.into(),
-            transcript: TranscriptPolicy::Tail { max_bytes: 16_384 },
-        })
+    let observation: Observation = client
+        .query("agent", "observe", json!({"sessionId":id}))
         .await?;
-    let result = tokio::select! {
-        _ = cancel.cancelled() => Err("ACP replay cancelled".into()),
-        result = async {
-        if opened.snapshot.root_turn.as_ref().is_some_and(|turn| {
-            matches!(
-                turn.state,
-                TurnState::Admitted(_)
-                    | TurnState::Created(_)
-                    | TurnState::Running(_)
-                    | TurnState::WaitingForUser(_)
-            )
-        }) {
-            return Err("Host session started active work before replay".into());
+    list::ensure_idle(&observation.session)?;
+    let chunks = history::read(client, id, Some(observation.through), None).await?;
+    let mut projection = Projection::default();
+    for chunk in chunks {
+        if cancel.is_cancelled() {
+            return Err("ACP replay cancelled".into());
         }
-        let through = opened
-            .transcript
-            .as_ref()
-            .ok_or("Host omitted transcript bootstrap")?
-            .durable
-            .through_sequence;
-        let rows = history::read(client, &opened.subscription_id, through, None).await?;
-        let mut projection = Projection::default();
-        for row in rows {
-            for update in projection.row(&row.value)? {
-                peer.update(id, update).await?;
-            }
+        for update in projection.chunk(&chunk)? {
+            peer.update(id, update).await?;
         }
-        Ok::<_, Error>(())
-        } => result,
-    };
-    let closed = client.close_subscription(&opened.subscription_id).await;
-    result?;
-    closed?;
+    }
     Ok(())
 }

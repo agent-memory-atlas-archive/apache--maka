@@ -18,12 +18,12 @@
  */
 
 //! ACP v2 façade over the ordinary Host client; no execution or storage authority.
+mod client;
 mod configuration;
 mod content;
 mod foreground;
 mod history;
 mod interaction;
-mod observation;
 mod projection;
 mod server;
 mod session;

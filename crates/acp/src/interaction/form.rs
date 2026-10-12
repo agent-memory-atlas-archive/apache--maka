@@ -18,14 +18,14 @@
  */
 
 use super::{Callback, acp, schema};
-use maka_protocol::interaction::{InteractionAnswer, InteractionRequest, InteractionSnapshot};
 use maka_runtime::capability::{FormResult, FormValue};
+use maka_runtime::interaction::{InteractionAnswer, InteractionRecord, InteractionRequest};
 
 pub(super) fn request(
-    snapshot: &InteractionSnapshot,
+    snapshot: &InteractionRecord,
     capabilities: &acp::ClientCapabilities,
 ) -> Result<Callback, crate::Error> {
-    match snapshot.request() {
+    match &snapshot.request {
         InteractionRequest::Form {
             tool_use_id,
             message,
@@ -52,7 +52,7 @@ pub(super) fn request(
     }
 }
 fn elicitation(
-    snapshot: &InteractionSnapshot,
+    snapshot: &InteractionRecord,
     capabilities: &acp::ClientCapabilities,
     tool_use_id: &str,
     message: &str,
@@ -65,18 +65,19 @@ fn elicitation(
     {
         return Err("ACP client does not support form elicitation".into());
     }
-    let scope = acp::ElicitationSessionScope::new(acp::SessionId::new(snapshot.session_id()))
-        .tool_call_id(acp::ToolCallId::new(tool_use_id));
+    let scope =
+        acp::ElicitationSessionScope::new(acp::SessionId::new(snapshot.session_id.as_str()))
+            .tool_call_id(acp::ToolCallId::new(tool_use_id));
     let params =
         acp::CreateElicitationRequest::new(acp::ElicitationFormMode::new(scope, schema), message);
     Ok(Callback::Elicitation(params))
 }
 
 pub(super) fn answer(
-    snapshot: &InteractionSnapshot,
+    snapshot: &InteractionRecord,
     response: acp::CreateElicitationResponse,
 ) -> Result<InteractionAnswer, crate::Error> {
-    Ok(match snapshot.request() {
+    Ok(match &snapshot.request {
         InteractionRequest::Form { .. } => {
             let result = match response.action {
                 acp::ElicitationAction::Accept(accept) => FormResult::Accept {
@@ -144,7 +145,7 @@ mod tests {
     use super::*;
     use serde_json::json;
     fn answer(
-        snapshot: &InteractionSnapshot,
+        snapshot: &InteractionRecord,
         value: serde_json::Value,
     ) -> Result<InteractionAnswer, crate::Error> {
         let response = super::super::Response::Elicitation(serde_json::from_value(value)?);
@@ -153,7 +154,7 @@ mod tests {
 
     #[test]
     fn questions_require_form_capability_and_reject_invalid_answers() {
-        use maka_protocol::interaction::{InteractionQuestion, QuestionOption};
+        use maka_runtime::interaction::{InteractionQuestion, QuestionOption};
         let snapshot = snapshot(InteractionRequest::Question {
             tool_use_id: "tool".into(),
             questions: vec![InteractionQuestion {

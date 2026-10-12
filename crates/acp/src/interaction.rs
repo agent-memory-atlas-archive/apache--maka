@@ -19,7 +19,7 @@
 
 //! Host interactions translated at the ACP boundary, without acquiring authority.
 use agent_client_protocol::schema::v2 as acp;
-use maka_protocol::interaction::{InteractionAnswer, InteractionRequest, InteractionSnapshot};
+use maka_runtime::interaction::{InteractionAnswer, InteractionRecord, InteractionRequest};
 
 mod form;
 mod permission;
@@ -35,19 +35,16 @@ pub enum Response {
 }
 
 pub fn request(
-    snapshot: &InteractionSnapshot,
+    snapshot: &InteractionRecord,
     capabilities: &acp::ClientCapabilities,
 ) -> Result<Callback, crate::Error> {
-    if !snapshot.is_pending() {
+    if snapshot.outcome.is_some() {
         return Err("Interaction is no longer pending".into());
     }
-    match snapshot.request() {
-        InteractionRequest::ServiceApproval { .. } => {
-            Err("Service confirmation requires the application Agent API".into())
-        }
-        InteractionRequest::Permissions { .. } | InteractionRequest::ClientCapability { .. } => {
-            permission::request(snapshot)
-        }
+    match &snapshot.request {
+        InteractionRequest::ServiceApproval { .. }
+        | InteractionRequest::Permissions { .. }
+        | InteractionRequest::ClientCapability { .. } => permission::request(snapshot),
         InteractionRequest::Form { .. } | InteractionRequest::Question { .. } => {
             form::request(snapshot, capabilities)
         }
@@ -55,15 +52,17 @@ pub fn request(
 }
 
 pub fn answer(
-    snapshot: &InteractionSnapshot,
+    snapshot: &InteractionRecord,
     response: Response,
 ) -> Result<InteractionAnswer, crate::Error> {
-    if !snapshot.is_pending() {
+    if snapshot.outcome.is_some() {
         return Err("Interaction is no longer pending".into());
     }
-    let answer = match (snapshot.request(), response) {
+    let answer = match (&snapshot.request, response) {
         (
-            InteractionRequest::Permissions { .. } | InteractionRequest::ClientCapability { .. },
+            InteractionRequest::ServiceApproval { .. }
+            | InteractionRequest::Permissions { .. }
+            | InteractionRequest::ClientCapability { .. },
             Response::Permission(response),
         ) => permission::answer(snapshot, response)?,
         (
@@ -72,16 +71,15 @@ pub fn answer(
         ) => form::answer(snapshot, response)?,
         _ => return Err("Interaction callback response type does not match request".into()),
     };
-    answer.validate_for_request(snapshot.request())?;
+    answer.validate_for_request(&snapshot.request)?;
     Ok(answer)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use maka_protocol::interaction::InteractionRecord;
-    pub(super) fn snapshot(request: InteractionRequest) -> InteractionSnapshot {
-        InteractionSnapshot::from_record(&InteractionRecord {
+    pub(super) fn snapshot(request: InteractionRequest) -> InteractionRecord {
+        InteractionRecord {
             session_id: "session".into(),
             turn_id: "turn".into(),
             run_id: "run".into(),
@@ -89,7 +87,6 @@ mod tests {
             created_at: 0,
             request,
             outcome: None,
-        })
-        .unwrap()
+        }
     }
 }

@@ -18,13 +18,41 @@
  */
 
 use super::{Callback, acp};
-use maka_protocol::interaction::{
-    Decision, InteractionAnswer, InteractionRequest, InteractionSnapshot,
+use maka_runtime::interaction::{
+    Decision, InteractionAnswer, InteractionRecord, InteractionRequest,
 };
 use maka_sandbox::grant;
 
-pub(super) fn request(snapshot: &InteractionSnapshot) -> Result<Callback, crate::Error> {
-    match snapshot.request() {
+pub(super) fn request(snapshot: &InteractionRecord) -> Result<Callback, crate::Error> {
+    match &snapshot.request {
+        InteractionRequest::ServiceApproval {
+            tool_use_id,
+            tool_name,
+            service,
+            method,
+            ..
+        } => Ok(Callback::Permission(
+            acp::RequestPermissionRequest::new(
+                acp::SessionId::new(snapshot.session_id.as_str()),
+                format!("Allow {tool_name}: {service} / {method}"),
+                vec![
+                    acp::PermissionOption::new(
+                        "allow_once",
+                        "Allow once",
+                        acp::PermissionOptionKind::AllowOnce,
+                    ),
+                    acp::PermissionOption::new(
+                        "reject_once",
+                        "Reject",
+                        acp::PermissionOptionKind::RejectOnce,
+                    ),
+                ],
+            )
+            .subject(acp::RequestPermissionSubject::from(
+                acp::ToolCallUpdate::new(tool_use_id.clone())
+                    .raw_input(serde_json::to_value(&snapshot.request)?),
+            )),
+        )),
         InteractionRequest::Permissions {
             tool_use_id,
             request,
@@ -53,7 +81,7 @@ pub(super) fn request(snapshot: &InteractionSnapshot) -> Result<Callback, crate:
                 None
             };
             let params = acp::RequestPermissionRequest::new(
-                acp::SessionId::new(snapshot.session_id()),
+                acp::SessionId::new(snapshot.session_id.as_str()),
                 title,
                 vec![
                     acp::PermissionOption::new(
@@ -83,7 +111,7 @@ pub(super) fn request(snapshot: &InteractionSnapshot) -> Result<Callback, crate:
             let tool_call = acp::ToolCallUpdate::new(acp::ToolCallId::new(tool_use_id.as_str()))
                 .raw_input(serde_json::to_value(target)?);
             let params = acp::RequestPermissionRequest::new(
-                acp::SessionId::new(snapshot.session_id()),
+                acp::SessionId::new(snapshot.session_id.as_str()),
                 format!(
                     "Allow {} / {} for this session",
                     target.server_id, target.tool_name
@@ -109,10 +137,28 @@ pub(super) fn request(snapshot: &InteractionSnapshot) -> Result<Callback, crate:
     }
 }
 pub(super) fn answer(
-    snapshot: &InteractionSnapshot,
+    snapshot: &InteractionRecord,
     response: acp::RequestPermissionResponse,
 ) -> Result<InteractionAnswer, crate::Error> {
-    Ok(match snapshot.request() {
+    Ok(match &snapshot.request {
+        InteractionRequest::ServiceApproval { .. } => {
+            let decision = match response.outcome {
+                acp::RequestPermissionOutcome::Cancelled => Decision::Deny,
+                acp::RequestPermissionOutcome::Selected(selected) => {
+                    match selected.option_id.0.as_ref() {
+                        "allow_once" => Decision::Allow,
+                        "reject_once" => Decision::Deny,
+                        _ => {
+                            return Err(
+                                "Client selected an unoffered service permission option".into()
+                            );
+                        }
+                    }
+                }
+                _ => return Err("Unsupported ACP permission outcome".into()),
+            };
+            InteractionAnswer::ServiceApproval { decision }
+        }
         InteractionRequest::Permissions {
             tool_use_id,
             request,
@@ -171,18 +217,18 @@ pub(super) fn answer(
 mod tests {
     use super::super::{request, tests::snapshot};
     use super::*;
-    use maka_protocol::interaction::PermissionRequest;
+    use maka_runtime::interaction::PermissionRequest;
     use maka_sandbox::Network;
     use serde_json::json;
     fn answer(
-        snapshot: &InteractionSnapshot,
+        snapshot: &InteractionRecord,
         value: serde_json::Value,
     ) -> Result<InteractionAnswer, crate::Error> {
         let response = super::super::Response::Permission(serde_json::from_value(value)?);
         super::super::answer(snapshot, response)
     }
 
-    fn permission(tool: Option<&str>) -> InteractionSnapshot {
+    fn permission(tool: Option<&str>) -> InteractionRecord {
         snapshot(InteractionRequest::Permissions {
             tool_use_id: tool.map(str::to_owned),
             base_revision: 0,
@@ -249,7 +295,7 @@ mod tests {
                     Some(acp::RequestPermissionSubject::ToolCall(_))
                 ));
             }
-            let InteractionRequest::Permissions { request, .. } = snapshot.request() else {
+            let InteractionRequest::Permissions { request, .. } = &snapshot.request else {
                 panic!()
             };
             assert_eq!(
@@ -270,9 +316,8 @@ mod tests {
 
     #[test]
     fn command_permission_uses_v2_command_subject() {
-        use maka_protocol::interaction::PermissionCommand;
-        let InteractionRequest::Permissions { mut request, .. } =
-            permission(None).request().clone()
+        use maka_runtime::interaction::PermissionCommand;
+        let InteractionRequest::Permissions { mut request, .. } = permission(None).request.clone()
         else {
             panic!()
         };
@@ -295,5 +340,47 @@ mod tests {
         };
         assert_eq!(command.cwd.0, std::path::Path::new("/tmp"));
         assert_eq!(command.tool_call_id.unwrap().to_string(), "tool");
+    }
+    #[test]
+    fn service_approval_names_the_exact_call_and_never_offers_persistent_authority() {
+        let record = snapshot(InteractionRequest::ServiceApproval {
+            tool_use_id: "original-call".into(),
+            tool_name: "Run".into(),
+            service: "maka.process.Process@1".into(),
+            method: "execute".into(),
+            binding: "binding".into(),
+            through: 42,
+        });
+        let Callback::Permission(callback) =
+            request(&record, &acp::ClientCapabilities::default()).unwrap()
+        else {
+            panic!("permission callback");
+        };
+        let encoded = serde_json::to_value(callback).unwrap();
+        assert!(encoded.to_string().contains("maka.process.Process@1"));
+        assert!(encoded.to_string().contains("original-call"));
+        assert_eq!(
+            answer(
+                &record,
+                json!({"outcome":{"outcome":"selected","optionId":"allow_once"}})
+            )
+            .unwrap(),
+            InteractionAnswer::ServiceApproval {
+                decision: Decision::Allow
+            }
+        );
+        assert!(
+            answer(
+                &record,
+                json!({"outcome":{"outcome":"selected","optionId":"allow_session"}})
+            )
+            .is_err()
+        );
+        assert_eq!(
+            answer(&record, json!({"outcome":{"outcome":"cancelled"}})).unwrap(),
+            InteractionAnswer::ServiceApproval {
+                decision: Decision::Deny
+            }
+        );
     }
 }

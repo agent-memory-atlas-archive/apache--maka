@@ -21,7 +21,7 @@ use maka_runtime::interaction::{InteractionAnswer, InteractionRecord};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, JsonSchema, PartialEq)]
+#[derive(Serialize, JsonSchema, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentPendingInteractions")]
 pub struct PendingInteractions {
@@ -29,7 +29,7 @@ pub struct PendingInteractions {
     #[schemars(length(max = 16))]
     pub entries: Vec<InteractionSummary>,
 }
-#[derive(Serialize, JsonSchema, PartialEq)]
+#[derive(Serialize, JsonSchema, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentInteractionSummary")]
 pub struct InteractionSummary {
@@ -38,7 +38,7 @@ pub struct InteractionSummary {
     #[schemars(with = "maka_runtime::schema::RequiredNullable<String>")]
     pub tool_use_id: Option<String>,
 }
-#[derive(Serialize, JsonSchema, PartialEq)]
+#[derive(Serialize, JsonSchema, PartialEq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[schemars(rename = "AgentInteractionKind")]
 pub enum InteractionKind {
@@ -67,7 +67,7 @@ pub struct InteractionRespond {
     pub request_id: String,
     pub answer: InteractionAnswer,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "AgentInteractionResult")]
 pub enum InteractionResult {
@@ -79,7 +79,7 @@ pub enum InteractionResult {
         reason: InteractionRejection,
     },
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[schemars(rename = "AgentInteractionRejection")]
 pub enum InteractionRejection {

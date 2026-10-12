@@ -17,16 +17,7 @@
  * under the License.
  */
 
-#[allow(dead_code)]
-#[path = "integration/support/host_fixture.rs"]
-mod host_fixture;
-#[allow(dead_code)]
-#[path = "integration/support/message_recovery.rs"]
-mod message_recovery;
-#[allow(dead_code)]
-#[path = "integration/support/peer.rs"]
-mod peer;
-#[path = "support/acp_server.rs"]
+mod provider;
 mod support;
 
 use agent_client_protocol::{
@@ -73,13 +64,13 @@ async fn form_scenario() {
     .await
     .unwrap();
     let (provider, mut model_requests) = (fixture.provider, fixture.model_requests);
-    let native = fixture.client.clone();
+    let mut native = fixture.native;
+    let session = fixture.session.clone();
     let workspace = fixture.workspace.clone();
     let (sdk, facade) = tokio::io::duplex(1024);
     let (facade_read, facade_write) = tokio::io::split(facade);
     let serving = tokio::spawn(maka_acp::serve(
         fixture.client,
-        fixture.notifications,
         facade_read,
         facade_write,
         tokio_util::sync::CancellationToken::new(),
@@ -105,8 +96,8 @@ async fn form_scenario() {
             acp::Implementation::new("maka-sdk-form", "1")).capabilities(acp::ClientCapabilities::new()
                 .elicitation(acp::ElicitationCapabilities::new().form(acp::ElicitationFormCapabilities::new()))))
             .block_task().await?;
-        connection.send_request(acp::ResumeSessionRequest::new("sdk-session", workspace)).block_task().await?;
-        connection.send_request(acp::PromptRequest::new("sdk-session", vec![acp::ContentBlock::Text(
+        connection.send_request(acp::ResumeSessionRequest::new(session.as_str(), workspace)).block_task().await?;
+        connection.send_request(acp::PromptRequest::new(session.as_str(), vec![acp::ContentBlock::Text(
             acp::TextContent::new("Ask me which answer to use."))])).block_task().await?;
         let first = model_requests.recv().await.unwrap();
         assert!(first.body["tools"].as_array().unwrap().iter().any(|tool| tool["function"]["name"] == "AskUserQuestion"));
@@ -117,7 +108,7 @@ async fn form_scenario() {
         let (form, answer) = forms.recv().await.expect("typed SDK form callback");
         let acp::ElicitationMode::Form(form) = form.mode else { panic!("expected form mode"); };
         let acp::ElicitationScope::Session(scope) = form.scope else { panic!("expected session scope"); };
-        assert_eq!(scope.session_id.to_string(), "sdk-session");
+        assert_eq!(scope.session_id.to_string(), session.as_str());
         let tool_id = scope.tool_call_id.expect("form must identify the dispatched tool").to_string();
         let requests: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM interaction_requests").fetch_one(&mut database).await.unwrap();
         assert_eq!(requests, 1, "the form callback must come from a durable Host interaction");
@@ -139,16 +130,16 @@ async fn form_scenario() {
         next.reply.send(json!({"index":0,"delta":{"content":"Selected Beta."},"finish_reason":"stop"})).unwrap();
         let mut live = Vec::new();
         assert_eq!(support::until_idle(&mut receive, &mut live).await, Some(acp::StopReason::EndTurn));
-        let rows = support::canonical(&native).await;
-        let result = rows.iter().find(|row| row["type"] == "tool_result" && row["toolUseId"] == tool_id)
+        let rows = support::canonical(&native, &session).await;
+        let result = rows.iter().find(|row| row.role == maka_plugins::session::history::Role::ToolResult && row.tool.as_ref().is_some_and(|tool| tool.tool_use_id == tool_id))
             .expect("canonical tool result for the SDK callback identity");
-        assert_eq!(result["isError"], false);
-        assert!(result["content"].to_string().contains("Beta"));
+        assert!(!result.tool.as_ref().unwrap().result.as_ref().unwrap().is_error);
+        assert!(result.text.contains("Beta"));
         assert!(live.iter().any(|update| {
             let acp::SessionUpdate::ToolCallUpdate(tool) = update else { return false; };
             tool.tool_call_id.to_string() == tool_id && serde_json::to_value(tool).unwrap()["status"] == "completed"
         }), "the same tool must be visibly complete before idle");
-        connection.send_request(acp::CloseSessionRequest::new("sdk-session")).block_task().await?;
+        connection.send_request(acp::CloseSessionRequest::new(session.as_str())).block_task().await?;
         Ok(())
     }).await.unwrap();
     tokio::time::timeout(Duration::from_secs(10), serving)
@@ -156,7 +147,7 @@ async fn form_scenario() {
         .unwrap()
         .unwrap()
         .unwrap();
-    native.disconnect();
+    native.close().await.unwrap();
     fixture.stop.cancel();
     fixture.server.await.unwrap().unwrap();
     database.close().await.unwrap();
@@ -166,13 +157,13 @@ async fn form_scenario() {
 async fn scenario(cancel: bool) {
     let fixture = support::Fixture::open().await;
     let (provider, mut model_requests) = (fixture.provider, fixture.model_requests);
-    let native = fixture.client.clone();
+    let mut native = fixture.native;
+    let session = fixture.session.clone();
     let workspace = fixture.workspace.clone();
     let (sdk, facade) = tokio::io::duplex(1024);
     let (facade_read, facade_write) = tokio::io::split(facade);
     let serving = tokio::spawn(maka_acp::serve(
         fixture.client,
-        fixture.notifications,
         facade_read,
         facade_write,
         tokio_util::sync::CancellationToken::new(),
@@ -189,18 +180,20 @@ async fn scenario(cancel: bool) {
             ProtocolVersion::V2, acp::Implementation::new("maka-sdk-acceptance", "1"),
         )).block_task().await?;
         assert_eq!(initialized.protocol_version, ProtocolVersion::V2);
-        connection.send_request(acp::ResumeSessionRequest::new("sdk-session", workspace.clone()))
+        connection.send_request(acp::ResumeSessionRequest::new(session.as_str(), workspace.clone()))
             .block_task().await?;
         let accepted = tokio::time::timeout(Duration::from_secs(5), connection.send_request(
-            acp::PromptRequest::new("sdk-session", vec![acp::ContentBlock::Text(acp::TextContent::new("Explain the fixture."))]),
+            acp::PromptRequest::new(session.as_str(), vec![acp::ContentBlock::Text(acp::TextContent::new("Explain the fixture."))]),
         ).block_task()).await.expect("prompt acceptance waited for model completion")?;
         let request = model_requests.recv().await.expect("model request after acceptance");
+        let admitted = support::query(&native, "agent", "observe", json!({"sessionId":session})).await;
+        let invocation = admitted["run"]["invocationId"].as_str().unwrap().to_owned();
         let mut reply = Some(request.reply);
         // The provider is now gated on this explicit reply. Neither prompt
         // acceptance nor busy rejection can rely on finishing the model call.
         assert!(!accepted.message_id.to_string().is_empty());
         let busy = connection.send_request(acp::PromptRequest::new(
-            "sdk-session", vec![acp::ContentBlock::Text(acp::TextContent::new("Must not be inserted."))],
+            session.as_str(), vec![acp::ContentBlock::Text(acp::TextContent::new("Must not be inserted."))],
         )).block_task().await;
         assert!(busy.is_err(), "a foreground prompt must exclude another admission");
         let mut live = Vec::new();
@@ -209,7 +202,7 @@ async fn scenario(cancel: bool) {
             live.push(update);
         }
         if cancel {
-            connection.send_notification(acp::CancelSessionNotification::new("sdk-session"))?;
+            connection.send_notification(acp::CancelSessionNotification::new(session.as_str()))?;
         } else {
             reply.take().unwrap().send(json!({"index":0,"delta":{"reasoning_content":"Check the evidence.","content":"The fixture is correct."},"finish_reason":"stop"})).unwrap();
         }
@@ -218,43 +211,37 @@ async fn scenario(cancel: bool) {
             let _ = reply.send(json!({"index":0,"delta":{},"finish_reason":"stop"}));
         }
         assert_eq!(stop, Some(if cancel { acp::StopReason::Cancelled } else { acp::StopReason::EndTurn }));
-        let rows = support::canonical(&native).await;
-        let users: Vec<_> = rows.iter().filter(|row| row["type"] == "user").collect();
+        let rows = support::canonical(&native, &session).await;
+        let users: Vec<_> = rows.iter().filter(|row| row.role == maka_plugins::session::history::Role::User).collect();
         assert_eq!(users.len(), 1, "busy rejection must not insert a second user message");
-        assert_eq!(users[0]["id"].as_str().unwrap(), accepted.message_id.to_string());
-        let turn = native.query_turn(maka_protocol::turn::TurnQueryInput {
-            session_id: "sdk-session".into(), turn_id: users[0]["turnId"].as_str().unwrap().into(),
-        }).await.unwrap();
-        assert_eq!(serde_json::to_value(turn).unwrap()["status"], if cancel {"cancelled"} else {"completed"});
+        assert_eq!(users[0].message_id, accepted.message_id.to_string());
+        let observed = support::query(&native, "agent", "observe", json!({"sessionId":session})).await;
+        assert_eq!(observed["session"]["activity"], "idle");
+        let execution = support::query(&native, "agent", "execution", json!({"sessionId":session,"invocationId":invocation})).await;
+        assert_eq!(execution["execution"]["state"], if cancel { "cancelled" } else { "completed" }, "ACP idle requires the original physical execution receipt");
         let live_messages = support::messages(&live);
         assert_eq!(live_messages.get(&("user_message".into(), accepted.message_id.to_string())).map(String::as_str), Some("Explain the fixture."));
         if !cancel {
-            let assistant: Vec<_> = rows.iter().filter(|row| row["type"] == "assistant").collect();
-            assert_eq!(assistant.iter().filter_map(|row| row["text"].as_str()).collect::<String>(), "The fixture is correct.");
-            assert_eq!(assistant.iter().filter_map(|row| row["thinking"]["text"].as_str()).collect::<String>(), "Check the evidence.");
+            use maka_plugins::session::history::{Role, HistoryField};
+            let assistant: Vec<_> = rows.iter().filter(|row| row.role == Role::Assistant).collect();
+            assert_eq!(assistant.iter().filter(|row| row.field == HistoryField::Body).map(|row| row.text.as_str()).collect::<String>(), "The fixture is correct.");
+            assert_eq!(assistant.iter().filter(|row| row.field == HistoryField::Thinking).map(|row| row.text.as_str()).collect::<String>(), "Check the evidence.");
             for row in assistant {
-                let id = row["id"].as_str().unwrap();
-                for (kind, message_id, expected) in [
-                    ("agent_message", id.to_owned(), row["text"].as_str()),
-                    ("agent_thought", format!("thinking:{id}"), row["thinking"]["text"].as_str()),
-                ] {
-                    if let Some(expected) = expected.filter(|text| !text.is_empty()) {
-                        assert_eq!(live_messages.get(&(kind.into(), message_id)).map(String::as_str), Some(expected));
-                    }
-                }
+                let (kind, id) = match row.field { HistoryField::Body => ("agent_message", row.message_id.clone()), HistoryField::Thinking => ("agent_thought", format!("thinking:{}", row.message_id)) };
+                if !row.text.is_empty() { assert_eq!(live_messages.get(&(kind.into(), id)).map(String::as_str), Some(row.text.as_str())); }
             }
         }
         // Close waits for the foreground's subscription cleanup, then resume
         // must reproduce the same canonical messages on this SDK connection.
-        connection.send_request(acp::CloseSessionRequest::new("sdk-session")).block_task().await?;
+        connection.send_request(acp::CloseSessionRequest::new(session.as_str())).block_task().await?;
         let mut replay = Vec::new();
         while let Ok(update) = receive.try_recv() { replay.push(update); }
         assert!(replay.is_empty(), "foreground emitted output after idle");
-        connection.send_request(acp::ResumeSessionRequest::new("sdk-session", workspace)
+        connection.send_request(acp::ResumeSessionRequest::new(session.as_str(), workspace)
             .replay_from(acp::ReplayFrom::Start(acp::ReplayFromStart::new())))
             .block_task().await?;
         // A typed close request is an SDK dispatch fence after replay delivery.
-        connection.send_request(acp::CloseSessionRequest::new("sdk-session")).block_task().await?;
+        connection.send_request(acp::CloseSessionRequest::new(session.as_str())).block_task().await?;
         while let Ok(update) = receive.try_recv() { replay.push(update); }
         assert_eq!(support::messages(&replay), live_messages);
         Ok(())
@@ -264,7 +251,7 @@ async fn scenario(cancel: bool) {
         .unwrap()
         .unwrap()
         .unwrap();
-    native.disconnect();
+    native.close().await.unwrap();
     fixture.stop.cancel();
     fixture.server.await.unwrap().unwrap();
     drop(provider);

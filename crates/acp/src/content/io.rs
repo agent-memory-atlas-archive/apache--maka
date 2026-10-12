@@ -17,7 +17,7 @@
  * under the License.
  */
 
-use super::{active, artifact};
+use super::{MAX_ATTACHMENT_BYTES, active};
 use std::{io::Read, path::PathBuf, time::Duration};
 use tokio_util::sync::CancellationToken;
 
@@ -51,7 +51,7 @@ fn read_file(path: PathBuf, cancel: CancellationToken) -> Result<Vec<u8>, crate:
     if !before.is_file() {
         return Err("Resource must be a regular file, not a symlink".into());
     }
-    if before.len() > artifact::MAX_ATTACHMENT_BYTES {
+    if before.len() > MAX_ATTACHMENT_BYTES {
         return Err("Resource exceeds byte limit".into());
     }
     let mut options = std::fs::OpenOptions::new();
@@ -68,7 +68,7 @@ fn read_file(path: PathBuf, cancel: CancellationToken) -> Result<Vec<u8>, crate:
     }
     let mut file = options.open(&path)?;
     let opened = file.metadata()?;
-    if !opened.is_file() || opened.len() > artifact::MAX_ATTACHMENT_BYTES {
+    if !opened.is_file() || opened.len() > MAX_ATTACHMENT_BYTES {
         return Err("Invalid local resource file".into());
     }
     #[cfg(windows)]
@@ -86,7 +86,7 @@ fn read_file(path: PathBuf, cancel: CancellationToken) -> Result<Vec<u8>, crate:
         if count == 0 {
             break;
         }
-        if bytes.len() + count > artifact::MAX_ATTACHMENT_BYTES as usize {
+        if bytes.len() + count > MAX_ATTACHMENT_BYTES as usize {
             return Err("Resource exceeds byte limit".into());
         }
         bytes.extend_from_slice(&buffer[..count]);

@@ -20,44 +20,6 @@
 use super::*;
 
 impl Projection {
-    pub fn delta(
-        &mut self,
-        delta: &SessionAssistantDelta,
-    ) -> Result<Vec<acp::SessionUpdate>, crate::Error> {
-        let kind = match delta.kind {
-            AssistantStreamKind::Text => MessageKind::Text,
-            AssistantStreamKind::Thinking => MessageKind::Thinking,
-        };
-        let key = (delta.turn_id.clone(), delta.message_id.clone(), kind);
-        let current = self
-            .streams
-            .get(&key)
-            .map(|m| m.text.as_str())
-            .unwrap_or("");
-        if delta.reset.is_some() && delta.start_offset != 0 {
-            return Err("Assistant reset has a nonzero offset".into());
-        }
-        let next = if delta.reset.is_some() {
-            delta.text.clone()
-        } else {
-            let offset = utf16_byte_offset(current, delta.start_offset)
-                .ok_or("Assistant offset is missing or splits a UTF-16 character")?;
-            if current[offset..].starts_with(&delta.text) && delta.complete.is_none() {
-                current.to_owned()
-            } else {
-                format!("{}{}", &current[..offset], delta.text)
-            }
-        };
-        self.text(
-            &delta.turn_id,
-            &delta.message_id,
-            kind,
-            &next,
-            delta.reset.is_some(),
-            message_meta(&delta.turn_id, &delta.message_id),
-        )
-    }
-
     pub(super) fn text(
         &mut self,
         turn: &str,
@@ -134,83 +96,100 @@ impl Projection {
     }
 }
 
-fn utf16_byte_offset(text: &str, offset: u64) -> Option<usize> {
-    let mut units = 0;
-    for (index, character) in text.char_indices() {
-        if units == offset {
-            return Some(index);
-        }
-        units += character.len_utf16() as u64;
-    }
-    (units == offset).then_some(text.len())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use maka_protocol::subscription::TrueFlag;
-
     #[test]
-    fn unicode_replay_and_durable_revision_keep_message_identity() {
+    fn unicode_stream_and_canonical_history_keep_the_same_message() {
         let mut projection = Projection::default();
-        let mut delta = SessionAssistantDelta {
-            kind: AssistantStreamKind::Text,
-            turn_id: "t".into(),
-            run_id: "r".into(),
+        projection
+            .append("t", "m", &ContentKind::Text, "🦀中")
+            .unwrap();
+        let update = projection
+            .append("t", "m", &ContentKind::Text, "!")
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(&update[0]).unwrap()["content"]["text"],
+            "!"
+        );
+        let mut chunk = HistoryChunk {
+            attachments: Vec::new(),
+            timing: None,
+            field: HistoryField::Body,
             message_id: "m".into(),
-            start_offset: 0,
+            turn_id: "t".into(),
+            timestamp: 0,
+            role: Role::Assistant,
+            sequence: 1,
+            offset: 0,
+            total_bytes: 8,
             text: "🦀中".into(),
-            reset: None,
-            complete: None,
-            interrupted: None,
+            tool: None,
         };
-        assert!(matches!(
-            projection.delta(&delta).unwrap()[0],
-            acp::SessionUpdate::AgentMessageChunk(_)
-        ));
-        assert!(projection.delta(&delta).unwrap().is_empty());
-        delta.start_offset = 1;
-        assert!(projection.delta(&delta).is_err());
-        delta.start_offset = 3;
-        delta.text = "!".into();
-        let update = serde_json::to_value(&projection.delta(&delta).unwrap()[0]).unwrap();
-        assert_eq!(update["content"]["text"], "!");
-        let row = json!({"type":"assistant","id":"m","turnId":"t","text":"🦀中!"});
-        assert!(projection.row(&row).unwrap().is_empty());
-        let mut changed = row;
-        changed["text"] = json!("🦀中! durable suffix");
-        let update = serde_json::to_value(&projection.row(&changed).unwrap()[0]).unwrap();
+        assert!(projection.chunk(&chunk).unwrap().is_empty());
+        chunk.offset = 7;
+        chunk.text = "!".into();
+        assert!(projection.chunk(&chunk).unwrap().is_empty());
+        chunk.offset = 0;
+        chunk.text = "revised".into();
+        chunk.total_bytes = 7;
+        let update = serde_json::to_value(&projection.chunk(&chunk).unwrap()[0]).unwrap();
         assert_eq!(update["sessionUpdate"], "agent_message");
         assert_eq!(update["messageId"], "m");
-        assert_eq!(update["content"][0]["text"], "🦀中! durable suffix");
-        delta.start_offset = 0;
-        delta.reset = Some(TrueFlag);
-        delta.text.clear();
-        let update = serde_json::to_value(&projection.delta(&delta).unwrap()[0]).unwrap();
-        assert_eq!(update["sessionUpdate"], "agent_message");
-        assert_eq!(update["messageId"], "m");
-        assert_eq!(update["content"][0]["text"], "");
+        assert_eq!(update["content"][0]["text"], "revised");
     }
-
     #[test]
-    fn empty_user_attachment_is_a_full_deduplicated_message() {
+    fn missing_history_fragment_is_rejected() {
         let mut projection = Projection::default();
-        let mut row = json!({"type":"user","id":"u","turnId":"t","text":"","attachments":[{"name":"photo.png","mimeType":"image/png","bytes":30,"kind":"image","ref":{"kind":"session_file","relativePath":"private"}}]});
-        let update = serde_json::to_value(&projection.row(&row).unwrap()[0]).unwrap();
+        let chunk = HistoryChunk {
+            attachments: Vec::new(),
+            timing: None,
+            field: HistoryField::Body,
+            message_id: "m".into(),
+            turn_id: "t".into(),
+            timestamp: 0,
+            role: Role::Assistant,
+            sequence: 1,
+            offset: 2,
+            total_bytes: 3,
+            text: "a".into(),
+            tool: None,
+        };
+        assert!(projection.chunk(&chunk).is_err());
+    }
+    #[test]
+    fn attachment_only_user_message_keeps_safe_descriptions_during_replay() {
+        let mut projection = Projection::default();
+        let chunk = HistoryChunk {
+            attachments: vec![maka_agent_service::contract::HistoryAttachment {
+                name: "photo.png".into(),
+                mime_type: "image/png".into(),
+                bytes: 30,
+                kind: maka_runtime::attachment::AttachmentKind::Image,
+            }],
+            timing: None,
+            field: HistoryField::Body,
+            message_id: "u".into(),
+            turn_id: "t".into(),
+            timestamp: 0,
+            role: Role::User,
+            sequence: 1,
+            offset: 0,
+            total_bytes: 0,
+            text: String::new(),
+            tool: None,
+        };
+        let update = serde_json::to_value(&projection.chunk(&chunk).unwrap()[0]).unwrap();
         assert_eq!(update["sessionUpdate"], "user_message");
-        assert_eq!(update["messageId"], "u");
-        assert_eq!(update["content"][0]["text"], "");
         assert_eq!(
             update["_meta"]["maka"]["attachments"][0]["name"],
             "photo.png"
         );
-        assert!(!update.to_string().contains("private"));
-        assert!(projection.row(&row).unwrap().is_empty());
-        row["attachments"][0]["name"] = json!("renamed.png");
-        assert!(matches!(
-            projection.row(&row).unwrap()[0],
-            acp::SessionUpdate::UserMessage(_)
-        ));
-        assert!(projection.row(&row).unwrap().is_empty());
+        assert!(
+            update["_meta"]["maka"]["attachments"][0]
+                .get("ref")
+                .is_none()
+        );
+        assert!(projection.chunk(&chunk).unwrap().is_empty());
     }
 }

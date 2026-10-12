@@ -275,7 +275,7 @@ pub enum Directories {
         after: Option<String>,
     },
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentDirectory")]
 pub struct Directory {
@@ -283,7 +283,7 @@ pub struct Directory {
     pub path: String,
     pub selection: DirectorySelection,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "AgentDirectoryPage")]
 pub enum DirectoryPage {
@@ -332,7 +332,7 @@ pub struct Metadata {
     #[schemars(length(max = 32))]
     pub labels: Vec<String>,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[schemars(rename = "AgentRejection")]
 pub enum Rejection {
@@ -343,14 +343,14 @@ pub enum Rejection {
     SessionUnavailable,
     Closed,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "AgentCreated")]
 pub enum Created {
     Created { session: Box<Session> },
     Rejected { reason: Rejection },
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "AgentMetadataResult")]
 pub enum MetadataResult {
@@ -412,14 +412,14 @@ pub struct UploadAttachment {
     #[schemars(regex(pattern = "^sha256:[a-f0-9]{64}$"))]
     pub digest: String,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "AgentAttachmentUploadResult")]
 pub enum AttachmentUploadResult {
     Uploaded { attachment: Attachment },
     Rejected { reason: AttachmentRejection },
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[schemars(rename = "AgentAttachmentRejection")]
 pub enum AttachmentRejection {
@@ -428,7 +428,7 @@ pub enum AttachmentRejection {
     Closed,
     Archived,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentAttachment")]
 pub struct Attachment {
@@ -481,7 +481,7 @@ pub struct DataSource {
     pub deployment: uuid::Uuid,
     pub namespace: maka_plugin_core::composition::InstanceId,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentSession")]
 pub struct Session {
@@ -500,7 +500,7 @@ pub struct Session {
     pub has_unread: bool,
     pub activity: SessionActivity,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[schemars(rename = "AgentSessionActivity")]
 pub enum SessionActivity {
@@ -508,7 +508,7 @@ pub enum SessionActivity {
     Working,
     Waiting,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentSessionPage")]
 pub struct SessionPage {
@@ -521,7 +521,7 @@ pub struct SessionPage {
     #[schemars(with = "maka_runtime::schema::RequiredNullable<String>")]
     pub after: Option<String>,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(
     tag = "kind",
     rename_all = "snake_case",
@@ -545,7 +545,7 @@ pub enum SendResult {
         revision: u64,
     },
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[schemars(rename = "AgentSkillInputRejection")]
 pub enum SkillInputRejection {
@@ -558,7 +558,7 @@ pub enum SkillInputRejection {
 pub struct Stopped {
     pub requested: bool,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentDelivery")]
 pub struct Delivery {
@@ -567,7 +567,7 @@ pub struct Delivery {
     pub turn_id: String,
     pub fact: DeliveryFact,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(
     tag = "kind",
     rename_all = "snake_case",
@@ -605,7 +605,7 @@ pub enum DeliveryFact {
         failed: bool,
     },
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[schemars(rename = "AgentContentKind")]
 pub enum ContentKind {
@@ -627,7 +627,7 @@ pub struct SessionRead {
     #[schemars(length(min = 1, max = 128))]
     pub session_id: String,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentObservation")]
 pub struct Observation {
@@ -636,7 +636,7 @@ pub struct Observation {
     pub run: Option<Run>,
     pub parts: Vec<Part>,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentRun")]
 pub struct Run {
@@ -644,7 +644,7 @@ pub struct Run {
     pub turn_id: String,
     pub state: RunState,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[schemars(rename = "AgentRunState")]
 pub enum RunState {
@@ -652,7 +652,7 @@ pub enum RunState {
     Running,
     WaitingForUser,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentPart")]
 pub struct Part {
@@ -662,7 +662,7 @@ pub struct Part {
     pub part_id: String,
     pub text_kind: ContentKind,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(
     tag = "kind",
     rename_all = "snake_case",
@@ -684,7 +684,7 @@ pub enum DeliveryPage {
     },
 }
 
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentQueue")]
 pub struct Queue {
@@ -692,7 +692,7 @@ pub struct Queue {
     #[schemars(length(max = 64))]
     pub entries: Vec<QueueEntry>,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentQueueEntry")]
 pub struct QueueEntry {
@@ -701,7 +701,7 @@ pub struct QueueEntry {
     #[schemars(length(max = 80))]
     pub preview: String,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[schemars(rename = "AgentQueueKind")]
 pub enum QueueKind {
@@ -799,10 +799,23 @@ pub enum QueueRejection {
     NotRunning,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentHistoryAttachment")]
+pub struct HistoryAttachment {
+    pub name: String,
+    pub mime_type: String,
+    pub bytes: u64,
+    pub kind: maka_runtime::attachment::AttachmentKind,
+}
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentHistoryChunk")]
 pub struct HistoryChunk {
+    /// Display metadata only, on the first user-message fragment; no storage capability.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 8))]
+    pub attachments: Vec<HistoryAttachment>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timing: Option<maka_plugins::session::history::TurnTiming>,
     pub field: maka_plugins::session::history::HistoryField,
@@ -885,7 +898,7 @@ pub enum HistorySearchPage {
     },
 }
 
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(
     tag = "kind",
     rename_all = "snake_case",

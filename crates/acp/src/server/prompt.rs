@@ -55,10 +55,9 @@ pub(super) fn dispatch(
     let peer = app.peer(cx);
     let tasks = app.tasks.clone();
     tasks.spawn(async move {
-        let turn_id = uuid::Uuid::new_v4().to_string();
         let preparing = Foreground::prepare(
-            app.client.clone(), peer, &app.routes, session, active, capabilities,
-            Prompt { turn_id: turn_id.clone(), content: request.prompt },
+            app.client.clone(), peer, session, active, capabilities,
+            Prompt { content: request.prompt },
         );
         tokio::pin!(preparing);
         let result = match tokio::time::timeout(Duration::from_secs(15), &mut preparing).await {
@@ -78,7 +77,6 @@ pub(super) fn dispatch(
                 let data = serde_json::json!({
                     "message": "Admission timed out; retaining the original receipt for cancellation",
                     "sessionId": session_id,
-                    "turnId": turn_id,
                 });
                 let _ = responder.respond_with_error(
                     agent_client_protocol::Error::internal_error().data(data),

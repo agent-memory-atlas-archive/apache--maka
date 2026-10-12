@@ -17,9 +17,9 @@
  * under the License.
  */
 
+use crate::client::Client;
 use crate::{
     Error, content,
-    observation::Routes,
     session::Registry,
     transport::{self, Peer},
 };
@@ -27,7 +27,7 @@ use agent_client_protocol::{
     Agent, Client as AcpClient, JsonRpcResponse, Responder, V2ConnectionTo,
     schema::{ProtocolVersion, v2 as acp},
 };
-use maka_client::{Client, Notification};
+use maka_runtime_host::application::host::Client as HostClient;
 use std::{
     future::Future,
     sync::{Arc, OnceLock},
@@ -35,7 +35,7 @@ use std::{
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    sync::{Semaphore, mpsc},
+    sync::Semaphore,
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 mod input;
@@ -45,7 +45,6 @@ struct App {
     client: Client,
     sessions: Registry,
     capabilities: OnceLock<acp::ClientCapabilities>,
-    routes: Routes,
     stop: CancellationToken,
     tasks: TaskTracker,
     requests: Arc<Semaphore>,
@@ -102,8 +101,7 @@ impl App {
 
 /// Serve ACP over caller-owned streams, using only the ordinary Host client.
 pub async fn serve<R, W>(
-    client: Client,
-    mut notifications: mpsc::Receiver<Notification>,
+    client: HostClient,
     input: R,
     output: W,
     stop: CancellationToken,
@@ -113,10 +111,9 @@ where
     W: AsyncWrite + Unpin + Send + 'static,
 {
     let app = Arc::new(App {
-        client,
+        client: Client::new(client, stop.clone()),
         sessions: Registry::default(),
         capabilities: OnceLock::new(),
-        routes: Routes::default(),
         stop,
         tasks: TaskTracker::new(),
         requests: Arc::new(Semaphore::new(32)),
@@ -252,36 +249,20 @@ where
         });
     let connection = server.connect_to(transport::lines(input, output));
     tokio::pin!(connection);
-    let result = loop {
-        tokio::select! {
-            _ = app.stop.cancelled() => break Ok(()),
-            result = &mut connection => break result.map_err(|error| -> Error { Box::new(error) }),
-            notification = notifications.recv() => {
-                match notification {
-                    Some(Notification::Observation(frame)) => {
-                        if let Err(error) = app.routes.dispatch(*frame) { break Err(error); }
-                    }
-                    Some(Notification::Catalog(_)) => {}
-                    None => break Err("Host connection closed".into()),
-                }
-            }
-        }
+    let result = tokio::select! {
+        _ = app.stop.cancelled() => Ok(()),
+        result = &mut connection => result.map_err(|error| -> Error { Box::new(error) }),
     };
     app.stop.cancel();
     app.sessions.cancel_all();
     app.tasks.close();
     let settled = tokio::time::timeout(Duration::from_secs(45), async {
-        let cleanup = async { app.tasks.wait().await; app.sessions.drained().await; };
-        tokio::pin!(cleanup);
-        let mut incoming_open = true;
-        loop {
-            tokio::select! {
-                _ = &mut cleanup => break,
-                notification = notifications.recv(), if incoming_open => { incoming_open = notification.is_some(); }
-            }
-        }
-    }).await;
-    app.client.disconnect();
-    settled.map_err(|_| "ACP shutdown did not settle its Host operations")?;
+        app.tasks.wait().await;
+        app.sessions.drained().await;
+    })
+    .await;
+    let closed = app.client.close().await;
+    settled.map_err(|_| "ACP shutdown did not settle its original Agent work")?;
+    closed?;
     result
 }

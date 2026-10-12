@@ -4185,6 +4185,7 @@ export type AgentQueueAction =
       messageIds: [string, ...string[]];
       kind: 'reorder';
     };
+export type AttachmentKind = 'image' | 'pdf' | 'doc' | 'code' | 'other';
 export type HistoryTurnOutcome = 'completed' | 'failed' | 'aborted';
 /**
  * Canonical message author/kind; the field identifies body versus thinking.
@@ -8952,6 +8953,56 @@ export interface AgentQueueMutation {
   edit: AgentQueueAction;
 }
 export interface AgentHistoryChunk {
+  /**
+   * Display metadata only, on the first user-message fragment; no storage capability.
+   *
+   * @maxItems 8
+   */
+  attachments?:
+    | []
+    | [AgentHistoryAttachment]
+    | [AgentHistoryAttachment, AgentHistoryAttachment]
+    | [AgentHistoryAttachment, AgentHistoryAttachment, AgentHistoryAttachment]
+    | [
+        AgentHistoryAttachment,
+        AgentHistoryAttachment,
+        AgentHistoryAttachment,
+        AgentHistoryAttachment,
+      ]
+    | [
+        AgentHistoryAttachment,
+        AgentHistoryAttachment,
+        AgentHistoryAttachment,
+        AgentHistoryAttachment,
+        AgentHistoryAttachment,
+      ]
+    | [
+        AgentHistoryAttachment,
+        AgentHistoryAttachment,
+        AgentHistoryAttachment,
+        AgentHistoryAttachment,
+        AgentHistoryAttachment,
+        AgentHistoryAttachment,
+      ]
+    | [
+        AgentHistoryAttachment,
+        AgentHistoryAttachment,
+        AgentHistoryAttachment,
+        AgentHistoryAttachment,
+        AgentHistoryAttachment,
+        AgentHistoryAttachment,
+        AgentHistoryAttachment,
+      ]
+    | [
+        AgentHistoryAttachment,
+        AgentHistoryAttachment,
+        AgentHistoryAttachment,
+        AgentHistoryAttachment,
+        AgentHistoryAttachment,
+        AgentHistoryAttachment,
+        AgentHistoryAttachment,
+        AgentHistoryAttachment,
+      ];
   timing?: HistoryTurnTiming | null;
   field: HistoryField;
   messageId: string;
@@ -8963,6 +9014,12 @@ export interface AgentHistoryChunk {
   totalBytes: number;
   text: string;
   tool: HistoryTool | null;
+}
+export interface AgentHistoryAttachment {
+  name: string;
+  mimeType: string;
+  bytes: number;
+  kind: AttachmentKind;
 }
 /**
  * Recorded logical Turn boundaries at the same history fence. An unfinished

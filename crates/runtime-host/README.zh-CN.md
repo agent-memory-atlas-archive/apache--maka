@@ -147,7 +147,8 @@ WebSocket 消息运行，HTTP 先检查凭据和 Origin。配对只批准确切�
 和进程范围，同时保留用户权限限制；空目录列表不授予任何 workspace。Discovery 仅作提示，
 客户端用在线状态核验 Root、epoch、source、generation 和生命周期。候选进程退出同时要求
 物理连接空闲与 Application 原子 idle fence；显式中断先提交退出决定，再执行真实清理，
-原 Root 在 drain 完成前持续保留。旧协作连接 handoff 参数已移除。ACP 入口仍在迁移。
+原 Root 在 drain 完成前持续保留。旧协作连接 handoff 参数已移除。ACP 入口使用同一公共
+Host 及 Agent／Settings 服务契约；原始调用回执与实际资源清理仍是完成依据。
 
 caller 历史按稳定 consumer 与 operation 保留首次 source 和原 Ref，跨 source 修订或目标变化
 仍读取原记录；不同 Ref 冲突。caller 记录不宣称业务结果，不产生 Host 授权。记录失败或 commit

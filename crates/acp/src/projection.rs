@@ -19,9 +19,8 @@
 
 //! Bounded ACP presentation of public observations and durable transcript rows.
 use agent_client_protocol::schema::{MaybeUndefined, v2 as acp};
-use maka_protocol::subscription::{
-    AssistantStreamKind, SessionAssistantDelta, SessionToolEvent, ToolResultStatus,
-};
+use maka_agent_service::contract::{ContentKind, HistoryChunk};
+use maka_plugins::session::history::{HistoryField, Role};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
@@ -50,6 +49,7 @@ pub struct Projection {
     streams: HashMap<(String, String, MessageKind), Message>,
     tools: HashMap<String, Tool>,
     bytes: usize,
+    assembly: Option<(u64, HistoryField, String, acp::Meta)>,
 }
 
 struct Tool {
@@ -58,66 +58,68 @@ struct Tool {
     published: Option<acp::ToolCallUpdate>,
     published_bytes: usize,
     authoritative: bool,
-    announced: bool,
 }
 
 impl Projection {
-    pub fn row(&mut self, row: &Value) -> Result<Vec<acp::SessionUpdate>, crate::Error> {
-        let id = required(row, "id")?;
-        let turn = required(row, "turnId")?;
-        match required(row, "type")? {
-            "assistant" => {
-                let mut updates = self.text(
-                    turn,
-                    id,
-                    MessageKind::Thinking,
-                    row["thinking"]["text"].as_str().unwrap_or(""),
-                    true,
-                    message_meta(turn, id),
-                )?;
-                updates.extend(self.text(
-                    turn,
-                    id,
-                    MessageKind::Text,
-                    required(row, "text")?,
-                    true,
-                    message_meta(turn, id),
-                )?);
-                Ok(updates)
+    pub fn chunk(&mut self, chunk: &HistoryChunk) -> Result<Vec<acp::SessionUpdate>, crate::Error> {
+        if chunk.offset == 0 {
+            let mut meta = message_meta(&chunk.turn_id, &chunk.message_id);
+            if !chunk.attachments.is_empty() {
+                meta["maka"]["attachments"] = serde_json::to_value(&chunk.attachments)?;
             }
-            "user" => {
-                let mut meta = message_meta(turn, id);
-                if let Some(attachments) = row["attachments"].as_array().filter(|a| !a.is_empty()) {
-                    // Host storage references are not client-readable resource URIs.
-                    meta["maka"]["attachments"] = bounded_value(&Value::Array(attachments.iter().map(|a| {
-                        json!({"name":a["name"], "mimeType":a["mimeType"], "bytes":a["bytes"], "kind":a["kind"]})
-                    }).collect()));
-                }
-                self.text(
-                    turn,
-                    id,
-                    MessageKind::User,
-                    row["displayText"]
-                        .as_str()
-                        .or_else(|| row["text"].as_str())
-                        .unwrap_or(""),
-                    true,
-                    meta,
-                )
-            }
-            "tool_call" | "tool_result" | "tool_activity" => self.tool_row(row, turn, id),
-            _ => Ok(vec![]),
+            self.assembly = Some((chunk.sequence, chunk.field, String::new(), meta));
         }
+        let (sequence, field, text, _) = self
+            .assembly
+            .as_mut()
+            .ok_or("History field starts with a missing fragment")?;
+        if *sequence != chunk.sequence || *field != chunk.field || text.len() as u64 != chunk.offset
+        {
+            return Err("History field fragments are discontinuous".into());
+        }
+        if chunk.total_bytes > TOTAL_BYTES as u64
+            || text.len() + chunk.text.len() > chunk.total_bytes as usize
+        {
+            return Err("History field exceeds its declared size".into());
+        }
+        text.push_str(&chunk.text);
+        if text.len() as u64 != chunk.total_bytes {
+            return Ok(vec![]);
+        }
+        let (_, _, text, meta) = self.assembly.take().expect("complete field");
+        let kind = match (chunk.role, chunk.field) {
+            (Role::User, _) => MessageKind::User,
+            (Role::Assistant, HistoryField::Thinking) => MessageKind::Thinking,
+            (Role::Assistant, HistoryField::Body) => MessageKind::Text,
+            _ => return self.tool_chunk(chunk, &text),
+        };
+        self.text(&chunk.turn_id, &chunk.message_id, kind, &text, true, meta)
+    }
+    pub fn append(
+        &mut self,
+        turn: &str,
+        id: &str,
+        kind: &ContentKind,
+        delta: &str,
+    ) -> Result<Vec<acp::SessionUpdate>, crate::Error> {
+        let kind = match kind {
+            ContentKind::Text => MessageKind::Text,
+            ContentKind::Thinking => MessageKind::Thinking,
+        };
+        let current = self
+            .streams
+            .get(&(turn.into(), id.into(), kind))
+            .map_or("", |message| message.text.as_str());
+        if current.len() + delta.len() > TOTAL_BYTES {
+            return Err("ACP stream exceeds its text limit".into());
+        }
+        let next = format!("{current}{delta}");
+        self.text(turn, id, kind, &next, false, message_meta(turn, id))
     }
 }
 
 fn message_meta(turn: &str, id: &str) -> acp::Meta {
     acp::Meta::from_iter([("maka".into(), json!({"hostMessageId":id,"turnId":turn}))])
-}
-fn required<'a>(row: &'a Value, key: &str) -> Result<&'a str, crate::Error> {
-    row[key]
-        .as_str()
-        .ok_or_else(|| format!("Transcript {key} is missing").into())
 }
 fn bounded(text: &str, max: usize) -> String {
     if text.len() <= max {
@@ -129,12 +131,4 @@ fn bounded(text: &str, max: usize) -> String {
         end -= 1;
     }
     format!("{}{suffix}", &text[..end])
-}
-fn bounded_value(value: &Value) -> Value {
-    let encoded = value.to_string();
-    if encoded.len() <= TOOL_BYTES {
-        value.clone()
-    } else {
-        json!({"truncated":true,"preview":bounded(&encoded, TOOL_BYTES)})
-    }
 }

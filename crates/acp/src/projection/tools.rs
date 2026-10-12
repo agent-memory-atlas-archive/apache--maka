@@ -20,132 +20,54 @@
 use super::*;
 
 impl Projection {
-    pub fn tool(
+    pub(super) fn tool_chunk(
         &mut self,
-        event: &SessionToolEvent,
+        chunk: &HistoryChunk,
+        text: &str,
     ) -> Result<Vec<acp::SessionUpdate>, crate::Error> {
-        let (turn, id) = match event {
-            SessionToolEvent::ToolStart {
-                turn_id,
-                tool_use_id,
-                ..
-            }
-            | SessionToolEvent::ToolProgress {
-                turn_id,
-                tool_use_id,
-                ..
-            }
-            | SessionToolEvent::ToolResult {
-                turn_id,
-                tool_use_id,
-                ..
-            } => (turn_id, tool_use_id),
-        };
-        let tool = self.ensure_tool(turn, id)?;
-        match event {
-            SessionToolEvent::ToolStart {
-                tool_name, title, ..
-            } => {
-                if !tool.authoritative {
-                    tool.card.title = MaybeUndefined::Value(bounded(
-                        title
-                            .as_ref()
-                            .map_or(tool_name.as_str(), |title| title.fallback.as_str()),
-                        4096,
-                    ));
-                    tool.card.name = MaybeUndefined::Value(tool_name.clone());
-                }
-            }
-            SessionToolEvent::ToolProgress { chunk, .. } => {
-                if tool.announced || tool.authoritative {
-                    return Ok(vec![]);
-                }
-                tool.card.content =
-                    MaybeUndefined::Value(text_content(&bounded(chunk, TOOL_BYTES)));
-            }
-            SessionToolEvent::ToolResult { status, .. } => {
-                if tool.authoritative {
-                    return Ok(vec![]);
-                }
-                if !tool.announced
-                    && let MaybeUndefined::Value(content) = &mut tool.card.content
-                {
-                    content.extend(text_content("[Awaiting durable tool result]"));
-                }
-                tool.announced = true;
-                tool.card.status =
-                    MaybeUndefined::Value(if *status == ToolResultStatus::Completed {
-                        acp::ToolCallStatus::Completed
-                    } else {
-                        acp::ToolCallStatus::Failed
-                    });
-                tool.meta("resultPending", json!(true));
-            }
+        let source = chunk
+            .tool
+            .as_ref()
+            .ok_or("Tool history omitted its canonical reference")?;
+        let tool = self.ensure_tool(&chunk.turn_id, &source.tool_use_id)?;
+        if let Some(call) = &source.call {
+            tool.card.name = MaybeUndefined::Value(call.name.clone());
+            tool.card.title = MaybeUndefined::Value(bounded(
+                call.title
+                    .as_ref()
+                    .map_or(call.name.as_str(), |title| title.fallback.as_str()),
+                4096,
+            ));
+            tool.meta("presentation", json!(call.presentation));
         }
-        self.publish(id)
-    }
-
-    pub(super) fn tool_row(
-        &mut self,
-        row: &Value,
-        turn: &str,
-        id: &str,
-    ) -> Result<Vec<acp::SessionUpdate>, crate::Error> {
-        if row["type"] == "tool_activity" {
-            let tool_id = required(row, "toolUseId")?;
-            let Some(title) = serde_json::from_value::<Option<maka_runtime::display::Text>>(
-                row["title"].clone(),
-            )?
-            else {
-                // Presentation-only activity carries no replacement title.
-                return Ok(vec![]);
-            };
-            title.validate()?;
-            let tool = self.ensure_tool(turn, tool_id)?;
-            tool.card.title = MaybeUndefined::Value(title.fallback);
-            return self.publish(tool_id);
-        }
-        if row["type"] == "tool_call" {
-            let name = required(row, "toolName")?;
-            let tool = self.ensure_tool(turn, id)?;
-            tool.card.name = MaybeUndefined::Value(name.into());
-            tool.card.title =
-                MaybeUndefined::Value(bounded(row["displayName"].as_str().unwrap_or(name), 4096));
-            tool.card.kind = MaybeUndefined::Value(match row["activityKind"].as_str() {
-                Some("read") => acp::ToolKind::Read,
-                Some("search" | "websearch" | "explore") => acp::ToolKind::Search,
-                Some("webfetch") => acp::ToolKind::Fetch,
-                Some("edit") => acp::ToolKind::Edit,
-                Some("command") => acp::ToolKind::Execute,
-                _ => acp::ToolKind::Other,
-            });
-            // Clear previously shown input when this durable card suppresses it.
-            tool.card.raw_input = match row.get("args") {
-                Some(args) if !matches!(name, "WriteStdin" | "todo_write") => {
-                    MaybeUndefined::Value(bounded_value(args))
-                }
-                _ => MaybeUndefined::Null,
-            };
-            self.publish(id)
-        } else {
-            let tool_id = required(row, "toolUseId")?;
-            let result = row.get("content").ok_or("Tool result content is missing")?;
-            // isError describes the call, not the observed background job.
-            let failed = row["isError"]
-                .as_bool()
-                .ok_or("Tool result status is missing")?;
-            let tool = self.ensure_tool(turn, tool_id)?;
+        if let Some(result) = &source.result {
             tool.authoritative = true;
-            tool.card.status = MaybeUndefined::Value(if failed {
-                acp::ToolCallStatus::Failed
-            } else {
-                acp::ToolCallStatus::Completed
-            });
-            tool.meta("resultPending", json!(false));
-            tool.card.content = MaybeUndefined::Value(result_content(result));
-            tool.card.raw_output = MaybeUndefined::Value(bounded_value(result));
-            self.publish(tool_id)
+            tool.card.status = MaybeUndefined::Value(
+                if result.is_error
+                    || matches!(
+                        result.settlement,
+                        Some(
+                            maka_runtime::tool_call::ToolSettlement::Unknown
+                                | maka_runtime::tool_call::ToolSettlement::Rejected
+                                | maka_runtime::tool_call::ToolSettlement::Failed
+                        )
+                    )
+                {
+                    acp::ToolCallStatus::Failed
+                } else {
+                    acp::ToolCallStatus::Completed
+                },
+            );
+            tool.meta("settlement", json!(result.settlement));
+            tool.meta("image", json!(result.image));
         }
+        if chunk.role == Role::ToolResult {
+            tool.card.content = MaybeUndefined::Value(text_content(&bounded(text, TOOL_BYTES)));
+        } else {
+            tool.card.raw_input =
+                MaybeUndefined::Value(json!({"preview":bounded(text, TOOL_BYTES)}));
+        }
+        self.publish(&source.tool_use_id)
     }
 
     /// Call after durable transcript catchup and authoritative turn settlement.
@@ -158,7 +80,7 @@ impl Projection {
             && self
                 .tools
                 .values()
-                .any(|tool| tool.turn == turn && tool.announced && !tool.authoritative)
+                .any(|tool| tool.turn == turn && !tool.authoritative)
         {
             return Err("Completed turn is missing an announced durable tool result".into());
         }
@@ -191,7 +113,6 @@ impl Projection {
                     published: None,
                     published_bytes: 0,
                     authoritative: false,
-                    announced: false,
                     card: acp::ToolCallUpdate::new(id.to_owned())
                         .title(id.to_owned())
                         .kind(acp::ToolKind::Other)
@@ -239,73 +160,4 @@ fn text_content(text: &str) -> Vec<acp::ToolCallContent> {
     vec![acp::ToolCallContent::Content(Box::new(acp::Content::new(
         text,
     )))]
-}
-
-fn result_content(result: &Value) -> Vec<acp::ToolCallContent> {
-    // Host file_diff lacks the absolute-path git_patch contract required by ACP.
-    let text = match result["kind"].as_str() {
-        Some("text") => result["text"].as_str().map(str::to_owned),
-        Some("file_diff") => result["diff"].as_str().map(str::to_owned),
-        Some("summary") => result["summarized"].as_str().map(str::to_owned),
-        Some("subagent" | "rive_workflow") => result["summary"].as_str().map(str::to_owned),
-        Some("json") => Some(
-            result["value"]
-                .as_str()
-                .map(str::to_owned)
-                .unwrap_or_else(|| result["value"].to_string()),
-        ),
-        _ => None,
-    }
-    .unwrap_or_else(|| result.to_string());
-    text_content(&bounded(&text, TOOL_BYTES))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn tool_terminal_requires_durable_result_and_explicit_bounded_presentation() {
-        let mut projection = Projection::default();
-        projection.row(&json!({"type":"tool_call","id":"call","turnId":"t","toolName":"Read","displayName":"Original title"})).unwrap();
-        let mut activity = json!({"type":"tool_activity","id":"activity","turnId":"t","toolUseId":"call","toolName":"Read","presentation":"maka.workspace.Files@1/readText"});
-        assert!(projection.row(&activity).unwrap().is_empty());
-        activity["title"] = Value::Null;
-        assert!(projection.row(&activity).unwrap().is_empty());
-        assert_eq!(
-            projection.tools["call"].card.title,
-            MaybeUndefined::Value("Original title".into())
-        );
-        activity["title"] = json!({"fallback":"Read source","translations":{}});
-        let updates = projection.row(&activity).unwrap();
-        assert_eq!(
-            serde_json::to_value(&updates[0]).unwrap()["title"],
-            "Read source"
-        );
-        activity["title"] = json!({"fallback":"","translations":{}});
-        assert!(projection.row(&activity).is_err());
-        let event = SessionToolEvent::ToolResult {
-            id: "e".into(),
-            turn_id: "t".into(),
-            ts: 0,
-            tool_use_id: "call".into(),
-            operation_id: None,
-            status: ToolResultStatus::Completed,
-        };
-        assert_eq!(projection.tool(&event).unwrap().len(), 1);
-        assert!(projection.finish("t", true).is_err());
-        let row = json!({"type":"tool_result","id":"result","turnId":"t","toolUseId":"call","isError":false,"content":{"kind":"text","text":"中".repeat(TOOL_BYTES)}});
-        let updates = projection.row(&row).unwrap();
-        assert!(matches!(updates[0], acp::SessionUpdate::ToolCallUpdate(_)));
-        let update = serde_json::to_value(&updates[0]).unwrap();
-        assert_eq!(update["status"], "completed");
-        assert_eq!(update["rawOutput"]["truncated"], true);
-        assert!(
-            update["content"][0]["content"]["text"]
-                .as_str()
-                .unwrap()
-                .ends_with("[Presentation truncated]")
-        );
-        assert!(projection.row(&row).unwrap().is_empty());
-        assert!(projection.finish("t", true).unwrap().is_empty());
-    }
 }

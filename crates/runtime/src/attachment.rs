@@ -129,7 +129,7 @@ impl AttachmentRef {
             .fold(0usize, |bytes, text| bytes.saturating_add(text.len()))
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AttachmentKind {
     Image,

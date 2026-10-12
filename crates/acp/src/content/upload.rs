@@ -17,102 +17,52 @@
  * under the License.
  */
 
-use super::{AttachmentRef, Client, Prepared, active, artifact};
-use artifact::{ArtifactIngestInput as Input, ArtifactIngestResult as Output};
-use base64::{Engine as _, engine::general_purpose::STANDARD};
-use std::time::Duration;
+use super::{Client, Prepared, active, artifact};
+use maka_agent_service::contract::AttachmentUploadResult;
+use maka_plugin_core::contract::{ResourceType, binary_resource_type};
+use maka_plugins::call::{Attachments, ReadResource};
+use serde_json::{Value, json};
+use std::{ops::Range, sync::Arc};
 use tokio_util::sync::CancellationToken;
-
-pub(super) fn begin(session: &str, id: &str, reference: &AttachmentRef, bytes: &[u8]) -> Input {
-    Input::Begin {
-        session_id: session.into(),
-        upload_id: id.into(),
-        name: reference.name.clone(),
-        mime_type: reference.mime_type.clone(),
-        total_bytes: bytes.len() as u64,
-        content_sha256: artifact::content_digest(bytes),
+struct Payload(Vec<u8>);
+impl ReadResource for Payload {
+    fn resource_type(&self) -> ResourceType {
+        binary_resource_type()
+    }
+    fn bytes(&self) -> usize {
+        self.0.len()
+    }
+    fn metadata(&self) -> Value {
+        json!({})
+    }
+    fn read(&self, range: Range<usize>) -> Result<Vec<u8>, String> {
+        self.0
+            .get(range)
+            .map(<[u8]>::to_vec)
+            .ok_or_else(|| "Attachment read exceeds immutable payload".into())
     }
 }
-
-async fn request(
-    client: &Client,
-    input: Input,
-    cancel: &CancellationToken,
-) -> Result<Output, crate::Error> {
-    tokio::select! {
-        biased;
-        _ = cancel.cancelled() => Err("Prompt cancelled".into()),
-        result = tokio::time::timeout(Duration::from_secs(30), client.ingest_artifact(input)) => Ok(result.map_err(|_| "Artifact upload timed out")??),
-    }
-}
-
 pub(super) async fn publish(
     client: &Client,
     session: &str,
     item: Prepared,
     cancel: &CancellationToken,
-) -> Result<(), crate::Error> {
+) -> Result<String, crate::Error> {
     active(cancel)?;
-    let result = async {
-        match request(
-            client,
-            begin(session, &item.id, &item.reference, &item.bytes),
-            cancel,
-        )
+    let input = json!({"sessionId":session,"name":item.name,"bytes":item.bytes.len(),"digest":artifact::content_digest(&item.bytes)});
+    let resources: Attachments = [(
+        "file".into(),
+        Arc::new(Payload(item.bytes)) as Arc<dyn ReadResource>,
+    )]
+    .into();
+    // Await the original confirmation even if ACP cancellation arrives during upload.
+    match client
+        .mutate("agent", "uploadAttachment", input, resources)
         .await?
-        {
-            Output::Committed { attachment, .. } if attachment == item.reference => return Ok(()),
-            Output::UploadOpened { next_offset: 0, .. } => {}
-            _ => return Err("Unexpected artifact begin result".into()),
+    {
+        AttachmentUploadResult::Uploaded { attachment } if attachment.session_id == session => {
+            Ok(attachment.id)
         }
-        let mut offset = 0;
-        for chunk in item.bytes.chunks(artifact::MAX_INGEST_CHUNK_BYTES) {
-            match request(
-                client,
-                Input::Chunk {
-                    session_id: session.into(),
-                    upload_id: item.id.clone(),
-                    offset,
-                    chunk_base64: STANDARD.encode(chunk),
-                },
-                cancel,
-            )
-            .await?
-            {
-                Output::ChunkAccepted { next_offset, .. }
-                    if next_offset == offset + chunk.len() as u64 =>
-                {
-                    offset = next_offset
-                }
-                _ => return Err("Unexpected artifact chunk result".into()),
-            }
-        }
-        match request(
-            client,
-            Input::Commit {
-                session_id: session.into(),
-                upload_id: item.id.clone(),
-            },
-            cancel,
-        )
-        .await?
-        {
-            Output::Committed { attachment, .. } if attachment == item.reference => Ok(()),
-            _ => Err("Unexpected artifact commit result".into()),
-        }
+        _ => Err("Host rejected the attachment upload".into()),
     }
-    .await;
-    if result.is_err() {
-        // Even an unacknowledged begin may have opened an upload. Cleanup is bounded
-        // and independent of the cancelled prompt; committed artifacts are retained.
-        let _ = tokio::time::timeout(
-            Duration::from_secs(2),
-            client.ingest_artifact(Input::Abort {
-                session_id: session.into(),
-                upload_id: item.id,
-            }),
-        )
-        .await;
-    }
-    result
 }

@@ -18,12 +18,11 @@
  */
 
 //! Validate the entire prompt before publishing any caller-owned attachments.
+use crate::client::Client;
 use agent_client_protocol::schema::v2 as acp;
-use maka_client::Client;
-use maka_protocol::{
-    artifact,
-    turn::{AttachmentKind, AttachmentRef, MessageContent, StorageRef},
-};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use maka_runtime::artifact;
+use maka_runtime::attachment::MAX_ATTACHMENT_BYTES;
 use std::path::PathBuf;
 use tokio_util::sync::CancellationToken;
 
@@ -45,18 +44,20 @@ enum Source {
     File(PathBuf),
     Bytes(Vec<u8>),
 }
+pub struct Message {
+    pub text: String,
+    pub attachments: Vec<String>,
+}
 struct Prepared {
-    id: String,
-    reference: AttachmentRef,
+    name: String,
     bytes: Vec<u8>,
 }
-
 pub async fn prepare(
     client: &Client,
     session: &str,
     blocks: Vec<acp::ContentBlock>,
     cancel: &CancellationToken,
-) -> Result<MessageContent, crate::Error> {
+) -> Result<Message, crate::Error> {
     let (mut content, pending) = validate(blocks)?;
     let mut prepared = Vec::with_capacity(pending.len());
     for item in pending {
@@ -65,45 +66,24 @@ pub async fn prepare(
             Source::Bytes(bytes) => bytes,
             Source::File(path) => io::read(path, cancel).await?,
         };
-        let mime = artifact::sniff_binary_mime(&bytes)
-            .map(str::to_owned)
-            .or(item.mime)
-            .unwrap_or_else(|| "application/octet-stream".into());
-        let id = uuid::Uuid::new_v4().to_string();
-        let reference = AttachmentRef {
-            kind: AttachmentKind::from_metadata(&mime, &item.name),
-            name: item.name,
-            mime_type: mime,
-            bytes: bytes.len() as u64,
-            storage_ref: StorageRef::SessionFile {
-                session_id: session.into(),
-                relative_path: artifact::upload_artifact_id(session, &id),
-            },
-        };
-        // Includes metadata control characters and the Host's upload limits.
-        artifact::decode_ingest_input(&serde_json::to_value(upload::begin(
-            session, &id, &reference, &bytes,
-        ))?)?;
+        if bytes.is_empty() || bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
+            return Err("Invalid attachment byte length".into());
+        }
         prepared.push(Prepared {
-            id,
-            reference,
+            name: item.name,
             bytes,
         });
     }
-    content.attachments =
-        (!prepared.is_empty()).then(|| prepared.iter().map(|p| p.reference.clone()).collect());
-    // This also catches total encoded input size before any artifact is uploaded.
-    content.validate_admission(false)?;
     for item in prepared {
-        upload::publish(client, session, item, cancel).await?;
+        content
+            .attachments
+            .push(upload::publish(client, session, item, cancel).await?);
     }
     active(cancel)?;
     Ok(content)
 }
 
-fn validate(
-    blocks: Vec<acp::ContentBlock>,
-) -> Result<(MessageContent, Vec<Pending>), crate::Error> {
+fn validate(blocks: Vec<acp::ContentBlock>) -> Result<(Message, Vec<Pending>), crate::Error> {
     let mut parts = Vec::new();
     let mut pending = Vec::new();
     let mut text_bytes = 0usize;
@@ -201,13 +181,9 @@ fn validate(
         }
     }
     Ok((
-        MessageContent {
+        Message {
             text: parts.join("\n\n"),
-            display_text: None,
-            attachments: None,
-            directory_references: None,
-            quotes: None,
-            inline_references: None,
+            attachments: vec![],
         },
         pending,
     ))
@@ -226,10 +202,14 @@ fn resource_uri(value: &str) -> Result<url::Url, crate::Error> {
     Ok(url::Url::parse(value).map_err(|_| "Invalid resource URI")?)
 }
 fn decode(value: &str) -> Result<Vec<u8>, crate::Error> {
-    Ok(artifact::decode_chunk(
-        value,
-        artifact::MAX_ATTACHMENT_BYTES as usize,
-    )?)
+    if value.len() > (MAX_ATTACHMENT_BYTES as usize).div_ceil(3) * 4 {
+        return Err("Attachment exceeds byte limit".into());
+    }
+    let bytes = STANDARD.decode(value)?;
+    if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
+        return Err("Attachment exceeds byte limit".into());
+    }
+    Ok(bytes)
 }
 fn active(cancel: &CancellationToken) -> Result<(), crate::Error> {
     if cancel.is_cancelled() {

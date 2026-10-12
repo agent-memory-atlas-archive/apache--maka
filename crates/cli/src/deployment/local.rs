@@ -18,15 +18,18 @@
  */
 
 use super::{activation, directory, store};
-use maka_client::{Client, Notification, local};
 use maka_event_log::root::{self, FileLease, RootNamespaces, RootOwner};
 use maka_process::detached::{self, Child};
 use maka_runtime_host::server::HostError;
+use maka_runtime_host::{
+    application::host::{Client, discovery},
+    ipc,
+};
 use sha2::{Digest, Sha256};
 use std::{io, path::PathBuf, sync::Arc, time::Duration};
-use tokio::{io::AsyncWriteExt, sync::mpsc};
+use tokio::io::AsyncWriteExt;
 
-type Connection = (Client, mpsc::Receiver<Notification>);
+type Connection = Client;
 
 /// Interactive startup does not install, update, repair or take over a Host.
 /// The UI calls this only after terminal validation, in a cancellable background job.
@@ -195,35 +198,27 @@ async fn live(
         return Ok(None);
     }
     let path = path.to_owned();
-    let discovery = match tokio::task::spawn_blocking(move || local::read_discovery(&path)).await? {
+    let discovery = match tokio::task::spawn_blocking(move || discovery::read(&path)).await? {
         Ok(discovery) => discovery,
         Err(error) if absent(&error) => return Ok(None),
-        Err(error) => return Err(error),
+        Err(error) => return Err(error.into()),
     };
     if discovery.root_id != expected_root {
         return Err("State Root changed during startup".into());
     }
-    let stream = match local::open_stream(&discovery.endpoint).await {
+    let stream = match ipc::connect(&discovery.endpoint).await {
         Ok(stream) => stream,
-        Err(error) if absent(&error) => return Ok(None),
+        Err(error) if error.downcast_ref::<io::Error>().is_some_and(absent) => return Ok(None),
         Err(error) => return Err(error),
     };
     Ok(Some(
-        Client::connect(
-            stream,
-            expected_root,
-            &discovery.host_epoch,
-            maka_client::Operations,
-        )
-        .await?,
+        Client::connect_stream(&discovery.endpoint, Some(discovery.host_epoch), stream).await?,
     ))
 }
 
-fn absent(error: &HostError) -> bool {
-    error.downcast_ref::<io::Error>().is_some_and(|error| {
-        matches!(
-            error.kind(),
-            io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
-        )
-    })
+fn absent(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+    )
 }
