@@ -47,6 +47,7 @@ interface State extends PageState {
     append: boolean;
   } | null;
   search: Search;
+  created?: ConnectionVersionBasis;
   detailRoute: 'credential' | 'form';
   route: 'catalog' | 'credential' | 'form';
   detail: Extract<SettingsConnectionDetail, { kind: 'ready' }> | null;
@@ -66,7 +67,7 @@ function request(
   basis: ConnectionVersionBasis | null = null,
   append = false,
 ): Action[] {
-  if (state.pending) return [];
+  if (state.pending && !(kind === 'detail' && state.pending.kind === 'page')) return [];
   const key = 'connections-' + ++state.serial;
   state.pending = { key, kind, basis, append };
   state.failed = false;
@@ -112,8 +113,8 @@ function frame<N extends Node>(
     const id = connection.basis.connectionId;
     const selected = state.selected === id;
     const actions = [
-      ui.button('open-' + at, text.credentials, !!state.pending),
-      ui.button('edit-' + at, text.editConnection, !!state.pending),
+      ui.button('open-' + at, text.signInConnection, state.pending?.kind === 'detail'),
+      ui.button('edit-' + at, text.editConnection, state.pending?.kind === 'detail'),
     ];
     if (ui.item) {
       const identity =
@@ -142,7 +143,7 @@ function frame<N extends Node>(
           { gap: 0 },
         ),
         selected,
-        !!state.pending,
+        state.pending?.kind === 'detail',
         { followFocus: true, submit: true },
       );
       return connection.editable
@@ -239,8 +240,14 @@ function frame<N extends Node>(
                 ui.button(
                   'open-' +
                     state.connections.findIndex((c) => c.basis.connectionId === state.selected),
-                  text.credentials,
-                  !!state.pending,
+                  text.signInConnection,
+                  state.pending?.kind === 'detail',
+                ),
+                ui.button(
+                  'edit-' +
+                    state.connections.findIndex((c) => c.basis.connectionId === state.selected),
+                  text.editConnection,
+                  state.pending?.kind === 'detail',
                 ),
               ]
             : []),
@@ -286,7 +293,12 @@ function frame<N extends Node>(
             presentation.slot(
               'form-' + state.mount,
               'form',
-              { ...props, catalogRevision: state.catalogRevision!, connection: state.detail },
+              {
+                ...props,
+                catalogRevision: state.catalogRevision!,
+                connection: state.detail,
+                existingSlugs: state.connections.map((c) => c.slug),
+              },
               { closed: 'closed', changed: 'changed', chrome: 'chrome' },
             ),
           ]
@@ -412,11 +424,17 @@ export function connections<N extends Node>(
           if (input.name === 'chrome') {
             state.pageChrome = input.event as NonNullable<State['pageChrome']>;
             events.push({ name: 'chrome', value: input.event });
-          } else if (input.name === 'changed') events.push({ name: 'changed', value: {} });
-          else if (input.name === 'closed') {
+          } else if (input.name === 'changed') {
+            state.created = (input.event as { created?: ConnectionVersionBasis }).created;
+            events.push({ name: 'changed', value: {} });
+          } else if (input.name === 'closed') {
             state.detail = null;
             state.route = 'catalog';
-            actions.push(...page(state));
+            if (state.created) {
+              state.detailRoute = 'credential';
+              actions.push(...request(state, 'detail', state.created, state.created));
+              state.created = undefined;
+            } else actions.push(...page(state));
           }
         } else if (input.kind === 'raw' && state.route === 'catalog') {
           if (input.key === 'back') events.push({ name: 'closed', value: {} });
@@ -425,7 +443,7 @@ export function connections<N extends Node>(
             state.detail = null;
             state.route = 'form';
             state.mount++;
-          } else if (!state.pending && input.key.startsWith('select-')) {
+          } else if (state.pending?.kind !== 'detail' && input.key.startsWith('select-')) {
             const connection = state.connections.find(
               (connection) => connection.basis.connectionId === input.key.slice(7),
             );
@@ -435,11 +453,14 @@ export function connections<N extends Node>(
             ) {
               state.selected = connection.basis.connectionId;
               if ((input.event as { kind?: string }).kind === 'submit' && connection.editable) {
-                state.detailRoute = 'form';
+                state.detailRoute = 'credential';
                 actions.push(...request(state, 'detail', connection.basis, connection.basis));
               }
             }
-          } else if (!state.pending && /^(open|edit)-(0|[1-9][0-9]*)$/.test(input.key)) {
+          } else if (
+            state.pending?.kind !== 'detail' &&
+            /^(open|edit)-(0|[1-9][0-9]*)$/.test(input.key)
+          ) {
             const connection = state.connections[Number(input.key.slice(5))];
             if (connection?.editable) {
               state.detailRoute = input.key.startsWith('edit-') ? 'form' : 'credential';

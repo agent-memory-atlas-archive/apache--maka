@@ -54,6 +54,7 @@ import {
 
 type Request =
   | { kind: 'status' }
+  | { kind: 'setupTarget'; basis: ConnectionVersionBasis; retried: boolean }
   | { kind: 'provider' }
   | { kind: 'reviewConnection'; basis: ConnectionVersionBasis; retried: boolean }
   | { kind: 'reviewStatus'; target: ConnectionCredentialTarget }
@@ -62,7 +63,7 @@ type Request =
   | { kind: 'history'; after: number }
   | { kind: 'earlier'; reference: RecoveryRef; cursor: number };
 interface Current {
-  kind: 'save' | 'delete' | 'login';
+  kind: 'save' | 'delete' | 'login' | 'discover';
   captured: EditorObservation | null;
   reference: RecoveryRef | null;
 }
@@ -91,6 +92,8 @@ interface State extends PageState {
   pending: Record<string, Request>;
   current: Current | null;
   finished: boolean;
+  setup: 'idle' | 'loading' | 'ready' | 'failed' | 'conflict';
+  advanced: boolean;
   notice: keyof Copy | null;
   confirmation: 'leave' | 'remove' | 'rebase' | null;
   historyOpen: boolean;
@@ -129,7 +132,7 @@ function busy(state: State) {
     !!state.current ||
     !!state.command ||
     Object.values(state.pending).some((r) =>
-      ['status', 'provider', 'reviewConnection', 'reviewStatus'].includes(r.kind),
+      ['status', 'provider', 'reviewConnection', 'reviewStatus', 'setupTarget'].includes(r.kind),
     )
   );
 }
@@ -181,6 +184,7 @@ function save(state: State, props: CredentialProps, actions: Action[]) {
     state.notice = 'keyTooLarge';
     return;
   }
+  state.setup = 'idle';
   state.current = { kind: 'save', captured, reference: null };
   state.notice = null;
   request(
@@ -213,6 +217,7 @@ function login(state: State, props: CredentialProps, method: string, actions: Ac
     !state.provider?.descriptor.authentication.some((m) => m.id === method && m.interactive)
   )
     return;
+  state.setup = 'idle';
   state.current = { kind: 'login', captured: null, reference: null };
   state.loginPrompt = null;
   state.loginMessage = '';
@@ -224,9 +229,40 @@ function login(state: State, props: CredentialProps, method: string, actions: Ac
     method,
   });
 }
+function setup(state: State, actions: Action[]) {
+  if (busy(state) || state.confirmation) return;
+  state.setup = 'loading';
+  state.notice = 'loadingConnectionModels';
+  const basis = { connectionId: state.target.connectionId, revision: state.target.revision };
+  request(
+    state,
+    actions,
+    { kind: 'setupTarget', basis, retried: false },
+    'settings',
+    'connection',
+    basis,
+  );
+}
 function known(state: State, value: unknown, events: Emission[]) {
   const current = state.current!;
-  if (current.kind === 'save' || current.kind === 'login') {
+  if (current.kind === 'discover') {
+    const result = value as
+      | { kind: 'ready'; connection: ConnectionVersionBasis }
+      | { kind: 'failed' | 'superseded' };
+    if (
+      result.kind === 'ready' &&
+      'connection' in result &&
+      result.connection.connectionId === state.target.connectionId
+    ) {
+      state.setup = 'ready';
+      state.notice = 'connectionReady';
+      state.finished = true;
+      events.push({ name: 'changed', value: {} });
+    } else if (result.kind === 'failed' || result.kind === 'superseded') {
+      state.setup = result.kind === 'failed' ? 'failed' : 'conflict';
+      state.notice = result.kind === 'failed' ? 'connectionModelsFailed' : 'keyConflict';
+    } else return false;
+  } else if (current.kind === 'save' || current.kind === 'login') {
     const result = value as SettingsCredentialLoginResult;
     if (result.kind === 'failed' && current.kind === 'login') {
       state.notice = {
@@ -248,6 +284,7 @@ function known(state: State, value: unknown, events: Emission[]) {
         !sameValue(result.connection.provider, state.target.provider)
       )
         return false;
+      state.status = state.status ? { ...state.status, configured: true } : null;
       state.finished = true; // Saving changes connection revision; never guess its next basis.
       state.notice = current.kind === 'login' ? 'loginSaved' : 'keySaved';
       state.loginPrompt = null;
@@ -357,7 +394,7 @@ function frame<N extends Node>(
   const form = ui.box(
     'credential-form',
     [
-      ...pageHeader(presentation, state, props, events, text.credentials),
+      ...pageHeader(presentation, state, props, events, text.signInConnection),
       ui.text(
         'connection',
         compactLabel(
@@ -391,7 +428,10 @@ function frame<N extends Node>(
             { changed: 'changed', submitted: 'submitted' },
           ),
         ],
-        { visible: apiKey, style: { width: fill, height: pixels(44), shrink: 0 } },
+        {
+          visible: apiKey && !state.finished,
+          style: { width: fill, height: pixels(44), shrink: 0 },
+        },
       ),
       ...(apiKey && target === 'desktop'
         ? [ui.text('help', text.keyHelp, 13, props.theme.muted)]
@@ -404,25 +444,61 @@ function frame<N extends Node>(
         : []),
       ...(state.loginPrompt
         ? [
-            ui.text('login-help', text.loginInstructions, 14),
-            ui.button('login-url', state.loginPrompt.url, false, false, {}, state.loginPrompt.url),
-            ui.button(
-              'login-code',
-              state.loginPrompt.userCode,
-              false,
-              true,
-              {},
-              state.loginPrompt.userCode,
+            ui.box(
+              'login-prompt',
+              [
+                ui.text('login-help', text.loginInstructions, 14),
+                ui.box(
+                  'login-link-row',
+                  [
+                    ui.text('login-address', state.loginPrompt.url, 14),
+                    ui.button(
+                      'login-url',
+                      text.copyLoginLink,
+                      false,
+                      false,
+                      {},
+                      state.loginPrompt.url,
+                    ),
+                  ],
+                  { row: true, gap: 1, terminal: { wrap: true }, style: { wrap: true } },
+                ),
+                ui.box(
+                  'login-code-row',
+                  [
+                    ui.text('login-device-code', state.loginPrompt.userCode, 18),
+                    ui.button(
+                      'login-code',
+                      text.copyLoginCode,
+                      false,
+                      true,
+                      {},
+                      state.loginPrompt.userCode,
+                    ),
+                  ],
+                  { row: true, gap: 1, terminal: { wrap: true }, style: { wrap: true } },
+                ),
+              ],
+              { gap: 1 },
             ),
-            ui.text('login-copy-help', text.loginCopyHelp, 12, props.theme.muted),
           ]
         : []),
       ui.box(
         'actions',
         [
-          ...(apiKey ? [ui.button('save', text.saveKey, !canSave(state, props), true)] : []),
+          ...(apiKey && !state.finished
+            ? [ui.button('save', text.saveKey, !canSave(state, props), true)]
+            : []),
+          ...(state.setup === 'ready' ? [ui.button('done', text.setupDone, false, true)] : []),
+          ...(state.setup === 'failed' ||
+          ((state.status?.configured || state.provider?.descriptor.anonymous) &&
+            state.setup === 'idle')
+            ? [ui.button('setup-models', text.loadConnectionModels, busy(state), true)]
+            : []),
           ...(state.provider?.descriptor.authentication
-            .filter((method) => method.interactive)
+            .filter(
+              (method) => method.interactive && !state.finished && state.current?.kind !== 'login',
+            )
             .map((method) =>
               ui.button(
                 'login-' + method.id,
@@ -441,7 +517,7 @@ function frame<N extends Node>(
                 ),
               ]
             : []),
-          ...(basis(state.status)
+          ...(state.advanced && basis(state.status)
             ? [
                 ui.button(
                   'remove',
@@ -459,7 +535,9 @@ function frame<N extends Node>(
                 ),
               ]
             : []),
-          ...(state.finished || !sameValue(state.openedTarget, props.target)
+          ...(state.setup === 'conflict' ||
+          (state.finished && state.setup === 'idle') ||
+          !sameValue(state.openedTarget, props.target)
             ? [ui.button('review', text.reviewConnection, !canReview)]
             : []),
         ],
@@ -505,13 +583,20 @@ function frame<N extends Node>(
             ),
           ]
         : []),
-      ui.button(
-        'history',
-        text.earlierOperations,
-        false,
-        false,
-        target === 'tui' ? { background: 0, align: 'start' } : {},
-      ),
+      ...(!state.current
+        ? [ui.button('advanced', state.advanced ? text.basicSettings : text.advancedSettings)]
+        : []),
+      ...(state.advanced
+        ? [
+            ui.button(
+              'history',
+              text.earlierOperations,
+              false,
+              false,
+              target === 'tui' ? { background: 0, align: 'start' } : {},
+            ),
+          ]
+        : []),
     ],
     {
       visible: !state.historyOpen && state.confirmation !== 'rebase',
@@ -691,6 +776,8 @@ export function credential<N extends Node>(
           pending: {},
           current: null,
           finished: false,
+          setup: 'idle',
+          advanced: false,
           notice: null,
           confirmation: null,
           historyOpen: false,
@@ -739,8 +826,10 @@ export function credential<N extends Node>(
           if (r.kind === 'mutate') {
             if (result.status === 'operation') receipt(state, result.reply, events);
             else if (result.status === 'not_accepted') {
+              const discovering = state.current?.kind === 'discover';
               state.current = null;
-              state.notice = 'keyRejected';
+              if (discovering) state.setup = 'failed';
+              state.notice = discovering ? 'connectionModelsFailed' : 'keyRejected';
             } else state.notice = 'keyUnknown';
           } else if (r.kind === 'receipt') {
             if (
@@ -749,6 +838,36 @@ export function credential<N extends Node>(
             )
               receipt(state, result.value as OperationReply, events);
             else state.notice = 'keyUnknown';
+          } else if (r.kind === 'setupTarget') {
+            const detail =
+              result.status === 'succeeded' ? (result.value as SettingsConnectionDetail) : null;
+            if (
+              detail?.kind === 'stale' &&
+              detail.actual?.connectionId === state.target.connectionId &&
+              !r.retried
+            ) {
+              request(
+                state,
+                actions,
+                { kind: 'setupTarget', basis: detail.actual, retried: true },
+                'settings',
+                'connection',
+                detail.actual,
+              );
+            } else if (
+              detail?.kind === 'ready' &&
+              detail.target.connectionId === r.basis.connectionId &&
+              detail.target.revision === r.basis.revision &&
+              sameValue(detail.target.provider, state.target.provider) &&
+              sameValue(detail.target.configuration, state.target.configuration)
+            ) {
+              state.target = detail.target;
+              state.current = { kind: 'discover', captured: null, reference: null };
+              request(state, actions, { kind: 'mutate' }, 'setup', 'discoverModels', detail.target);
+            } else {
+              state.setup = detail ? 'conflict' : 'failed';
+              state.notice = detail ? 'keyConflict' : 'connectionModelsFailed';
+            }
           } else if (r.kind === 'reviewConnection') {
             const detail =
               result.status === 'succeeded' ? (result.value as SettingsConnectionDetail) : null;
@@ -872,6 +991,10 @@ export function credential<N extends Node>(
               'provider',
               state.target.provider,
             );
+          else if (input.key === 'setup-models') setup(state, actions);
+          else if (input.key === 'done' && state.setup === 'ready')
+            events.push({ name: 'closed', value: {} });
+          else if (input.key === 'advanced') state.advanced = !state.advanced;
           else if (input.key === 'save') save(state, props, actions);
           else if (input.key === 'refresh-status') readStatus(state, actions);
           else if (input.key === 'review') review(state, props, actions);
@@ -908,6 +1031,7 @@ export function credential<N extends Node>(
               state.openedTarget = props.target;
               state.status = state.reviewed.status;
               state.finished = false;
+              state.setup = 'idle';
               state.notice = null;
             }
             state.reviewed = null;
@@ -963,6 +1087,16 @@ export function credential<N extends Node>(
                 entry.reference,
               );
           }
+        }
+        if (
+          state.setup === 'idle' &&
+          (['loginSaved', 'keySaved'].includes(state.notice ?? '') ||
+            state.provider?.descriptor.anonymous)
+        )
+          setup(state, actions);
+        if (state.setup === 'failed' && state.finished && !busy(state)) {
+          state.finished = false;
+          readStatus(state, actions);
         }
         const out = frame(presentation, state, props, actions, events);
         out.cancel = cancel;

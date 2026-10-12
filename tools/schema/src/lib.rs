@@ -327,7 +327,7 @@ pub fn catalog() -> Value {
     ];
     // The union makes actual ABI types reachable to the generator. It is not
     // an additional message format or admission contract.
-    let contracts = json!({
+    let mut contracts = json!({
         "markdown": markdown::markdown_contract(),
         "markdownText": markdown::text_contract(),
         "diff": maka_ui_runtime::diff::diff_contract(),
@@ -369,7 +369,10 @@ pub fn catalog() -> Value {
         "workspaceWeb": maka_web_api::contract(),
         "workspaceJev": maka_workspace_api::jev::contract(),
     });
-    let native = json!({
+    contracts["settingsSetup"] =
+        serde_json::to_value(maka_settings_native::contract::setup_contract())
+            .expect("setup contract");
+    let mut native = json!({
         "label": maka_ui_runtime::label_native(),
         "locale": maka_ui_runtime::locale::native(),
         "textReader": maka_ui_runtime::text::native(),
@@ -412,6 +415,8 @@ pub fn catalog() -> Value {
         "settings": maka_settings_native::native(),
         "settingsAuthentication": maka_settings_native::native_authentication(),
     });
+    native["settingsSetup"] =
+        serde_json::to_value(maka_settings_native::native_setup()).expect("setup native");
     json!({
         "schema": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",

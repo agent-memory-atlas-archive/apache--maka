@@ -1239,6 +1239,7 @@ export interface CredentialProps extends ConnectionsProps {
 }
 export interface ConnectionFormProps extends ConnectionsProps {
   catalogRevision: number;
+  existingSlugs?: string[];
   connection: Extract<SettingsConnectionDetail, { kind: 'ready' }> | null;
 }
 export const connectionFormContract: Contract = {
@@ -1248,21 +1249,29 @@ export const connectionFormContract: Contract = {
   interface: {
     kind: 'component',
     props: {
-      ...pageProps({
-        theme: { $ref: '#/$defs/Theme' },
-        locale,
-        catalogRevision: { type: 'integer', minimum: 0 },
-        connection: {
-          anyOf: [native.settings.interface.methods.connection.output.oneOf[1], { type: 'null' }],
+      ...pageProps(
+        {
+          existingSlugs: { type: 'array', items: string },
+          theme: { $ref: '#/$defs/Theme' },
+          locale,
+          catalogRevision: { type: 'integer', minimum: 0 },
+          connection: {
+            anyOf: [native.settings.interface.methods.connection.output.oneOf[1], { type: 'null' }],
+          },
         },
-      }),
+        ['theme', 'locale', 'catalogRevision', 'connection'],
+      ),
       $defs: {
         ...defs,
         ...native.settings.interface.methods.connection.output.$defs,
         Theme: themeSchema,
       },
     },
-    events: { chrome: pageChrome, closed: object({}), changed: object({}) },
+    events: {
+      chrome: pageChrome,
+      closed: object({}),
+      changed: object({ created: native.settings.interface.methods.connection.input }, []),
+    },
     captures: {},
   },
 };

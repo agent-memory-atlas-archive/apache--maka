@@ -65,6 +65,7 @@ interface State {
   pageQuery: string | null;
   catalogRevision: number | null;
   next: SettingsModelCursor | null;
+  pageStarts: SettingsModelCursor[];
   failed: boolean;
 }
 function supports(selection: SelectedModel) {
@@ -206,10 +207,14 @@ function read(state: State, more = false): Action[] {
   if (dirty(state)) return capture(state);
   return readPage(state, more);
 }
-function readPage(state: State, more = false): Action[] {
+function readPage(state: State, more = false, previous = false): Action[] {
   if (state.pending) return [];
+  if (previous) state.pageStarts.pop();
+  else if (more && state.next) state.pageStarts.push(state.next);
+  else state.pageStarts = [];
+  const cursor = state.pageStarts.at(-1);
   const key = `models-${++state.serial}`;
-  state.pending = { kind: 'page', key, query: state.query, first: !more };
+  state.pending = { kind: 'page', key, query: state.query, first: !cursor };
   state.failed = false;
   return [
     {
@@ -218,8 +223,8 @@ function readPage(state: State, more = false): Action[] {
       member: 0,
       method: 'models',
       input:
-        more && state.next && state.catalogRevision !== null
-          ? { kind: 'continue', revision: state.catalogRevision, cursor: state.next }
+        cursor && state.catalogRevision !== null
+          ? { kind: 'continue', revision: state.catalogRevision, cursor }
           : { kind: 'start', query: state.query },
       resources: {},
     },
@@ -319,7 +324,12 @@ function frame<N extends Node>(
   const controls = ui.box(
     'model-actions',
     [
-      ...(state.next ? [ui.button('more', text.moreModels, !!state.pending || props.busy)] : []),
+      ...(state.pageStarts.length
+        ? [ui.button('previous-page', text.previousModels, !editableChoices(state, props))]
+        : []),
+      ...(state.next
+        ? [ui.button('more', text.nextModelPage, !editableChoices(state, props))]
+        : []),
       ui.button(
         'refresh',
         target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.refreshModels,
@@ -610,6 +620,7 @@ export function models<N extends Node>(
         pageQuery: null,
         catalogRevision: null,
         next: null,
+        pageStarts: [],
         failed: false,
       };
       return frame(presentation, state, props, read(state));
@@ -637,6 +648,7 @@ export function models<N extends Node>(
           catalogRevision: null,
           defaultModel: null,
           next: null,
+          pageStarts: [],
         };
         return frame(
           presentation,
@@ -846,7 +858,13 @@ export function models<N extends Node>(
             }
           } else if (input.key === 'default-refresh') actions.push(...readPage(state));
           else if (input.key === 'refresh') actions.push(...read(state));
-          else if (input.key === 'more' && !state.pending) {
+          else if (
+            input.key === 'previous-page' &&
+            editableChoices(state, props) &&
+            state.pageStarts.length
+          ) {
+            actions.push(...readPage(state, false, true));
+          } else if (input.key === 'more' && !state.pending) {
             if (state.next) actions.push(...read(state, true));
           } else if (
             presentation.target === 'desktop' &&

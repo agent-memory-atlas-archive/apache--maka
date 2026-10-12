@@ -43,7 +43,7 @@ type State = {
   serial: number;
   request: Request | null;
   requestId: string;
-  current: number;
+  invalidField: number | null;
   drafts: Draft[];
   pending: Record<string, Read>;
   reads: Read[];
@@ -122,6 +122,7 @@ function finish(state: State, props: QuestionEditorProps, events: Emission[]) {
     ) > 8192
   ) {
     state.notice = 'formInvalid';
+    state.invalidField = null;
     return;
   }
   events.push({
@@ -140,18 +141,19 @@ function submit(state: State, props: QuestionEditorProps, actions: Action[], eve
       const captured = draft.observation;
       if (!captured || captured.snapshot.marked || captured.snapshot.text.bytes > 8192) {
         state.notice = 'formInvalid';
-        state.current = index;
+        state.invalidField = index;
         return;
       }
       reads.push({ index, captured });
     } else if (valid(field, draft.value)) values[field.name] = draft.value;
     else {
       state.notice = 'formInvalid';
-      state.current = index;
+      state.invalidField = index;
       return;
     }
   }
   state.notice = null;
+  state.invalidField = null;
   state.submission = values;
   state.reads = reads;
   readNext(state, actions);
@@ -208,7 +210,17 @@ export function formEditor<N extends Node>(
             { row: true, gap: 1, terminal: { wrap: true }, style: { wrap: true } },
           ),
           ...(props.status ? [ui.text('status', props.status, 13, props.theme.muted)] : []),
-          ...(state.notice ? [ui.text('notice', text[state.notice], 13, props.theme.muted)] : []),
+          ...(state.notice
+            ? [
+                ui.text(
+                  'notice',
+                  text[state.notice] +
+                    (state.invalidField !== null ? ': ' + fields[state.invalidField].label : ''),
+                  13,
+                  props.theme.muted,
+                ),
+              ]
+            : []),
           ...(outcome
             ? [
                 ui.text(
@@ -225,19 +237,6 @@ export function formEditor<N extends Node>(
                 ),
               ]
             : []),
-          ui.box(
-            'tabs',
-            fields.map((_, index) =>
-              ui.button(`page-${index}`, `${index + 1}`, !props.open, state.current === index),
-            ),
-            {
-              row: true,
-              gap: 1,
-              terminal: { wrap: true },
-              style: { wrap: true },
-              focusGroup: true,
-            },
-          ),
           ui.box(
             'pages',
             [
@@ -269,7 +268,6 @@ export function formEditor<N extends Node>(
                   );
                 const limits = textual(field)
                   ? [
-                      field.kind,
                       ...('minLength' in field && field.minLength !== undefined
                         ? [`≥ ${field.minLength}`]
                         : []),
@@ -371,7 +369,6 @@ export function formEditor<N extends Node>(
                     ),
                   );
                 return ui.box(`page-content-${index}`, children, {
-                  visible: state.current === index,
                   gap: 1,
                   style: { width: fill },
                 });
@@ -414,7 +411,7 @@ export function formEditor<N extends Node>(
           serial: 0,
           request,
           requestId: props.record.requestId,
-          current: 0,
+          invalidField: null,
           drafts: (request?.fields ?? []).map((f) => ({
             included: f.required || f.default !== undefined,
             value: f.default ?? (f.kind === 'multi_select' ? [] : null),
@@ -481,7 +478,7 @@ export function formEditor<N extends Node>(
               state.pending = {};
               state.reads = [];
               state.notice = 'formInvalid';
-              state.current = read.index;
+              state.invalidField = read.index;
             } else {
               Object.defineProperty(state.submission, field.name, {
                 value,
@@ -502,8 +499,6 @@ export function formEditor<N extends Node>(
           events.push({ name: 'closed', value: {} });
         } else if (input.key === 'check' && !props.checking)
           events.push({ name: 'check', value: {} });
-        else if (/^page-\d+$/.test(input.key) && state.request?.fields[Number(input.key.slice(5))])
-          state.current = Number(input.key.slice(5));
         else if (available(state, props) && !state.submission) {
           const include = /^include-(\d+)$/.exec(input.key),
             boolean = /^boolean-(\d+)-(true|false)$/.exec(input.key),

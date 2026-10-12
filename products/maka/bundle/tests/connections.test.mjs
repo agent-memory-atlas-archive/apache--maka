@@ -193,6 +193,208 @@ for (const platform of ['tui', 'desktop']) {
     assert.deepEqual(c.action('connections').input, { kind: 'start' });
     assert.equal(c.state.connections.length, 0);
   });
+  test(`${platform} new connection goes directly to sign-in and rows expose it during paging`, async () => {
+    const c = await client('connections', platform);
+    c.reply(c.action('connections'), {
+      kind: 'ready',
+      revision: 3,
+      connections: [],
+      next: null,
+      defaultTarget: null,
+    });
+    c.raw('create');
+    c.event({
+      kind: 'component',
+      child: 'form-1',
+      name: 'changed',
+      event: { created: { connectionId: target.connectionId, revision: 7 } },
+    });
+    c.event({ kind: 'component', child: 'form-1', name: 'closed', event: {} });
+    assert.deepEqual(c.action('connection').input, {
+      connectionId: target.connectionId,
+      revision: 7,
+    });
+    c.reply(c.action('connection'), {
+      kind: 'ready',
+      target,
+      name: 'ChatGPT',
+      enabled: true,
+      enabledModelCount: 0,
+    });
+    assert.equal(c.state.route, 'credential');
+    c.event({ kind: 'component', child: 'credential-2', name: 'closed', event: {} });
+    c.reply(c.action('connections'), {
+      kind: 'ready',
+      revision: 4,
+      connections: [
+        {
+          basis: { connectionId: target.connectionId, revision: 7 },
+          name: 'ChatGPT',
+          slug: 'chatgpt',
+          provider: identity,
+          editable: true,
+          enabled: true,
+          enabledModelCount: 0,
+        },
+      ],
+      next: 16,
+      defaultTarget: null,
+    });
+    const background = c.action('connections');
+    c.raw('select-' + target.connectionId);
+    const detail = c.action('connection');
+    assert.ok(detail, 'loaded rows remain actionable during the next page');
+    c.reply(background, { kind: 'changed', revision: 5 });
+    c.reply(detail, {
+      kind: 'ready',
+      target,
+      name: 'ChatGPT',
+      enabled: true,
+      enabledModelCount: 0,
+    });
+    assert.equal(c.state.route, 'credential');
+  });
+  test(`${platform} provider selection generates an unused ID and leaves technical fields optional`, async () => {
+    const c = await client('connection-form', platform, {
+      existingSlugs: ['chatgpt', 'chatgpt-2'],
+    });
+    c.reply(c.action('providers'), { providers: [provider], next: null });
+    c.raw('provider-0');
+    assert.equal(c.state.defaultSlug, 'chatgpt-3');
+    assert.equal(c.state.fields.name.enabled, true);
+    assert.equal(c.state.fields.slug.enabled, true);
+    assert.equal(c.state.fields.models.enabled, false);
+    assert.equal(c.state.advanced, false);
+  });
+  test(`${platform} API key save survives discovery failure and retries only model loading`, async () => {
+    const apiProvider = {
+      ...provider,
+      descriptor: {
+        ...provider.descriptor,
+        authentication: [{ id: 'api-key', interactive: false, label: 'API key', inputSchema: {} }],
+      },
+    };
+    const c = await client('credential', platform, { target });
+    const status = c.action('credentialStatus'),
+      definition = c.action('provider');
+    const locator = { scope: 'connection', connectionId: target.connectionId, kind: 'provider' };
+    c.reply(definition, apiProvider);
+    c.reply(status, {
+      kind: 'status',
+      status: { locator, configured: false, credentialId: null, revision: null },
+    });
+    c.query('secret', 1, 'test-secret');
+    c.raw('save');
+    const save = c.action('saveCredential');
+    const settle = (action, value) =>
+      c.event({
+        kind: 'action',
+        key: action.key,
+        event: {
+          status: 'operation',
+          reply: {
+            reference: { operation: action.key },
+            receipt: {
+              kind: 'recorded',
+              outcome: { kind: 'returned', value },
+              cleanup: { kind: 'confirmed' },
+            },
+          },
+        },
+      });
+    settle(save, {
+      kind: 'saved',
+      connection: { connectionId: target.connectionId, slug: target.slug, provider: identity },
+    });
+    const reset = c.state.command;
+    c.event({
+      kind: 'component',
+      child: 'secret',
+      name: 'changed',
+      event: {
+        revision: 2,
+        snapshot: { text: { owner: 'secret', revision: 2, bytes: 0 }, marked: null },
+        receipt: { owner: reset.owner, sequence: reset.sequence, outcome: { status: 'applied' } },
+      },
+    });
+    const next = { ...target, revision: target.revision + 1 };
+    c.reply(c.action('connection'), {
+      kind: 'stale',
+      actual: { connectionId: target.connectionId, revision: next.revision },
+    });
+    c.reply(c.action('connection'), {
+      kind: 'ready',
+      target: next,
+      name: 'ChatGPT',
+      enabled: true,
+      enabledModelCount: 0,
+    });
+    settle(c.action('discoverModels'), { kind: 'failed' });
+    assert.equal(c.state.notice, 'connectionModelsFailed');
+    c.reply(c.action('credentialStatus'), {
+      kind: 'status',
+      status: { locator, configured: true, credentialId: 'saved-key', revision: 1 },
+    });
+    c.raw('setup-models');
+    c.reply(c.action('connection'), {
+      kind: 'ready',
+      target: next,
+      name: 'ChatGPT',
+      enabled: true,
+      enabledModelCount: 0,
+    });
+    assert.equal(c.action('saveCredential'), undefined);
+    settle(c.action('discoverModels'), {
+      kind: 'ready',
+      connection: { connectionId: target.connectionId, revision: next.revision + 1 },
+    });
+    c.raw('done');
+    assert.ok(c.out.events.some((e) => e.name === 'closed'));
+  });
+  test(`${platform} model pages can return to earlier choices`, async () => {
+    const c = await client('models', platform, {
+      catalogEpoch: 0,
+      openRequest: null,
+      selection: null,
+      busy: false,
+    });
+    const choice = (id) => ({
+      selection: { connectionId: 'a', revision: 1, modelId: id },
+      connectionName: 'A',
+      label: id,
+      thinkingLevels: [],
+      defaultThinkingLevel: null,
+    });
+    const cursor = { query: '', connection: 0, model: 16 };
+    c.reply(c.action('models'), {
+      kind: 'ready',
+      revision: 3,
+      choices: [choice('first')],
+      defaultModel: { kind: 'none' },
+      next: cursor,
+    });
+    c.query('model-query', 1, '');
+    c.raw('toggle');
+    c.raw('more');
+    assert.deepEqual(c.action('models').input, { kind: 'continue', revision: 3, cursor });
+    c.reply(c.action('models'), {
+      kind: 'ready',
+      revision: 3,
+      choices: [choice('second')],
+      defaultModel: { kind: 'none' },
+      next: null,
+    });
+    c.raw('previous-page');
+    assert.deepEqual(c.action('models').input, { kind: 'start', query: '' });
+    c.reply(c.action('models'), {
+      kind: 'ready',
+      revision: 3,
+      choices: [choice('first')],
+      defaultModel: { kind: 'none' },
+      next: cursor,
+    });
+    assert.equal(c.state.choices[0].label, 'first');
+  });
   test(`${platform} ChatGPT login retains progress, cancellation and original receipt`, async () => {
     const c = await client('credential', platform, { target });
     const status = c.action('credentialStatus'),
@@ -277,7 +479,49 @@ for (const platform of ['tui', 'desktop']) {
         },
       },
     });
-    assert.equal(c.state.notice, 'loginSaved');
+    assert.equal(c.state.notice, 'loadingConnectionModels');
+    assert.ok(c.action('connection'));
+    const afterLogin = { ...target, revision: target.revision + 1 };
+    c.reply(c.action('connection'), {
+      kind: 'stale',
+      actual: { connectionId: target.connectionId, revision: afterLogin.revision },
+    });
+    c.reply(c.action('connection'), {
+      kind: 'ready',
+      target: afterLogin,
+      name: 'ChatGPT',
+      enabled: true,
+      enabledModelCount: 0,
+    });
+    const discovery = c.action('discoverModels');
+    assert.equal(discovery.binding, 'setup');
+    assert.deepEqual(discovery.input, afterLogin);
+    c.event({
+      kind: 'action',
+      key: discovery.key,
+      event: {
+        status: 'operation',
+        reply: {
+          reference: { operation: 'discover' },
+          receipt: {
+            kind: 'recorded',
+            outcome: {
+              kind: 'returned',
+              value: {
+                kind: 'ready',
+                connection: {
+                  connectionId: target.connectionId,
+                  revision: afterLogin.revision + 1,
+                },
+              },
+            },
+            cleanup: { kind: 'confirmed' },
+          },
+        },
+      },
+    });
+    assert.equal(c.state.notice, 'connectionReady');
+    assert.equal(c.state.setup, 'ready');
     assert.equal(c.state.finished, true);
     assert.equal(c.state.command, null);
     assert.equal(

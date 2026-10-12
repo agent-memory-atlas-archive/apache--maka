@@ -44,6 +44,7 @@ export default {
           skills: { contract: sdk.contracts.skillLibrary, cardinality: { kind: 'optional' } },
           settings: one(sdk.contracts.settings),
           authentication: one(sdk.contracts.settingsAuthentication),
+          setup: one(sdk.contracts.settingsSetup),
         },
       },
     },

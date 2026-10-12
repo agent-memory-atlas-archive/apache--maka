@@ -36,7 +36,7 @@ import {
 } from '../../shared/view.js';
 import { matchesProvider } from '../search.js';
 import { busy, canRemove, canSave, fresh, sameConnection } from './operations.js';
-import { formPanes, names, type FieldName, type State } from './state.js';
+import { advancedFields, names, type FieldName, type State } from './state.js';
 
 export function fieldLabel(name: FieldName, text: Copy) {
   return {
@@ -64,8 +64,7 @@ export function frame<N extends Node>(
   const loadingProviders = Object.values(state.pending).some((r) => r.kind === 'providers');
   const identity: Identity | undefined =
     state.baseline?.target.provider ?? state.provider?.identity;
-  const panes = formPanes(state);
-  const currentPane = panes[Math.min(state.pane, panes.length - 1)];
+
   const form = ui.box(
     'form',
     [
@@ -78,44 +77,17 @@ export function frame<N extends Node>(
         'form-back',
         false,
       ),
-      ui.box(
-        'form-actions',
-        [
-          ui.button('form-save', text.saveConnection, !canSave(state, props), true),
-          ...(state.current?.reference
-            ? [
-                ui.button(
-                  'form-check',
-                  text.check,
-                  Object.values(state.pending).some(
-                    (r) => r.kind === 'receipt' || r.kind === 'mutate',
-                  ),
-                ),
-              ]
-            : []),
-          ...(state.conflict || !fresh(state, props)
-            ? [
-                ui.button(
-                  'form-review',
-                  text.reviewConnection,
-                  locked || !sameConnection(state, props),
-                ),
-              ]
-            : []),
-          ui.button(
-            'form-history',
-            text.earlierConnectionOperations,
-            false,
-            false,
-            target === 'tui' ? { background: 0, align: 'start' } : {},
-          ),
-        ],
-        { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
-      ),
-      ...(state.baseline
-        ? [ui.button('form-remove', text.removeConnection, !canRemove(state, props))]
+      ...(state.notice
+        ? [
+            ui.text(
+              'form-notice',
+              text[state.notice] +
+                (state.invalidField ? ': ' + fieldLabel(state.invalidField, text) : ''),
+              13,
+              props.theme.muted,
+            ),
+          ]
         : []),
-      ...(state.notice ? [ui.text('form-notice', text[state.notice], 13, props.theme.muted)] : []),
       ...(!fresh(state, props)
         ? [ui.text('form-target-changed', text.connectionChanged, 13, props.theme.muted)]
         : []),
@@ -224,34 +196,24 @@ export function frame<N extends Node>(
             ui.box(
               'provider-summary',
               [
+                ...(!state.baseline
+                  ? [
+                      ui.button(
+                        'change-provider',
+                        text.changeProvider,
+                        locked || Object.values(state.fields).some((field) => !!field.command),
+                      ),
+                    ]
+                  : []),
                 ui.text(
                   'provider-identity',
-                  compactLabel(identity?.name ?? '', 36),
+                  compactLabel(state.provider?.descriptor.label ?? identity?.name ?? '', 36),
                   13,
                   props.theme.muted,
-                ),
-                ui.button(
-                  'connection-enabled',
-                  state.enabled ? text.connectionEnabled : text.connectionDisabled,
-                  locked,
                 ),
               ],
               { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
             ),
-            ...(target === 'tui'
-              ? [
-                  ui.box(
-                    'field-navigation',
-                    [
-                      ...(state.pane > 0 ? [ui.button('field-previous', text.previousModels)] : []),
-                      ...(state.pane + 1 < panes.length
-                        ? [ui.button('field-next', text.nextField)]
-                        : []),
-                    ],
-                    { row: true, gap: 1, terminal: { wrap: true } },
-                  ),
-                ]
-              : []),
           ]),
       ...(state.baseline || state.provider
         ? [
@@ -262,7 +224,10 @@ export function frame<N extends Node>(
             ),
           ]
         : []),
-      // All original native owners stay mounted across provider selection, panes and confirmations.
+      ...(!state.baseline && state.provider
+        ? [ui.text('setup-help', text.connectionSetupHelp, 13, props.theme.muted)]
+        : []),
+      // Keep native owners mounted when advanced settings are collapsed.
       ...names.map((name) => {
         const f = state.fields[name],
           label = fieldLabel(name, text);
@@ -276,7 +241,8 @@ export function frame<N extends Node>(
               [
                 ui.text('label-' + name, label, 15, props.theme.text, 550),
                 ...(state.baseline ||
-                ['endpoint', 'configuration', 'overrides', 'overlay'].includes(name)
+                (name === 'endpoint' && !state.provider?.descriptor.customEndpoint) ||
+                ['models', 'configuration', 'overrides', 'overlay'].includes(name)
                   ? [
                       ui.button(
                         'edit-' + name,
@@ -325,17 +291,19 @@ export function frame<N extends Node>(
               [
                 presentation.slot(
                   'field-' + name,
-                  name === 'slug' ? 'input' : 'editor',
+                  ['slug', 'name', 'endpoint'].includes(name) ? 'input' : 'editor',
                   {
-                    appearance: name === 'slug' ? props.theme.input : props.theme.textarea,
+                    appearance: ['slug', 'name', 'endpoint'].includes(name)
+                      ? props.theme.input
+                      : props.theme.textarea,
                     accessibilityLabel: label,
                     placeholder: text.fieldPlaceholder + label,
                     readOnly: locked || !f.enabled,
                     disabled: false,
                     tabIndex: f.enabled ? 0 : -1,
-                    autoFocus: target === 'tui' && name === currentPane,
+                    autoFocus: false,
                     command: f.command,
-                    ...(name === 'slug' ? {} : { softWrap: true }),
+                    ...(['slug', 'name', 'endpoint'].includes(name) ? {} : { softWrap: true }),
                   },
                   {
                     changed: 'field-changed',
@@ -349,7 +317,7 @@ export function frame<N extends Node>(
                 style: {
                   width: fill,
                   height: pixels(
-                    name === 'slug'
+                    ['slug', 'name', 'endpoint'].includes(name)
                       ? 36
                       : ['configuration', 'overrides', 'overlay'].includes(name)
                         ? 180
@@ -371,13 +339,31 @@ export function frame<N extends Node>(
           ],
           {
             visible:
-              available && panes.includes(name) && (target === 'desktop' || currentPane === name),
+              available &&
+              (!advancedFields.includes(name) || state.advanced) &&
+              (name !== 'endpoint' ||
+                state.advanced ||
+                !!state.baseline ||
+                !!state.provider?.descriptor.customEndpoint),
             gap: target === 'desktop' ? 8 : 1,
             padding: 0,
             style: { width: fill },
           },
         );
       }),
+      ...(state.advanced
+        ? [
+            ui.button(
+              'connection-enabled',
+              state.enabled ? text.connectionEnabled : text.connectionDisabled,
+              locked,
+            ),
+            ui.button('form-history', text.earlierConnectionOperations),
+            ...(state.baseline
+              ? [ui.button('form-remove', text.removeConnection, !canRemove(state, props))]
+              : []),
+          ]
+        : []),
     ],
     {
       visible: !state.historyOpen && !state.confirmation,
@@ -386,6 +372,53 @@ export function frame<N extends Node>(
       terminal: { grow: 1 },
     },
   );
+  const footer = ui.box(
+    'form-footer',
+    [
+      ui.box(
+        'form-actions',
+        [
+          ui.button(
+            'form-save',
+            state.baseline ? text.saveConnection : text.continueSignIn,
+            !canSave(state, props),
+            true,
+          ),
+          ...(state.current?.reference
+            ? [
+                ui.button(
+                  'form-check',
+                  text.check,
+                  Object.values(state.pending).some(
+                    (r) => r.kind === 'receipt' || r.kind === 'mutate',
+                  ),
+                ),
+              ]
+            : []),
+          ...(state.conflict || !fresh(state, props)
+            ? [
+                ui.button(
+                  'form-review',
+                  text.reviewConnection,
+                  locked || !sameConnection(state, props),
+                ),
+              ]
+            : []),
+        ],
+        { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
+      ),
+    ],
+    {
+      visible: !!(state.baseline || state.provider) && !state.historyOpen && !state.confirmation,
+      gap: 0,
+      terminal: { shrink: false },
+    },
+  );
+  const main = ui.box('form-main', [form, footer], {
+    gap: 1,
+    terminal: { grow: 1 },
+    style: { width: fill, height: fill, minHeight: 0 },
+  });
   const reviewValue =
     state.confirmation === 'remove'
       ? [
@@ -539,12 +572,12 @@ export function frame<N extends Node>(
     ui.box(
       'connection-form',
       target !== 'tui'
-        ? [form, confirmation, earlier]
+        ? [main, confirmation, earlier]
         : [
             ui.dialog(
               'form-auxiliary',
               state.historyOpen ? text.earlierConnectionOperations : text.editConnection,
-              form,
+              main,
               ui.box('form-auxiliary-content', [confirmation, earlier], { gap: 0 }),
               !!state.confirmation || state.historyOpen,
               undefined,

@@ -183,6 +183,7 @@ impl Handler for Settings {
                         descriptor,
                     })
                 }
+                "discoverModels" => super::setup::discover(&store, input, context).await,
                 "loginCredential" => super::credential::login(&store, input, context).await,
                 "create" => {
                     context.operation().ok_or("settings_mutation_required")?;

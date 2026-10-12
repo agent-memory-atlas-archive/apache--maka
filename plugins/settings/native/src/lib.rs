@@ -24,6 +24,7 @@ mod credential;
 pub mod network;
 pub mod preferences;
 mod service;
+mod setup;
 pub mod usage;
 use futures_util::future::BoxFuture;
 use maka_host_runtime::application::{NativeActivation, NativeOwner, NativeRegistry};
@@ -33,6 +34,7 @@ pub const EXPORT: &str = "Settings";
 pub fn provide(registry: &mut NativeRegistry) -> Result<(), String> {
     for (implementation, export, contract) in [
         (IMPLEMENTATION, EXPORT, contract::contract()),
+        ("maka.settings.setup", "Setup", contract::setup_contract()),
         (
             "maka.settings.authentication",
             "Authentication",
@@ -112,5 +114,13 @@ pub fn native_authentication() -> maka_plugin_core::package::NativeDefinition {
         "maka.settings.authentication",
         serde_json::json!({"type":"object","properties":{},"required":[],"additionalProperties":false}),
         [("Authentication", contract::authentication_contract())],
+    )
+}
+
+pub fn native_setup() -> maka_plugin_core::package::NativeDefinition {
+    maka_plugin_core::package::NativeDefinition::new(
+        "maka.settings.setup",
+        serde_json::json!({"type":"object","properties":{},"required":[],"additionalProperties":false}),
+        [("Setup", contract::setup_contract())],
     )
 }

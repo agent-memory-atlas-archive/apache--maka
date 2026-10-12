@@ -30,6 +30,7 @@ export default {
         imports: {
           settings: one(sdk.contracts.settings),
           authentication: one(sdk.contracts.settingsAuthentication),
+          setup: one(sdk.contracts.settingsSetup),
         },
       },
     },

@@ -452,3 +452,29 @@ pub fn contract() -> Contract {
         },
     }
 }
+
+#[derive(Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "SettingsSetupResult")]
+pub enum SetupResult {
+    Ready {
+        connection: maka_agent_facts::configuration::ConnectionVersionBasis,
+    },
+    Failed,
+    Superseded,
+}
+pub fn setup_contract() -> Contract {
+    Contract {
+        name: "maka.settings.Setup".into(),
+        version: 1,
+        transport: Transport::Remote,
+        interface: Interface::Service {
+            methods: BTreeMap::from([(
+                "discoverModels".into(),
+                method::<maka_agent_facts::configuration::ConnectionCredentialTarget, SetupResult>(
+                    MethodMode::Mutation,
+                ),
+            )]),
+        },
+    }
+}

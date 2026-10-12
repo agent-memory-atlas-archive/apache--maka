@@ -673,14 +673,12 @@ fn bundled_connections_search_scroll_click_and_chatgpt_credentials() {
     tui.send(b"chatgpt");
     tui.wait_until(|s| s.contains("ChatGPT Subscription") && !s.contains("Anthropic"));
     click(&mut tui, "ChatGPT Subscription");
-    tui.wait_for("Next field");
-    click(&mut tui, "Next field");
-    tui.wait_for("Connection ID");
-    tui.send(b"chatgpt-test");
-    tui.wait_for("chatgpt-test");
-    click(&mut tui, "Save connection");
-    tui.wait_until(|s| s.contains("Search connections") && s.contains("chatgpt-test"));
-    click(&mut tui, "Credentials");
+    tui.wait_for("Continue to sign in");
+    let screen = tui.screen.snapshot().unwrap().screen;
+    assert!(screen.contains("Name"), "{screen}");
+    assert!(!screen.contains("Next field"), "{screen}");
+    assert!(!screen.contains("Connection ID"), "{screen}");
+    click(&mut tui, "Continue to sign in");
     tui.wait_for("Sign in with ChatGPT");
     assert!(
         !tui.screen

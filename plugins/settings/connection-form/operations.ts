@@ -82,7 +82,7 @@ export function initial(state: State, name: FieldName) {
     case 'name':
       return state.baseline?.name ?? state.provider?.descriptor.label ?? '';
     case 'slug':
-      return '';
+      return state.defaultSlug;
     case 'endpoint':
       return typeof configuration(state).baseUrl === 'string'
         ? (configuration(state).baseUrl as string)
@@ -164,6 +164,7 @@ export function save(
   const attempt = ++state.serial;
   state.current = { kind: 'save', attempt, values: {}, remaining: fields, reference: null };
   state.notice = null;
+  state.invalidField = null;
   for (const name of fields) {
     const captured = state.fields[name].observation!;
     request(
@@ -296,9 +297,13 @@ export function mutate(state: State, actions: Action[], validation: SettingsVali
     }
     // Read results are immutable attempt data, never the writable editor state.
     current.values = {};
-  } catch {
+  } catch (error) {
     state.current = null;
     state.notice = 'invalidConnectionFields';
+    const field = error instanceof Error ? (error.message as FieldName) : null;
+    state.invalidField = field && names.includes(field) ? field : null;
+    if (state.invalidField && !['name', 'endpoint'].includes(state.invalidField))
+      state.advanced = true;
   }
 }
 
@@ -322,7 +327,13 @@ export function settle(state: State, reply: OperationReply, events: Emission[]) 
       return;
     }
     state.current = null;
-    events.push({ name: 'changed', value: {} }, { name: 'closed', value: {} });
+    events.push(
+      {
+        name: 'changed',
+        value: !state.baseline && value.connection ? { created: value.connection } : {},
+      },
+      { name: 'closed', value: {} },
+    );
   } else {
     state.current = null;
     state.conflict = ['connection_stale', 'revision_conflict'].includes(value.kind);

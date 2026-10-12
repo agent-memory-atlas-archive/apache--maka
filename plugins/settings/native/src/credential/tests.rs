@@ -53,6 +53,8 @@ impl Transport for Script {
                 json!({"device_auth_id":"private-device-id", "user_code":"ABCD-EFGH", "interval":1})
             } else if request.url.ends_with("/deviceauth/token") {
                 json!({"authorization_code":"private-code", "code_verifier":"private-verifier"})
+            } else if request.url.contains("/models?client_version=") {
+                json!({"models":[{"slug":"gpt-5.4","display_name":"GPT 5.4"},{"slug":"gpt-5.3-codex","display_name":"GPT 5.3 Codex"}]})
             } else {
                 assert_eq!(request.url, "https://auth.openai.com/oauth/token");
                 json!({"access_token":"private-access", "refresh_token":"private-refresh", "expires_in":3600})
@@ -179,6 +181,74 @@ async fn chatgpt_login_saves_privately_and_rejects_cancelled_or_changed_connecti
             assert_eq!(result["kind"], "saved");
             assert!(secret.unwrap().contains("private-refresh"));
             assert_eq!(transport.requests.lock().unwrap().len(), 3);
+            // Authentication alone leaves the connection without selectable models.
+            // Discovery failure preserves it; a retry publishes models and a default.
+            for discovery in ["network", "changed", "success"] {
+                let row = store.catalog().await.unwrap().connections.remove(0);
+                let basis = ConnectionCredentialTarget {
+                    connection_id: row.connection_id.clone(),
+                    revision: row.revision,
+                    slug: row.slug.clone(),
+                    provider: row.provider.clone(),
+                    configuration: row.configuration.clone(),
+                };
+                let maka_config::onboarding::OnboardingPreparation::Ready(ticket) = store
+                    .prepare_onboarding(Target::Existing {
+                        expected: basis,
+                        configuration: row.configuration.clone(),
+                    })
+                    .await
+                    .unwrap()
+                else {
+                    panic!("discovery ticket")
+                };
+                if discovery == "changed" {
+                    store.update_connection(serde_json::from_value(json!({"expected":{"connectionId":row.connection_id,"revision":row.revision},"changes":{"name":"Renamed during discovery"}})).unwrap()).await.unwrap();
+                }
+                let discovered = crate::setup::discover_prepared(
+                    ticket,
+                    connections::definition(&identity).unwrap(),
+                    provider::Context {
+                        transport: Arc::new(Script {
+                            fail: discovery == "network",
+                            ..Default::default()
+                        }),
+                        cancellation: CancellationToken::new(),
+                        interaction: None,
+                    },
+                )
+                .await
+                .unwrap();
+                let catalog = store.catalog().await.unwrap();
+                assert!(
+                    store
+                        .credential_secret(&locator, None)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .contains("private-refresh")
+                );
+                assert!(!discovered.to_string().contains("private-"));
+                if discovery == "success" {
+                    assert_eq!(discovered["kind"], "ready");
+                    assert_eq!(
+                        catalog.connections[0].enabled_model_ids,
+                        ["gpt-5.4", "gpt-5.3-codex"]
+                    );
+                    assert_eq!(catalog.default_target.unwrap().model_id, "gpt-5.4");
+                } else {
+                    assert_eq!(
+                        discovered["kind"],
+                        if discovery == "network" {
+                            "failed"
+                        } else {
+                            "superseded"
+                        }
+                    );
+                    assert!(catalog.connections[0].enabled_model_ids.is_empty());
+                    assert!(catalog.default_target.is_none());
+                }
+            }
         } else {
             assert!(secret.is_none());
             assert_eq!(

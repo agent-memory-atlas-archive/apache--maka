@@ -45207,4 +45207,126 @@ export const contracts = {
       },
     },
   },
+  settingsSetup: {
+    name: 'maka.settings.Setup',
+    version: 1,
+    transport: 'remote',
+    interface: {
+      kind: 'service',
+      methods: {
+        discoverModels: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'ConnectionCredentialTarget',
+            type: 'object',
+            properties: {
+              connectionId: {
+                type: 'string',
+              },
+              revision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              slug: {
+                type: 'string',
+              },
+              provider: {
+                $ref: '#/$defs/Identity',
+              },
+              configuration: {
+                type: 'object',
+              },
+            },
+            additionalProperties: false,
+            required: ['connectionId', 'revision', 'slug', 'provider', 'configuration'],
+            $defs: {
+              Identity: {
+                description:
+                  'Durable recipient, not a registration lease. Re-loading the same package can\nrestore it; another package, Entry or scope cannot inherit its credentials.',
+                type: 'object',
+                properties: {
+                  packageId: {
+                    type: 'string',
+                  },
+                  entryId: {
+                    type: 'string',
+                  },
+                  scope: {
+                    type: 'string',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['packageId', 'entryId', 'scope', 'name'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsSetupResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  connection: {
+                    $ref: '#/$defs/ConnectionVersionBasis',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'ready',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'connection'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'superseded',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
+            $defs: {
+              ConnectionVersionBasis: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision'],
+              },
+            },
+          },
+          resources: {},
+        },
+      },
+    },
+  },
 } satisfies Record<string, Contract>;

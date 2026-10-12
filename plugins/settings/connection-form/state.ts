@@ -50,15 +50,13 @@ export const names = [
 
 export type FieldName = (typeof names)[number];
 
-export const advancedFields: readonly FieldName[] = ['configuration', 'overrides', 'overlay'];
-
-export function formPanes(state: State) {
-  return names.filter(
-    (name) =>
-      (name !== 'slug' || !state.baseline) &&
-      (!advancedFields.includes(name) || state.advanced || state.fields[name].enabled),
-  );
-}
+export const advancedFields: readonly FieldName[] = [
+  'slug',
+  'models',
+  'configuration',
+  'overrides',
+  'overlay',
+];
 
 export interface Field {
   enabled: boolean;
@@ -94,7 +92,7 @@ export interface State extends PageState {
   fields: Record<FieldName, Field>;
   enabled: boolean;
   enabledEdited: boolean;
-  pane: number;
+  defaultSlug: string;
   advanced: boolean;
   pending: Record<string, Request>;
   current: {
@@ -105,6 +103,7 @@ export interface State extends PageState {
     reference: RecoveryRef | null;
   } | null;
   notice: keyof Copy | null;
+  invalidField: FieldName | null;
   conflict: boolean;
   reviewed: Detail | null;
   reviewedCatalog: number | null;

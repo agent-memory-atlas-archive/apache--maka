@@ -111,6 +111,7 @@ export const packageNames = [
   'model-default',
   'settings',
   'settings-authentication',
+  'settings-setup',
   'connections',
   'credential',
   'connection-form',
@@ -199,6 +200,7 @@ function settingsComposition(
       | 'agent'
       | 'settings'
       | 'settings-authentication'
+      | 'settings-setup'
       | 'receipts'
       | 'workspace-processes'
       | 'workspace-web'
@@ -240,6 +242,7 @@ function settingsComposition(
       ),
       settings: node('settings'),
       'settings-authentication': node('settings-authentication'),
+      'settings-setup': node('settings-setup'),
       'skill-outcomes': node('skill-outcomes'),
       receipts: node('receipts'),
       'recovery-gateway': node(
@@ -256,6 +259,7 @@ function settingsComposition(
         {
           settings: [local('settings', 'Settings')],
           authentication: [local('settings-authentication', 'Authentication')],
+          setup: [local('settings-setup', 'Setup')],
         },
       ),
     },
@@ -418,6 +422,7 @@ function settingsComposition(
         {
           settings: [remote('settings', 'Settings')],
           authentication: [remote('settings-authentication', 'Authentication')],
+          setup: [remote('settings-setup', 'Setup')],
           secret: [local('input', 'SecretInput')],
           receipts: [remote('receipts', 'Receipts')],
           history: [local('history', 'History')],
@@ -503,6 +508,14 @@ function settingsComposition(
       export: 'Authentication',
     },
     declaration: { contract: contracts.settingsAuthentication, availability: 'required' },
+  });
+  remoteExports.push({
+    capability: {
+      deployment: 'local',
+      instance: [keys['settings-setup']],
+      export: 'Setup',
+    },
+    declaration: { contract: contracts.settingsSetup, availability: 'required' },
   });
   remoteExports.push(
     {
@@ -591,6 +604,12 @@ function settingsComposition(
             gateway,
             'authentication',
             Object.keys(contracts.settingsAuthentication.interface.methods),
+            true,
+          ),
+          setup: expose(
+            gateway,
+            'setup',
+            Object.keys(contracts.settingsSetup.interface.methods),
             true,
           ),
           skillOutcomes: expose('recovery-gateway', 'skillOutcomes', ['read'], true),

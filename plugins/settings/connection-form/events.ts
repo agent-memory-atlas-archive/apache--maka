@@ -47,7 +47,7 @@ import {
   settle,
   utf8Bytes,
 } from './operations.js';
-import { formPanes, type FieldName, type SettingsValidation, type State } from './state.js';
+import { type FieldName, type SettingsValidation, type State } from './state.js';
 import { searchEvent, matchesProvider } from '../search.js';
 import { frame } from './view.js';
 
@@ -221,7 +221,12 @@ export function handleEvent<N extends Node>(
       state.reviewPage = 0;
     } else if (key === 'form-confirm-remove') remove(state, props, actions);
     else if (key === 'form-back') {
-      if (!state.provider && !state.baseline && !state.current)
+      if (
+        !state.current &&
+        !state.enabledEdited &&
+        ((!state.provider && !state.baseline) ||
+          (state.baseline && !Object.values(state.fields).some((field) => field.enabled)))
+      )
         events.push({ name: 'closed', value: {} });
       else state.confirmation = 'leave';
     } else if (key === 'form-cancel') {
@@ -311,16 +316,25 @@ export function handleEvent<N extends Node>(
           entry.reference,
         );
     } else if (!busy(state) && !state.confirmation && !state.historyOpen && fresh(state, props)) {
-      if (key === 'connection-enabled') {
+      if (
+        key === 'change-provider' &&
+        !state.baseline &&
+        !Object.values(state.fields).some((field) => field.command)
+      ) {
+        state.provider = null;
+        state.notice = null;
+        state.invalidField = null;
+        state.advanced = false;
+        for (const field of Object.values(state.fields)) {
+          field.enabled = false;
+          field.initialized = false;
+        }
+      } else if (key === 'connection-enabled') {
         state.enabled = !state.enabled;
         state.enabledEdited = true;
       } else if (key === 'form-advanced') {
         state.advanced = !state.advanced;
-        state.pane = 0;
-      } else if (key === 'field-next')
-        state.pane = Math.min(state.pane + 1, formPanes(state).length - 1);
-      else if (key === 'field-previous') state.pane = Math.max(0, state.pane - 1);
-      else if (
+      } else if (
         key === 'provider-refresh' &&
         !state.provider &&
         !state.baseline &&
@@ -336,8 +350,18 @@ export function handleEvent<N extends Node>(
           if (target === 'tui' && (input.event as { kind?: string }).kind !== 'submit')
             return frame(presentation, state, props, actions, events);
           state.provider = provider;
+          const base =
+            provider.identity.name
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, '-')
+              .slice(0, 48)
+              .replace(/^-|-$/g, '') || 'connection';
+          let slug = base;
+          for (let suffix = 2; props.existingSlugs?.includes(slug); suffix++)
+            slug = base + '-' + suffix;
+          state.defaultSlug = slug;
           state.search.pending = null;
-          for (const name of ['name', 'slug', 'endpoint', 'models'] as FieldName[]) {
+          for (const name of ['name', 'slug', 'endpoint'] as FieldName[]) {
             state.fields[name].enabled =
               name !== 'endpoint' || !!provider.descriptor.customEndpoint;
             prefill(state, name);

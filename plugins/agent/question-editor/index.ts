@@ -35,7 +35,7 @@ type Draft = {
   selection: 'unset' | 'text' | 'skip' | number;
   observation: EditorObservation | null;
 };
-type State = { revision: number; current: number; drafts: Draft[] };
+type State = { revision: number; drafts: Draft[] };
 export function questionEditor<N extends Node>(
   presentation: Presentation<N>,
 ): Component<State, QuestionEditorProps, N> {
@@ -87,28 +87,6 @@ export function questionEditor<N extends Node>(
                 ),
               ]
             : []),
-          ui.box(
-            'question-tabs',
-            qs.map((_, index) => {
-              const key = `question-${index}`,
-                label = `${index + 1} ${answer(state, index) ? '✓' : '○'}`;
-              return ui.item
-                ? ui.item(
-                    key,
-                    ui.text(`${key}-label`, label, 14),
-                    state.current === index,
-                    !props.open,
-                  )
-                : ui.button(key, label, !props.open, state.current === index);
-            }),
-            {
-              row: true,
-              gap: 1,
-              focusGroup: true,
-              terminal: { wrap: true },
-              style: { wrap: true },
-            },
-          ),
           ui.box(
             'question-pages',
             qs.map((question, index) => {
@@ -204,7 +182,6 @@ export function questionEditor<N extends Node>(
                     : []),
                 ],
                 {
-                  visible: state.current === index,
                   gap: presentation.target === 'tui' ? 1 : 10,
                   style: { width: fill },
                 },
@@ -234,7 +211,6 @@ export function questionEditor<N extends Node>(
       frame(
         {
           revision: 0,
-          current: 0,
           drafts: questions(props).map(() => ({ selection: 'unset', observation: null })),
         },
         props,
@@ -276,10 +252,7 @@ export function questionEditor<N extends Node>(
         if (input.key === 'close') events.push({ name: 'closed', value: {} });
         else if (input.key === 'check' && !props.checking)
           events.push({ name: 'check', value: {} });
-        else if (input.key.startsWith('question-')) {
-          const index = Number(input.key.slice(9));
-          if (questions(props)[index]) state.current = index;
-        } else if (editable(props)) {
+        else if (editable(props)) {
           const option = /^option-(\d+)-(\d+)$/.exec(input.key);
           const mode = /^(text|skip)-(\d+)$/.exec(input.key);
           if (option && questions(props)[Number(option[1])]?.options[Number(option[2])])

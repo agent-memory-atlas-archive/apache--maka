@@ -62,6 +62,7 @@
   "input": "plugins/ui/input",
   "settings": "plugins/settings/settings",
   "settings-authentication": "plugins/settings/authentication",
+  "settings-setup": "plugins/settings/setup",
   "history": "plugins/application/history",
   "surface": "plugins/ui/surface",
   "editor": "plugins/ui/editor",
