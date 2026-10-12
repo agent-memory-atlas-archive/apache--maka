@@ -133,7 +133,12 @@ source 中执行同样的记录与最终准入顺序，并与 query 共用真实
 确认 Policy panic 沿现有隔离准入失败路径处理；接受工作保留本地 token 或 peer 观察到
 真实清理及粘性失败。远端 caller adapter 必须保留**真实** SQL token/Root lease 到远端
 真实 cleanup 确认；peer 观察不能拥有该 Root，断线或业务 receipt 不能替代 cleanup。
-这只是执行接缝；认证 application 网络 transport 仍待实现。
+`application::host::Host` 已通过当前账户 IPC 暴露持久化应用；embedding 提供经检查的
+endpoint 与 native grants。每个认证会话持有原批准和 transport，关闭时撤销准入并等待
+该会话的调用清理，不影响其他会话。公开 mutation 使用 `Call::confirm` 和
+`Client::mutate_owned`，由 Host gateway 在最终准入前记录自身 caller intent；私有 UI
+通道仍要求原 caller commit，并拒绝 Host confirmation。公开状态中的计数仅供观察，
+退出委托 `Application::shutdown_if_idle` 及真实清理。CLI、ACP 和认证 WebSocket 入口仍待迁移。
 
 caller 历史按稳定 consumer 与 operation 保留首次 source 和原 Ref，跨 source 修订或目标变化
 仍读取原记录；不同 Ref 冲突。caller 记录不宣称业务结果，不产生 Host 授权。记录失败或 commit

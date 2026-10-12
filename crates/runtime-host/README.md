@@ -194,8 +194,17 @@ Confirmation panics use the existing isolated admission failure path. Accepted w
 retains its local token or peer observation through actual cleanup and sticky failures.
 The remote caller adapter must retain its **actual** SQL token/Root lease until
 remote cleanup is confirmed; a peer observation cannot own that Root. Disconnect
-or a business receipt is not cleanup confirmation. This is an execution seam;
-the authenticated application network transport is still required work.
+or a business receipt is not cleanup confirmation.
+
+`application::host::Host` exposes a persisted application over current-account IPC.
+The embedding supplies checked endpoint and native grants. Each authenticated
+session owns its exact peer approval and transport; closing it revokes admission
+and drains its calls without affecting other sessions. Public mutations use
+`Call::confirm` and `Client::mutate_owned`: the Host gateway records its own caller
+intent before final admission. Private UI channels require their original caller
+commit and reject Host confirmation. Public status counts are observations;
+retirement delegates to `Application::shutdown_if_idle` and physical cleanup.
+The CLI, ACP and authenticated WebSocket entrypoints still require migration.
 
 `Context::mutate` performs the same caller commit and final admission sequence in
 the original Host caller source. Native and JavaScript mutations share execution

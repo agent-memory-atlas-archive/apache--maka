@@ -55,7 +55,9 @@ impl HostEndpoint {
         Ok(())
     }
 }
+#[derive(Clone)]
 pub struct Endpoints(BTreeMap<String, Entry>);
+#[derive(Clone)]
 enum Entry {
     Ready(Endpoint),
     Unavailable(Description),

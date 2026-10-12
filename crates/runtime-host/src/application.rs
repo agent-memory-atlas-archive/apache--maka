@@ -21,6 +21,7 @@
 pub mod abi;
 mod caller;
 mod context;
+pub mod host;
 pub mod management;
 mod native_context;
 pub mod operations;
@@ -1040,7 +1041,7 @@ impl Client {
         prepared: PreparedMutation,
         recorded: RecordedIntent,
     ) -> Result<Mutation> {
-        self.dispatch_mutation(prepared, Confirmation::Recorded(Box::new(recorded)))
+        self.dispatch_mutation(prepared, Some(Confirmation::Recorded(Box::new(recorded))))
             .await
     }
     /// Dispatches an authenticated peer adapter's caller-commit attestation.
@@ -1056,15 +1057,24 @@ impl Client {
         intent: CallerConfirmation,
     ) -> Result<Mutation> {
         intent.validate().map_err(|e| e.to_string())?;
-        self.dispatch_mutation(prepared, Confirmation::Peer(Box::new(intent)))
+        self.dispatch_mutation(prepared, Some(Confirmation::Peer(Box::new(intent))))
             .await
+    }
+    /// The trusted Host gateway is the caller: persist its original intent in
+    /// this Application's Root before final admission and execution. Ordinary
+    /// peer transports must use their caller's recorded confirmation instead.
+    pub async fn mutate_owned(&self, prepared: PreparedMutation) -> Result<Mutation> {
+        self.dispatch_mutation(prepared, None).await
     }
     async fn dispatch_mutation(
         &self,
         mut prepared: PreparedMutation,
-        confirmation: Confirmation,
+        confirmation: Option<Confirmation>,
     ) -> Result<Mutation> {
-        if &prepared.reference != confirmation.reference() {
+        if confirmation
+            .as_ref()
+            .is_some_and(|value| &prepared.reference != value.reference())
+        {
             return Err("caller intent disagrees with original preparation".into());
         }
         let reference = prepared.reference.clone();
@@ -1087,7 +1097,7 @@ impl Client {
                 parent,
                 kind: CallKind::Mutation {
                     operation: reference.operation,
-                    confirmation: Some(confirmation),
+                    confirmation,
                     reply,
                 },
                 binding,

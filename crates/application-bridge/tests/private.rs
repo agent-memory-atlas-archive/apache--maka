@@ -1917,3 +1917,62 @@ async fn checked_ui_mutation_progress_cancel_waits_for_original_completion_and_r
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn private_peer_cannot_delegate_its_caller_intent_to_the_host() {
+    let f = Fixture::new().await;
+    let (channel, accepted) = tokio::io::duplex(64 * 1024);
+    let (reader, writer) = tokio::io::split(accepted);
+    let observer = f.server.serve(reader, writer, f.peer.clone()).unwrap();
+    let (reader, writer) = tokio::io::split(channel);
+    let operation = Uuid::new_v4();
+    let mut call = Call::new(
+        reader,
+        writer,
+        f.server.catalogue().select("business").unwrap(),
+        Source {
+            deployment: f.source.clone(),
+            consumer: support::identity(2),
+            mount: Uuid::new_v4(),
+            request: operation,
+        },
+        "write".into(),
+        serde_json::Value::Null,
+        Default::default(),
+    );
+    call.start().await.unwrap();
+    assert!(matches!(
+        call.receive().await.unwrap(),
+        Reply::Prepared { .. }
+    ));
+    assert!(matches!(
+        call.confirm().await.unwrap(),
+        Reply::Aborted {
+            cleanup: Ok(()),
+            ..
+        }
+    ));
+    observer.await.unwrap();
+    assert!(
+        f.caller
+            .application_intent(f.source.deployment, support::identity(2), operation)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        f.store
+            .application_intent(
+                f.app.source().unwrap().deployment,
+                support::identity(13),
+                operation
+            )
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(call.cleanup_confirmed());
+    drop(call);
+    f.server.close().await.unwrap();
+    f.cleanup().await;
+}

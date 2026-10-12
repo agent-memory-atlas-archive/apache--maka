@@ -100,7 +100,7 @@ impl Server {
         R: AsyncRead + Unpin + Send + 'static,
         W: AsyncWrite + Unpin + Send + 'static,
     {
-        self.serve_inner(reader, writer, peer, None)
+        self.serve_inner(reader, writer, peer, None, false)
     }
     /// An inherited-bootstrap nonce pairs a private current-account channel
     /// with this original Host incarnation. Hello uses the same capacity and
@@ -119,7 +119,22 @@ impl Server {
         if nonce.is_nil() {
             return Err("private channel nonce must be nonnil".into());
         }
-        self.serve_inner(reader, writer, peer, Some(nonce))
+        self.serve_inner(reader, writer, peer, Some(nonce), false)
+    }
+    /// The embedding has authenticated a public principal and selected its
+    /// Host gateway consumers and endpoint grants. This mode records caller
+    /// intents in the Host Root; incoming JSON cannot select this mode.
+    pub fn serve_owned<R, W>(
+        self: &Arc<Self>,
+        reader: R,
+        writer: W,
+        peer: Arc<Peers>,
+    ) -> Result<impl Future<Output = Result<()>> + Send + 'static>
+    where
+        R: AsyncRead + Unpin + Send + 'static,
+        W: AsyncWrite + Unpin + Send + 'static,
+    {
+        self.serve_inner(reader, writer, peer, None, true)
     }
     fn serve_inner<R, W>(
         self: &Arc<Self>,
@@ -127,6 +142,7 @@ impl Server {
         writer: W,
         peer: Arc<Peers>,
         nonce: Option<uuid::Uuid>,
+        owned: bool,
     ) -> Result<impl Future<Output = Result<()>> + Send + 'static>
     where
         R: AsyncRead + Unpin + Send + 'static,
@@ -153,7 +169,7 @@ impl Server {
                 lost: false,
                 pending: None,
             };
-            let execution = AssertUnwindSafe(session.run(&server, peer, nonce))
+            let execution = AssertUnwindSafe(session.run(&server, peer, nonce, owned))
                 .catch_unwind()
                 .await;
             let panicked = execution.is_err();
@@ -349,6 +365,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Session<R, W> {
         server: &Server,
         peer: Arc<Peers>,
         nonce: Option<uuid::Uuid>,
+        owned: bool,
     ) -> Result<()> {
         if let Some(nonce) = nonce {
             let hello: Hello = tokio::select! {
@@ -382,6 +399,11 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Session<R, W> {
         if endpoint.binding.registration_epoch() != open.registration_epoch {
             return self
                 .abort("original Host registration is no longer available".into())
+                .await;
+        }
+        if owned && &open.source.consumer != endpoint.binding.consumer().instance() {
+            return self
+                .abort("caller differs from the selected Host gateway".into())
                 .await;
         }
         let scope = match server.policy.scope(
@@ -474,9 +496,22 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Session<R, W> {
                         drop(prepared);
                         self.abort("mutation preparation cancelled".into()).await
                     }
-                    Control::Commit { intent } => {
+                    control @ (Control::Commit { .. } | Control::Confirm)
+                        if matches!(
+                            (&control, owned),
+                            (Control::Commit { .. }, false) | (Control::Confirm, true)
+                        ) =>
+                    {
                         let reference = prepared.reference().clone();
-                        let admission = server.client.mutate_from_peer(prepared, *intent);
+                        let admission = async {
+                            match control {
+                                Control::Commit { intent } => {
+                                    server.client.mutate_from_peer(prepared, *intent).await
+                                }
+                                Control::Confirm => server.client.mutate_owned(prepared).await,
+                                _ => unreachable!(),
+                            }
+                        };
                         let completion = match self.observe(admission).await {
                             Ok(mut accepted) => {
                                 while let Some(value) = self.observe(accepted.recv()).await {
@@ -502,7 +537,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Session<R, W> {
                         })
                         .await
                     }
-                    Control::Pull => {
+                    _ => {
                         drop(prepared);
                         self.abort("mutation requires caller commit or cancellation".into())
                             .await

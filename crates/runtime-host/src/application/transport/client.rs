@@ -279,6 +279,20 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Call<R, W> {
             self.receive().await
         }
     }
+    /// Confirm a mutation whose caller intent belongs to the authenticated
+    /// public Host gateway. Private peer channels reject this control.
+    pub async fn confirm(&mut self) -> Result<Reply> {
+        if self.phase != Phase::Prepared || self.cancel_sent || self.recorded.is_some() {
+            return Err("remote mutation is not awaiting Host confirmation".into());
+        }
+        self.phase = Phase::Lost;
+        self.settlement_phase = Some(Phase::Dispatched);
+        let channel = self.channel.as_mut().expect("prepared channel");
+        wire::write(&mut channel.writer, &Control::Confirm).await?;
+        self.phase = Phase::Dispatched;
+        self.settlement_phase = None;
+        self.receive().await
+    }
     /// Drain cancellation on this same channel. A reply item or preparation is
     /// not terminal cleanup; retain it and await the original terminal reply.
     pub async fn close(&mut self) -> Result<()> {

@@ -68,6 +68,7 @@ pub(super) enum Control {
     Pull,
     Cancel,
     Commit { intent: Box<CallerConfirmation> },
+    Confirm,
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
