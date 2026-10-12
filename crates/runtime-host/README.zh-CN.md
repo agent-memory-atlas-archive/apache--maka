@@ -142,7 +142,12 @@ endpoint 与 native grants。每个认证会话持有原批准和 transport，�
 WebSocket 消息运行，HTTP 先检查凭据和 Origin。配对只批准确切的持久来源与公开 endpoint
 选择，确认前会过期，并绑定导入客户端身份。会话准入与凭据撤销共用一个 gate；撤销只关闭
 该凭据的原 transport。原生生命周期与凭据管理操作仅允许本地 owner；旧操作名不授权应用
-调用。CLI 和 ACP 入口仍待迁移。
+调用。CLI serve、托管/临时候选进程、discovery、凭据管理和 SSH stdio 转发已使用应用 Host。
+首次启动保存产品来源和所选 package bytes；重启复用原来源。托管目录修改同步 Agent、Skills
+和进程范围，同时保留用户权限限制；空目录列表不授予任何 workspace。Discovery 仅作提示，
+客户端用在线状态核验 Root、epoch、source、generation 和生命周期。候选进程退出同时要求
+物理连接空闲与 Application 原子 idle fence；显式中断先提交退出决定，再执行真实清理，
+原 Root 在 drain 完成前持续保留。旧协作连接 handoff 参数已移除。ACP 入口仍在迁移。
 
 caller 历史按稳定 consumer 与 operation 保留首次 source 和原 Ref，跨 source 修订或目标变化
 仍读取原记录；不同 Ref 冲突。caller 记录不宣称业务结果，不产生 Host 授权。记录失败或 commit

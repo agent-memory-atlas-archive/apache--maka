@@ -20,10 +20,10 @@
 use super::{
     Deployment, Mode, RootId, activation, configuration, directory, package, store, updates,
 };
+use crate::host_client::RetirementResult;
 use crate::host_client::{HostClient, LiveHost};
 use clap::Args;
 use maka_event_log::root::{self, FileLease, RootNamespaces, RootOwner};
-use maka_protocol::host::RetirementResult;
 use maka_runtime_host::server::HostError;
 use serde::Serialize;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
@@ -291,10 +291,7 @@ pub(super) async fn retire(
                 if let Ok(mut client) =
                     HostClient::connect(&deployment.root_path, Some(&deployment.generation())).await
                 {
-                    match client
-                        .retire(None, false, None, allow_idle_connections)
-                        .await?
-                    {
+                    match client.retire(None, false, allow_idle_connections).await? {
                         RetirementResult::ActiveTasks => return Ok(None),
                         RetirementResult::Prepared { .. } => {}
                     }

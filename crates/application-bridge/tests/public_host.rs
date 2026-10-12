@@ -28,7 +28,7 @@ use maka_plugin_core::operation::{OperationCleanup, OperationOutcome, Receipt};
 use maka_runtime_host::{
     application::{
         NativeRegistry,
-        host::{Client, Host},
+        host::{Client, Host, discovery},
         transport::{Grant, HostEndpoint, Reply},
     },
     ipc::LocalListener,
@@ -58,11 +58,24 @@ async fn public_ipc_persists_original_gateway_intent_and_retires_original_owner(
         #[cfg(windows)]
         let address = std::path::PathBuf::from(format!(r"\\.\pipe\maka-public-test-{}", Uuid::new_v4()));
         let listener = LocalListener::bind(&address).unwrap();
+        let registration = host.publish_registration(&address, None).unwrap();
+        let discovery = discovery::read_with_namespaces(&root, &namespaces).unwrap();
         let serving = tokio::spawn({ let host = host.clone(); async move { host.serve_local(listener, CancellationToken::new()).await } });
+        let mut live = Client::status(&address, Some(host.epoch())).await.unwrap();
+        discovery.verify(&live).unwrap();
+        live.source.revision += 1;
+        assert!(discovery.verify(&live).is_err());
+        live.source.revision -= 1;
+        live.generation = Some("another deployment".into());
+        assert!(discovery.verify(&live).is_err());
+        live.generation = None;
+        live.pid = std::num::NonZeroU32::new(live.pid.get() + 1).unwrap();
+        assert!(discovery.verify(&live).is_err());
         assert!(Client::connect(&address, Some(Uuid::new_v4())).await.is_err());
         let mut client = Client::connect(&address, Some(host.epoch())).await.unwrap();
         let mut other = Client::connect(&address, Some(host.epoch())).await.unwrap();
         assert_eq!(Client::status(&address, Some(host.epoch())).await.unwrap().sessions, 2);
+        assert!(!Client::retire_with_options(&address, host.epoch(), false, false).await.unwrap());
         let mut write = client.call("business", "write".into(), Value::Null, Default::default()).await.unwrap();
         write.start().await.unwrap();
         assert!(matches!(write.receive().await.unwrap(), Reply::Prepared { .. }));
@@ -92,6 +105,9 @@ async fn public_ipc_persists_original_gateway_intent_and_retires_original_owner(
         assert!(Client::retire(&address, host.epoch()).await.unwrap());
         serving.await.unwrap().unwrap();
         assert!(host.status().closed);
+        assert!(discovery.verify(&host.status()).is_err());
+        registration.remove().unwrap();
+        assert_eq!(discovery::read_with_namespaces(&root, &namespaces).unwrap_err().kind(), std::io::ErrorKind::NotFound);
         drop((client, other, write, rejected, read, host, store));
         drop(RootOwner::open(&root, &namespaces).unwrap());
     }).await.unwrap();
@@ -181,8 +197,12 @@ async fn lost_session_close_observer_cannot_release_accepted_work_or_root_early(
         drop(client);
         assert!(!Client::retire(&address, host.epoch()).await.unwrap());
         assert_eq!(RootOwner::open(&root, &namespaces).err().unwrap().kind(), std::io::ErrorKind::WouldBlock);
+        assert!(Client::retire_with_options(&address, host.epoch(), true, true).await.unwrap());
+        host.wait_for_drain().await;
+        assert!(!host.status().closed);
+        assert!(!serving.is_finished());
+        assert_eq!(RootOwner::open(&root, &namespaces).err().unwrap().kind(), std::io::ErrorKind::WouldBlock);
         blocked.release.add_permits(1);
-        while !Client::retire(&address, host.epoch()).await.unwrap() {}
         serving.await.unwrap().unwrap();
         // The disconnected invocation still has no same-channel cleanup receipt.
         call.disconnect();

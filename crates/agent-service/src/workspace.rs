@@ -69,7 +69,7 @@ pub(crate) fn open(specs: Vec<DirectoryRootSpec>, managed: &Path) -> Result<Vec<
             })
         })
         .collect::<Result<_, String>>()?;
-    if roots.is_empty() || !fits(&root_page(&roots)?) {
+    if !fits(&root_page(&roots)?) {
         return Err("agent_workspace_configuration_invalid".into());
     }
     Ok(roots)

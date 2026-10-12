@@ -17,7 +17,10 @@
  * under the License.
  */
 
-use maka_runtime_host::server::{Host, HostError, websocket::WebSocketListener};
+use maka_runtime_host::{
+    application::host::{Host, LifecycleMode, Options, websocket::WebSocketListener},
+    server::HostError,
+};
 use serde_json::json;
 use std::{path::Path, sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
@@ -66,20 +69,21 @@ pub(super) async fn run(
         Some(address) => Some(WebSocketListener::bind(address, Vec::new()).await?),
         None => None,
     };
-    let host = Host::open_with_options(
+    let host = crate::application::open_host(
         owner,
-        global_instructions()?,
-        maka_runtime_host::server::HostOptions {
-            lifecycle_mode: maka_runtime_host::server::LifecycleMode::Service,
-            skill_home: home_directory()?,
-            project_directory_roots: deployment
-                .as_ref()
-                .and_then(|deployment| deployment.project_directory_roots.clone()),
+        Options {
+            lifecycle_mode: LifecycleMode::Service,
             generation: deployment
                 .as_ref()
                 .map(|deployment| deployment.generation()),
             ..Default::default()
         },
+        deployment
+            .as_ref()
+            .map(|deployment| {
+                crate::application::Roots::Configured(deployment.project_directory_roots.clone())
+            })
+            .unwrap_or(crate::application::Roots::Saved),
     )
     .await?;
     let endpoint = super::endpoint::LocalEndpoint::bind()?;
@@ -98,7 +102,7 @@ pub(super) async fn run(
     }
     println!("{ready}");
     let result = listen(endpoint, websocket, host, cancellation).await;
-    result.and(registration.remove())
+    result.and(registration.remove().map_err(Into::into))
 }
 
 /// Process policy belongs to the CLI, never to an embedded Host library.
@@ -114,15 +118,9 @@ pub(super) async fn listen(
         cancellation.clone(),
         Duration::from_secs(10),
     );
-    match websocket {
-        Some(websocket) => {
-            endpoint
-                .listener
-                .serve_with_websocket(websocket, host, cancellation)
-                .await
-        }
-        None => endpoint.listener.serve(host, cancellation).await,
-    }
+    host.serve(endpoint.listener, websocket, cancellation)
+        .await
+        .map_err(Into::into)
 }
 
 fn watch_shutdown(
@@ -152,11 +150,6 @@ fn watch_shutdown(
     {
         std::process::exit(70);
     }
-}
-
-pub(super) fn global_instructions()
--> Result<Option<std::path::PathBuf>, maka_runtime_host::server::HostError> {
-    Ok(home_directory()?.map(|home| home.join(".maka")))
 }
 
 pub(super) fn home_directory()

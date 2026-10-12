@@ -165,21 +165,9 @@ async fn standard_configuration(
         "locale": locale.unwrap_or_else(|| "auto".into()),
         "scheme": if light { "light" } else { "dark" },
     });
-    let vm = maka_js_runtime::plugin::Vm::pure(Default::default())?;
-    let result = match vm.load("maka-product-installation".into(), super::AUTHORING.into()) {
-        Ok(module) => {
-            let result = module
-                .call(vec!["installation".into()], vec![options])
-                .await
-                .map_err(HostError::from);
-            let closed = module.close().await.map_err(HostError::from);
-            result.and_then(|value| closed.map(|()| value))
-        }
-        Err(error) => Err(error.into()),
-    };
-    vm.shutdown().await;
-    result
+    super::installation(options).await
 }
+
 async fn open(
     root: PathBuf,
     initialize: bool,
@@ -258,49 +246,14 @@ async fn prepare(
             return Err("original launcher connection input changed".into());
         }
         let packages = decode_packages(preparation.packages)?;
-        let mut declarations = maka_plugin_core::package::Packages::default();
-        for package in &packages {
-            declarations.insert(
-                package.application_ref(),
-                package
-                    .manifest()
-                    .application
-                    .as_ref()
-                    .ok_or("missing application declaration")?
-                    .clone(),
-            )?;
-        }
-        // Persist each source's complete expanded package closure, including
-        // structural templates and disabled instances. Host startup must not
-        // read and validate every bundled UI package merely because the same
-        // distribution also contains the terminal product.
-        let selected = |input: &Input,
-                        observations: &[RemoteObservation]|
-         -> Result<Vec<Package>, HostError> {
-            let remote = observations
-                .iter()
-                .map(|observation| {
-                    (
-                        observation.capability.clone(),
-                        observation.declaration.clone(),
-                    )
-                })
-                .collect();
-            let plan = maka_plugin_core::plan::Plan::prepare(input, &declarations, &remote)?;
-            let required: std::collections::BTreeSet<_> = plan
-                .instances()
-                .values()
-                .map(|instance| &instance.package)
-                .collect();
-            Ok(packages
-                .iter()
-                .filter(|package| required.contains(&package.application_ref()))
-                .cloned()
-                .collect())
-        };
-        let host_packages = selected(&preparation.sources.host, &[])?;
-        let management_packages = selected(&preparation.sources.management_host, &[])?;
-        let ui_packages = selected(&preparation.sources.ui, &preparation.sources.remote_exports)?;
+        let host_packages = super::selected(&preparation.sources.host, &[], &packages)?;
+        let management_packages =
+            super::selected(&preparation.sources.management_host, &[], &packages)?;
+        let ui_packages = super::selected(
+            &preparation.sources.ui,
+            &preparation.sources.remote_exports,
+            &packages,
+        )?;
         let host_store = open(root, false, Some(domain)).await?;
         let result = async {
             ensure(
@@ -393,7 +346,9 @@ async fn begin(
     host_store.drain().await;
     result
 }
-fn decode_packages(files: Vec<BTreeMap<String, String>>) -> Result<Vec<Package>, HostError> {
+pub(super) fn decode_packages(
+    files: Vec<BTreeMap<String, String>>,
+) -> Result<Vec<Package>, HostError> {
     if files.len() > 128 {
         return Err("too many prepared packages".into());
     }
@@ -416,7 +371,7 @@ fn decode_packages(files: Vec<BTreeMap<String, String>>) -> Result<Vec<Package>,
         })
         .collect()
 }
-async fn ensure(
+pub(super) async fn ensure(
     store: &EventLog,
     deployment: Uuid,
     input: &Input,

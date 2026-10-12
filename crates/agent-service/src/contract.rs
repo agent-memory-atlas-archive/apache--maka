@@ -76,7 +76,7 @@ pub struct Configuration {
     /// Initial policy within the selected workspace capability.
     pub permissions: WorkspacePermissions,
     /// Installation-published directories, captured without creating workspace markers.
-    #[schemars(length(min = 1, max = 8))]
+    #[schemars(length(max = 8))]
     pub workspace_roots: Vec<maka_runtime_host::server::DirectoryRootSpec>,
     /// Explicit read-only roots for user-selected conversation sources.
     #[serde(default)]

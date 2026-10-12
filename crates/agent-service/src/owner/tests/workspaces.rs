@@ -499,3 +499,33 @@ async fn replaced_directory_marker_and_removed_publication_refuse_before_message
     fixture.app.shutdown().await.unwrap();
     fixture.config.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn removing_all_published_directories_keeps_the_service_available_without_workspace_authority()
+ {
+    let mut fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    let original = fixture
+        .query("directories", json!({"kind":"roots"}))
+        .await
+        .unwrap();
+    let selection = original["roots"][0]["selection"].clone();
+    publish(&mut fixture, vec![]).await;
+    assert_eq!(
+        fixture
+            .query("directories", json!({"kind":"roots"}))
+            .await
+            .unwrap()["roots"],
+        json!([])
+    );
+    assert!(
+        fixture
+            .query(
+                "directories",
+                json!({"kind":"children","selection":selection,"after":null})
+            )
+            .await
+            .is_err()
+    );
+    fixture.app.shutdown().await.unwrap();
+    fixture.config.shutdown().await.unwrap();
+}

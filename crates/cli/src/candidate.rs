@@ -20,7 +20,10 @@
 use crate::{args::Root, endpoint::LocalEndpoint};
 use clap::Args;
 use maka_event_log::root::{RootNamespaces, RootOwner};
-use maka_runtime_host::server::{Host, HostError, HostOptions};
+use maka_runtime_host::{
+    application::host::{LifecycleMode, Options},
+    server::HostError,
+};
 use std::{
     io::{BufRead, Read},
     time::Duration,
@@ -62,7 +65,7 @@ impl Candidate {
         let deployment = crate::deployment::admit(&root, crate::deployment::Mode::OnDemand).await?;
         let websocket = match &deployment {
             Some(deployment) => Some(
-                maka_runtime_host::server::websocket::WebSocketListener::bind(
+                maka_runtime_host::application::host::websocket::WebSocketListener::bind(
                     deployment.websocket,
                     Vec::new(),
                 )
@@ -77,23 +80,24 @@ impl Candidate {
             watch_owner(owner_lost.clone())?;
         }
         let signals = super::signals::watch(cancel.clone())?;
-        let host = Host::open_with_options(
+        let host = crate::application::open_host(
             root,
-            super::serve::global_instructions()?,
-            HostOptions {
-                input_roots: Default::default(),
-                plugins: Default::default(),
-                lifecycle_mode: maka_runtime_host::server::LifecycleMode::Ephemeral,
-                skill_home: super::serve::home_directory()?,
-                project_directory_roots: deployment
-                    .as_ref()
-                    .and_then(|deployment| deployment.project_directory_roots.clone()),
+            Options {
+                lifecycle_mode: LifecycleMode::Ephemeral,
                 generation: deployment
                     .as_ref()
                     .map(|deployment| deployment.generation())
                     .or(self.generation),
                 handshake_timeout: Duration::from_millis(self.handshake_timeout_ms),
             },
+            deployment
+                .as_ref()
+                .map(|deployment| {
+                    crate::application::Roots::Configured(
+                        deployment.project_directory_roots.clone(),
+                    )
+                })
+                .unwrap_or(crate::application::Roots::Saved),
         )
         .await?;
         let endpoint = LocalEndpoint::bind()?;
@@ -112,12 +116,15 @@ impl Candidate {
             self.idle_grace_ms
         };
         let expiry = tokio::spawn(async move {
-            idle_host
+            let result = idle_host
                 .wait_until_idle(
                     Duration::from_millis(self.initial_connection_timeout_ms),
                     Duration::from_millis(idle_grace),
                 )
                 .await;
+            if let Err(error) = result {
+                eprintln!("candidate cleanup unconfirmed: {error}");
+            }
             idle_cancel.cancel();
         });
         let serving = super::serve::listen(endpoint, websocket, host.clone(), cancel);
@@ -127,7 +134,7 @@ impl Candidate {
             _ = owner_lost.cancelled() => {
                 // EOF abandons an unaccepted startup. Once a client was admitted,
                 // ordinary Host residency and idle expiry own this lifetime.
-                host.abandon_unaccepted_startup();
+                host.abandon_unaccepted_startup().await;
                 serving.await
             }
             result = &mut serving => result,
@@ -136,7 +143,7 @@ impl Candidate {
         let _ = expiry.await;
         drop(signals);
         let removed = registration.remove();
-        result.and(removed)
+        result.and(removed.map_err(Into::into))
     }
 }
 

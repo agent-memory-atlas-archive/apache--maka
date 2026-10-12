@@ -51,48 +51,20 @@ fn candidate_owner_eof_preserves_an_independently_accepted_client_until_idle() {
     let directory = tempfile::tempdir().unwrap();
     let mut fixture = start(directory.path());
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    let discovery = maka_client::local::read_discovery(&fixture.root).unwrap();
-    let (client, notifications) = runtime.block_on(connect(&fixture.root));
-    assert_eq!(client.identity.root_id, discovery.root_id);
-    assert_eq!(client.identity.host_epoch, discovery.host_epoch);
-    assert_eq!(
-        runtime
-            .block_on(client.request(Operation::HostStatus, json!({})))
-            .unwrap()["state"],
-        "ready"
-    );
+    let discovery = discovery::read(&fixture.root).unwrap();
+    let mut client = runtime.block_on(connect(&fixture.root));
+    assert_eq!(client.epoch(), discovery.host_epoch);
     // The launcher has never handshaken or sent the owner-release message.
     drop(fixture.child.as_mut().unwrap().stdin.take());
     runtime.block_on(async {
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                let status = client
-                    .request(Operation::HostDiagnosticsQuery, json!({}))
-                    .await
-                    .unwrap();
-                assert_eq!(status["hostEpoch"], discovery.host_epoch);
-                assert_eq!(status["state"], "ready");
-                if status["logs"].as_array().unwrap().iter().any(|entry| {
-                    entry
-                        .as_str()
-                        .unwrap()
-                        .contains("Startup launcher gone; accepted clients retain Host lifetime")
-                }) {
-                    break;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("owner EOF must be processed while the observer stays attached");
-        assert_eq!(
-            client
-                .request(Operation::HostStatus, json!({}))
-                .await
-                .unwrap()["state"],
-            "ready"
-        );
-        let live = maka_client::local::read_discovery(&fixture.root).unwrap();
+        // Stay attached beyond the entire idle grace after owner EOF.
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        let status = Client::status(&discovery.endpoint, Some(client.epoch()))
+            .await
+            .unwrap();
+        assert_eq!(status.epoch, discovery.host_epoch);
+        assert!(!status.closing);
+        let live = discovery::read(&fixture.root).unwrap();
         assert_eq!(live.root_id, discovery.root_id);
         assert_eq!(live.host_epoch, discovery.host_epoch);
         assert_eq!(live.pid, discovery.pid);
@@ -103,10 +75,8 @@ fn candidate_owner_eof_preserves_an_independently_accepted_client_until_idle() {
             )
             .is_err()
         );
-        client.disconnect();
-        client.closed().await;
+        client.close().await.unwrap();
     });
-    drop(notifications);
     assert!(fixture.wait_for_exit().success());
     assert!(!fixture.registration.exists());
     drop(
@@ -122,7 +92,7 @@ fn candidate_owner_eof_preserves_an_independently_accepted_client_until_idle() {
 fn candidate_owner_eof_without_an_accepted_client_drains_startup() {
     let directory = tempfile::tempdir().unwrap();
     let mut fixture = start(directory.path());
-    let discovery = maka_client::local::read_discovery(&fixture.root).unwrap();
+    let discovery = discovery::read(&fixture.root).unwrap();
     assert_eq!(discovery.root_id, fixture.root_id);
     assert_eq!(discovery.pid.get(), fixture.child.as_ref().unwrap().id());
     drop(fixture.child.as_mut().unwrap().stdin.take());

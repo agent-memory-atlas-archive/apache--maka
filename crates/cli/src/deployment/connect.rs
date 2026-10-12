@@ -19,15 +19,18 @@
 
 use super::{RootId, activation};
 use clap::Args;
-use maka_protocol::{
-    MAX_MESSAGE_BYTES,
-    handshake::{HostHandshake, decode_hello, decode_host_handshake},
+use maka_runtime_host::{
+    application::{
+        host::{
+            VERSION,
+            protocol::{Opening, Response},
+        },
+        transport::wire,
+    },
+    server::HostError,
 };
-use maka_runtime_host::server::HostError;
 use std::time::Duration;
-use tokio::io::{
-    AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
-};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Args)]
@@ -51,7 +54,7 @@ impl Connect {
         let cancel = CancellationToken::new();
         let _signals = crate::signals::watch(cancel.clone())?;
         let result = tokio::select! {
-            result = self.bridge(BufReader::new(input), &mut output) => result,
+            result = self.bridge(input, &mut output) => result,
             _ = cancel.cancelled() => Ok(()),
             result = &mut output_done => {
                 result??;
@@ -71,48 +74,54 @@ impl Connect {
 
     async fn bridge(
         &self,
-        mut input: impl AsyncBufRead + Unpin,
+        input: impl AsyncRead + Unpin,
         output: &mut (impl AsyncWrite + Unpin),
     ) -> Result<(), HostError> {
-        // A silent client must not reserve the deployment executor or start a Host.
-        let hello = tokio::time::timeout(Duration::from_secs(5), frame(&mut input)).await??;
-        decode_hello(&maka_protocol::decode_message(&hello)?)?;
+        // Silent or incompatible input cannot start a Host or reserve its executor.
+        let mut input = wire::Reader::new(input);
+        let mut opening: Opening =
+            tokio::time::timeout(Duration::from_secs(5), input.read_bounded(4096)).await??;
+        if opening.version != VERSION {
+            return Err("unsupported public application Host protocol".into());
+        }
         let (deployment, lease) =
             activation::prepare(&self.root_id, self.repair_root_after_remount).await?;
         let (probe, live) = activation::connect_or_launch(&deployment, lease.clone()).await?;
-        let mut stream = probe.open_bridge().await?;
-        let mut stream = BufReader::new(&mut stream);
-        let accepted = tokio::time::timeout(Duration::from_secs(5), async {
-            stream.write_all(&hello).await?;
-            stream.write_all(b"\n").await?;
-            stream.flush().await?;
-            let reply = frame(&mut stream).await?;
-            let handshake = decode_host_handshake(&maka_protocol::decode_message(&reply)?)?;
-            if let HostHandshake::Accepted {
-                root_id,
-                host_epoch,
-                ..
-            } = &handshake
-                && (root_id != &deployment.root_id || host_epoch != &live.epoch)
-            {
-                return Err::<_, HostError>(
-                    "Host changed between activation and bridge handshake".into(),
-                );
-            }
-            Ok((reply, matches!(handshake, HostHandshake::Accepted { .. })))
+        let epoch = uuid::Uuid::parse_str(&live.epoch)?;
+        if opening.epoch.is_some_and(|expected| expected != epoch) {
+            return Err("Host incarnation changed before bridge admission".into());
+        }
+        opening.epoch = Some(epoch);
+        let mut stream = wire::Reader::new(probe.open_bridge().await?);
+        let response: Response = tokio::time::timeout(Duration::from_secs(5), async {
+            wire::write(&mut stream.inner, &opening).await?;
+            stream.read().await
         })
         .await??;
+        match &response {
+            Response::Connected(connected)
+                if connected.epoch != epoch
+                    || connected.version != VERSION
+                    || connected.source.state_domain != deployment.root_id =>
+            {
+                return Err("Host identity changed during bridge admission".into());
+            }
+            Response::Status(status)
+                if status.epoch != epoch
+                    || status.version != VERSION
+                    || status.root_id != deployment.root_id
+                    || status.pid != live.pid =>
+            {
+                return Err("Host identity changed during bridge status".into());
+            }
+            _ => {}
+        }
         lease.validate()?;
         drop(probe);
         drop(lease);
-        output.write_all(&accepted.0).await?;
-        output.write_all(b"\n").await?;
-        output.flush().await?;
-        if !accepted.1 {
-            return Ok(());
-        }
-        // Keep both BufReaders: either may already own pipelined bytes beyond hello.
-        relay(&mut input, output, stream).await?;
+        wire::write(output, &response).await?;
+        // Carry every prefetched byte across the boundary, including pipelined calls.
+        relay(&mut input.inner, output, stream.inner).await?;
         Ok(())
     }
 }
@@ -144,22 +153,10 @@ async fn relay(
     Ok(())
 }
 
-async fn frame(reader: &mut (impl AsyncBufRead + Unpin)) -> Result<Vec<u8>, HostError> {
-    let mut bytes = Vec::new();
-    reader
-        .take(MAX_MESSAGE_BYTES as u64 + 2)
-        .read_until(b'\n', &mut bytes)
-        .await?;
-    if bytes.last() != Some(&b'\n') || bytes.len() > MAX_MESSAGE_BYTES + 1 {
-        return Err("Host bridge greeting is incomplete or too large".into());
-    }
-    bytes.pop();
-    Ok(bytes)
-}
-
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use tokio::io::AsyncReadExt;
 
     #[tokio::test]
     async fn input_eof_preserves_a_response_already_blocked_on_output() {

@@ -20,9 +20,8 @@
 use super::{Admission, Deployment, RootId, directory, service, store, updates};
 use crate::host_client::{HostClient, LiveHost};
 use clap::Args;
-use maka_protocol::handshake::Lifecycle;
 use maka_runtime_host::server::HostError;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
 use std::path::{Path, PathBuf};
 
@@ -70,21 +69,12 @@ enum OperationState {
 enum HostObservation {
     Connected {
         identity: LiveHost,
-        activity: Activity,
+        activity: maka_runtime_host::application::host::Status,
     },
     Unavailable {
         message: String,
     },
     NotAdmitted,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Activity {
-    state: Lifecycle,
-    connections: usize,
-    active_operations: usize,
-    active_residencies: usize,
 }
 
 impl Status {
@@ -158,7 +148,7 @@ async fn observe_host(deployment: &Deployment) -> HostObservation {
         let mut client =
             HostClient::connect(&deployment.root_path, Some(&deployment.generation())).await?;
         let identity = client.live_host(deployment.websocket.port()).await?;
-        let activity = serde_json::from_value(client.status().await?)?;
+        let activity = client.status().await?;
         Ok::<_, HostError>(HostObservation::Connected { identity, activity })
     }
     .await;

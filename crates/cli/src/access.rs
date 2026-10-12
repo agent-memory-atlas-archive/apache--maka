@@ -19,22 +19,12 @@
 
 use crate::{args::Root, host_client::HostClient};
 use clap::{Args, Subcommand};
-use maka_event_log::root::RootNamespaces;
-use maka_protocol::{
-    Operation,
-    access::{
-        decode_issue_result, decode_prepare_input, decode_revoke_input, decode_revoke_result,
-    },
-};
-use maka_runtime::access::{
-    AccessCredentialPrepareInput, AccessCredentialRevokeInput, ManagedPrincipalKind,
-};
-use maka_runtime_host::{access_delivery, server::HostError};
-use serde::Serialize;
+pub(super) use maka_runtime_host::application::host::Pairing;
+use maka_runtime_host::server::HostError;
 
 #[derive(Subcommand)]
 pub(super) enum Access {
-    /// Print short-lived remote Desktop pairing JSON, including its secret credential.
+    /// Print short-lived remote application pairing JSON, including its secret credential.
     Prepare(Prepare),
     /// Revoke a credential and disconnect its remote clients.
     Revoke(Revoke),
@@ -56,15 +46,6 @@ pub(super) struct Revoke {
     credential_id: String,
 }
 
-// No Debug: this receipt is intended only for the importing Client.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct Pairing {
-    root_id: String,
-    credential_id: String,
-    credential: String,
-}
-
 impl Access {
     pub async fn run(self) -> Result<(), HostError> {
         match self {
@@ -73,77 +54,41 @@ impl Access {
         }
     }
 }
-
 impl Prepare {
     async fn run(self) -> Result<(), HostError> {
-        let input = pairing_input(self.principal)?;
+        let principal = pairing_input(self.principal)?;
         let mut client = HostClient::connect(&self.root.root, None).await?;
-        let pairing = prepare(&mut client, input).await?;
-        println!("{}", serde_json::to_string(&pairing)?);
-        drop(client);
+        println!(
+            "{}",
+            serde_json::to_string(&prepare(&mut client, principal).await?)?
+        );
         Ok(())
     }
 }
-
-pub(super) fn pairing_input(principal: String) -> Result<AccessCredentialPrepareInput, HostError> {
-    // Match the Desktop owner policy, without granting arbitrary Host paths.
-    // Pending credentials expire and must be finalized by the importing
-    // Client; its instance identity then remains bound to the credential.
-    let input = serde_json::to_value(AccessCredentialPrepareInput {
-        principal_kind: ManagedPrincipalKind::RemoteOwner,
-        principal_id: principal,
-        operation_grants: Operation::ALL
-            .iter()
-            .filter(|operation| operation.allows_remote_owner())
-            .map(|operation| operation.as_str().into())
-            .collect(),
-        can_publish_client_capabilities: true,
-        can_use_host_paths: false,
-        bind_client_instance: Some(true),
-    })?;
-    Ok(decode_prepare_input(&input)?)
+pub(super) fn pairing_input(principal: String) -> Result<String, HostError> {
+    if principal.is_empty()
+        || principal.len() > 128
+        || !principal
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_.:-".contains(&byte))
+    {
+        return Err("principal must contain 1–128 ASCII letters, digits, or _ . : -".into());
+    }
+    Ok(principal)
 }
-
 pub(super) async fn prepare(
     client: &mut HostClient,
-    input: AccessCredentialPrepareInput,
+    principal: String,
 ) -> Result<Pairing, HostError> {
-    let result = decode_issue_result(
-        &client
-            .request(
-                Operation::AccessCredentialPrepare,
-                serde_json::to_value(input)?,
-            )
-            .await?,
-    )?;
-    let control = RootNamespaces::for_current_account()?
-        .control
-        .join(client.root_id());
-    let credential_id = result.credential_id.clone();
-    let credential = tokio::task::spawn_blocking(move || {
-        access_delivery::consume(&control, &result.delivery_id, &credential_id)
-    })
-    .await??;
-    Ok(Pairing {
-        root_id: client.root_id().into(),
-        credential_id: result.credential_id,
-        credential,
-    })
+    client.prepare_access(principal).await
 }
-
 impl Revoke {
     async fn run(self) -> Result<(), HostError> {
-        let input = serde_json::to_value(AccessCredentialRevokeInput {
-            credential_id: self.credential_id,
-        })?;
-        decode_revoke_input(&input)?;
-        let mut client = HostClient::connect(&self.root.root, None).await?;
-        let result = decode_revoke_result(
-            &client
-                .request(Operation::AccessCredentialRevoke, input)
-                .await?,
-        )?;
-        println!("{}", serde_json::to_string(&result)?);
+        let client = HostClient::connect(&self.root.root, None).await?;
+        println!(
+            "{}",
+            serde_json::json!({"revoked": client.revoke_access(self.credential_id).await?})
+        );
         Ok(())
     }
 }

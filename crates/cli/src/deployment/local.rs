@@ -93,11 +93,12 @@ async fn connect_inner(path: PathBuf) -> Result<Connection, HostError> {
                 deployment.require_active()?;
                 // Keep its probe resident until the actual interactive handshake.
                 let (probe, _) = activation::connect_or_launch(&deployment, lease.clone()).await?;
+                let anchor = probe.anchor().await?;
                 let connection = live(&path, &root_id)
                     .await?
                     .ok_or("Activated Host is unavailable")?;
                 lease.validate()?;
-                drop(probe);
+                drop(anchor);
                 return Ok(connection);
             }
             store::Installation::Incomplete => {

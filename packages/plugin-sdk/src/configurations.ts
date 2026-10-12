@@ -201,7 +201,6 @@ export const configurations = {
         items: {
           $ref: '#/$defs/DirectoryRootSpec',
         },
-        minItems: 1,
         maxItems: 8,
       },
       importRoots: {
@@ -661,7 +660,6 @@ export const configurations = {
             },
             description:
               'Installation-published directories, captured without creating workspace markers.',
-            minItems: 1,
             maxItems: 8,
           },
           importRoots: {

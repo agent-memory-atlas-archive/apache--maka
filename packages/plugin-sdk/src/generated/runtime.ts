@@ -6366,10 +6366,10 @@ export interface AgentConfiguration {
   /**
    * Installation-published directories, captured without creating workspace markers.
    *
-   * @minItems 1
    * @maxItems 8
    */
   workspaceRoots:
+    | []
     | [DirectoryRootSpec]
     | [DirectoryRootSpec, DirectoryRootSpec]
     | [DirectoryRootSpec, DirectoryRootSpec, DirectoryRootSpec]

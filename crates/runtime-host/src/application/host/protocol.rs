@@ -27,7 +27,7 @@ use uuid::Uuid;
 pub const VERSION: u32 = 1;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Opening {
+pub struct Opening {
     pub version: u32,
     pub epoch: Option<Uuid>,
     #[serde(default)]
@@ -36,13 +36,24 @@ pub(super) struct Opening {
 }
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub(super) enum Request {
+pub enum Request {
     Connect,
-    Call { session: Uuid },
+    Call {
+        session: Uuid,
+    },
     Status,
-    Retire,
-    PrepareAccess { principal: String },
-    RevokeAccess { credential: String },
+    Retire {
+        #[serde(default)]
+        interrupt: bool,
+        #[serde(default)]
+        allow_idle_connections: bool,
+    },
+    PrepareAccess {
+        principal: String,
+    },
+    RevokeAccess {
+        credential: String,
+    },
     FinalizeAccess,
 }
 #[derive(Serialize, Deserialize)]
@@ -52,7 +63,7 @@ pub(super) enum Request {
     rename_all = "snake_case",
     deny_unknown_fields
 )]
-pub(super) enum Response {
+pub enum Response {
     Connected(Connected),
     Accepted,
     Status(Status),
@@ -64,12 +75,12 @@ pub(super) enum Response {
 }
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub(super) enum SessionControl {
+pub enum SessionControl {
     Close,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Connected {
+pub struct Connected {
     pub version: u32,
     pub epoch: Uuid,
     pub session: Uuid,
@@ -80,6 +91,11 @@ pub(super) struct Connected {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Status {
+    pub root_id: String,
+    pub version: u32,
+    pub pid: std::num::NonZeroU32,
+    pub generation: Option<String>,
+    pub lifecycle_mode: LifecycleMode,
     pub epoch: Uuid,
     pub source: DeploymentRef,
     pub closing: bool,
@@ -88,4 +104,11 @@ pub struct Status {
     pub sessions: usize,
     /// Observation only; idle retirement also fences native background producers.
     pub active_calls: usize,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LifecycleMode {
+    Service,
+    Ephemeral,
 }

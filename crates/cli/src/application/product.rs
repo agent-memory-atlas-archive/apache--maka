@@ -24,7 +24,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeMap, io::Write, path::PathBuf};
 
+mod headless;
 mod launch;
+pub(crate) use headless::{Roots, open_host};
 pub(crate) use launch::Launch;
 
 struct Bundled {
@@ -202,4 +204,59 @@ fn export(
         file.write_all(b"\n")?;
     }
     Ok(())
+}
+
+async fn installation(options: Value) -> Result<Value, HostError> {
+    let vm = maka_js_runtime::plugin::Vm::pure(Default::default())?;
+    let result = match vm.load("maka-product-installation".into(), AUTHORING.into()) {
+        Ok(module) => {
+            let result = module
+                .call(vec!["installation".into()], vec![options])
+                .await
+                .map_err(HostError::from);
+            let closed = module.close().await.map_err(HostError::from);
+            result.and_then(|value| closed.map(|()| value))
+        }
+        Err(error) => Err(error.into()),
+    };
+    vm.shutdown().await;
+    result
+}
+fn selected(
+    input: &Input,
+    observations: &[RemoteObservation],
+    packages: &[Package],
+) -> Result<Vec<Package>, HostError> {
+    let mut declarations = maka_plugin_core::package::Packages::default();
+    for package in packages {
+        declarations.insert(
+            package.application_ref(),
+            package
+                .manifest()
+                .application
+                .as_ref()
+                .ok_or("missing application declaration")?
+                .clone(),
+        )?;
+    }
+    let remote = observations
+        .iter()
+        .map(|observation| {
+            (
+                observation.capability.clone(),
+                observation.declaration.clone(),
+            )
+        })
+        .collect();
+    let plan = maka_plugin_core::plan::Plan::prepare(input, &declarations, &remote)?;
+    let required: std::collections::BTreeSet<_> = plan
+        .instances()
+        .values()
+        .map(|instance| &instance.package)
+        .collect();
+    Ok(packages
+        .iter()
+        .filter(|package| required.contains(&package.application_ref()))
+        .cloned()
+        .collect())
 }

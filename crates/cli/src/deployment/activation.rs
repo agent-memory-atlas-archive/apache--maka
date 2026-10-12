@@ -59,7 +59,7 @@ enum Frame {
         root_id: String,
         host_epoch: String,
         pid: NonZeroU32,
-        protocol_version: u8,
+        protocol_version: u32,
         endpoint: Endpoint,
     },
     Error {
@@ -112,6 +112,7 @@ impl Activate {
         }
         let (deployment, lease) = prepare(&self.root_id, self.repair_root_after_remount).await?;
         let (client, live) = connect_or_launch(&deployment, lease.clone()).await?;
+        let anchor = client.anchor().await?;
         lease.validate()?;
         emit(
             &Frame::Result {
@@ -121,7 +122,7 @@ impl Activate {
                 root_id: deployment.root_id,
                 host_epoch: live.epoch,
                 pid: live.pid,
-                protocol_version: 0,
+                protocol_version: maka_runtime_host::application::host::VERSION,
                 endpoint: Endpoint {
                     host: "127.0.0.1",
                     port: live.port,
@@ -131,7 +132,7 @@ impl Activate {
             self.framed,
         )?;
         // Keep the transport resident until the complete result has been flushed.
-        drop(client);
+        drop(anchor);
         Ok(())
     }
 }

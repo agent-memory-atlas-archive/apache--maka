@@ -43,9 +43,16 @@ pub struct Client {
 }
 impl Client {
     pub async fn connect(address: &Path, epoch: Option<Uuid>) -> Result<Self> {
-        let mut anchor = ipc::connect(address)
+        let anchor = ipc::connect(address)
             .await
             .map_err(|error| error.to_string())?;
+        Self::connect_stream(address, epoch, anchor).await
+    }
+    pub async fn connect_stream(
+        address: &Path,
+        epoch: Option<Uuid>,
+        mut anchor: LocalStream,
+    ) -> Result<Self> {
         wire::write(
             &mut anchor,
             &Opening {
@@ -159,22 +166,54 @@ impl Client {
         }
     }
     pub async fn status(address: &Path, epoch: Option<Uuid>) -> Result<Status> {
-        match control(address, epoch, Request::Status).await? {
+        let stream = ipc::connect(address)
+            .await
+            .map_err(|error| error.to_string())?;
+        Self::status_stream(stream, epoch).await
+    }
+    pub async fn status_stream(stream: LocalStream, epoch: Option<Uuid>) -> Result<Status> {
+        match control_stream(stream, epoch, Request::Status).await? {
             Response::Status(status) => Ok(status),
             _ => Err("Host status response mismatch".into()),
         }
     }
     pub async fn retire(address: &Path, epoch: Uuid) -> Result<bool> {
-        match control(address, Some(epoch), Request::Retire).await? {
+        Self::retire_with_options(address, epoch, false, true).await
+    }
+    /// True confirms the retirement decision; force retirement can still be
+    /// cleaning up. The original Root lease remains held through actual drain.
+    pub async fn retire_with_options(
+        address: &Path,
+        epoch: Uuid,
+        interrupt: bool,
+        allow_idle_connections: bool,
+    ) -> Result<bool> {
+        match control(
+            address,
+            Some(epoch),
+            Request::Retire {
+                interrupt,
+                allow_idle_connections,
+            },
+        )
+        .await?
+        {
             Response::Retired(result) => result,
             _ => Err("Host retirement response mismatch".into()),
         }
     }
 }
 async fn control(address: &Path, epoch: Option<Uuid>, request: Request) -> Result<Response> {
-    let mut stream = ipc::connect(address)
+    let stream = ipc::connect(address)
         .await
         .map_err(|error| error.to_string())?;
+    control_stream(stream, epoch, request).await
+}
+async fn control_stream(
+    mut stream: LocalStream,
+    epoch: Option<Uuid>,
+    request: Request,
+) -> Result<Response> {
     wire::write(
         &mut stream,
         &Opening {

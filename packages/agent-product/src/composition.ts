@@ -824,7 +824,7 @@ function workspaceComposition(configuration: CompositionConfiguration): Applicat
         scheduledTasks: !!configuration.agent.scheduledTasks,
         web: !!configuration.web,
         jev: !!configuration.jev,
-        place: configuration.agent.workspaceRoots[0].path,
+        place: configuration.agent.workspaceRoots[0]?.path ?? '',
       },
       {
         agent: [remote('agent', 'agent')],

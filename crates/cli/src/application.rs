@@ -21,7 +21,7 @@ mod product;
 mod schema;
 mod serve;
 
-pub(crate) use product::Launch;
+pub(crate) use product::{Launch, Roots, open_host};
 
 use std::{
     io::Read,

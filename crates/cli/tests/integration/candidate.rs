@@ -17,14 +17,9 @@
  * under the License.
  */
 
-use maka_client::{Client, Operations};
 use maka_event_log::root::{RootNamespaces, RootOwner};
-use maka_protocol::{
-    Operation,
-    handshake::{ClientHello, HostHandshake, Replacement, Takeover},
-};
+use maka_runtime_host::application::host::{Client, discovery};
 use serde_json::Value;
-use serde_json::json;
 use std::{
     fs,
     io::Write,
@@ -137,16 +132,15 @@ fn candidate_preserves_root_authority_and_drains_on_owner_loss_or_released_idle(
         }
 
         runtime.block_on(async {
-            let (client, _notifications) = connect(&fixture.root).await;
-            let status = client
-                .request(Operation::HostStatus, json!({}))
+            let mut client = connect(&fixture.root).await;
+            let found = discovery::read(&fixture.root).unwrap();
+            let status = Client::status(&found.endpoint, Some(client.epoch()))
                 .await
                 .unwrap();
-            assert_eq!(status["state"], "ready");
-            assert_eq!(status["hostEpoch"], registration["hostEpoch"]);
-            assert_eq!(client.identity.root_id, fixture.root_id);
-            client.disconnect();
-            client.closed().await;
+            assert!(!status.closing);
+            assert_eq!(status.epoch.to_string(), registration["hostEpoch"]);
+            assert_eq!(status.root_id, fixture.root_id);
+            client.close().await.unwrap();
         });
 
         let status = Command::new(env!("CARGO_BIN_EXE_maka"))
@@ -160,8 +154,8 @@ fn candidate_preserves_root_authority_and_drains_on_owner_loss_or_released_idle(
             String::from_utf8_lossy(&status.stderr)
         );
         let status: Value = serde_json::from_slice(&status.stdout).unwrap();
-        assert_eq!(status["hostEpoch"], registration["hostEpoch"]);
-        assert_eq!(status["state"], "ready");
+        assert_eq!(status["epoch"], registration["hostEpoch"]);
+        assert_eq!(status["closing"], false);
         if matches!(end, End::Retirement | End::Standalone | End::Successor) {
             let stale = Command::new(env!("CARGO_BIN_EXE_maka"))
                 .args(["host", "retire", "--root"])
@@ -223,115 +217,50 @@ fn candidate_preserves_root_authority_and_drains_on_owner_loss_or_released_idle(
     drop(RootOwner::open(&fixture.root, &namespaces).unwrap());
 }
 
-async fn connect(
-    root: &Path,
-) -> (
-    Client,
-    tokio::sync::mpsc::Receiver<maka_client::Notification>,
-) {
-    let discovery = maka_client::local::read_discovery(root).unwrap();
-    Client::connect(
-        maka_client::local::open_stream(&discovery.endpoint)
-            .await
-            .unwrap(),
-        &discovery.root_id,
-        &discovery.host_epoch,
-        Operations,
-    )
-    .await
-    .unwrap()
+async fn connect(root: &Path) -> Client {
+    let discovery = discovery::read(root).unwrap();
+    let status = Client::status(&discovery.endpoint, Some(discovery.host_epoch))
+        .await
+        .unwrap();
+    discovery.verify(&status).unwrap();
+    Client::connect(&discovery.endpoint, Some(discovery.host_epoch))
+        .await
+        .unwrap()
 }
 
 async fn verify_takeover(root: &Path, registration: &Value) {
     tokio::time::timeout(Duration::from_secs(10), async {
-        let (client, _notifications) = connect(root).await;
-        let (observer, _observer_notifications) = connect(root).await;
-        assert_eq!(client.identity.host_epoch, observer.identity.host_epoch);
-        let diagnostics = client
-            .request(Operation::HostDiagnosticsQuery, json!({}))
+        let mut client = connect(root).await;
+        let mut observer = connect(root).await;
+        let discovery = discovery::read(root).unwrap();
+        assert_eq!(client.epoch(), observer.epoch());
+        let status = Client::status(&discovery.endpoint, Some(client.epoch()))
             .await
             .unwrap();
-        assert_eq!(diagnostics["hostEpoch"], registration["hostEpoch"]);
-        assert_eq!(diagnostics["pid"], registration["pid"]);
-        assert_eq!(diagnostics["activeOperations"], 0);
-        assert_eq!(diagnostics["activeResidencies"], 0);
-        assert_eq!(diagnostics["connections"], 2);
-        assert_eq!(diagnostics["upgradeBlockingActivity"], true);
+        assert_eq!(status.epoch.to_string(), registration["hostEpoch"]);
+        assert_eq!(status.pid.get(), registration["pid"]);
+        assert_eq!(status.active_calls, 0);
+        assert_eq!(status.sessions, 2);
         assert!(
-            diagnostics["logs"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|v| v.as_str().unwrap().contains("Host ready"))
+            Client::retire(&discovery.endpoint, uuid::Uuid::new_v4())
+                .await
+                .is_err()
         );
-        assert!(matches!(
-            client
-                .request(
-                    Operation::HostUpgradePrepare,
-                    json!({
-                        "expectedHostEpoch":"stale", "allowInterruptActiveTasks":true
-                    })
-                )
-                .await,
-            Err(maka_client::RequestFailure::Rejected(maka_client::ClientError::Rejected(error)))
-                if error.code == maka_protocol::OperationErrorCode::OperationConflict
-        ));
-        let busy = client.request(Operation::HostUpgradePrepare, json!({
-            "expectedHostEpoch":registration["hostEpoch"], "allowInterruptActiveTasks":false,
-            "allowCooperativeHandoff":true
-        })).await.unwrap();
-        assert_eq!(busy, json!({"kind":"active_tasks"}));
-        assert!(matches!(
-            challenge(registration).await,
-            HostHandshake::Incompatible {
-                replacement: Replacement::BlockedByResidency,
-                ..
-            }
-        ));
-        observer.disconnect();
-        observer.closed().await;
-        client.disconnect();
-        client.closed().await;
-        loop {
-            match challenge(registration).await {
-                HostHandshake::Draining { host_epoch, .. } => {
-                    assert_eq!(host_epoch, registration["hostEpoch"]);
-                    break;
-                }
-                HostHandshake::Incompatible {
-                    replacement: Replacement::BlockedByResidency,
-                    ..
-                } => tokio::task::yield_now().await,
-                other => panic!("Unexpected takeover: {other:?}"),
-            }
-        }
+        assert!(
+            !Client::retire_with_options(&discovery.endpoint, client.epoch(), false, false)
+                .await
+                .unwrap()
+        );
+        observer.close().await.unwrap();
+        client.close().await.unwrap();
+        assert!(
+            Client::retire_with_options(&discovery.endpoint, client.epoch(), false, false)
+                .await
+                .unwrap()
+        );
     })
     .await
-    .expect("native candidate takeover timed out");
-}
-
-async fn challenge(registration: &Value) -> HostHandshake {
-    let stream =
-        maka_client::local::open_stream(Path::new(registration["endpoint"].as_str().unwrap()))
-            .await
-            .unwrap();
-    let (mut reader, mut writer) =
-        maka_transport::ndjson::split(stream, tokio_util::sync::CancellationToken::new());
-    writer
-        .write(&ClientHello {
-            client_instance_id: uuid::Uuid::new_v4().to_string(),
-            protocol_min: maka_protocol::PROTOCOL_VERSION,
-            protocol_max: maka_protocol::PROTOCOL_VERSION,
-            compatibility_epoch: maka_protocol::COMPATIBILITY_EPOCH,
-            composition_id: maka_protocol::COMPOSITION_ID.into(),
-            generation: Some("native-cli-successor".into()),
-            takeover: Some(Takeover {
-                expected_host_epoch: registration["hostEpoch"].as_str().unwrap().into(),
-            }),
-        })
-        .await
-        .unwrap();
-    maka_protocol::handshake::decode_host_handshake(&reader.read().await.unwrap().unwrap()).unwrap()
+    .expect("native candidate retirement timed out");
 }
 
 /// Reap the exact test child before removing its fresh root's account-level lease files.
