@@ -146,10 +146,12 @@ pub(crate) struct Owner {
     tool_basis: Vec<crate::tools::SelectedTool>,
     skills: Option<skills::Library>,
     executors: crate::executor::Executors,
-    runs: Mutex<Runs>,
+    runs: Arc<Mutex<Runs>>,
     permits: Arc<Semaphore>,
     upload_capacity: Arc<Semaphore>,
     workers: TaskTracker,
+    producers: TaskTracker,
+    producer_gate: Arc<Mutex<()>>,
     stop: CancellationToken,
 }
 impl Owner {
@@ -335,8 +337,10 @@ impl Owner {
             tool_basis,
             skills,
             executors,
-            runs: Mutex::default(),
+            runs: Arc::default(),
             workers,
+            producers: TaskTracker::new(),
+            producer_gate: Arc::default(),
             stop,
         });
         Ok(owner)
@@ -910,6 +914,20 @@ fn metadata_rejection(title: &str, labels: &[String]) -> Option<Rejection> {
     }
 }
 impl Owner {
+    pub(crate) fn prepare_retirement(
+        &self,
+    ) -> Option<Box<dyn maka_runtime_host::application::NativeRetirement>> {
+        let producer = self.producer_gate.clone().try_lock_owned().ok()?;
+        let runs = self.runs.clone().try_lock_owned().ok()?;
+        if !runs.controls.is_empty() || !runs.quarantined.is_empty() || !self.workers.is_empty() {
+            return None;
+        }
+        Some(Box::new(Idle {
+            runs,
+            _producer: producer,
+            stop: self.stop.clone(),
+        }))
+    }
     pub fn close(self: &Arc<Self>) -> BoxFuture<'static, Result<(), String>> {
         let owner = self.clone();
         Box::pin(async move {
@@ -917,8 +935,10 @@ impl Owner {
                 let mut runs = owner.runs.lock().await;
                 runs.closing = true;
                 owner.stop.cancel();
-                owner.workers.close();
             }
+            owner.producers.close();
+            owner.producers.wait().await;
+            owner.workers.close();
             owner.workers.wait().await;
             owner.engine.drain().await;
             let scheduler = owner.scheduler.finish().await;
@@ -930,6 +950,17 @@ impl Owner {
             scheduler?;
             configuration.map_err(|_| "agent_configuration_cleanup_unconfirmed".into())
         })
+    }
+}
+struct Idle {
+    runs: tokio::sync::OwnedMutexGuard<Runs>,
+    _producer: tokio::sync::OwnedMutexGuard<()>,
+    stop: CancellationToken,
+}
+impl maka_runtime_host::application::NativeRetirement for Idle {
+    fn commit(mut self: Box<Self>) {
+        self.runs.closing = true;
+        self.stop.cancel();
     }
 }
 pub(crate) fn now() -> u64 {

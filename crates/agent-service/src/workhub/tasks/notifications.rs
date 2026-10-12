@@ -45,7 +45,11 @@ impl Tasks {
                 if stop.is_cancelled() || hub.tasks.cleanup_failed() {
                     return;
                 }
+                let Some(producer) = hub.agent.0.producer().await else {
+                    return;
+                };
                 let result = hub.notification_page(after.take(), stop.clone()).await;
+                drop(producer);
                 match result {
                     Ok(next) => {
                         after = next;

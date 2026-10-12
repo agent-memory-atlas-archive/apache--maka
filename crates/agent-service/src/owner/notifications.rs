@@ -33,7 +33,12 @@ impl Owner {
         F: FnOnce(CancellationToken) -> Fut,
         Fut: std::future::Future<Output = ()> + std::marker::Send + 'static,
     {
-        self.workers.spawn(task(self.stop.child_token()));
+        self.producers.spawn(task(self.stop.child_token()));
+    }
+
+    pub(crate) async fn producer(&self) -> Option<tokio::sync::MutexGuard<'_, ()>> {
+        let guard = self.producer_gate.lock().await;
+        (!self.stop.is_cancelled()).then_some(guard)
     }
 
     pub(crate) async fn return_route(&self, source: &Invocation) -> Result<ReturnRoute, String> {

@@ -395,6 +395,49 @@ impl Owner {
                 .expect("activation belongs to this owner");
         }
     }
+    fn shutdown_if_idle(&mut self) -> Result<bool> {
+        if self.closing {
+            return Ok(true);
+        }
+        if self.starting
+            || self.loading_adoption.is_some()
+            || !self.jobs.is_empty()
+            || !self.failed.is_empty()
+            || self.cleanup_error.is_some()
+            || self
+                .owned
+                .values()
+                .any(|owned| owned.initializing || owned.closing)
+            || self.activations.values().any(|activation| {
+                !self
+                    .runtime
+                    .status(activation)
+                    .is_ok_and(|status| status.calls == 0)
+            })
+        {
+            return Ok(false);
+        }
+        // No await: invocation admission and source adoption remain serialized
+        // with this decision. Each native guard fences its independent producers.
+        let mut guards = Vec::new();
+        for owned in self.owned.values() {
+            if let Some(native) = &owned.native_owner {
+                match std::panic::catch_unwind(AssertUnwindSafe(|| native.prepare_retirement())) {
+                    Ok(Some(guard)) => guards.push(guard),
+                    Ok(None) => return Ok(false),
+                    Err(_) => return Err("native idle retirement preparation panicked".into()),
+                }
+            }
+        }
+        self.stop();
+        for guard in guards {
+            if std::panic::catch_unwind(AssertUnwindSafe(|| guard.commit())).is_err() {
+                self.cleanup_error
+                    .get_or_insert("native idle retirement commit panicked".into());
+            }
+        }
+        Ok(true)
+    }
     fn fail_initialization(&mut self, id: InstanceId, error: String) {
         self.startup_error.get_or_insert(error);
         self.initialization_failures.insert(id.clone());
@@ -924,6 +967,9 @@ impl Owner {
     }
     fn command(&mut self, command: Command) {
         match command {
+            Command::ShutdownIdle { reply } => {
+                let _ = reply.send(self.shutdown_if_idle());
+            }
             Command::CaptureImport {
                 consumer,
                 import,

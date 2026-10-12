@@ -269,6 +269,11 @@ impl executor::OutputSink for Output {
     }
 }
 impl NativeOwner for Service {
+    fn prepare_retirement(
+        &self,
+    ) -> Option<Box<dyn maka_runtime_host::application::NativeRetirement>> {
+        self.0.processes.is_idle().then(|| Box::new(()) as _)
+    }
     fn close(&self) -> BoxFuture<'static, Result<(), String>> {
         let owner = self.0.clone();
         Box::pin(async move {

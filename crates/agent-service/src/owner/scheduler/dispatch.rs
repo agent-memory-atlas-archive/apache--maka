@@ -129,7 +129,7 @@ impl Owner {
             return;
         }
         let owner = self.clone();
-        self.workers.spawn(async move {
+        self.producers.spawn(async move {
             let mut recover = true;
             let mut previous_error = None;
             let mut last_tick = now();
@@ -140,6 +140,9 @@ impl Owner {
                 let at = now();
                 recover |= at.saturating_sub(last_tick) > 60_000;
                 last_tick = at;
+                let Some(producer) = owner.producer().await else {
+                    return;
+                };
                 let delay = match owner.tick_schedules(recover).await {
                     Ok(delay) => {
                         recover = false;
@@ -154,6 +157,7 @@ impl Owner {
                         Duration::from_secs(5)
                     }
                 };
+                drop(producer);
                 tokio::select! {
                     () = owner.stop.cancelled() => return,
                     () = owner.scheduler.wake.notified() => {},

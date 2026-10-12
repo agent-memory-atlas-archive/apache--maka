@@ -94,6 +94,11 @@ struct Reader {
     root: Arc<RootOwner>,
 }
 impl NativeOwner for Reader {
+    fn prepare_retirement(
+        &self,
+    ) -> Option<Box<dyn maka_runtime_host::application::NativeRetirement>> {
+        Some(Box::new(()))
+    }
     fn close(&self) -> BoxFuture<'static, Result<(), String>> {
         Box::pin(async { Ok(()) })
     }

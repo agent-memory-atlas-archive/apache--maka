@@ -28,6 +28,9 @@ pub const GATEWAY: &str = "maka.application.gateway";
 
 struct Gateway;
 impl NativeOwner for Gateway {
+    fn prepare_retirement(&self) -> Option<Box<dyn crate::application::NativeRetirement>> {
+        Some(Box::new(()))
+    }
     fn close(&self) -> BoxFuture<'static, Result<()>> {
         Box::pin(async { Ok(()) })
     }

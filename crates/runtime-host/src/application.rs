@@ -146,7 +146,23 @@ pub trait NativeOwner: Send + Sync + 'static {
     fn execution_basis(&self) -> Option<Value> {
         None
     }
+    /// Fence independent producers only when all accepted background work has
+    /// settled. Must not block. The returned guard prevents new background
+    /// admissions until commit; dropping it resumes ordinary admission.
+    /// None conservatively reports busy, including unsupported native owners.
+    fn prepare_retirement(&self) -> Option<Box<dyn NativeRetirement>> {
+        None
+    }
     fn close(&self) -> BoxFuture<'static, Result<()>>;
+}
+/// An actual native admission fence. Commit permanently stops its producers;
+/// physical cleanup still belongs to NativeOwner::close.
+pub trait NativeRetirement: Send {
+    fn commit(self: Box<Self>);
+}
+/// For native owners whose work is entirely owned by Application invocations.
+impl NativeRetirement for () {
+    fn commit(self: Box<Self>) {}
 }
 pub struct NativeActivation {
     pub exports: Result<BTreeMap<String, Published<Arc<dyn Handler>>>>,
@@ -438,6 +454,9 @@ struct Dispatch {
 }
 
 pub(super) enum Command {
+    ShutdownIdle {
+        reply: oneshot::Sender<Result<bool>>,
+    },
     CaptureImport {
         consumer: InstanceId,
         import: String,
@@ -786,6 +805,33 @@ impl Application {
     }
     pub async fn shutdown(&self) -> Result<()> {
         self.stop.cancel();
+        self.wait_closed().await
+    }
+    /// Atomically retire only if invocations and native background work are
+    /// idle. A busy result preserves admission. Success awaits real cleanup;
+    /// dropping this observer never cancels an already committed retirement.
+    pub async fn shutdown_if_idle(&self) -> Result<bool> {
+        if self.client.snapshot().closing {
+            self.wait_closed().await?;
+            return Ok(true);
+        }
+        let (reply, receive) = oneshot::channel();
+        self.client
+            .dispatch
+            .commands
+            .send(Command::ShutdownIdle { reply })
+            .await
+            .map_err(|_| "Host owner disappeared before idle retirement".to_string())?;
+        if !receive
+            .await
+            .map_err(|_| "Host owner disappeared before idle retirement".to_string())??
+        {
+            return Ok(false);
+        }
+        self.wait_closed().await?;
+        Ok(true)
+    }
+    async fn wait_closed(&self) -> Result<()> {
         let mut updates = self.client.updates.clone();
         loop {
             let snapshot = updates.borrow().clone();

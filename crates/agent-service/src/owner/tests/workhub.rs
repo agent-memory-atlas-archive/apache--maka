@@ -587,6 +587,7 @@ async fn workhub_uses_original_agent_engine_and_freezes_coordinator_prompt() {
         let sent = fixture.send(session).await.unwrap();
         let (mut socket, _) = listener.accept().await.unwrap();
         let request = request(&mut socket).await;
+        assert!(!fixture.app.shutdown_if_idle().await.unwrap());
         assert!(
             request["messages"]
                 .as_array()
@@ -628,7 +629,9 @@ async fn workhub_uses_original_agent_engine_and_freezes_coordinator_prompt() {
         let prompt = config.system_prompt.unwrap();
         assert!(prompt.text.contains("WorkHub coordinator"));
         assert_eq!(prompt.sources[0].name, hub::IMPLEMENTATION);
-        fixture.app.shutdown().await.unwrap();
+        while !fixture.app.shutdown_if_idle().await.unwrap() {
+            tokio::task::yield_now().await;
+        }
         fixture.config.shutdown().await.unwrap();
     })
     .await

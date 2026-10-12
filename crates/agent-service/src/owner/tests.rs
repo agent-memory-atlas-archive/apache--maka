@@ -954,6 +954,7 @@ async fn actual_http_runs_are_bounded_and_observer_loss_does_not_release_capacit
         let fixture = Fixture::new(&base,2,None).await;
         let first = fixture.create("First").await; let second = fixture.create("Second").await; let third = fixture.create("Third").await;
         let started = fixture.send(&first).await.unwrap(); entered.acquire().await.unwrap().forget();
+        assert!(!fixture.app.shutdown_if_idle().await.unwrap(), "completed send RPC still owns a live model run");
         let active = fixture.query("observe", json!({"sessionId":first})).await.unwrap();
         assert_eq!(active["session"]["id"], first);
         assert_eq!(active["session"]["activity"], "working");
@@ -991,7 +992,7 @@ async fn actual_http_runs_are_bounded_and_observer_loss_does_not_release_capacit
         expected.kind = SourceKind::ModelAdapter;
         expected.name = "chat-completions".into();
         assert_eq!(adapter, &expected, "model evidence retains the actual Agent activation");
-        fixture.app.shutdown().await.unwrap(); fixture.config.shutdown().await.unwrap();
+        assert!(fixture.app.shutdown_if_idle().await.unwrap()); fixture.config.shutdown().await.unwrap();
     }).await.unwrap();
 }
 #[tokio::test]

@@ -299,6 +299,11 @@ impl Handler for Service {
     }
 }
 impl NativeOwner for Service {
+    fn prepare_retirement(
+        &self,
+    ) -> Option<Box<dyn maka_runtime_host::application::NativeRetirement>> {
+        self.0.resources.is_idle().then(|| Box::new(()) as _)
+    }
     fn close(&self) -> BoxFuture<'static, Result<(), String>> {
         self.0.stopping.cancel();
         let resources = self.0.resources.clone();

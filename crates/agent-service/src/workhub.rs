@@ -368,6 +368,12 @@ impl NativeOwner for Hub {
         self.agent.0.activated();
         self.tasks.start_notifications(&self.agent.0);
     }
+    fn prepare_retirement(
+        &self,
+    ) -> Option<Box<dyn maka_runtime_host::application::NativeRetirement>> {
+        let guard = self.agent.0.prepare_retirement()?;
+        (!self.tasks.cleanup_failed()).then_some(guard)
+    }
     fn close(&self) -> BoxFuture<'static, Result<(), String>> {
         let agent = self.agent.0.clone();
         let tasks = self.tasks.clone();

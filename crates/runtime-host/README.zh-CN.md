@@ -82,6 +82,12 @@ panic 保留 work、Scope 与容量，并退休相关注册。应用 root Drop �
 不能保活 root 或取消已接受工作。关停成功须 native/module 清理及 VM 真实关闭；共享 VM 失败
 撤销该执行域的实际注册与消费者，不影响其它执行域。
 
+`Application::shutdown_if_idle` 与调用接纳、源码更新串行判断空闲：调用须已结算，且每个
+原生 owner 都须通过非阻塞的 `NativeOwner::prepare_retirement` 锁住后台任务入口；未实现
+此接口的 owner 视为忙碌。放弃准备会恢复接纳，提交后停止后台生产者，成功仍须等待真实
+清理。Agent 定时器等待期间不算活动工作，正在执行的调度检查和已接受运行仍算；丢失退出
+观察者不会释放原工作所有权。
+
 Subscription 方法复用原 handler、Binding、Policy 与执行 owner。`Client::subscribe`
 创建可独立取消的 reader；原生通过 `Context::emit` 发布，JavaScript 使用
 `await context.invoke({operation:'emit', value})`。每个数据项与最终返回值均验证 method.output。

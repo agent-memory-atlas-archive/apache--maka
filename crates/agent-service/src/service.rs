@@ -774,6 +774,11 @@ impl maka_runtime_host::application::NativeOwner for Agent {
     fn activated(&self) {
         self.0.activated();
     }
+    fn prepare_retirement(
+        &self,
+    ) -> Option<Box<dyn maka_runtime_host::application::NativeRetirement>> {
+        self.0.prepare_retirement()
+    }
     fn close(&self) -> BoxFuture<'static, Result<(), String>> {
         self.0.close()
     }

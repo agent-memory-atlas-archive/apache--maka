@@ -476,6 +476,9 @@ impl Handler for Manager {
     }
 }
 impl NativeOwner for Manager {
+    fn prepare_retirement(&self) -> Option<Box<dyn crate::application::NativeRetirement>> {
+        Some(Box::new(()))
+    }
     fn execution_basis(&self) -> Option<Value> {
         Some(serde_json::json!({
             "stateDomain": self.source.state_domain,
@@ -649,6 +652,9 @@ fn provide_manager(
 
 struct Uninitialized;
 impl NativeOwner for Uninitialized {
+    fn prepare_retirement(&self) -> Option<Box<dyn crate::application::NativeRetirement>> {
+        Some(Box::new(()))
+    }
     fn close(&self) -> BoxFuture<'static, Result<()>> {
         Box::pin(async { Ok(()) })
     }

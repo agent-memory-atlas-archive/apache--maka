@@ -250,6 +250,11 @@ impl Handler for Files {
     }
 }
 impl NativeOwner for Files {
+    fn prepare_retirement(
+        &self,
+    ) -> Option<Box<dyn maka_runtime_host::application::NativeRetirement>> {
+        Some(Box::new(()))
+    }
     fn close(&self) -> BoxFuture<'static, Result<(), String>> {
         // No detached workers. Provider retirement waits for admitted call Scopes.
         Box::pin(async { Ok(()) })

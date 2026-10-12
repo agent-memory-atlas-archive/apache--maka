@@ -51,6 +51,9 @@ impl Handler for Reader {
     }
 }
 impl NativeOwner for Reader {
+    fn prepare_retirement(&self) -> Option<Box<dyn crate::application::NativeRetirement>> {
+        Some(Box::new(()))
+    }
     fn close(&self) -> BoxFuture<'static, Result<()>> {
         // No activation-owned native resource. Request SQL remains in its
         // independent owner and is settled through Context's parent ticket.

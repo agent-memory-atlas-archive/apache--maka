@@ -590,6 +590,11 @@ impl Handler for Library {
     }
 }
 impl NativeOwner for Library {
+    fn prepare_retirement(
+        &self,
+    ) -> Option<Box<dyn maka_runtime_host::application::NativeRetirement>> {
+        Some(Box::new(()))
+    }
     fn close(&self) -> BoxFuture<'static, Result<(), String>> {
         // All reads retain their original call's resource group. No independent
         // background scan, process, watcher or mutable catalog is owned here.

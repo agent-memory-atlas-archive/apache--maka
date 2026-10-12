@@ -364,3 +364,34 @@ async fn scheduler_rechecks_new_conversation_boundary_after_creation_before_admi
         storage.finish().await.unwrap();
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn sleeping_producers_allow_idle_retirement_but_active_iterations_are_fenced() {
+    tokio::time::timeout(Duration::from_secs(20), async {
+        let f = fixture("http://127.0.0.1:1/v1").await;
+        f.drained().await;
+        let producer = f.owner.producer().await.unwrap();
+        assert!(!f.app.shutdown_if_idle().await.unwrap());
+        assert!(!f.owner.stop.is_cancelled());
+        drop(producer);
+        // The guard blocks a new iteration, but an abandoned retirement restores it.
+        let guard = loop {
+            if let Some(guard) = f.owner.prepare_retirement() {
+                break guard;
+            }
+            tokio::task::yield_now().await;
+        };
+        assert!(f.owner.producer_gate.try_lock().is_err());
+        drop(guard);
+        assert!(!f.owner.stop.is_cancelled());
+        drop(f.owner.producer().await.unwrap());
+        while !f.app.shutdown_if_idle().await.unwrap() {
+            tokio::task::yield_now().await;
+        }
+        assert!(f.owner.producers.is_empty());
+        assert!(f.owner.workers.is_empty());
+        f.config.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
+}

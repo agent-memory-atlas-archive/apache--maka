@@ -123,6 +123,14 @@ client handles do not keep the root alive or cancel accepted work. Shutdown succ
 requires native/module cleanup and actual VM shutdown. Shared VM failure retires
 its actual registrations and consumers, leaving unrelated domains independent.
 
+`Application::shutdown_if_idle` serializes the idle decision with invocation
+admission and source adoption. It requires settled calls and a nonblocking
+`NativeOwner::prepare_retirement` fence from every native owner; unsupported
+owners report busy. Dropping preparation guards restores admission. Committing
+them stops independent producers, and success still awaits ordinary physical
+cleanup. Sleeping Agent timers do not count as active work; their current
+iterations and accepted runs do. Lost retirement observers never release custody.
+
 Subscription methods use the same handler, binding, policy and execution owner.
 `Client::subscribe` creates an independently cancellable reader; native handlers
 publish through `Context::emit`, and JavaScript uses

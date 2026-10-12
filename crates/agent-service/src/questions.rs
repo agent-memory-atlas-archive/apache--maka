@@ -200,6 +200,11 @@ fn encode(answer: Answer) -> Result<Value, String> {
     serde_json::to_value(answer).map_err(|_| "question_output_unavailable".into())
 }
 impl NativeOwner for Questions {
+    fn prepare_retirement(
+        &self,
+    ) -> Option<Box<dyn maka_runtime_host::application::NativeRetirement>> {
+        Some(Box::new(()))
+    }
     fn close(&self) -> BoxFuture<'static, Result<(), String>> {
         // No detached work: native Host calls retain actual request custody and
         // revoke/settle their Scope before the provider can finish retirement.

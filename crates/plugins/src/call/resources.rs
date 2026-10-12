@@ -38,6 +38,12 @@ struct State {
 }
 
 impl Resources {
+    /// Observe settlement without closing admission. Callers deciding retirement
+    /// must independently fence every producer before relying on this result.
+    pub fn is_idle(&self) -> bool {
+        let state = self.state.lock().unwrap();
+        state.failure.is_none() && self.tasks.is_empty()
+    }
     /// Wake the original presenter after ticket destruction has changed its
     /// settlement fact. The callback must not retain the resource group itself.
     pub fn with_wake(wake: impl Fn() + Send + Sync + 'static) -> Self {

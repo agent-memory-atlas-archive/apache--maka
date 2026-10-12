@@ -60,6 +60,9 @@ struct Done {
     cleanup: Result<(), String>,
 }
 impl Processes {
+    pub fn is_idle(&self) -> bool {
+        self.entries.lock().unwrap().is_empty() && self.workers.is_idle()
+    }
     pub fn new(calls: Arc<calls::Calls>, configuration: Configuration) -> Self {
         Self {
             calls,

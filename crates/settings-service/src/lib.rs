@@ -78,6 +78,11 @@ pub fn provide(registry: &mut NativeRegistry) -> Result<(), String> {
 }
 struct Uninitialized;
 impl NativeOwner for Uninitialized {
+    fn prepare_retirement(
+        &self,
+    ) -> Option<Box<dyn maka_runtime_host::application::NativeRetirement>> {
+        Some(Box::new(()))
+    }
     fn close(&self) -> BoxFuture<'static, Result<(), String>> {
         Box::pin(async { Ok(()) })
     }

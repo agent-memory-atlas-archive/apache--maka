@@ -348,6 +348,11 @@ impl Handler for Settings {
     }
 }
 impl NativeOwner for Settings {
+    fn prepare_retirement(
+        &self,
+    ) -> Option<Box<dyn maka_runtime_host::application::NativeRetirement>> {
+        Some(Box::new(()))
+    }
     fn close(&self) -> BoxFuture<'static, Result<(), String>> {
         let store = self.configuration.clone();
         Box::pin(async move {

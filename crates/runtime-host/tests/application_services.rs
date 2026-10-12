@@ -31,6 +31,8 @@ mod operations;
 mod persistence;
 #[path = "application_services/resource_ingress.rs"]
 mod resource_ingress;
+#[path = "application_services/retirement.rs"]
+mod retirement;
 #[path = "application_services/subscriptions.rs"]
 mod subscriptions;
 
