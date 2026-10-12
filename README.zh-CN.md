@@ -42,7 +42,7 @@ just run
 
 | 目录 | 用途 |
 | --- | --- |
-| [platform/](platform/README.zh-CN.md) | 应用内核、Host/UI owner、JavaScript 后端和原生渲染器 |
+| [platform/](platform/README.zh-CN.md) | 应用内核、Host/UI owner、JavaScript 执行适配器和原生渲染器 |
 | [plugins/](plugins/README.zh-CN.md) | 插件声明、业务实现及共享领域契约 |
 | [products/maka/](products/maka/README.zh-CN.md) | 原生工厂选择、产品组合、CLI 和桌面入口 |
 | `tools/schema/` | 无需构建完整产品的契约与 schema 导出 |

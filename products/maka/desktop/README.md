@@ -21,7 +21,7 @@
 
 [简体中文](README.zh-CN.md)
 
-Builds the `maka-desktop` executable and owns native windows. It loads a committed Desktop composition, injects the UI JavaScript backend and uses `maka-render-gpui` to present frames. Pages and workflows come from plugin packages.
+Builds the `maka-desktop` executable and owns native windows. It loads a committed Desktop composition, injects the UI JavaScript execution adapter and uses `maka-render-gpui` to present frames. Pages and workflows come from plugin packages.
 
 Build with `just build`, then launch an installed Desktop deployment with `target/debug/maka desktop --root PATH --deployment UUID --connections FILE`. The CLI starts its sibling frontend. Window shutdown waits for native resource release, accepted operations and Host connection cleanup. Platform-specific IME and accessibility behavior needs verification in a real window.
 

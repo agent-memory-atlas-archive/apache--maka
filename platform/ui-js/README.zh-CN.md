@@ -21,6 +21,6 @@
 
 [English](README.md)
 
-为 `maka-ui-runtime` 执行 JavaScript 组件回调。`execution` 创建产品嵌入方使用的后端配置。适配器在 guest 限制内执行激活与回调代码，UI 所有者校验并提交结果批次。原生输入资源、操作回执和挂载清理仍归该所有者管理。
+为 `maka-ui-runtime` 执行 JavaScript 组件回调。`execution` 为产品嵌入方配置执行适配器。适配器在 guest 限制内执行激活与回调代码，UI 所有者校验并提交结果批次。原生输入资源、操作回执和挂载清理仍归该所有者管理。
 
 [源码](src/lib.rs) · [Cargo 配置](Cargo.toml)

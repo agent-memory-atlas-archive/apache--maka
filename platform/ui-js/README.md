@@ -21,6 +21,6 @@
 
 [简体中文](README.zh-CN.md)
 
-Executes JavaScript component callbacks for `maka-ui-runtime`. `execution` creates the backend options used by a product embedding. The adapter runs activation and callback code within guest limits; the UI owner validates and commits the resulting batch. Native input resources, mutation receipts and mount cleanup stay with that owner.
+Executes JavaScript component callbacks for `maka-ui-runtime`. `execution` configures the execution adapter for a product embedding. The adapter runs activation and callback code within guest limits; the UI owner validates and commits the resulting batch. Native input resources, mutation receipts and mount cleanup stay with that owner.
 
 [Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

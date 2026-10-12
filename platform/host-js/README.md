@@ -21,6 +21,6 @@
 
 [简体中文](README.zh-CN.md)
 
-Runs JavaScript Host services through the backend interface of `maka-host-runtime`. `factory` creates the adapter with explicit limits. Guest calls retain the original Host context, imports and attachment slots; the adapter supplies execution, while the Host decides admission and owns cleanup. Native-only embeddings can omit this crate.
+Runs JavaScript Host services through the execution interface of `maka-host-runtime`. `factory` creates the adapter with explicit limits. Guest calls retain the original Host context, imports and attachment slots; the adapter supplies execution, while the Host decides admission and owns cleanup. Native-only embeddings can omit this crate.
 
 [Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

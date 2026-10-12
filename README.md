@@ -42,7 +42,7 @@ just run
 
 | Directory | Purpose |
 | --- | --- |
-| [platform/](platform/README.md) | Application kernel, Host/UI owners, JavaScript backends and native renderers |
+| [platform/](platform/README.md) | Application kernel, Host/UI owners, JavaScript execution adapters and native renderers |
 | [plugins/](plugins/README.md) | Authored plugin declarations, business implementations and shared domain contracts |
 | [products/maka/](products/maka/README.md) | Native factory selection, product composition, CLI and desktop entry points |
 | `tools/schema/` | Contract/schema export without building the product |

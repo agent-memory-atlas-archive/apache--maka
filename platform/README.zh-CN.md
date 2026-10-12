@@ -33,6 +33,6 @@
 | I/O 与隔离 | [network](network/README.zh-CN.md)、[process](process/README.zh-CN.md)、[sandbox](sandbox/README.zh-CN.md)、[computer-use](computer-use/README.zh-CN.md) |
 | 连接与健康状态 | [transport](transport/README.zh-CN.md)、[background-health](background-health/README.zh-CN.md) |
 
-Host 和 UI 共用插件生命周期内核，通过可选后端接入 JavaScript。渲染器消费已提交帧、管理原生资源，不选择产品页面。
+Host 和 UI 共用插件生命周期内核，通过可选的执行适配器运行 JavaScript 插件。渲染器消费已提交帧、管理原生资源，不选择产品页面。
 
 依赖边界是明确的：Host、UI 和渲染器无需 V8 或 Agent 引擎即可编译。部分平台代码仍依赖存储与呈现所需的 Agent 共用事实类型；这些数据依赖明确列在 Cargo 配置中。

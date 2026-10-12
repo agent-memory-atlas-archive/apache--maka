@@ -21,7 +21,7 @@
 
 [English](README.md)
 
-执行经过校验的服务组合，负责调用准入、激活和退役。产品提供原生工厂，并按需注入 JavaScript 后端。所有者与客户端 API 见 `application`；编写原生服务可从 `application/native_context.rs` 开始。
+执行经过校验的服务组合，负责调用准入、激活和退役。产品提供原生工厂，并按需注入 JavaScript 执行适配器。所有者与客户端 API 见 `application`；编写原生服务可从 `application/native_context.rs` 开始。
 
 提交的配置表示期望状态，实例完成收敛后才成为有效状态。更新保留未改变的激活及其绑定；替换必须等待已接受调用和原生资源完成清理。操作回执区分业务结果与清理状态，丢失响应后应查询原回执。
 

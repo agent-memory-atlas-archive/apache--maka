@@ -21,7 +21,7 @@
 
 [简体中文](README.zh-CN.md)
 
-Owns component activation, state, input dispatch and atomic frame updates. `Application` runs a checked UI composition; `NativeRegistry` supplies compiled factories and a scene compiler. Products inject JavaScript execution through `backend` when needed.
+Owns component activation, state, input dispatch and atomic frame updates. `Application` runs a checked UI composition; `NativeRegistry` supplies compiled factories and a scene compiler. Products inject a JavaScript execution adapter through the `backend` module when needed.
 
 A callback proposes state, a frame and one-shot actions. The runtime validates the whole batch before committing it. Renderers consume committed frames and own platform resources; they do not execute guest code during layout or paint. Terminal and desktop scenes have separate languages.
 

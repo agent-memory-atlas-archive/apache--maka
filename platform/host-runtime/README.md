@@ -21,7 +21,7 @@
 
 [简体中文](README.zh-CN.md)
 
-Runs checked service compositions and owns call admission, activation and retirement. Products supply native factories and, when needed, a JavaScript backend. See `application` for the owner and client API; `application/native_context.rs` is the starting point for native services.
+Runs checked service compositions and owns call admission, activation and retirement. Products supply native factories and, when needed, a JavaScript execution adapter. See `application` for the owner and client API; `application/native_context.rs` is the starting point for native services.
 
 A committed source is desired configuration. It becomes effective only after its instances converge. Updates preserve unchanged activations and their captured bindings; replacements wait for accepted calls and native resources to settle. Mutation receipts distinguish business results from cleanup, so a lost reply must be resolved through its original receipt.
 

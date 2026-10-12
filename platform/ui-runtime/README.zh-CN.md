@@ -21,7 +21,7 @@
 
 [English](README.md)
 
-管理组件激活、状态、输入分发和帧的原子更新。`Application` 执行经过校验的 UI 组合，`NativeRegistry` 提供编译进程序的工厂和场景编译器。需要 JavaScript 时，由产品通过 `backend` 注入。
+管理组件激活、状态、输入分发和帧的原子更新。`Application` 执行经过校验的 UI 组合，`NativeRegistry` 提供编译进程序的工厂和场景编译器。需要 JavaScript 时，由产品通过 `backend` 模块注入执行适配器。
 
 回调提交状态、帧和一次性动作的候选结果，运行时校验整个批次后再提交。渲染器消费已提交帧并管理平台资源，不在布局或绘制时执行 guest 代码。终端和桌面使用各自的场景语言。
 

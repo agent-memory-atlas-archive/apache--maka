@@ -21,7 +21,7 @@
 
 [简体中文](README.zh-CN.md)
 
-Builds the `maka` executable. It starts the terminal product, serves Hosts, exposes ACP and provides application inspection, composition and installation commands. Product startup wires native factories and JavaScript backends into the platform owners.
+Builds the `maka` executable. It starts the terminal product, serves Hosts, exposes ACP and provides application inspection, composition and installation commands. Product startup wires native factories and JavaScript execution adapters into the platform owners.
 
 From the repository root, run `just run` or `just run --help`. Development builds load `../bundle/dist`; `just run` rebuilds that bundle before Cargo starts. Release builds embed it. Desktop runs in a separate sibling executable.
 

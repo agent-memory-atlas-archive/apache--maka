@@ -21,7 +21,7 @@
 
 [English](README.md)
 
-构建 `maka-desktop` 可执行文件并管理原生窗口。它加载已提交的 Desktop 组合，注入 UI JavaScript 后端，并通过 `maka-render-gpui` 呈现帧。页面与工作流来自插件包。
+构建 `maka-desktop` 可执行文件并管理原生窗口。它加载已提交的 Desktop 组合，注入 UI JavaScript 执行适配器，并通过 `maka-render-gpui` 呈现帧。页面与工作流来自插件包。
 
 使用 `just build` 构建，再以 `target/debug/maka desktop --root PATH --deployment UUID --connections FILE` 启动已安装的 Desktop 部署。CLI 会启动同目录前端。窗口关闭需要等待原生资源释放、已接受操作和 Host 连接清理。平台特有的 IME 与无障碍行为需要在真实窗口中验证。
 

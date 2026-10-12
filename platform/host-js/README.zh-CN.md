@@ -21,6 +21,6 @@
 
 [English](README.md)
 
-通过 `maka-host-runtime` 的后端接口执行 JavaScript Host 服务。`factory` 接收显式运行限制并创建适配器。Guest 调用沿用原始 Host 上下文、导入绑定和附件槽位；适配器负责执行，Host 负责准入和清理。只使用原生实现的嵌入程序可以不依赖本 crate。
+通过 `maka-host-runtime` 的执行接口执行 JavaScript Host 服务。`factory` 接收显式运行限制并创建适配器。Guest 调用沿用原始 Host 上下文、导入绑定和附件槽位；适配器负责执行，Host 负责准入和清理。只使用原生实现的嵌入程序可以不依赖本 crate。
 
 [源码](src/lib.rs) · [Cargo 配置](Cargo.toml)

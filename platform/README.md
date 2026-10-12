@@ -33,6 +33,6 @@ The platform loads packages, checks compositions, owns execution resources and p
 | I/O and isolation | [network](network/README.md), [process](process/README.md), [sandbox](sandbox/README.md), [computer-use](computer-use/README.md) |
 | Connections and health | [transport](transport/README.md), [background-health](background-health/README.md) |
 
-Host and UI share the plugin lifecycle kernel. JavaScript runs through optional backend adapters. Renderers consume committed frames and own native resources; they do not choose product pages.
+Host and UI share the plugin lifecycle kernel. Optional execution adapters run JavaScript plugins. Renderers consume committed frames and own native resources; they do not choose product pages.
 
 The dependency boundary is deliberate: Host, UI and the renderers can compile without V8 or the Agent engine. Some platform code still depends on shared Agent facts for storage and presentation. Those data dependencies are visible in the Cargo manifests.

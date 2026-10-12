@@ -29,7 +29,7 @@ Maka assembles applications from plugins. A package declares what it provides an
 
 A `package.ts` identifies an authored plugin. A Cargo crate identifies code compiled together. They need not correspond one-to-one: an Agent service can use several domain crates, while related plugin entries can share one native implementation crate.
 
-The Host and UI owners use the same lifecycle kernel. JavaScript execution is injected through `host-js` and `ui-js`; native renderers and owners can compile without V8 or the Agent engine. Shared fact types remain explicit dependencies where persistence or presentation needs them.
+The Host and UI owners use the same lifecycle kernel. The `host-js` and `ui-js` adapters execute JavaScript plugins; native renderers and owners can compile without V8 or the Agent engine. Shared fact types remain explicit dependencies where persistence or presentation needs them.
 
 ## From package to running application
 
