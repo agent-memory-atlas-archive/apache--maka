@@ -148,6 +148,7 @@ two reviewers (Opus and Fable) without a sign-off per step; each package is comm
 | F42 | Side chat: a fork of the task in the workbar, its cleanup ledger, quotes from the transcript, hidden forks | c9fd75b..9adda9f | done |
 | F43 | Files: HTML pages rendered in the face, links by Desktop's rule, pages opened in the default app | 4a05bc0..9b58c10 | done |
 | F44 | Side chat fixes from an adversarial review: the ledger merged across runs and never overwritten unread, owner locks taken before they are named, `operation_conflict` settled, removals tried again, the picked mode set again | a754ada..cbbca54 | done |
+| F45 | A State Root whose disk identity changed (macOS remounted its volume): Desktop's repair prompt in the disconnected strip, Repair workspace beside Retry, the marker's `rootIdentity` replaced under Maka's marker lock with before and after checks | e6d0a25..b5ec632 | done |
 
 Later candidates: Browser (gpui-kit has a `webview` crate; the model's browser tools need
 client capabilities), and a webview for the Files face's HTML pages, which would run their

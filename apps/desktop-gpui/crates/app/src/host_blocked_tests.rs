@@ -19,10 +19,12 @@
 
 //! UI integration tests of the screen that stands in for the task view
 //! while a Host blocker is in place: a Runtime Host of another protocol
-//! epoch, and a missing or unbuilt Maka checkout. The production window
-//! content runs against a scripted Host transport; the supervisor's events
-//! are fed as the `host-client` supervisor sends them (its own tests cover
-//! a scripted Host answering `incompatible`).
+//! epoch, and a missing or unbuilt Maka checkout; and of the disconnected
+//! strip's repair of a State Root whose marker names another directory.
+//! The production window content runs against a scripted Host transport;
+//! the supervisor's events are fed as the `host-client` supervisor sends
+//! them (its own tests cover a scripted Host answering `incompatible`, and
+//! a supervised launch that stops for the repair and starts once repaired).
 
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -41,8 +43,8 @@ use serde_json::{Value, json};
 use shared::copy::host as copy;
 use shared::copy::{self as shell_copy, Locale};
 use workspace::{
-    EpochMismatch, HostBlocker, HostRequestError, HostSession, HostTransport, MissingCheckout,
-    StateRootStore, UnavailableProjectCatalog,
+    ConnectionStatus, EpochMismatch, HostBlocker, HostRequestError, HostSession, HostTransport,
+    MissingCheckout, RetryState, StateRootRepairState, StateRootStore, UnavailableProjectCatalog,
 };
 
 use crate::{BuildWorkbench, StateRootSetup, Workbench};
@@ -138,13 +140,24 @@ struct Harness {
 
 impl Harness {
     fn open(cx: &mut TestAppContext) -> Self {
+        Self::open_with(|session| session, cx)
+    }
+
+    /// With the Host session `configure` returns.
+    fn open_with(
+        configure: impl FnOnce(HostSession) -> HostSession,
+        cx: &mut TestAppContext,
+    ) -> Self {
         cx.update(|cx| {
             gpui_kit::init(cx);
             crate::init(cx);
             cx.set_reduce_motion(true);
         });
         let host = cx.new(|_| {
-            HostSession::with_transport(PathBuf::from("/tmp/.dev-root"), Arc::new(ScriptedHost))
+            configure(HostSession::with_transport(
+                PathBuf::from("/tmp/.dev-root"),
+                Arc::new(ScriptedHost),
+            ))
         });
         let build: Rc<BuildWorkbench> =
             Rc::new(|_, _, _, _| unreachable!("the root is not switched"));
@@ -322,5 +335,212 @@ fn other_suspensions_keep_the_strip(cx: &mut TestAppContext) {
         assert!(window.try_find("host-blocked").is_none());
         assert!(window.find("host-disconnected").visible());
         assert!(window.find("empty-state").visible());
+        assert!(window.try_find("repair-state-root").is_none(), "only a marker to repair");
+        assert!(window.try_find("state-root-repair-message").is_none());
+    });
+}
+
+/// A State Root whose marker keeps the device number its volume had before
+/// a remount, and a control namespace for the marker lock, in a scratch
+/// directory (never the real ones).
+#[cfg(unix)]
+struct Remounted {
+    dir: PathBuf,
+    root: PathBuf,
+}
+
+#[cfg(unix)]
+const ROOT_ID: &str = "67d440f2c07d4cf4e9f56a52aa2bf8e435c71602ddda6244987e201de0c4fb8d";
+
+#[cfg(unix)]
+// Fixture files are written and read synchronously; no UI thread is
+// involved.
+#[allow(clippy::disallowed_methods)]
+impl Remounted {
+    fn new(name: &str) -> Self {
+        use std::os::unix::fs::MetadataExt as _;
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        static NEXT: AtomicU32 = AtomicU32::new(0);
+        let number = NEXT.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir()
+            .join(format!("app-remounted-{name}-{}-{number}", std::process::id()));
+        let root = dir.join("state-root");
+        std::fs::create_dir_all(&root).expect("root");
+        let root = std::fs::canonicalize(root).expect("canonical root");
+        let directory = std::fs::metadata(&root).expect("root");
+        let marker = json!({
+            "schemaVersion": 1, "kind": "interactive", "rootId": ROOT_ID,
+            "rootIdentity": {
+                "dev": (directory.dev() + 1).to_string(),
+                "ino": directory.ino().to_string()
+            }
+        });
+        std::fs::write(Self::marker_path(&root), format!("{marker}\n")).expect("stale marker");
+        Self { dir, root }
+    }
+
+    fn marker_path(root: &Path) -> PathBuf {
+        root.join(host_client::STORAGE_ROOT_MARKER_FILE)
+    }
+
+    fn marker(&self) -> Value {
+        serde_json::from_slice(&std::fs::read(Self::marker_path(&self.root)).expect("marker"))
+            .expect("json")
+    }
+
+    fn namespace(&self) -> PathBuf {
+        self.dir.join("runtime-hosts")
+    }
+
+    /// The window over a Host session that takes the marker lock in the
+    /// scratch namespace, suspended on this State Root's marker as the
+    /// supervisor reports it.
+    fn suspended_window(&self, cx: &mut TestAppContext) -> Harness {
+        cx.executor().allow_parking();
+        let namespace = self.namespace();
+        let harness = Harness::open_with(|session| session.with_control_namespace(namespace), cx);
+        let repair =
+            match futures_lite::future::block_on(host_client::prepare_state_root(&self.root)) {
+                Err(host_client::StateRootError::IdentityMismatch(repair)) => *repair,
+                other => panic!("expected a mismatch, got {other:?}"),
+            };
+        let error = host_client::StateRootError::IdentityMismatch(Box::new(repair.clone()));
+        let reason = host_client::error_chain(&error);
+        harness.feed(ConnectionEvent::AttemptFailed { attempt: 1, reason: reason.clone() }, cx);
+        harness.feed(
+            ConnectionEvent::Suspended { reason, blocker: Some(HostBlocker::StateRoot(repair)) },
+            cx,
+        );
+        harness
+    }
+}
+
+#[cfg(unix)]
+impl Drop for Remounted {
+    fn drop(&mut self) {
+        std::fs::remove_dir_all(&self.dir).ok();
+    }
+}
+
+/// Lets the repair, which runs on real threads, finish.
+#[cfg(unix)]
+// The test thread waits for those threads; no UI thread is involved.
+#[allow(clippy::disallowed_methods)]
+fn settle_repair(harness: &Harness, cx: &mut TestAppContext) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        cx.run_until_parked();
+        let repairing = harness
+            .host
+            .read_with(cx, |host, _| host.repair_state() == &StateRootRepairState::Repairing);
+        if !repairing {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "the repair did not finish");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    harness.with_window(cx, |_, _| {});
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+fn a_state_root_to_repair_is_explained_in_the_strip_and_repaired_on_a_click(
+    cx: &mut TestAppContext,
+) {
+    let remounted = Remounted::new("click");
+    let harness = remounted.suspended_window(cx);
+    let path = remounted.root.display().to_string();
+    harness.with_window(cx, |window, _| {
+        // The strip, not a screen of its own; the task view stays.
+        assert!(window.try_find("host-blocked").is_none());
+        assert!(window.find("host-disconnected").visible());
+        assert!(window.find("empty-state").visible());
+        assert_eq!(window.find("reconnect").label(), Some(shell_copy::RETRY.en()));
+        let repair = window.find("repair-state-root");
+        assert!(repair.visible());
+        assert_eq!(repair.label(), Some(shell_copy::REPAIR_STATE_ROOT.en()));
+        // Desktop's words replace the reason and the manual command, which
+        // would meet the same marker.
+        assert!(window.try_find("host-disconnected-reason").is_none());
+        assert!(window.try_find("serve-command").is_none());
+        assert!(window.try_find("state-root-repair-error").is_none());
+    });
+    assert_eq!(
+        harness.label("state-root-repair-message", cx),
+        shell_copy::STATE_ROOT_REPAIR_MESSAGE.en()
+    );
+    assert_eq!(
+        harness.label("state-root-repair-detail", cx),
+        shell_copy::STATE_ROOT_REPAIR_DETAIL.en()
+    );
+    assert_eq!(harness.label("state-root-repair-path", cx), path);
+    let stale = remounted.marker();
+
+    harness.with_window(cx, |window, cx| window.click("repair-state-root", cx));
+    settle_repair(&harness, cx);
+
+    // Repaired: the same rootId and inode, the device number it has now.
+    let repaired = remounted.marker();
+    assert_eq!(repaired["rootId"], ROOT_ID);
+    assert_eq!(repaired["rootIdentity"]["ino"], stale["rootIdentity"]["ino"]);
+    assert_ne!(repaired["rootIdentity"]["dev"], stale["rootIdentity"]["dev"]);
+    // Then it retries, and the strip no longer offers the repair.
+    harness.host.read_with(cx, |host, _| {
+        assert!(
+            matches!(
+                host.status(),
+                ConnectionStatus::Disconnected { retry: RetryState::Attempting { .. }, .. }
+            ),
+            "{:?}",
+            host.status()
+        );
+        assert_eq!(host.blocker(), None);
+    });
+    harness.with_window(cx, |window, _| {
+        assert!(window.find("host-disconnected").visible());
+        assert!(window.try_find("repair-state-root").is_none());
+        assert!(window.try_find("state-root-repair-message").is_none());
+    });
+    harness.feed(ConnectionEvent::HostStarting { attempt: 1, pid: 42 }, cx);
+    harness.feed(ConnectionEvent::Connected { accepted: accepted() }, cx);
+    harness.with_window(cx, |window, _| {
+        assert!(window.try_find("host-disconnected").is_none());
+        assert!(window.find("send-message").visible());
+    });
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+// The fixture changes the marker synchronously.
+#[allow(clippy::disallowed_methods)]
+fn a_failed_repair_shows_its_reason_in_the_strip(cx: &mut TestAppContext) {
+    let remounted = Remounted::new("failed");
+    let harness = remounted.suspended_window(cx);
+    // Another marker after the offer: the repair refuses it.
+    let changed = format!(
+        r#"{{"schemaVersion":1,"kind":"interactive","rootId":"{}","rootIdentity":{{"dev":"1","ino":"2"}}}}"#,
+        "f".repeat(64)
+    );
+    std::fs::write(Remounted::marker_path(&remounted.root), &changed).expect("changed marker");
+
+    harness.with_window(cx, |window, cx| window.click("repair-state-root", cx));
+    settle_repair(&harness, cx);
+    let error = harness.label("state-root-repair-error", cx);
+    assert!(error.contains("changed after the repair was offered"), "{error}");
+    harness.with_window(cx, |window, _| {
+        assert!(window.find("repair-state-root").visible(), "still offered");
+        assert!(window.find("state-root-repair-message").visible());
+    });
+    assert_eq!(
+        std::fs::read_to_string(Remounted::marker_path(&remounted.root)).expect("marker"),
+        changed,
+        "nothing written"
+    );
+
+    // Retry checks the State Root again; the failure goes.
+    harness.with_window(cx, |window, cx| window.click("reconnect", cx));
+    harness.with_window(cx, |window, _| {
+        assert!(window.try_find("state-root-repair-error").is_none());
     });
 }

@@ -50,7 +50,7 @@ pub const STORAGE_ROOT_MARKER_FILE: &str = ".maka-storage-root.json";
 pub const REGISTRATION_FILE: &str = "registration.json";
 
 /// `MAX_STORAGE_ROOT_MARKER_BYTES` in `root-authority.ts`.
-const MAX_MARKER_BYTES: u64 = 1_024;
+pub(crate) const MAX_MARKER_BYTES: u64 = 1_024;
 
 /// `MAX_REGISTRATION_BYTES` in `control/registration.ts`.
 const MAX_REGISTRATION_BYTES: u64 = 16 * 1024;
@@ -126,6 +126,8 @@ pub(crate) struct MarkerRecord {
     /// `rootIdentity.dev` and `rootIdentity.ino`, decimal.
     pub(crate) dev: String,
     pub(crate) ino: String,
+    /// The file's bytes as read.
+    pub(crate) bytes: Vec<u8>,
 }
 
 /// Reads and validates the marker of the State Root at `root`
@@ -134,19 +136,27 @@ pub(crate) async fn read_marker(root: &Path) -> Result<MarkerRecord, DiscoveryEr
     let path = root.join(STORAGE_ROOT_MARKER_FILE);
     let bytes = match read_bounded_file(&path, MAX_MARKER_BYTES).await {
         Ok(Some(bytes)) => bytes,
-        Ok(None) => {
-            return Err(DiscoveryError::InvalidMarker {
-                path,
-                reason: format!("must be a regular file of at most {MAX_MARKER_BYTES} bytes"),
-            });
-        }
+        Ok(None) => return Err(marker_not_a_file(path)),
         Err(source) if source.kind() == io::ErrorKind::NotFound => {
             return Err(DiscoveryError::RootUnmarked(root.to_owned()));
         }
         Err(source) => return Err(DiscoveryError::Io { path, source }),
     };
+    parse_marker(&path, bytes)
+}
+
+/// The marker at `path` is not a bounded regular file.
+pub(crate) fn marker_not_a_file(path: PathBuf) -> DiscoveryError {
+    DiscoveryError::InvalidMarker {
+        path,
+        reason: format!("must be a regular file of at most {MAX_MARKER_BYTES} bytes"),
+    }
+}
+
+/// Validates the marker read from `path` the way `isRootMarker` does.
+pub(crate) fn parse_marker(path: &Path, bytes: Vec<u8>) -> Result<MarkerRecord, DiscoveryError> {
     let invalid = |reason: &str| DiscoveryError::InvalidMarker {
-        path: path.clone(),
+        path: path.to_owned(),
         reason: reason.to_owned(),
     };
     let marker: RootMarker = serde_json::from_slice(&bytes).map_err(|_| invalid("not a marker"))?;
@@ -167,6 +177,7 @@ pub(crate) async fn read_marker(root: &Path) -> Result<MarkerRecord, DiscoveryEr
         root_id: marker.root_id,
         dev: marker.root_identity.dev,
         ino: marker.root_identity.ino,
+        bytes,
     })
 }
 

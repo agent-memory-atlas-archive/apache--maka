@@ -49,6 +49,9 @@ thiserror.workspace = true
 url.workspace = true
 uuid.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
 # Named pipes with overlapped I/O behind a safe API, so one thread can wait
 # in a read while another writes (see src/named_pipe.rs). Windows only, and
 # without its tokio integration.

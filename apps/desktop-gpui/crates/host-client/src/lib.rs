@@ -50,7 +50,7 @@
 //! [`RootConnector`] built with [`RootConnector::spawning`] does that on
 //! every attempt of a supervised connection. See the `launcher` module
 //! re-exports ([`LaunchOptions`], [`MakaInstallation`], [`NodeRuntime`],
-//! [`spawn_candidate`], [`prepare_state_root`]).
+//! [`spawn_candidate`], [`prepare_state_root`], [`repair_state_root`]).
 //!
 //! ```no_run
 //! use host_client::{ConnectOptions, Connected, Connection, discover_host, random_client_instance_id};

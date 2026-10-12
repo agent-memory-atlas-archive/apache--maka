@@ -3600,6 +3600,7 @@ dependencies = [
  "getrandom 0.4.3",
  "host-protocol",
  "interprocess",
+ "libc",
  "log",
  "rustls-platform-verifier",
  "serde",

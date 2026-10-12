@@ -27,10 +27,10 @@ use std::time::Duration;
 
 use gpui_kit::{AppContext as _, Context, EventEmitter, SharedString, Task};
 use host_client::{
-    ConnectionEvent, HostBlocker, HostEvent, LOCAL_PROFILE_ID, LaunchOptions, ReconnectPolicy,
-    RemoteConnector, RemoteHostProfile, ResolvedRemoteHost, RootConnector, Supervised,
-    SupervisorHandle, client_identity_path, configured_maka_checkout, random_client_instance_id,
-    supervise,
+    ConnectionEvent, HostBlocker, HostEvent, LOCAL_PROFILE_ID, LaunchOptions, PreparedRoot,
+    ReconnectPolicy, RemoteConnector, RemoteHostProfile, ResolvedRemoteHost, RootConnector,
+    StateRootRepair, Supervised, SupervisorHandle, client_identity_path, configured_maka_checkout,
+    error_chain, random_client_instance_id, supervise,
 };
 use host_protocol::{AccessCredential, ClientHello, HostAccepted, PushFrame, RemoteTransport};
 use shared::copy::{
@@ -71,6 +71,21 @@ pub enum RetryState {
     Waiting { attempt: u32, delay: Duration },
     /// Retrying cannot help; only [`HostSession::reconnect`] resumes.
     Suspended,
+}
+
+/// Where a repair of the State Root's marker stands
+/// ([`HostSession::repair_state_root`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StateRootRepairState {
+    /// No repair runs, and none failed since the person last retried.
+    #[default]
+    Idle,
+    /// A repair runs.
+    Repairing,
+    /// The last repair of the offered marker failed: why. Nothing or the
+    /// whole repaired marker was written.
+    Failed(SharedString),
 }
 
 impl ConnectionStatus {
@@ -204,8 +219,14 @@ pub struct HostSession {
     host: WindowHost,
     status: ConnectionStatus,
     /// Why automatic attempts stopped, when it is something the window
-    /// explains on a screen of its own; see [`Self::blocker`].
+    /// explains beyond the reason text; see [`Self::blocker`].
     blocker: Option<HostBlocker>,
+    /// The repair of a State Root marker that names another directory.
+    repair: StateRootRepairState,
+    repair_task: Option<Task<()>>,
+    /// Where a repair takes Maka's marker lock, when not the platform
+    /// control namespace (tests).
+    control_namespace: Option<PathBuf>,
     /// The Maka checkout a Host is started from, read once from the
     /// environment ([`host_client::configured_maka_checkout`]).
     maka_checkout: Option<PathBuf>,
@@ -280,6 +301,9 @@ impl HostSession {
             host,
             status: ConnectionStatus::Connecting,
             blocker: None,
+            repair: StateRootRepairState::Idle,
+            repair_task: None,
+            control_namespace: None,
             maka_checkout: configured_maka_checkout(),
             accepted: None,
             host_changed: false,
@@ -298,6 +322,9 @@ impl HostSession {
             host: WindowHost::Local,
             status: ConnectionStatus::Connecting,
             blocker: None,
+            repair: StateRootRepairState::Idle,
+            repair_task: None,
+            control_namespace: None,
             maka_checkout: configured_maka_checkout(),
             accepted: None,
             host_changed: false,
@@ -312,6 +339,14 @@ impl HostSession {
     pub fn for_host(mut self, host: WindowHost) -> Self {
         self.requester = self.requester.clone().with_access(host.access());
         self.host = host;
+        self
+    }
+
+    /// The same session, but a State Root repair takes Maka's marker lock
+    /// under `namespace` instead of the platform control namespace. For
+    /// tests, which must never touch the real one.
+    pub fn with_control_namespace(mut self, namespace: PathBuf) -> Self {
+        self.control_namespace = Some(namespace);
         self
     }
 
@@ -374,14 +409,102 @@ impl HostSession {
     }
 
     /// What stops every attempt until a person acts: a Host of another
-    /// compatibility epoch, or no built Maka checkout to start one from.
-    /// Set by a suspension that names one; it stays through a retry the
-    /// user asked for and through that attempt's failure, so the screen that
-    /// explains it does not flicker, and goes once an attempt gets further
-    /// (a Host starting, a connection, an ordinary retry) or a later
-    /// suspension names none.
+    /// compatibility epoch, no built Maka checkout to start one from, or a
+    /// State Root marker that names another directory. Set by a suspension
+    /// that names one; it stays through a retry the user asked for and
+    /// through that attempt's failure, so what explains it does not
+    /// flicker, and goes once an attempt gets further (a Host starting, a
+    /// connection, an ordinary retry), a later suspension names none, or
+    /// the State Root is repaired.
     pub fn blocker(&self) -> Option<&HostBlocker> {
         self.blocker.as_ref()
+    }
+
+    /// The repair the window offers when the State Root's marker records
+    /// another directory identity than its directory has: its volume was
+    /// mounted again under a new device number, or it is a copy
+    /// ([`HostBlocker::StateRoot`]).
+    pub fn state_root_repair(&self) -> Option<&StateRootRepair> {
+        match &self.blocker {
+            Some(HostBlocker::StateRoot(repair)) => Some(repair),
+            _ => None,
+        }
+    }
+
+    pub fn repair_state(&self) -> &StateRootRepairState {
+        &self.repair
+    }
+
+    /// Repairs the State Root marker as offered ([`Self::state_root_repair`];
+    /// [`host_client::repair_state_root`]), then retries the connection. The
+    /// person's click is the confirmation Maka Desktop asks for before it
+    /// repairs; nothing calls this on its own. Does nothing while a repair
+    /// runs. A failure stays in [`Self::repair_state`] until the person
+    /// retries or the offer changes.
+    pub fn repair_state_root(&mut self, cx: &mut Context<Self>) {
+        let Some(repair) = self.state_root_repair().cloned() else {
+            return;
+        };
+        if self.repair == StateRootRepairState::Repairing {
+            return;
+        }
+        self.set_repair_state(StateRootRepairState::Repairing, cx);
+        let namespace = self.control_namespace.clone();
+        let offered = repair.clone();
+        let work = cx.background_spawn(async move {
+            let namespace = match namespace {
+                Some(namespace) => namespace,
+                None => host_client::control_namespace().map_err(|error| error_chain(&error))?,
+            };
+            host_client::repair_state_root(&repair, &namespace)
+                .await
+                .map_err(|error| error_chain(&error))
+        });
+        self.repair_task = Some(cx.spawn(async move |this, cx| {
+            let result = work.await;
+            this.update(cx, |this, cx| this.finish_repair(&offered, result, cx)).ok();
+        }));
+    }
+
+    fn finish_repair(
+        &mut self,
+        offered: &StateRootRepair,
+        result: Result<PreparedRoot, Arc<str>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.repair_task = None;
+        let still_offered = self.state_root_repair() == Some(offered);
+        match result {
+            Ok(root) => {
+                log::info!(
+                    "repaired the State Root marker in {} (rootId {})",
+                    root.canonical_path.display(),
+                    root.root_id
+                );
+                self.set_repair_state(StateRootRepairState::Idle, cx);
+                if still_offered {
+                    self.set_blocker(None, cx);
+                }
+                self.reconnect(cx);
+            }
+            Err(reason) => {
+                log::warn!("repairing the State Root marker failed: {reason}");
+                let state = if still_offered {
+                    StateRootRepairState::Failed(reason.as_ref().to_owned().into())
+                } else {
+                    StateRootRepairState::Idle
+                };
+                self.set_repair_state(state, cx);
+            }
+        }
+    }
+
+    fn set_repair_state(&mut self, state: StateRootRepairState, cx: &mut Context<Self>) {
+        if self.repair != state {
+            self.repair = state;
+            cx.emit(HostSessionEvent::StatusChanged);
+            cx.notify();
+        }
     }
 
     /// The Maka checkout this window starts Hosts from: `MAKA_REPO`, else
@@ -401,15 +524,19 @@ impl HostSession {
     }
 
     /// Attempts to connect now instead of waiting out the backoff, or after
-    /// automatic attempts were suspended.
+    /// automatic attempts were suspended. A failed repair's reason goes: the
+    /// attempt checks the State Root again. Without a supervisor (tests and
+    /// previews) only the status shows the attempt.
     pub fn reconnect(&mut self, cx: &mut Context<Self>) {
-        let Some(supervisor) = &self.supervisor else {
-            return;
-        };
         if self.status.is_connected() {
             return;
         }
-        supervisor.reconnect_now();
+        if matches!(self.repair, StateRootRepairState::Failed(_)) {
+            self.set_repair_state(StateRootRepairState::Idle, cx);
+        }
+        if let Some(supervisor) = &self.supervisor {
+            supervisor.reconnect_now();
+        }
         if let ConnectionStatus::Disconnected { retry, .. } = &mut self.status {
             let attempt = match *retry {
                 RetryState::Attempting { attempt } | RetryState::Waiting { attempt, .. } => attempt,
@@ -508,6 +635,10 @@ impl HostSession {
     fn set_blocker(&mut self, blocker: Option<HostBlocker>, cx: &mut Context<Self>) {
         if self.blocker != blocker {
             self.blocker = blocker;
+            // A failure was about the repair offered before.
+            if matches!(self.repair, StateRootRepairState::Failed(_)) {
+                self.repair = StateRootRepairState::Idle;
+            }
             cx.emit(HostSessionEvent::StatusChanged);
             cx.notify();
         }
@@ -823,6 +954,191 @@ mod tests {
             "other foreground work runs between batches, not only before or after the whole \
              burst: {seen:?}"
         );
+    }
+
+    /// A State Root whose marker keeps the device number its volume had
+    /// before a remount, in a scratch directory with its own control
+    /// namespace for the marker lock.
+    #[cfg(unix)]
+    struct Remounted {
+        dir: PathBuf,
+        root: PathBuf,
+    }
+
+    #[cfg(unix)]
+    // Fixture files are written synchronously; no UI thread is involved.
+    #[allow(clippy::disallowed_methods)]
+    impl Remounted {
+        const ROOT_ID: &str = "67d440f2c07d4cf4e9f56a52aa2bf8e435c71602ddda6244987e201de0c4fb8d";
+
+        fn new(name: &str) -> Self {
+            use std::os::unix::fs::MetadataExt as _;
+
+            static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            let number = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let dir = std::env::temp_dir()
+                .join(format!("workspace-remounted-{name}-{}-{number}", std::process::id()));
+            let root = dir.join("state-root");
+            std::fs::create_dir_all(&root).expect("root");
+            let root = std::fs::canonicalize(root).expect("canonical root");
+            let directory = std::fs::metadata(&root).expect("root");
+            let marker = json!({
+                "schemaVersion": 1, "kind": "interactive", "rootId": Self::ROOT_ID,
+                "rootIdentity": {
+                    "dev": (directory.dev() + 1).to_string(),
+                    "ino": directory.ino().to_string()
+                }
+            });
+            std::fs::write(marker_path(&root), format!("{marker}\n")).expect("stale marker");
+            Self { dir, root }
+        }
+
+        fn offered(&self) -> StateRootRepair {
+            match futures_lite::future::block_on(host_client::prepare_state_root(&self.root)) {
+                Err(host_client::StateRootError::IdentityMismatch(repair)) => *repair,
+                other => panic!("expected a mismatch, got {other:?}"),
+            }
+        }
+
+        fn marker(&self) -> serde_json::Value {
+            serde_json::from_slice(&std::fs::read(marker_path(&self.root)).expect("marker"))
+                .expect("json")
+        }
+
+        fn namespace(&self) -> PathBuf {
+            self.dir.join("runtime-hosts")
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for Remounted {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.dir).ok();
+        }
+    }
+
+    #[cfg(unix)]
+    fn marker_path(root: &Path) -> PathBuf {
+        root.join(host_client::STORAGE_ROOT_MARKER_FILE)
+    }
+
+    /// Runs the foreground until the repair is no longer running; the
+    /// repair itself runs on real threads.
+    #[cfg(unix)]
+    // The test thread waits for those threads; no UI thread is involved.
+    #[allow(clippy::disallowed_methods)]
+    fn settle_repair(host: &Entity<HostSession>, cx: &mut TestAppContext) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            cx.run_until_parked();
+            let repairing = host
+                .read_with(cx, |host, _| host.repair_state() == &StateRootRepairState::Repairing);
+            if !repairing {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "the repair did not finish");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[cfg(unix)]
+    fn remounted_session(
+        remounted: &Remounted,
+        cx: &mut TestAppContext,
+    ) -> (Entity<HostSession>, StateRootRepair) {
+        cx.executor().allow_parking();
+        let host = cx.new(|_| {
+            HostSession::with_transport(remounted.root.clone(), Arc::new(NoTransport))
+                .with_control_namespace(remounted.namespace())
+        });
+        let repair = remounted.offered();
+        let reason: Arc<str> = "the State Root marker records a different directory".into();
+        feed(&host, ConnectionEvent::AttemptFailed { attempt: 1, reason: reason.clone() }, cx);
+        feed(
+            &host,
+            ConnectionEvent::Suspended {
+                reason,
+                blocker: Some(HostBlocker::StateRoot(repair.clone())),
+            },
+            cx,
+        );
+        (host, repair)
+    }
+
+    #[cfg(unix)]
+    #[gpui_kit::test]
+    fn a_repair_the_person_asks_for_replaces_the_identity_then_retries(cx: &mut TestAppContext) {
+        let remounted = Remounted::new("repair");
+        let (host, repair) = remounted_session(&remounted, cx);
+        host.read_with(cx, |host, _| {
+            assert_eq!(host.state_root_repair(), Some(&repair));
+            assert_eq!(host.repair_state(), &StateRootRepairState::Idle);
+            assert_eq!(host.status().label(), STATUS_DISCONNECTED);
+        });
+        let stale = remounted.marker();
+
+        host.update(cx, |host, cx| {
+            host.repair_state_root(cx);
+            assert_eq!(host.repair_state(), &StateRootRepairState::Repairing);
+            // A second click while it runs starts nothing.
+            host.repair_state_root(cx);
+        });
+        settle_repair(&host, cx);
+
+        host.read_with(cx, |host, _| {
+            assert_eq!(host.repair_state(), &StateRootRepairState::Idle);
+            assert_eq!(host.state_root_repair(), None, "the offer is gone");
+            assert_eq!(host.blocker(), None);
+            assert!(
+                matches!(
+                    host.status(),
+                    ConnectionStatus::Disconnected { retry: RetryState::Attempting { .. }, .. }
+                ),
+                "it retries: {:?}",
+                host.status()
+            );
+        });
+        let repaired = remounted.marker();
+        assert_eq!(repaired["rootId"], Remounted::ROOT_ID);
+        assert_eq!(repaired["rootIdentity"]["ino"], stale["rootIdentity"]["ino"]);
+        assert_ne!(repaired["rootIdentity"]["dev"], stale["rootIdentity"]["dev"]);
+        let prepared =
+            futures_lite::future::block_on(host_client::prepare_state_root(&remounted.root))
+                .expect("the State Root prepares now");
+        assert_eq!(prepared.root_id, Remounted::ROOT_ID);
+    }
+
+    #[cfg(unix)]
+    #[gpui_kit::test]
+    // The fixture changes the marker synchronously.
+    #[allow(clippy::disallowed_methods)]
+    fn a_failed_repair_keeps_the_offer_and_says_why_until_the_retry(cx: &mut TestAppContext) {
+        let remounted = Remounted::new("failed");
+        let (host, repair) = remounted_session(&remounted, cx);
+        // The marker changes after the offer: the repair must not write.
+        let changed = format!(
+            r#"{{"schemaVersion":1,"kind":"interactive","rootId":"{}","rootIdentity":{{"dev":"1","ino":"2"}}}}"#,
+            "f".repeat(64)
+        );
+        std::fs::write(marker_path(&remounted.root), &changed).expect("changed marker");
+
+        host.update(cx, |host, cx| host.repair_state_root(cx));
+        settle_repair(&host, cx);
+        host.read_with(cx, |host, _| {
+            let StateRootRepairState::Failed(reason) = host.repair_state() else {
+                panic!("expected a failure, got {:?}", host.repair_state());
+            };
+            assert!(reason.contains("changed after the repair was offered"), "{reason}");
+            assert_eq!(host.state_root_repair(), Some(&repair), "still offered");
+            assert_eq!(host.status().label(), STATUS_DISCONNECTED, "no retry");
+        });
+        assert_eq!(std::fs::read_to_string(marker_path(&remounted.root)).expect("marker"), changed);
+
+        // Retry checks the State Root again; the old failure goes.
+        host.update(cx, |host, cx| host.reconnect(cx));
+        host.read_with(cx, |host, _| {
+            assert_eq!(host.repair_state(), &StateRootRepairState::Idle);
+        });
     }
 
     #[gpui_kit::test]

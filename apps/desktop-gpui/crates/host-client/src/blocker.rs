@@ -23,13 +23,16 @@
 //!
 //! A [`HostBlocker`] comes with [`crate::ConnectionEvent::Suspended`]: the
 //! supervisor derives it from the attempt that failed permanently
-//! ([`AttemptError::blocker`]). Other permanent failures (a copied State
-//! Root, a Node that is too old, a refused credential) carry none; their
-//! reason text says what to do.
+//! ([`AttemptError::blocker`]). A State Root whose marker names another
+//! directory carries one too, which the window explains with the repair it
+//! offers. Other permanent failures (a Node that is too old, a refused
+//! credential) carry none; their reason text says what to do.
 
 use host_protocol::{RUNTIME_HOST_COMPATIBILITY_EPOCH, ReplacementDisposition};
 
-use crate::{AttemptError, ConnectError, LaunchError, MissingCheckout};
+use crate::{
+    AttemptError, ConnectError, LaunchError, MissingCheckout, StateRootError, StateRootRepair,
+};
 
 /// Why no connection attempt can succeed until a person acts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +43,12 @@ pub enum HostBlocker {
     /// No Host answered, and the Maka checkout to start one from is missing
     /// or was not built.
     Checkout(MissingCheckout),
+    /// The State Root's marker records another directory identity than its
+    /// directory has ([`StateRootError::IdentityMismatch`]): its volume was
+    /// mounted again under a new device number, or it was copied or
+    /// restored. A person who knows it is the original can have it repaired
+    /// ([`crate::repair_state_root`]), as Maka Desktop offers.
+    StateRoot(StateRootRepair),
 }
 
 /// A Host of one compatibility epoch and a client of another. The Host
@@ -95,7 +104,7 @@ impl ConnectError {
 
 impl AttemptError {
     /// What the window should explain instead of this error's text, when
-    /// it is something only a person can fix outside the app.
+    /// it is something only a person can fix.
     ///
     /// A remote Host's refusal is not one yet: what the screen tells the
     /// user to update is the local checkout, and a remote Host runs from
@@ -107,6 +116,9 @@ impl AttemptError {
                 LaunchError::Connect(error) => error,
                 LaunchError::Installation(error) => {
                     return error.checkout().cloned().map(HostBlocker::Checkout);
+                }
+                LaunchError::StateRoot(StateRootError::IdentityMismatch(repair)) => {
+                    return Some(HostBlocker::StateRoot(repair.as_ref().clone()));
                 }
                 _ => return None,
             },

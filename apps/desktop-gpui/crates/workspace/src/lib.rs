@@ -52,11 +52,11 @@ pub use connections::{
 };
 pub use host_client::{
     EpochMismatch, HostBlocker, HostSelection, LOCAL_PROFILE_ID, MissingCheckout, RemoteHostEntry,
-    RemoteHostProfile, RemoteProfileStore, SshFailure, configured_maka_checkout,
+    RemoteHostProfile, RemoteProfileStore, SshFailure, StateRootRepair, configured_maka_checkout,
 };
 pub use host_session::{
-    ConnectionStatus, HostSession, HostSessionEvent, RemoteHost, RetryState, WindowHost,
-    remote_endpoint_label,
+    ConnectionStatus, HostSession, HostSessionEvent, RemoteHost, RetryState, StateRootRepairState,
+    WindowHost, remote_endpoint_label,
 };
 pub use hosts::{
     AddMethod, HostAction, HostChoice, HostDirectory, HostList, HostOutcome, HostPairing,

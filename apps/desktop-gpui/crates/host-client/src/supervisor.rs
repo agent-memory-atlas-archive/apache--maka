@@ -114,8 +114,8 @@ pub enum ConnectionEvent {
     AttemptFailed { attempt: u32, reason: Arc<str> },
     /// Retrying cannot help (an incompatible Host, a different State Root):
     /// automatic attempts stop until [`SupervisorHandle::reconnect_now`].
-    /// `blocker` is set when the cause is one a window explains on a screen
-    /// of its own ([`AttemptError::blocker`]).
+    /// `blocker` is set when the cause is one a window explains beyond its
+    /// reason text ([`AttemptError::blocker`]).
     Suspended { reason: Arc<str>, blocker: Option<HostBlocker> },
     /// The event consumer fell behind and the pump is waiting for it. No frame
     /// was dropped. Reported once per episode.

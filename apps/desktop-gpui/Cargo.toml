@@ -124,6 +124,9 @@ icu_normalizer = { version = "2.3", default-features = false, features = ["compi
 # Only the codecs attachments decode and encode (the conversation crate).
 # GPUI already depends on this version with more of them.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "tiff", "bmp"] }
+# `O_NOFOLLOW` for the State Root marker files host-client opens, as Maka
+# opens them. The constant only; already in the graph.
+libc = "0.2"
 log = "0.4"
 # The Markdown parser gpui-kit's text view uses (same version, already in
 # the graph): the find bar reads a reply's visible text with the same parse.

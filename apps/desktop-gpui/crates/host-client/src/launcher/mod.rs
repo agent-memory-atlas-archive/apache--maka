@@ -29,7 +29,9 @@
 //!
 //! The pieces are public for tests and tools:
 //!
-//! - [`prepare_state_root`] creates a State Root and its marker;
+//! - [`prepare_state_root`] creates a State Root and its marker, and
+//!   [`repair_state_root`] adopts one whose marker names another directory
+//!   once a person confirms it is the original;
 //! - [`MakaInstallation`] and [`NodeRuntime`] find what a candidate runs;
 //! - [`spawn_candidate`] starts one candidate process and returns a
 //!   [`CandidateProcess`] with its pid and exit;
@@ -63,7 +65,9 @@ pub use startup::{
     StartupErrorSummary, StartupFailureReason, clear_startup_diagnostic, read_startup_diagnostic,
     select_startup_diagnostic, startup_diagnostic_path,
 };
-pub use state_root::{PreparedRoot, StateRootError, prepare_state_root};
+pub use state_root::{
+    PreparedRoot, StateRootError, StateRootRepair, prepare_state_root, repair_state_root,
+};
 
 #[cfg(all(test, unix))]
 mod tests;

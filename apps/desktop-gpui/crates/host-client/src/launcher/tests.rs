@@ -38,8 +38,8 @@ use serde_json::{Value, json};
 use super::*;
 use crate::tests::{FakeHost, hello};
 use crate::{
-    ConnectError, Connected, ConnectionEvent, HostEvent, ReconnectPolicy, RootConnector,
-    STORAGE_ROOT_MARKER_FILE, Supervised, read_root_id, supervise,
+    ConnectError, Connected, ConnectionEvent, HostBlocker, HostEvent, ReconnectPolicy,
+    RootConnector, STORAGE_ROOT_MARKER_FILE, Supervised, read_root_id, supervise,
 };
 
 const FAKE_CANDIDATE: &str =
@@ -529,4 +529,73 @@ fn the_supervisor_starts_a_host_again_when_the_registration_disappears() {
     assert!(seen.iter().any(|event| matches!(event, ConnectionEvent::HostEpochChanged { .. })));
     assert_eq!(scenario.launches().len(), 2);
     assert!(scenario.connections.load(Ordering::SeqCst) >= 2);
+}
+
+/// After a reboot macOS can mount the State Root's volume under a new
+/// device number, so the marker's `rootIdentity` keeps the old `dev` with
+/// the directory's own inode. The supervisor stops with the repair as its
+/// blocker and starts nothing; once the repair has replaced the identity,
+/// a retry launches a Host on the same `rootId`.
+#[test]
+fn a_state_root_from_before_a_remount_launches_once_repaired() {
+    use std::os::unix::fs::MetadataExt as _;
+
+    const ROOT_ID: &str = "67d440f2c07d4cf4e9f56a52aa2bf8e435c71602ddda6244987e201de0c4fb8d";
+    let scenario = Scenario::new("remount", false);
+    fs::create_dir(&scenario.root).expect("root");
+    let directory = fs::metadata(&scenario.root).expect("root");
+    let stale = json!({
+        "schemaVersion": 1, "kind": "interactive", "rootId": ROOT_ID,
+        "rootIdentity": { "dev": (directory.dev() + 4).to_string(), "ino": directory.ino().to_string() }
+    });
+    let marker = scenario.root.join(STORAGE_ROOT_MARKER_FILE);
+    fs::write(&marker, format!("{stale}\n")).expect("stale marker");
+
+    let connector =
+        RootConnector::new(&scenario.root, hello()).spawning(scenario.options("register"));
+    let Supervised { handle, run, events } = supervise(connector, ReconnectPolicy::default());
+    let runner = thread::spawn(move || block_on(run));
+    let next = || loop {
+        if let HostEvent::Connection(event) = block_on(events.recv()).expect("event") {
+            break event;
+        }
+    };
+
+    let repair = loop {
+        match next() {
+            ConnectionEvent::Suspended {
+                blocker: Some(HostBlocker::StateRoot(repair)), ..
+            } => {
+                break repair;
+            }
+            ConnectionEvent::Suspended { reason, blocker } => {
+                panic!("suspended without the repair: {reason} {blocker:?}")
+            }
+            _ => {}
+        }
+    };
+    assert_eq!(repair.path(), scenario.root);
+    assert_eq!(repair.root_id(), ROOT_ID);
+    assert!(scenario.launches().is_empty(), "no candidate for an unverified root");
+    assert_eq!(
+        fs::read_to_string(&marker).expect("marker"),
+        format!("{stale}\n"),
+        "nothing written before the person decides"
+    );
+
+    let repaired = block_on(repair_state_root(&repair, &scenario.namespace)).expect("repaired");
+    assert_eq!(repaired.root_id, ROOT_ID);
+    handle.reconnect_now();
+    let accepted = loop {
+        match next() {
+            ConnectionEvent::Connected { accepted } => break accepted,
+            ConnectionEvent::Suspended { reason, .. } => panic!("suspended again: {reason}"),
+            _ => {}
+        }
+    };
+    assert_eq!(accepted.root_id, ROOT_ID);
+    assert_eq!(scenario.launches().len(), 1);
+    assert_eq!(scenario.root_id(), ROOT_ID);
+    handle.shutdown();
+    runner.join().expect("supervisor thread");
 }

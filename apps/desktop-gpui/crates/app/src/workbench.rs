@@ -76,8 +76,8 @@ use shared::menu::{
     Menu, MenuEntry, MenuHeading, MenuItem, MenuPlacement, MenuSlot, menu_layer, reopens_on,
 };
 use shared::theme::{
-    ActiveMakaPalette as _, RADIUS_MODAL, badge, banner, banner_description, floating_shadow,
-    quiet_button,
+    ActiveMakaPalette as _, RADIUS_MODAL, badge, banner, banner_description, control_button,
+    floating_shadow, quiet_button,
 };
 
 use terminal::Terminals;
@@ -108,8 +108,9 @@ use workspace::actions::{
     SwitchHost, SwitchStateRoot, ToggleSidebar,
 };
 use workspace::{
-    ConnectionCatalog, ConnectionStatus, HostDirectory, HostSession, ProjectCatalogSource,
-    ProjectSelection, ProjectSelectionEvent, RetryState, path_name,
+    ConnectionCatalog, ConnectionStatus, HostBlocker, HostDirectory, HostSession,
+    ProjectCatalogSource, ProjectSelection, ProjectSelectionEvent, RetryState,
+    StateRootRepairState, path_name,
 };
 
 /// Height of the window chrome band: the main plate's header, and the part
@@ -2872,10 +2873,12 @@ impl Workbench {
     }
 
     /// The screen that explains a [`workspace::HostBlocker`], when the Host
-    /// session has one.
+    /// session has one that needs it. A State Root to repair has none: the
+    /// disconnected strip offers the repair.
     fn render_host_blocked(&self, cx: &App) -> Option<AnyElement> {
         let host = self.host.read(cx);
-        let blocker = host.blocker()?.clone();
+        let blocker =
+            host.blocker().filter(|blocker| !matches!(blocker, HostBlocker::StateRoot(_)))?.clone();
         let retrying = matches!(
             host.status(),
             ConnectionStatus::Disconnected { retry: RetryState::Attempting { .. }, .. }
@@ -2897,6 +2900,12 @@ impl Workbench {
     /// at its end, what happens next at 14, the reason as machine text
     /// (compact mono 12/20), and for the local Host the command that starts
     /// one by hand.
+    ///
+    /// When the State Root's marker names another directory, it says what
+    /// Maka Desktop's repair prompt says instead (the path as machine text)
+    /// and offers Repair workspace, the primary action, after Retry; a
+    /// failed repair's reason follows as machine text. Starting a Host by
+    /// hand would meet the same marker, so the command is left out.
     fn render_connection_strip(
         &self,
         column_rems: f32,
@@ -2941,8 +2950,16 @@ impl Workbench {
             _ => String::new(),
         };
         let attempting = matches!(retry, RetryState::Attempting { .. });
-        // Starting a Host by hand helps only with the local one.
-        let local = !host.is_remote();
+        let repair = host.state_root_repair().map(|repair| repair.path().display().to_string());
+        let offers_repair = repair.is_some();
+        let repairing = host.repair_state() == &StateRootRepairState::Repairing;
+        let repair_failure = match host.repair_state() {
+            StateRootRepairState::Failed(reason) => Some(reason.clone()),
+            _ => None,
+        };
+        // Starting a Host by hand helps only with the local one, and not
+        // with a State Root to repair.
+        let local = !host.is_remote() && !offers_repair;
         let command = copy::serve_command(host.root());
         let title = copy::DISCONNECTED_TITLE.get(cx);
         let mono = cx.theme().mono_font_family.clone();
@@ -2982,10 +2999,62 @@ impl Workbench {
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.host.update(cx, |host, cx| host.reconnect(cx));
                                     })),
-                            ),
+                            )
+                            .when(offers_repair, |this| {
+                                this.child(
+                                    control_button(Button::new("repair-state-root").primary())
+                                        .flex_shrink_0()
+                                        .h_7()
+                                        .label(copy::REPAIR_STATE_ROOT.get(cx))
+                                        .loading(repairing)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.host
+                                                .update(cx, |host, cx| host.repair_state_root(cx));
+                                        })),
+                                )
+                            }),
                     )
-                    .when(!next.is_empty(), |this| this.child(banner_description(next)))
-                    .when(!reason.is_empty(), |this| {
+                    .when_some(repair, |this, path| {
+                        let message = copy::STATE_ROOT_REPAIR_MESSAGE.get(cx);
+                        let detail = copy::STATE_ROOT_REPAIR_DETAIL.get(cx);
+                        this.child(
+                            banner_description(message)
+                                .id("state-root-repair-message")
+                                .test_support()
+                                .aria_label(message),
+                        )
+                        .child(
+                            banner_description(detail)
+                                .id("state-root-repair-detail")
+                                .test_support()
+                                .aria_label(detail),
+                        )
+                        .child(
+                            machine_text(path.clone().into())
+                                .id("state-root-repair-path")
+                                .test_support()
+                                .aria_label(path)
+                                .mt_1(),
+                        )
+                        .when_some(repair_failure, |this, failure| {
+                            this.child(
+                                banner_description(copy::STATE_ROOT_REPAIR_FAILED.get(cx)).mt_3(),
+                            )
+                            .child(
+                                machine_text(failure.clone())
+                                    .id("state-root-repair-error")
+                                    .test_support()
+                                    .aria_label(failure)
+                                    .mt_1(),
+                            )
+                        })
+                    })
+                    // The repair's words stand in for what happens next
+                    // and the reason, which names the marker in other words.
+                    .when(!offers_repair && !next.is_empty(), |this| {
+                        this.child(banner_description(next))
+                    })
+                    .when(!offers_repair && !reason.is_empty(), |this| {
                         this.child(
                             machine_text(reason.clone())
                                 .id("host-disconnected-reason")

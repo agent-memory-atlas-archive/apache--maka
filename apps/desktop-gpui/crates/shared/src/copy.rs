@@ -125,6 +125,26 @@ texts! {
         "Or start a Host yourself from the Maka checkout:",
         "也可以在 Maka 源码目录中自行启动 Host：",
         "也可以在 Maka 原始碼目錄中自行啟動 Host：";
+    // The strip when the State Root's marker names another directory: Maka
+    // Desktop's repair prompt (`storageRootRepair` in
+    // apps/desktop/src/main/native-diagnostic-dialog-copy.ts) under the
+    // strip's own title, the path after the detail as machine text, and the
+    // button in this catalog's sentence case.
+    STATE_ROOT_REPAIR_MESSAGE =
+        "Maka cannot verify this workspace.",
+        "Maka 无法验证这个工作区。",
+        "Maka 無法驗證這個工作區。";
+    STATE_ROOT_REPAIR_DETAIL =
+        "The disk identity may have changed. Repair only if this is the original Maka workspace \
+         on this computer, not a copied workspace.",
+        "系统中的磁盘标识可能发生了变化。仅当这是本机原来的 Maka 工作区、而不是复制出的工作区时，才选择修复。",
+        "系統中的磁碟識別資訊可能已變更。僅當這是本機原本的 Maka 工作區，而不是複製的工作區時，才選擇修復。";
+    REPAIR_STATE_ROOT = "Repair workspace", "修复工作区", "修復工作區";
+    /// Above a failed repair's reason.
+    STATE_ROOT_REPAIR_FAILED =
+        "Couldn’t repair the workspace:",
+        "无法修复工作区：",
+        "無法修復工作區：";
 
     // The State Root dialog: first launch, and Switch data folder…. The
     // dialog calls the State Root the data folder, as the menus do.

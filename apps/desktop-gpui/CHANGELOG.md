@@ -152,6 +152,9 @@ The version lives only in the workspace `Cargo.toml`. A release moves the
   epoch refuses the client (both epochs, the newer side, the pinned commit,
   and the commands that fix it), or when no built Maka checkout is there to
   start a Host from (the path it looked at, and the commands that build it).
+- Repair workspace in the disconnected strip when the State Root's marker
+  names another disk identity, as after macOS remounts its volume: Maka
+  Desktop's prompt, then the marker's identity replaced and the Host started.
 - A running turn's status line shows that the turn is alive, as Maka
   Desktop's does: a working phrase that changes every 20 seconds (the first
   one only, with motion reduced) and the time since the message was sent,
