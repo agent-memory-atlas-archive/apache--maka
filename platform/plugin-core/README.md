@@ -17,83 +17,12 @@
   under the License.
 -->
 
-# Plugin core
+# maka-plugin-core
 
-Shared declarations, composition planning and lifecycle authority for Host, TUI and Desktop. This crate
-has no dependency on Host business plugins, a JavaScript engine or a renderer.
+[简体中文](README.zh-CN.md)
 
-`composition::Input` is the editable deployment input. `plan::Plan::prepare` expands
-immutable package templates, applies instance-owned overrides and checks explicit
-capability bindings before a caller commits new input. A plan is a projection,
-not another configuration store. Stable source keys are independent of aliases;
-package revisions pin exact bytes. State schema compatibility and effect
-authorization are separate runtime checks.
+Defines package declarations, contracts, compositions and the shared plugin lifecycle. `plan` checks selected entries and bindings; `runtime` manages registrations and retirement. Host and UI use this same kernel with different execution backends.
 
-Contract declarations derive their JSON schemas through `schemars`. Entry export
-batches must pass `EntryDeclaration::check_exports` before publication. Current
-compatibility is conservative: nominal name, version and full shape must match.
-Remote declarations prove compatibility only, never readiness or authority.
-JavaScript component entries also declare a nominal `scene: { name, version }`.
-The execution adapter checks this against its presenter before activation; the
-core validates metadata without interpreting the language. This local requirement
-is separate from the public component contract and may differ across variants.
-Native, pure Value/Service and Host entries cannot declare a scene language.
+The kernel has no Agent policy or native layout vocabulary. A binding selects an export that satisfies an import; the receiving Host still checks permission when a call arrives.
 
-Component captures distinguish a service `resource` output from a presentation
-`continuation` output. Both retain the same declared input schema and explicit
-forwarding path. Continuations are local native observations, never remote service
-attachments or authorization evidence; the embedding checks them before publishing
-Query feedback. The core declares their shape without owning native UI state.
-
-`runtime::Runtime<T>` owns activation and registration epochs, atomically checks
-actual export batches, revokes consumers and tracks accepted execution and resource
-cleanup. The embedding adapter owns execution, cancellation and close confirmation;
-the core has no executor and imposes no `Send`/`Sync` bound on native values.
-Loading consumers can invoke live dependencies before publishing their own exports.
-Retirement closes admission; accepted work stays with its provider until explicit
-settlement. Dropping an executor token is not settlement. Failed or unknown cleanup
-fences replacement. Failure settlement returns newly retired owners so the adapter
-can deliver stop signals. Structural template imports route dependencies without
-turning them into dependencies of the whole product.
-
-Bound capabilities retain exact identities and epochs, without owning the service
-value. Only a live registration or accepted execution/work owns that value.
-`Runtime::inspect` borrows the exact live registration without accepting work.
-`Capability::consumer` exposes the original consumer for policy and execution-domain
-checks. Neither inspection nor identity grants authorization; the adapter still
-performs final policy checks and `admit` before executing a call.
-
-Authorization and durable business-operation admission remain embedding obligations.
-`Runtime::attach_remote` accepts a trusted adapter’s actual endpoint and registration
-epoch for an explicitly referenced remote target. Local and remote owners share
-work, resource, retirement and cleanup rules. Attachment tokens capture the full
-target and a private lifetime epoch; reconnecting with the same wire epoch cannot
-redirect old handles. An absent optional endpoint binds empty; required endpoints
-remain unready. Attachment does not authenticate a transport or grant access.
-
-Application packages use manifest schema version 2 and an `application` declaration.
-The CLI checks them without activating a deployment:
-
-```sh
-maka application check --input deployment.json --package /absolute/package/path
-```
-
-The checker does not execute JavaScript or create native UI resources.
-
-Component mounts are independent owners. Retiring one mount stops its owned children
-without retiring reusable component providers. Provider retirement stops dependent
-mounts. Explicit native close confirmation and accepted-call settlement remain separate
-cleanup obligations; neither can release the other's fence.
-
-Component contracts declare named captures with input schemas and nominal read-only
-resource types. Service methods declare typed resource input slots. Resource type
-names/versions describe shapes, not grants; actual payloads and authorization belong
-to the execution adapter's private request attachments. JSON metadata cannot mint
-these attachments. Declarations require explicit `captures` and `resources` maps;
-there is no decoding fallback for previous shapes.
-
-`deployment::management` owns the shared deployment-manager contract and closed
-read/install/replace outcomes. Package bundle resources are nominal immutable
-payloads; their type and input metadata grant no management access. Execution
-adapters bind the actual Root and enforce policy. Committed desired input, known
-rejection/conflict and unresolved operation outcome remain distinct.
+[Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

@@ -21,25 +21,37 @@
 
 [English](ARCHITECTURE.md)
 
-Maka 是插件应用运行时。Host 与 UI 以显式能力绑定实例化共用插件内核；已提交的组合选择执行入口、配置和启动组件，终端与 Desktop 是原生呈现适配器。
+Maka 通过插件组装应用。包声明自己提供和需要的能力，组合选择实例并将导入连接到导出。Host 服务执行工作，UI 组件通过原生终端或桌面渲染器呈现结果。
 
-目录表示代码归属，`package.ts` 表示插件身份，Cargo crate 表示编译单元，三者无需一一对应。family 目录只分组，不授予能力或创建运行时身份；既有包 ID、入口 ID 与持久化 namespace 不取决于源码路径。
+## 代码归属
 
-- **平台：** `platform/plugin-core` 校验组合与绑定身份，`platform/packages` 加载不可变包，`platform/capabilities` 管理调用作用域与资源。`platform/event-log` 保持唯一持久写入者，并在激活前恢复遗留事实，包括已卸载插件留下的事实。
-- **Host 与 UI：** `platform/host-runtime` 拥有准入与服务结算；`platform/ui-runtime` 拥有挂载组件、输入捕获、已接受动作和清理。需要 JavaScript 时，产品注入 `platform/host-js`、`platform/ui-js`。原生 Host/UI 与终端、GPUI 渲染器的编译不包含 V8 或 Agent 执行实现，持久化和公开业务事实依赖仍显式保留。
-- **插件：** 叶子目录 `plugins/<family>/<plugin>/package.ts` 声明自己的入口与导入；原生实现位于插件自身或共享 family crate。`plugins/agent/engine` 管理 Agent 执行，`facts`、`ports`、`api`、`authority` 分别承载持久事实、业务接口、公开服务契约和原调用准入。Web、Files、Processes、Skills、Interactions 均可独立注册。
-- **产品：** `products/maka/native` 选择编入的原生工厂；`products/maka/bundle/package-inputs.json` 选择插件包，`src/composition.ts` 完成绑定。CLI 与桌面入口注入执行后端并启动组合。工厂可用不意味着插件已激活或已获得授权。
-- **开发：** 原生描述信息取自 Rust 的实际实现标识、契约和配置 schema，`tools/schema` 无需产品或 V8 即可生成 SDK。通用插件构建器接受单个叶子或产品选择；`plugins/shared` 的共享组件不依赖某个产品。
-- **Computer Use：** `platform/computer-use` 独立于 Code Mode，拥有自己的 REPL 和会话生命周期。
+[平台](platform/README.zh-CN.md)包含包加载器、组合内核、执行所有者和渲染器。[插件](plugins/README.zh-CN.md)包含业务功能及其声明。[Maka 产品](products/maka/README.zh-CN.md)选择包、原生工厂和启动行为。
 
-同一插件可以提供独立终端和桌面入口，也可以只支持一端。动态 JavaScript 包定义新布局与工作流，Rust 原生实现随二进制提供。安装只保存不可变包字节，不改变启用状态或权限；替换启动根、配置或绑定需显式校验来源变更。原生 owner 保有编辑与阅读状态，插件保存工作流状态和观察，不复制原生缓冲区或像素位置。
+`package.ts` 标识一个开发者声明的插件，Cargo crate 标识一起编译的代码。两者不必一一对应：Agent 服务可以使用多个领域 crate，相关插件入口也可以共用一个原生实现 crate。
 
-用 `maka application run --root PATH --deployment UUID --connections FILE` 启动终端产品，桌面来源用 `maka-desktop run`。连接配置提供显式方法与恢复授权。不带命令启动 `products/maka/bundle` 中的普通产品；`--help` 不获取 State Root。CLI/ACP 与原生业务服务沿用同一规范客户端协议。
+Host 与 UI 所有者使用相同的生命周期内核，通过 `host-js` 和 `ui-js` 注入 JavaScript 执行。原生渲染器和所有者无需 V8 或 Agent 引擎即可编译；存储与呈现所需的共用事实类型仍作为显式依赖存在。
 
-插件资料库独立于活动实例发现内置定义。插件拥有自己的本地化介绍，Host 发布其已注册的默认组合。添加内置插件通过现有的组合操作与版本校验应用默认设置。移除实例保留目录发现能力和插件数据；已安装的包文件仍是独立资源。
+## 从包到运行中的应用
 
-`packages/cli` 的 npm 包只负责选择并启动匹配的可执行文件，不实现运行时、配置存储或工具。
+1. 包加载器校验不可变内容并计算引用。
+2. 组合规划器检查入口选择、配置和绑定。
+3. Root 按修订保存期望配置及包内容。
+4. Host 或 UI 激活所选实现，实例完成收敛后，该配置才成为有效状态。
 
-详细契约见各 crate 的 README；JavaScript 插件开发见 [SDK](packages/plugin-sdk/README.zh-CN.md)。
+安装不授予权限。绑定让调用方能够找到符合契约的提供方；每次调用准入时，Host 都会检查调用方、方法、输入和实际资源。本地 IPC 连接携带启动器提供的显式方法与回执恢复权限。
 
-开发版从 `products/maka/bundle/dist` 或 `MAKA_PRODUCT_BUNDLE` 读取产物，继续走同一包校验与提交管线。`just run` 先构建 TypeScript 产物再启动 Cargo，修改 TypeScript 不触发 Rust 重编译。发布版内嵌产物。已有 Root 中的包安装和更新仍需显式提交来源变更。
+更新配置会保留未改变的激活及其绑定。改变的实例先退役再替换。已接受的工作始终归原所有者管理，即使调用方断开或组件消失也是如此。
+
+## 状态与副作用
+
+EventLog 持有持久 Root 和规范记录。稳定的插件数据归属于 Root、部署和实例。包修订与激活 epoch 描述代码和执行，本身不会创建新的数据命名空间。
+
+变更操作具有回执，业务完成和实际清理分别记录。响应丢失时，调用方查询原回执，不重新发起替代操作。取消表示请求停止工作；资源仍被持有，直到实际清理完成。
+
+UI 回调提出状态、帧和动作的候选更新，整个批次校验后原子提交。渲染器读取已提交帧，不在绘制时执行插件代码。原生编辑器管理缓冲区、选择和 IME，插件通过有界捕获与命令操作它们。
+
+## 开发与分发
+
+`just run` 先打包 TypeScript，再启动 Cargo。开发二进制从磁盘读取 bundle，发布二进制将其嵌入程序；两者使用相同的包校验与提交路径。重建代码不会替换已有安装保存的组合。
+
+Rust 契约通过 [maka-schema](tools/schema/README.zh-CN.md)生成 [JavaScript SDK](packages/plugin-sdk/README.zh-CN.md)，无需构建产品。npm 包只负责[启动原生可执行文件](packages/cli/README.zh-CN.md)。

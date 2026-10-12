@@ -17,32 +17,18 @@
   under the License.
 -->
 
-# Native Rust extensions
+# Native Rust plugins
 
-Native extensions are compiled into the Host or presenter and selected by an explicit
-`implementation` name in a package entry. JavaScript packages cannot supply arbitrary
-Rust factories. Register Host factories through `NativeRegistry`; publish exact
-contracts and handlers in `NativeActivation` with the actual `NativeOwner`.
+A native package entry selects an implementation compiled into the executable. Keep its `IMPLEMENTATION` identifier, contracts and configuration schema together in a `NativeDefinition`. Schema generation exposes that definition through `sdk.nativeImplementations`; `package.ts` consumes it rather than duplicating the contract.
 
-`NativeContext` supplies the actual activation, package, persistence and captured
-imports. Stable persistence belongs to the Root domain, deployment UUID and instance
-identity; source revision and activation epoch do not create new data owners.
-A factory that fails after acquiring resources must return an owner that can settle
-them; an initializer error does not prove cleanup.
+For a Host service, implement the factory in the owning plugin crate and register it through `provide(&mut NativeRegistry)`. The Maka product selects that provider in `products/maka/native`. The composition still has to create an instance and bind its imports. See `plugins/skills/native` and `plugins/workspace/workspace-web/native` for examples.
 
-Service calls receive the original `Context.scope()`. Native I/O keeps a resource
-ticket until physical completion. Use the scope's cancellation for child work and
-finish the real request before reporting cleanup. A task tracker or retained ticket
-must outlive a lost observation. `NativeOwner.close` confirms actual settlement;
-returning success without joining owned workers breaks retirement and capacity.
+A factory receives `NativeContext` and configuration. Return a `NativeActivation` with validated exports and a `NativeOwner` that can close acquired resources, including resources acquired before initialization fails. The context carries the actual activation, selected package, captured imports and optional persistence.
 
-`NativeServices` captures original imports and adds private native-origin evidence;
-every call still passes Host policy. Public `Identity` is observation, not permission.
-`execution_basis` may attest only immutable facts that fully identify equivalent
-execution semantics. Leave opaque owners activation-specific when that cannot be
-proven; do not override it to force a recovery test to pass.
+Durable data belongs to the Root, deployment and instance. An activation epoch or package revision does not create a new data owner. Services that require persistence must reject an ephemeral context.
 
-Relevant examples: `plugins/skills/native/src/lib.rs`, `plugins/workspace/workspace-web/native/src/host.rs`
-and `platform/host-runtime/src/application/native_context.rs`. Native UI objects remain
-in their presenter owner/main-thread lifecycle; the plugin kernel owns descriptions,
-checked bindings and teardown coordination, not framework objects.
+A handler uses the original `Context.scope()` and actual attachments. Retain call resource tickets until native I/O and workers have finished. `NativeOwner.close` reports physical settlement; dropping an observer or requesting cancellation is insufficient. Cleanup failure must remain visible to the owner.
+
+`NativeServices` forwards through captured imports with private native-origin evidence. Public identity fields are observations, not grants. Declare an `execution_basis` only when immutable facts fully establish equivalent execution semantics; otherwise retain activation-specific identity.
+
+Native UI factories use the UI registry and presenter lifecycle. Keep entities, input bindings and subscriptions in the native resource owner, outside immutable view recipes. See `platform/ui-runtime` and the relevant renderer.

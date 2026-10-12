@@ -1,6 +1,6 @@
 ---
 name: maka-plugin-authoring
-description: Build, extend, debug, or package Maka application plugins with Host services, native TUI or Desktop components, and explicit product compositions. Use for Maka plugin development and SDK integration.
+description: Create, extend or debug Maka plugins, including Host services, native terminal or desktop components, and product bindings.
 license: Apache-2.0
 ---
 <!--
@@ -22,38 +22,26 @@ license: Apache-2.0
   under the License.
 -->
 
-# Maka application plugin authoring
+# Maka plugin authoring
 
-Use the application runtime described by `@maka-agent/plugin-sdk` and the schemas
-from the actual `maka application schema` command. The package declaration,
-composition, execution grants and runtime activation each describe different facts.
+Start from the plugin's declaration and the contract its consumer needs. A package declares entries, imports and exports; a composition creates instances and bindings. Native factory registration makes an implementation available. Host grants determine whether a call is allowed.
 
-Start with [Quickstart](references/quickstart.md) for a runnable Host/TUI/Desktop
-package. For existing work, inspect its declared entry, imports and exports before
-changing code. Keep instance UUIDs stable when changing configuration; changing an
-identity replaces its state owner.
+In a checkout, authored plugins live under `plugins/<family>/<plugin>/package.ts`. Rust implementation crates sit beside the plugin or in a shared family directory. Product selection and wiring belong to `products/maka/bundle`; compiled Host factories are selected in `products/maka/native`. Keep business behavior in the owning plugin.
 
-Read only the relevant guide:
+For a new package, follow [Quickstart](references/quickstart.md). It covers a single-plugin checkout build and the standalone Echo/counter starter. For an existing plugin, inspect its entry, contracts and captured imports before editing. Preserve instance UUIDs when updating an installation: those identities own saved state.
 
-- [Services and model tools](references/tools-and-input.md): HostService, requests,
-  mutations, subscriptions and explicitly selected Agent tools.
-- [State and authority](references/state-and-authority.md): ownership, cancellation,
-  receipt recovery and retained resources.
-- [Native presentations](references/terminal-apps.md): Component callbacks, platform
-  scenes, native editors and input routing.
-- [Models and execution](references/models-and-execution.md): existing Agent/model
-  contracts and where native execution extensions belong.
-- [Native Rust](references/native-rust.md): compiled factories and actual Call custody.
-- [Testing and shipping](references/testing-and-shipping.md): meaningful validation,
-  immutable package references and installation.
-- [API map](references/api-map.md): exact source contracts included in this build.
+Read the guide relevant to the change:
 
-When reading through Maka's selected skill loader, use the exact skill reference
-and catalog revision from its current search or preparation result. Read a relative
-resource with `resource: { path: "references/quickstart.md" }`; copy each returned
-`next` object unchanged. Use the configured tool name shown in the current metadata.
-In a checkout these are ordinary files; `references/sdk/` is embedded from
-`packages/plugin-sdk/src/` during the build.
+- [Host services and Agent tools](references/tools-and-input.md): handlers, scoped calls and tool selection.
+- [UI components](references/terminal-apps.md): callbacks, native scenes, editors and input.
+- [State and authority](references/state-and-authority.md): data ownership, mutation receipts and cancellation.
+- [Native Rust](references/native-rust.md): definitions, registration and resource lifetime.
+- [Models and execution](references/models-and-execution.md): Agent/provider integration.
+- [Testing and shipping](references/testing-and-shipping.md): package checks, installation and actual runtime tests.
+- [API sources](references/api-map.md): exact types and schemas for this build.
 
-Deliver the package or change with evidence from its actual declared runtime.
-A valid manifest alone does not prove the service, native scene or recovery behavior.
+Use the SDK root exports and the runtime's `maka application schema` output. Rust declarations generate SDK contracts; hand-editing generated files creates drift. JavaScript entries have no ambient Node APIs. Effects use declared service imports and request-local resources.
+
+When this skill is loaded through Maka, use the reference and catalog revision returned by discovery. Read a resource with `resource: { path: "references/quickstart.md" }` and pass returned `next` objects back unchanged. Use the tool name from current metadata. The packaged `references/sdk/` directory contains this build's SDK sources; in a checkout they live under `packages/plugin-sdk/src/`.
+
+Verify the changed behavior in its declared runtime. A package check establishes contract compatibility; UI input, service effects and recovery need checks at their actual owners.

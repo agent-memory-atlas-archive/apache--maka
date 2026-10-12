@@ -42,16 +42,16 @@ just run
 
 | 目录 | 用途 |
 | --- | --- |
-| `platform/` | 应用内核、Host/UI owner、JavaScript 后端和原生渲染器 |
-| `plugins/` | 插件声明、业务实现及共享领域契约 |
-| `products/maka/` | 原生工厂选择、产品组合、CLI 和桌面入口 |
+| [platform/](platform/README.zh-CN.md) | 应用内核、Host/UI owner、JavaScript 后端和原生渲染器 |
+| [plugins/](plugins/README.zh-CN.md) | 插件声明、业务实现及共享领域契约 |
+| [products/maka/](products/maka/README.zh-CN.md) | 原生工厂选择、产品组合、CLI 和桌面入口 |
 | `tools/schema/` | 无需构建完整产品的契约与 schema 导出 |
 | `packages/plugin-sdk/` | JavaScript 插件的 Host、组件与原生呈现契约，由规范定义生成 |
 | `packages/cli/` | 启动各平台 Rust 可执行文件的 npm 薄封装 |
 | `scripts/rust/` | 内嵌 SDK 打包与绑定源码的 npm 分发 |
 | `website/` | 独立构建的项目官网 |
 
-通过 `just --list` 查看开发命令。参阅[贡献指南](CONTRIBUTING.zh-CN.md)、[架构](ARCHITECTURE.zh-CN.md)、[文档](docs/README.md)和[安全策略](SECURITY.md)。
+通过 `just --list` 查看开发命令。参阅[贡献指南](CONTRIBUTING.zh-CN.md)、[架构](ARCHITECTURE.zh-CN.md)和[安全策略](SECURITY.md)。
 
 ## 分发
 

@@ -17,45 +17,10 @@
   under the License.
 -->
 
-# ACP
+# maka-acp
 
 [简体中文](README.zh-CN.md)
 
-Exposes Maka through the official `agent-client-protocol` SDK. This crate uses
-the public application Host client and the Agent/Settings service contracts;
-execution, permissions and durable facts stay in their native owners.
+Serves ACP v2 to editor clients through the ordinary Host client. `serve` translates protocol requests into admitted Agent operations and observations. It owns neither execution nor canonical storage. For invoking an external ACP agent from Maka, see `plugins/agent/acp-executor`.
 
-```sh
-maka acp
-maka acp --root /absolute/state/root
-```
-
-The CLI connects to or starts the local application Host. Model choices are resolved
-against the current configured catalog at each prompt. Standard input/output carry ACP;
-diagnostics go to standard error. The default state root is shared with the TUI.
-
-- Inbound protocol: experimental ACP v2 (`unstable_protocol_v2`).
-- Sessions: create, list, resume, close and model/thinking/workspace-access
-  selectors. Directories must be published by Host; access is read-only or workspace-write. Resume can replay from the start using canonical message identities.
-- Prompts: text, images, embedded resources and explicitly supplied local file links.
-  Admission returns the durable user message ID before model completion; updates
-  stream until the terminal idle state.
-- Interactions: exact service-call approval, permission requests and capability-negotiated form elicitation.
-  Host validates the exact answer; a rejected or cancelled callback never grants permission.
-- Cancellation targets the original accepted invocation or queued message, and cannot interrupt another caller's shared execution. Closing a session
-  cancels and settles its foreground without deleting history. A late admission
-  receipt remains owned through cancellation; unknown outcomes are not resubmitted.
-
-Client MCP servers, additional workspace directories, arbitrary replay cursors
-and ACP authentication are not advertised. Attachments in replay retain descriptive
-metadata rather than exposing Host-private paths. Resume requires an idle Host
-session. Each connection supports up to eight attached sessions.
-
-The SDK owns JSON-RPC parsing, correlation and dispatch; the transport adapter
-bounds line size and output waits. The outbound Executor adapter lives in
-[`external-agent`](../external-agent/README.md), where SDK negotiation also supports v1.
-
-```sh
-cargo nextest run -p maka-acp
-cargo nextest run -p maka-cli --bin maka -E 'test(acp::tests::)'
-```
+[Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

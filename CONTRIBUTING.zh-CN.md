@@ -21,35 +21,39 @@
 
 [English](CONTRIBUTING.md)
 
-贡献者对代码的正确性、来源和许可负责。最终评审与合并由人类决定；AI 评审不能替代独立的人类评审。实质性 AI 编写的提交需要保留 `Generated-by: <tool>` trailer。
+缺陷和具体提案使用 [Issues](https://github.com/apache/maka/issues)，一般问题使用 [Discussions](https://github.com/apache/maka/discussions)，安全漏洞通过 [SECURITY.md](SECURITY.md)报告。认领未分配 issue 时，评论内容只写 `take`；放弃认领只写 `untake`。
 
-分支、提交和 PR 标题使用 Conventional Commits。向 `main` 合并需要其他 committer 的批准和通过的 `test` 检查。公开讨论与发布流程遵循[英文贡献指南](CONTRIBUTING.md)。
+项目方向、治理和重要产品决策在 [dev@maka.apache.org](https://lists.apache.org/list.html?dev@maka.apache.org)讨论。实现细节可以在 PR 中讨论。
 
 ## 开发
 
-需要 Rust stable、Node.js 24 LTS、npm 11.19.0、just、cargo-nextest 和 Python 3。许可证清单检查还需要 cargo-deny。
-
-常用任务统一使用 [just](https://github.com/casey/just)。推荐通过包管理器安装（macOS：`brew install just`），也可运行 `cargo install --locked just`。Windows 还需将 Git for Windows 的 `sh` 加入 `PATH`。
+安装 Rust stable、Node.js 24 LTS、npm 11.19.0、just、cargo-nextest 和 Python 3。许可证检查还需 cargo-deny。Windows 需要将 Git for Windows 的 `sh` 加入 `PATH`。
 
 ```sh
-just setup                 # 构建时使用的 JavaScript 依赖
-just run --help            # CLI 命令
-just check                 # 格式、Clippy、SDK、脚本和 Rust 测试
+just setup
+just run --help
+just check
 ```
 
-通过 `just test -p maka-runtime-host` 运行单个 crate 的测试。向 `just build` 传递 Cargo 参数选择目标和构建模式，复用现有缓存，避免重复构建。
+`just check` 执行格式、lint、类型、测试和许可证检查。针对 Rust 局部修改，可运行 `cargo nextest run -p CRATE`；通过 `--lib` 或 `--test NAME` 限制构建的测试目标。先运行与改动行为相关的检查，再做完整仓库检查。
 
-日常开发使用 Cargo 的 V8 预构建。`just package` 复用我们固定的、不含 LGPL glibc 数学实现的 V8 产物；只有缺少匹配预构建和本地缓存时才源码编译。构建要求见 [CLI 打包说明](packages/cli/README.zh-CN.md)。
+[产品指南](products/maka/README.zh-CN.md)说明 TypeScript 开发方式，[插件指南](plugins/README.zh-CN.md)介绍声明与组合。原生打包和 V8 要求见 [scripts/rust](scripts/rust/README.zh-CN.md)。[官网](website/README.md)使用独立的 manifest 和锁文件。
 
-官网独立管理依赖：先运行 `just website-setup`，再使用 `just website-dev` 或 `just website-check`。官网依赖更新写入 `website/package-lock.json`，构建工具和插件依赖使用根锁文件。
+## 代码与文档
 
-## 代码约定
+- 使用 `name.rs` 和同名 `name/` 目录组织子模块。单元测试与实现放在一起，集成测试位于 `tests/`。
+- 测试可观察行为和重要失败边界，避免重复夹具、源码文本断言和固定延时。
+- 领域策略留在插件，Host 管理准入和资源结算，服务接收显式能力。
+- 用类型表达闭合状态，通过 `schemars` 生成 schema。数据库变更使用 SQLx migration。
+- 协议字段与本地化文案分离，保留完整的 `en`、`zh-CN` 和 `zh-TW` locale。
+- 维护简洁的中英文 README，说明职责和有用入口；字段级细节链接到 schema。
 
-- 使用 `name.rs` 配合 `name/`，不使用 `mod.rs`。单元测试放在实现文件末尾，集成测试放在 `tests/`。
-- 测试持久行为和重要失败边界，优先扩展已有测试，避免重复夹具、源码文本断言和固定延时。
-- 业务插件只使用公共能力；Host 管理准入、事实和资源结算，插件管理领域策略。
-- 用类型表达闭合状态，通过 `schemars` 生成 schema。数据库结构变更放入 SQLx migration。
-- 协议字段与本地化文案分离，保留完整的 `en`、`zh-CN`、`zh-TW` locale。
-- 运行 `just check`，保持中英文 crate 文档一致。
+## 提交与评审
 
-架构见 [ARCHITECTURE.zh-CN.md](ARCHITECTURE.zh-CN.md)。
+标题使用 Conventional Commits，分支使用 `<type>/<description>`。填写 [PR 模板](.github/pull_request_template.md)，说明结果及相关验证；UI 变更附截图或录屏。仓库使用 squash merge，PR 标题会成为最终提交标题。
+
+每份贡献都需要一位人类负责人，对准确性、来源和许可负责。只提交有权贡献的内容，遵循 [Apache-2.0](LICENSE)，保留第三方归属信息。参阅[来源记录](docs/code-origin-audit.md)和[文件头规范](.github/ASF_SOURCE_HEADERS.md)。
+
+在 PR 中披露实质性的生成工具使用并注明工具名称。翻译、措辞修改、自动补全和拼写修正不计入此范围。包含实质性 AI 编写内容的提交应携带 `Generated-by: <tool>`，并在 squash 或 amend 后保留。自动消息应表明身份。
+
+Agent 可以提交和推送。合并到 `main` 需要另一位 committer 批准，并通过 `test` 检查。AI 评审不能替代独立的人类判断。后续推送不会自动撤销已有批准；变更超出原评审范围时，应再次请求评审。维护者决定评审是否充分。

@@ -17,8 +17,6 @@
   under the License.
 -->
 
-# Code Review
+# Code review
 
-When reviewing a pull request, always apply
-`.github/skills/code-review/SKILL.md`. Include every answer required by its
-`Required Conclusion` section, even when no actionable finding is found.
+Use [.github/skills/code-review/SKILL.md](skills/code-review/SKILL.md) when reviewing a pull request. Report concrete findings and material verification gaps.

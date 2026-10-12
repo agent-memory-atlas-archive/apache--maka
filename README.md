@@ -42,16 +42,16 @@ just run
 
 | Directory | Purpose |
 | --- | --- |
-| `platform/` | Application kernel, Host/UI owners, JavaScript backends and native renderers |
-| `plugins/` | Authored plugin declarations, business implementations and shared domain contracts |
-| `products/maka/` | Native factory selection, product composition, CLI and desktop entry points |
+| [platform/](platform/README.md) | Application kernel, Host/UI owners, JavaScript backends and native renderers |
+| [plugins/](plugins/README.md) | Authored plugin declarations, business implementations and shared domain contracts |
+| [products/maka/](products/maka/README.md) | Native factory selection, product composition, CLI and desktop entry points |
 | `tools/schema/` | Contract/schema export without building the product |
 | `packages/plugin-sdk/` | Generated Host, component and native presentation contracts for JavaScript plugins |
 | `packages/cli/` | npm launcher for platform-specific Rust executables |
 | `scripts/rust/` | Embedded SDK bundling and source-bound npm packaging |
 | `website/` | Independently built project website |
 
-Use `just --list` for development commands. See [Contributing](CONTRIBUTING.md), [Architecture](ARCHITECTURE.md), [Documentation](docs/README.md) and [Security](SECURITY.md).
+Use `just --list` for development commands. See [Contributing](CONTRIBUTING.md), [Architecture](ARCHITECTURE.md) and [Security](SECURITY.md).
 
 ## Distribution
 

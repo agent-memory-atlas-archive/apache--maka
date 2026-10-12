@@ -17,64 +17,12 @@
   under the License.
 -->
 
-# 插件核心
+# maka-plugin-core
 
-Host、TUI 与 Desktop 共用的声明、组合解析与生命周期权威，不依赖 Host 业务、JavaScript
-引擎或呈现框架。
+[English](README.md)
 
-`composition::Input` 是可编辑的部署输入。`plan::Plan::prepare` 展开不可变包模板、
-应用属于具体实例的覆盖并预检显式能力绑定，调用方通过检查后才能提交输入。
-运行计划只是投影，不是第二份配置。稳定来源 key 与 alias 分离，包 revision 固定
-确切字节；数据 schema 兼容与副作用授权仍需各自的运行检查。
+定义包声明、契约、组合以及共用的插件生命周期。`plan` 校验所选入口和绑定，`runtime` 管理注册与退役。Host 和 UI 使用同一内核，注入不同的执行后端。
 
-契约声明通过 `schemars` 派生 JSON schema。激活导出批次发布前必须通过
-`EntryDeclaration::check_exports`。目前采用保守兼容规则：名义名称、版本和完整
-公开结构一致。远端声明只能证明兼容，不能证明就绪或授予权限。
+内核不包含 Agent 业务策略或原生布局语言。绑定负责为导入选择符合契约的导出；调用到达后，接收方 Host 仍需检查权限。
 
-JavaScript 组件 entry 另声明名义 `scene: { name, version }`，由执行适配器在激活前
-检查本地 presenter 是否支持；内核只校验元数据，不解释语言。该本地要求与公开组件
-契约分离，TUI/Desktop variant 可以不同。原生、纯 Value/Service 与 Host entry 不声明 scene。
-
-Component capture 的 output 区分业务 `resource` 与呈现 `continuation`，两者保留同一套
-输入 schema 和显式 forwarding 路径。Continuation 是本地原生观察，不进入远端服务附件，
-也不授予权限；执行适配器在发布 Query 反馈前检查它。核心只声明结构，不持有原生 UI 状态。
-
-`runtime::Runtime<T>` 管理激活和注册 epoch、原子检查实际导出批次、撤销消费者，
-并跟踪已接受执行及资源清理。执行适配器负责运行、取消和关闭确认；核心没有执行器，
-不要求原生值实现 `Send`/`Sync`。初始化中的消费者可以调用就绪依赖，然后才发布自身导出。
-撤销关闭新准入，已接受工作仍由提供者持有，直到明确结算；丢弃执行 token 不等于结算。
-失败或未知清理阻止替换，失败结算返回新撤销的 owner，供适配器发送停止信号。
-纯模板的 imports 只路由依赖，不成为整个产品的执行依赖。
-
-绑定只保留准确身份与 epoch，不持有 service value；核心中的实际注册或已接受执行/work 才持值。
-`Runtime::inspect` 借用准确的存活注册，不接受工作。`Capability::consumer` 提供原消费者
-身份，供适配器检查策略与执行域。检查和身份本身不授予权限；执行前仍需最终策略检查
-和 `admit`。
-
-授权和持久业务操作准入仍由执行环境负责。`Runtime::attach_remote` 接收受信任适配器提供的实际 endpoint 与注册 epoch，
-目标必须被组合显式引用。本地与远端 owner 共用 work、resource、撤销和清理机制。
-附着 token 捕获完整 target 与私有 lifetime epoch，同 wire epoch 重连不能重定向旧句柄。
-可选 endpoint 缺席时绑定为空；必需 endpoint 缺席仍未就绪。附着不证明 transport 身份或授予权限。
-
-应用包使用 Manifest schema version 2 的 `application` 声明。CLI 可以在不激活
-部署的情况下检查它们：
-
-```sh
-maka application check --input deployment.json --package /absolute/package/path
-```
-
-检查器不执行 JavaScript，也不创建原生 UI 资源。
-
-组件挂载是独立所有者；撤销一个挂载会停止其子挂载，不撤销可复用提供者。
-提供者撤销会停止依赖挂载。原生 close 确认与 accepted call 结算是两个独立清理条件，
-不能互相替代或提前释放清理阻塞。
-
-组件契约声明命名 capture、输入 schema 与名义只读资源类型；service method 声明类型化
-资源输入槽。资源名称/版本描述形状，不授予权限；实际 payload 与授权归执行适配器的
-请求私有附件，不能由 JSON metadata 伪造。声明必须显式提供 `captures` / `resources`
-map，不为旧格式保留解码回退。
-
-`deployment::management` 提供共享部署管理契约以及封闭 read/install/replace 结果。
-Package bundle resource 仅声明不可变 payload 的名义类型，不因类型或输入 metadata
-授予管理权限；执行适配器绑定实际 Root 并检查 policy。已提交输入、确定拒绝/冲突及
-未决操作结果保持区分。
+[源码](src/lib.rs) · [Cargo 配置](Cargo.toml)

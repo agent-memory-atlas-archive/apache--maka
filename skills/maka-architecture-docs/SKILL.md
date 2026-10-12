@@ -1,6 +1,6 @@
 ---
 name: maka-architecture-docs
-description: Draft, restructure, translate, or review bilingual Chinese-English architecture documentation for the Maka Agent backend. Use when Codex works on Maka technical narratives, component or mechanism explanations, architecture decisions, system flows, engineering guides, or documentation quality checks and needs blog-like clarity without losing architectural precision. Do not use it to impose a fixed topic list or information architecture unless the user asks for one.
+description: Write or revise Maka architecture guides and crate READMEs from the current code, with natural English and Chinese counterparts.
 ---
 <!--
   Licensed to the Apache Software Foundation (ASF) under one
@@ -21,57 +21,22 @@ description: Draft, restructure, translate, or review bilingual Chinese-English 
   under the License.
 -->
 
-# Maka Architecture Docs
+# Maka documentation
 
-Create architecture documentation that is easy to enter, technically rigorous, and maintainable in both Chinese and English. Treat the user's chosen subject and document organization as constraints; this skill governs writing quality, evidence, bilingual consistency, and review.
+Write for the person trying to use or change the code. Read the relevant implementation and commands before explaining them. Existing prose is a lead to investigate, not evidence that a feature still exists.
 
-## Select the task mode
+Use the owning directory's README for component guidance. Keep the root architecture guide about the relationship between platform, plugins and products. Explain a mechanism once and link to it elsewhere. Preserve licensing, source provenance and release requirements when removing old material.
 
-- **Draft**: create a new document from code, design notes, interviews, or a user brief.
-- **Rewrite**: improve an existing document while preserving its technical meaning.
-- **Translate**: produce a natural counterpart in the other language, not a sentence-by-sentence transliteration.
-- **Review**: identify concrete gaps in clarity, evidence, correctness, or bilingual consistency.
-- **Standardize**: align multiple documents on terminology, metadata, status labels, and structure without forcing them into identical narratives.
+A crate README should say what the crate does, where to start, and which boundary matters to its callers. Add a command or example when it makes the crate usable. Small declaration crates may need only a paragraph and source links. Larger runtimes may need an explanation of lifecycle and failure behavior; the number of sections should follow the subject.
 
-Confirm the intended mode from the request. Infer it when safe; ask only when different interpretations would materially change the output.
+Use the current vocabulary precisely:
 
-## Follow the workflow
+- A package declares entries and contracts; a composition selects instances and bindings.
+- A Cargo crate is a compilation unit. It does not imply plugin activation.
+- Committing desired configuration, activating it and completing cleanup are separate events.
+- A binding locates a compatible capability; Host admission checks permission.
+- Business completion and physical cleanup have separate outcomes. Lost replies retain their original operation identity.
 
-1. **Establish the article contract.** State the one core question, intended reader, expected reading depth, source language, and claimed implementation status. Do not invent a topic or replace the user's outline.
-2. **Collect evidence.** Inspect the relevant code paths, tests, schemas, configuration, ADRs, and existing documents before presenting implementation details as facts. Separate verified behavior from plans and interpretation.
-3. **Build the narrative.** Move from problem and intuition to a concrete scenario, then mechanism, boundaries, failures, and trade-offs. Include only the sections that help answer the core question.
-4. **Add technical anchors.** Connect claims to real components, state transitions, invariants, interfaces, observability signals, or code locations as appropriate.
-5. **Create the bilingual counterpart.** Preserve concepts, status, examples, diagrams, and section identity while rewriting naturally for the target language.
-6. **Run the quality gate.** Review both language versions against `references/quality-gate.md`. Fix failed required checks before calling the document complete.
+Write direct, connected prose. Replace old paths and APIs instead of appending migration caveats. Keep proposals clearly separate from implemented behavior. Link to generated schemas for field-level detail rather than copying their contents.
 
-Read `references/writing-standard.md` whenever drafting, rewriting, or standardizing architecture content. Read `references/bilingual-standard.md` whenever creating or reviewing both languages. Use `assets/article-template.md` as a starting scaffold only when it fits the chosen subject; remove irrelevant sections rather than filling them mechanically.
-
-## Apply non-negotiable rules
-
-- Start from a reader question or engineering problem, not a component inventory.
-- Distinguish **Current**, **Planned**, **Exploratory**, **Deprecated**, and **Historical** claims.
-- Never present an unverified design assumption as current implementation.
-- Explain important mechanisms through intuition, scenario, mechanism, and boundary.
-- Cover meaningful failure paths and trade-offs, not only the happy path.
-- Keep diagrams purposeful and language-neutral where practical; explain what each diagram includes and omits.
-- Use stable terms. Do not alternate among synonyms for variety when they represent the same Maka concept.
-- Prefer separate, complete Chinese and English documents with shared assets over interleaved paragraph-by-paragraph translation.
-- Preserve uncertainty. Translation must not strengthen or weaken a claim.
-- Optimize for progressive depth: a reader should gain value from the opening summary without reading the entire article.
-
-## Handle reviews
-
-Lead with actionable findings ordered by impact. Cite the exact section or line when possible. Check, in order:
-
-1. factual correctness and status confusion;
-2. missing boundaries, invariants, or failure behavior;
-3. broken narrative or unexplained concepts;
-4. bilingual semantic drift and terminology inconsistency;
-5. maintainability issues such as duplicated diagrams or unstable code references;
-6. style polish.
-
-If there are no material findings, say so and identify any verification limits.
-
-## Deliver artifacts
-
-When creating files, follow the repository's existing documentation layout. If no convention exists, recommend rather than silently establish a new repository-wide structure. Keep language counterparts at matching relative paths or give them stable shared document IDs. Report which technical claims were verified and which remain planned or uncertain.
+Maintain English and Chinese counterparts for repository guides. Translate the meaning naturally while keeping identifiers, examples, limitations and commands aligned. Check local links and runnable examples; report only verification that was actually performed.

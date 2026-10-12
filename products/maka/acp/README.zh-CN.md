@@ -17,41 +17,10 @@
   under the License.
 -->
 
-# ACP
+# maka-acp
 
 [English](README.md)
 
-通过官方 `agent-client-protocol` SDK 对外提供 Maka。此 crate 只使用公共 Host
-客户端与 Agent／Settings 服务契约；执行、权限和持久事实仍由原生所有者管理。
+通过普通 Host 客户端向编辑器提供 ACP v2 服务。`serve` 将协议请求转换为获准的 Agent 操作和观察，不持有执行或规范存储权限。Maka 调用外部 ACP Agent 的实现位于 `plugins/agent/acp-executor`。
 
-```sh
-maka acp
-maka acp --root /absolute/state/root
-```
-
-CLI 连接或启动本机应用 Host。每次发送都按当前配置目录解析模型选择。标准输入／输出只传输 ACP，诊断写入标准错误。
-默认使用与 TUI 相同的状态目录。
-
-- 接入协议：实验性的 ACP v2（`unstable_protocol_v2`）。
-- 会话：创建、列表、恢复、关闭，以及模型、思考和工作区访问选项。
-  工作目录必须由 Host 发布；权限仅提供只读和工作区写入。
-  恢复支持从头重放，保留规范消息身份。
-- 输入：文本、图片、嵌入资源及客户端明确提供的本地文件链接。
-  接收后先返回持久用户消息 ID，再流式发送更新，直到终态 idle。
-- 交互：精确服务调用确认、权限请求，以及按客户端能力启用的表单询问。
-  Host 校验精确回答；拒绝或取消不会授予权限。
-- 取消精确定位原始接收的 invocation 或排队消息，不中断其他调用者的共享执行。关闭会话会取消并结算前台工作，
-  不删除历史。迟到的接收回执在取消期间仍由连接持有；未知结果不会重新提交。
-
-不声明支持客户端 MCP 服务、额外工作区目录、任意重放游标或 ACP 身份认证。
-附件重放保留描述元数据，不暴露 Host 私有路径。恢复要求 Host 会话空闲；
-每条连接最多打开八个会话。
-
-SDK 负责 JSON-RPC 解析、请求关联和派发，传输适配层限制行大小及输出等待时间。
-调用外部 Agent 的 Executor 适配在
-[`external-agent`](../external-agent/README.zh-CN.md)，通过 SDK 协商同时支持 v1。
-
-```sh
-cargo nextest run -p maka-acp
-cargo nextest run -p maka-cli --bin maka -E 'test(acp::tests::)'
-```
+[源码](src/lib.rs) · [Cargo 配置](Cargo.toml)

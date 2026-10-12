@@ -17,41 +17,31 @@
   under the License.
 -->
 
-# Maka experimental Rust preview
+# Maka npm launcher
 
 [简体中文](README.zh-CN.md)
 
-**This npm distribution is an independent, experimental preview. It is not an official release of the Apache Software Foundation (ASF), and is not approved, endorsed, or supported by the ASF. Its publication does not imply ASF affiliation or sponsorship.** The source repository and Apache-2.0 license do not change this distribution's unofficial status.
-
-Install the experimental CLI explicitly:
+**The `rust-preview` distribution is an independent, experimental preview. It is not an official Apache Software Foundation release and is not approved, endorsed or supported by the ASF.**
 
 ```sh
 npm install --global @maka-agent/cli@rust-preview
 ```
 
-`@maka-agent/cli@latest`, the native components’ `latest` tags, and the separate `maka-agent@latest` are empty placeholders with no CLI, runtime, dependencies, or install scripts. The `@maka-agent/cli-*` packages are platform components of the same unofficial preview. Preview behavior and compatibility can change without notice.
+The launcher selects the matching native executable and forwards arguments, standard I/O and exit status. Exact-version optional dependencies carry the CLI and desktop frontend. The preview targets macOS arm64, Linux x64 with glibc, and Windows x64. WSL uses the Linux executable with a matching Windows helper for Computer Use.
 
-The `@maka-agent/cli` npm launcher starts the native Maka CLI for the current OS and CPU. Exact-version optional dependencies carry the executables. Arguments, standard input/output and exit status pass through to the native process.
-Each native package also contains the GPUI frontend: `maka desktop --root PATH --deployment UUID [--connections FILE]` presents the committed plugin product. The CLI does not link the GPUI frontend.
+The `latest` tags remain empty placeholders, including the separate `maka-agent` package. They contain no CLI, runtime, dependencies or install scripts. The placeholder source lives in [placeholder](placeholder/README.md); preview artifacts must stay on `rust-preview`.
 
-The supported preview set is macOS arm64, Linux x64 with glibc, and Windows x64. WSL uses the Linux executable and can obtain the matching Windows helper through the native distribution layer.
-
-The native CLI also embeds the ordinary Agent/Studio product packages. `maka application compose --configuration installation.json --output product-source` authors checked Host/UI inputs and installable packages without a source checkout or runtime Node. See the [product configuration and installation guide](../agent-product/README.md).
-
-Run `maka` in a terminal. The first launch confirms the current workspace and installs the standard Agent product in `~/.maka/application`; subsequent launches reopen that saved application. Use `--workspace DIRECTORY`, `--product workhub`, `--locale auto|en|zh-CN|zh-TW` or `--light` for a new installation, and `--root DIRECTORY` to select a separate application. `--trust-workspace` supplies the same explicit first-install trust without the prompt. Workspace file changes and sandboxed commands are enabled; subprocess network access starts disabled. Choose a model connection in the application. Saved installations are edited through Settings and Plugins; startup flags do not overwrite them.
-
-Use `maka --help` for CLI commands. `maka application launch` explicitly selects the same product launcher. Advanced installations can supply `--configuration installation.json` on their first launch. Reopening requires only `--root UI_ROOT`, including recovery after partial initialization. See the [product guide](../agent-product/README.md).
-
+Run `maka` to start the terminal product. First launch confirms the workspace; later launches reopen the saved installation. See [the product guide](../../products/maka/bundle/README.md) for configuration and explicit composition commands.
 
 ## Build and publish
 
-Create a committed source candidate with `just source <version>`. Each platform runs:
+Create a source candidate from a committed revision with `just source <version>`. Build each native target from that same archive:
 
 ```sh
 just package <source.tar.gz> <target> <build-id> native-preview
 ```
 
-The package command writes the platform archive and `<target>.json` receipt. Collect all three platforms and the source archive with its SHA-512 sidecar, then run:
+Collect all three native packages and receipts, plus the source archive and SHA-512 sidecar. Then run:
 
 ```sh
 just release-prepare native-preview
@@ -59,18 +49,8 @@ just release-check native-preview
 just publish native-preview
 ```
 
-`release-prepare` assembles and validates all four packages from one source. `release-check` installs the launcher and native package offline on the current platform and exercises the CLI/V8 and Desktop entry; run it on all three platforms. Publication installs the Windows component first, the other native packages next, and the launcher last, then verifies every `rust-preview` tag. Retry the same artifacts after interruption; never rebuild an already published version. Use one publisher at a time per channel: npm tags have no conditional-write API.
+`release-check` installs and exercises the prepared artifacts offline; run it on each target platform. Publication uploads native components before the launcher and verifies the channel tags. Retry the same artifacts after interruption. Use one publisher per channel because npm tags have no conditional update operation.
 
-GitHub uses the registered `npm-publication.yml` entry. `gh workflow run npm-publication.yml --ref <branch> -f publish=false` produces the complete artifacts and three-platform verification. Unofficial publication runs in the personal fork `M4n5ter/maka-agent`, not the ASF repository. It requires explicit `publish=true` on `feat/runtime-host-rust` and the dedicated `npm-rust-preview` environment. That environment permits only this branch and holds its npm publishing token; the main-branch publication environment is independent. Use `gh workflow run npm-publication.yml --repo M4n5ter/maka-agent --ref feat/runtime-host-rust -f publish=true` to build, verify, and publish the preview.
+The [publication workflow](../../.github/workflows/npm-publication.yml) can build and verify with `publish=false`. Unofficial publishing runs in `M4n5ter/maka-agent` on `feat/runtime-host-rust`, requires explicit `publish=true`, and uses its dedicated `npm-rust-preview` environment. It does not publish from the ASF repository.
 
-The shared `latest` placeholder template is maintained in `packages/cli/placeholder/`. Stage a copy with the intended package name, inspect its tarball, then publish it with `--tag latest`; it has no executable code. Never move `latest` to a preview build.
-
-Release packages use pinned V8 builds with optional LGPL glibc math disabled. Native macOS packaging requires Xcode 26 or newer for Computer Use; CI builds on macOS 26 and checks installation on macOS 15. Linux needs glib, X11/XCB, xkbcommon, Wayland, Fontconfig and FreeType development files and cargo-zigbuild/Zig. A fallback V8 source build additionally requires Python 3, Git, Clang/libclang 19 or newer and a native C++ toolchain. It downloads Chromium tools, can take over an hour and needs tens of GiB of temporary space, removed after the build.
-
-Completed V8 libraries, bindings and notices are reused from `target/v8` (or `$CARGO_TARGET_DIR/v8`). On a cache miss, packaging downloads the matching bundle pinned in `scripts/rust/v8-prebuilts.json`; only an absent pin triggers source compilation. The key binds V8 source, target, features and producer code, independently of Maka/deno_core versions and download tooling. Downloads must match the source-pinned SHA-256, and every use validates the bundle's file digests. A broken pin or corrupt cache fails explicitly. Native link and smoke checks still run for every package.
-
-For keys without pins, native CI exports `v8-prebuilt-*` artifacts with archives, digests and the validating commit/run. After the complete workflow passes, publish those exact archives as versioned GitHub dependency prerelease assets under a `deps-v8-*` tag and commit their URLs, hashes and validation records to `v8-prebuilts.json`. Never overwrite an existing asset or change the meaning of a key. Actions caches accelerate unpublished builds; the committed manifest is the trust root for downloads. Remove a corrupt local entry (and its Actions cache, if applicable) before retrying; deleting local cache alone normally downloads the pinned bundle again.
-
-After dependency changes, run `node scripts/rust/notices.mjs generate` and review the snapshot. It collects full and nested license texts from pinned dependency sources; reviewed exceptions for missing upstream license files live in `notices-sources.json`. Release builds validate the snapshot's source-input binding and append notices from the actual V8 build graph and Rust standard library. The license TSV is an inventory, not a substitute for these texts.
-
-No install script downloads or executes an unverified helper. Runtime behavior lives in `products/maka/cli`.
+See [native build tooling](../../scripts/rust/README.md) for dependencies, V8 caching and notices, and [source releases](../../.github/ASF_SOURCE_RELEASE.md) for archive verification and signing.

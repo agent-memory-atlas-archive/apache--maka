@@ -17,42 +17,31 @@
   under the License.
 -->
 
-# Maka 实验性 Rust 预览版
+# Maka npm launcher
 
 [English](README.md)
 
-**本 npm 分发是独立发布的实验性预览版，与 ASF 官方发布无关。它不是 Apache 软件基金会（ASF）的官方版本，未经 ASF 批准、背书或支持，也不代表 ASF 的关联或赞助。** 源码仓库和 Apache-2.0 许可证不改变本分发的非官方性质。
-
-请显式安装实验性 CLI：
+**`rust-preview` 是独立的实验性预览分发，不是 Apache 软件基金会正式发行版，也未经 ASF 批准、背书或支持。**
 
 ```sh
 npm install --global @maka-agent/cli@rust-preview
 ```
 
-`@maka-agent/cli@latest`、原生平台包的 `latest` 以及独立的 `maka-agent@latest` 均为空占位包，不含 CLI、运行时、依赖或安装脚本。`@maka-agent/cli-*` 是同一非官方预览版的平台组件。预览版的行为和兼容性可能随时变化。
+启动器选择匹配的原生可执行文件，转发参数、标准 I/O 和退出状态。精确版本的可选依赖携带 CLI 与桌面前端。预览版支持 macOS arm64、使用 glibc 的 Linux x64 和 Windows x64。WSL 使用 Linux 可执行文件，通过匹配的 Windows helper 提供 Computer Use。
 
-`@maka-agent/cli` npm 启动器启动当前操作系统和 CPU 对应的原生 Maka CLI，通过精确版本的可选依赖分发可执行文件。命令参数、标准输入输出和退出状态直接传递给原生进程。
-每个平台包也含 GPUI 前端：`maka desktop --root PATH --deployment UUID [--connections FILE]` 呈现已提交的插件产品；CLI 本身不链接 GPUI 前端。
+`latest` 标签仍为空占位包，包括独立的 `maka-agent` 包；它们没有 CLI、运行时、依赖或安装脚本。占位源码见 [placeholder](placeholder/README.md)，预览产物必须使用 `rust-preview`。
 
-预览分发支持 macOS arm64、使用 glibc 的 Linux x64 和 Windows x64。WSL 使用 Linux 可执行文件，并由原生分发层获取匹配的 Windows 辅助程序。
-
-
-原生 CLI 同时携带普通 Agent/Studio 产品包。`maka application compose --configuration installation.json --output product-source` 可生成已校验的 Host/UI 输入及可安装包，无需源码目录或运行时 Node。配置与安装步骤见[产品说明](../agent-product/README.zh-CN.md)。
-
-在终端运行 `maka` 即可打开产品。首次确认当前工作目录，并在 `~/.maka/application` 安装标准 Agent 产品；后续重开这份已保存的应用。新安装可指定 `--workspace 目录`、`--product workhub`、`--locale auto|en|zh-CN|zh-TW` 或 `--light`；`--root 目录` 选择另一份独立应用。`--trust-workspace` 显式信任首次安装的工作目录，省去提示。默认启用工作区文件修改和沙箱命令，子进程网络访问关闭；模型连接在应用内选择。已保存的安装通过设置和插件管理修改，启动参数不会覆盖它。
-
-`maka --help` 查看 CLI 命令；`maka application launch` 显式调用同一产品启动器。高级安装仍可在首次启动提供 `--configuration installation.json`；以后只需 `--root UI_ROOT`，也可恢复部分完成的初始化。见[产品指南](../agent-product/README.zh-CN.md)。
-
+运行 `maka` 启动终端产品。首次启动确认工作区，之后重新打开保存的安装。配置和显式组合命令见[产品指南](../../products/maka/bundle/README.zh-CN.md)。
 
 ## 构建与发布
 
-通过 `just source <version>` 从已提交代码生成源码候选包。各平台分别运行：
+通过 `just source <version>` 从已提交修订创建源码候选包。各平台使用同一归档构建：
 
 ```sh
 just package <source.tar.gz> <target> <build-id> native-preview
 ```
 
-打包命令会在输出目录写入平台包及 `<target>.json` 回执。将三个平台的产物、源码包及其 SHA-512 文件收集到同一目录后：
+收集三个平台的原生包与回执，以及源码归档和 SHA-512 文件，然后执行：
 
 ```sh
 just release-prepare native-preview
@@ -60,18 +49,8 @@ just release-check native-preview
 just publish native-preview
 ```
 
-`release-prepare` 从同一源码包生成启动器并校验四个包；`release-check` 在当前平台离线安装启动器和原生包，实际运行 CLI/V8 并验证 Desktop 入口。三个平台均应完成验收。`publish` 先发布 Windows 辅助组件，再发布其余原生包，最后发布启动器，并确认各包的 `rust-preview` 标签。中断后重试同一份产物；不要重新构建同一版本。一个发布通道同一时刻只允许一个发布者，npm 标签没有条件写入接口。
+`release-check` 离线安装并运行已准备产物，每个目标平台都要执行。发布先上传原生组件，再上传启动器，并验证频道标签。中断后重试相同产物。npm 标签不支持条件更新，每个频道同时只运行一个发布者。
 
-GitHub 使用已登记的 `npm-publication.yml`。在功能分支可运行 `gh workflow run npm-publication.yml --ref <branch> -f publish=false`，得到完整产物与三平台验收结果。非官方发布在个人 fork `M4n5ter/maka-agent` 中执行，不从 ASF 仓库发布。须在 `feat/runtime-host-rust` 分支显式选择 `publish=true`，使用独立的 `npm-rust-preview` 环境。该环境仅允许此分支，并保存 npm 发布 Token；主分支的发布环境独立管理。执行 `gh workflow run npm-publication.yml --repo M4n5ter/maka-agent --ref feat/runtime-host-rust -f publish=true` 即可完成构建、验证及预览发布。
+[发布工作流](../../.github/workflows/npm-publication.yml)以 `publish=false` 构建和验证。非官方发布在 `M4n5ter/maka-agent` 的 `feat/runtime-host-rust` 分支运行，需要显式 `publish=true`，使用独立 `npm-rust-preview` 环境，不从 ASF 仓库发布。
 
-`latest` 的共用占位模板维护在 `packages/cli/placeholder/`。复制到临时目录并设置目标包名，打包检查后，用 `--tag latest` 发布生成的 tarball；包内没有可执行代码。不要将 `latest` 指向预览构建。
-
-正式包使用固定的 V8 构建，关闭可选的 LGPL glibc 数学实现。macOS 打包需要 Xcode 26 或更新版本来编译 Computer Use；CI 使用 macOS 26 构建，并在 macOS 15 验证安装。Linux 需要 glib、X11/XCB、xkbcommon、Wayland、Fontconfig、FreeType 开发包及 cargo-zigbuild/Zig。回退到 V8 源码构建时，还需 Python 3、Git、Clang/libclang 19 或更新版本及原生 C++ 工具链；该过程会下载 Chromium 工具，可能耗时超过一小时，并使用数十 GiB 临时空间，完成后自动清理。
-
-完成的 V8 静态库、bindings 和声明保存在 `target/v8`（或 `$CARGO_TARGET_DIR/v8`）。缓存未命中时，打包程序下载 `scripts/rust/v8-prebuilts.json` 中固定的匹配产物；只有缺少对应条目才源码编译。key 绑定 V8 源码、平台、功能和生产代码，不绑定 Maka/deno_core 版本或下载工具。下载必须匹配源码内固定的 SHA-256，每次使用还会校验包内文件摘要；下载异常或缓存损坏会明确报错。每次打包仍执行实际链接和原生冒烟测试。
-
-对于尚未固定的 key，原生 CI 导出 `v8-prebuilt-*` 产物，包含压缩包、摘要和完成验证的提交及运行记录。完整工作流通过后，将同一批压缩包发布到 `deps-v8-*` 标签下，作为固定版本的 GitHub 依赖预构建资产，并把 URL、摘要和验证记录提交到 `v8-prebuilts.json`。不要覆盖既有资产或改变同一 key 的含义。Actions 缓存加速尚未发布的构建，源码内的清单负责认证下载内容。缓存损坏时删除对应的本地条目及 Actions 缓存后重试；单独删除本地缓存通常会重新下载已固定的预构建。
-
-依赖变化后运行 `node scripts/rust/notices.mjs generate` 并审查许可证快照。它从固定依赖版本收集全文和嵌套声明，少数上游缺少独立许可文件的例外记录在 `notices-sources.json`。发布校验快照与源码输入的绑定，并追加实际 V8 构建图和 Rust 标准库声明；许可证 TSV 仅用作清单，不能代替全文。
-
-安装脚本不会下载或执行未经验证的辅助程序。运行时行为由 `products/maka/cli` 实现。
+依赖、V8 缓存和 notices 见[原生构建工具](../../scripts/rust/README.zh-CN.md)；归档校验与签名见[源码发布](../../.github/ASF_SOURCE_RELEASE.md)。

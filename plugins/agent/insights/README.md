@@ -17,17 +17,10 @@
   under the License.
 -->
 
-# Insights
+# maka-insights
 
 [简体中文](README.zh-CN.md)
 
-Usage and pricing settings implemented as a public plugin API consumer.
+Stores the preferences used by the Insights feature. The presentation and aggregation consumers live outside this crate. Start with `preferences` when changing the persisted settings or their validation.
 
-- Host owns accounting facts, authorization and the pricing catalog; this crate owns reports and view preferences.
-- Activity, totals and breakdowns share one immutable query fence. Missing counters and valuations remain unknown.
-- Rate edits use catalog revisions and affect future admissions only. Conflicts require a fresh read.
-- Preferences use plugin-scoped storage CAS. Retirement withdraws the UI and Remote registrations, not accepted Host work or accounting.
-
-The native plugin needs no V8. Its Client uses public `settings.page` and `session.inspector.overview` slots; package identity is not an authorization shortcut. Inspector reads stay bound to the viewed Session and refresh on accounting events, not streaming text.
-
-Run Client lifecycle acceptance with `node --test plugins/agent/insights/tests/client.test.mjs` from the repository root.
+[Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

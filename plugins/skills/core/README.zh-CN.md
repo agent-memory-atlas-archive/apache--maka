@@ -17,12 +17,10 @@
   under the License.
 -->
 
-# Documentation
+# maka-skills
 
-- [Architecture](../ARCHITECTURE.md) · [架构](../ARCHITECTURE.zh-CN.md)
-- [Contributing](../CONTRIBUTING.md) · [贡献指南](../CONTRIBUTING.zh-CN.md)
-- [Plugin SDK](../packages/plugin-sdk/README.md)
-- [Computer Use](../platform/computer-use/README.md)
-- [Providers](../plugins/agent/providers/README.md)
-- [npm distribution](../packages/cli/README.md)
-- [Security](../SECURITY.md)
+[English](README.md)
+
+解析 SKILL.md，发现技能来源，并准备所选指令和资源。`Catalog` 提供发现接口，`PreparedInvocation` 表示一次准备好的使用。`build.rs` 组装内置资源，包括插件开发 skill 及匹配的 SDK 源码。技能文本属于数据，其中的工具名和引用不会授予执行权限。
+
+[源码](src/lib.rs) · [Cargo 配置](Cargo.toml)

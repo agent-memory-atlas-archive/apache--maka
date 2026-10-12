@@ -17,14 +17,10 @@
   under the License.
 -->
 
-# Root configuration
+# maka-config
 
-`ConfigurationStore::for_root` shares the actual `RootOwner`. Its owned SQL connection handles the connection catalog, credential vault and their independent revisions. The embedding drains `shutdown` before releasing its native owner; catalog/status snapshots grant no execution or Root access.
+[简体中文](README.zh-CN.md)
 
-Connection changes compare the caller's exact catalog or connection basis in the write transaction. Credential deletion requires an explicit `expectedConnection`: the original complete connection target for connection credentials, or null for network credentials. The same vault transaction checks this target before the credential generation; changing an endpoint cannot leave an old deletion request valid merely because the saved key is unchanged.
+Persists the Root's connection catalog, credentials, model catalog and preferences. `ConfigurationStore` uses an existing owned Root. Connection observations and credential revisions are separate, so clients can inspect configuration without receiving secrets. These records control execution and do not belong in model conversation history.
 
-`oauth::LoginStart` requires `expectedCredential`, including explicit null when the caller observed no credential. Existing login targets contain their original `ConnectionCredentialTarget`. Preparation compares both in one SQL snapshot, and completion compares the prepared connection and vault generation again. Refresh or logout cannot be silently overwritten by a request based on an earlier observation. The original authentication fingerprint includes that observation; recovery observes the original attempt and never grants a second exchange.
-
-Provider credentials use the authentication/enrollment owner and validated credential envelopes. Generic `set_credential` rejects provider keys. Trusted native extensions can use the same provider `Definition::authenticate` validation after their actual Host admission, then publish through the prepared enrollment. Authentication input and replacement secrets stay private; public queries return only catalog facts and credential status. Commit uncertainty remains distinct from confirmed business success and from physical cleanup.
-
-`ConnectionCatalogEntryUpdate` is a partial update: omitted name, configuration, enabled state and enabled model IDs preserve their original values; explicit false or an empty array replaces them. These fields reject null. The original override and request-body patches still distinguish omission (keep), null (clear), and a supplied value (set). Merge and final row validation occur only after the exact connection CAS in the original SQL transaction. A configuration change retains the original discovery/test invalidation and override policy.
+[Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

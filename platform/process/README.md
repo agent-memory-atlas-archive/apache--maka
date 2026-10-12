@@ -19,26 +19,8 @@
 
 # maka-process
 
-[中文](README.zh-CN.md)
+[简体中文](README.zh-CN.md)
 
-Native process and PTY transport, cancellation, sandbox launch integration and
-headless terminal state for Linux, macOS and Windows.
+Runs captured commands through pipes, PTYs and detached process primitives. `Command` describes a launch; `ShellExecutor`, `pipe` and `pty` manage execution and I/O. Sandbox preparation is supplied by `maka-sandbox`. The caller owns authorization and durable background records, and must retain the process until exit and cleanup are observed.
 
-`Shell` captures the executable once for command execution and interactive PTYs.
-On Unix it prefers a supported, executable account login shell (not `$SHELL`).
-Fallback order is zsh → bash → sh on macOS, bash → zsh → sh on Linux;
-Windows prefers PowerShell 7 → Windows PowerShell → cmd. Model guidance names
-the selected dialect. Commands load login profiles by default; `login: false`
-skips them. Profile loading remains inside the same sandbox and timeout.
-
-`terminal::Screen` uses `alacritty_terminal` without its PTY event loop or renderer.
-The existing PTY worker owns the parser; no JavaScript runtime, extra thread or
-cross-runtime serialization is needed. The Host retains admission, canonical
-records, backpressure and final output drain.
-
-Snapshots expose the viewport, 500 rows of history, cursor/input modes and the
-last alternate screen. History loss or text-budget clipping sets `truncated`.
-Writes, escape expansion, combining characters, OSC storage and protocol replies
-are bounded. A failed parser cannot publish partial state; the Host retains its
-last successful snapshot. Clipboard, title and hyperlink effects are suppressed.
-Terminal escape handling follows Alacritty, not exact xterm emulation.
+[Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

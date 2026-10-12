@@ -1,0 +1,49 @@
+<!--
+  Licensed to the Apache Software Foundation (ASF) under one
+  or more contributor license agreements.  See the NOTICE file
+  distributed with this work for additional information
+  regarding copyright ownership.  The ASF licenses this file
+  to you under the Apache License, Version 2.0 (the
+  "License"); you may not use this file except in compliance
+  with the License.  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing,
+  software distributed under the License is distributed on an
+  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+  KIND, either express or implied.  See the License for the
+  specific language governing permissions and limitations
+  under the License.
+-->
+
+# Plugins
+
+[English](README.md)
+
+叶目录中的 `package.ts` 声明一个插件，列出可执行入口、配置、导入和导出。Cargo crate 是编译单元：一个插件可以使用多个 crate，相关插件也可以共用实现 crate。
+
+| 插件族 | 职责 |
+| --- | --- |
+| [agent](agent/README.zh-CN.md) | 会话、模型执行、工具、目标和调度 |
+| [workspace](workspace/README.zh-CN.md) | 文件、进程、Web 和 Jev 服务 |
+| [settings](settings/native/README.zh-CN.md) | 连接、凭据和偏好 |
+| [skills](skills/native/README.zh-CN.md) | 技能发现、读取和发布 |
+| [interactions](interactions/native/README.zh-CN.md) | 问题和表单 |
+| [workhub](workhub/core/README.zh-CN.md) | 任务协调和 worker 结果 |
+| `ui/` | 原生 UI 能力声明 |
+| `shared/` | 共用 TypeScript 契约与开发辅助函数 |
+
+修改已有插件时，从声明入手，沿所选实现查找代码。JavaScript 入口指定本地模块，例如由 `tui.ts` 构建的 `tui.js`。原生入口选择可执行文件提供的实现。插件族目录和已链接 crate 都不会自动激活插件。
+
+在仓库根目录构建单个包：
+
+```sh
+node scripts/plugins/build.mjs   --plugin plugins/workspace/workspace-web --output /tmp/maka-web-bundle
+```
+
+构建器会替换输出目录，包内容位于 `packages/`。可运行 `maka application inspect-package --package /tmp/maka-web-bundle/packages/workspace-web` 检查结果。
+
+将插件加入 Maka 时，在[产品选择](../products/maka/bundle/package-inputs.json)中添加路径，再在[组合](../products/maka/bundle/src/composition.ts)中添加实例和绑定。新增原生实现还需在[产品注册表](../products/maka/native/README.zh-CN.md)中加入工厂。导入声明依赖，Host 授权决定可以执行哪些调用。
+
+[插件开发 skill](../skills/maka-plugin-authoring/SKILL.md)提供可运行的独立示例，以及服务、UI、状态和原生扩展指南。[SDK](../packages/plugin-sdk/README.zh-CN.md)提供精确契约。

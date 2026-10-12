@@ -17,23 +17,17 @@
   under the License.
 -->
 
-# Exact application API
+# API sources
 
-The root SDK export is the current application ABI. The `references/sdk/` files are
-copied from this build's `packages/plugin-sdk/src/`; read them as source when needed.
+In the bundled skill, `references/sdk/` contains the SDK sources from the same build. In a checkout, read `packages/plugin-sdk/src/`.
 
-| Need | Source |
+| Need | File within the SDK |
 | --- | --- |
-| Component, Output, RequestContext, HostService | `sdk/index.ts` |
-| Native scene constructors and target typing | `sdk/ui.ts` |
-| PackageDeclaration, CompositionInput, HostRequest, OperationReply, native props | `sdk/generated/runtime.ts` |
-| Exact public service/component contracts | `sdk/contracts.ts` |
-| Native configuration schemas | `sdk/configurations.ts` |
+| `Component`, `HostService`, `RequestContext` | `index.ts` |
+| Native terminal and desktop scene helpers | `ui.ts` |
+| Package/composition types, wire values and native props | `generated/runtime.ts` |
+| Public service and component contracts | `contracts.ts` |
+| Native configuration schemas | `configurations.ts` |
+| Native implementation definitions | `native.ts` |
 
-Use the root definitions above and `maka application schema`.
-The schema command emits contracts/configurations plus declaration schemas from the
-same Rust types that validate actual runtime calls.
-
-A TypeScript type is useful during authoring; runtime Rust still validates JSON,
-resource slots, contract compatibility, budgets and permissions. Do not infer support
-for an undeclared method.
+`maka application schema` emits the executable's catalog. In a checkout, `npm --workspace @maka-agent/plugin-sdk run schema:generate` regenerates the SDK through `tools/schema`; `schema:check` checks for drift. Types help authoring, while Rust validates runtime values, resource slots, compatibility and permission.

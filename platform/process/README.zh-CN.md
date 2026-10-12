@@ -21,19 +21,6 @@
 
 [English](README.md)
 
-Linux、macOS 和 Windows 的原生进程／PTY 传输、取消、沙箱启动接入和无界面终端状态。
+通过管道、PTY 和分离进程执行已确定的命令。`Command` 描述启动参数，`ShellExecutor`、`pipe` 和 `pty` 管理执行与 I/O。沙箱准备由 `maka-sandbox` 提供。调用方负责授权及持久化后台记录，并应保留进程所有权，直到确认退出和清理完成。
 
-`Shell` 为命令执行和交互 PTY 一次性选定可执行程序。Unix 优先使用受支持且可执行的
-系统账户登录 shell，而非 `$SHELL`；macOS 按 zsh → bash → sh 回退，Linux 按
-bash → zsh → sh 回退。Windows 优先 PowerShell 7 → Windows PowerShell → cmd。
-模型提示与所选语法一致。命令默认加载登录配置，`login: false` 可跳过；
-配置加载仍受同一沙箱和超时约束。
-
-`terminal::Screen` 使用 `alacritty_terminal`，不启用其 PTY 事件循环或渲染器。
-解析器归现有 PTY worker 所有，不需要 JavaScript runtime、额外线程或跨 runtime 序列化。
-Host 保留执行准入、规范日志、背压和最终输出排空。
-
-快照提供可见屏幕、500 行历史、光标／输入模式和最后一次备用屏幕。
-历史丢失或文本超限会设置 `truncated`。写入、转义序列扩展、组合字符、OSC 存储和
-协议应答均有资源上限。解析失败不发布部分状态，Host 保留最后一次成功快照。
-剪贴板、标题和超链接副作用不会执行。转义序列行为遵循 Alacritty，不模拟全部 xterm 差异。
+[源码](src/lib.rs) · [Cargo 配置](Cargo.toml)

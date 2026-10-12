@@ -17,5 +17,5 @@
 
 interface:
   display_name: "Maka Architecture Docs"
-  short_description: "Write clear, rigorous bilingual Maka architecture documents"
-  default_prompt: "Use $maka-architecture-docs to draft or review a bilingual Maka backend architecture document."
+  short_description: "Write Maka guides and crate READMEs"
+  default_prompt: "Use $maka-architecture-docs to draft or review Maka architecture guides and crate READMEs."

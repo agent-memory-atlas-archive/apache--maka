@@ -61,6 +61,7 @@ configuration and explicit method/recovery grants. Use the Desktop executable fo
 its native presentation. Do not claim Desktop visual/input verification from a TUI
 check or a pure component reducer test.
 
-In a checkout use the repository's relevant Rust/TypeScript checks. Avoid running
-product bundle generation, including notice regeneration, concurrently with tests
-that import the shared product `dist` directory.
+In a checkout, run the relevant crate tests and SDK/product type checks. Product
+tests build once before running. To build another product artifact concurrently,
+use `node products/maka/bundle/scripts/build.mjs --output PATH` with a separate
+directory; two writers must not share `dist`.

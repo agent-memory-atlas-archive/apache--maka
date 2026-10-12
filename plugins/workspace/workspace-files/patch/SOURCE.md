@@ -22,7 +22,7 @@
 
 This crate contains code derived from OpenAI Codex's `codex-rs/apply-patch`,
 licensed under Apache-2.0. Original notice: **OpenAI Codex, Copyright 2025 OpenAI**.
-See the repository [NOTICE](../../NOTICE), the repository's Apache-2.0 [LICENSE](../../LICENSE),
+See the repository [NOTICE](../../../../NOTICE), the repository's Apache-2.0 [LICENSE](../../../../LICENSE),
 and the pinned upstream [license](https://github.com/openai/codex/blob/624ccf794703e2d84e748fc3ef547d6191a8c0a4/LICENSE).
 
 ## Exact provenance

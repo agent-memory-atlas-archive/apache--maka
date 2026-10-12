@@ -29,7 +29,7 @@ export const links = {
   devList: 'https://lists.apache.org/list.html?dev@maka.apache.org',
   cli: `${main}/packages/cli/README.md`,
   eventLog: `${main}/platform/event-log/README.md`,
-  docs: `${main}/docs/README.md`,
+  docs: `${main}/plugins/README.md`,
   security: `${main}/SECURITY.md`,
   asf: 'https://www.apache.org/',
   incubator: 'https://incubator.apache.org/',

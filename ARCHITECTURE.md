@@ -21,25 +21,37 @@
 
 [简体中文](ARCHITECTURE.zh-CN.md)
 
-Maka is a plugin application runtime. Host and UI instantiate the shared plugin kernel with explicit capability bindings. A committed composition selects executable entries, configuration and its launch component; terminal and Desktop are native presentation adapters.
+Maka assembles applications from plugins. A package declares what it provides and what it needs. A composition chooses instances and connects their imports to exports. Host services perform work; UI components present it through native terminal or desktop renderers.
 
-Directories identify ownership, `package.ts` identifies a plugin, and Cargo crates identify compilation units. These boundaries need not be one-to-one. Family folders group related plugins; they do not grant capabilities or create runtime identities. Existing package IDs, entry IDs and persisted namespaces remain independent of source paths.
+## Code ownership
 
-- **Platform:** `platform/plugin-core` checks composition and binding identity; `platform/packages` loads immutable package bytes; `platform/capabilities` owns scoped resources. `platform/event-log` is the single durable writer and performs startup recovery before activation, including facts left by plugins no longer installed.
-- **Host and UI:** `platform/host-runtime` owns admission and service settlement. `platform/ui-runtime` owns mounted components, captured input, accepted actions and cleanup. Products inject `platform/host-js` and `platform/ui-js` when JavaScript is needed. Native Host/UI and the terminal/GPUI renderers compile without V8 or Agent execution; their persistence and public business-fact dependencies remain explicit.
-- **Plugins:** leaf `plugins/<family>/<plugin>/package.ts` files declare their own entries and imports. Native implementations live beside their plugin or in a shared family crate. `plugins/agent/engine` owns Agent execution; `facts`, `ports`, `api` and `authority` separate durable facts, business ports, public service contracts and original-invocation admission. Web, Files, Processes, Skills and Interactions register independently of Agent.
-- **Product:** `products/maka/native` selects compiled native factories. `products/maka/bundle/package-inputs.json` selects authored packages, and `src/composition.ts` binds them. CLI and desktop supply the execution backends and start the selected product. Factory availability alone neither activates a plugin nor grants access.
-- **Authoring:** native definitions come from the actual Rust implementation identifiers, contracts and configuration schemas; `tools/schema` generates SDK facts without the product or V8. The generic plugin builder accepts one leaf or the product selection. Shared components under `plugins/shared` do not depend on a product.
-- **Computer Use:** `platform/computer-use` owns its REPL and session lifetime independently of Code Mode.
+[Platform](platform/README.md) contains the package loader, composition kernel, execution owners and renderers. [Plugins](plugins/README.md) contain business features and their declarations. [The Maka product](products/maka/README.md) selects packages, native factories and startup behavior.
 
-A plugin may provide separate terminal and desktop entries, or support one target. Dynamic JavaScript packages define new layouts and workflows; Rust native implementations are supplied with the executable. Installation stores immutable package bytes without changing activation or permissions. Replacing the launch root, configuration or bindings is an explicit checked source update. Native owners retain editing and reading state; plugins hold workflow state and observations, rather than copies of native buffers or pixel positions.
+A `package.ts` identifies an authored plugin. A Cargo crate identifies code compiled together. They need not correspond one-to-one: an Agent service can use several domain crates, while related plugin entries can share one native implementation crate.
 
-Launch a committed terminal product with `maka application run --root PATH --deployment UUID --connections FILE`, or a desktop source with `maka-desktop run`. Connections carry explicit method and recovery grants. The no-command CLI starts the ordinary product described in `products/maka/bundle`; `--help` acquires no State Root. CLI/ACP and native business services use the same canonical client protocol.
+The Host and UI owners use the same lifecycle kernel. JavaScript execution is injected through `host-js` and `ui-js`; native renderers and owners can compile without V8 or the Agent engine. Shared fact types remain explicit dependencies where persistence or presentation needs them.
 
-The plugin library discovers linked definitions independently of active instances. Each plugin owns its localizable description; the Host publishes its registered defaults. Adding a linked plugin applies those defaults through the existing revision-checked composition operation. Removing an instance preserves discovery and plugin data; installed package files remain a separate resource.
+## From package to running application
 
-The npm package in `packages/cli` only chooses and launches a matching executable. It does not add a second runtime, configuration store or tool implementation.
+1. The package loader validates immutable bytes and computes their reference.
+2. The composition planner checks entry selection, configuration and bindings.
+3. A Root stores the desired source and its package bytes at a revision.
+4. Host or UI activates the selected implementations. The source becomes effective when its instances converge.
 
-See the owning crate READMEs for detailed contracts, and [the SDK](packages/plugin-sdk/README.md) for JavaScript plugin authoring.
+Installation does not grant permissions. A binding makes a compatible provider available to a consumer; the Host checks the caller, method, input and actual resources when admitting each call. Local IPC connections carry explicit method and recovery grants supplied by the launcher.
 
-Development builds read `products/maka/bundle/dist` (or `MAKA_PRODUCT_BUNDLE`) through the same validated package loader and commit pipeline. `just run` rebuilds the TypeScript bundle before starting Cargo; TypeScript inputs do not invalidate Rust compilation. Release builds embed the bundle. Installing or updating packages in an existing Root remains an explicit source operation.
+Updating a source preserves unchanged activations and their captured bindings. Changed instances retire before replacement. Already accepted work remains with its original owner, including when the caller disconnects or a component disappears.
+
+## State and effects
+
+The EventLog owns the durable Root and canonical records. Stable plugin data belongs to a Root, deployment and instance. Package revisions and activation epochs describe code and execution; neither creates a new data namespace by itself.
+
+Mutations have receipts. Business completion and physical cleanup are recorded separately. If a reply is lost, the caller resolves the original receipt instead of issuing a replacement operation. Cancellation asks work to stop; resources remain owned until their actual cleanup completes.
+
+UI callbacks propose a state/frame update and actions. A validated batch commits atomically. Renderers read committed frames; they do not execute plugin code during paint. Native editors own buffers, selection and IME, while plugins use bounded captures and commands.
+
+## Development and distribution
+
+`just run` bundles TypeScript before starting Cargo. Development binaries read that bundle from disk; release binaries embed it. Both use the same package validation and commit path. Rebuilding code does not replace an existing installation's saved composition.
+
+Rust contracts generate the [JavaScript SDK](packages/plugin-sdk/README.md) through [maka-schema](tools/schema/README.md), without building the product. The npm package is a [native executable launcher](packages/cli/README.md).
