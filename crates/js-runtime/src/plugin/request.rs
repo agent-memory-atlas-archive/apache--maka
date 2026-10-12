@@ -93,7 +93,7 @@ async fn op_maka_request(
         .0
         .upgrade()
         .ok_or_else(|| JsErrorBox::generic("request context expired"))?;
-    let size = super::bridge::encoded_size(&input.0, 1024 * 1024)
+    let size = super::json::encoded_size(&input.0, 1024 * 1024)
         .map_err(|e| JsErrorBox::generic(e.to_string()))?;
     let (_call, _bytes) = {
         let state = state.borrow();

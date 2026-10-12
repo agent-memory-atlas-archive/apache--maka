@@ -17,10 +17,8 @@
  * under the License.
  */
 
-//! Journaled tool execution, client capabilities and Code Mode.
+//! Journaled tool execution and Code Mode.
 mod cell;
-mod client;
 mod dispatch;
-pub use client::{ApprovalFuture, ClientInteractions, ClientTools, PermissionFuture};
 pub use dispatch::{RequestTools, RunTools, StepTools};
 pub use maka_tool_catalog::*;

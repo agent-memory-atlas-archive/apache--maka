@@ -39,7 +39,7 @@ struct Loaded {
 struct Request {
     module: Module,
     reply: oneshot::Sender<Result<serde_json::Value>>,
-    _slot: Option<OwnedSemaphorePermit>,
+    _slot: OwnedSemaphorePermit,
     _bytes: OwnedSemaphorePermit,
     context: Option<Arc<super::request::Owner>>,
 }
@@ -57,7 +57,6 @@ pub(super) async fn run(
         // Trusted runtime setup precedes the user-script clock. Keep its errors
         // in this result so queued loads still receive the common cleanup below.
         let mut runtime = match realm {
-            super::Realm::Legacy => engine::runtime(&health, &limits)?,
             super::Realm::Pure => engine::pure_runtime(&health, &limits)?,
             super::Realm::Scoped => engine::scoped_runtime(&health, &limits)?,
         };
@@ -87,22 +86,13 @@ pub(super) async fn run(
                     Ready::Command(Some(command)) => match command {
                         Command::Load {
                             id,
-                            bridge,
-                            bootstrap,
                             name,
                             source,
                             state,
                             bytes,
                         } => {
-                            match engine::load(&mut runtime, &name, &source, bootstrap, id) {
+                            match engine::load(&mut runtime, &name, &source) {
                                 Ok(code) => {
-                                    if let Some(bridge) = bridge {
-                                        runtime
-                                            .op_state()
-                                            .borrow_mut()
-                                            .borrow_mut::<super::bridge::Bindings>()
-                                            .insert(id, bridge);
-                                    }
                                     modules.insert(
                                         id,
                                         Loaded {
@@ -219,19 +209,8 @@ pub(super) async fn run(
                             if let Some(module) = modules.get_mut(&id) {
                                 module.closing = true;
                                 if module.calls == 0 {
-                                    close(&mut runtime, &mut modules, &mut states, id);
+                                    close(&mut modules, &mut states, id);
                                 }
-                            }
-                        }
-                        Command::ReleaseCallback { module, callback } => {
-                            if let Some(loaded) = modules.get(&module) {
-                                // Release is synchronous; there is no promise to drive.
-                                drop(engine::call(
-                                    &mut runtime,
-                                    &loaded.code,
-                                    &["release".into()],
-                                    &[callback.into()],
-                                )?);
                             }
                         }
                         Command::Statistics {
@@ -262,7 +241,7 @@ pub(super) async fn run(
                         if let Some(module) = modules.get_mut(&request.module.0.id) {
                             module.calls -= 1;
                             if module.closing && module.calls == 0 {
-                                close(&mut runtime, &mut modules, &mut states, request.module.0.id);
+                                close(&mut modules, &mut states, request.module.0.id);
                             }
                         }
                     }
@@ -323,18 +302,10 @@ pub(super) async fn run(
 }
 
 fn close(
-    runtime: &mut deno_core::JsRuntime,
     modules: &mut BTreeMap<u64, Loaded>,
     states: &mut BTreeMap<u64, watch::Sender<State>>,
     id: u64,
 ) {
-    if let Some(bindings) = runtime
-        .op_state()
-        .borrow_mut()
-        .try_borrow_mut::<super::bridge::Bindings>()
-    {
-        bindings.remove(id);
-    }
     modules.remove(&id);
     if let Some(state) = states.remove(&id) {
         state.send_replace(State::Closed(None));

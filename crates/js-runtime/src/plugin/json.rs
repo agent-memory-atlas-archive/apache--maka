@@ -18,7 +18,7 @@
  */
 
 //! JSON values keep JSON Number semantics instead of serde_v8's automatic BigInt conversion.
-use deno_core::{FromV8, ToV8, v8};
+use deno_core::{ToV8, v8};
 use deno_error::JsErrorBox;
 use serde_json::Value;
 
@@ -32,8 +32,8 @@ impl Json {
     }
 }
 pub(super) fn check_delivery(value: &Value, limit: usize) -> Result<usize, JsErrorBox> {
-    let size = super::bridge::encoded_size(value, limit)
-        .map_err(|e| JsErrorBox::generic(e.to_string()))?;
+    let size =
+        super::json::encoded_size(value, limit).map_err(|e| JsErrorBox::generic(e.to_string()))?;
     exact_numbers(value)?;
     Ok(size)
 }
@@ -102,17 +102,6 @@ pub(super) fn to_v8<'a, 'i>(
     Json::encode(value)?.to_v8(scope)
 }
 
-/// Op conversion checks the VM-owned JSON string before allocating a Rust Value.
-pub(super) struct JsonInput(pub Value);
-impl<'a> FromV8<'a> for JsonInput {
-    type Error = JsErrorBox;
-    fn from_v8<'i>(
-        scope: &mut v8::PinScope<'a, 'i>,
-        value: v8::Local<'a, v8::Value>,
-    ) -> Result<Self, Self::Error> {
-        decode(scope, value, 32 * 1024 * 1024).map(Self)
-    }
-}
 pub(super) fn decode<'a, 'i>(
     scope: &mut v8::PinScope<'a, 'i>,
     value: v8::Local<'a, v8::Value>,
@@ -142,4 +131,30 @@ pub(super) fn decode<'a, 'i>(
         .map_err(|e| JsErrorBox::generic(e.to_string()))?;
     js_numbers(&mut value);
     Ok(value)
+}
+
+// Count encoded bytes without allocating a second copy of a large Host result.
+pub(super) fn encoded_size<T: serde::Serialize + ?Sized>(
+    value: &T,
+    limit: usize,
+) -> serde_json::Result<usize> {
+    struct Counter {
+        size: usize,
+        limit: usize,
+    }
+    impl std::io::Write for Counter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if bytes.len() > self.limit.saturating_sub(self.size) {
+                return Err(std::io::Error::other("Host payload byte limit"));
+            }
+            self.size += bytes.len();
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut counter = Counter { size: 0, limit };
+    serde_json::to_writer(&mut counter, value)?;
+    Ok(counter.size)
 }

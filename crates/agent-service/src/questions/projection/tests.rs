@@ -17,7 +17,8 @@
  * under the License.
  */
 
-use maka_protocol::interaction::*;
+use super::*;
+use maka_runtime::interaction::*;
 use serde_json::json;
 
 fn questions() -> serde_json::Value {

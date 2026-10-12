@@ -34,6 +34,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, sync::Arc};
 
+mod projection;
+
 pub const IMPLEMENTATION: &str = "maka.interactions.questions";
 pub const EXPORT: &str = "questions";
 
@@ -141,7 +143,7 @@ impl Handler for Questions {
                 invocation: invocation.clone(),
                 operation_id: operation_id.into(),
             };
-            let request = match maka_protocol::interaction::project_question_request(
+            let request = match projection::project_question_request(
                 &tool.tool_use_id(),
                 &input["questions"],
             ) {

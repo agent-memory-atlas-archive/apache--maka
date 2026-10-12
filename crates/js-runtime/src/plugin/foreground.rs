@@ -33,7 +33,7 @@ use serde_json::Value;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-use super::{Bootstrap, Health, Limits, Result, bridge, engine, failed};
+use super::{Health, Limits, Result, engine, failed, json};
 
 /// An opaque module reference, valid only in its originating foreground realm.
 #[derive(Clone)]
@@ -118,11 +118,10 @@ impl Foreground {
         self.budget.enter();
         let _entered = self.scheduler.enter();
         let outcome = entered(&mut self.runtime, |runtime| {
-            let outcome =
-                engine::load(runtime, name, source, Bootstrap::Plain, id).and_then(|module| {
-                    engine::poll_ready_jobs(runtime)?;
-                    Ok(module)
-                });
+            let outcome = engine::load(runtime, name, source).and_then(|module| {
+                engine::poll_ready_jobs(runtime)?;
+                Ok(module)
+            });
             self.budget.finish(outcome)
         })?;
         self.next_module = id;
@@ -153,7 +152,7 @@ impl Foreground {
         {
             return Err(failed("invalid foreground export path"));
         }
-        bridge::encoded_size(args, 1024 * 1024).map_err(failed)?;
+        json::encoded_size(args, 1024 * 1024).map_err(failed)?;
         self.budget.enter();
         let _entered = self.scheduler.enter();
         let outcome = entered(&mut self.runtime, |runtime| {
@@ -253,7 +252,7 @@ impl Foreground {
                 "foreground callbacks are retired or from another realm",
             ));
         }
-        bridge::encoded_size(args, 1024 * 1024).map_err(failed)?;
+        json::encoded_size(args, 1024 * 1024).map_err(failed)?;
         self.budget.enter_until(deadline);
         let _entered = self.scheduler.enter();
         let outcome = entered(&mut self.runtime, |runtime| {

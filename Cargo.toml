@@ -28,7 +28,6 @@ members = [
     "crates/application-bridge",
     "crates/background-health",
     "crates/cli",
-    "crates/client-capability",
     "crates/config",
     "crates/desktop",
     "crates/computer-use",
@@ -46,7 +45,6 @@ members = [
     "crates/plugin-core",
     "crates/presentation",
     "crates/process",
-    "crates/protocol",
     "crates/providers",
     "crates/responses",
     "crates/runtime",
@@ -99,7 +97,6 @@ maka-agent = { path = "crates/agent" }
 maka-agent-service = { path = "crates/agent-service" }
 maka-assistant = { path = "crates/assistant" }
 maka-background-health = { path = "crates/background-health" }
-maka-client-capability = { path = "crates/client-capability" }
 maka-config = { path = "crates/config" }
 maka-computer-use = { path = "crates/computer-use" }
 maka-event-log = { path = "crates/event-log" }
@@ -116,7 +113,6 @@ maka-plugins = { path = "crates/plugins" }
 maka-plugin-core = { path = "crates/plugin-core" }
 maka-presentation = { path = "crates/presentation" }
 maka-process = { path = "crates/process" }
-maka-protocol = { path = "crates/protocol" }
 maka-providers = { path = "crates/providers" }
 maka-responses = { path = "crates/responses" }
 maka-runtime = { path = "crates/runtime" }

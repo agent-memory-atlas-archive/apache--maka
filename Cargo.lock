@@ -8212,7 +8212,6 @@ dependencies = [
  "maka-plugins",
  "maka-presentation",
  "maka-process",
- "maka-protocol",
  "maka-providers",
  "maka-runtime",
  "maka-runtime-host",
@@ -8342,26 +8341,6 @@ dependencies = [
  "uuid",
  "windows 0.62.2",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "maka-client-capability"
-version = "0.2.0"
-dependencies = [
- "base64 0.22.1",
- "maka-event-log",
- "maka-protocol",
- "maka-runtime",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "tokio-util",
- "unicode-normalization",
- "url",
- "uuid",
 ]
 
 [[package]]
@@ -8752,22 +8731,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "maka-protocol"
-version = "0.2.0"
-dependencies = [
- "base64 0.22.1",
- "maka-plugins",
- "maka-presentation",
- "maka-runtime",
- "regress",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "url",
- "uuid",
-]
-
-[[package]]
 name = "maka-providers"
 version = "0.2.0"
 dependencies = [
@@ -9012,11 +8975,9 @@ name = "maka-tools"
 version = "0.2.0"
 dependencies = [
  "futures-util",
- "maka-client-capability",
  "maka-event-log",
  "maka-js-runtime",
  "maka-plugins",
- "maka-protocol",
  "maka-runtime",
  "maka-tool-catalog",
  "schemars 1.2.2",

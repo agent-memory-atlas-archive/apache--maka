@@ -139,7 +139,7 @@ Query/Mutation 的 `actions` 分开。key 在本组件内唯一；key 与完整�
 资源仅在首次启动时捕获，不随画面重新取样。每项 feedback 为
 `{ status: 'updated', value }`，终值沿用 `succeeded`/`failed`；反馈事务提交后才消费
 下一项。替换或退休会丢弃旧反馈，原执行仍须完成真实 cleanup。Desktop/TUI 共用这套
-机制；认证跨进程 transport 仍待实现。
+机制；跨进程调用使用经过认证的 application Host transport。
 
 一次性 `Action.key` 是原 component Mount 内的反馈相关性。排队、准备、执行或等待反馈
 期间不能重用；需要并发时使用不同 key。反馈事务可以原子地以自己的 key 发起下一次请求。
@@ -208,7 +208,7 @@ fingerprint，不记录快照字节或 metadata；同 operation UUID 的新捕�
 使用最后实际返回的 cursor 继续；count 只是上界，完整数组最多 1 MiB。如果完整回调包装
 超过交付预算，query 返回 `failed`，健康组件可以减小页大小后重试。原引用跨来源替换和
 Root 重开保留；这些观察不授予 Host 权限，也不能代替 confirmed caller 执行 token。
-跨进程资源传输和旧业务迁移仍待实现。
+资源快照也可通过经过认证的 application Host 连接传输。
 
 持久 Host 组合可选择 `maka.operations.receipts`，通过 `Receipts` 导出提供
 `contracts.receiptReader`。普通 `read` Query 接收原 `RecoveryRef`，返回
@@ -226,39 +226,7 @@ receipt，不能把本次查询成功当成原效果已成功。传输或查询�
 `maka application read --root ROOT --deployment UUID` 会检查已保存的输入与精确包字节。
 返回的 `DeploymentRef` 只标识数据域与来源修订，不授予权限，也不表示运行就绪。
 Host 可以从该快照启动，并在已接受的工作及资源实际收尾期间保留存储所有权。
-原回执可以跨来源替换和进程重启读取；未知外部副作用的权威恢复、
-跨进程资源传输与在线组合收敛仍待实现。
-
-`./host` API 及下方指南属于仍待迁移和删除的旧实现，不是新应用 API 的适配层。
-
-Rust Runtime Host 的公开 TypeScript 契约。当前为 **Host SDK 3**、
-**终端 View 9**，与 Maka 应用版本及 npm workspace 版本分别演进。
-此 workspace 仍为私有包，不应假设能从 npm 仓库安装。
-
-插件开发文档统一维护在
-[Maka 插件编写 skill](../../skills/maka-plugin-authoring/SKILL.md) 中。
-它随 Maka 内置分发，包含可执行模板和完整 SDK 源码契约。
-每个 Profile 会自动安装，启动时将完整目录同步到随 Maka 提供的版本，清除过时资源。
-启用、禁用和固定设置会保留；自定义内容请另建技能保存。
-可用 `/skill:maka-plugin-authoring`，也可由模型按任务发现。
-`Skill` 按需读取附带资源，无需向普通文件工具开放 Host 私有目录。
-
-先读[快速开始](../../skills/maka-plugin-authoring/references/quickstart.md)，
-使用[可运行插件模板](../../skills/maka-plugin-authoring/assets/starter/)。
-[API 索引](../../skills/maka-plugin-authoring/references/api-map.md) 对应完整
-[SDK 源码](src/host.ts)；专题指南分别说明工具与输入、权限与状态、终端界面、
-模型与执行器、原生 Rust 插件，以及测试和交付。
-
-```sh
-npm --workspace @maka-agent/plugin-sdk run build
-npm --workspace @maka-agent/plugin-sdk run typecheck
-node --test packages/plugin-sdk/tests/*.test.mjs
-```
-
-Runtime/UI 入口必须是无未解析 import、无顶层 await 的独立 ESM。
-开发时使用 SDK 类型导入，运行时通过实际调用上下文的 Host 能力执行操作。
-Manifest、生命周期和实例激活方法见统一指南。
-
+原回执可以跨来源替换和进程重启读取；恢复读取原操作记录，不自动重放未知外部副作用。
 
 UI activate 返回带 component 或 value kind 的 `UiExport`。value 通过普通 Value 契约
 发布按 schema 校验的不可变 JSON。所有组件回调及 activate(configuration, values)

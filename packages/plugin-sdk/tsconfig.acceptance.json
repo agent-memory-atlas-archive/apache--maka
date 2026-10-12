@@ -6,7 +6,6 @@
     "noEmit": true,
     "incremental": false,
     "paths": {
-      "@maka-agent/plugin-sdk/host": ["./src/host.ts"],
       "@maka-agent/plugin-sdk": ["./src/index.ts"]
     },
     "types": [],
@@ -14,16 +13,5 @@
     "composite": false,
     "rootDir": "../.."
   },
-  "include": [
-    "tests/*.types.ts",
-    "../../crates/runtime-host/tests/fixtures/host-plugin.mjs",
-    "../../crates/runtime-host/tests/fixtures/background-plugin.mjs",
-    "../../crates/runtime-host/tests/fixtures/http-plugin.mjs",
-    "../../crates/runtime-host/tests/fixtures/files-plugin.mjs",
-    "../../crates/runtime-host/tests/fixtures/clients-plugin.mjs",
-    "../../crates/runtime-host/tests/fixtures/remote-plugin.mjs",
-    "../../crates/cli/tests/fixtures/board-plugin/host.mjs",
-    "../../crates/cli/tests/fixtures/executor-plugin.mjs",
-    "examples/**/*.ts"
-  ]
+  "include": ["tests/*.types.ts", "examples/**/*.ts"]
 }

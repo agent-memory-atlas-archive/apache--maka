@@ -31,7 +31,7 @@ async fn capture(module: &Module, name: &str, method: &str) -> Captured {
 #[tokio::test]
 async fn worker_registration_freezes_async_functions_receiver_and_module_identity() {
     tokio::time::timeout(Duration::from_secs(10), async {
-        let vm = Vm::new(Limits::default()).unwrap();
+        let vm = Vm::pure(Limits::default()).unwrap();
         let first = vm.load("first.mjs".into(), r#"
             export let service = { label: 'first', async read(input) { return this.label + ':' + input; } };
             export function replace() { service.read = () => 'changed function'; service = {read: () => 'changed namespace'}; }
@@ -64,7 +64,7 @@ async fn capture_result(module: &Module) -> Result<Captured, Error> {
 #[tokio::test]
 async fn unclaimed_worker_registration_payload_releases_globals_and_capacity() {
     tokio::time::timeout(Duration::from_secs(10), async {
-        let vm = Vm::new(Limits::default()).unwrap();
+        let vm = Vm::pure(Limits::default()).unwrap();
         let module = vm
             .load(
                 "capture-drop.mjs".into(),
@@ -117,15 +117,14 @@ impl Gate {
         })
     }
 }
-impl Bridge for Gate {
-    fn call(
+impl RequestBridge for Gate {
+    fn invoke(
         &self,
-        method: String,
-        _: Value,
+        method: Value,
     ) -> futures_util::future::BoxFuture<'static, Result<Value, Error>> {
         let gate = self.clone();
         Box::pin(async move {
-            match method.as_str() {
+            match method.as_str().unwrap() {
                 "wait" => {
                     gate.started.add_permits(1);
                     let _permit = gate.release.acquire_owned().await.unwrap();
@@ -141,9 +140,9 @@ impl Bridge for Gate {
     }
 }
 const GATED: &str = r#"
-    export const service = { async read(key) {
-        const value = await Deno.core.ops.op_maka_plugin(key, 'wait', null);
-        await Deno.core.ops.op_maka_plugin(key, 'finished', null);
+    export const service = { async read(context) {
+        const value = await context.invoke('wait');
+        await context.invoke('finished');
         return value;
     }};
 "#;
@@ -151,22 +150,13 @@ const GATED: &str = r#"
 #[tokio::test]
 async fn accepted_promises_survive_all_external_vm_module_handles_and_waiters() {
     tokio::time::timeout(Duration::from_secs(10), async {
-        for bound in [false, true] {
+        {
             let gate = Gate::new();
-            let vm = Vm::new(Limits::default()).unwrap();
-            let module = vm
-                .load_with_bridge("last-owner.mjs".into(), GATED.into(), Some(gate.clone()))
-                .unwrap();
+            let vm = Vm::scoped(Limits::default()).unwrap();
+            let module = vm.load("last-owner.mjs".into(), GATED.into()).unwrap();
             let callbacks = capture(&module, "service", "read").await;
             let weak = module.downgrade();
-            let args = vec![json!(module.host_key())];
-            let mut pending = if bound {
-                Box::pin(callbacks.call("read", args))
-                    as std::pin::Pin<Box<dyn Future<Output = Result<Value, Error>>>>
-            } else {
-                Box::pin(module.call(vec!["service".into(), "read".into()], args))
-                    as std::pin::Pin<Box<dyn Future<Output = Result<Value, Error>>>>
-            };
+            let mut pending = Box::pin(callbacks.call_with_context("read", vec![], gate.clone()));
             assert!(futures_util::poll!(pending.as_mut()).is_pending());
             let _started = gate.started.acquire().await.unwrap();
             assert_eq!(vm.statistics(false).await.unwrap().pending_calls, 1);
@@ -193,12 +183,10 @@ async fn accepted_promises_survive_all_external_vm_module_handles_and_waiters() 
 async fn explicit_close_waits_for_captured_work_after_reply_observer_is_abandoned() {
     tokio::time::timeout(Duration::from_secs(10), async {
         let gate = Gate::new();
-        let vm = Vm::new(Limits::default()).unwrap();
-        let module = vm
-            .load_with_bridge("close-owned.mjs".into(), GATED.into(), Some(gate.clone()))
-            .unwrap();
+        let vm = Vm::scoped(Limits::default()).unwrap();
+        let module = vm.load("close-owned.mjs".into(), GATED.into()).unwrap();
         let callbacks = capture(&module, "service", "read").await;
-        let mut pending = Box::pin(callbacks.call("read", vec![json!(module.host_key())]));
+        let mut pending = Box::pin(callbacks.call_with_context("read", vec![], gate.clone()));
         assert!(futures_util::poll!(pending.as_mut()).is_pending());
         let _started = gate.started.acquire().await.unwrap();
         drop(pending);
@@ -226,7 +214,7 @@ async fn explicit_close_waits_for_captured_work_after_reply_observer_is_abandone
 #[tokio::test]
 async fn worker_registration_checks_input_result_json_and_registration_shapes() {
     tokio::time::timeout(Duration::from_secs(10), async {
-        let vm = Vm::new(Limits::default()).unwrap();
+        let vm = Vm::pure(Limits::default()).unwrap();
         let module = vm.load("json-boundary.mjs".into(), r#"
             let calls = 0;
             export const service = {read(value) { calls++; return value; }, large() {return '界'.repeat(400000);}, json() {return {toJSON(){return {calls};}};}, circular() { const value={}; value.self=value; return value; }};
@@ -255,7 +243,7 @@ async fn worker_registration_checks_input_result_json_and_registration_shapes() 
 async fn capture_getters_and_result_to_json_stalls_terminate_the_actual_worker_domain() {
     tokio::time::timeout(Duration::from_secs(10), async {
         for capture_stall in [true, false] {
-            let vm = Vm::new(Limits {
+            let vm = Vm::pure(Limits {
                 synchronous_slice: Duration::from_millis(200),
                 ..Limits::default()
             })
@@ -282,36 +270,31 @@ async fn capture_getters_and_result_to_json_stalls_terminate_the_actual_worker_d
 }
 
 struct Inexact;
-impl Bridge for Inexact {
-    fn call(
-        &self,
-        _: String,
-        _: Value,
-    ) -> futures_util::future::BoxFuture<'static, Result<Value, Error>> {
+impl RequestBridge for Inexact {
+    fn invoke(&self, _: Value) -> futures_util::future::BoxFuture<'static, Result<Value, Error>> {
         Box::pin(async { Ok(json!({"nested":[u64::MAX]})) })
     }
 }
 #[tokio::test]
 async fn native_bridge_rejects_inexact_integer_results_without_bigint_or_rounding() {
     tokio::time::timeout(Duration::from_secs(10), async {
-        let vm = Vm::new(Limits::default()).unwrap();
+        let vm = Vm::scoped(Limits::default()).unwrap();
         let module = vm
-            .load_with_bridge(
+            .load(
                 "inexact-output.mjs".into(),
                 r#"
-            export const service = {async read(key) {
-                try { await Deno.core.ops.op_maka_plugin(key, 'read', null); return false; }
+            export const service = {async read(context) {
+                try { await context.invoke('read'); return false; }
                 catch(error) { return error.message.includes('represented exactly'); }
             }};
         "#
                 .into(),
-                Some(Arc::new(Inexact)),
             )
             .unwrap();
         let callbacks = capture_result(&module).await.unwrap();
         assert_eq!(
             callbacks
-                .call("read", vec![json!(module.host_key())])
+                .call_with_context("read", vec![], Arc::new(Inexact))
                 .await
                 .unwrap(),
             json!(true)
@@ -325,10 +308,9 @@ async fn native_bridge_rejects_inexact_integer_results_without_bigint_or_roundin
 }
 
 struct CountInput(Arc<std::sync::atomic::AtomicUsize>);
-impl Bridge for CountInput {
-    fn call(
+impl RequestBridge for CountInput {
+    fn invoke(
         &self,
-        _: String,
         input: Value,
     ) -> futures_util::future::BoxFuture<'static, Result<Value, Error>> {
         self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -338,18 +320,18 @@ impl Bridge for CountInput {
 #[tokio::test]
 async fn native_bridge_checks_vm_json_input_before_copy_and_before_dispatch() {
     tokio::time::timeout(Duration::from_secs(10), async {
-        let vm = Vm::new(Limits::default()).unwrap();
+        let vm = Vm::scoped(Limits::default()).unwrap();
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let module = vm.load_with_bridge("input-json.mjs".into(), r#"
-            export const service = { async read(key, mode) {
+        let module = vm.load("input-json.mjs".into(), r#"
+            export const service = { async read(mode, context) {
                 const input = mode==='bigint' ? {nested:[9007199254740993n]} : {text:'x'.repeat(32*1024*1024)};
-                try { await Deno.core.ops.op_maka_plugin(key, 'echo', input); return false; }
-                catch(error) { return error.message.includes(mode==='bigint'?'BigInt':'32 MiB'); }
+                try { await context.invoke(input); return false; }
+                catch(error) { return error.message.includes(mode==='bigint'?'BigInt':'1 MiB'); }
             }};
-        "#.into(), Some(Arc::new(CountInput(calls.clone())))).unwrap();
+        "#.into()).unwrap();
         let callbacks = capture_result(&module).await.unwrap();
         for mode in ["bigint", "large"] {
-            assert_eq!(callbacks.call("read", vec![json!(module.host_key()),json!(mode)]).await.unwrap(), json!(true));
+            assert_eq!(callbacks.call_with_context("read", vec![json!(mode)], Arc::new(CountInput(calls.clone()))).await.unwrap(), json!(true));
         }
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
         assert!(!vm.is_terminated());
@@ -359,14 +341,12 @@ async fn native_bridge_checks_vm_json_input_before_copy_and_before_dispatch() {
 }
 
 #[tokio::test]
-async fn pure_worker_cannot_install_host_ops_or_bridge_bearing_modules() {
+async fn pure_worker_has_no_ambient_host_ops() {
     tokio::time::timeout(Duration::from_secs(10), async {
         let vm = Vm::pure(Limits::default()).unwrap();
         let module = vm.load("pure.mjs".into(), "export const service = { async read() { await Promise.resolve(); return [typeof Deno, typeof fetch, typeof console]; } };".into()).unwrap();
         let captured = module.capture(vec!["service".into()], vec!["read".into()]).await.unwrap();
         assert_eq!(captured.call("read", vec![]).await.unwrap(), json!(["undefined","undefined","undefined"]));
-        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        assert!(vm.load_with_bridge("bridge.mjs".into(), "export function read() {}".into(), Some(Arc::new(CountInput(calls)))).is_err());
         module.close().await.unwrap();
         vm.shutdown().await;
     }).await.unwrap();

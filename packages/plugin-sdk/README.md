@@ -179,7 +179,7 @@ commit. Resources are captured once at start, rather than on each frame. Feedbac
 outcomes. Each item waits for its component feedback transaction to commit before
 the next is consumed. Replacement and retirement discard old feedback while the
 original executor still completes actual cleanup. This supports both Desktop and TUI;
-authenticated cross-process transport remains unfinished.
+authenticated cross-process calls use the application Host transport.
 
 One-shot `Action.key` is the feedback correlation within its original component Mount.
 Do not reuse it while queued, preparing, executing, or waiting for feedback. Overlapping
@@ -285,7 +285,7 @@ may still be unknown or unavailable. Transport/query failures use `failed`;
 keep the original reference. Large or inexact journal values produce the same
 reference with `unavailable` for this portable contract, while raw native recovery
 preserves them. Query cleanup does not describe the original operation's cleanup.
-Cross-process resource transport and business migration remain unfinished.
+Resource snapshots also travel through authenticated application Host connections.
 
 Deployment sources can be stored in an owned State Root with
 `maka application commit --root ROOT --deployment UUID --expected-revision 0 --input input.json --package bundle.maka-plugin`.
@@ -293,41 +293,8 @@ A replacement requires the observed revision. `maka application read --root ROOT
 validates the persisted source and exact package bytes. The returned `DeploymentRef` identifies
 that state domain and source revision; it grants no access and makes no readiness claim.
 The Host executor can start from this snapshot and retains storage ownership through accepted
-work and cleanup. Original receipts survive source replacement and restart. Resolving unknown external effects,
-cross-process resource transport and live reconciliation remain unfinished.
-
-The `./host` API and the guide below belong to the implementation still awaiting
-migration and removal. They are not an adapter for the application API.
-
-Public TypeScript contracts for the Rust Runtime Host. **Host SDK 3** and
-**terminal View 9** are independent of Maka's application version and this npm
-workspace's version. The workspace is private and is not an assumed registry package.
-
-Plugin development has one maintained guide: the
-[Maka plugin authoring skill](../../skills/maka-plugin-authoring/SKILL.md).
-It is bundled with Maka, including executable starter files and the complete SDK
-source contracts. It is installed automatically for each Profile and its complete directory is
-replaced with the shipped version at startup, removing obsolete resources. Enable/disable
-and pinning preferences are preserved; keep custom changes in a separate skill. Load
-`/skill:maka-plugin-authoring` or let the model discover it. `Skill` reads its linked
-resources without exposing Host-private directories to ordinary file tools.
-
-Start with the [quickstart](../../skills/maka-plugin-authoring/references/quickstart.md)
-and [runnable package](../../skills/maka-plugin-authoring/assets/starter/).
-The [API map](../../skills/maka-plugin-authoring/references/api-map.md) routes to
-exact [SDK sources](src/host.ts); separate guides cover tools/input, authority/state,
-terminal apps, providers/executors, native Rust, and testing/shipping.
-
-```sh
-npm --workspace @maka-agent/plugin-sdk run build
-npm --workspace @maka-agent/plugin-sdk run typecheck
-node --test packages/plugin-sdk/tests/*.test.mjs
-```
-
-Package runtime/UI entries are self-contained ESM with no unresolved imports or
-top-level await. Use type-only SDK imports during development and the issued Host
-capabilities for runtime effects. See the guide for manifests, lifecycle and activation.
-
+work and cleanup. Original receipts survive source replacement and restart. Recovery observes
+the original operation; unknown external effects are never automatically replayed.
 
 UI activation returns `UiExport` entries tagged `component` or `value`. The latter
 publishes immutable, schema-checked JSON through a normal Value contract. Every

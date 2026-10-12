@@ -17,33 +17,37 @@
  * under the License.
  */
 
-use maka_js_runtime::plugin::{Bridge, Error, Limits, Module, Pool, Vm};
+use maka_js_runtime::plugin::{Error, Limits, Module, RequestBridge, Vm};
 use serde_json::{Value, json};
 use std::time::Duration;
 
 mod captured;
 mod inventory;
-mod registration;
 mod request;
 
 struct Relay(Module);
-impl Bridge for Relay {
-    fn call(
+impl RequestBridge for Relay {
+    fn invoke(
         &self,
-        method: String,
         input: Value,
     ) -> futures_util::future::BoxFuture<'static, Result<Value, Error>> {
         let target = self.0.clone();
-        Box::pin(async move { target.call(vec![method], vec![input]).await })
+        Box::pin(async move {
+            target
+                .call(
+                    vec![input["method"].as_str().unwrap().into()],
+                    vec![input["value"].clone()],
+                )
+                .await
+        })
     }
 }
 
 #[tokio::test]
 async fn cross_vm_host_calls_preserve_values_and_retirement_does_not_retarget_or_deadlock() {
     tokio::time::timeout(Duration::from_secs(10), async {
-        let pool = Pool::new(Limits::default());
-        let shared = pool.shared().unwrap();
-        let dedicated = pool.dedicated("service-generation").unwrap();
+        let shared = Vm::scoped(Limits::default()).unwrap();
+        let dedicated = Vm::pure(Limits::default()).unwrap();
         let service = dedicated.load("service.mjs".into(), r#"
             let release;
             let calls = 0;
@@ -52,13 +56,14 @@ async fn cross_vm_host_calls_preserve_values_and_retirement_does_not_retarget_or
             export function wait(value) { return new Promise(resolve => { release = () => resolve(value); }); }
             export function finish() { release(); }
         "#.into()).unwrap();
-        let caller = shared.load_with_bridge("caller.mjs".into(), r#"
-            export function invoke(id, method, value) {
-                globalThis.staleBridge = () => Deno.core.ops.op_maka_plugin(id, "echo", value);
-                return Deno.core.ops.op_maka_plugin(id, method, value);
+        let caller = shared.load("caller.mjs".into(), r#"
+            export function invoke(method, value, context) {
+                globalThis.staleBridge = () => context.invoke({method:"echo", value});
+                return context.invoke({method, value});
             }
-        "#.into(), Some(std::sync::Arc::new(Relay(service.clone())))).unwrap();
-        let key = caller.host_key();
+        "#.into()).unwrap();
+        let callbacks = caller.capture(vec![], vec!["invoke".into()]).await.unwrap();
+        let relay = std::sync::Arc::new(Relay(service.clone()));
         let payload = json!({"nested":[1, null, {"text":"跨 VM",
             "timestamp":1_790_320_333_732_i64,
             "safe":[9_007_199_254_740_991_i64,-9_007_199_254_740_991_i64],
@@ -72,12 +77,13 @@ async fn cross_vm_host_calls_preserve_values_and_retirement_does_not_retarget_or
         expected["nested"][2]["largeExact"] = json!(1_000_000_000_000_000_128_u64 as f64);
         expected["nested"][2]["negativeExact"] = json!(-1_000_000_000_000_000_128_i64 as f64);
         assert_eq!(service.call(vec!["echo".into()], vec![payload.clone()]).await.unwrap(), expected);
-        assert_eq!(caller.call(vec!["invoke".into()], vec![json!(key), json!("echo"), payload.clone()]).await.unwrap(), expected);
+        assert_eq!(callbacks.call_with_context("invoke", vec![json!("echo"), payload.clone()], relay.clone()).await.unwrap(), expected);
         assert_eq!(call(&service, "count").await, json!(2));
         let running = tokio::spawn({
-            let caller = caller.clone();
+            let callbacks = callbacks.clone();
+            let relay = relay.clone();
             let payload = payload.clone();
-            async move { caller.call(vec!["invoke".into()], vec![json!(key), json!("wait"), payload]).await.unwrap() }
+            async move { callbacks.call_with_context("invoke", vec![json!("wait"), payload], relay).await.unwrap() }
         });
         while dedicated.statistics(false).await.unwrap().pending_calls != 1 { tokio::task::yield_now().await; }
         let closing = tokio::spawn({ let caller = caller.clone(); async move { caller.close().await.unwrap() } });
@@ -89,7 +95,7 @@ async fn cross_vm_host_calls_preserve_values_and_retirement_does_not_retarget_or
         let inspector = shared.load("inspector.mjs".into(), r#"
             export async function inspect() {
                 try { await globalThis.staleBridge(); return false; }
-                catch (error) { return error.message.includes("retired"); }
+                catch (error) { return error.message.includes("expired"); }
                 finally { delete globalThis.staleBridge; }
             }
         "#.into()).unwrap();
@@ -108,36 +114,9 @@ async fn call(module: &Module, name: &str) -> Value {
 }
 
 #[tokio::test]
-async fn reserved_control_calls_queue_without_rejecting_retirement() {
-    tokio::time::timeout(Duration::from_secs(10), async {
-        let vm=Vm::new(Limits::default()).unwrap();
-        let module=vm.load("control-contention.mjs".into(), r#"
-            const pending = new Map();
-            export function cancel(id) { return new Promise(resolve => pending.set(id, resolve)); }
-            export function count() { return pending.size; }
-            export function release() { for (const done of pending.values()) done(); pending.clear(); }
-            export function retire() { return true; }
-        "#.into()).unwrap();
-        let first=tokio::spawn({ let module=module.clone(); async move { module.cancel_call("one".into()).await } });
-        let second=tokio::spawn({ let module=module.clone(); async move { module.cancel_call("two".into()).await } });
-        while call(&module,"count").await != json!(2) { tokio::task::yield_now().await; }
-        let mut retirement=Box::pin(module.lifecycle(maka_js_runtime::plugin::Lifecycle::Retire));
-        assert!(futures_util::poll!(retirement.as_mut()).is_pending(),
-            "cleanup queues behind admitted control calls instead of failing capacity");
-        call(&module,"release").await;
-        first.await.unwrap().unwrap();
-        second.await.unwrap().unwrap();
-        retirement.await.unwrap();
-        module.close().await.unwrap();
-        assert_eq!(vm.statistics(false).await.unwrap().pending_calls,0);
-        vm.shutdown().await;
-    }).await.unwrap();
-}
-
-#[tokio::test]
 async fn shared_vm_multiplexes_and_drains_before_reclaiming_module() {
     tokio::time::timeout(Duration::from_secs(15), async {
-        let vm = Vm::new(Limits::default()).unwrap();
+        let vm = Vm::pure(Limits::default()).unwrap();
         let waiting = vm
             .load(
                 "waiting.mjs".into(),
@@ -196,7 +175,7 @@ async fn shared_vm_multiplexes_and_drains_before_reclaiming_module() {
 #[tokio::test]
 async fn module_errors_and_hot_updates_do_not_poison_or_retain_the_shared_vm() {
     tokio::time::timeout(Duration::from_secs(20), async {
-        let vm = Vm::new(Limits::default()).unwrap();
+        let vm = Vm::pure(Limits::default()).unwrap();
         let baseline = vm.statistics(true).await.unwrap().used_heap_bytes;
         let bad = vm
             .load(
@@ -248,11 +227,9 @@ async fn runaway_terminates_its_vm_and_not_an_independent_vm() {
             synchronous_slice: Duration::from_millis(200),
             ..Limits::default()
         };
-        let pool = Pool::new(limits);
-        let shared = pool.shared().unwrap();
-        let dedicated = pool.dedicated("separate-generation").unwrap();
-        let same_generation = pool.dedicated("separate-generation").unwrap();
-        let other = pool.dedicated("another-generation").unwrap();
+        let shared = Vm::pure(limits.clone()).unwrap();
+        let dedicated = Vm::pure(limits.clone()).unwrap();
+        let other = Vm::pure(limits.clone()).unwrap();
         let innocent = shared
             .load(
                 "innocent.mjs".into(),
@@ -266,17 +243,8 @@ async fn runaway_terminates_its_vm_and_not_an_independent_vm() {
             )
             .unwrap();
         assert_eq!(call(&innocent, "ping").await, json!(1));
-        assert_eq!(
-            pool.shared()
-                .unwrap()
-                .statistics(false)
-                .await
-                .unwrap()
-                .modules,
-            1
-        );
+        assert_eq!(shared.statistics(false).await.unwrap().modules, 1);
         separate.ready().await.unwrap();
-        assert_eq!(same_generation.statistics(false).await.unwrap().modules, 1);
         let runaway = shared
             .load(
                 "runaway.mjs".into(),
@@ -294,7 +262,7 @@ async fn runaway_terminates_its_vm_and_not_an_independent_vm() {
         dedicated.shutdown().await;
         other.shutdown().await;
         // Retaining dead handles must not revive or retarget a VM.
-        let replacement = pool.dedicated("another-generation").unwrap();
+        let replacement = Vm::pure(limits).unwrap();
         assert!(!replacement.is_terminated());
         replacement.shutdown().await;
     })

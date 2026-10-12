@@ -20,13 +20,11 @@
 mod catalog;
 mod cells;
 mod child_image;
-mod client_preparation;
 mod commit_faults;
 mod large_child_output;
 mod plugins;
 mod preflight;
 
 mod support {
-    pub(crate) mod model_fixture;
     pub(crate) mod preflight;
 }

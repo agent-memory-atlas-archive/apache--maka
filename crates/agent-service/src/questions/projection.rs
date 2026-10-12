@@ -17,13 +17,19 @@
  * under the License.
  */
 
-use super::{InteractionRequest, decode_request};
-use crate::{ProtocolError, Result, display::project};
+use maka_runtime::interaction::InteractionRequest;
+type Result<T> = std::result::Result<T, &'static str>;
+fn decode_request(value: &Value) -> Result<InteractionRequest> {
+    let request: InteractionRequest =
+        serde_json::from_value(value.clone()).map_err(|_| "Invalid question request")?;
+    request.validate()?;
+    Ok(request)
+}
 use serde_json::{Value, json};
 
 /// Decode before display projection, then validate the projected request again.
 /// Canonical reads must use decode_request, preserving their stored display text.
-pub fn project_question_request(
+pub(super) fn project_question_request(
     tool_use_id: &str,
     questions: &Value,
 ) -> Result<InteractionRequest> {
@@ -41,6 +47,25 @@ pub fn project_question_request(
             }
         }
     }
-    request.validate().map_err(ProtocolError::invalid)?;
+    request.validate()?;
     Ok(request)
 }
+
+fn project(value: &str, limit: usize) -> Result<String> {
+    let mut result = String::new();
+    for c in value.chars() {
+        if matches!(c as u32, 0..=31 | 127..=159 | 0x61c | 0x200e..=0x200f | 0x2028..=0x202e | 0x2066..=0x2069)
+        {
+            result.push_str(&format!("\\u{{{:X}}}", c as u32));
+        } else {
+            result.push(c);
+        }
+    }
+    if result.len() > limit {
+        return Err("Projected display text exceeds byte limit");
+    }
+    Ok(result)
+}
+
+#[cfg(test)]
+mod tests;

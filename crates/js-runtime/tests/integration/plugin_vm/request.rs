@@ -79,7 +79,6 @@ async fn private_contexts_expire_before_reply_without_an_ambient_or_json_address
         assert_eq!(calls.load(Ordering::SeqCst), 2, "invalid inputs never dispatch");
         callbacks.call("mutateIntrinsics", vec![]).await.unwrap();
         assert_eq!(callbacks.call_with_context("read", vec![Value::Null], Arc::new(Echo { label:"second".into(),calls:calls.clone() })).await.unwrap(), json!({"label":"second","input":null}));
-        assert!(vm.load_with_bridge("legacy.mjs".into(), "export const x=1;".into(), Some(Arc::new(super::Relay(module.clone())))).is_err());
         assert!(!vm.is_terminated());
         module.close().await.unwrap();
         vm.shutdown().await;

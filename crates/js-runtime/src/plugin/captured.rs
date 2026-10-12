@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-use super::{Command, Module, Result, bridge, failed};
+use super::{Command, Module, Result, failed, json};
 use serde_json::Value;
 use std::{collections::BTreeSet, sync::Arc};
 use tokio::sync::oneshot;
@@ -87,7 +87,7 @@ impl Captured {
         }
         let module = &self.0.module;
         module.ready().await?;
-        let size = bridge::encoded_size(&args, 1024 * 1024).map_err(failed)?;
+        let size = json::encoded_size(&args, 1024 * 1024).map_err(failed)?;
         let slot = module
             .0
             .vm
@@ -119,7 +119,7 @@ impl Captured {
                 args,
                 context,
                 reply,
-                slot: Some(slot),
+                slot,
                 bytes,
             })
             .map_err(|_| module.0.vm.0.health.error())?;
@@ -141,7 +141,7 @@ impl Module {
         {
             return Err(failed("invalid worker callback registration"));
         }
-        let size = bridge::encoded_size(&(&namespace, &methods), 1024 * 1024).map_err(failed)?;
+        let size = json::encoded_size(&(&namespace, &methods), 1024 * 1024).map_err(failed)?;
         let slot = self
             .0
             .vm

@@ -18,19 +18,15 @@
  */
 //! Trusted plugin VMs, separate from the model runtime.
 //! A VM multiplexes modules and promises; module handles own code retention.
-mod bridge;
 mod captured;
 mod engine;
 mod foreground;
 mod json;
-mod pool;
 mod request;
 mod worker;
 
-pub use bridge::Bridge;
 pub use captured::Captured;
 pub use foreground::{Foreground, ForegroundCallbacks, ForegroundModule};
-pub use pool::Pool;
 pub use request::RequestBridge;
 
 use deno_core::v8;
@@ -78,7 +74,6 @@ enum State {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Realm {
-    Legacy,
     Pure,
     Scoped,
 }
@@ -106,18 +101,10 @@ impl WeakModule {
 struct ModuleOwner {
     vm: Vm,
     id: u64,
-    bootstrap: Bootstrap,
     closing: AtomicBool,
     state: watch::Receiver<State>,
-    control_calls: Arc<Semaphore>,
-    control_bytes: Arc<Semaphore>,
 }
 
-#[derive(Clone, Copy)]
-pub enum Lifecycle {
-    Retire,
-    Dispose,
-}
 impl Drop for ModuleOwner {
     fn drop(&mut self) {
         if !self.closing.swap(true, Ordering::SeqCst) {
@@ -137,8 +124,6 @@ pub struct Statistics {
 enum Command {
     Load {
         id: u64,
-        bridge: Option<Arc<dyn Bridge>>,
-        bootstrap: Bootstrap,
         name: String,
         source: String,
         state: watch::Sender<State>,
@@ -150,7 +135,7 @@ enum Command {
         args: Vec<Value>,
         context: Option<Arc<request::Owner>>,
         reply: oneshot::Sender<Result<Value>>,
-        slot: Option<OwnedSemaphorePermit>,
+        slot: OwnedSemaphorePermit,
         bytes: OwnedSemaphorePermit,
     },
     Capture {
@@ -166,29 +151,11 @@ enum Command {
         callback: u64,
     },
     Close(u64),
-    ReleaseCallback {
-        module: u64,
-        callback: u32,
-    },
     Statistics {
         collect: bool,
         reply: oneshot::Sender<Statistics>,
         slot: OwnedSemaphorePermit,
     },
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Bootstrap {
-    Plain,
-    Plugin,
-    Presenter,
-}
-
-#[derive(Clone, Copy)]
-enum CallLane {
-    Work,
-    Control,
-    OwnedWait,
 }
 
 struct Health {
@@ -229,18 +196,13 @@ impl Health {
 }
 
 impl Vm {
-    pub fn new(limits: Limits) -> Result<Self> {
-        Self::create(limits, Realm::Legacy)
-    }
-
-    /// A background realm without Host ops, legacy SDKs or ambient Deno access.
-    /// Bridge-bearing loads are rejected even if a caller retains this VM.
+    /// A background realm without Host ops or ambient Deno access.
     pub fn pure(limits: Limits) -> Result<Self> {
         Self::create(limits, Realm::Pure)
     }
 
     /// A background realm with only native request-private capabilities.
-    /// No ambient Host router, Deno globals or legacy SDK can be installed.
+    /// No ambient Host router or Deno globals are installed.
     pub fn scoped(limits: Limits) -> Result<Self> {
         Self::create(limits, Realm::Scoped)
     }
@@ -298,51 +260,9 @@ impl Vm {
         })))
     }
 
-    /// Synchronous reservation lets a Fiber own cleanup before awaiting readiness.
+    /// Reserve module custody before awaiting readiness.
     /// Entrypoints are prebuilt ESM bundles: no imports or top-level await.
     pub fn load(&self, name: String, source: String) -> Result<Module> {
-        self.load_with_bridge(name, source, None)
-    }
-
-    pub fn load_with_bridge(
-        &self,
-        name: String,
-        source: String,
-        bridge: Option<Arc<dyn Bridge>>,
-    ) -> Result<Module> {
-        self.load_bound(name, source, bridge, Bootstrap::Plain)
-    }
-
-    pub fn load_plugin(
-        &self,
-        name: String,
-        source: String,
-        bridge: Arc<dyn Bridge>,
-    ) -> Result<Module> {
-        self.load_bound(name, source, Some(bridge), Bootstrap::Plugin)
-    }
-
-    /// A terminal page has its own factory and capability surface. It never
-    /// runs the business plugin activation bootstrap.
-    pub fn load_presenter(
-        &self,
-        name: String,
-        source: String,
-        bridge: Arc<dyn Bridge>,
-    ) -> Result<Module> {
-        self.load_bound(name, source, Some(bridge), Bootstrap::Presenter)
-    }
-
-    fn load_bound(
-        &self,
-        name: String,
-        source: String,
-        bridge: Option<Arc<dyn Bridge>>,
-        bootstrap: Bootstrap,
-    ) -> Result<Module> {
-        if self.0.realm != Realm::Legacy && (bridge.is_some() || bootstrap != Bootstrap::Plain) {
-            return Err(failed("this VM cannot install a legacy Host bridge or SDK"));
-        }
         if name.len() > 1024
             || source.len() > 8 * 1024 * 1024
             || self.0.health.stopped.is_cancelled()
@@ -365,8 +285,6 @@ impl Vm {
             .commands
             .send(Command::Load {
                 id,
-                bridge,
-                bootstrap,
                 name,
                 source,
                 state,
@@ -376,11 +294,8 @@ impl Vm {
         Ok(Module(Arc::new(ModuleOwner {
             vm: self.clone(),
             id,
-            bootstrap,
             closing: AtomicBool::new(false),
             state: receiver,
-            control_calls: Arc::new(Semaphore::new(2)),
-            control_bytes: Arc::new(Semaphore::new(8192)),
         })))
     }
 
@@ -419,12 +334,6 @@ impl Vm {
 }
 
 impl Module {
-    pub fn release_callback(&self, callback: u32) {
-        let _ = self.0.vm.0.commands.send(Command::ReleaseCallback {
-            module: self.0.id,
-            callback,
-        });
-    }
     pub fn downgrade(&self) -> WeakModule {
         WeakModule(Arc::downgrade(&self.0))
     }
@@ -436,23 +345,6 @@ impl Module {
     pub fn vm_failure(&self) -> Option<Error> {
         self.0.vm.0.health.failure.lock().unwrap().clone()
     }
-    pub async fn cancel_call(&self, id: String) -> Result<()> {
-        if id.len() > 128 {
-            return Err(failed("invalid invocation identity"));
-        }
-        self.call_inner(
-            vec!["cancel".into()],
-            vec![Value::String(id)],
-            CallLane::Control,
-        )
-        .await
-        .map(|_| ())
-    }
-    /// Routing identity inside this VM, not authorization or a durable identity.
-    pub fn host_key(&self) -> String {
-        self.0.id.to_string()
-    }
-
     pub async fn ready(&self) -> Result<()> {
         let mut state = self.0.state.clone();
         loop {
@@ -471,64 +363,7 @@ impl Module {
 
     /// Function paths are relative to the module namespace, not globalThis.
     pub async fn call(&self, path: Vec<String>, args: Vec<Value>) -> Result<Value> {
-        self.call_inner(path, args, CallLane::Work).await
-    }
-
-    /// Wait only on an SDK-owned stream handle. Idle observations retain their
-    /// argument bytes and module lifetime without occupying ordinary work slots.
-    pub async fn stream_next(&self, handle: &str) -> Result<Value> {
-        self.validate_stream_handle(handle)?;
-        self.call_inner(
-            vec!["streamNext".into()],
-            vec![Value::String(handle.into())],
-            CallLane::OwnedWait,
-        )
-        .await
-    }
-
-    /// Stream cleanup uses reserved control capacity even when work is saturated.
-    pub async fn stream_close(&self, handle: &str) -> Result<()> {
-        self.validate_stream_handle(handle)?;
-        self.call_inner(
-            vec!["streamClose".into()],
-            vec![Value::String(handle.into())],
-            CallLane::Control,
-        )
-        .await
-        .map(|_| ())
-    }
-
-    fn validate_stream_handle(&self, handle: &str) -> Result<()> {
-        if self.0.bootstrap != Bootstrap::Plugin || handle.is_empty() || handle.len() > 128 {
-            return Err(failed(
-                "stream observation requires an SDK plugin stream handle",
-            ));
-        }
-        Ok(())
-    }
-
-    /// Start the SDK's prepared business jobs and await their owned lifetime.
-    /// The SDK admits this transition once; waiting jobs consume neither work
-    /// slots nor the control capacity needed to retire them.
-    pub async fn start_tasks(&self) -> Result<()> {
-        if self.0.bootstrap != Bootstrap::Plugin {
-            return Err(failed("business tasks require an SDK plugin module"));
-        }
-        self.call_inner(vec!["effective".into()], vec![], CallLane::OwnedWait)
-            .await
-            .map(|_| ())
-    }
-
-    /// Reserved control capacity lets retirement signal calls that fill the
-    /// ordinary request budget and are waiting for that very signal.
-    pub async fn lifecycle(&self, action: Lifecycle) -> Result<()> {
-        let name = match action {
-            Lifecycle::Retire => "retire",
-            Lifecycle::Dispose => "dispose",
-        };
-        self.call_inner(vec![name.into()], vec![], CallLane::Control)
-            .await
-            .map(|_| ())
+        self.call_inner(path, args).await
     }
 
     /// The fault domain is this module's entire VM, including shared peers.
@@ -536,12 +371,7 @@ impl Module {
         self.0.vm.terminate(reason);
     }
 
-    async fn call_inner(
-        &self,
-        path: Vec<String>,
-        args: Vec<Value>,
-        lane: CallLane,
-    ) -> Result<Value> {
+    async fn call_inner(&self, path: Vec<String>, args: Vec<Value>) -> Result<Value> {
         self.ready().await?;
         if path.is_empty()
             || path.len() > 8
@@ -553,32 +383,19 @@ impl Module {
         if size > 32 * 1024 * 1024 {
             return Err(failed("call arguments exceed 32 MiB"));
         }
-        let budget = if matches!(lane, CallLane::Control) {
-            &self.0.control_bytes
-        } else {
-            &self.0.vm.0.bytes
-        };
-        let slot = match lane {
-            // Retirement and several stream cancellations may arrive together.
-            // Wait in the reserved lane instead of rejecting cleanup while its
-            // other signals are making progress; ordinary calls stay fail-fast.
-            CallLane::Control => Some(tokio::select! {
-                biased;
-                _ = self.0.vm.0.health.stopped.cancelled() => return Err(self.0.vm.0.health.error()),
-                slot = self.0.control_calls.clone().acquire_owned() => slot.map_err(|_| self.0.vm.0.health.error())?,
-            }),
-            CallLane::Work => Some(
-                self.0
-                    .vm
-                    .0
-                    .calls
-                    .clone()
-                    .try_acquire_owned()
-                    .map_err(|_| failed("VM call capacity exhausted"))?,
-            ),
-            CallLane::OwnedWait => None,
-        };
-        let bytes = budget
+        let slot = self
+            .0
+            .vm
+            .0
+            .calls
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| failed("VM call capacity exhausted"))?;
+        let bytes = self
+            .0
+            .vm
+            .0
+            .bytes
             .clone()
             .try_acquire_many_owned(size.max(1) as u32)
             .map_err(|_| failed("VM input budget exhausted"))?;
