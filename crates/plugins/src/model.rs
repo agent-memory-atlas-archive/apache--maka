@@ -17,8 +17,8 @@
  * under the License.
  */
 
-//! Model protocol implementations are ordinary plugin contributions.
-use crate::{contributions::Contribution, fiber::CallGuard, http};
+//! Model protocol implementations captured by their execution owner.
+use crate::http;
 use futures_util::future::BoxFuture;
 pub use maka_runtime::model::{
     ModelEvent,
@@ -115,49 +115,34 @@ pub trait ProviderAdapter: Send + Sync {
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<Arc<dyn Session>, Error>>;
 }
-pub struct Adapter {
-    pub provider: Arc<dyn ProviderAdapter>,
-}
-/// A logical step captures the descriptor; retries never resolve the catalog.
+/// One immutable protocol binding, retained through retries and stream cleanup.
 #[derive(Clone)]
-pub struct Binding(Contribution<Adapter>);
+pub struct Binding(Arc<BoundAdapter>);
+struct BoundAdapter {
+    provider: Arc<dyn ProviderAdapter>,
+    source: maka_runtime::composition::SourceRevision,
+}
 impl Binding {
-    pub fn supports_item_acceptance(&self) -> bool {
-        self.0.value.provider.supports_item_acceptance()
+    pub fn new(
+        provider: Arc<dyn ProviderAdapter>,
+        source: maka_runtime::composition::SourceRevision,
+    ) -> Self {
+        Self(Arc::new(BoundAdapter { provider, source }))
     }
-
-    pub fn new(contribution: Contribution<Adapter>) -> Self {
-        Self(contribution)
+    pub fn supports_item_acceptance(&self) -> bool {
+        self.0.provider.supports_item_acceptance()
     }
     pub async fn open(
         &self,
         lifetime: Lifetime,
         cancellation: CancellationToken,
     ) -> Result<Arc<dyn Session>, Error> {
-        let _call = self.admit()?;
-        self.0.value.provider.open(lifetime, cancellation).await
+        self.0.provider.open(lifetime, cancellation).await
     }
     pub fn same_registration(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0.value, &other.0.value)
+        Arc::ptr_eq(&self.0, &other.0)
     }
-    pub fn source(&self, name: &str) -> Result<maka_runtime::composition::SourceRevision, Error> {
-        let identity = self
-            .0
-            .owner
-            .identity()
-            .map_err(|error| Error::Adapter(error.to_string()))?;
-        Ok(maka_runtime::composition::SourceRevision {
-            kind: maka_runtime::composition::SourceKind::ModelAdapter,
-            name: name.into(),
-            package_id: identity.package_id,
-            entry_id: identity.entry_id,
-            revision: self.0.registration_id().to_string(),
-            activation: identity.activation,
-        })
-    }
-    pub fn admit(&self) -> Result<CallGuard, Error> {
-        self.0
-            .admit()
-            .map_err(|_| Error::Adapter("model adapter registration retired".into()))
+    pub fn source(&self) -> &maka_runtime::composition::SourceRevision {
+        &self.0.source
     }
 }

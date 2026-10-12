@@ -462,7 +462,6 @@ export interface HostContext {
       invoke: (input: Input, call: CallContext) => Awaitable<Json>,
     ): Promise<Registration>;
   };
-  readonly modelAdapters: import('./models.js').ModelAdapters;
   readonly modelProviders: import('./providers.js').ModelProviders;
   readonly executors: {
     /** Scope-visible choices, not execution permission. Refine the query when incomplete. */

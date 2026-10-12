@@ -17,7 +17,6 @@
  * under the License.
  */
 
-use super::callbacks::{Callback, invoke};
 use futures_util::future::BoxFuture;
 use maka_plugins::{http, model::*};
 use serde::{Deserialize, Serialize};
@@ -75,13 +74,6 @@ impl Calls {
             Arc::new(Resources::default()),
             context.interaction,
         )
-    }
-    fn register(
-        self: &Arc<Self>,
-        context: Context,
-        resources: Arc<Resources>,
-    ) -> Result<Handle, Error> {
-        self.register_call(context, resources, None)
     }
     fn register_call(
         self: &Arc<Self>,
@@ -251,97 +243,6 @@ impl Call {
                 Ok(Value::Null)
             }
         }
-    }
-}
-pub(super) struct Adapter {
-    pub callback: Arc<Callback>,
-    pub calls: Arc<Calls>,
-}
-impl ProviderAdapter for Adapter {
-    fn open(
-        &self,
-        lifetime: Lifetime,
-        cancellation: tokio_util::sync::CancellationToken,
-    ) -> BoxFuture<'_, Result<Arc<dyn Session>, Error>> {
-        Box::pin(async move {
-            let value = invoke(
-                &self.callback.module,
-                self.callback.id,
-                json!(lifetime),
-                Value::Null,
-                cancellation,
-            )
-            .await
-            .map_err(|error| invalid(error.to_string()))?;
-            #[derive(Deserialize)]
-            #[serde(deny_unknown_fields)]
-            struct Opened {
-                callback: u32,
-                confirmation: bool,
-            }
-            let opened: Opened = serde_json::from_value(value).map_err(invalid)?;
-            if opened.callback == 0 {
-                return Err(invalid("invalid model session callback"));
-            }
-            Ok(Arc::new(JavaScript {
-                callback: Arc::new(Callback {
-                    module: self.callback.module.clone(),
-                    id: opened.callback,
-                    calls: self.callback.calls.clone(),
-                }),
-                calls: self.calls.clone(),
-                resources: Arc::default(),
-                confirmation: Mutex::default(),
-                conversation: matches!(lifetime, Lifetime::Conversation) && opened.confirmation,
-            }) as Arc<dyn Session>)
-        })
-    }
-}
-struct JavaScript {
-    callback: Arc<Callback>,
-    calls: Arc<Calls>,
-    resources: Arc<Resources>,
-    confirmation: Mutex<Option<Confirmation>>,
-    conversation: bool,
-}
-impl Session for JavaScript {
-    fn stream(&self, request: Request, context: Context) -> BoxFuture<'static, Result<(), Error>> {
-        let callback = self.callback.clone();
-        let calls = self.calls.clone();
-        let resources = self.resources.clone();
-        let confirmation = self.confirmation.lock().unwrap().take();
-        Box::pin(async move {
-            let cancellation = context.cancellation.clone();
-            let routing = context.transport.identity().to_string();
-            let handle = calls.register(context, resources)?;
-            let result = invoke(
-                &callback.module,
-                callback.id,
-                encode(request)?,
-                json!({"model":handle.id, "routing":routing, "confirmation":confirmation}),
-                cancellation.clone(),
-            )
-            .await
-            .map_err(|error| invalid(error.to_string()))?;
-            if cancellation.is_cancelled() {
-                return Err(Error::Cancelled);
-            }
-            if let Some(error) = result.get("error") {
-                let error: Error = serde_json::from_value(error.clone()).map_err(invalid)?;
-                if let Error::Provider(failure) = &error {
-                    failure.validate()?;
-                }
-                return Err(error);
-            }
-            Ok(())
-        })
-    }
-    fn needs_confirmation(&self) -> bool {
-        self.conversation
-    }
-    fn confirm(&self, confirmation: Confirmation) -> BoxFuture<'_, Result<bool, Error>> {
-        *self.confirmation.lock().unwrap() = Some(confirmation);
-        Box::pin(async { Ok(true) })
     }
 }
 fn invalid(message: impl ToString) -> Error {

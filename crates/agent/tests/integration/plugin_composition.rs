@@ -163,11 +163,6 @@ async fn plugin_step_surface_survives_retry_changes_only_between_steps_and_reope
         let path = directory.path().join("events.sqlite");
         let log = Arc::new(EventLog::open(&path).await.unwrap());
         let catalog = Catalog::default();
-        let models = Fiber::new("maka.models", "maka.models", Scope::Profile).unwrap();
-        models.begin_loading().unwrap(); models.ready().unwrap();
-        catalog.publish(&models, maka_model::adapters::Builtin(
-            maka_js_runtime::trusted::TrustedRuntime::default()
-        ).stage().unwrap()).unwrap();
         let count = Arc::new(AtomicUsize::new(0));
         let first = publish(&catalog, "old", count.clone());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -255,9 +250,6 @@ async fn session_loaded_plugin_names_use_current_handlers_and_never_restore_revo
         let directory = tempfile::tempdir().unwrap();
         let log = Arc::new(EventLog::open(&directory.path().join("events.sqlite")).await.unwrap());
         let catalog = Catalog::default();
-        let models = Fiber::new("maka.models", "maka.models", Scope::Profile).unwrap();
-        models.begin_loading().unwrap(); models.ready().unwrap();
-        catalog.publish(&models, maka_model::adapters::Builtin(maka_js_runtime::trusted::TrustedRuntime::default()).stage().unwrap()).unwrap();
         let count = Arc::new(AtomicUsize::new(0));
         let first = publish(&catalog, "old", count.clone());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

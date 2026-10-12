@@ -17,7 +17,7 @@
  * under the License.
  */
 
-import type { Awaitable, Cancellation, Json, Registration } from './host.js';
+import type { Cancellation, Json } from './host.js';
 import type { HttpRequest, HttpResponse } from './http.js';
 
 type Options = { providerOptions?: Json };
@@ -151,26 +151,6 @@ export interface ModelContext {
   progress(): Promise<void>;
   /** Await each emission. Host validates completion and applies backpressure. */
   emit(event: ModelEvent): Promise<void>;
-}
-export interface ModelConfirmation {
-  prompt: readonly ModelMessage[];
-  settled_tool_call_ids: readonly string[];
-  response_id: string | null;
-}
-export interface ModelSession {
-  stream(request: ModelRequest, context: ModelContext): Awaitable<void>;
-  /** Called before the next request, with Host-committed history. */
-  confirm?(confirmation: ModelConfirmation): Awaitable<void>;
-}
-export interface ModelAdapters {
-  /** Ordinary scoped contribution. Same-name Session registration shadows profile.
-   * Session objects are ephemeral; canonical requests never depend on their cache.
-   * HTTP bodies end with a call; sockets close with the session.
-   */
-  register(
-    name: string,
-    open: (lifetime: 'request' | 'conversation') => Awaitable<ModelSession>,
-  ): Promise<Registration>;
 }
 /** Throw an Error carrying modelFailure to preserve typed retry evidence.
  * replaySafe must be false if provider-side effects may already have occurred.

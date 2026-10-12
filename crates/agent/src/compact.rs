@@ -105,10 +105,7 @@ pub(super) async fn capture(
     {
         return Ok(None);
     }
-    let adapter = inner.model.binding_in_scope(
-        &input.provider,
-        &maka_plugins::composition::Scope::Session(input.invocation.session_id.clone()),
-    )?;
+    let adapter = inner.model.binding(&input.provider)?;
     Ok(Some(Job {
         input: input.clone(),
         source,

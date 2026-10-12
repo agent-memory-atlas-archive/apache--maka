@@ -237,7 +237,7 @@ impl Source {
             }),
         };
         self.models
-            .binding_in_scope(&config, &Scope::Session(session_id.into()))
+            .binding(&config)
             .map_err(|error| unavailable(error.to_string()))?;
         Ok(PreparedProvider {
             source: Arc::new(self.clone()),

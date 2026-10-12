@@ -30,36 +30,13 @@ use tokio_util::sync::CancellationToken;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn compact_next_main_and_reopen_use_durable_baseline_with_complete_tail() {
-    // A Session-only adapter must also handle compaction; resolving the profile
-    // catalog for summary requests would silently change or lose the provider.
     let engine = |log| {
-        use maka_plugins::{composition::Scope, contributions::Catalog, fiber::Fiber};
-        let catalog = Catalog::default();
-        let owner = Fiber::new(
-            "scoped.models",
-            "scoped.models",
-            Scope::Session("session".into()),
-        )
-        .unwrap();
-        owner.begin_loading().unwrap();
-        owner.ready().unwrap();
-        catalog
-            .publish(
-                &owner,
-                maka_model::adapters::Builtin(Default::default())
-                    .stage()
-                    .unwrap(),
-            )
-            .unwrap();
-        let model = maka_model::ModelExecutor::new(1, std::time::Duration::from_secs(10))
-            .unwrap()
-            .with_catalog(catalog);
-        let engine = maka_agent::Engine::new(
+        let model = maka_model::ModelExecutor::new(1, std::time::Duration::from_secs(10)).unwrap();
+        maka_agent::Engine::new(
             log,
             model,
             maka_js_runtime::CodeExecutor::new(1, Default::default()).unwrap(),
-        );
-        (engine, owner)
+        )
     };
     let input = |base: &str, id: &str, compact| {
         let mut input = support::input(base, id, compact);
@@ -89,7 +66,7 @@ async fn compact_next_main_and_reopen_use_durable_baseline_with_complete_tail() 
         requests
     });
     let log = Arc::new(EventLog::open(&path).await.unwrap());
-    let (worker, owner) = engine(log.clone());
+    let worker = engine(log.clone());
     worker
         .run(input(&base, "old", false), CancellationToken::new())
         .await
@@ -106,10 +83,9 @@ async fn compact_next_main_and_reopen_use_durable_baseline_with_complete_tail() 
         .unwrap();
     worker.drain().await;
     drop(worker);
-    drop(owner);
     Arc::try_unwrap(log).ok().unwrap().close().await.unwrap();
     let log = Arc::new(EventLog::open(&path).await.unwrap());
-    let (worker, _owner) = engine(log.clone());
+    let worker = engine(log.clone());
     worker
         .run(input(&base, "reopen", false), CancellationToken::new())
         .await
@@ -182,9 +158,23 @@ async fn compact_next_main_and_reopen_use_durable_baseline_with_complete_tail() 
         .unwrap();
     assert_eq!(composition.max_output_tokens, Some(8000));
     assert!(composition.system_prompt.is_none());
-    assert!(composition.sources.iter().any(|source| source.kind
-        == maka_runtime::composition::SourceKind::ModelAdapter
-        && source.package_id == "scoped.models"));
+    let first_request = prefix
+        .events
+        .iter()
+        .find(|stored| matches!(stored.event.fact, Fact::ModelRequested { .. }))
+        .unwrap();
+    let original = log
+        .request_composition("session", &first_request.event.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let adapter = original
+        .sources
+        .iter()
+        .find(|source| source.kind == maka_runtime::composition::SourceKind::ModelAdapter)
+        .unwrap();
+    assert_eq!(adapter.name, "chat-completions");
+    assert!(composition.sources.contains(adapter));
     for event in prefix.events.iter().filter(|event| {
         matches!(
             event.event.invocation.invocation_id.as_str(),

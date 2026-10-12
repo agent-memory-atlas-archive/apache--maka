@@ -1158,25 +1158,6 @@
             });
           },
         }),
-        modelAdapters: Object.freeze({
-          register: (name, open) =>
-            register('model_adapter', { name }, async (lifetime) => {
-              const session = await open(lifetime);
-              if (typeof session?.stream !== 'function')
-                throw new TypeError('Model adapter requires a stream method');
-              const id = callback(async (request, call) => {
-                try {
-                  if (call.confirmation) await session.confirm?.(call.confirmation);
-                  await session.stream(request, call);
-                  return null;
-                } catch (error) {
-                  if (error?.modelFailure) return { error: error.modelFailure };
-                  throw error;
-                }
-              });
-              return { callback: id, confirmation: typeof session.confirm === 'function' };
-            }),
-        }),
         behaviors: Object.freeze({
           register: (name, prepare, options = {}) => {
             const nativeInput = options.nativeInput ?? 'denied';

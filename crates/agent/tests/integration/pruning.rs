@@ -167,7 +167,9 @@ async fn settled_results_are_pruned_before_context_limits_and_survive_failed_sum
         input.main_output_limit = Some(4000);
         input.context = Some(ModelRequestContext {
             provider_id: "openai".into(),
-            context_window: Some(220),
+            // The archived pages fit; the original multi-megabyte tool output
+            // does not. The separate usage threshold selects summary attempts.
+            context_window: Some(256_000),
             model_context_window: None,
             declared_window: spent.then_some(210),
         });

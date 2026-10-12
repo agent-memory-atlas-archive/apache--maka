@@ -199,9 +199,6 @@ impl<'a> RequestTools<'a> {
         self.finished.load(Ordering::Acquire)
     }
 
-    pub fn captured(&self) -> Option<&maka_plugins::contributions::Captured> {
-        self.captured.as_deref()
-    }
     pub fn catalog_digest(&self) -> &str {
         &self.digest
     }

@@ -209,8 +209,6 @@ impl Owner {
         } else {
             workspace::open(settings.import_roots.clone(), root.canonical_path())?
         };
-        let models = ModelExecutor::new(1, Duration::from_secs(60))
-            .map_err(|_| "agent_executor_unavailable")?;
         let cells = maka_js_runtime::CodeExecutor::new(1, maka_js_runtime::CellLimits::default())
             .map_err(|_| "agent_executor_unavailable")?;
         let workers = TaskTracker::new();
@@ -223,6 +221,8 @@ impl Owner {
             activation: context.activation().epoch().to_string(),
             revision: context.package().revision.clone(),
         };
+        let models = ModelExecutor::for_source(1, Duration::from_secs(60), revision.clone())
+            .map_err(|_| "agent_executor_unavailable")?;
         let behavior = prompt.map(|text| {
             let mut source = revision.clone();
             source.kind = SourceKind::PromptSection;

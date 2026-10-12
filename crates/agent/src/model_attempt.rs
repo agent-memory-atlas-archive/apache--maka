@@ -384,9 +384,7 @@ async fn execute_once(
                     .model_revision
                     .iter()
                     .cloned()
-                    .chain(std::iter::once(
-                        binding.source(request.provider.adapter_name())?,
-                    ))
+                    .chain(std::iter::once(binding.source().clone()))
                     .collect(),
             }
             .freeze()

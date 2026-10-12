@@ -142,13 +142,10 @@ impl Executions {
             .map_err(|error| ToolError::Failed(error.message))?;
             let provider_id = prepared.provider_id.clone();
             let request = llm::request(prepared, input);
-            let adapter = maka_model::adapters::resolve(
-                &self
-                    .plugin_catalog
-                    .capture(&Scope::Session(session_id.clone())),
-                request.provider.adapter_name(),
-            )
-            .map_err(|error| ToolError::Failed(error.to_string()))?;
+            let adapter = self
+                .models
+                .binding(&request.provider)
+                .map_err(|error| ToolError::Failed(error.to_string()))?;
             let quote = self
                 .configuration
                 .quote_model(provider_id, model.model.clone())

@@ -359,12 +359,6 @@ impl Executions {
         cancellation: CancellationToken,
     ) -> Result<Prepared<ModelGeneration>, ToolError> {
         input.validate().map_err(failed)?;
-        let scope = match &boundary {
-            Boundary::Session { boundary, .. } => {
-                maka_plugins::composition::Scope::Session(boundary.session_id.clone())
-            }
-            _ => maka_plugins::composition::Scope::Profile,
-        };
         let (key, model, thinking) = match boundary {
             Boundary::Session { boundary, .. } => {
                 let session = self
@@ -411,11 +405,7 @@ impl Executions {
             .await
             .map_err(|error| failed(error.message))?;
         let models = self.models.clone();
-        let adapter = maka_model::adapters::resolve(
-            &self.plugin_catalog.capture(&scope),
-            provider.config.adapter_name(),
-        )
-        .map_err(failed)?;
+        let adapter = self.models.binding(&provider.config).map_err(failed)?;
         let host = self.clone();
         Ok(Prepared {
             operation: Operation::Model {

@@ -24,6 +24,7 @@ publish.workspace = true
 
 [dependencies]
 maka-providers.workspace = true
+uuid.workspace = true
 hyper = { version = "1.11.1", default-features = false }
 futures-util.workspace = true
 tokio-tungstenite.workspace = true

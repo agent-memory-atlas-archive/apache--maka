@@ -17,91 +17,32 @@
  * under the License.
  */
 
-use crate::{ModelError, ProviderKind, sdk};
-use futures_util::future::BoxFuture;
+use crate::{ProviderKind, sdk};
 use maka_js_runtime::trusted::TrustedRuntime;
-use maka_plugins::{
-    composition::Scope,
-    contributions::{Captured, Catalog, Staged},
-    fiber::Fiber,
-    kernel::{Plugin, PluginContext},
-    model::{Adapter, Binding},
-};
-use std::sync::Arc;
+use maka_plugins::model::{Binding, ProviderAdapter};
+use maka_runtime::composition::{SourceKind, SourceRevision};
+use std::{collections::BTreeMap, sync::Arc};
 
-pub const ID: &str = "maka.models";
-
-/// Distribution defaults only. Selection and retirement use the same catalog
-/// as external adapters, with ordinary Session-over-profile shadowing.
-pub struct Builtin(pub TrustedRuntime);
-impl Builtin {
-    pub fn stage(&self) -> Result<Staged, maka_plugins::Error> {
-        let mut staged = Staged::default();
-        staged.insert(
-            "responses",
-            Adapter {
-                provider: Arc::new(maka_responses::Adapter::default()),
-            },
-        )?;
-        let sdk = Arc::new(sdk::Adapter(self.0.clone()));
-        for name in ["chat-completions", "anthropic-messages"] {
-            staged.insert(
-                name,
-                Adapter {
-                    provider: sdk.clone(),
-                },
-            )?;
-        }
-        Ok(staged)
-    }
-}
-impl Plugin for Builtin {
-    fn description(&self) -> Option<maka_plugins::kernel::Description> {
-        Some(maka_plugins::kernel::Description {
-            name: maka_plugins::terminal_ui::Text::localized(
-                "Model protocols",
-                "模型协议",
-                "模型協定",
-            ),
-            summary: Some(maka_plugins::terminal_ui::Text::localized(
-                "Support the protocols used by connected model services.",
-                "支持已连接模型服务使用的协议。",
-                "支援已連接模型服務使用的協定。",
-            )),
+pub(crate) fn builtin(runtime: TrustedRuntime, owner: SourceRevision) -> BTreeMap<String, Binding> {
+    let sdk = Arc::new(sdk::Adapter(runtime));
+    let providers: [(&str, Arc<dyn ProviderAdapter>); 4] = [
+        ("responses", Arc::new(maka_responses::Adapter::default())),
+        ("chat-completions", sdk.clone()),
+        ("anthropic-messages", sdk),
+        (
+            maka_providers::codex::ADAPTER,
+            Arc::new(maka_providers::codex::Codex::default()),
+        ),
+    ];
+    providers
+        .into_iter()
+        .map(|(name, provider)| {
+            let mut source = owner.clone();
+            source.kind = SourceKind::ModelAdapter;
+            source.name = name.into();
+            (name.into(), Binding::new(provider, source))
         })
-    }
-
-    fn activate(
-        &self,
-        _: PluginContext,
-        _: serde_json::Value,
-    ) -> BoxFuture<'static, Result<Staged, String>> {
-        let result = self.stage().map_err(|error| error.to_string());
-        Box::pin(async { result })
-    }
-}
-pub(crate) fn standalone(runtime: TrustedRuntime) -> Result<(Catalog, Arc<Fiber>), ModelError> {
-    let setup = || {
-        let catalog = Catalog::default();
-        let owner = Fiber::new(ID, ID, Scope::Profile)?;
-        owner.begin_loading()?;
-        owner.ready()?;
-        catalog.publish(&owner, Builtin(runtime).stage()?)?;
-        let subscription = Fiber::new(
-            maka_providers::codex::ID,
-            maka_providers::codex::ID,
-            Scope::Profile,
-        )?;
-        subscription.begin_loading()?;
-        subscription.ready()?;
-        catalog.publish_child(
-            &owner.context(),
-            subscription,
-            maka_providers::codex::Codex::default().stage()?,
-        )?;
-        Ok::<_, maka_plugins::Error>((catalog, Arc::new(owner)))
-    };
-    setup().map_err(|error| ModelError::Adapter(error.to_string()))
+        .collect()
 }
 
 pub fn name(kind: &ProviderKind) -> &str {
@@ -110,12 +51,4 @@ pub fn name(kind: &ProviderKind) -> &str {
         ProviderKind::Anthropic => "anthropic-messages",
         ProviderKind::OpenaiChat | ProviderKind::OpenaiCompatible { .. } => "chat-completions",
     }
-}
-pub fn resolve(captured: &Captured, name: &str) -> Result<Binding, ModelError> {
-    captured
-        .typed::<Adapter>()
-        .entries
-        .remove(name)
-        .map(Binding::new)
-        .ok_or_else(|| ModelError::Adapter(format!("model adapter is unavailable: {name}")))
 }

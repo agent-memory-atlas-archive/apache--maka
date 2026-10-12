@@ -18,19 +18,14 @@
  */
 
 use super::Setup;
-use maka_model::adapters::{Builtin, ID};
 use maka_plugins::{
     composition::{Entry, Operation, Scope},
     kernel::{Definition, Plugin},
 };
 use std::sync::Arc;
 
-pub(crate) fn install(
-    setup: &mut Setup,
-    runtime: maka_js_runtime::trusted::TrustedRuntime,
-) -> Result<(), maka_plugins::Error> {
-    let plugins: [(&str, Arc<dyn Plugin>); 3] = [
-        (ID, Arc::new(Builtin(runtime))),
+pub(crate) fn install(setup: &mut Setup) -> Result<(), maka_plugins::Error> {
+    let plugins: [(&str, Arc<dyn Plugin>); 2] = [
         (
             maka_providers::codex::ID,
             Arc::new(maka_providers::codex::Codex::default()),

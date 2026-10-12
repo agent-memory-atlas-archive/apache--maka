@@ -43,7 +43,6 @@ mod large_outputs;
 mod live_pipes;
 mod live_pty_stream;
 mod live_shell;
-mod model_adapters;
 mod model_providers;
 mod oauth;
 mod plan_plugin;

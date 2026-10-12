@@ -983,6 +983,14 @@ async fn actual_http_runs_are_bounded_and_observer_loss_does_not_release_capacit
         let observation = fixture.store.session_projection::<Value>(&first).await.unwrap().unwrap();
         let events = fixture.store.session_stream_events(&first,0,observation.through_sequence,32,64*1024).await.unwrap();
         assert!(events.events.iter().any(|event| matches!(&event.fact,maka_event_log::observation::StreamFact::PartDelta{text,..} if text=="Elegant response")));
+        let prefix = fixture.store.prefix(128, 1024*1024).await.unwrap();
+        let model_request = prefix.events.iter().find(|row| row.event.invocation.session_id == first && matches!(row.event.fact, maka_runtime::event::Fact::ModelRequested { .. })).unwrap();
+        let composition = fixture.store.request_composition(&first, &model_request.event.id).await.unwrap().unwrap();
+        let adapter = composition.sources.iter().find(|source| source.kind == SourceKind::ModelAdapter).unwrap();
+        let mut expected = fixture.owner.revision.clone();
+        expected.kind = SourceKind::ModelAdapter;
+        expected.name = "chat-completions".into();
+        assert_eq!(adapter, &expected, "model evidence retains the actual Agent activation");
         fixture.app.shutdown().await.unwrap(); fixture.config.shutdown().await.unwrap();
     }).await.unwrap();
 }
@@ -1147,51 +1155,34 @@ impl maka_plugins::model::Session for Fault {
         })
     }
 }
-fn controlled_model(
-    panic: bool,
-) -> (
-    ModelExecutor,
-    Fault,
-    maka_plugins::Registration,
-    maka_plugins::fiber::Fiber,
-) {
+fn controlled_model(panic: bool) -> (ModelExecutor, Fault) {
     let fault = Fault {
         panic,
         entered: Arc::new(Semaphore::new(0)),
         release: Arc::new(Semaphore::new(0)),
         store: Arc::new(StdMutex::new(None)),
     };
-    let catalog = maka_plugins::contributions::Catalog::default();
-    let fiber = maka_plugins::fiber::Fiber::new(
-        "fixture.adapter",
-        "fixture.adapter",
-        maka_runtime::scope::Scope::Profile,
-    )
-    .unwrap();
-    fiber.begin_loading().unwrap();
-    fiber.ready().unwrap();
-    fiber.publish().unwrap();
-    let mut staged = maka_plugins::contributions::Staged::default();
-    staged
-        .insert(
-            "chat-completions",
-            maka_plugins::model::Adapter {
-                provider: Arc::new(fault.clone()),
-            },
-        )
-        .unwrap();
-    let registration = catalog.register(&fiber.context(), staged).unwrap();
+    let binding = maka_plugins::model::Binding::new(
+        Arc::new(fault.clone()),
+        maka_runtime::composition::SourceRevision {
+            kind: maka_runtime::composition::SourceKind::ModelAdapter,
+            name: "chat-completions".into(),
+            package_id: "fixture.adapter".into(),
+            entry_id: "fixture.adapter".into(),
+            activation: "fixture.activation".into(),
+            revision: "1".into(),
+        },
+    );
     (
         ModelExecutor::new(1, Duration::from_secs(30))
             .unwrap()
-            .with_catalog(catalog),
+            .with_adapters(BTreeMap::from([("chat-completions".into(), binding)])),
         fault,
-        registration,
-        fiber,
     )
 }
+
 async fn cleanup_case(panic: bool) {
-    let (model, fault, registration, fiber) = controlled_model(panic);
+    let (model, fault) = controlled_model(panic);
     let fixture = Fixture::new("http://127.0.0.1:1/v1", 1, Some(model)).await;
     *fault.store.lock().unwrap() = Some(fixture.store.clone());
     let session = fixture.create("Physical lifetime").await;
@@ -1286,8 +1277,6 @@ async fn cleanup_case(panic: bool) {
     drop(config);
     drop(store);
     drop(fault);
-    drop(registration);
-    drop(fiber);
     if panic {
         assert_eq!(
             RootOwner::open(&root, &namespaces).err().unwrap().kind(),

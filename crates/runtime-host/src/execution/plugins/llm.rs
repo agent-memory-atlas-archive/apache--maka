@@ -255,15 +255,10 @@ impl Executions {
             serde_json::to_value(&input).map_err(|error| Error::Invalid(error.to_string()))?;
         let provider_id = prepared.provider_id.clone();
         let request = request(prepared, input);
-        let adapter = maka_model::adapters::resolve(
-            &self
-                .plugin_catalog
-                .capture(&maka_plugins::composition::Scope::Session(
-                    invocation.session_id.clone(),
-                )),
-            request.provider.adapter_name(),
-        )
-        .map_err(|error| Error::Invalid(error.to_string()))?;
+        let adapter = self
+            .models
+            .binding(&request.provider)
+            .map_err(|error| Error::Invalid(error.to_string()))?;
         let models = self.models.clone();
         let operation_id = uuid::Uuid::new_v4().to_string();
         let source = maka_event_log::usage::AuxiliarySource::Agent {

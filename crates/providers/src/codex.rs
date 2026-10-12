@@ -44,12 +44,6 @@ impl Codex {
     pub fn stage(&self) -> Result<Staged, maka_plugins::Error> {
         let mut staged = Staged::default();
         staged.insert("chatgpt", self.definition()?)?;
-        staged.insert(
-            ADAPTER,
-            model::Adapter {
-                provider: Arc::new(Self::default()),
-            },
-        )?;
         Ok(staged)
     }
 }

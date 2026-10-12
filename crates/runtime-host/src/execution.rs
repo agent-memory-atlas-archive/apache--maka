@@ -121,8 +121,7 @@ impl Executions {
             }));
         let plugin_catalog = maka_plugins::contributions::Catalog::with_calls(plugin_calls.clone());
         tools::reserve_core_names(&plugin_catalog)?;
-        let models = ModelExecutor::with_runtime(runtime.clone(), 64, Duration::from_secs(120))?
-            .with_catalog(plugin_catalog.clone());
+        let models = ModelExecutor::with_runtime(runtime.clone(), 64, Duration::from_secs(120))?;
         Ok(Self {
             plugin_catalog,
             submissions: Default::default(),

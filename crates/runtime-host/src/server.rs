@@ -274,7 +274,7 @@ impl Host {
         crate::plugins::recall::install(&mut setup)?;
         crate::plugins::assistant::install(&mut setup)?;
         crate::plugins::plan::install(&mut setup)?;
-        crate::plugins::models::install(&mut setup, runtime.clone())?;
+        crate::plugins::models::install(&mut setup)?;
         if let Some(path) = global_instructions {
             match maka_plugins::filesystem::ReadRoot::open(path).await {
                 Ok(root) => {

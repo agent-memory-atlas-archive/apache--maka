@@ -20,12 +20,7 @@
 use super::provider_stream::request;
 use futures_util::future::BoxFuture;
 use maka_model::{ModelExecutor, ProviderKind};
-use maka_plugins::{
-    composition::Scope,
-    contributions::{Catalog, Staged},
-    fiber::Fiber,
-    model::*,
-};
+use maka_plugins::model::*;
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
@@ -77,40 +72,35 @@ impl Session for Controlled {
         })
     }
 }
-fn staged(release: CancellationToken, retained: Arc<Mutex<Option<Context>>>) -> Staged {
-    let mut value = Staged::default();
-    value
-        .insert(
-            "chat-completions",
-            Adapter {
-                provider: Arc::new(Controlled { release, retained }),
-            },
-        )
-        .unwrap();
-    value
+fn binding(
+    release: CancellationToken,
+    retained: Arc<Mutex<Option<Context>>>,
+    revision: &str,
+) -> Binding {
+    let source = maka_runtime::composition::SourceRevision {
+        kind: maka_runtime::composition::SourceKind::ModelAdapter,
+        name: "chat-completions".into(),
+        package_id: "fixture.adapter".into(),
+        entry_id: "fixture.adapter".into(),
+        activation: "fixture.activation".into(),
+        revision: revision.into(),
+    };
+    Binding::new(Arc::new(Controlled { release, retained }), source)
 }
 #[tokio::test]
-async fn publication_replacement_preserves_accepted_calls_rejects_stale_starts_and_bounds_idle_work()
- {
-    let catalog = Catalog::default();
-    let owner = Fiber::new("external.model", "external.model", Scope::Profile).unwrap();
-    owner.begin_loading().unwrap();
-    owner.ready().unwrap();
-    owner.publish().unwrap();
+async fn captured_adapter_survives_executor_replacement_and_bounds_idle_work() {
     let release = CancellationToken::new();
     let retained = Arc::default();
-    let registration = catalog
-        .register(
-            &owner.context(),
-            staged(release.clone(), Arc::clone(&retained)),
-        )
-        .unwrap();
+    let original = binding(release.clone(), Arc::clone(&retained), "1");
     let executor = ModelExecutor::new(2, Duration::from_millis(100))
         .unwrap()
-        .with_catalog(catalog.clone());
+        .with_adapters(std::collections::BTreeMap::from([(
+            "chat-completions".into(),
+            original.clone(),
+        )]));
     let input = || request(ProviderKind::OpenaiChat, "http://unused.example/v1".into());
     let original = executor.binding(&input().provider).unwrap();
-    let source = original.source("chat-completions").unwrap();
+    let source = original.source().clone();
     let mut accepted = executor
         .stream_with_adapter(input(), CancellationToken::new(), None, original.clone())
         .await
@@ -119,24 +109,14 @@ async fn publication_replacement_preserves_accepted_calls_rejects_stale_starts_a
         accepted.next().await.unwrap().unwrap(),
         ModelEvent::ResponseMetadata { .. }
     ));
-    drop(registration);
-    let _replacement = catalog
-        .register(
-            &owner.context(),
-            staged(CancellationToken::new(), Arc::default()),
-        )
-        .unwrap();
+    let executor = executor.with_adapters(std::collections::BTreeMap::from([(
+        "chat-completions".into(),
+        binding(CancellationToken::new(), Arc::default(), "2"),
+    )]));
     let replacement = executor.binding(&input().provider).unwrap();
-    assert_ne!(
-        source.revision,
-        replacement.source("chat-completions").unwrap().revision
-    );
-    assert!(
-        executor
-            .stream_with_adapter(input(), CancellationToken::new(), None, original)
-            .await
-            .is_err()
-    );
+    assert_ne!(source.revision, replacement.source().revision);
+    assert!(!original.same_registration(&replacement));
+    assert_eq!(original.source(), &source);
     release.cancel();
     assert!(matches!(
         accepted.next().await.unwrap().unwrap(),
@@ -176,8 +156,4 @@ async fn publication_replacement_preserves_accepted_calls_rejects_stale_starts_a
         .cancel_and_wait()
         .await
         .expect("actual stream cleanup");
-    owner
-        .shutdown(tokio::time::Instant::now() + Duration::from_secs(1))
-        .await
-        .unwrap();
 }

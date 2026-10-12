@@ -238,8 +238,7 @@ impl Drop for ModelStream {
 pub struct ModelExecutor {
     permits: Arc<Semaphore>,
     idle_timeout: Duration,
-    catalog: maka_plugins::contributions::Catalog,
-    _standalone: Option<Arc<maka_plugins::fiber::Fiber>>,
+    adapters: std::collections::BTreeMap<String, maka_plugins::model::Binding>,
     networks: Arc<network::Pool>,
 }
 
@@ -302,23 +301,53 @@ impl ModelExecutor {
         concurrency: usize,
         idle_timeout: Duration,
     ) -> Result<Self, ModelError> {
+        Self::build(
+            runtime,
+            concurrency,
+            idle_timeout,
+            maka_runtime::composition::SourceRevision {
+                kind: maka_runtime::composition::SourceKind::ModelAdapter,
+                name: "maka-model".into(),
+                package_id: "maka-model".into(),
+                entry_id: "maka-model".into(),
+                activation: uuid::Uuid::new_v4().to_string(),
+                revision: env!("CARGO_PKG_VERSION").into(),
+            },
+        )
+    }
+
+    /// Bind compiled protocol implementations to the actual application owner.
+    pub fn for_source(
+        concurrency: usize,
+        idle_timeout: Duration,
+        source: maka_runtime::composition::SourceRevision,
+    ) -> Result<Self, ModelError> {
+        Self::build(TrustedRuntime::default(), concurrency, idle_timeout, source)
+    }
+
+    fn build(
+        runtime: TrustedRuntime,
+        concurrency: usize,
+        idle_timeout: Duration,
+        source: maka_runtime::composition::SourceRevision,
+    ) -> Result<Self, ModelError> {
         if concurrency == 0 || idle_timeout.is_zero() {
             return Err(ModelError::Adapter("invalid model execution limits".into()));
         }
-        let (catalog, owner) = adapters::standalone(runtime)?;
         Ok(Self {
             permits: Arc::new(Semaphore::new(concurrency)),
             idle_timeout,
-            catalog,
-            _standalone: Some(owner),
+            adapters: adapters::builtin(runtime, source),
             networks: Arc::default(),
         })
     }
 
-    /// Use the embedding Host's ordinary plugin catalog. No builtin fallback.
-    pub fn with_catalog(mut self, catalog: maka_plugins::contributions::Catalog) -> Self {
-        self.catalog = catalog;
-        self._standalone = None;
+    /// Replace the compiled bindings supplied by the execution owner.
+    pub fn with_adapters(
+        mut self,
+        adapters: std::collections::BTreeMap<String, maka_plugins::model::Binding>,
+    ) -> Self {
+        self.adapters = adapters;
         self
     }
 
@@ -326,15 +355,11 @@ impl ModelExecutor {
         &self,
         provider: &ProviderConfig,
     ) -> Result<maka_plugins::model::Binding, ModelError> {
-        self.binding_in_scope(provider, &maka_plugins::composition::Scope::Profile)
-    }
-
-    pub fn binding_in_scope(
-        &self,
-        provider: &ProviderConfig,
-        scope: &maka_plugins::composition::Scope,
-    ) -> Result<maka_plugins::model::Binding, ModelError> {
-        adapters::resolve(&self.catalog.capture(scope), provider.adapter_name())
+        let name = provider.adapter_name();
+        self.adapters
+            .get(name)
+            .cloned()
+            .ok_or_else(|| ModelError::Adapter(format!("model adapter is unavailable: {name}")))
     }
 
     pub async fn stream(
@@ -428,13 +453,11 @@ impl ModelExecutor {
         let (sender, receiver) = mpsc::channel(4);
         let worker_cancel = cancellation.clone();
         let idle_timeout = self.idle_timeout;
-        let lease = binding.admit()?;
         let network = self.networks.get(&request.provider.network)?;
         let request = request.into_adapter()?;
         let worker = tokio::spawn(async move {
             let _permit = permit;
             let failure_sender = sender.clone();
-            let _lease = lease;
             let adapter_cancel = worker_cancel.child_token();
             let _settlement = adapter_cancel.clone().drop_guard();
             let (activity, mut progress) = tokio::sync::watch::channel(tokio::time::Instant::now());

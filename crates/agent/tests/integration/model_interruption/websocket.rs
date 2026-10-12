@@ -79,12 +79,6 @@ impl maka_plugins::model::Session for Unavailable {
 
 #[tokio::test]
 async fn fallback_waits_for_retry_budget_and_gets_one_bounded_budget_of_its_own() {
-    use maka_plugins::{
-        composition::Scope,
-        contributions::{Catalog, Staged},
-        fiber::Fiber,
-        model::Adapter,
-    };
     tokio::time::timeout(Duration::from_secs(10), async {
         for replay_safe in [true, false] {
             let directory = tempfile::tempdir().unwrap();
@@ -93,30 +87,29 @@ async fn fallback_waits_for_retry_budget_and_gets_one_bounded_budget_of_its_own(
                     .await
                     .unwrap(),
             );
-            let catalog = Catalog::default();
-            let fiber = Fiber::new("fixture", "fixture", Scope::Profile).unwrap();
-            fiber.begin_loading().unwrap();
-            fiber.ready().unwrap();
-            fiber.publish().unwrap();
             let attempts = Arc::new(std::sync::Mutex::new((false, Vec::new())));
-            let mut staged = Staged::default();
-            staged
-                .insert(
-                    "chat-completions",
-                    Adapter {
-                        provider: Arc::new(Unavailable {
-                            attempts: attempts.clone(),
-                            replay_safe,
-                        }),
-                    },
-                )
-                .unwrap();
-            let _registration = catalog.register(&fiber.context(), staged).unwrap();
+            let binding = maka_plugins::model::Binding::new(
+                Arc::new(Unavailable {
+                    attempts: attempts.clone(),
+                    replay_safe,
+                }),
+                maka_runtime::composition::SourceRevision {
+                    kind: maka_runtime::composition::SourceKind::ModelAdapter,
+                    name: "chat-completions".into(),
+                    package_id: "fixture.adapter".into(),
+                    entry_id: "fixture.adapter".into(),
+                    activation: "fixture.activation".into(),
+                    revision: "1".into(),
+                },
+            );
             let worker = Engine::new(
                 log.clone(),
                 ModelExecutor::new(1, Duration::from_secs(5))
                     .unwrap()
-                    .with_catalog(catalog),
+                    .with_adapters(std::collections::BTreeMap::from([(
+                        "chat-completions".into(),
+                        binding,
+                    )])),
                 CodeExecutor::new(1, CellLimits::default()).unwrap(),
             );
             let result = worker

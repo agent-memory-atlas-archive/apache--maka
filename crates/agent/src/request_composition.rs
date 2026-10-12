@@ -66,15 +66,8 @@ impl Surface {
                 }
             }
         }
-        let name = input.provider.adapter_name();
-        let adapter = match tools.captured() {
-            Some(captured) => maka_model::adapters::resolve(captured, name)?,
-            None => models.binding_in_scope(
-                &input.provider,
-                &maka_plugins::composition::Scope::Session(input.invocation.session_id.clone()),
-            )?,
-        };
-        prompt.sources.push(adapter.source(name)?);
+        let adapter = models.binding(&input.provider)?;
+        prompt.sources.push(adapter.source().clone());
         if let Some(source) = &input.model_revision {
             prompt.sources.push(source.clone());
         }
