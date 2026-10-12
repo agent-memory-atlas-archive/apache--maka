@@ -58,7 +58,7 @@ async fn read(workspace: ReadDirectory) -> Vec<WorkspaceInstruction> {
     parse_instruction_files(sources)
 }
 
-fn render(global: Vec<WorkspaceInstruction>, project: Vec<WorkspaceInstruction>) -> String {
+pub fn render(global: Vec<WorkspaceInstruction>, project: Vec<WorkspaceInstruction>) -> String {
     let mut output = String::new();
     let mut used = 0;
     for (scope, instructions) in [("global", global), ("project", project)] {

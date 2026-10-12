@@ -139,6 +139,9 @@ pub(super) struct Setup {
     forms: bool,
     files: Option<&'static str>,
     processes: bool,
+    isolated_workspaces: bool,
+    web: bool,
+    jev: bool,
     protocol: bool,
     skills: Option<std::path::PathBuf>,
     bundled_skills: bool,
@@ -164,6 +167,9 @@ impl Setup {
             forms: false,
             files: None,
             processes: false,
+            isolated_workspaces: false,
+            web: false,
+            jev: false,
             protocol: false,
             skills: None,
             bundled_skills: false,
@@ -185,6 +191,9 @@ impl Setup {
             forms: false,
             files: None,
             processes: false,
+            isolated_workspaces: false,
+            web: false,
+            jev: false,
             protocol: false,
             skills: None,
             bundled_skills: false,
@@ -212,6 +221,9 @@ impl Setup {
             forms: false,
             files: None,
             processes: false,
+            isolated_workspaces: false,
+            web: false,
+            jev: false,
             protocol: false,
             skills: None,
             bundled_skills: false,
@@ -260,6 +272,24 @@ impl Setup {
             ..Self::javascript()
         }
     }
+    pub(super) fn jev() -> Self {
+        Self {
+            jev: true,
+            ..Self::javascript()
+        }
+    }
+    pub(super) fn web() -> Self {
+        Self {
+            web: true,
+            ..Self::javascript()
+        }
+    }
+    pub(super) fn isolated_processes() -> Self {
+        Self {
+            isolated_workspaces: true,
+            ..Self::processes()
+        }
+    }
     pub(super) fn processes() -> Self {
         Self {
             processes: true,
@@ -279,6 +309,16 @@ impl Setup {
     pub(super) fn selections(&self) -> Vec<contract::ServiceTool> {
         if self.protocol || (self.skills.is_some() && !self.skill_tools) {
             return vec![];
+        }
+        if self.web {
+            return [("fetch", "WebFetch"), ("search", "WebSearch")]
+                .into_iter()
+                .map(|(method, name)| contract::ServiceTool {
+                    method: method.into(),
+                    name: name.into(),
+                    ..self.selection()
+                })
+                .collect();
         }
         if self.skills.is_some() {
             if self.prepare_skills {
@@ -316,6 +356,12 @@ impl Setup {
         }
     }
     fn contract(&self) -> Contract {
+        if self.jev {
+            return crate::jev::contract();
+        }
+        if self.web {
+            return crate::web::contract();
+        }
         if self.skills.is_some() {
             crate::skills::contract()
         } else if let Some(source) = &self.images {
@@ -335,6 +381,12 @@ impl Setup {
         }
     }
     fn export(&self) -> &str {
+        if self.jev {
+            return crate::jev::EXPORT;
+        }
+        if self.web {
+            return crate::web::EXPORT;
+        }
         if self.skills.is_some() {
             crate::skills::EXPORT
         } else if self.images.is_some() {
@@ -354,6 +406,12 @@ impl Setup {
         }
     }
     pub(super) fn method(&self) -> &str {
+        if self.jev {
+            return "evaluate";
+        }
+        if self.web {
+            return "fetch";
+        }
         if self.skills.is_some() {
             "search"
         } else if self.images.is_some() {
@@ -372,7 +430,11 @@ impl Setup {
     }
     pub(super) fn selection(&self) -> contract::ServiceTool {
         contract::ServiceTool {
-            input: contract::ToolInput::Json,
+            input: if self.web {
+                contract::ToolInput::Web
+            } else {
+                contract::ToolInput::Json
+            },
             presentation: self
                 .files
                 .filter(|method| {
@@ -391,7 +453,9 @@ impl Setup {
             } else {
                 contract::ToolResult::Json
             },
-            name: if self.files.is_some() || self.images.is_some() {
+            name: if self.web {
+                "WebFetch"
+            } else if self.files.is_some() || self.images.is_some() {
                 "WorkspaceFile"
             } else if self.forms {
                 "AskUserForm"
@@ -451,7 +515,11 @@ impl Setup {
                 }],
             );
         packages[0] = provider;
-        let implementation = if self.skills.is_some() {
+        let implementation = if self.jev {
+            json!({"kind":"native","implementation":crate::jev::IMPLEMENTATION})
+        } else if self.web {
+            json!({"kind":"native","implementation":crate::web::IMPLEMENTATION})
+        } else if self.skills.is_some() {
             json!({"kind":"native","implementation":crate::skills::IMPLEMENTATION})
         } else if let Some(source) = &self.images {
             source.implementation()
@@ -471,7 +539,7 @@ impl Setup {
             json!({"kind":"javascript","module":"counter.mjs","realm":"shared"})
         };
         let mut files = BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({"schemaVersion":2,"id":"fixture.counter","application":{"entries":{"host":{
-            "implementation":implementation,"configuration":if self.skills.is_some() { crate::skills::configuration_schema() } else if self.processes || self.protocol { crate::processes::configuration_schema() } else { json!({"type":"object","additionalProperties":false}) },"imports":{},
+            "implementation":implementation,"configuration":if self.jev { crate::jev::configuration_schema() } else if self.web { crate::web::configuration_schema() } else if self.skills.is_some() { crate::skills::configuration_schema() } else if self.processes || self.protocol { crate::processes::configuration_schema() } else { json!({"type":"object","additionalProperties":false}) },"imports":{},
             "exports":if self.processes {
                 json!({(self.export()):{"contract":self.contract(),"availability":"required"},
                     "terminal":{"contract":crate::processes::terminal::contract(),"availability":"required"}})
@@ -481,7 +549,9 @@ impl Setup {
             if let Some(code) = source.javascript() {
                 files.insert("images.mjs".into(), code.into_bytes());
             }
-        } else if self.counter.is_none()
+        } else if !self.web
+            && !self.jev
+            && self.counter.is_none()
             && !self.forms
             && !self.questions
             && self.files.is_none()
@@ -498,7 +568,7 @@ impl Setup {
                 key: Uuid::from_u128(21),
                 package: package.application_ref().into(),
                 use_package: PackageUse::Entry,
-                configuration: if let Some(path) = &self.skills {
+                configuration: if self.web || self.jev { NodeConfiguration { values: serde_json::from_value(json!({"network":"allowed"})).unwrap(), parameters: BTreeMap::new() } } else if let Some(path) = &self.skills {
                     NodeConfiguration { values: serde_json::from_value(json!({
                         "bundled":self.bundled_skills,
                         "home":self.standard_sources.then_some(path),
@@ -507,7 +577,7 @@ impl Setup {
                     })).unwrap(), parameters: BTreeMap::new() }
                 } else if self.processes || self.protocol {
                     NodeConfiguration { values: serde_json::from_value(json!({
-                        "filesystem":{"default":"write","rules":[],"denyGlobs":[]}, "network":"allowed", "helper":null, "sessionOwner":id(1)
+                        "filesystem":{"default":"write","rules":[],"denyGlobs":[]}, "network":"allowed", "helper":null, "sessionOwner":id(1), "isolatedWorkspaces":self.isolated_workspaces
                     })).unwrap(), parameters: BTreeMap::new() }
                 } else { Default::default() },
                 parameters: Default::default(),
@@ -572,6 +642,12 @@ impl Setup {
         }
     }
     pub(super) fn provide(&self, registry: &mut NativeRegistry) {
+        if self.jev {
+            crate::jev::provide(registry).unwrap();
+        }
+        if self.web {
+            crate::web::provide(registry).unwrap();
+        }
         if let Some(probe) = &self.preparation {
             let probe = probe.clone();
             registry
@@ -650,6 +726,7 @@ impl Setup {
                         .into_iter()
                         .map(|tool| tool.method)
                         .chain(self.prepare_skills.then(|| "prepare".into()))
+                        .chain(self.web.then(|| "capture".into()))
                         .chain(
                             self.protocol
                                 .then_some(["run".to_owned(), "input".to_owned()])
@@ -1688,5 +1765,39 @@ async fn resume_replays_original_settlements_without_redispatching_effects() {
             fixture.app.shutdown().await.unwrap();
             fixture.config.shutdown().await.unwrap();
         }
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn session_tool_selection_is_an_execution_ceiling_and_is_inherited() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let counter = Counter::new(Behavior::Returned);
+        let fixture = Fixture::with_services(
+            &format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None,
+            Some(Setup::native(counter.clone(), true)),
+        ).await;
+        assert_eq!(fixture.query("tools", json!({})).await.unwrap()["names"], json!(["Counter"]));
+        let mut input = fixture.create_input("Restricted worker").await;
+        input["tools"] = json!([]);
+        let created = fixture.mutation(2, "create", input, Uuid::new_v4()).await.unwrap();
+        let session = created["session"]["id"].as_str().unwrap();
+        assert_eq!(created["session"]["tools"], json!([]));
+        let inherited = fixture.mutation(2, "create", json!({"title":"Inherited", "labels":[], "tools":["Counter"],
+            "workspace":{"kind":"session","sessionId":session}}), Uuid::new_v4()).await.unwrap();
+        assert_eq!(inherited["session"]["tools"], json!([]));
+        fixture.send(session).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let input = request(&mut socket).await;
+        assert!(input["tools"].is_null() || input["tools"].as_array().unwrap().is_empty());
+        tool_response(&mut socket).await;
+        let (mut socket, _) = listener.accept().await.unwrap();
+        request(&mut socket).await;
+        response(&mut socket).await;
+        fixture.drained().await;
+        assert_eq!(counter.effects.load(Ordering::SeqCst), 0);
+        assert!(facts(&fixture, session).await.iter().any(|fact| matches!(fact, Fact::ToolRejected { name, reason: maka_runtime::tool_call::ToolRejection::Unavailable, .. } if name == "Counter")));
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
     }).await.unwrap();
 }

@@ -16,9 +16,9 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-mod instructions;
+pub mod instructions;
 pub mod plan;
-mod prompt;
+pub mod prompt;
 pub mod recall;
 mod terminal;
 pub mod todo;

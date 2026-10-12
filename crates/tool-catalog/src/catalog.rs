@@ -49,6 +49,7 @@ pub struct ToolCatalog {
     pub(crate) entries: Arc<BTreeMap<String, Arc<RegisteredTool>>>,
     pub(super) discovery: bool,
     pub(crate) plugins: Option<crate::plugins::Source>,
+    pub(crate) request_bindings: Arc<Vec<crate::request::Group>>,
     pub(crate) workspace: Option<maka_plugins::filesystem::ReadRoot>,
 }
 
@@ -121,6 +122,7 @@ impl ToolCatalog {
             discovery: false,
             plugins: None,
             workspace: None,
+            request_bindings: Arc::default(),
         })
     }
 
@@ -151,6 +153,7 @@ impl ToolCatalog {
             discovery: self.discovery,
             plugins: self.plugins.clone(),
             workspace: self.workspace.clone(),
+            request_bindings: self.request_bindings.clone(),
         }
     }
 
@@ -177,6 +180,7 @@ impl ToolCatalog {
             discovery: self.discovery,
             plugins: self.plugins.clone(),
             workspace: self.workspace.clone(),
+            request_bindings: self.request_bindings.clone(),
         }
     }
 

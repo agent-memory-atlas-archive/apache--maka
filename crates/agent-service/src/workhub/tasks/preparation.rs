@@ -37,6 +37,11 @@ pub(super) enum Target {
         session_id: String,
     },
     New {
+        #[serde(default)]
+        isolated_workspace: bool,
+        #[serde(default)]
+        #[schemars(length(max = 128), extend("uniqueItems" = true))]
+        tools: Option<Vec<String>>,
         title: String,
         workspace: crate::contract::DirectorySelection,
     },
@@ -274,9 +279,19 @@ impl Hub {
         }
         let session = match &assignment.target {
             Target::Existing { session_id } => session_id.clone(),
-            Target::New { title, workspace } => {
+            Target::New {
+                title,
+                workspace,
+                tools,
+                isolated_workspace,
+            } => {
                 let operation = child_id(&format!("{id}:create"));
-                let input = serde_json::json!({"title":title,"labels":[],"workspace":{"kind":"directory","selection":workspace}});
+                let kind = if *isolated_workspace {
+                    "isolated_git"
+                } else {
+                    "directory"
+                };
+                let input = serde_json::json!({"title":title,"labels":[],"tools":tools,"workspace":{"kind":kind,"selection":workspace}});
                 let reply = self
                     .dispatch(
                         request,
@@ -302,11 +317,22 @@ impl Hub {
                         }));
                     }
                 };
-                if value["kind"] != "created"
-                    || value["session"]["workspace"]["directoryIdentity"]
-                        != serde_json::to_value(&workspace.directory_identity)
-                            .map_err(|_| "workhub_directory_invalid")?
-                {
+                if value["kind"] != "created" {
+                    return Err("workhub_creation_invalid".into());
+                }
+                let selected: crate::contract::Workspace =
+                    serde_json::from_value(value["session"]["workspace"].clone())
+                        .map_err(|_| "workhub_creation_invalid")?;
+                let matches = if *isolated_workspace {
+                    selected.worktree.as_ref().is_some_and(|binding| {
+                        binding.source_identity() == &workspace.directory_identity
+                            && binding.directory() == std::path::Path::new(&selected.path)
+                    })
+                } else {
+                    selected.worktree.is_none()
+                        && selected.directory_identity == workspace.directory_identity
+                };
+                if !matches {
                     return Err("workhub_creation_invalid".into());
                 }
                 value["session"]["id"]

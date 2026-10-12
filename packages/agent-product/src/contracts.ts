@@ -107,6 +107,8 @@ export interface SelectedModel {
   thinkingLevel: ThinkingLevel | null;
 }
 export interface ModelsProps {
+  /** Forms can require an explicit choice instead of adopting the chat default. */
+  suggestDefault?: boolean;
   catalogEpoch: number;
   openRequest: number | null;
   theme: Theme;
@@ -413,6 +415,7 @@ const component = (
   interface: { kind: 'component', props: withDefs(props), events, captures },
 });
 export interface WorkspaceProps {
+  workhub?: boolean;
   embedded?: boolean;
   fixed?: boolean;
   session?: { request: number; id: string };
@@ -422,12 +425,14 @@ export const workspaceContract = component(
   'maka.agent.Workspace',
   object(
     {
+      workhub: { type: 'boolean' },
       embedded: { type: 'boolean' },
       fixed: { type: 'boolean' },
       session: object({ request: { type: 'integer', minimum: 0 }, id: string }),
     },
     [],
   ),
+  { workhub: object({}) },
 );
 export const paletteContract = component(
   'maka.agent.CommandPalette',
@@ -594,6 +599,89 @@ export const schedulerContract = component(
     connections: object({}),
   },
 );
+export const sessionDefaultsContract = component(
+  'maka.agent.SessionDefaults',
+  pageProps({
+    theme: { $ref: '#/$defs/Theme' },
+    locale,
+    open: { type: 'boolean' },
+    busy: { type: 'boolean' },
+  }),
+  { chrome: pageChrome, closed: object({}) },
+);
+export const networkSettingsContract = component(
+  'maka.agent.NetworkSettings',
+  pageProps({
+    theme: { $ref: '#/$defs/Theme' },
+    locale,
+    open: { type: 'boolean' },
+    busy: { type: 'boolean' },
+  }),
+  { chrome: pageChrome, closed: object({}) },
+);
+export const assistantPreferencesContract = component(
+  'maka.agent.AssistantPreferences',
+  pageProps({
+    theme: { $ref: '#/$defs/Theme' },
+    locale,
+    open: { type: 'boolean' },
+    busy: { type: 'boolean' },
+  }),
+  { chrome: pageChrome, closed: object({}) },
+);
+export const webSettingsContract = component(
+  'maka.agent.WebSettings',
+  pageProps({
+    theme: { $ref: '#/$defs/Theme' },
+    locale,
+    open: { type: 'boolean' },
+    busy: { type: 'boolean' },
+  }),
+  { chrome: pageChrome, closed: object({}) },
+);
+export const jevSettingsContract = component(
+  'maka.agent.JevSettings',
+  pageProps({
+    theme: { $ref: '#/$defs/Theme' },
+    locale,
+    open: { type: 'boolean' },
+    busy: { type: 'boolean' },
+  }),
+  { chrome: pageChrome, closed: object({}) },
+);
+export const subagentSettingsContract = component(
+  'maka.agent.SubagentSettings',
+  pageProps({
+    theme: { $ref: '#/$defs/Theme' },
+    locale,
+    open: { type: 'boolean' },
+    busy: { type: 'boolean' },
+  }),
+  { chrome: pageChrome, closed: object({}) },
+);
+export interface InsightsProps extends ProjectsProps {
+  scope: { sequence: number; sessionId: string | null; label: string } | null;
+}
+export const insightsContract = component(
+  'maka.agent.Insights',
+  pageProps({
+    theme: { $ref: '#/$defs/Theme' },
+    locale,
+    open: { type: 'boolean' },
+    busy: { type: 'boolean' },
+    scope: {
+      anyOf: [
+        object({
+          sequence: { type: 'integer', minimum: 0 },
+          sessionId: { type: ['string', 'null'] },
+          label: { type: 'string' },
+        }),
+        { type: 'null' },
+      ],
+    },
+  }),
+  { chrome: pageChrome, closed: object({}) },
+);
 export const importsContract = component(
   'maka.agent.Imports',
   pageProps({
@@ -658,7 +746,12 @@ export const navigationContract = component(
     selected: { anyOf: [string, { type: 'null' }] },
     busy: { type: 'boolean' },
   }),
-  { select: object({ sessionId: string, details: { type: 'boolean' } }, ['sessionId']) },
+  {
+    select: object(
+      { sessionId: string, details: { type: 'boolean' }, usage: { type: 'boolean' } },
+      ['sessionId'],
+    ),
+  },
 );
 export const imageViewerContract = component(
   'maka.agent.ImageViewer',
@@ -1036,14 +1129,18 @@ export const modelsContract: Contract = {
     kind: 'component',
     props: {
       ...withDefs(
-        object({
-          catalogEpoch: { type: 'integer', minimum: 0 },
-          openRequest: { anyOf: [{ type: 'integer', minimum: 0 }, { type: 'null' }] },
-          theme: { $ref: '#/$defs/Theme' },
-          locale,
-          selection: { anyOf: [selectedModel, { type: 'null' }] },
-          busy: { type: 'boolean' },
-        }),
+        object(
+          {
+            suggestDefault: { type: 'boolean' },
+            catalogEpoch: { type: 'integer', minimum: 0 },
+            openRequest: { anyOf: [{ type: 'integer', minimum: 0 }, { type: 'null' }] },
+            theme: { $ref: '#/$defs/Theme' },
+            locale,
+            selection: { anyOf: [selectedModel, { type: 'null' }] },
+            busy: { type: 'boolean' },
+          },
+          ['catalogEpoch', 'openRequest', 'theme', 'locale', 'selection', 'busy'],
+        ),
         modelDefs,
       ),
     },

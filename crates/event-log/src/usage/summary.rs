@@ -19,7 +19,7 @@
 
 use super::{EventLog, Query, StoreError, invalid};
 use maka_runtime::accounting::{
-    Cost, ModelSummary, ModelTotals, Pending, ProviderSummary, Summary, Tokens, ToolSummary,
+    Cost, Group, ModelSummary, ModelTotals, Pending, ProviderSummary, Summary, Tokens, ToolSummary,
     ToolTotals,
 };
 use sqlx::{Connection, QueryBuilder, Row, Sqlite, sqlite::SqliteRow};
@@ -28,10 +28,30 @@ use sqlx::{Connection, QueryBuilder, Row, Sqlite, sqlite::SqliteRow};
 pub struct Report {
     pub through: u64,
     pub summary: Summary,
+    pub next_offset: Option<u64>,
 }
 
 impl EventLog {
     pub async fn usage_summary(&self, query: Query) -> Result<Report, StoreError> {
+        self.read_usage_summary(query, None).await
+    }
+    /// Full totals and one bounded breakdown at the same settlement fence.
+    pub async fn usage_summary_page(
+        &self,
+        query: Query,
+        group: Group,
+        offset: u64,
+    ) -> Result<Report, StoreError> {
+        if offset > i64::MAX as u64 {
+            return Err(invalid("invalid Usage group offset"));
+        }
+        self.read_usage_summary(query, Some((group, offset))).await
+    }
+    async fn read_usage_summary(
+        &self,
+        query: Query,
+        page: Option<(Group, u64)>,
+    ) -> Result<Report, StoreError> {
         self.validate_root()?;
         query.validate()?;
         self.connection
@@ -47,7 +67,7 @@ impl EventLog {
                     tools.push(TOOLS);
                     query.restrict(&mut tools, through);
                     let tool_row = tools.build().fetch_one(&mut *tx).await?;
-                    let summary = Summary {
+                    let mut summary = Summary {
                         pending: Pending {
                             models: pending(&mut tx, &query, through, "model_usage", "started_at")
                                 .await?,
@@ -68,6 +88,8 @@ impl EventLog {
                             through,
                             MODELS,
                             "json_extract(quote_json, '$.providerId')",
+                            page,
+                            Group::ByProvider,
                         )
                         .await?
                         .iter()
@@ -78,34 +100,83 @@ impl EventLog {
                             })
                         })
                         .collect::<Result<_, StoreError>>()?,
-                        by_model: groups(&mut tx, &query, through, MODELS, "model_id")
-                            .await?
-                            .iter()
-                            .map(|row| {
-                                Ok(ModelSummary {
-                                    model_id: row.try_get("key")?,
-                                    totals: read_models(row)?,
-                                })
+                        by_model: groups(
+                            &mut tx,
+                            &query,
+                            through,
+                            MODELS,
+                            "model_id",
+                            page,
+                            Group::ByModel,
+                        )
+                        .await?
+                        .iter()
+                        .map(|row| {
+                            Ok(ModelSummary {
+                                model_id: row.try_get("key")?,
+                                totals: read_models(row)?,
                             })
-                            .collect::<Result<_, StoreError>>()?,
-                        by_tool: groups(&mut tx, &query, through, TOOLS, "name")
-                            .await?
-                            .iter()
-                            .map(|row| {
-                                Ok(ToolSummary {
-                                    name: row.try_get("key")?,
-                                    totals: read_tools(row)?,
-                                })
+                        })
+                        .collect::<Result<_, StoreError>>()?,
+                        by_tool: groups(
+                            &mut tx,
+                            &query,
+                            through,
+                            TOOLS,
+                            "name",
+                            page,
+                            Group::ByTool,
+                        )
+                        .await?
+                        .iter()
+                        .map(|row| {
+                            Ok(ToolSummary {
+                                name: row.try_get("key")?,
+                                totals: read_tools(row)?,
                             })
-                            .collect::<Result<_, StoreError>>()?,
+                        })
+                        .collect::<Result<_, StoreError>>()?,
                     };
-                    if serde_json::to_vec(&summary)?.len() > 48 * 1024 {
+                    let mut next_offset = None;
+                    if let Some((group, offset)) = page {
+                        // The query includes one lookahead row. Account for bytes as well
+                        // as rows, without truncating an identity or silently dropping it.
+                        loop {
+                            let len = match group {
+                                Group::ByProvider => summary.by_provider.len(),
+                                Group::ByModel => summary.by_model.len(),
+                                Group::ByTool => summary.by_tool.len(),
+                            };
+                            if len <= 32 && serde_json::to_vec(&summary)?.len() <= 48 * 1024 {
+                                break;
+                            }
+                            if len <= 1 {
+                                return Err(invalid("one Usage group exceeds response capacity"));
+                            }
+                            match group {
+                                Group::ByProvider => {
+                                    summary.by_provider.pop();
+                                }
+                                Group::ByModel => {
+                                    summary.by_model.pop();
+                                }
+                                Group::ByTool => {
+                                    summary.by_tool.pop();
+                                }
+                            }
+                            next_offset = Some(offset + len as u64 - 1);
+                        }
+                    } else if serde_json::to_vec(&summary)?.len() > 48 * 1024 {
                         return Err(invalid(
                             "Usage summary exceeds response capacity; narrow the time range",
                         ));
                     }
                     tx.commit().await?;
-                    Ok(Report { through, summary })
+                    Ok(Report {
+                        through,
+                        summary,
+                        next_offset,
+                    })
                 })
             })
             .await
@@ -118,13 +189,22 @@ async fn groups(
     through: u64,
     columns: &'static str,
     key: &'static str,
+    page: Option<(Group, u64)>,
+    group: Group,
 ) -> Result<Vec<SqliteRow>, StoreError> {
+    if page.is_some_and(|(selected, _)| selected != group) {
+        return Ok(vec![]);
+    }
     let mut sql = QueryBuilder::<Sqlite>::new("SELECT ");
     sql.push(key).push(" AS key, ").push(columns);
     query.restrict(&mut sql, through);
-    sql.push(" GROUP BY key ORDER BY calls DESC, key LIMIT 129");
+    sql.push(" GROUP BY key ORDER BY calls DESC, key LIMIT ")
+        .push_bind(if page.is_some() { 33 } else { 129 });
+    if let Some((_, offset)) = page {
+        sql.push(" OFFSET ").push_bind(offset as i64);
+    }
     let rows = sql.build().fetch_all(connection).await?;
-    if rows.len() > 128 {
+    if page.is_none() && rows.len() > 128 {
         return Err(invalid(
             "Usage breakdown exceeds 128 groups; narrow the time range",
         ));

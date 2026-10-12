@@ -54,6 +54,7 @@ pub(crate) async fn request(
                     &context.invocation,
                     &context.operation_id,
                     configuration.boundary_revision,
+                    &request,
                 ))
                 .expect("tool identity")
             )

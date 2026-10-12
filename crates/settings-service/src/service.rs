@@ -23,7 +23,10 @@ use maka_runtime::configuration::*;
 use maka_runtime_host::application::{Context, Handler, NativeOwner};
 use serde_json::Value;
 use std::sync::Arc;
-pub(crate) struct Settings(pub Arc<maka_config::ConfigurationStore>);
+pub(crate) struct Settings {
+    pub configuration: Arc<maka_config::ConfigurationStore>,
+    pub log: Arc<maka_event_log::EventLog>,
+}
 
 fn rejected(reason: ConfigurationRejection) -> Result<Value, String> {
     super::connections::encode(CatalogMutationResult::Rejected { reason })
@@ -148,9 +151,24 @@ impl Handler for Settings {
         input: Value,
         context: Context,
     ) -> BoxFuture<'static, Result<Value, String>> {
-        let store = self.0.clone();
+        let store = self.configuration.clone();
+        let log = self.log.clone();
         Box::pin(async move {
             match method.as_str() {
+                "network" => super::network::read(&store, &log, input).await,
+                "updateNetwork" => super::network::update(&store, input, context).await,
+                "usage" => super::usage::page(&log, input).await,
+                "usageSummary" => super::usage::summary(&log, input).await,
+                "prices" => super::usage::prices(&store, input).await,
+                "updatePrice" => {
+                    context.operation().ok_or("settings_mutation_required")?;
+                    super::usage::update_price(&store, input).await
+                }
+                "assistantPreferences" => super::preferences::read(&store, input).await,
+                "updateAssistantPreferences" => {
+                    context.operation().ok_or("settings_mutation_required")?;
+                    super::preferences::update(&store, input).await
+                }
                 "connections" => super::connections::page(&store, input).await,
                 "connection" => super::connections::detail(&store, input).await,
                 "providers" => super::connections::providers(input),
@@ -331,7 +349,7 @@ impl Handler for Settings {
 }
 impl NativeOwner for Settings {
     fn close(&self) -> BoxFuture<'static, Result<(), String>> {
-        let store = self.0.clone();
+        let store = self.configuration.clone();
         Box::pin(async move {
             store
                 .shutdown()

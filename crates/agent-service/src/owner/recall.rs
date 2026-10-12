@@ -38,35 +38,26 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
 pub(crate) struct Recall {
-    store: Arc<maka_event_log::EventLog>,
-    prefix: String,
-    data_source: crate::contract::DataSource,
-    enabled: bool,
-    services: maka_runtime_host::application::NativeServices,
-    stop: CancellationToken,
-    workers: tokio_util::task::TaskTracker,
-    capacity: Arc<Semaphore>,
+    pub(super) store: Arc<maka_event_log::EventLog>,
+    pub(super) configuration: Arc<maka_config::ConfigurationStore>,
+    pub(super) prefix: String,
+    pub(super) data_source: crate::contract::DataSource,
+    pub(super) enabled: bool,
+    pub(super) services: maka_runtime_host::application::NativeServices,
+    pub(super) stop: CancellationToken,
+    pub(super) workers: tokio_util::task::TaskTracker,
+    pub(super) capacity: Arc<Semaphore>,
 }
 impl Recall {
-    pub fn new(
-        store: Arc<maka_event_log::EventLog>,
-        prefix: String,
-        data_source: crate::contract::DataSource,
-        enabled: bool,
-        stop: CancellationToken,
-        workers: tokio_util::task::TaskTracker,
-        services: maka_runtime_host::application::NativeServices,
-    ) -> Self {
-        Self {
-            store,
-            prefix,
-            data_source,
-            enabled,
-            services,
-            stop,
-            workers,
-            capacity: Arc::new(Semaphore::new(2)),
-        }
+    async fn private(&self) -> Result<bool, ToolError> {
+        Ok(self
+            .configuration
+            .runtime_policy()
+            .await
+            .map_err(failed)?
+            .policy
+            .privacy
+            .incognito_active)
     }
     async fn session(
         &self,
@@ -84,6 +75,9 @@ impl Recall {
     async fn check(&self, call: &Scope) -> Result<(), ToolError> {
         if call.cancellation.is_cancelled() || self.stop.is_cancelled() {
             return Err(failed("Recall cancelled"));
+        }
+        if self.private().await? {
+            return Err(failed("Recall is unavailable in privacy mode"));
         }
         if let Some(invocation) = call.identity.agent() {
             if !self.enabled {
@@ -195,6 +189,32 @@ impl Recall {
                 handler: ToolHandler::Prepared(self.clone()),
             })
             .collect()
+    }
+}
+impl maka_tools::request::RequestBinding for Recall {
+    fn bind(
+        &self,
+        request: maka_tools::request::BindingRequest,
+    ) -> maka_tools::request::BindingFuture {
+        let recall = Arc::new(self.clone());
+        Box::pin(async move {
+            let unavailable = !recall.enabled || recall.private().await?;
+            if request.cancellation.is_cancelled() || recall.stop.is_cancelled() {
+                return Err(failed("Recall cancelled"));
+            }
+            Ok(request
+                .tools
+                .into_iter()
+                .map(|name| {
+                    let projection = if unavailable {
+                        maka_tools::request::BoundTool::Unavailable
+                    } else {
+                        maka_tools::request::BoundTool::Prepared(recall.clone())
+                    };
+                    (name, projection)
+                })
+                .collect())
+        })
     }
 }
 impl History for Recall {

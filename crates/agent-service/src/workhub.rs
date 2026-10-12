@@ -20,6 +20,7 @@
 //! Native WorkHub owns its coordinator Agent. Worker capabilities are ordinary
 //! explicit service imports, never a dependency from the Agent back to itself.
 pub mod contract;
+pub mod presets;
 mod tasks;
 mod watch;
 use crate::{owner::Owner, service::Agent};
@@ -240,6 +241,7 @@ impl Hub {
             .0
             .create(
                 crate::contract::Create {
+                    tools: None,
                     title: "WorkHub".into(),
                     labels: vec![],
                     workspace: crate::contract::WorkspaceSelection::Directory {
@@ -247,6 +249,7 @@ impl Hub {
                     },
                 },
                 &intent.operation,
+                scope,
             )
             .await?
         {
@@ -285,6 +288,17 @@ impl Handler for Hub {
                     }
                     if method == "watchTasks" || method == "watchTask" {
                         return hub.watch(input, method == "watchTask", &context).await;
+                    }
+                    if method == "presets" {
+                        return serde_json::to_value(hub.presets().await?)
+                            .map_err(|_| "workhub_output_invalid".into());
+                    }
+                    if method == "savePresets" {
+                        context.operation().ok_or("workhub_mutation_required")?;
+                        let input =
+                            serde_json::from_value(input).map_err(|_| "workhub_input_invalid")?;
+                        return serde_json::to_value(hub.save_presets(input).await?)
+                            .map_err(|_| "workhub_output_invalid".into());
                     }
                     if method == "controls" {
                         let input: contract::ControlsRead =

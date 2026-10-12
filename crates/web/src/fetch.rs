@@ -59,7 +59,8 @@ pub enum Error {
     Settlement(#[from] maka_runtime::tools::ToolError),
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[schemars(rename = "WebPage")]
 #[serde(rename_all = "camelCase")]
 pub struct Page {
     pub url: String,
@@ -70,7 +71,8 @@ pub struct Page {
     pub truncated: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[schemars(rename = "WebFormat")]
 #[serde(rename_all = "snake_case")]
 pub enum Format {
     Markdown,

@@ -163,7 +163,14 @@ const specifications = {
       appearance: one(own.themeContract),
       locale: one(sdk.contracts.locale),
     },
-    configuration: own.object({ locale: own.locale, worker: { type: 'string', const: 'worker' } }),
+    configuration: own.object(
+      {
+        locale: own.locale,
+        worker: { type: 'string', const: 'worker' },
+        initialRoute: { type: 'string', enum: ['coordinator', 'sessions'] },
+      },
+      ['locale', 'worker'],
+    ),
   },
   workspace: {
     contract: own.workspaceContract,
@@ -184,12 +191,25 @@ const specifications = {
       directories: one(own.directoryPickerContract),
       projects: one(own.projectsContract),
       imports: one(own.importsContract),
+      assistantPreferences: one(own.assistantPreferencesContract),
+      networkSettings: one(own.networkSettingsContract),
+      sessionDefaults: one(own.sessionDefaultsContract),
+      webSettings: { contract: own.webSettingsContract, cardinality: { kind: 'optional' } },
+      jevSettings: { contract: own.jevSettingsContract, cardinality: { kind: 'optional' } },
+      subagentSettings: {
+        contract: own.subagentSettingsContract,
+        cardinality: { kind: 'optional' },
+      },
+      insights: one(own.insightsContract),
       recall: one(own.recallContract),
       scheduler: one(own.schedulerContract),
       apps: one(own.appsContract),
       details: one(own.sessionDetailsContract),
       terminals: one(own.terminalPanelContract),
-      skills: { contract: own.skillLibraryContract, cardinality: { kind: 'optional' } },
+      skills: {
+        contract: own.skillLibraryContract,
+        cardinality: { kind: 'optional' },
+      },
       queueEditor: one(own.queueEditorContract),
       formEditor: one(own.formEditorContract),
       questionEditor: one(own.questionEditorContract),
@@ -208,6 +228,8 @@ const specifications = {
         terminals: { type: 'boolean' },
         skills: { type: 'boolean' },
         scheduledTasks: { type: 'boolean' },
+        web: { type: 'boolean' },
+        jev: { type: 'boolean' },
         place: { type: 'string', maxLength: 4096 },
       },
       ['locale'],
@@ -330,6 +352,95 @@ specifications['command-palette'] = {
     input: one(sdk.contracts.textInput),
     reader: one(sdk.contracts.textReader),
     reading: one(sdk.contracts.readingArea),
+  },
+};
+specifications['session-defaults'] = {
+  contract: own.sessionDefaultsContract,
+  export: 'SessionDefaults',
+  module: 'session-defaults',
+  configuration: own.object({
+    instance: { type: 'array', items: own.string, minItems: 1, maxItems: 16 },
+  }),
+  imports: {
+    management: one(sdk.contracts.deploymentManager),
+    receipts: one(sdk.contracts.receiptReader),
+    history: one(sdk.contracts.callerHistory),
+  },
+};
+specifications['assistant-preferences'] = {
+  contract: own.assistantPreferencesContract,
+  export: 'AssistantPreferences',
+  module: 'assistant-preferences',
+  imports: {
+    settings: one(sdk.contracts.settings),
+    input: one(sdk.contracts.textInput),
+    editor: one(sdk.contracts.textarea),
+    reader: one(sdk.contracts.textReader),
+    receipts: one(sdk.contracts.receiptReader),
+    history: one(sdk.contracts.callerHistory),
+  },
+};
+specifications['network-settings'] = {
+  contract: own.networkSettingsContract,
+  export: 'NetworkSettings',
+  module: 'network-settings',
+  imports: {
+    settings: one(sdk.contracts.settings),
+    input: one(sdk.contracts.textInput),
+    secret: one(sdk.contracts.secretInput),
+    reader: one(sdk.contracts.textReader),
+    receipts: one(sdk.contracts.receiptReader),
+    history: one(sdk.contracts.callerHistory),
+  },
+};
+specifications['subagent-settings'] = {
+  contract: own.subagentSettingsContract,
+  export: 'SubagentSettings',
+  module: 'subagent-settings',
+  imports: {
+    workhub: one(sdk.contracts.workhubCoordinator),
+    agent: one(sdk.contracts.agent),
+    models: one(own.modelsContract),
+    input: one(sdk.contracts.textInput),
+    reader: one(sdk.contracts.textReader),
+    receipts: one(sdk.contracts.receiptReader),
+    history: one(sdk.contracts.callerHistory),
+  },
+};
+specifications['jev-settings'] = {
+  contract: own.jevSettingsContract,
+  export: 'JevSettings',
+  module: 'jev-settings',
+  imports: {
+    jev: one(sdk.contracts.workspaceJev),
+    input: one(sdk.contracts.textInput),
+    secret: one(sdk.contracts.secretInput),
+    reader: one(sdk.contracts.textReader),
+    receipts: one(sdk.contracts.receiptReader),
+    history: one(sdk.contracts.callerHistory),
+  },
+};
+specifications['web-settings'] = {
+  contract: own.webSettingsContract,
+  export: 'WebSettings',
+  module: 'web-settings',
+  imports: {
+    web: one(sdk.contracts.workspaceWeb),
+    secret: one(sdk.contracts.secretInput),
+    receipts: one(sdk.contracts.receiptReader),
+    history: one(sdk.contracts.callerHistory),
+  },
+};
+specifications['insights'] = {
+  contract: own.insightsContract,
+  export: 'Insights',
+  module: 'insights',
+  imports: {
+    settings: one(sdk.contracts.settings),
+    input: one(sdk.contracts.textInput),
+    reader: one(sdk.contracts.textReader),
+    receipts: one(sdk.contracts.receiptReader),
+    history: one(sdk.contracts.callerHistory),
   },
 };
 specifications.recall = {
@@ -517,11 +628,13 @@ for (const [name, spec] of Object.entries(specifications)) {
     if (name === 'appearance')
       contents = `import {activate as appearance} from '${resolve(root, 'src/theme.ts')}';export function activate(configuration){return appearance(configuration,${target === 'tui'});}`;
     else if (name === 'workspace')
-      contents = `import {workspace} from '${resolve(root, 'src/workspace.ts')}';import {workspaceContract} from '${resolve(root, 'src/contracts.ts')}';export let component;export function activate(configuration){component=workspace(presentations.${target},configuration.locale,configuration.terminals === true, configuration.place ?? '', configuration.skills === true, configuration.scheduledTasks === true);return {Workspace:{kind:'component',contract:workspaceContract,component:['component']}};}`;
+      contents = `import {workspace} from '${resolve(root, 'src/workspace.ts')}';import {workspaceContract} from '${resolve(root, 'src/contracts.ts')}';export let component;export function activate(configuration){component=workspace(presentations.${target},configuration.locale,configuration.terminals === true, configuration.place ?? '', configuration.skills === true, configuration.scheduledTasks === true, configuration.web === true, configuration.jev === true);return {Workspace:{kind:'component',contract:workspaceContract,component:['component']}};}`;
     else if (name === 'apps')
       contents = `import {apps,activate as exports} from '${resolve(root, 'src/apps.ts')}';export let component;export function activate(configuration){component=apps(presentations.${target},configuration);return exports();}`;
+    else if (name === 'session-defaults')
+      contents = `import {sessionDefaults,activate as exports} from '${resolve(root, 'src/session-defaults.ts')}';export let component;export function activate(configuration){component=sessionDefaults(presentations.${target},configuration.instance);return exports();}`;
     else if (name === 'workhub-root')
-      contents = `import {workhubRoot,activate as exports} from '${resolve(root, 'src/workhub-root.ts')}';export let component;export function activate(configuration){component=workhubRoot(presentations.${target},configuration.locale,configuration.worker);return exports();}`;
+      contents = `import {workhubRoot,activate as exports} from '${resolve(root, 'src/workhub-root.ts')}';export let component;export function activate(configuration){component=workhubRoot(presentations.${target},configuration.locale,configuration.worker,configuration.initialRoute);return exports();}`;
     else if (name === 'studio' || name === 'recovery')
       contents = `import {${name},activate as exports} from '${resolve(root, 'src/' + name + '.ts')}';export let component;export function activate(configuration){component=${name}(presentations.${target},configuration.locale);return exports();}`;
     else if (name === 'connection-form')
@@ -591,7 +704,7 @@ for (const [name, spec] of Object.entries(specifications)) {
       welcome: one(sdk.contracts.morphMark),
       input: one(sdk.contracts.textInput),
     });
-  if (name === 'deployment-settings' || name === 'deployment')
+  if (name === 'deployment-settings' || name === 'deployment' || name === 'insights')
     entries.tui.imports.checkpoint = one(sdk.contracts.valueCheckpoint);
   if (name === 'tool-details') entries.tui.imports.diff = one(sdk.contracts.diff);
   if (name === 'image-viewer') entries.desktop.imports.image = one(sdk.contracts.image);
@@ -628,6 +741,7 @@ const agentImports = {
     cardinality: { kind: 'many', min: 0, max: 8 },
   },
   executors: { contract: sdk.contracts.executor, cardinality: { kind: 'many', min: 0, max: 8 } },
+  web: { contract: sdk.contracts.workspaceWeb, cardinality: { kind: 'optional' } },
   skills: { contract: sdk.contracts.skillLibrary, cardinality: { kind: 'optional' } },
   forms: { contract: sdk.contracts.forms, cardinality: { kind: 'optional' } },
   questions: { contract: sdk.contracts.questions, cardinality: { kind: 'optional' } },
@@ -865,6 +979,24 @@ const mechanical = {
       },
     },
   },
+  'workspace-web': {
+    entries: {
+      host: native(
+        'maka.workspace.web',
+        { web: required(sdk.contracts.workspaceWeb) },
+        sdk.configurations.workspaceWeb,
+      ),
+    },
+  },
+  'workspace-jev': {
+    entries: {
+      host: native(
+        'maka.workspace.jev',
+        { jev: required(sdk.contracts.workspaceJev) },
+        sdk.configurations.workspaceJev,
+      ),
+    },
+  },
   'workspace-processes': {
     entries: {
       host: native(
@@ -953,6 +1085,8 @@ const mechanical = {
             cardinality: { kind: 'optional' },
           },
           terminal: { contract: sdk.contracts.terminal, cardinality: { kind: 'optional' } },
+          jev: { contract: sdk.contracts.workspaceJev, cardinality: { kind: 'optional' } },
+          web: { contract: sdk.contracts.workspaceWeb, cardinality: { kind: 'optional' } },
           skills: { contract: sdk.contracts.skillLibrary, cardinality: { kind: 'optional' } },
           settings: one(sdk.contracts.settings),
         },

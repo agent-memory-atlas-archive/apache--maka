@@ -567,6 +567,15 @@ export function components<N extends Node>(
                           copy(props.locale).detailsTitle,
                           props.busy,
                         ),
+                        ...(target === 'tui'
+                          ? [
+                              ui.button(
+                                'usage-' + session.id,
+                                tuiText(props.locale, 'insights-this-session'),
+                                props.busy,
+                              ),
+                            ]
+                          : []),
                       ])
                     : row;
                 })
@@ -1357,11 +1366,20 @@ export function components<N extends Node>(
             const session = groups
               .filter((group) => groupOpen(next, group.key))
               .flatMap((group) => group.sessions)
-              .find((session) => session.id === input.key || 'details-' + session.id === input.key);
+              .find(
+                (session) =>
+                  session.id === input.key ||
+                  'details-' + session.id === input.key ||
+                  'usage-' + session.id === input.key,
+              );
             if (session)
               events.push({
                 name: 'select',
-                value: { sessionId: session.id, details: input.key === 'details-' + session.id },
+                value: {
+                  sessionId: session.id,
+                  details: input.key === 'details-' + session.id,
+                  ...(input.key === 'usage-' + session.id ? { usage: true } : {}),
+                },
               });
           }
         }

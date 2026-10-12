@@ -430,3 +430,201 @@ async fn root_settings_create_partial_edit_save_capture_and_stale_vault_basis_us
     fixture.app.shutdown().await.unwrap();
     fixture.config.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn assistant_preferences_and_capability_guidance_freeze_at_message_acceptance() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let fixture = Fixture::configured(
+            &format!("http://{}/v1", listener.local_addr().unwrap()),
+            1, None, None, None,
+            |settings| settings.assistant = Some(AssistantConfiguration {
+                home: Some(settings.workspace_roots[0].path.parent().unwrap().to_str().unwrap().into()),
+            }),
+        ).await;
+        let global = fixture._dir.path().join(".maka");
+        std::fs::create_dir(&global).unwrap();
+        std::fs::write(global.join("AGENTS.md"), "GLOBAL FIRST").unwrap();
+        std::fs::write(fixture.workspace.join("AGENTS.md"), "PROJECT FIRST").unwrap();
+        // A guidance filename is not authority to escape the selected directory.
+        #[cfg(unix)] {
+            let outside = fixture._dir.path().join("outside-guidance");
+            std::fs::write(&outside, "OUTSIDE SECRET").unwrap();
+            std::os::unix::fs::symlink(&outside, fixture.workspace.join("CLAUDE.md")).unwrap();
+            std::os::unix::fs::symlink(&outside, global.join("CLAUDE.md")).unwrap();
+        }
+        let initial = query(&fixture, "assistantPreferences", json!({})).await;
+        let (saved, reference) = mutate(&fixture, "updateAssistantPreferences", json!({
+            "expectedRevision":initial["revision"],
+            "mutation":{"kind":"personalization","displayName":"M4n5ter","assistantTone":"FIRST TONE"}
+        }), None).await;
+        assert_eq!(saved["kind"], "committed");
+        let observation = fixture.store.operation_observation(&reference).await.unwrap().unwrap();
+        assert_eq!(observation.outcome, OperationOutcome::Returned { value: saved.clone() });
+        let (stale, _) = mutate(&fixture, "updateAssistantPreferences", json!({
+            "expectedRevision":initial["revision"],
+            "mutation":{"kind":"workspace_instructions","enabled":false}
+        }), None).await;
+        assert_eq!(stale["kind"], "revision_conflict");
+        let session = fixture.create("Assistant policy").await;
+        assert_eq!(fixture.send(&session).await.unwrap()["kind"], "started");
+        let (mut first, _) = listener.accept().await.unwrap();
+        let system = |sent: &Value| sent["messages"].as_array().unwrap().iter()
+            .filter(|message| message["role"] == "system")
+            .map(|message| message["content"].as_str().unwrap()).collect::<Vec<_>>().join("\n");
+        let original = system(&request(&mut first).await);
+        for value in ["You are Maka", "M4n5ter", "FIRST TONE", "GLOBAL FIRST", "PROJECT FIRST"] {
+            assert!(original.contains(value), "missing {value}: {original}");
+        }
+        assert!(!original.contains("OUTSIDE SECRET"));
+        assert_eq!(fixture.send(&session).await.unwrap()["kind"], "queued");
+        std::fs::write(global.join("AGENTS.md"), "GLOBAL REPLACED").unwrap();
+        std::fs::write(fixture.workspace.join("AGENTS.md"), "PROJECT REPLACED").unwrap();
+        let (disabled, _) = mutate(&fixture, "updateAssistantPreferences", json!({
+            "expectedRevision":saved["revision"],
+            "mutation":{"kind":"workspace_instructions","enabled":false}
+        }), None).await;
+        assert_eq!(disabled["kind"], "committed");
+        response(&mut first).await;
+        let (mut second, _) = listener.accept().await.unwrap();
+        assert_eq!(system(&request(&mut second).await), original, "queued work uses its persisted acceptance basis");
+        response(&mut second).await;
+        fixture.drained().await;
+        assert_eq!(fixture.send(&session).await.unwrap()["kind"], "started");
+        let (mut third, _) = listener.accept().await.unwrap();
+        let current = system(&request(&mut third).await);
+        assert!(current.contains("FIRST TONE"));
+        assert!(!current.contains("GLOBAL") && !current.contains("PROJECT"));
+        response(&mut third).await;
+        fixture.drained().await;
+        let current = query(&fixture, "assistantPreferences", json!({})).await;
+        assert_eq!(current["incognitoActive"], false);
+        let (privacy, reference) = mutate(&fixture, "updateAssistantPreferences", json!({
+            "expectedRevision":current["revision"],
+            "mutation":{"kind":"privacy","incognitoActive":true}
+        }), None).await;
+        assert_eq!(privacy["kind"], "committed");
+        assert_eq!(query(&fixture, "assistantPreferences", json!({})).await["incognitoActive"], true);
+        assert!(fixture.config.runtime_policy().await.unwrap().policy.privacy.incognito_active);
+        assert_eq!(fixture.store.operation_observation(&reference).await.unwrap().unwrap().outcome,
+            OperationOutcome::Returned { value: privacy });
+        let (stale, _) = mutate(&fixture, "updateAssistantPreferences", json!({
+            "expectedRevision":current["revision"],
+            "mutation":{"kind":"privacy","incognitoActive":false}
+        }), None).await;
+        assert_eq!(stale["kind"], "revision_conflict");
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn native_usage_keeps_request_quotes_and_settlement_fences_across_price_changes() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let fixture = Fixture::new(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None).await;
+        let page = query(&fixture, "prices", json!({"kind":"start"})).await;
+        let price = |revision: Value, input: f64| json!({
+            "expectedRevision": revision,
+            "mutation":{"kind":"upsert","pricing":{"modelKey":"openai-compatible:fixture-model","inputUsdPer1M":input,"outputUsdPer1M":20.0}}
+        });
+        let (saved, reference) = mutate(&fixture, "updatePrice", price(page["revision"].clone(), 10.0), None).await;
+        assert_eq!(saved["result"]["kind"], "committed");
+        assert_eq!(fixture.store.operation_observation(&reference).await.unwrap().unwrap().outcome,
+            OperationOutcome::Returned { value: saved.clone() });
+        let session = fixture.create("Physical usage").await;
+        fixture.send(&session).await.unwrap();
+        let (mut first, _) = listener.accept().await.unwrap();
+        request(&mut first).await;
+        // Change prices while the first provider request is still in flight.
+        let (changed, _) = mutate(&fixture, "updatePrice", price(saved["result"]["revision"].clone(), 100.0), None).await;
+        assert_eq!(changed["result"]["kind"], "committed");
+        let (stale, _) = mutate(&fixture, "updatePrice", price(saved["result"]["revision"].clone(), 1000.0), None).await;
+        assert_eq!(stale["result"]["kind"], "revision_conflict");
+        response(&mut first).await;
+        fixture.drained().await;
+        let range = json!({"from":0,"to":9_007_199_254_740_991u64,"sessionId":session,"through":null});
+        let original = query(&fixture, "usageSummary", json!({"range":range,"group":"byProvider","offset":0})).await;
+        assert_eq!(original["summary"]["models"]["calls"], 1);
+        let cost = original["summary"]["models"]["cost"]["knownUsd"].as_f64().unwrap();
+        assert!((cost - 0.00005).abs() < 1e-12, "first request must retain original quote: {original}");
+        let mut frozen = range.clone();
+        frozen["through"] = original["through"].clone();
+        fixture.send(&session).await.unwrap();
+        let (mut second, _) = listener.accept().await.unwrap();
+        request(&mut second).await;
+        response(&mut second).await;
+        fixture.drained().await;
+        assert_eq!(query(&fixture, "usageSummary", json!({"range":frozen,"group":"byProvider","offset":0})).await, original);
+        let activity = query(&fixture, "usage", json!({"range":frozen,"selection":{"kind":null,"status":null,"search":""},"offset":0})).await;
+        assert_eq!(activity["total"], 1);
+        assert_eq!(activity["attempts"][0]["attempt"]["quote"]["pricing"]["inputUsdPer1M"], 10.0);
+        let latest = query(&fixture, "usageSummary", json!({"range":range,"group":"byProvider","offset":0})).await;
+        assert_eq!(latest["summary"]["models"]["calls"], 2);
+        assert_eq!(latest["summary"]["models"]["input"]["known"], 2);
+        assert_eq!(latest["summary"]["models"]["output"]["known"], 4);
+        assert_eq!(latest["summary"]["models"]["cost"]["unvalued"], 0);
+        assert!((latest["summary"]["models"]["cost"]["knownUsd"].as_f64().unwrap() - 0.00019).abs() < 1e-12);
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn host_proxy_settings_route_model_requests_and_keep_atomic_credential_receipts() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let proxy = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let fixture = Fixture::new("http://proxy-target.invalid/v1", 1, None).await;
+        let original = query(&fixture, "network", json!({})).await;
+        assert_eq!(original["rootPath"], fixture.root.canonicalize().unwrap().to_str().unwrap());
+        assert_eq!(original["rootId"], fixture.store.owned_root().unwrap().root_id());
+        let mut policy = original["proxy"].clone();
+        policy["enabled"] = json!(true);
+        policy["protocol"] = json!("http");
+        policy["host"] = json!("127.0.0.1");
+        policy["port"] = json!(proxy.local_addr().unwrap().port());
+        policy["authEnabled"] = json!(true);
+        policy["username"] = json!("proxy-user");
+        policy["bypassList"] = json!([]);
+        policy["autoBypassDomains"] = json!([]);
+        let update = json!({"expectedPolicyRevision":original["revision"],"expectedCredential":null,"networkProxy":policy,"credential":"replace"});
+        let (saved, reference) = mutate(&fixture, "updateNetwork", update.clone(), Some("private-proxy-password")).await;
+        assert_eq!(saved["result"]["kind"], "committed");
+        let current = query(&fixture, "network", json!({})).await;
+        assert_eq!(current["proxy"], policy);
+        assert_eq!(current["credential"]["configured"], true);
+        assert!(!current.to_string().contains("private-proxy-password"));
+        assert_eq!(fixture.config.network_configuration().await.unwrap().password.as_deref(), Some("private-proxy-password"));
+        assert_eq!(fixture.store.operation_observation(&reference).await.unwrap().unwrap().outcome,
+            OperationOutcome::Returned { value: saved.clone() });
+        let (stale, _) = mutate(&fixture, "updateNetwork", update, Some("different-password")).await;
+        assert_eq!(stale["result"]["kind"], "revision_conflict");
+        let session = fixture.create("Proxy route").await;
+        fixture.send(&session).await.unwrap();
+        // This hostname is deliberately unresolvable. Receiving the request at
+        // the local proxy proves the actual native model transport uses settings.
+        let (mut stream, _) = proxy.accept().await.unwrap();
+        let sent = request(&mut stream).await;
+        assert_eq!(sent["model"], "fixture-model");
+        response(&mut stream).await;
+        fixture.drained().await;
+        let mut disabled = policy;
+        disabled["enabled"] = json!(false);
+        disabled["authEnabled"] = json!(false);
+        let delete = json!({"expectedPolicyRevision":current["revision"],"expectedCredential":{
+            "locator":current["credential"]["locator"],"credentialId":current["credential"]["credentialId"],"revision":current["credential"]["revision"]
+        },"networkProxy":disabled,"credential":"delete"});
+        let (removed, _) = mutate(&fixture, "updateNetwork", delete.clone(), None).await;
+        assert_eq!(removed["result"]["kind"], "committed");
+        let final_state = fixture.config.network_configuration().await.unwrap();
+        assert!(!final_state.proxy.enabled && !final_state.proxy.auth_enabled && final_state.password.is_none());
+        let mut stale_credential = delete;
+        stale_credential["expectedPolicyRevision"] = removed["result"]["revision"].clone();
+        let (stale, _) = mutate(&fixture, "updateNetwork", stale_credential, None).await;
+        assert_eq!(stale["result"]["kind"], "credential_stale");
+        let observation = fixture.store.operation_observation(&reference).await.unwrap().unwrap();
+        assert_eq!(observation.outcome, OperationOutcome::Returned { value: saved });
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}

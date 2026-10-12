@@ -57,7 +57,12 @@ pub(super) async fn change(
     .await
     .unwrap()
 }
-async fn call(listener: &TcpListener, f: &Fixture, session: &str, input: Value) -> Value {
+pub(super) async fn call(
+    listener: &TcpListener,
+    f: &Fixture,
+    session: &str,
+    input: Value,
+) -> Value {
     let started = f.send(session).await.unwrap();
     let (mut socket, _) = listener.accept().await.unwrap();
     let sent = request(&mut socket).await;
@@ -73,7 +78,7 @@ pub(super) async fn tool_response(socket: &mut TcpStream, input: Value) {
     socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
 }
 
-async fn finish(listener: &TcpListener, f: &Fixture) -> Value {
+pub(super) async fn finish(listener: &TcpListener, f: &Fixture) -> Value {
     let (mut socket, _) = listener.accept().await.unwrap();
     let sent = request(&mut socket).await;
     let tool = sent["messages"]

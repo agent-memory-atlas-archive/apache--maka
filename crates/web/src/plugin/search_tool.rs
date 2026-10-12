@@ -61,15 +61,13 @@ impl BindingProvider for Provider {
                 return Ok(None);
             }
             if settings.source == Source::Model {
-                return Ok(request
-                    .model
-                    .as_ref()
-                    .and_then(native)
-                    .map(|provider| Binding {
+                return Ok(request.model.as_ref().and_then(crate::search::native).map(
+                    |provider| Binding {
                         provider_tools: [("WebSearch".into(), provider)].into(),
                         handler: None,
                         context: None,
-                    }));
+                    },
+                ));
             }
             let Some(record) = web
                 .settings
@@ -194,24 +192,4 @@ fn invalid(error: impl std::fmt::Display) -> ToolRejection {
     ToolRejection::InvalidInput {
         message: error.to_string(),
     }
-}
-
-fn native(
-    model: &maka_runtime::tools::ModelToolContext,
-) -> Option<maka_runtime::tools::ProviderTool> {
-    use maka_runtime::tools::{ProviderTool, ProviderToolProtocol};
-    let protocol = model.provider_tools?;
-    if model.capabilities.web_search != Some(true) {
-        return None;
-    }
-    Some(match protocol {
-        ProviderToolProtocol::OpenaiResponses => ProviderTool {
-            id: "openai.web_search".into(),
-            args: json!({"searchContextSize":"medium"}),
-        },
-        ProviderToolProtocol::AnthropicMessages => ProviderTool {
-            id: "anthropic.web_search_20250305".into(),
-            args: json!({"maxUses":8}),
-        },
-    })
 }

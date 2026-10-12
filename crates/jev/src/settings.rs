@@ -21,12 +21,14 @@ mod patch;
 pub use patch::{HeaderPatch, SecretChange, SecretsPatch};
 
 use maka_plugins::{credentials, storage};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "JevSettings")]
 pub struct Settings {
     pub enabled: bool,
     pub url: String,
@@ -62,12 +64,13 @@ impl Settings {
         Ok(())
     }
     // Changing the destination must never forward a credential saved for another endpoint.
-    pub(crate) fn credential_key(&self) -> String {
+    pub fn credential_key(&self) -> String {
         format!("endpoint-{:x}", Sha256::digest(self.url.as_bytes()))
     }
 }
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+#[schemars(rename = "JevSnapshot")]
 pub struct Snapshot {
     pub revision: Option<u64>,
     pub settings: Settings,
@@ -77,7 +80,7 @@ pub struct Snapshot {
     pub header_names: Vec<String>,
 }
 #[derive(Clone)]
-pub(crate) struct Repository {
+pub struct Repository {
     pub store: Arc<dyn storage::Store>,
     pub credentials: Arc<dyn credentials::Credentials>,
 }

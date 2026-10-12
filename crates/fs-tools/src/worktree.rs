@@ -18,7 +18,7 @@
  */
 
 //! Host-owned linked worktrees. Call synchronous operations on a blocking worker.
-//! A binding must be durably attached to its Session before materialization.
+//! A binding must be durably recorded for its owning Session before materialization.
 mod checkout;
 mod ownership;
 mod patch;
@@ -36,12 +36,14 @@ use std::{
 };
 
 /// Immutable allocation intent, not the current child branch or HEAD.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Binding {
     id: String,
     common_dir: PathBuf,
     source: PathBuf,
+    #[schemars(with = "String", regex(pattern = "^sha256:[a-f0-9]{64}$"))]
+    source_identity: maka_runtime::execution::DirectoryIdentity,
     base_commit: String,
     directory: PathBuf,
 }
@@ -52,6 +54,9 @@ impl Binding {
     }
     pub fn source(&self) -> &Path {
         &self.source
+    }
+    pub fn source_identity(&self) -> &maka_runtime::execution::DirectoryIdentity {
+        &self.source_identity
     }
     pub fn base_commit(&self) -> &str {
         &self.base_commit
@@ -86,7 +91,7 @@ impl Worktrees {
     pub fn plan(&self, source: &Path, id: &str, cancel: Arc<AtomicBool>) -> io::Result<Binding> {
         valid_id(id)?;
         interrupted(&cancel)?;
-        let source = dunce::canonicalize(source)?;
+        let (source, source_identity) = crate::directory::capture(source)?;
         let repo = git::discover(&source)?;
         if repo
             .workdir()
@@ -102,15 +107,26 @@ impl Worktrees {
         checkout::supported(&repo)?;
         let base = repo.head_id().map_err(io::Error::other)?.detach();
         let base_commit = base.to_string();
-        let mut status = repo
+        let status = repo
             .status(gix::progress::Discard)
             .map_err(io::Error::other)?
             .untracked_files(gix::status::UntrackedFiles::Files)
             .should_interrupt_owned(cancel.clone())
             .into_iter(std::iter::empty())
             .map_err(io::Error::other)?;
-        if let Some(change) = status.next() {
-            change.map_err(io::Error::other)?;
+        for change in status {
+            let change = change.map_err(io::Error::other)?;
+            // The native directory owner creates this identity before task
+            // routing. It is metadata, not uncommitted source to omit.
+            if let gix::status::Item::IndexWorktree(
+                gix::status::index_worktree::Item::DirectoryContents { entry, .. },
+            ) = &change
+                && entry.status == gix::dir::entry::Status::Untracked
+                && entry.rela_path.as_slice() == crate::workspace::MARKER_FILE.as_bytes()
+                && crate::workspace::read_identity(&source).is_ok()
+            {
+                continue;
+            }
             return Err(invalid(
                 "isolated execution requires a clean source worktree",
             ));
@@ -122,6 +138,7 @@ impl Worktrees {
         Ok(Binding {
             id: id.into(),
             source,
+            source_identity,
             base_commit,
             common_dir: dunce::canonicalize(repo.common_dir())?,
             directory: self.root.join(id).join("worktree"),

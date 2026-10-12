@@ -36,6 +36,9 @@ pub(super) fn capture(
     state_root: &std::path::Path,
 ) -> Result<Captured, ToolError> {
     let workspace = &configuration.workspace;
+    if workspace.worktree.is_some() && !settings.isolated_workspaces {
+        return Err(failed("Isolated workspace execution is not installed"));
+    }
     let path = PathBuf::from(&workspace.path);
     let directory =
         maka_fs_tools::directory::open(&path, &workspace.directory_identity).map_err(failed)?;
@@ -54,14 +57,34 @@ pub(super) fn capture(
     let private = Sandbox::Managed {
         filesystem: Policy {
             default: Access::Write,
-            rules: vec![Rule::subtree(state_root, Access::Deny)],
+            rules: crate::workspace::private_rules(workspace, state_root).map_err(failed)?,
             deny_globs: vec![],
         },
         network: Network::Allowed,
     };
+    let mut installed_filesystem = settings.filesystem.clone();
+    if workspace.worktree.is_some() {
+        installed_filesystem
+            .rules
+            .push(Rule::subtree(&path, Access::Write));
+    }
     let installation = Sandbox::Managed {
-        filesystem: settings.filesystem.clone(),
+        filesystem: installed_filesystem,
         network: settings.network.clone(),
+    };
+    let installation = if workspace.worktree.is_some() {
+        installation
+            .intersect(&Sandbox::Managed {
+                filesystem: Policy {
+                    default: Access::Read,
+                    rules: vec![Rule::subtree(&path, Access::Write)],
+                    deny_globs: vec![],
+                },
+                network: settings.network.clone(),
+            })
+            .map_err(failed)?
+    } else {
+        installation
     };
     let ceiling = installation
         .intersect(&metadata)

@@ -483,7 +483,7 @@ fn narrow_row_uses_the_same_remaining_width_for_measure_and_unicode_paint() {
     let tree = json!({"kind":"stack","key":"root","direction":"column","gap":0,"padding":0,"background":0,"children":[
         {"kind":"stack","key":"row","direction":"row","gap":0,"padding":0,"background":0,"children":[
             {"kind":"text","key":"first","text":"12345","color":16777215},
-            {"kind":"text","key":"wrapped","text":"中文abcd","color":16777215}]},
+            {"kind":"text","key":"wrapped","text":"中文abcd.","color":16777215}]},
         {"kind":"text","key":"after","text":"after","color":16777215}]});
     let source = format!(
         "export function activate(){{return {{App:{{contract:{},kind:'component',component:['app']}}}};}} export const app={{mount(){{return {{actions:[],events:[],frame:{{revision:0,state:{{}},surface:{{kind:'terminal',binding:'surface'}},view:{}}}}};}},update(){{throw Error('unexpected update');}},event(){{throw Error('unexpected event');}}}};",
@@ -522,9 +522,12 @@ fn narrow_row_uses_the_same_remaining_width_for_measure_and_unicode_paint() {
     )
     .unwrap();
     let buffer = draw(&mut tui, 10, 5);
-    assert_eq!(buffer[(5, 1)].symbol(), "b");
-    assert_eq!(buffer[(6, 1)].symbol(), "c");
-    assert_eq!(buffer[(7, 1)].symbol(), "d");
+    // The word and its punctuation stay together after the wide graphemes.
+    assert_eq!(buffer[(5, 1)].symbol(), "a");
+    assert_eq!(buffer[(6, 1)].symbol(), "b");
+    assert_eq!(buffer[(7, 1)].symbol(), "c");
+    assert_eq!(buffer[(8, 1)].symbol(), "d");
+    assert_eq!(buffer[(9, 1)].symbol(), ".");
     assert_eq!(buffer[(0, 2)].symbol(), "a");
     assert_eq!(buffer[(4, 2)].symbol(), "r");
     tui.surface_closed(&tui.surface(), Ok(())).unwrap();

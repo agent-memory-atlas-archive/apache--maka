@@ -26,7 +26,7 @@ pub use checkpoint_mode::CheckpointMode;
 pub use summary::{SUMMARY_FORMAT_TEMPLATE, validate_summary};
 pub const MAX_SUMMARY_BYTES: usize = 256 * 1024;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelPurpose {
     Main,

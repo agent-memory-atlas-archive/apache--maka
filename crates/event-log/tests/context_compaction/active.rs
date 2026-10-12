@@ -166,11 +166,6 @@ async fn active_anchor_is_atomic_bounded_and_survives_next_turn_and_reopen() {
         .unwrap();
     assert_eq!(source.anchor.unwrap().event, *anchor.event());
     assert!(source.tail.is_empty());
-    assert!(
-        log.read_model_context("session", Some("active"))
-            .await
-            .is_err()
-    );
     assert!(log.unfinished_invocations(10).await.unwrap().len() == 1);
     log.append(&event(
         "active",
@@ -180,6 +175,12 @@ async fn active_anchor_is_atomic_bounded_and_survives_next_turn_and_reopen() {
     ))
     .await
     .unwrap();
+    let closed = log.read_model_context("session", None).await.unwrap();
+    assert!(matches!(
+        log.read_frozen_model_context(&closed.source_evidence, 100, 1)
+            .await,
+        Err(maka_event_log::StoreError::PrefixTooLarge)
+    ));
     log.append(&opening("next")).await.unwrap();
     log.close().await.unwrap();
     let log = EventLog::open(&path).await.unwrap();

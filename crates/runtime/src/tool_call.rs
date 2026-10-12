@@ -58,7 +58,7 @@ pub enum ToolSettlement {
 }
 
 /// Refusal category without input-derived explanation text.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RejectionKind {
     Unavailable,
@@ -89,13 +89,13 @@ pub enum ToolRejection {
 
 /// A Tool Call is distinct from its durable host operation. Origin determines
 /// model visibility; it is not an independent flag that can contradict ancestry.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ToolCallIdentity {
     pub tool_call_id: String,
     pub origin: ToolOrigin,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ToolOrigin {
     Provider {

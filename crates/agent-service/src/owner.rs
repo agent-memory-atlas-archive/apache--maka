@@ -23,6 +23,7 @@ use crate::{
 use futures_util::future::BoxFuture;
 use maka_agent::{Engine, RunError, RunInput, RunWork};
 
+mod assistant;
 mod attachments;
 mod execution;
 mod imports;
@@ -30,10 +31,13 @@ mod interactions;
 mod notifications;
 mod projects;
 pub(crate) use notifications::ReturnRoute;
+mod patches;
 mod queue;
 mod recall;
 mod scheduler;
 mod skills;
+mod work;
+mod worktrees;
 use maka_config::ConfigurationStore;
 use maka_event_log::{EventLog, sessions::SessionRecord};
 use maka_model::ModelExecutor;
@@ -59,6 +63,8 @@ use uuid::Uuid;
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SessionConfiguration {
+    #[serde(default)]
+    pub tools: Option<Vec<String>>,
     pub title: String,
     pub labels: Vec<String>,
     pub workspace: Workspace,
@@ -71,6 +77,8 @@ pub(crate) struct SessionConfiguration {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MessageBasis {
+    #[serde(default)]
+    allowed_tools: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     background: Option<ScheduledTarget>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -127,6 +135,7 @@ pub(crate) struct Owner {
     revision: SourceRevision,
     behavior: Option<SystemPrompt>,
     pub workspace_roots: Vec<workspace::Root>,
+    instruction_home: Option<Arc<cap_std::fs::Dir>>,
     pub import_roots: Vec<workspace::Root>,
     import_capacity: Arc<Semaphore>,
     internal_tools: Vec<maka_runtime::tools::ToolDefinition>,
@@ -206,43 +215,6 @@ impl Owner {
             .map_err(|_| "agent_executor_unavailable")?;
         let workers = TaskTracker::new();
         let stop = CancellationToken::new();
-        let recall = Arc::new(recall::Recall::new(
-            persistence.store().clone(),
-            prefix.clone(),
-            data_source.clone(),
-            settings.recall,
-            stop.clone(),
-            workers.clone(),
-            context.services(),
-        ));
-        if settings.recall {
-            additional.extend(recall.tools());
-        }
-        let scheduler = Arc::new(scheduler::Scheduler::new(
-            persistence.store().clone(),
-            prefix.clone(),
-        ));
-        if settings.scheduled_tasks {
-            additional.extend(scheduler.tools());
-        }
-        let internal_tools = additional
-            .iter()
-            .map(|tool| tool.definition.clone())
-            .collect();
-        let (tools, tool_basis) = crate::tools::catalog(
-            context.services(),
-            persistence.store().clone(),
-            &settings.tools,
-            additional,
-        )?;
-        let credentials = crate::model::Credentials {
-            executor: models.clone(),
-            refresh: Arc::new(maka_runtime_host::oauth::Authority::new(
-                workers.clone(),
-                stop.clone(),
-            )),
-        };
-        let engine = Engine::new(persistence.store().clone(), models, cells);
         let revision = SourceRevision {
             kind: SourceKind::ModelProvider,
             name: implementation.into(),
@@ -261,13 +233,82 @@ impl Owner {
             }
         });
         let skills = skills::Library::select(&context, &settings, revision.clone())?;
+        let instruction_home = assistant::open_home(settings.assistant.as_ref())?;
         let executors = crate::executor::Executors::capture(&context, &settings.executors)?;
-        // Acquire the only asynchronous persistent child last. No fallible
-        // export preparation remains after the actual native owner is created.
         let configuration = Arc::new(
             ConfigurationStore::for_root(root)
                 .await
                 .map_err(|_| "agent_configuration_unavailable")?,
+        );
+        let recall = Arc::new(recall::Recall {
+            store: persistence.store().clone(),
+            configuration: configuration.clone(),
+            prefix: prefix.clone(),
+            data_source: data_source.clone(),
+            enabled: settings.recall,
+            stop: stop.clone(),
+            workers: workers.clone(),
+            services: context.services(),
+            capacity: Arc::new(Semaphore::new(2)),
+        });
+        if settings.recall {
+            additional.extend(recall.tools());
+        }
+        let scheduler = Arc::new(scheduler::Scheduler::new(
+            persistence.store().clone(),
+            prefix.clone(),
+        ));
+        if settings.scheduled_tasks {
+            additional.extend(scheduler.tools());
+        }
+        let internal_tools = additional
+            .iter()
+            .map(|tool| tool.definition.clone())
+            .collect();
+        let prepared_tools = crate::tools::catalog(
+            context.services(),
+            persistence.store().clone(),
+            &settings.tools,
+            additional,
+            workers.clone(),
+        )
+        .and_then(|(tools, basis)| {
+            let tools = if settings.recall {
+                tools
+                    .with_request_binding(
+                        maka_runtime::tools::ToolPreparer::names(recall.as_ref())
+                            .into_iter()
+                            .collect(),
+                        recall.clone(),
+                    )
+                    .map_err(|error| error.to_string())?
+            } else {
+                tools
+            };
+            Ok((tools, basis))
+        });
+        let (tools, tool_basis) = match prepared_tools {
+            Ok(tools) => tools,
+            Err(error) => {
+                configuration
+                    .shutdown()
+                    .await
+                    .map_err(|_| "agent_configuration_cleanup_unconfirmed")?;
+                return Err(error);
+            }
+        };
+        let credentials = crate::model::Credentials {
+            executor: models.clone(),
+            refresh: Arc::new(maka_runtime_host::oauth::Authority::new(
+                workers.clone(),
+                stop.clone(),
+            )),
+        };
+        let engine = Engine::with_pricing(
+            persistence.store().clone(),
+            models,
+            cells,
+            Arc::new(crate::model::Prices(configuration.clone())),
         );
         let owner = Arc::new(Self {
             scheduler,
@@ -281,6 +322,7 @@ impl Owner {
             managed_worktrees,
             revision,
             behavior,
+            instruction_home,
             internal_tools,
             internal_bindings,
             permits: Arc::new(Semaphore::new(settings.max_active_runs)),
@@ -321,9 +363,22 @@ impl Owner {
             .ok_or("agent_session_unavailable".into())
     }
     pub async fn create(
+        self: &Arc<Self>,
+        input: Create,
+        operation: &maka_plugin_core::operation::RecoveryRef,
+        scope: &maka_plugins::call::Scope,
+    ) -> Result<Created, String> {
+        let operation = operation.clone();
+        self.resource_work(scope, move |owner, scope| {
+            Box::pin(async move { owner.create_inner(input, &operation, &scope).await })
+        })
+        .await
+    }
+    async fn create_inner(
         &self,
         input: Create,
         operation: &maka_plugin_core::operation::RecoveryRef,
+        scope: &maka_plugins::call::Scope,
     ) -> Result<Created, String> {
         if let Some(reason) = metadata_rejection(&input.title, &input.labels) {
             return Ok(Created::Rejected { reason });
@@ -334,7 +389,28 @@ impl Owner {
                 reason: Rejection::Closed,
             });
         }
+        let mut tools = input.tools;
+        if let Some(names) = &mut tools {
+            names.sort();
+            if names.len() > 128
+                || names.windows(2).any(|pair| pair[0] == pair[1])
+                || names.iter().any(|name| !self.tools.contains(name))
+            {
+                return Ok(Created::Rejected {
+                    reason: Rejection::ToolsUnavailable,
+                });
+            }
+        }
         let selected = match input.workspace {
+            WorkspaceSelection::IsolatedGit { selection } => {
+                let Some(workspace) = self.isolated_workspace(selection, operation, scope).await?
+                else {
+                    return Ok(Created::Rejected {
+                        reason: Rejection::WorkspaceUnavailable,
+                    });
+                };
+                workspace
+            }
             WorkspaceSelection::Project { project, selection } => {
                 let Some(workspace) = self.select_project(project, selection).await? else {
                     return Ok(Created::Rejected {
@@ -388,6 +464,15 @@ impl Owner {
                         reason: Rejection::WorkspaceUnavailable,
                     });
                 }
+                if let Some(parent) = session.configuration.tools {
+                    tools = Some(match tools {
+                        None => parent,
+                        Some(names) => names
+                            .into_iter()
+                            .filter(|name| parent.contains(name))
+                            .collect(),
+                    });
+                }
                 session.configuration.workspace
             }
         };
@@ -398,6 +483,7 @@ impl Owner {
                 &id,
                 &operation.fingerprint,
                 &SessionConfiguration {
+                    tools,
                     title: input.title,
                     labels: input.labels,
                     workspace: selected,
@@ -513,10 +599,29 @@ impl Owner {
         .map_err(|_| "agent_metadata_failed")?;
         match changed {
             SessionMutation::Committed(record) => Ok(MetadataResult::Committed {
-                session: crate::service::summary(self, record),
+                session: Box::new(crate::service::summary(self, record)),
             }),
             SessionMutation::RevisionConflict { expected, actual } => {
                 Ok(MetadataResult::RevisionConflict { expected, actual })
+            }
+        }
+    }
+    pub(super) fn tool_names(&self) -> crate::contract::ToolNames {
+        crate::contract::ToolNames {
+            names: self.tools.names(),
+        }
+    }
+    fn selected_tools(&self, allowed: Option<&[String]>) -> maka_tools::ToolCatalog {
+        match allowed {
+            None => self.tools.clone(),
+            Some(allowed) => {
+                let names = self.tools.names();
+                let excluded: Vec<_> = names
+                    .iter()
+                    .filter(|name| !allowed.contains(name))
+                    .map(String::as_str)
+                    .collect();
+                self.tools.excluding(&excluded)
             }
         }
     }
@@ -617,6 +722,9 @@ impl Owner {
                 .map_err(public_error)?,
             )),
             Selection::Executor(selection) => {
+                if session.configuration.tools.is_some() {
+                    return Err("agent_executor_cannot_enforce_tool_selection".into());
+                }
                 PreparedBackend::Executor(Box::new(self.executors.select(selection)?))
             }
         };
@@ -632,6 +740,7 @@ impl Owner {
         .await?;
         let external = executor.is_some();
         let basis = MessageBasis {
+            allowed_tools: session.configuration.tools.clone(),
             background: None,
             internal_tools: if external {
                 vec![]
@@ -643,7 +752,9 @@ impl Owner {
             } else {
                 self.internal_bindings.clone()
             },
-            behavior: self.behavior.clone(),
+            behavior: self
+                .capture_behavior(&session.configuration.workspace)
+                .await?,
             model,
             executor,
             workspace: session.configuration.workspace.clone(),
@@ -673,7 +784,8 @@ impl Owner {
                 if basis.executor.is_some() {
                     vec![]
                 } else {
-                    self.tools.names()
+                    self.selected_tools(session.configuration.tools.as_deref())
+                        .names()
                 },
             )
             .await?

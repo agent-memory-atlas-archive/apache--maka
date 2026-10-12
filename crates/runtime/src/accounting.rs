@@ -27,13 +27,14 @@ mod summary;
 mod tool;
 pub use activity::{Activity, ActivityKind, ActivityStatus, Selection};
 pub use summary::{
-    Cost, ModelSummary, ModelTotals, Pending, ProviderSummary, Summary, Tokens, ToolSummary,
+    Cost, Group, ModelSummary, ModelTotals, Pending, ProviderSummary, Summary, Tokens, ToolSummary,
     ToolTotals,
 };
 pub use tool::{ToolAttempt, ToolResult, ToolStatus};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[schemars(rename = "UsageOutcome")]
 pub enum Outcome {
     Success,
     Error,
@@ -42,8 +43,9 @@ pub enum Outcome {
     Unknown,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[schemars(rename = "UsageAuxiliarySource")]
 pub enum AuxiliarySource {
     /// One Host-owned title request, authorized by the first committed user opening.
     /// It may finish after that invocation ends and cannot execute tools.
@@ -59,8 +61,9 @@ pub enum AuxiliarySource {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[schemars(rename = "UsageOrigin")]
 pub enum Origin {
     Agent {
         invocation: Invocation,
@@ -71,8 +74,9 @@ pub enum Origin {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "UsageModelAttempt")]
 pub struct ModelAttempt {
     pub request_id: String,
     pub origin: Origin,

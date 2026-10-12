@@ -717,6 +717,19 @@ test('bundled products author without Node and export exact checked sources for 
           hostDeployment: uuid(80),
           managementDeployment: uuid(81),
         };
+        if (productName === 'agent') {
+          configuration.web = { network: 'allowed' };
+          configuration.agent.tools.push(
+            ...['fetch', 'search'].map((method) => ({
+              name: method === 'fetch' ? 'WebFetch' : 'WebSearch',
+              description: 'Use configured Web access.',
+              import: 'web',
+              method,
+              confirmation: 'preapproved',
+              result: 'json',
+            })),
+          );
+        }
         if (productName === 'agent')
           configuration.skills = {
             bundled: true,
@@ -974,6 +987,14 @@ test('bundled products author without Node and export exact checked sources for 
             {
               origin: [keys.agent],
               consumer: [keys.agent],
+              provider: [keys['workspace-web']],
+              export: 'web',
+              methods: ['fetch', 'search', 'capture'],
+              recovery: true,
+            },
+            {
+              origin: [keys.agent],
+              consumer: [keys.agent],
               provider: [keys.skills],
               export: 'skills',
               methods: ['search', 'load', 'prepare'],
@@ -1015,6 +1036,14 @@ test('bundled products author without Node and export exact checked sources for 
             {
               origin: [keys.agent],
               consumer: [keys.agent],
+              provider: [keys['workspace-web']],
+              export: 'web',
+              methods: ['fetch', 'search', 'capture'],
+              recovery: true,
+            },
+            {
+              origin: [keys.agent],
+              consumer: [keys.agent],
               provider: [keys['workspace-files']],
               export: 'files',
               methods: ['write', 'readImage', 'glob', 'grep'],
@@ -1042,6 +1071,27 @@ test('bundled products author without Node and export exact checked sources for 
             { kind: 'instance', path: ['workspace-processes'], export: 'processes' },
           ]);
         } else assert.equal(business.native, undefined);
+        assert.equal('web-settings' in ui.instances, productName === 'agent');
+        if (productName === 'agent') {
+          assert.deepEqual(host.instances['workspace-web'].configuration.values, {
+            network: 'allowed',
+          });
+          assert.deepEqual(host.instances.agent.bindings.web, [
+            { kind: 'instance', path: ['workspace-web'], export: 'web' },
+          ]);
+          assert.ok(
+            host.instances.agent.configuration.values.tools
+              .filter((tool) => tool.import === 'web')
+              .every((tool) => tool.input === 'web'),
+          );
+          assert.deepEqual(business.endpoints.web.grant.methods, [
+            'snapshot',
+            'save',
+            'saveKey',
+            'deleteKey',
+            'checkKey',
+          ]);
+        }
         assert.equal('workspace-files' in host.instances, filesEnabled);
         assert.equal('workspace-processes' in host.instances, filesEnabled);
 
@@ -13470,7 +13520,7 @@ for (const target of ['desktop', 'tui']) {
     const guest = await import(
       pathToFileURL(resolve(root, `dist/packages/workhub-root/${target}.js`))
     );
-    guest.activate({ locale: 'en', worker: 'worker' });
+    guest.activate({ locale: 'en', worker: 'worker', initialRoute: 'sessions' });
     const client = new Client(guest.component, false);
     const original = {
       ...reference,
@@ -13496,7 +13546,8 @@ for (const target of ['desktop', 'tui']) {
     const before = structuredClone(slots());
     client.raw('workhub-route-sessions');
     assert.deepEqual(slots(), before);
-    client.raw('workhub-route-coordinator');
+    client.input({ kind: 'component', child: 'worker-workspace', name: 'workhub', event: {} });
+    assert.equal(client.state.route, 'coordinator');
     client.raw('workhub-setup-start');
     assert.equal(
       [...client.actions.values()].some((action) => action.method === 'resolve'),
@@ -14311,6 +14362,22 @@ test('TUI settings preserve the conversation, return to the parent category, and
   assert.deepEqual(client.state.pages, []);
   assert.deepEqual(client.state.selected, selected);
   assert.deepEqual(client.state.watch, watch);
+  client.raw('usage-open');
+  assert.deepEqual(client.state.pages, ['settings']);
+  assert.equal(client.state.settingsCategory, 'insights');
+  assert.equal(client.state.insightsScope.sessionId, selected.id);
+  assert.deepEqual(
+    client.state.selected,
+    selected,
+    'opening usage does not switch the conversation',
+  );
+  client.raw('page-back');
+  client.raw('settings');
+  assert.equal(
+    client.state.insightsScope.sessionId,
+    null,
+    'ordinary settings resets the prior session scope',
+  );
 });
 
 for (const target of ['tui', 'desktop'])
@@ -14602,7 +14669,7 @@ test('TUI settings navigation checkpoints coalesce changes and restore the page 
   const observe = (client, sequence, revision, value) =>
     client.input({
       kind: 'component',
-      child: 'navigation-checkpoint-navigation/workspace',
+      child: 'navigation/workspace',
       name: 'bookmark',
       event: { sequence, state: { kind: 'ready', revision, value } },
     });

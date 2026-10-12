@@ -20,7 +20,10 @@
 use super::*;
 
 async fn fixture(base: &str) -> Fixture {
-    Fixture::configured(base, 1, None, None, None, false, true).await
+    Fixture::configured(base, 1, None, None, None, |settings| {
+        settings.scheduled_tasks = true
+    })
+    .await
 }
 fn task(effect: Value) -> Value {
     json!({"task":{"title":"Scheduled 中😀", "intentBody":"Remember the original request", "schedule":{"kind":"interval","everySeconds":3600,"startAt":now()+3_600_000},"effect":effect,"maxFires":null,"expiresAt":null},"timezone":"Asia/Singapore","misfire":"latest"})

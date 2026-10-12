@@ -594,11 +594,15 @@ impl Editor {
                 self.dragging = false;
             }
             MouseEventKind::ScrollDown | MouseEventKind::ScrollUp if area.contains(point) => {
-                self.top = if mouse.kind == MouseEventKind::ScrollDown {
+                let next = if mouse.kind == MouseEventKind::ScrollDown {
                     (self.top + 3).min(self.layout.rows.len().saturating_sub(area.height as usize))
                 } else {
                     self.top.saturating_sub(3)
                 };
+                if next == self.top {
+                    return false;
+                }
+                self.top = next;
             }
             _ => return false,
         }

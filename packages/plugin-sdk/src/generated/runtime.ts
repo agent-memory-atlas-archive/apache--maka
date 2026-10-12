@@ -94,6 +94,20 @@ export type RuntimeProtocol =
   | ReadText
   | TextChunk
   | AgentConfiguration
+  | WorkspaceJevConfiguration
+  | JevSet
+  | JevCredential
+  | JevUpdate
+  | JevEvaluation
+  | JevResult
+  | WorkspaceWebConfiguration
+  | WebCapture
+  | WebCall_WebFetch
+  | WebCall_WebQuery
+  | WebSet
+  | WebKey
+  | WebUpdate
+  | WebResult
   | AgentExecute
   | AgentExecutorsRead
   | AgentExecutors
@@ -111,6 +125,9 @@ export type RuntimeProtocol =
   | ProtocolProcessProgress
   | ProtocolProcessCompletion
   | ProtocolProcessWritten
+  | AgentToolNames
+  | WorkHubPresets
+  | WorkHubPresetsResult
   | WorkHubResolve
   | WorkHubCoordinator
   | WorkHubConfiguration
@@ -126,6 +143,20 @@ export type RuntimeProtocol =
   | AgentWork
   | ModelSelection
   | SettingsModelsRead
+  | SettingsUsageRead
+  | SettingsUsagePage
+  | SettingsUsageSummary
+  | SettingsUsageSummaryRead
+  | SettingsPricingResult
+  | PricingQuery
+  | PricingPage
+  | PricingUpdate
+  | SettingsAssistantPreferences
+  | SettingsNetworkSnapshot
+  | SettingsNetworkUpdate
+  | SettingsNetworkUpdated
+  | SettingsPreferencesUpdate
+  | SettingsPreferencesUpdated
   | SettingsModelsPage
   | SettingsConnectionsRead
   | SettingsConnectionsPage
@@ -1302,9 +1333,122 @@ export type EditorCapture =
  * Access inside the original selected directory; never an ambient filesystem grant.
  */
 export type AgentWorkspaceAccess = 'read_only' | 'workspace_write';
-export type AgentToolInput = 'json' | 'skill';
+export type AgentToolInput = 'json' | 'skill' | 'web';
 export type AgentToolResult = 'json' | 'image';
 export type AgentToolConfirmation = 'required' | 'preapproved';
+export type Network =
+  | ('denied' | 'allowed')
+  | {
+      restricted: {
+        /**
+         * @maxItems 128
+         */
+        destinations: Destination[];
+      };
+    };
+export type JevCredentialTarget =
+  | {
+      kind: 'api_key';
+    }
+  | {
+      name: string;
+      kind: 'header';
+    };
+export type JevCredentialChange = 'replace' | 'remove';
+export type JevUpdate =
+  | {
+      snapshot: JevSnapshot;
+      kind: 'updated';
+    }
+  | {
+      kind: 'changed';
+    }
+  | {
+      kind: 'invalid';
+    };
+export type JevQuestion =
+  | {
+      instructions: unknown;
+      criteria?: {
+        [k: string]: unknown | undefined;
+      } | null;
+      type: 'noul';
+    }
+  | {
+      instructions: unknown;
+      criteria: {
+        [k: string]: unknown | undefined;
+      };
+      type: 'choice';
+    }
+  | {
+      instructions: unknown;
+      criteria: unknown[];
+      type: 'score';
+    };
+export type JevResult =
+  | {
+      value: JevEvaluationResult;
+      kind: 'completed';
+    }
+  | {
+      message: string;
+      kind: 'failed';
+    };
+export type JevAnswer =
+  | {
+      noul: number;
+      type: 'noul';
+    }
+  | {
+      choice: string;
+      confidence: number;
+      probabilities: {
+        [k: string]: number | undefined;
+      };
+      type: 'choice';
+    }
+  | {
+      score: number;
+      confidence: number;
+      probabilities: {
+        [k: string]: number | undefined;
+      };
+      legend: {
+        [k: string]: string | undefined;
+      };
+      type: 'score';
+    };
+export type WebSource = 'model' | 'tavily';
+export type WebUpdate =
+  | {
+      snapshot: WebSnapshot;
+      kind: 'updated';
+    }
+  | {
+      kind: 'changed';
+    }
+  | {
+      kind: 'invalid_key';
+    }
+  | {
+      kind: 'check_unavailable';
+    };
+export type WebCheckOutcome =
+  | 'valid'
+  | 'invalid_credentials'
+  | 'rate_limited'
+  | 'network_error'
+  | 'timeout';
+export type WebResult =
+  | {
+      value: unknown;
+      kind: 'completed';
+    }
+  | {
+      message: string;
+      kind: 'failed';
+    };
 export type ThinkingLevel =
   | 'off'
   | 'minimal'
@@ -1347,16 +1491,6 @@ export type Scope = 'subtree' | 'exact';
  * Equal-path conflict priority is different from authority breadth: deny wins.
  */
 export type Access = 'read' | 'write' | 'deny';
-export type Network =
-  | ('denied' | 'allowed')
-  | {
-      restricted: {
-        /**
-         * @maxItems 128
-         */
-        destinations: Destination[];
-      };
-    };
 export type ExecutorOutcome =
   | {
       text: string;
@@ -1427,6 +1561,18 @@ export type ProtocolProcessCompletion =
       message: string;
       kind: 'failed';
     };
+export type WorkHubPresetsResult =
+  | {
+      snapshot: WorkHubPresets;
+      kind: 'saved';
+    }
+  | {
+      snapshot: WorkHubPresets;
+      kind: 'conflict';
+    }
+  | {
+      kind: 'invalid';
+    };
 export type WorkHubCoordinator =
   | {
       kind: 'missing';
@@ -1447,10 +1593,113 @@ export type AgentSessionActivity = 'idle' | 'working' | 'waiting';
 export type AgentRejection =
   | 'title_invalid'
   | 'labels_invalid'
+  | 'tools_unavailable'
   | 'workspace_unavailable'
   | 'session_unavailable'
   | 'closed';
 export type WorkHubTaskStatus =
+  | {
+      /**
+       * @maxItems 16
+       */
+      dependencies:
+        | []
+        | [string]
+        | [string, string]
+        | [string, string, string]
+        | [string, string, string, string]
+        | [string, string, string, string, string]
+        | [string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string, string]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ];
+      kind: 'blocked';
+    }
+  | {
+      kind: 'cancelled';
+    }
   | {
       stage: WorkHubPreparationStage;
       operation: string;
@@ -1559,6 +1808,10 @@ export type WorkHubControlStatus =
     };
 export type WorkHubControlOutcome =
   | {
+      result: AgentPatchResult;
+      kind: 'patch';
+    }
+  | {
       result: AgentStopped;
       kind: 'stop';
     }
@@ -1569,6 +1822,20 @@ export type WorkHubControlOutcome =
   | {
       result: AgentQueueMutationResult;
       kind: 'retract';
+    };
+export type AgentPatchResult =
+  | {
+      kind: 'unavailable';
+    }
+  | {
+      kind: 'busy';
+    }
+  | {
+      kind: 'changed';
+    }
+  | {
+      patch: AgentWorkspacePatch;
+      kind: 'ready';
     };
 export type AgentResumeResult =
   | {
@@ -1630,6 +1897,244 @@ export type SettingsModelsRead =
       revision: number;
       cursor: SettingsModelCursor;
       kind: 'continue';
+    };
+export type UsageActivityKind = 'model' | 'tool';
+export type UsageActivityStatus = 'success' | 'error' | 'aborted' | 'unknown' | 'rejected';
+/**
+ * A physical model call or tool attempt, never copied conversation membership.
+ */
+export type UsageActivity =
+  | {
+      kind: 'model';
+      attempt: UsageModelAttempt;
+      [k: string]: unknown | undefined;
+    }
+  | {
+      kind: 'tool';
+      attempt: UsageToolAttempt;
+      [k: string]: unknown | undefined;
+    };
+export type UsageOrigin =
+  | {
+      invocation: Invocation;
+      purpose: ModelPurpose;
+      kind: 'agent';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      source: UsageAuxiliarySource;
+      kind: 'auxiliary';
+      [k: string]: unknown | undefined;
+    };
+export type ModelPurpose = 'main' | 'summary';
+export type UsageAuxiliarySource =
+  | {
+      invocation: Invocation;
+      kind: 'session_title';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      invocation: Invocation;
+      operation_id: string;
+      kind: 'agent';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      id: string;
+      kind: 'host_effect';
+      [k: string]: unknown | undefined;
+    };
+export type UsageOutcome = ('success' | 'error' | 'aborted') | 'unknown';
+export type ToolOrigin =
+  | {
+      step_id: string;
+      kind: 'provider';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      parent_operation_id: string;
+      parent_tool_call_id: string;
+      kind: 'code_mode';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      parent_operation_id: string;
+      parent_tool_call_id: string;
+      kind: 'code_cell';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      kind: 'standalone';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      package_id: string;
+      entry_id: string;
+      activation: string;
+      parent_operation_id?: string | null;
+      kind: 'host_sdk';
+      [k: string]: unknown | undefined;
+    };
+export type UsageToolResult =
+  | {
+      reason: RejectionKind;
+      kind: 'rejected';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      startedAt: number;
+      outcome: UsageToolStatus;
+      kind: 'settled';
+      [k: string]: unknown | undefined;
+    };
+/**
+ * Refusal category without input-derived explanation text.
+ */
+export type RejectionKind =
+  | 'unavailable'
+  | 'invalid_input'
+  | 'policy_denied'
+  | 'preparation_failed'
+  | 'exclusive_conflict'
+  | 'cancelled';
+export type UsageToolStatus = 'success' | 'error' | 'unknown';
+/**
+ * Breakdown selected for a bounded summary page.
+ */
+export type UsageGroup = 'byProvider' | 'byModel' | 'byTool';
+export type SettingsPricingResult =
+  | {
+      result: PricingUpdated;
+      kind: 'updated';
+    }
+  | {
+      kind: 'rejected';
+    };
+export type PricingUpdated =
+  | {
+      revision: number;
+      kind: 'committed';
+    }
+  | {
+      revision: number;
+      kind: 'unchanged';
+    }
+  | {
+      expectedRevision: number;
+      actualRevision: number;
+      kind: 'revision_conflict';
+    };
+export type PricingQuery =
+  | {
+      kind: 'start';
+    }
+  | {
+      revision: number;
+      offset: number;
+      kind: 'continue';
+    };
+export type PricingPage =
+  | {
+      revision: number;
+      offset: number;
+      entries: PricingEntry[];
+      nextOffset?: number | null;
+      kind: 'page';
+    }
+  | {
+      expectedRevision: number;
+      actualRevision: number;
+      kind: 'revision_changed';
+    };
+export type PricingEntry =
+  | {
+      pricing: Pricing;
+      source: 'builtin';
+    }
+  | {
+      pricing: Pricing;
+      resetEffect: PricingResetEffect;
+      source: 'custom';
+    };
+export type PricingResetEffect = 'restore_builtin' | 'become_unpriced';
+export type PricingMutation =
+  | {
+      pricing: Pricing;
+      kind: 'upsert';
+    }
+  | {
+      modelKey: string;
+      kind: 'delete';
+    };
+export type ProxyProtocol = 'http' | 'https' | 'socks5';
+export type CredentialLocator =
+  | {
+      connectionId: string;
+      kind: ConnectionCredentialKind;
+      scope: 'connection';
+    }
+  | {
+      kind: PasswordKind;
+      scope: 'network_proxy';
+    };
+export type ConnectionCredentialKind = 'provider' | 'request_headers';
+export type PasswordKind = 'password';
+export type SettingsNetworkCredentialAction = 'keep' | 'delete' | 'replace';
+export type SettingsNetworkUpdated =
+  | {
+      result: NetworkProxyUpdateResult;
+      kind: 'applied';
+    }
+  | {
+      kind: 'rejected';
+    };
+export type NetworkProxyUpdateResult =
+  | {
+      revision: number;
+      credentialStatus: CredentialStatus;
+      kind: 'committed';
+    }
+  | {
+      expectedRevision: number;
+      actualRevision: number;
+      kind: 'revision_conflict';
+    }
+  | {
+      expected: CredentialTarget;
+      actual: CredentialTarget;
+      kind: 'proxy_target_mismatch';
+    }
+  | {
+      expected: CredentialVersionBasis | null;
+      actual: CredentialVersionBasis | null;
+      kind: 'credential_stale';
+    };
+export type SettingsPreferencesMutation =
+  | {
+      displayName: string;
+      assistantTone: string;
+      kind: 'personalization';
+    }
+  | {
+      enabled: boolean;
+      kind: 'workspace_instructions';
+    }
+  | {
+      incognitoActive: boolean;
+      kind: 'privacy';
+    };
+export type SettingsPreferencesUpdated =
+  | {
+      revision: number;
+      kind: 'committed';
+    }
+  | {
+      expectedRevision: number;
+      actualRevision: number;
+      kind: 'revision_conflict';
+    }
+  | {
+      kind: 'rejected';
     };
 export type SettingsModelsPage =
   | {
@@ -2009,18 +2514,6 @@ export type SettingsConnectionDetail =
       enabledModelCount: number;
       kind: 'ready';
     };
-export type CredentialLocator =
-  | {
-      connectionId: string;
-      kind: ConnectionCredentialKind;
-      scope: 'connection';
-    }
-  | {
-      kind: PasswordKind;
-      scope: 'network_proxy';
-    };
-export type ConnectionCredentialKind = 'provider' | 'request_headers';
-export type PasswordKind = 'password';
 export type SettingsCredentialSaveResult =
   | {
       connection: ConnectionIdentity;
@@ -2310,6 +2803,10 @@ export type AgentSessionPosition =
       kind: 'before';
     };
 export type AgentWorkspaceSelection =
+  | {
+      selection: AgentDirectorySelection;
+      kind: 'isolated_git';
+    }
   | {
       project: AgentProjectRef;
       selection: AgentDirectorySelection;
@@ -5797,6 +6294,14 @@ export interface TextChunk {
 }
 export interface AgentConfiguration {
   /**
+   * Permit creation of Host-owned Git worktrees from published directories.
+   */
+  isolatedWorkspaces?: boolean;
+  /**
+   * Select Maka's assistant policy and workspace guidance explicitly.
+   */
+  assistant?: AgentAssistantConfiguration | null;
+  /**
    * Enable model proposals and approved scheduled work for this Agent.
    */
   scheduledTasks?: boolean;
@@ -5957,6 +6462,12 @@ export interface AgentConfiguration {
    */
   tools: AgentServiceTool[];
 }
+export interface AgentAssistantConfiguration {
+  /**
+   * Read only the three instruction files in this home's .maka directory.
+   */
+  home?: string | null;
+}
 export interface AgentServiceExecutor {
   name: string;
   import: string;
@@ -6013,6 +6524,114 @@ export interface DisplayText {
   translations?: {
     [k: string]: string | undefined;
   };
+}
+export interface WorkspaceJevConfiguration {
+  network: Network;
+}
+/**
+ * Destination authority, independent of the upstream proxy used to reach it.
+ * A domain grant does not authorize its subdomains or other ports.
+ */
+export interface Destination {
+  host: string;
+  port: number;
+}
+export interface JevSet {
+  revision?: number | null;
+  settings: JevSettings;
+}
+export interface JevSettings {
+  enabled: boolean;
+  url: string;
+  model: string;
+  timeoutMs: number;
+}
+export interface JevCredential {
+  url: string;
+  revision?: number | null;
+  target: JevCredentialTarget;
+  change: JevCredentialChange;
+}
+export interface JevSnapshot {
+  revision?: number | null;
+  settings: JevSettings;
+  credentialRevision?: number | null;
+  configured: boolean;
+  apiKeyConfigured: boolean;
+  headerNames: string[];
+  [k: string]: unknown | undefined;
+}
+export interface JevEvaluation {
+  state: unknown;
+  questions: {
+    [k: string]: JevQuestion | undefined;
+  };
+}
+export interface JevEvaluationResult {
+  model: string;
+  answers: {
+    [k: string]: JevAnswer | undefined;
+  };
+  usage: JevUsage;
+}
+export interface JevUsage {
+  input_tokens: number;
+  output_tokens: number;
+}
+export interface WorkspaceWebConfiguration {
+  network: Network;
+}
+export interface WebCapture {
+  basis: WebBasis;
+  available: boolean;
+  source: WebSource;
+  credentialConfigured: boolean;
+}
+export interface WebBasis {
+  revision?: number | null;
+  credentialRevision?: number | null;
+}
+export interface WebCall_WebFetch {
+  basis: WebBasis;
+  input: WebFetch;
+}
+export interface WebFetch {
+  url: string;
+}
+export interface WebCall_WebQuery {
+  basis: WebBasis;
+  input: WebQuery;
+}
+export interface WebQuery {
+  query: string;
+  limit?: number;
+}
+export interface WebSet {
+  revision?: number | null;
+  settings: WebSettings;
+}
+export interface WebSettings {
+  enabled: boolean;
+  source: WebSource;
+}
+export interface WebKey {
+  revision?: number | null;
+}
+export interface WebSnapshot {
+  revision?: number | null;
+  settings: WebSettings;
+  credential: WebCredential;
+  [k: string]: unknown | undefined;
+}
+export interface WebCredential {
+  revision?: number | null;
+  configured: boolean;
+  check?: WebCheck | null;
+  [k: string]: unknown | undefined;
+}
+export interface WebCheck {
+  credential_revision: number;
+  outcome: WebCheckOutcome;
 }
 export interface AgentExecute {
   /**
@@ -6133,14 +6752,6 @@ export interface Rule {
   scope: Scope;
   access: Access;
 }
-/**
- * Destination authority, independent of the upstream proxy used to reach it.
- * A domain grant does not authorize its subdomains or other ports.
- */
-export interface Destination {
-  host: string;
-  port: number;
-}
 export interface ProtocolProcessRun {
   executable: string;
   /**
@@ -6168,6 +6779,43 @@ export interface ProtocolProcessWritten {
   bytes: number;
   closed: boolean;
 }
+export interface AgentToolNames {
+  /**
+   * @maxItems 128
+   */
+  names: string[];
+}
+export interface WorkHubPresets {
+  revision: number | null;
+  /**
+   * @maxItems 64
+   */
+  entries: WorkHubPreset[];
+}
+export interface WorkHubPreset {
+  isolatedWorkspace?: boolean;
+  id: string;
+  name: string;
+  description: string;
+  worker: string;
+  /**
+   * Exact installed names; an empty list permits reasoning without tools.
+   *
+   * @maxItems 128
+   */
+  tools: string[];
+  model: ModelSelection;
+  thinkingLevel?: ThinkingLevel | null;
+  enabled: boolean;
+}
+/**
+ * Exact public selection observed by a caller, checked once at run admission.
+ */
+export interface ModelSelection {
+  connectionId: string;
+  revision: number;
+  modelId: string;
+}
 export interface WorkHubResolve {
   /**
    * Used only when freezing the first coordinator creation intent.
@@ -6183,6 +6831,7 @@ export interface AgentDirectorySelection {
   directoryIdentity: string;
 }
 export interface AgentSession {
+  tools?: string[] | null;
   dataSource: AgentDataSource;
   permissions: AgentWorkspacePermissions;
   boundaryRevision: number;
@@ -6206,12 +6855,27 @@ export interface AgentDataSource {
 }
 export interface AgentWorkspace {
   /**
+   * Native owner allocation; never accepted from a caller as workspace authority.
+   */
+  worktree?: Binding | null;
+  /**
    * Optional membership in this Agent's canonical Project catalog.
    */
   projectId?: string | null;
   path: string;
   directoryIdentity: string;
   identity: string;
+}
+/**
+ * Immutable allocation intent, not the current child branch or HEAD.
+ */
+export interface Binding {
+  id: string;
+  common_dir: string;
+  source: string;
+  source_identity: string;
+  base_commit: string;
+  directory: string;
 }
 export interface WorkHubConfiguration {
   agent: AgentConfiguration;
@@ -6240,6 +6904,102 @@ export interface AgentAnswerCursor {
   offset: number;
 }
 export interface WorkHubTask {
+  /**
+   * @maxItems 16
+   */
+  dependencies?:
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ];
   taskId: string;
   worker: string;
   operation: string;
@@ -6271,6 +7031,13 @@ export interface WorkHubControl {
   controlId: string;
   operation: string;
   status: WorkHubControlStatus;
+}
+export interface AgentWorkspacePatch {
+  artifactId: string;
+  sessionId: string;
+  turnId: string;
+  baseCommit: string;
+  bytes: number;
 }
 export interface AgentStopped {
   requested: boolean;
@@ -6613,18 +7380,250 @@ export interface AgentWorkRead {
   target: AgentWorkTarget;
   cursor?: AgentAnswerCursor | null;
 }
-/**
- * Exact public selection observed by a caller, checked once at run admission.
- */
-export interface ModelSelection {
-  connectionId: string;
-  revision: number;
-  modelId: string;
-}
 export interface SettingsModelCursor {
   query: string;
   connection: number;
   model: number;
+}
+export interface SettingsUsageRead {
+  range: SettingsUsageRange;
+  selection: UsageSelection;
+  offset: number;
+}
+export interface SettingsUsageRange {
+  from: number;
+  to: number;
+  sessionId: string | null;
+  through: number | null;
+}
+/**
+ * Filters only the activity list, never headline accounting for the range.
+ */
+export interface UsageSelection {
+  kind?: UsageActivityKind | null;
+  status?: UsageActivityStatus | null;
+  search?: string;
+}
+export interface SettingsUsagePage {
+  through: number;
+  /**
+   * @maxItems 32
+   */
+  attempts: UsageActivity[];
+  total: number;
+  nextOffset?: number | null;
+}
+export interface UsageModelAttempt {
+  requestId: string;
+  origin: UsageOrigin;
+  sessionId?: string | null;
+  binding?: ModelBinding | null;
+  modelId: string;
+  startedAt: number;
+  completedAt: number;
+  outcome: UsageOutcome;
+  usage: ModelUsage;
+  quote?: Quote | null;
+  costUsd?: number | null;
+}
+/**
+ * Public model identity. Credentials and provider handles never belong here.
+ */
+export interface ModelBinding {
+  connection_id: string;
+  connection_slug: string;
+  model: string;
+  [k: string]: unknown | undefined;
+}
+export interface ModelUsage {
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  cache_read_tokens?: number | null;
+  cache_write_tokens?: number | null;
+  reasoning_tokens?: number | null;
+  [k: string]: unknown | undefined;
+}
+export interface Quote {
+  providerId: string;
+  revision: number;
+  pricing?: Pricing | null;
+}
+export interface Pricing {
+  modelKey: string;
+  inputUsdPer1M: number;
+  outputUsdPer1M: number;
+  cacheReadUsdPer1M?: number;
+  cacheWriteUsdPer1M?: number;
+}
+export interface UsageToolAttempt {
+  requestId: string;
+  invocation: Invocation;
+  call: ToolCallIdentity;
+  name: string;
+  binding?: ModelBinding | null;
+  completedAt: number;
+  result: UsageToolResult;
+}
+/**
+ * A Tool Call is distinct from its durable host operation. Origin determines
+ * model visibility; it is not an independent flag that can contradict ancestry.
+ */
+export interface ToolCallIdentity {
+  tool_call_id: string;
+  origin: ToolOrigin;
+  [k: string]: unknown | undefined;
+}
+export interface SettingsUsageSummary {
+  through: number;
+  summary: SettingsUsageTotals;
+  nextOffset?: number | null;
+}
+export interface SettingsUsageTotals {
+  models: UsageModelTotals;
+  tools: UsageToolTotals;
+  pending: UsagePending;
+  /**
+   * @maxItems 32
+   */
+  byProvider: UsageProviderSummary[];
+  /**
+   * @maxItems 32
+   */
+  byModel: UsageModelSummary[];
+  /**
+   * @maxItems 32
+   */
+  byTool: UsageToolSummary[];
+}
+export interface UsageModelTotals {
+  calls: number;
+  success: number;
+  error: number;
+  aborted: number;
+  unknown: number;
+  /**
+   * Sum of observed durations; unknown outcomes are excluded. Not wall-clock time.
+   */
+  durationMs: number;
+  input: UsageTokens;
+  output: UsageTokens;
+  cacheRead: UsageTokens;
+  cacheWrite: UsageTokens;
+  reasoning: UsageTokens;
+  cost: UsageCost;
+}
+/**
+ * Sum of reported counters, qualified by calls that omitted this counter.
+ */
+export interface UsageTokens {
+  known: number;
+  missing: number;
+}
+export interface UsageCost {
+  knownUsd: number;
+  /**
+   * Calls without a persisted valuation; includes unpriced calls.
+   */
+  unvalued: number;
+  unpriced: number;
+}
+export interface UsageToolTotals {
+  /**
+   * Includes pre-dispatch refusals, which are counted separately below.
+   */
+  calls: number;
+  success: number;
+  error: number;
+  unknown: number;
+  rejected: number;
+  /**
+   * Known success/error durations; refusals and unknown effects contribute no time.
+   */
+  durationMs: number;
+  /**
+   * Only known success/error settlements contribute to observed execution latency.
+   */
+  meanLatencyMs?: number | null;
+}
+export interface UsagePending {
+  models: number;
+  tools: number;
+}
+export interface UsageProviderSummary {
+  /**
+   * Unknown identity is not inferred from a transport protocol or current settings.
+   */
+  providerId?: string | null;
+  totals: UsageModelTotals;
+}
+export interface UsageModelSummary {
+  modelId: string;
+  totals: UsageModelTotals;
+}
+export interface UsageToolSummary {
+  name: string;
+  totals: UsageToolTotals;
+}
+export interface SettingsUsageSummaryRead {
+  range: SettingsUsageRange;
+  group: UsageGroup;
+  offset: number;
+}
+export interface PricingUpdate {
+  expectedRevision: number;
+  mutation: PricingMutation;
+}
+export interface SettingsAssistantPreferences {
+  revision: number;
+  displayName: string;
+  assistantTone: string;
+  workspaceInstructions: boolean;
+  incognitoActive: boolean;
+}
+export interface SettingsNetworkSnapshot {
+  revision: number;
+  proxy: NetworkProxy;
+  credential: CredentialStatus;
+  rootId: string;
+  rootPath: string;
+}
+export interface NetworkProxy {
+  enabled: boolean;
+  protocol: ProxyProtocol;
+  host: string;
+  port: number;
+  authEnabled: boolean;
+  username: string;
+  bypassList: string[];
+  autoBypassDomains: string[];
+}
+export interface CredentialStatus {
+  locator: CredentialLocator;
+  configured: boolean;
+  credentialId: string | null;
+  revision: number | null;
+  updatedAt: number | null;
+}
+export interface SettingsNetworkUpdate {
+  expectedPolicyRevision: number;
+  expectedCredential: CredentialVersionBasis | null;
+  networkProxy: NetworkProxy;
+  credential: SettingsNetworkCredentialAction;
+}
+export interface CredentialVersionBasis {
+  locator: CredentialLocator;
+  credentialId: string;
+  revision: number;
+}
+export interface CredentialTarget {
+  protocol: ProxyProtocol;
+  host: string;
+  port: number;
+  username: string;
+}
+export interface SettingsPreferencesUpdate {
+  expectedRevision: number;
+  mutation: SettingsPreferencesMutation;
 }
 export interface SettingsModelChoice {
   selection: ModelSelection;
@@ -6779,11 +7778,6 @@ export interface SettingsSaveCredential {
   expected: ConnectionCredentialTarget;
   expectedCredential: CredentialVersionBasis | null;
 }
-export interface CredentialVersionBasis {
-  locator: CredentialLocator;
-  credentialId: string;
-  revision: number;
-}
 export interface ConnectionIdentity {
   connectionId: string;
   slug: string;
@@ -6886,13 +7880,6 @@ export interface RemoveCatalogConnectionInput {
 }
 export interface CredentialVaultQueryInput {
   locator: CredentialLocator;
-}
-export interface CredentialStatus {
-  locator: CredentialLocator;
-  configured: boolean;
-  credentialId: string | null;
-  revision: number | null;
-  updatedAt: number | null;
 }
 export interface DeleteCredentialInput {
   expected: CredentialVersionBasis;
@@ -7177,6 +8164,13 @@ export interface AgentList {
   position: AgentSessionPosition;
 }
 export interface AgentCreate {
+  /**
+   * Immutable narrowing of this Agent's installed tools. None uses the installation;
+   * an empty list permits no model tools. External executors cannot enforce this.
+   *
+   * @maxItems 128
+   */
+  tools?: string[] | null;
   title: string;
   /**
    * @maxItems 32
@@ -7756,6 +8750,11 @@ export interface FormAsk {
  * Immutable installation ceiling selected by trusted native composition.
  */
 export interface WorkspaceProcessConfiguration {
+  /**
+   * Allow the selected native Session's verified owned worktree, within its
+   * own access policy. Other Host-private paths remain denied.
+   */
+  isolatedWorkspaces?: boolean;
   filesystem: Policy;
   network: Network;
   /**

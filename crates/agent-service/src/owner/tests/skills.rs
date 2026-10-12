@@ -69,7 +69,7 @@ async fn selected_skill_tools_use_actual_agent_context_and_original_grants_over_
                     "binding" => invalid[0].import = "absent".into(),
                     _ => unreachable!(),
                 }
-                assert_eq!(crate::tools::catalog(f.services.clone(), f.store.clone(), &invalid, vec![]).err().as_deref(), Some(expected));
+                assert_eq!(crate::tools::catalog(f.services.clone(), f.store.clone(), &invalid, vec![], Default::default()).err().as_deref(), Some(expected));
             }
             let session = f.create("Skill tools").await;
             f.send(&session).await.unwrap();
@@ -133,7 +133,7 @@ async fn selected_skill_tools_use_actual_agent_context_and_original_grants_over_
         let f = Fixture::with_services("http://127.0.0.1:9/v1", 1, None, None, Some(service_tools::Setup::forms())).await;
         let mut invalid = f.owner.settings.tools.clone();
         invalid[0].input = contract::ToolInput::Skill;
-        assert_eq!(crate::tools::catalog(f.services.clone(), f.store.clone(), &invalid, vec![]).err().as_deref(), Some("agent_skill_tool_contract_invalid"));
+        assert_eq!(crate::tools::catalog(f.services.clone(), f.store.clone(), &invalid, vec![], Default::default()).err().as_deref(), Some("agent_skill_tool_contract_invalid"));
         f.app.shutdown().await.unwrap();
         f.config.shutdown().await.unwrap();
     }).await.unwrap();

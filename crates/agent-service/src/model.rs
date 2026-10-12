@@ -280,3 +280,25 @@ fn connection(row: &maka_runtime::configuration::ConnectionCatalogEntry) -> Conn
 fn unavailable() -> RunError {
     RunError::InvalidInput("agent_model_unavailable".into())
 }
+
+/// Capture the actual Root rate decision for every physical provider request.
+pub(crate) struct Prices(pub Arc<ConfigurationStore>);
+impl maka_agent::pricing::Pricing for Prices {
+    fn quote<'a>(
+        &'a self,
+        provider: &'a str,
+        model: &'a str,
+    ) -> BoxFuture<'a, Result<maka_runtime::pricing::Quote, RunError>> {
+        Box::pin(async move {
+            self.0
+                .quote_model(provider.into(), model.into())
+                .await
+                .map_err(|error| match error {
+                    maka_config::ConfigError::CommitUnknown => {
+                        maka_runtime::event::CommitError::OutcomeUnknown(error.to_string()).into()
+                    }
+                    _ => RunError::Internal("model pricing unavailable".into()),
+                })
+        })
+    }
+}

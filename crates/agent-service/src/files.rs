@@ -297,7 +297,7 @@ fn capture(
     let host_ceiling = Sandbox::Managed {
         filesystem: Policy {
             default: Access::Write,
-            rules: vec![Rule::subtree(state_root, Access::Deny)],
+            rules: crate::workspace::private_rules(workspace, state_root).map_err(failed)?,
             deny_globs: vec![],
         },
         network: Network::Denied,

@@ -7028,6 +7028,12 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  tools: {
+                    type: ['array', 'null'],
+                    items: {
+                      type: 'string',
+                    },
+                  },
                   dataSource: {
                     $ref: '#/$defs/AgentDataSource',
                   },
@@ -7140,6 +7146,18 @@ export const contracts = {
               AgentWorkspace: {
                 type: 'object',
                 properties: {
+                  worktree: {
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   projectId: {
                     description: "Optional membership in this Agent's canonical Project catalog.",
                     type: ['string', 'null'],
@@ -7162,6 +7180,40 @@ export const contracts = {
                 additionalProperties: false,
                 required: ['path', 'directoryIdentity', 'identity'],
               },
+              Binding: {
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
+              },
               AgentSessionActivity: {
                 type: 'string',
                 enum: ['idle', 'working', 'waiting'],
@@ -7177,6 +7229,17 @@ export const contracts = {
             title: 'AgentCreate',
             type: 'object',
             properties: {
+              tools: {
+                description:
+                  "Immutable narrowing of this Agent's installed tools. None uses the installation;\nan empty list permits no model tools. External executors cannot enforce this.",
+                type: ['array', 'null'],
+                items: {
+                  type: 'string',
+                },
+                maxItems: 128,
+                default: null,
+                uniqueItems: true,
+              },
               title: {
                 type: 'string',
                 minLength: 1,
@@ -7198,6 +7261,20 @@ export const contracts = {
             $defs: {
               AgentWorkspaceSelection: {
                 oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      selection: {
+                        $ref: '#/$defs/AgentDirectorySelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'isolated_git',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'selection'],
+                  },
                   {
                     type: 'object',
                     properties: {
@@ -7247,21 +7324,6 @@ export const contracts = {
                   },
                 ],
               },
-              AgentProjectRef: {
-                type: 'object',
-                properties: {
-                  id: {
-                    type: 'string',
-                    format: 'uuid',
-                  },
-                  revision: {
-                    type: 'string',
-                    pattern: '^[a-f0-9]{64}$',
-                  },
-                },
-                additionalProperties: false,
-                required: ['id', 'revision'],
-              },
               AgentDirectorySelection: {
                 type: 'object',
                 properties: {
@@ -7284,6 +7346,21 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['rootId', 'segments', 'directoryIdentity'],
+              },
+              AgentProjectRef: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'string',
+                    pattern: '^[a-f0-9]{64}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['id', 'revision'],
               },
             },
           },
@@ -7324,6 +7401,12 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  tools: {
+                    type: ['array', 'null'],
+                    items: {
+                      type: 'string',
+                    },
+                  },
                   dataSource: {
                     $ref: '#/$defs/AgentDataSource',
                   },
@@ -7436,6 +7519,18 @@ export const contracts = {
               AgentWorkspace: {
                 type: 'object',
                 properties: {
+                  worktree: {
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   projectId: {
                     description: "Optional membership in this Agent's canonical Project catalog.",
                     type: ['string', 'null'],
@@ -7458,6 +7553,40 @@ export const contracts = {
                 additionalProperties: false,
                 required: ['path', 'directoryIdentity', 'identity'],
               },
+              Binding: {
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
+              },
               AgentSessionActivity: {
                 type: 'string',
                 enum: ['idle', 'working', 'waiting'],
@@ -7467,6 +7596,7 @@ export const contracts = {
                 enum: [
                   'title_invalid',
                   'labels_invalid',
+                  'tools_unavailable',
                   'workspace_unavailable',
                   'session_unavailable',
                   'closed',
@@ -9354,6 +9484,12 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  tools: {
+                    type: ['array', 'null'],
+                    items: {
+                      type: 'string',
+                    },
+                  },
                   dataSource: {
                     $ref: '#/$defs/AgentDataSource',
                   },
@@ -9466,6 +9602,18 @@ export const contracts = {
               AgentWorkspace: {
                 type: 'object',
                 properties: {
+                  worktree: {
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   projectId: {
                     description: "Optional membership in this Agent's canonical Project catalog.",
                     type: ['string', 'null'],
@@ -9487,6 +9635,40 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['path', 'directoryIdentity', 'identity'],
+              },
+              Binding: {
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
               },
               AgentSessionActivity: {
                 type: 'string',
@@ -10174,6 +10356,12 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  tools: {
+                    type: ['array', 'null'],
+                    items: {
+                      type: 'string',
+                    },
+                  },
                   dataSource: {
                     $ref: '#/$defs/AgentDataSource',
                   },
@@ -10286,6 +10474,18 @@ export const contracts = {
               AgentWorkspace: {
                 type: 'object',
                 properties: {
+                  worktree: {
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   projectId: {
                     description: "Optional membership in this Agent's canonical Project catalog.",
                     type: ['string', 'null'],
@@ -10307,6 +10507,40 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['path', 'directoryIdentity', 'identity'],
+              },
+              Binding: {
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
               },
               AgentSessionActivity: {
                 type: 'string',
@@ -11312,6 +11546,12 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  tools: {
+                    type: ['array', 'null'],
+                    items: {
+                      type: 'string',
+                    },
+                  },
                   dataSource: {
                     $ref: '#/$defs/AgentDataSource',
                   },
@@ -11424,6 +11664,18 @@ export const contracts = {
               AgentWorkspace: {
                 type: 'object',
                 properties: {
+                  worktree: {
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   projectId: {
                     description: "Optional membership in this Agent's canonical Project catalog.",
                     type: ['string', 'null'],
@@ -11445,6 +11697,40 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['path', 'directoryIdentity', 'identity'],
+              },
+              Binding: {
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
               },
               AgentSessionActivity: {
                 type: 'string',
@@ -11512,6 +11798,12 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  tools: {
+                    type: ['array', 'null'],
+                    items: {
+                      type: 'string',
+                    },
+                  },
                   dataSource: {
                     $ref: '#/$defs/AgentDataSource',
                   },
@@ -11624,6 +11916,18 @@ export const contracts = {
               AgentWorkspace: {
                 type: 'object',
                 properties: {
+                  worktree: {
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   projectId: {
                     description: "Optional membership in this Agent's canonical Project catalog.",
                     type: ['string', 'null'],
@@ -11646,6 +11950,40 @@ export const contracts = {
                 additionalProperties: false,
                 required: ['path', 'directoryIdentity', 'identity'],
               },
+              Binding: {
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
+              },
               AgentSessionActivity: {
                 type: 'string',
                 enum: ['idle', 'working', 'waiting'],
@@ -11655,6 +11993,7 @@ export const contracts = {
                 enum: [
                   'title_invalid',
                   'labels_invalid',
+                  'tools_unavailable',
                   'workspace_unavailable',
                   'session_unavailable',
                   'closed',
@@ -11803,6 +12142,12 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  tools: {
+                    type: ['array', 'null'],
+                    items: {
+                      type: 'string',
+                    },
+                  },
                   dataSource: {
                     $ref: '#/$defs/AgentDataSource',
                   },
@@ -11915,6 +12260,18 @@ export const contracts = {
               AgentWorkspace: {
                 type: 'object',
                 properties: {
+                  worktree: {
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   projectId: {
                     description: "Optional membership in this Agent's canonical Project catalog.",
                     type: ['string', 'null'],
@@ -11937,6 +12294,40 @@ export const contracts = {
                 additionalProperties: false,
                 required: ['path', 'directoryIdentity', 'identity'],
               },
+              Binding: {
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
+              },
               AgentSessionActivity: {
                 type: 'string',
                 enum: ['idle', 'working', 'waiting'],
@@ -11946,6 +12337,7 @@ export const contracts = {
                 enum: [
                   'title_invalid',
                   'labels_invalid',
+                  'tools_unavailable',
                   'workspace_unavailable',
                   'session_unavailable',
                   'closed',
@@ -12007,6 +12399,12 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  tools: {
+                    type: ['array', 'null'],
+                    items: {
+                      type: 'string',
+                    },
+                  },
                   dataSource: {
                     $ref: '#/$defs/AgentDataSource',
                   },
@@ -12119,6 +12517,18 @@ export const contracts = {
               AgentWorkspace: {
                 type: 'object',
                 properties: {
+                  worktree: {
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   projectId: {
                     description: "Optional membership in this Agent's canonical Project catalog.",
                     type: ['string', 'null'],
@@ -12140,6 +12550,40 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['path', 'directoryIdentity', 'identity'],
+              },
+              Binding: {
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
               },
               AgentSessionActivity: {
                 type: 'string',
@@ -12974,6 +13418,118 @@ export const contracts = {
           },
           resources: {},
         },
+        readPatch: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentPatchRead',
+            type: 'object',
+            properties: {
+              execution: {
+                $ref: '#/$defs/AgentExecutionRead',
+              },
+              offset: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 52428800,
+              },
+            },
+            additionalProperties: false,
+            required: ['execution', 'offset'],
+            $defs: {
+              AgentExecutionRead: {
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  invocationId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                },
+                additionalProperties: false,
+                required: ['sessionId', 'invocationId'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentPatchPage',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'unavailable',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  patch: {
+                    $ref: '#/$defs/AgentWorkspacePatch',
+                  },
+                  offset: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  next: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  text: {
+                    type: 'string',
+                    maxLength: 8192,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'ready',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'patch', 'offset', 'next', 'text'],
+              },
+            ],
+            $defs: {
+              AgentWorkspacePatch: {
+                type: 'object',
+                properties: {
+                  artifactId: {
+                    type: 'string',
+                  },
+                  sessionId: {
+                    type: 'string',
+                  },
+                  turnId: {
+                    type: 'string',
+                  },
+                  baseCommit: {
+                    type: 'string',
+                  },
+                  bytes: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['artifactId', 'sessionId', 'turnId', 'baseCommit', 'bytes'],
+              },
+            },
+          },
+          resources: {},
+        },
         recall: {
           mode: 'query',
           input: {
@@ -13054,6 +13610,12 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  tools: {
+                    type: ['array', 'null'],
+                    items: {
+                      type: 'string',
+                    },
+                  },
                   dataSource: {
                     $ref: '#/$defs/AgentDataSource',
                   },
@@ -13166,6 +13728,18 @@ export const contracts = {
               AgentWorkspace: {
                 type: 'object',
                 properties: {
+                  worktree: {
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   projectId: {
                     description: "Optional membership in this Agent's canonical Project catalog.",
                     type: ['string', 'null'],
@@ -13187,6 +13761,40 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['path', 'directoryIdentity', 'identity'],
+              },
+              Binding: {
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
               },
               AgentSessionActivity: {
                 type: 'string',
@@ -15003,6 +15611,18 @@ export const contracts = {
               AgentWorkspace: {
                 type: 'object',
                 properties: {
+                  worktree: {
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   projectId: {
                     description: "Optional membership in this Agent's canonical Project catalog.",
                     type: ['string', 'null'],
@@ -15024,6 +15644,40 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['path', 'directoryIdentity', 'identity'],
+              },
+              Binding: {
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
               },
               AgentWorkspacePermissions: {
                 type: 'object',
@@ -15942,6 +16596,18 @@ export const contracts = {
               AgentWorkspace: {
                 type: 'object',
                 properties: {
+                  worktree: {
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   projectId: {
                     description: "Optional membership in this Agent's canonical Project catalog.",
                     type: ['string', 'null'],
@@ -15963,6 +16629,40 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['path', 'directoryIdentity', 'identity'],
+              },
+              Binding: {
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
               },
               AgentWorkspacePermissions: {
                 type: 'object',
@@ -16662,6 +17362,108 @@ export const contracts = {
           },
           resources: {},
         },
+        snapshotPatch: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentExecutionRead',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              invocationId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'invocationId'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentPatchResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'unavailable',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'busy',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  patch: {
+                    $ref: '#/$defs/AgentWorkspacePatch',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'ready',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'patch'],
+              },
+            ],
+            $defs: {
+              AgentWorkspacePatch: {
+                type: 'object',
+                properties: {
+                  artifactId: {
+                    type: 'string',
+                  },
+                  sessionId: {
+                    type: 'string',
+                  },
+                  turnId: {
+                    type: 'string',
+                  },
+                  baseCommit: {
+                    type: 'string',
+                  },
+                  bytes: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['artifactId', 'sessionId', 'turnId', 'baseCommit', 'bytes'],
+              },
+            },
+          },
+          resources: {},
+        },
         source: {
           mode: 'query',
           input: {
@@ -17304,6 +18106,31 @@ export const contracts = {
                 ],
               },
             ],
+          },
+          resources: {},
+        },
+        tools: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            properties: {},
+            additionalProperties: false,
+          },
+          output: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              names: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                },
+                maxItems: 128,
+              },
+            },
+            required: ['names'],
+            title: 'AgentToolNames',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
           },
           resources: {},
         },
@@ -18490,6 +19317,18 @@ export const contracts = {
               AgentWorkspace: {
                 type: 'object',
                 properties: {
+                  worktree: {
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   projectId: {
                     description: "Optional membership in this Agent's canonical Project catalog.",
                     type: ['string', 'null'],
@@ -18511,6 +19350,40 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['path', 'directoryIdentity', 'identity'],
+              },
+              Binding: {
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
               },
               AgentWorkspacePermissions: {
                 type: 'object',
@@ -19362,6 +20235,20 @@ export const contracts = {
                     additionalProperties: false,
                     properties: {
                       result: {
+                        $ref: '#/$defs/AgentPatchResult',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'patch',
+                      },
+                    },
+                    required: ['kind', 'result'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      result: {
                         $ref: '#/$defs/AgentStopped',
                       },
                       kind: {
@@ -19400,6 +20287,81 @@ export const contracts = {
                     required: ['kind', 'result'],
                   },
                 ],
+              },
+              AgentPatchResult: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'unavailable',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'busy',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'changed',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      patch: {
+                        $ref: '#/$defs/AgentWorkspacePatch',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'ready',
+                      },
+                    },
+                    required: ['kind', 'patch'],
+                  },
+                ],
+              },
+              AgentWorkspacePatch: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  artifactId: {
+                    type: 'string',
+                  },
+                  sessionId: {
+                    type: 'string',
+                  },
+                  turnId: {
+                    type: 'string',
+                  },
+                  baseCommit: {
+                    type: 'string',
+                  },
+                  bytes: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                required: ['artifactId', 'sessionId', 'turnId', 'baseCommit', 'bytes'],
               },
               AgentStopped: {
                 type: 'object',
@@ -19713,6 +20675,12 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  tools: {
+                    type: ['array', 'null'],
+                    items: {
+                      type: 'string',
+                    },
+                  },
                   dataSource: {
                     $ref: '#/$defs/AgentDataSource',
                   },
@@ -19825,6 +20793,18 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  worktree: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                  },
                   projectId: {
                     type: ['string', 'null'],
                     format: 'uuid',
@@ -19846,6 +20826,40 @@ export const contracts = {
                 },
                 required: ['path', 'directoryIdentity', 'identity'],
               },
+              Binding: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
+              },
               AgentSessionActivity: {
                 type: 'string',
                 enum: ['idle', 'working', 'waiting'],
@@ -19855,10 +20869,129 @@ export const contracts = {
                 enum: [
                   'title_invalid',
                   'labels_invalid',
+                  'tools_unavailable',
                   'workspace_unavailable',
                   'session_unavailable',
                   'closed',
                 ],
+              },
+            },
+          },
+          resources: {},
+        },
+        presets: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            properties: {},
+            additionalProperties: false,
+          },
+          output: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              revision: {
+                type: ['integer', 'null'],
+                format: 'uint64',
+                minimum: 0,
+              },
+              entries: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/WorkHubPreset',
+                },
+                maxItems: 64,
+              },
+            },
+            required: ['revision', 'entries'],
+            title: 'WorkHubPresets',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              WorkHubPreset: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  isolatedWorkspace: {
+                    type: 'boolean',
+                    default: false,
+                  },
+                  id: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                    pattern: '^[a-zA-Z0-9._:-]+$',
+                  },
+                  name: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  description: {
+                    type: 'string',
+                    maxLength: 4000,
+                  },
+                  worker: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 256,
+                  },
+                  tools: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                    description:
+                      'Exact installed names; an empty list permits reasoning without tools.',
+                    maxItems: 128,
+                    uniqueItems: true,
+                  },
+                  model: {
+                    $ref: '#/$defs/ModelSelection',
+                  },
+                  thinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  enabled: {
+                    type: 'boolean',
+                  },
+                },
+                required: ['id', 'name', 'description', 'worker', 'tools', 'model', 'enabled'],
+              },
+              ModelSelection: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  modelId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 512,
+                  },
+                },
+                required: ['connectionId', 'revision', 'modelId'],
+                description:
+                  'Exact public selection observed by a caller, checked once at run admission.',
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
               },
             },
           },
@@ -19990,6 +21123,12 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  tools: {
+                    type: ['array', 'null'],
+                    items: {
+                      type: 'string',
+                    },
+                  },
                   dataSource: {
                     $ref: '#/$defs/AgentDataSource',
                   },
@@ -20102,6 +21241,18 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  worktree: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                  },
                   projectId: {
                     type: ['string', 'null'],
                     format: 'uuid',
@@ -20123,6 +21274,40 @@ export const contracts = {
                 },
                 required: ['path', 'directoryIdentity', 'identity'],
               },
+              Binding: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
+              },
               AgentSessionActivity: {
                 type: 'string',
                 enum: ['idle', 'working', 'waiting'],
@@ -20132,10 +21317,276 @@ export const contracts = {
                 enum: [
                   'title_invalid',
                   'labels_invalid',
+                  'tools_unavailable',
                   'workspace_unavailable',
                   'session_unavailable',
                   'closed',
                 ],
+              },
+            },
+          },
+          resources: {},
+        },
+        savePresets: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              revision: {
+                type: ['integer', 'null'],
+                format: 'uint64',
+                minimum: 0,
+              },
+              entries: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/WorkHubPreset',
+                },
+                maxItems: 64,
+              },
+            },
+            required: ['revision', 'entries'],
+            title: 'WorkHubPresets',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              WorkHubPreset: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  isolatedWorkspace: {
+                    type: 'boolean',
+                    default: false,
+                  },
+                  id: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                    pattern: '^[a-zA-Z0-9._:-]+$',
+                  },
+                  name: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  description: {
+                    type: 'string',
+                    maxLength: 4000,
+                  },
+                  worker: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 256,
+                  },
+                  tools: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                    description:
+                      'Exact installed names; an empty list permits reasoning without tools.',
+                    maxItems: 128,
+                    uniqueItems: true,
+                  },
+                  model: {
+                    $ref: '#/$defs/ModelSelection',
+                  },
+                  thinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  enabled: {
+                    type: 'boolean',
+                  },
+                },
+                required: ['id', 'name', 'description', 'worker', 'tools', 'model', 'enabled'],
+              },
+              ModelSelection: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  modelId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 512,
+                  },
+                },
+                required: ['connectionId', 'revision', 'modelId'],
+                description:
+                  'Exact public selection observed by a caller, checked once at run admission.',
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  snapshot: {
+                    $ref: '#/$defs/WorkHubPresets',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'saved',
+                  },
+                },
+                required: ['kind', 'snapshot'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  snapshot: {
+                    $ref: '#/$defs/WorkHubPresets',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'conflict',
+                  },
+                },
+                required: ['kind', 'snapshot'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'invalid',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
+            title: 'WorkHubPresetsResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              WorkHubPresets: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  revision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  entries: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/WorkHubPreset',
+                    },
+                    maxItems: 64,
+                  },
+                },
+                required: ['revision', 'entries'],
+              },
+              WorkHubPreset: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  isolatedWorkspace: {
+                    type: 'boolean',
+                    default: false,
+                  },
+                  id: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                    pattern: '^[a-zA-Z0-9._:-]+$',
+                  },
+                  name: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  description: {
+                    type: 'string',
+                    maxLength: 4000,
+                  },
+                  worker: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 256,
+                  },
+                  tools: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                    description:
+                      'Exact installed names; an empty list permits reasoning without tools.',
+                    maxItems: 128,
+                    uniqueItems: true,
+                  },
+                  model: {
+                    $ref: '#/$defs/ModelSelection',
+                  },
+                  thinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  enabled: {
+                    type: 'boolean',
+                  },
+                },
+                required: ['id', 'name', 'description', 'worker', 'tools', 'model', 'enabled'],
+              },
+              ModelSelection: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  modelId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 512,
+                  },
+                },
+                required: ['connectionId', 'revision', 'modelId'],
+                description:
+                  'Exact public selection observed by a caller, checked once at run admission.',
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
               },
             },
           },
@@ -20190,6 +21641,13 @@ export const contracts = {
             type: 'object',
             additionalProperties: false,
             properties: {
+              dependencies: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                },
+                maxItems: 16,
+              },
               taskId: {
                 type: 'string',
               },
@@ -20210,6 +21668,35 @@ export const contracts = {
             $defs: {
               WorkHubTaskStatus: {
                 oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      dependencies: {
+                        type: 'array',
+                        items: {
+                          type: 'string',
+                        },
+                        maxItems: 16,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'blocked',
+                      },
+                    },
+                    required: ['kind', 'dependencies'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'cancelled',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
                   {
                     type: 'object',
                     additionalProperties: false,
@@ -20716,6 +22203,13 @@ export const contracts = {
             type: 'object',
             additionalProperties: false,
             properties: {
+              dependencies: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                },
+                maxItems: 16,
+              },
               taskId: {
                 type: 'string',
               },
@@ -20736,6 +22230,35 @@ export const contracts = {
             $defs: {
               WorkHubTaskStatus: {
                 oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      dependencies: {
+                        type: 'array',
+                        items: {
+                          type: 'string',
+                        },
+                        maxItems: 16,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'blocked',
+                      },
+                    },
+                    required: ['kind', 'dependencies'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'cancelled',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
                   {
                     type: 'object',
                     additionalProperties: false,
@@ -21747,6 +23270,18 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  worktree: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                  },
                   projectId: {
                     type: ['string', 'null'],
                     format: 'uuid',
@@ -21767,6 +23302,40 @@ export const contracts = {
                   },
                 },
                 required: ['path', 'directoryIdentity', 'identity'],
+              },
+              Binding: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
               },
               SkillLibraryChangeKind: {
                 type: 'string',
@@ -21874,6 +23443,18 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  worktree: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                  },
                   projectId: {
                     type: ['string', 'null'],
                     format: 'uuid',
@@ -21894,6 +23475,40 @@ export const contracts = {
                   },
                 },
                 required: ['path', 'directoryIdentity', 'identity'],
+              },
+              Binding: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
               },
               SkillLibraryChangeKind: {
                 type: 'string',
@@ -22071,6 +23686,18 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  worktree: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                  },
                   projectId: {
                     type: ['string', 'null'],
                     format: 'uuid',
@@ -22091,6 +23718,40 @@ export const contracts = {
                   },
                 },
                 required: ['path', 'directoryIdentity', 'identity'],
+              },
+              Binding: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
               },
               SkillLibraryCursor: {
                 type: 'object',
@@ -22324,6 +23985,18 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  worktree: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                  },
                   projectId: {
                     type: ['string', 'null'],
                     format: 'uuid',
@@ -22344,6 +24017,40 @@ export const contracts = {
                   },
                 },
                 required: ['path', 'directoryIdentity', 'identity'],
+              },
+              Binding: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
               },
               SkillModelLoad: {
                 type: 'object',
@@ -22841,6 +24548,18 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  worktree: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                  },
                   projectId: {
                     type: ['string', 'null'],
                     format: 'uuid',
@@ -22861,6 +24580,40 @@ export const contracts = {
                   },
                 },
                 required: ['path', 'directoryIdentity', 'identity'],
+              },
+              Binding: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
               },
               SkillPrepare: {
                 type: 'object',
@@ -23193,6 +24946,18 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  worktree: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                  },
                   projectId: {
                     type: ['string', 'null'],
                     format: 'uuid',
@@ -23213,6 +24978,40 @@ export const contracts = {
                   },
                 },
                 required: ['path', 'directoryIdentity', 'identity'],
+              },
+              Binding: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
               },
               SkillLibraryChangeKind: {
                 type: 'string',
@@ -23342,6 +25141,18 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  worktree: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                  },
                   projectId: {
                     type: ['string', 'null'],
                     format: 'uuid',
@@ -23362,6 +25173,40 @@ export const contracts = {
                   },
                 },
                 required: ['path', 'directoryIdentity', 'identity'],
+              },
+              Binding: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
               },
               SkillLibraryChangeKind: {
                 type: 'string',
@@ -23413,6 +25258,18 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  worktree: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                  },
                   projectId: {
                     type: ['string', 'null'],
                     format: 'uuid',
@@ -23433,6 +25290,40 @@ export const contracts = {
                   },
                 },
                 required: ['path', 'directoryIdentity', 'identity'],
+              },
+              Binding: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
               },
             },
           },
@@ -23639,6 +25530,18 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  worktree: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                  },
                   projectId: {
                     type: ['string', 'null'],
                     format: 'uuid',
@@ -23659,6 +25562,40 @@ export const contracts = {
                   },
                 },
                 required: ['path', 'directoryIdentity', 'identity'],
+              },
+              Binding: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
               },
               SkillModelSearch: {
                 type: 'object',
@@ -29080,6 +31017,50 @@ export const contracts = {
     interface: {
       kind: 'service',
       methods: {
+        assistantPreferences: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsPreferencesRead',
+            type: 'object',
+            additionalProperties: false,
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsAssistantPreferences',
+            type: 'object',
+            properties: {
+              revision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              displayName: {
+                type: 'string',
+                maxLength: 256,
+              },
+              assistantTone: {
+                type: 'string',
+                maxLength: 4096,
+              },
+              workspaceInstructions: {
+                type: 'boolean',
+              },
+              incognitoActive: {
+                type: 'boolean',
+              },
+            },
+            additionalProperties: false,
+            required: [
+              'revision',
+              'displayName',
+              'assistantTone',
+              'workspaceInstructions',
+              'incognitoActive',
+            ],
+          },
+          resources: {},
+        },
         connection: {
           mode: 'query',
           input: {
@@ -30587,6 +32568,334 @@ export const contracts = {
           },
           resources: {},
         },
+        network: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsNetworkRead',
+            type: 'object',
+            additionalProperties: false,
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsNetworkSnapshot',
+            type: 'object',
+            properties: {
+              revision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              proxy: {
+                $ref: '#/$defs/NetworkProxy',
+              },
+              credential: {
+                $ref: '#/$defs/CredentialStatus',
+              },
+              rootId: {
+                type: 'string',
+              },
+              rootPath: {
+                type: 'string',
+              },
+            },
+            additionalProperties: false,
+            required: ['revision', 'proxy', 'credential', 'rootId', 'rootPath'],
+            $defs: {
+              NetworkProxy: {
+                type: 'object',
+                properties: {
+                  enabled: {
+                    type: 'boolean',
+                  },
+                  protocol: {
+                    $ref: '#/$defs/ProxyProtocol',
+                  },
+                  host: {
+                    type: 'string',
+                  },
+                  port: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 0,
+                    maximum: 65535,
+                  },
+                  authEnabled: {
+                    type: 'boolean',
+                  },
+                  username: {
+                    type: 'string',
+                  },
+                  bypassList: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  autoBypassDomains: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'enabled',
+                  'protocol',
+                  'host',
+                  'port',
+                  'authEnabled',
+                  'username',
+                  'bypassList',
+                  'autoBypassDomains',
+                ],
+              },
+              ProxyProtocol: {
+                type: 'string',
+                enum: ['http', 'https', 'socks5'],
+              },
+              CredentialStatus: {
+                type: 'object',
+                properties: {
+                  locator: {
+                    $ref: '#/$defs/CredentialLocator',
+                  },
+                  configured: {
+                    type: 'boolean',
+                  },
+                  credentialId: {
+                    type: ['string', 'null'],
+                  },
+                  revision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  updatedAt: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['locator', 'configured', 'credentialId', 'revision', 'updatedAt'],
+              },
+              CredentialLocator: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      connectionId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        $ref: '#/$defs/ConnectionCredentialKind',
+                      },
+                      scope: {
+                        type: 'string',
+                        const: 'connection',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['scope', 'connectionId', 'kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        $ref: '#/$defs/PasswordKind',
+                      },
+                      scope: {
+                        type: 'string',
+                        const: 'network_proxy',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['scope', 'kind'],
+                  },
+                ],
+              },
+              ConnectionCredentialKind: {
+                type: 'string',
+                enum: ['provider', 'request_headers'],
+              },
+              PasswordKind: {
+                type: 'string',
+                enum: ['password'],
+              },
+            },
+          },
+          resources: {},
+        },
+        prices: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'PricingQuery',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'start',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  offset: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'continue',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'revision', 'offset'],
+              },
+            ],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'PricingPage',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  offset: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  entries: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/PricingEntry',
+                    },
+                  },
+                  nextOffset: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'page',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'revision', 'offset', 'entries', 'nextOffset'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  expectedRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  actualRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'revision_changed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'expectedRevision', 'actualRevision'],
+              },
+            ],
+            $defs: {
+              PricingEntry: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      pricing: {
+                        $ref: '#/$defs/Pricing',
+                      },
+                      source: {
+                        type: 'string',
+                        const: 'builtin',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['source', 'pricing'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      pricing: {
+                        $ref: '#/$defs/Pricing',
+                      },
+                      resetEffect: {
+                        $ref: '#/$defs/PricingResetEffect',
+                      },
+                      source: {
+                        type: 'string',
+                        const: 'custom',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['source', 'pricing', 'resetEffect'],
+                  },
+                ],
+              },
+              Pricing: {
+                type: 'object',
+                properties: {
+                  modelKey: {
+                    type: 'string',
+                  },
+                  inputUsdPer1M: {
+                    type: 'number',
+                    format: 'double',
+                  },
+                  outputUsdPer1M: {
+                    type: 'number',
+                    format: 'double',
+                  },
+                  cacheReadUsdPer1M: {
+                    type: 'number',
+                    format: 'double',
+                  },
+                  cacheWriteUsdPer1M: {
+                    type: 'number',
+                    format: 'double',
+                  },
+                },
+                additionalProperties: false,
+                required: ['modelKey', 'inputUsdPer1M', 'outputUsdPer1M'],
+              },
+              PricingResetEffect: {
+                type: 'string',
+                enum: ['restore_builtin', 'become_unpriced'],
+              },
+            },
+          },
+          resources: {},
+        },
         providers: {
           mode: 'query',
           input: {
@@ -31700,6 +34009,1703 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['connectionId', 'modelId'],
+              },
+            },
+          },
+          resources: {},
+        },
+        updateAssistantPreferences: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsPreferencesUpdate',
+            type: 'object',
+            properties: {
+              expectedRevision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+              mutation: {
+                $ref: '#/$defs/SettingsPreferencesMutation',
+              },
+            },
+            additionalProperties: false,
+            required: ['expectedRevision', 'mutation'],
+            $defs: {
+              SettingsPreferencesMutation: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      displayName: {
+                        type: 'string',
+                        maxLength: 256,
+                      },
+                      assistantTone: {
+                        type: 'string',
+                        maxLength: 4096,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'personalization',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'displayName', 'assistantTone'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      enabled: {
+                        type: 'boolean',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'workspace_instructions',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'enabled'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      incognitoActive: {
+                        type: 'boolean',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'privacy',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'incognitoActive'],
+                  },
+                ],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsPreferencesUpdated',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'committed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'revision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  expectedRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  actualRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'revision_conflict',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'expectedRevision', 'actualRevision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
+          },
+          resources: {},
+        },
+        updateNetwork: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsNetworkUpdate',
+            type: 'object',
+            properties: {
+              expectedPolicyRevision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              expectedCredential: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/CredentialVersionBasis',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+              networkProxy: {
+                $ref: '#/$defs/NetworkProxy',
+              },
+              credential: {
+                $ref: '#/$defs/SettingsNetworkCredentialAction',
+              },
+            },
+            additionalProperties: false,
+            required: [
+              'expectedPolicyRevision',
+              'expectedCredential',
+              'networkProxy',
+              'credential',
+            ],
+            $defs: {
+              CredentialVersionBasis: {
+                type: 'object',
+                properties: {
+                  locator: {
+                    $ref: '#/$defs/CredentialLocator',
+                  },
+                  credentialId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['locator', 'credentialId', 'revision'],
+              },
+              CredentialLocator: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      connectionId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        $ref: '#/$defs/ConnectionCredentialKind',
+                      },
+                      scope: {
+                        type: 'string',
+                        const: 'connection',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['scope', 'connectionId', 'kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        $ref: '#/$defs/PasswordKind',
+                      },
+                      scope: {
+                        type: 'string',
+                        const: 'network_proxy',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['scope', 'kind'],
+                  },
+                ],
+              },
+              ConnectionCredentialKind: {
+                type: 'string',
+                enum: ['provider', 'request_headers'],
+              },
+              PasswordKind: {
+                type: 'string',
+                enum: ['password'],
+              },
+              NetworkProxy: {
+                type: 'object',
+                properties: {
+                  enabled: {
+                    type: 'boolean',
+                  },
+                  protocol: {
+                    $ref: '#/$defs/ProxyProtocol',
+                  },
+                  host: {
+                    type: 'string',
+                  },
+                  port: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 0,
+                    maximum: 65535,
+                  },
+                  authEnabled: {
+                    type: 'boolean',
+                  },
+                  username: {
+                    type: 'string',
+                  },
+                  bypassList: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  autoBypassDomains: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'enabled',
+                  'protocol',
+                  'host',
+                  'port',
+                  'authEnabled',
+                  'username',
+                  'bypassList',
+                  'autoBypassDomains',
+                ],
+              },
+              ProxyProtocol: {
+                type: 'string',
+                enum: ['http', 'https', 'socks5'],
+              },
+              SettingsNetworkCredentialAction: {
+                type: 'string',
+                enum: ['keep', 'delete', 'replace'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsNetworkUpdated',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  result: {
+                    $ref: '#/$defs/NetworkProxyUpdateResult',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'applied',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'result'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
+            $defs: {
+              NetworkProxyUpdateResult: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      revision: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      credentialStatus: {
+                        $ref: '#/$defs/CredentialStatus',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'committed',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'revision', 'credentialStatus'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      expectedRevision: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      actualRevision: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'revision_conflict',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'expectedRevision', 'actualRevision'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      expected: {
+                        $ref: '#/$defs/CredentialTarget',
+                      },
+                      actual: {
+                        $ref: '#/$defs/CredentialTarget',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'proxy_target_mismatch',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'expected', 'actual'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      expected: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/CredentialVersionBasis',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      actual: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/CredentialVersionBasis',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'credential_stale',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'expected', 'actual'],
+                  },
+                ],
+              },
+              CredentialStatus: {
+                type: 'object',
+                properties: {
+                  locator: {
+                    $ref: '#/$defs/CredentialLocator',
+                  },
+                  configured: {
+                    type: 'boolean',
+                  },
+                  credentialId: {
+                    type: ['string', 'null'],
+                  },
+                  revision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  updatedAt: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['locator', 'configured', 'credentialId', 'revision', 'updatedAt'],
+              },
+              CredentialLocator: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      connectionId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        $ref: '#/$defs/ConnectionCredentialKind',
+                      },
+                      scope: {
+                        type: 'string',
+                        const: 'connection',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['scope', 'connectionId', 'kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        $ref: '#/$defs/PasswordKind',
+                      },
+                      scope: {
+                        type: 'string',
+                        const: 'network_proxy',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['scope', 'kind'],
+                  },
+                ],
+              },
+              ConnectionCredentialKind: {
+                type: 'string',
+                enum: ['provider', 'request_headers'],
+              },
+              PasswordKind: {
+                type: 'string',
+                enum: ['password'],
+              },
+              CredentialTarget: {
+                type: 'object',
+                properties: {
+                  protocol: {
+                    $ref: '#/$defs/ProxyProtocol',
+                  },
+                  host: {
+                    type: 'string',
+                  },
+                  port: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 0,
+                    maximum: 65535,
+                  },
+                  username: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['protocol', 'host', 'port', 'username'],
+              },
+              ProxyProtocol: {
+                type: 'string',
+                enum: ['http', 'https', 'socks5'],
+              },
+              CredentialVersionBasis: {
+                type: 'object',
+                properties: {
+                  locator: {
+                    $ref: '#/$defs/CredentialLocator',
+                  },
+                  credentialId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['locator', 'credentialId', 'revision'],
+              },
+            },
+          },
+          resources: {
+            secret: {
+              type: {
+                name: 'maka.text.utf8',
+                version: 1,
+              },
+              optional: true,
+            },
+          },
+        },
+        updatePrice: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'PricingUpdate',
+            type: 'object',
+            properties: {
+              expectedRevision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              mutation: {
+                $ref: '#/$defs/PricingMutation',
+              },
+            },
+            additionalProperties: false,
+            required: ['expectedRevision', 'mutation'],
+            $defs: {
+              PricingMutation: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      pricing: {
+                        $ref: '#/$defs/Pricing',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'upsert',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'pricing'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      modelKey: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'delete',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'modelKey'],
+                  },
+                ],
+              },
+              Pricing: {
+                type: 'object',
+                properties: {
+                  modelKey: {
+                    type: 'string',
+                  },
+                  inputUsdPer1M: {
+                    type: 'number',
+                    format: 'double',
+                  },
+                  outputUsdPer1M: {
+                    type: 'number',
+                    format: 'double',
+                  },
+                  cacheReadUsdPer1M: {
+                    type: 'number',
+                    format: 'double',
+                  },
+                  cacheWriteUsdPer1M: {
+                    type: 'number',
+                    format: 'double',
+                  },
+                },
+                additionalProperties: false,
+                required: ['modelKey', 'inputUsdPer1M', 'outputUsdPer1M'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsPricingResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  result: {
+                    $ref: '#/$defs/PricingUpdated',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'updated',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'result'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
+            $defs: {
+              PricingUpdated: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      revision: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'committed',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'revision'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      revision: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'unchanged',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'revision'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      expectedRevision: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      actualRevision: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'revision_conflict',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'expectedRevision', 'actualRevision'],
+                  },
+                ],
+              },
+            },
+          },
+          resources: {},
+        },
+        usage: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsUsageRead',
+            type: 'object',
+            properties: {
+              range: {
+                $ref: '#/$defs/SettingsUsageRange',
+              },
+              selection: {
+                $ref: '#/$defs/UsageSelection',
+              },
+              offset: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+            },
+            additionalProperties: false,
+            required: ['range', 'selection', 'offset'],
+            $defs: {
+              SettingsUsageRange: {
+                type: 'object',
+                properties: {
+                  from: {
+                    type: 'number',
+                    format: 'double',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  to: {
+                    type: 'number',
+                    format: 'double',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  sessionId: {
+                    type: ['string', 'null'],
+                  },
+                  through: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['from', 'to', 'sessionId', 'through'],
+              },
+              UsageSelection: {
+                description:
+                  'Filters only the activity list, never headline accounting for the range.',
+                type: 'object',
+                properties: {
+                  kind: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/UsageActivityKind',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  status: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/UsageActivityStatus',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  search: {
+                    type: 'string',
+                    default: '',
+                  },
+                },
+                additionalProperties: false,
+              },
+              UsageActivityKind: {
+                type: 'string',
+                enum: ['model', 'tool'],
+              },
+              UsageActivityStatus: {
+                type: 'string',
+                enum: ['success', 'error', 'aborted', 'unknown', 'rejected'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsUsagePage',
+            type: 'object',
+            properties: {
+              through: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              attempts: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/UsageActivity',
+                },
+                maxItems: 32,
+              },
+              total: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              nextOffset: {
+                type: ['integer', 'null'],
+                format: 'uint64',
+                minimum: 0,
+              },
+            },
+            additionalProperties: false,
+            required: ['through', 'attempts', 'total', 'nextOffset'],
+            $defs: {
+              UsageActivity: {
+                description:
+                  'A physical model call or tool attempt, never copied conversation membership.',
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'model',
+                      },
+                      attempt: {
+                        $ref: '#/$defs/UsageModelAttempt',
+                      },
+                    },
+                    required: ['kind', 'attempt'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'tool',
+                      },
+                      attempt: {
+                        $ref: '#/$defs/UsageToolAttempt',
+                      },
+                    },
+                    required: ['kind', 'attempt'],
+                  },
+                ],
+              },
+              UsageModelAttempt: {
+                type: 'object',
+                properties: {
+                  requestId: {
+                    type: 'string',
+                  },
+                  origin: {
+                    $ref: '#/$defs/UsageOrigin',
+                  },
+                  sessionId: {
+                    type: ['string', 'null'],
+                  },
+                  binding: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ModelBinding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  modelId: {
+                    type: 'string',
+                  },
+                  startedAt: {
+                    type: 'number',
+                    format: 'double',
+                  },
+                  completedAt: {
+                    type: 'number',
+                    format: 'double',
+                  },
+                  outcome: {
+                    $ref: '#/$defs/UsageOutcome',
+                  },
+                  usage: {
+                    $ref: '#/$defs/ModelUsage',
+                  },
+                  quote: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Quote',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  costUsd: {
+                    type: ['number', 'null'],
+                    format: 'double',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'requestId',
+                  'origin',
+                  'sessionId',
+                  'binding',
+                  'modelId',
+                  'startedAt',
+                  'completedAt',
+                  'outcome',
+                  'usage',
+                  'quote',
+                  'costUsd',
+                ],
+              },
+              UsageOrigin: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      invocation: {
+                        $ref: '#/$defs/Invocation',
+                      },
+                      purpose: {
+                        $ref: '#/$defs/ModelPurpose',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'agent',
+                      },
+                    },
+                    required: ['kind', 'invocation', 'purpose'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      source: {
+                        $ref: '#/$defs/UsageAuxiliarySource',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'auxiliary',
+                      },
+                    },
+                    required: ['kind', 'source'],
+                  },
+                ],
+              },
+              Invocation: {
+                type: 'object',
+                properties: {
+                  session_id: {
+                    type: 'string',
+                  },
+                  turn_id: {
+                    type: 'string',
+                  },
+                  run_id: {
+                    type: 'string',
+                  },
+                  invocation_id: {
+                    type: 'string',
+                  },
+                },
+                required: ['session_id', 'turn_id', 'run_id', 'invocation_id'],
+              },
+              ModelPurpose: {
+                type: 'string',
+                enum: ['main', 'summary'],
+              },
+              UsageAuxiliarySource: {
+                oneOf: [
+                  {
+                    description:
+                      'One Host-owned title request, authorized by the first committed user opening.\nIt may finish after that invocation ends and cannot execute tools.',
+                    type: 'object',
+                    properties: {
+                      invocation: {
+                        $ref: '#/$defs/Invocation',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'session_title',
+                      },
+                    },
+                    required: ['kind', 'invocation'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      invocation: {
+                        $ref: '#/$defs/Invocation',
+                      },
+                      operation_id: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'agent',
+                      },
+                    },
+                    required: ['kind', 'invocation', 'operation_id'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      id: {
+                        type: 'string',
+                        format: 'uuid',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'host_effect',
+                      },
+                    },
+                    required: ['kind', 'id'],
+                  },
+                ],
+              },
+              ModelBinding: {
+                description:
+                  'Public model identity. Credentials and provider handles never belong here.',
+                type: 'object',
+                properties: {
+                  connection_id: {
+                    type: 'string',
+                  },
+                  connection_slug: {
+                    type: 'string',
+                  },
+                  model: {
+                    type: 'string',
+                  },
+                },
+                required: ['connection_id', 'connection_slug', 'model'],
+              },
+              UsageOutcome: {
+                oneOf: [
+                  {
+                    type: 'string',
+                    enum: ['success', 'error', 'aborted'],
+                  },
+                  {
+                    description: 'The admission ended without a recorded provider outcome.',
+                    type: 'string',
+                    const: 'unknown',
+                  },
+                ],
+              },
+              ModelUsage: {
+                type: 'object',
+                properties: {
+                  input_tokens: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  output_tokens: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  cache_read_tokens: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  cache_write_tokens: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  reasoning_tokens: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                required: [
+                  'input_tokens',
+                  'output_tokens',
+                  'cache_read_tokens',
+                  'cache_write_tokens',
+                  'reasoning_tokens',
+                ],
+              },
+              Quote: {
+                type: 'object',
+                properties: {
+                  providerId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  pricing: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Pricing',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
+                required: ['providerId', 'revision', 'pricing'],
+              },
+              Pricing: {
+                type: 'object',
+                properties: {
+                  modelKey: {
+                    type: 'string',
+                  },
+                  inputUsdPer1M: {
+                    type: 'number',
+                    format: 'double',
+                  },
+                  outputUsdPer1M: {
+                    type: 'number',
+                    format: 'double',
+                  },
+                  cacheReadUsdPer1M: {
+                    type: 'number',
+                    format: 'double',
+                  },
+                  cacheWriteUsdPer1M: {
+                    type: 'number',
+                    format: 'double',
+                  },
+                },
+                additionalProperties: false,
+                required: ['modelKey', 'inputUsdPer1M', 'outputUsdPer1M'],
+              },
+              UsageToolAttempt: {
+                type: 'object',
+                properties: {
+                  requestId: {
+                    type: 'string',
+                  },
+                  invocation: {
+                    $ref: '#/$defs/Invocation',
+                  },
+                  call: {
+                    $ref: '#/$defs/ToolCallIdentity',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                  binding: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ModelBinding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  completedAt: {
+                    type: 'number',
+                    format: 'double',
+                  },
+                  result: {
+                    $ref: '#/$defs/UsageToolResult',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'requestId',
+                  'invocation',
+                  'call',
+                  'name',
+                  'binding',
+                  'completedAt',
+                  'result',
+                ],
+              },
+              ToolCallIdentity: {
+                description:
+                  'A Tool Call is distinct from its durable host operation. Origin determines\nmodel visibility; it is not an independent flag that can contradict ancestry.',
+                type: 'object',
+                properties: {
+                  tool_call_id: {
+                    type: 'string',
+                  },
+                  origin: {
+                    $ref: '#/$defs/ToolOrigin',
+                  },
+                },
+                required: ['tool_call_id', 'origin'],
+              },
+              ToolOrigin: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      step_id: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'provider',
+                      },
+                    },
+                    required: ['kind', 'step_id'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      parent_operation_id: {
+                        type: 'string',
+                      },
+                      parent_tool_call_id: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'code_mode',
+                      },
+                    },
+                    required: ['kind', 'parent_operation_id', 'parent_tool_call_id'],
+                  },
+                  {
+                    description:
+                      "An independently running cell accepted by an exec control call.\nIts parent may settle once startup/observation completes; its own nested\ntool effects must still drain before the cell's canonical settlement.",
+                    type: 'object',
+                    properties: {
+                      parent_operation_id: {
+                        type: 'string',
+                      },
+                      parent_tool_call_id: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'code_cell',
+                      },
+                    },
+                    required: ['kind', 'parent_operation_id', 'parent_tool_call_id'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'standalone',
+                      },
+                    },
+                    required: ['kind'],
+                  },
+                  {
+                    description:
+                      'Explicit Host SDK work, never dispatch inferred from executor observations.',
+                    type: 'object',
+                    properties: {
+                      package_id: {
+                        type: 'string',
+                      },
+                      entry_id: {
+                        type: 'string',
+                      },
+                      activation: {
+                        type: 'string',
+                      },
+                      parent_operation_id: {
+                        type: ['string', 'null'],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'host_sdk',
+                      },
+                    },
+                    required: [
+                      'kind',
+                      'package_id',
+                      'entry_id',
+                      'activation',
+                      'parent_operation_id',
+                    ],
+                  },
+                ],
+              },
+              UsageToolResult: {
+                oneOf: [
+                  {
+                    description: 'No effect was admitted, so no execution duration is reported.',
+                    type: 'object',
+                    properties: {
+                      reason: {
+                        $ref: '#/$defs/RejectionKind',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'rejected',
+                      },
+                    },
+                    required: ['kind', 'reason'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      startedAt: {
+                        type: 'number',
+                        format: 'double',
+                      },
+                      outcome: {
+                        $ref: '#/$defs/UsageToolStatus',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'settled',
+                      },
+                    },
+                    required: ['kind', 'startedAt', 'outcome'],
+                  },
+                ],
+              },
+              RejectionKind: {
+                description: 'Refusal category without input-derived explanation text.',
+                type: 'string',
+                enum: [
+                  'unavailable',
+                  'invalid_input',
+                  'policy_denied',
+                  'preparation_failed',
+                  'exclusive_conflict',
+                  'cancelled',
+                ],
+              },
+              UsageToolStatus: {
+                type: 'string',
+                enum: ['success', 'error', 'unknown'],
+              },
+            },
+          },
+          resources: {},
+        },
+        usageSummary: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsUsageSummaryRead',
+            type: 'object',
+            properties: {
+              range: {
+                $ref: '#/$defs/SettingsUsageRange',
+              },
+              group: {
+                $ref: '#/$defs/UsageGroup',
+              },
+              offset: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+            },
+            additionalProperties: false,
+            required: ['range', 'group', 'offset'],
+            $defs: {
+              SettingsUsageRange: {
+                type: 'object',
+                properties: {
+                  from: {
+                    type: 'number',
+                    format: 'double',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  to: {
+                    type: 'number',
+                    format: 'double',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  sessionId: {
+                    type: ['string', 'null'],
+                  },
+                  through: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['from', 'to', 'sessionId', 'through'],
+              },
+              UsageGroup: {
+                description: 'Breakdown selected for a bounded summary page.',
+                type: 'string',
+                enum: ['byProvider', 'byModel', 'byTool'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsUsageSummary',
+            type: 'object',
+            properties: {
+              through: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              summary: {
+                $ref: '#/$defs/SettingsUsageTotals',
+              },
+              nextOffset: {
+                type: ['integer', 'null'],
+                format: 'uint64',
+                minimum: 0,
+              },
+            },
+            additionalProperties: false,
+            required: ['through', 'summary', 'nextOffset'],
+            $defs: {
+              SettingsUsageTotals: {
+                type: 'object',
+                properties: {
+                  models: {
+                    $ref: '#/$defs/UsageModelTotals',
+                  },
+                  tools: {
+                    $ref: '#/$defs/UsageToolTotals',
+                  },
+                  pending: {
+                    $ref: '#/$defs/UsagePending',
+                  },
+                  byProvider: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/UsageProviderSummary',
+                    },
+                    maxItems: 32,
+                  },
+                  byModel: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/UsageModelSummary',
+                    },
+                    maxItems: 32,
+                  },
+                  byTool: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/UsageToolSummary',
+                    },
+                    maxItems: 32,
+                  },
+                },
+                additionalProperties: false,
+                required: ['models', 'tools', 'pending', 'byProvider', 'byModel', 'byTool'],
+              },
+              UsageModelTotals: {
+                type: 'object',
+                properties: {
+                  calls: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  success: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  error: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  aborted: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  unknown: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  durationMs: {
+                    description:
+                      'Sum of observed durations; unknown outcomes are excluded. Not wall-clock time.',
+                    type: 'number',
+                    format: 'double',
+                  },
+                  input: {
+                    $ref: '#/$defs/UsageTokens',
+                  },
+                  output: {
+                    $ref: '#/$defs/UsageTokens',
+                  },
+                  cacheRead: {
+                    $ref: '#/$defs/UsageTokens',
+                  },
+                  cacheWrite: {
+                    $ref: '#/$defs/UsageTokens',
+                  },
+                  reasoning: {
+                    $ref: '#/$defs/UsageTokens',
+                  },
+                  cost: {
+                    $ref: '#/$defs/UsageCost',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'calls',
+                  'success',
+                  'error',
+                  'aborted',
+                  'unknown',
+                  'durationMs',
+                  'input',
+                  'output',
+                  'cacheRead',
+                  'cacheWrite',
+                  'reasoning',
+                  'cost',
+                ],
+              },
+              UsageTokens: {
+                description:
+                  'Sum of reported counters, qualified by calls that omitted this counter.',
+                type: 'object',
+                properties: {
+                  known: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  missing: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['known', 'missing'],
+              },
+              UsageCost: {
+                type: 'object',
+                properties: {
+                  knownUsd: {
+                    type: 'number',
+                    format: 'double',
+                  },
+                  unvalued: {
+                    description: 'Calls without a persisted valuation; includes unpriced calls.',
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  unpriced: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['knownUsd', 'unvalued', 'unpriced'],
+              },
+              UsageToolTotals: {
+                type: 'object',
+                properties: {
+                  calls: {
+                    description:
+                      'Includes pre-dispatch refusals, which are counted separately below.',
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  success: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  error: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  unknown: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  rejected: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  durationMs: {
+                    description:
+                      'Known success/error durations; refusals and unknown effects contribute no time.',
+                    type: 'number',
+                    format: 'double',
+                  },
+                  meanLatencyMs: {
+                    description:
+                      'Only known success/error settlements contribute to observed execution latency.',
+                    type: ['number', 'null'],
+                    format: 'double',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'calls',
+                  'success',
+                  'error',
+                  'unknown',
+                  'rejected',
+                  'durationMs',
+                  'meanLatencyMs',
+                ],
+              },
+              UsagePending: {
+                type: 'object',
+                properties: {
+                  models: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  tools: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['models', 'tools'],
+              },
+              UsageProviderSummary: {
+                type: 'object',
+                properties: {
+                  providerId: {
+                    description:
+                      'Unknown identity is not inferred from a transport protocol or current settings.',
+                    type: ['string', 'null'],
+                  },
+                  totals: {
+                    $ref: '#/$defs/UsageModelTotals',
+                  },
+                },
+                additionalProperties: false,
+                required: ['providerId', 'totals'],
+              },
+              UsageModelSummary: {
+                type: 'object',
+                properties: {
+                  modelId: {
+                    type: 'string',
+                  },
+                  totals: {
+                    $ref: '#/$defs/UsageModelTotals',
+                  },
+                },
+                additionalProperties: false,
+                required: ['modelId', 'totals'],
+              },
+              UsageToolSummary: {
+                type: 'object',
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  totals: {
+                    $ref: '#/$defs/UsageToolTotals',
+                  },
+                },
+                additionalProperties: false,
+                required: ['name', 'totals'],
               },
             },
           },
@@ -35637,6 +39643,1558 @@ export const contracts = {
       schema: {
         type: 'object',
         additionalProperties: false,
+      },
+    },
+  },
+  workspaceWeb: {
+    name: 'maka.workspace.Web',
+    version: 1,
+    transport: 'remote',
+    interface: {
+      kind: 'service',
+      methods: {
+        capture: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+          },
+          output: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              basis: {
+                $ref: '#/$defs/WebBasis',
+              },
+              available: {
+                type: 'boolean',
+              },
+              source: {
+                $ref: '#/$defs/WebSource',
+              },
+              credentialConfigured: {
+                type: 'boolean',
+              },
+            },
+            required: ['basis', 'available', 'source', 'credentialConfigured'],
+            title: 'WebCapture',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              WebBasis: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  revision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  credentialRevision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+              },
+              WebSource: {
+                type: 'string',
+                enum: ['model', 'tavily'],
+              },
+            },
+          },
+          resources: {},
+        },
+        checkKey: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              revision: {
+                type: ['integer', 'null'],
+                format: 'uint64',
+                minimum: 0,
+              },
+            },
+            title: 'WebKey',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  snapshot: {
+                    $ref: '#/$defs/WebSnapshot',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'updated',
+                  },
+                },
+                required: ['kind', 'snapshot'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'invalid_key',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'check_unavailable',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
+            title: 'WebUpdate',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              WebSnapshot: {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  settings: {
+                    $ref: '#/$defs/WebSettings',
+                  },
+                  credential: {
+                    $ref: '#/$defs/WebCredential',
+                  },
+                },
+                required: ['settings', 'credential'],
+              },
+              WebSettings: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  enabled: {
+                    type: 'boolean',
+                  },
+                  source: {
+                    $ref: '#/$defs/WebSource',
+                  },
+                },
+                required: ['enabled', 'source'],
+              },
+              WebSource: {
+                type: 'string',
+                enum: ['model', 'tavily'],
+              },
+              WebCredential: {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  configured: {
+                    type: 'boolean',
+                  },
+                  check: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/WebCheck',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                required: ['configured'],
+              },
+              WebCheck: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  credential_revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  outcome: {
+                    $ref: '#/$defs/WebCheckOutcome',
+                  },
+                },
+                required: ['credential_revision', 'outcome'],
+              },
+              WebCheckOutcome: {
+                type: 'string',
+                enum: ['valid', 'invalid_credentials', 'rate_limited', 'network_error', 'timeout'],
+              },
+            },
+          },
+          resources: {},
+        },
+        deleteKey: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              revision: {
+                type: ['integer', 'null'],
+                format: 'uint64',
+                minimum: 0,
+              },
+            },
+            title: 'WebKey',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  snapshot: {
+                    $ref: '#/$defs/WebSnapshot',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'updated',
+                  },
+                },
+                required: ['kind', 'snapshot'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'invalid_key',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'check_unavailable',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
+            title: 'WebUpdate',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              WebSnapshot: {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  settings: {
+                    $ref: '#/$defs/WebSettings',
+                  },
+                  credential: {
+                    $ref: '#/$defs/WebCredential',
+                  },
+                },
+                required: ['settings', 'credential'],
+              },
+              WebSettings: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  enabled: {
+                    type: 'boolean',
+                  },
+                  source: {
+                    $ref: '#/$defs/WebSource',
+                  },
+                },
+                required: ['enabled', 'source'],
+              },
+              WebSource: {
+                type: 'string',
+                enum: ['model', 'tavily'],
+              },
+              WebCredential: {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  configured: {
+                    type: 'boolean',
+                  },
+                  check: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/WebCheck',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                required: ['configured'],
+              },
+              WebCheck: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  credential_revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  outcome: {
+                    $ref: '#/$defs/WebCheckOutcome',
+                  },
+                },
+                required: ['credential_revision', 'outcome'],
+              },
+              WebCheckOutcome: {
+                type: 'string',
+                enum: ['valid', 'invalid_credentials', 'rate_limited', 'network_error', 'timeout'],
+              },
+            },
+          },
+          resources: {},
+        },
+        fetch: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              basis: {
+                $ref: '#/$defs/WebBasis',
+              },
+              input: {
+                $ref: '#/$defs/WebFetch',
+              },
+            },
+            required: ['basis', 'input'],
+            title: 'WebCall_WebFetch',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              WebBasis: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  revision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  credentialRevision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+              },
+              WebFetch: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  url: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 8192,
+                  },
+                },
+                required: ['url'],
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: true,
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+              },
+            ],
+            title: 'WebResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          resources: {},
+        },
+        save: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              revision: {
+                type: ['integer', 'null'],
+                format: 'uint64',
+                minimum: 0,
+              },
+              settings: {
+                $ref: '#/$defs/WebSettings',
+              },
+            },
+            required: ['settings'],
+            title: 'WebSet',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              WebSettings: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  enabled: {
+                    type: 'boolean',
+                  },
+                  source: {
+                    $ref: '#/$defs/WebSource',
+                  },
+                },
+                required: ['enabled', 'source'],
+              },
+              WebSource: {
+                type: 'string',
+                enum: ['model', 'tavily'],
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  snapshot: {
+                    $ref: '#/$defs/WebSnapshot',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'updated',
+                  },
+                },
+                required: ['kind', 'snapshot'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'invalid_key',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'check_unavailable',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
+            title: 'WebUpdate',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              WebSnapshot: {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  settings: {
+                    $ref: '#/$defs/WebSettings',
+                  },
+                  credential: {
+                    $ref: '#/$defs/WebCredential',
+                  },
+                },
+                required: ['settings', 'credential'],
+              },
+              WebSettings: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  enabled: {
+                    type: 'boolean',
+                  },
+                  source: {
+                    $ref: '#/$defs/WebSource',
+                  },
+                },
+                required: ['enabled', 'source'],
+              },
+              WebSource: {
+                type: 'string',
+                enum: ['model', 'tavily'],
+              },
+              WebCredential: {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  configured: {
+                    type: 'boolean',
+                  },
+                  check: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/WebCheck',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                required: ['configured'],
+              },
+              WebCheck: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  credential_revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  outcome: {
+                    $ref: '#/$defs/WebCheckOutcome',
+                  },
+                },
+                required: ['credential_revision', 'outcome'],
+              },
+              WebCheckOutcome: {
+                type: 'string',
+                enum: ['valid', 'invalid_credentials', 'rate_limited', 'network_error', 'timeout'],
+              },
+            },
+          },
+          resources: {},
+        },
+        saveKey: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              revision: {
+                type: ['integer', 'null'],
+                format: 'uint64',
+                minimum: 0,
+              },
+            },
+            title: 'WebKey',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  snapshot: {
+                    $ref: '#/$defs/WebSnapshot',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'updated',
+                  },
+                },
+                required: ['kind', 'snapshot'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'invalid_key',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'check_unavailable',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
+            title: 'WebUpdate',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              WebSnapshot: {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  settings: {
+                    $ref: '#/$defs/WebSettings',
+                  },
+                  credential: {
+                    $ref: '#/$defs/WebCredential',
+                  },
+                },
+                required: ['settings', 'credential'],
+              },
+              WebSettings: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  enabled: {
+                    type: 'boolean',
+                  },
+                  source: {
+                    $ref: '#/$defs/WebSource',
+                  },
+                },
+                required: ['enabled', 'source'],
+              },
+              WebSource: {
+                type: 'string',
+                enum: ['model', 'tavily'],
+              },
+              WebCredential: {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  configured: {
+                    type: 'boolean',
+                  },
+                  check: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/WebCheck',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                required: ['configured'],
+              },
+              WebCheck: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  credential_revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  outcome: {
+                    $ref: '#/$defs/WebCheckOutcome',
+                  },
+                },
+                required: ['credential_revision', 'outcome'],
+              },
+              WebCheckOutcome: {
+                type: 'string',
+                enum: ['valid', 'invalid_credentials', 'rate_limited', 'network_error', 'timeout'],
+              },
+            },
+          },
+          resources: {
+            secret: {
+              type: {
+                name: 'maka.text.utf8',
+                version: 1,
+              },
+              optional: false,
+            },
+          },
+        },
+        search: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              basis: {
+                $ref: '#/$defs/WebBasis',
+              },
+              input: {
+                $ref: '#/$defs/WebQuery',
+              },
+            },
+            required: ['basis', 'input'],
+            title: 'WebCall_WebQuery',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              WebBasis: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  revision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  credentialRevision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+              },
+              WebQuery: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  query: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 200,
+                  },
+                  limit: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 1,
+                    maximum: 10,
+                    default: 5,
+                  },
+                },
+                required: ['query'],
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: true,
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+              },
+            ],
+            title: 'WebResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          resources: {},
+        },
+        snapshot: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+          },
+          output: {
+            type: 'object',
+            properties: {
+              revision: {
+                type: ['integer', 'null'],
+                format: 'uint64',
+                minimum: 0,
+              },
+              settings: {
+                $ref: '#/$defs/WebSettings',
+              },
+              credential: {
+                $ref: '#/$defs/WebCredential',
+              },
+            },
+            required: ['settings', 'credential'],
+            title: 'WebSnapshot',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              WebSettings: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  enabled: {
+                    type: 'boolean',
+                  },
+                  source: {
+                    $ref: '#/$defs/WebSource',
+                  },
+                },
+                required: ['enabled', 'source'],
+              },
+              WebSource: {
+                type: 'string',
+                enum: ['model', 'tavily'],
+              },
+              WebCredential: {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  configured: {
+                    type: 'boolean',
+                  },
+                  check: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/WebCheck',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                required: ['configured'],
+              },
+              WebCheck: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  credential_revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  outcome: {
+                    $ref: '#/$defs/WebCheckOutcome',
+                  },
+                },
+                required: ['credential_revision', 'outcome'],
+              },
+              WebCheckOutcome: {
+                type: 'string',
+                enum: ['valid', 'invalid_credentials', 'rate_limited', 'network_error', 'timeout'],
+              },
+            },
+          },
+          resources: {},
+        },
+      },
+    },
+  },
+  workspaceJev: {
+    name: 'maka.workspace.Jev',
+    version: 1,
+    transport: 'remote',
+    interface: {
+      kind: 'service',
+      methods: {
+        credential: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              url: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 8192,
+              },
+              revision: {
+                type: ['integer', 'null'],
+                format: 'uint64',
+                minimum: 0,
+              },
+              target: {
+                $ref: '#/$defs/JevCredentialTarget',
+              },
+              change: {
+                $ref: '#/$defs/JevCredentialChange',
+              },
+            },
+            required: ['url', 'target', 'change'],
+            title: 'JevCredential',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              JevCredentialTarget: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'api_key',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      name: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'header',
+                      },
+                    },
+                    required: ['kind', 'name'],
+                  },
+                ],
+              },
+              JevCredentialChange: {
+                type: 'string',
+                enum: ['replace', 'remove'],
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  snapshot: {
+                    $ref: '#/$defs/JevSnapshot',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'updated',
+                  },
+                },
+                required: ['kind', 'snapshot'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'invalid',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
+            title: 'JevUpdate',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              JevSnapshot: {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  settings: {
+                    $ref: '#/$defs/JevSettings',
+                  },
+                  credentialRevision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  configured: {
+                    type: 'boolean',
+                  },
+                  apiKeyConfigured: {
+                    type: 'boolean',
+                  },
+                  headerNames: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                },
+                required: ['settings', 'configured', 'apiKeyConfigured', 'headerNames'],
+              },
+              JevSettings: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  enabled: {
+                    type: 'boolean',
+                  },
+                  url: {
+                    type: 'string',
+                  },
+                  model: {
+                    type: 'string',
+                  },
+                  timeoutMs: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                required: ['enabled', 'url', 'model', 'timeoutMs'],
+              },
+            },
+          },
+          resources: {
+            secret: {
+              type: {
+                name: 'maka.text.utf8',
+                version: 1,
+              },
+              optional: true,
+            },
+          },
+        },
+        evaluate: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              state: true,
+              questions: {
+                type: 'object',
+                additionalProperties: {
+                  $ref: '#/$defs/JevQuestion',
+                },
+              },
+            },
+            required: ['state', 'questions'],
+            title: 'JevEvaluation',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              JevQuestion: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      instructions: true,
+                      criteria: {
+                        type: ['object', 'null'],
+                        additionalProperties: true,
+                      },
+                      type: {
+                        type: 'string',
+                        const: 'noul',
+                      },
+                    },
+                    required: ['type', 'instructions'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      instructions: true,
+                      criteria: {
+                        type: 'object',
+                        additionalProperties: true,
+                      },
+                      type: {
+                        type: 'string',
+                        const: 'choice',
+                      },
+                    },
+                    required: ['type', 'instructions', 'criteria'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      instructions: true,
+                      criteria: {
+                        type: 'array',
+                        items: true,
+                      },
+                      type: {
+                        type: 'string',
+                        const: 'score',
+                      },
+                    },
+                    required: ['type', 'instructions', 'criteria'],
+                  },
+                ],
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: {
+                    $ref: '#/$defs/JevEvaluationResult',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+              },
+            ],
+            title: 'JevResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              JevEvaluationResult: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  model: {
+                    type: 'string',
+                  },
+                  answers: {
+                    type: 'object',
+                    additionalProperties: {
+                      $ref: '#/$defs/JevAnswer',
+                    },
+                  },
+                  usage: {
+                    $ref: '#/$defs/JevUsage',
+                  },
+                },
+                required: ['model', 'answers', 'usage'],
+              },
+              JevAnswer: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      noul: {
+                        type: 'number',
+                        format: 'double',
+                      },
+                      type: {
+                        type: 'string',
+                        const: 'noul',
+                      },
+                    },
+                    required: ['type', 'noul'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      choice: {
+                        type: 'string',
+                      },
+                      confidence: {
+                        type: 'number',
+                        format: 'double',
+                      },
+                      probabilities: {
+                        type: 'object',
+                        additionalProperties: {
+                          type: 'number',
+                          format: 'double',
+                        },
+                      },
+                      type: {
+                        type: 'string',
+                        const: 'choice',
+                      },
+                    },
+                    required: ['type', 'choice', 'confidence', 'probabilities'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      score: {
+                        type: 'number',
+                        format: 'double',
+                      },
+                      confidence: {
+                        type: 'number',
+                        format: 'double',
+                      },
+                      probabilities: {
+                        type: 'object',
+                        additionalProperties: {
+                          type: 'number',
+                          format: 'double',
+                        },
+                      },
+                      legend: {
+                        type: 'object',
+                        additionalProperties: {
+                          type: 'string',
+                        },
+                      },
+                      type: {
+                        type: 'string',
+                        const: 'score',
+                      },
+                    },
+                    required: ['type', 'score', 'confidence', 'probabilities', 'legend'],
+                  },
+                ],
+              },
+              JevUsage: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  input_tokens: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  output_tokens: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                required: ['input_tokens', 'output_tokens'],
+              },
+            },
+          },
+          resources: {},
+        },
+        save: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              revision: {
+                type: ['integer', 'null'],
+                format: 'uint64',
+                minimum: 0,
+              },
+              settings: {
+                $ref: '#/$defs/JevSettings',
+              },
+            },
+            required: ['settings'],
+            title: 'JevSet',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              JevSettings: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  enabled: {
+                    type: 'boolean',
+                  },
+                  url: {
+                    type: 'string',
+                  },
+                  model: {
+                    type: 'string',
+                  },
+                  timeoutMs: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                required: ['enabled', 'url', 'model', 'timeoutMs'],
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  snapshot: {
+                    $ref: '#/$defs/JevSnapshot',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'updated',
+                  },
+                },
+                required: ['kind', 'snapshot'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'invalid',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
+            title: 'JevUpdate',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              JevSnapshot: {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  settings: {
+                    $ref: '#/$defs/JevSettings',
+                  },
+                  credentialRevision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  configured: {
+                    type: 'boolean',
+                  },
+                  apiKeyConfigured: {
+                    type: 'boolean',
+                  },
+                  headerNames: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                },
+                required: ['settings', 'configured', 'apiKeyConfigured', 'headerNames'],
+              },
+              JevSettings: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  enabled: {
+                    type: 'boolean',
+                  },
+                  url: {
+                    type: 'string',
+                  },
+                  model: {
+                    type: 'string',
+                  },
+                  timeoutMs: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                required: ['enabled', 'url', 'model', 'timeoutMs'],
+              },
+            },
+          },
+          resources: {},
+        },
+        snapshot: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+          },
+          output: {
+            type: 'object',
+            properties: {
+              revision: {
+                type: ['integer', 'null'],
+                format: 'uint64',
+                minimum: 0,
+              },
+              settings: {
+                $ref: '#/$defs/JevSettings',
+              },
+              credentialRevision: {
+                type: ['integer', 'null'],
+                format: 'uint64',
+                minimum: 0,
+              },
+              configured: {
+                type: 'boolean',
+              },
+              apiKeyConfigured: {
+                type: 'boolean',
+              },
+              headerNames: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                },
+              },
+            },
+            required: ['settings', 'configured', 'apiKeyConfigured', 'headerNames'],
+            title: 'JevSnapshot',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              JevSettings: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  enabled: {
+                    type: 'boolean',
+                  },
+                  url: {
+                    type: 'string',
+                  },
+                  model: {
+                    type: 'string',
+                  },
+                  timeoutMs: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                required: ['enabled', 'url', 'model', 'timeoutMs'],
+              },
+            },
+          },
+          resources: {},
+        },
       },
     },
   },

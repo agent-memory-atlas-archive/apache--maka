@@ -147,6 +147,23 @@ export const configurations = {
     title: 'AgentConfiguration',
     type: 'object',
     properties: {
+      isolatedWorkspaces: {
+        description: 'Permit creation of Host-owned Git worktrees from published directories.',
+        type: 'boolean',
+        default: false,
+      },
+      assistant: {
+        description: "Select Maka's assistant policy and workspace guidance explicitly.",
+        anyOf: [
+          {
+            $ref: '#/$defs/AgentAssistantConfiguration',
+          },
+          {
+            type: 'null',
+          },
+        ],
+        default: null,
+      },
       scheduledTasks: {
         description: 'Enable model proposals and approved scheduled work for this Agent.',
         type: 'boolean',
@@ -221,6 +238,19 @@ export const configurations = {
     additionalProperties: false,
     required: ['permissions', 'workspaceRoots', 'maxActiveRuns', 'maxSteps', 'tools'],
     $defs: {
+      AgentAssistantConfiguration: {
+        type: 'object',
+        properties: {
+          home: {
+            description: "Read only the three instruction files in this home's .maka directory.",
+            type: ['string', 'null'],
+            minLength: 1,
+            maxLength: 4096,
+            default: null,
+          },
+        },
+        additionalProperties: false,
+      },
       AgentServiceExecutor: {
         type: 'object',
         properties: {
@@ -371,7 +401,7 @@ export const configurations = {
       },
       AgentToolInput: {
         type: 'string',
-        enum: ['json', 'skill'],
+        enum: ['json', 'skill', 'web'],
       },
       DisplayText: {
         description: 'Presentation text is distinct from the stable identity used for navigation.',
@@ -577,6 +607,23 @@ export const configurations = {
         type: 'object',
         additionalProperties: false,
         properties: {
+          isolatedWorkspaces: {
+            type: 'boolean',
+            description: 'Permit creation of Host-owned Git worktrees from published directories.',
+            default: false,
+          },
+          assistant: {
+            anyOf: [
+              {
+                $ref: '#/$defs/AgentAssistantConfiguration',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            description: "Select Maka's assistant policy and workspace guidance explicitly.",
+            default: null,
+          },
           scheduledTasks: {
             type: 'boolean',
             description: 'Enable model proposals and approved scheduled work for this Agent.',
@@ -649,6 +696,19 @@ export const configurations = {
           },
         },
         required: ['permissions', 'workspaceRoots', 'maxActiveRuns', 'maxSteps', 'tools'],
+      },
+      AgentAssistantConfiguration: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          home: {
+            type: ['string', 'null'],
+            description: "Read only the three instruction files in this home's .maka directory.",
+            minLength: 1,
+            maxLength: 4096,
+            default: null,
+          },
+        },
       },
       AgentServiceExecutor: {
         type: 'object',
@@ -800,7 +860,7 @@ export const configurations = {
       },
       AgentToolInput: {
         type: 'string',
-        enum: ['json', 'skill'],
+        enum: ['json', 'skill', 'web'],
       },
       DisplayText: {
         type: 'object',
@@ -921,6 +981,12 @@ export const configurations = {
     type: 'object',
     additionalProperties: false,
     properties: {
+      isolatedWorkspaces: {
+        type: 'boolean',
+        description:
+          "Allow the selected native Session's verified owned worktree, within its\nown access policy. Other Host-private paths remain denied.",
+        default: false,
+      },
       filesystem: {
         $ref: '#/$defs/Policy',
       },
@@ -1083,6 +1149,12 @@ export const configurations = {
     type: 'object',
     additionalProperties: false,
     properties: {
+      isolatedWorkspaces: {
+        type: 'boolean',
+        description:
+          "Allow the selected native Session's verified owned worktree, within its\nown access policy. Other Host-private paths remain denied.",
+        default: false,
+      },
       filesystem: {
         $ref: '#/$defs/Policy',
       },
@@ -1238,6 +1310,134 @@ export const configurations = {
       WorkspaceProcessSessionKind: {
         type: 'string',
         enum: ['agent', 'workhub'],
+      },
+    },
+  },
+  workspaceWeb: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      network: {
+        $ref: '#/$defs/Network',
+      },
+    },
+    required: ['network'],
+    title: 'WorkspaceWebConfiguration',
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    $defs: {
+      Network: {
+        oneOf: [
+          {
+            type: 'string',
+            enum: ['denied', 'allowed'],
+          },
+          {
+            type: 'object',
+            properties: {
+              restricted: {
+                type: 'object',
+                properties: {
+                  destinations: {
+                    type: 'array',
+                    uniqueItems: true,
+                    items: {
+                      $ref: '#/$defs/Destination',
+                    },
+                    maxItems: 128,
+                  },
+                },
+                additionalProperties: false,
+                required: ['destinations'],
+              },
+            },
+            required: ['restricted'],
+            additionalProperties: false,
+          },
+        ],
+      },
+      Destination: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          host: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 253,
+          },
+          port: {
+            type: 'integer',
+            format: 'uint16',
+            minimum: 1,
+            maximum: 65535,
+          },
+        },
+        required: ['host', 'port'],
+        description:
+          'Destination authority, independent of the upstream proxy used to reach it.\nA domain grant does not authorize its subdomains or other ports.',
+      },
+    },
+  },
+  workspaceJev: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      network: {
+        $ref: '#/$defs/Network',
+      },
+    },
+    required: ['network'],
+    title: 'WorkspaceJevConfiguration',
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    $defs: {
+      Network: {
+        oneOf: [
+          {
+            type: 'string',
+            enum: ['denied', 'allowed'],
+          },
+          {
+            type: 'object',
+            properties: {
+              restricted: {
+                type: 'object',
+                properties: {
+                  destinations: {
+                    type: 'array',
+                    uniqueItems: true,
+                    items: {
+                      $ref: '#/$defs/Destination',
+                    },
+                    maxItems: 128,
+                  },
+                },
+                additionalProperties: false,
+                required: ['destinations'],
+              },
+            },
+            required: ['restricted'],
+            additionalProperties: false,
+          },
+        ],
+      },
+      Destination: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          host: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 253,
+          },
+          port: {
+            type: 'integer',
+            format: 'uint16',
+            minimum: 1,
+            maximum: 65535,
+          },
+        },
+        required: ['host', 'port'],
+        description:
+          'Destination authority, independent of the upstream proxy used to reach it.\nA domain grant does not authorize its subdomains or other ports.',
       },
     },
   },

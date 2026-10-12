@@ -48,6 +48,10 @@ pub const EXPORT: &str = "processes";
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "WorkspaceProcessConfiguration")]
 pub struct Configuration {
+    /// Allow the selected native Session's verified owned worktree, within its
+    /// own access policy. Other Host-private paths remain denied.
+    #[serde(default)]
+    pub isolated_workspaces: bool,
     pub filesystem: Policy,
     pub network: Network,
     /// Trusted CLI supporting the original platform sandbox bootstrap.

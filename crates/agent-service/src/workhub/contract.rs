@@ -70,6 +70,9 @@ pub struct TaskRead {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "WorkHubTask")]
 pub struct Task {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 16))]
+    pub dependencies: Vec<String>,
     pub task_id: String,
     pub worker: String,
     pub operation: uuid::Uuid,
@@ -84,6 +87,11 @@ pub struct Task {
 )]
 #[schemars(rename = "WorkHubTaskStatus")]
 pub enum TaskStatus {
+    Blocked {
+        #[schemars(length(max = 16))]
+        dependencies: Vec<String>,
+    },
+    Cancelled,
     Preparing {
         stage: PreparationStage,
         operation: uuid::Uuid,
@@ -180,6 +188,9 @@ pub enum ControlStatus {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "WorkHubControlOutcome")]
 pub enum ControlOutcome {
+    Patch {
+        result: crate::contract::PatchResult,
+    },
     Stop {
         result: crate::contract::Stopped,
     },
@@ -220,6 +231,26 @@ pub fn contract() -> Contract {
         transport: Transport::Remote,
         interface: Interface::Service {
             methods: BTreeMap::from([
+                (
+                    "presets".into(),
+                    Method {
+                        progress: None,
+                        mode: MethodMode::Query,
+                        input: serde_json::json!({"type":"object","properties":{},"additionalProperties":false}),
+                        output: schemars::schema_for!(super::presets::Presets).into(),
+                        resources: BTreeMap::new(),
+                    },
+                ),
+                (
+                    "savePresets".into(),
+                    Method {
+                        progress: None,
+                        mode: MethodMode::Mutation,
+                        input: schemars::schema_for!(super::presets::Presets).into(),
+                        output: schemars::schema_for!(super::presets::Result).into(),
+                        resources: BTreeMap::new(),
+                    },
+                ),
                 (
                     "watchTasks".into(),
                     Method {

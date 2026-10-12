@@ -24,6 +24,7 @@ publish.workspace = true
 
 [dependencies]
 maka-config.workspace = true
+maka-event-log.workspace = true
 maka-plugin-core.workspace = true
 maka-plugins.workspace = true
 maka-runtime.workspace = true

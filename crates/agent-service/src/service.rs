@@ -83,6 +83,7 @@ impl Handler for Agent {
                         context.emit(encode(page)?).await?;
                     }
                 }
+                "tools" => encode(owner.tool_names()),
                 "schedules" => encode(owner.schedules(decode(input)?).await?),
                 "watchSchedules" | "scheduleAlerts" => {
                     let mut changes = owner.schedule_changes();
@@ -149,8 +150,17 @@ impl Handler for Agent {
                 "create" => {
                     let input: Create = decode(input)?;
                     let operation = context.operation().ok_or("agent_mutation_required")?;
-                    encode(owner.create(input, operation).await?)
+                    encode(owner.create(input, operation, context.scope()).await?)
                 }
+                "snapshotPatch" => {
+                    context.operation().ok_or("agent_mutation_required")?;
+                    encode(
+                        owner
+                            .snapshot_patch(decode(input)?, context.scope())
+                            .await?,
+                    )
+                }
+                "readPatch" => encode(owner.read_patch(decode(input)?).await?),
                 "markRead" => {
                     context.operation().ok_or("agent_mutation_required")?;
                     encode(owner.mark_read(decode(input)?).await?)
@@ -687,6 +697,7 @@ pub(crate) fn summary_for(
         SessionActivity::Idle
     };
     Session {
+        tools: session.configuration.tools,
         data_source: Box::new(data_source.clone()),
         permissions: session.configuration.permissions,
         boundary_revision: session.configuration.boundary_revision,

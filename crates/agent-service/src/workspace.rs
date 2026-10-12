@@ -26,6 +26,26 @@ use maka_runtime_host::server::DirectoryRootSpec;
 use std::{path::Path, sync::Arc};
 
 pub(crate) const PAGE_BYTES: usize = 48 * 1024;
+
+/// The native Session record is the authority for the sole exception inside
+/// private state. A caller-supplied path can never open this exception.
+pub(crate) fn private_rules(
+    selected: &Workspace,
+    state_root: &Path,
+) -> Result<Vec<maka_sandbox::filesystem::Rule>, String> {
+    use maka_sandbox::filesystem::{Access, Rule};
+    let mut rules = vec![Rule::subtree(state_root, Access::Deny)];
+    if let Some(binding) = &selected.worktree {
+        if binding.directory() != Path::new(&selected.path) {
+            return Err("agent_workspace_unavailable".into());
+        }
+        maka_fs_tools::worktree::Worktrees::open(&state_root.join("subagent-worktrees"))
+            .and_then(|worktrees| worktrees.inspect(binding))
+            .map_err(|_| "agent_workspace_unavailable")?;
+        rules.push(Rule::subtree(binding.directory(), Access::Write));
+    }
+    Ok(rules)
+}
 #[derive(Clone)]
 pub(crate) struct Root {
     name: String,
@@ -274,6 +294,7 @@ pub(crate) async fn initialize(
     directory::open(&path, &selection.directory_identity)
         .map_err(|_| "agent_workspace_initialization_failed")?;
     Ok(Some(Workspace {
+        worktree: None,
         project_id: None,
         path: host_path(&path)?,
         directory_identity: selection.directory_identity,
@@ -291,15 +312,28 @@ pub(crate) async fn validate(
     tokio::task::spawn_blocking(move || {
         let (path, observed) = directory::capture(Path::new(&selected.path))
             .map_err(|_| "agent_workspace_unavailable")?;
-        if path.starts_with(&managed)
-            || host_path(&path)? != selected.path
-            || observed != selected.directory_identity
-        {
+        if host_path(&path)? != selected.path || observed != selected.directory_identity {
             return Err("agent_workspace_unavailable".into());
         }
+        let authorized = if let Some(binding) = &selected.worktree {
+            directory::open(binding.source(), binding.source_identity())
+                .map_err(|_| "agent_workspace_unavailable")?;
+            if binding.directory() != path {
+                return Err("agent_workspace_unavailable".into());
+            }
+            maka_fs_tools::worktree::Worktrees::open(&managed)
+                .and_then(|worktrees| worktrees.inspect(binding))
+                .map_err(|_| "agent_workspace_unavailable")?;
+            binding.source()
+        } else {
+            if path.starts_with(&managed) {
+                return Err("agent_workspace_unavailable".into());
+            }
+            path.as_path()
+        };
         let root = roots
             .iter()
-            .find(|root| root.directory.validate(&path).is_ok())
+            .find(|root| root.directory.validate(authorized).is_ok())
             .ok_or("agent_workspace_unavailable")?;
         let directory = directory::open(&path, &selected.directory_identity)
             .map_err(|_| "agent_workspace_unavailable")?;
@@ -310,7 +344,7 @@ pub(crate) async fn validate(
             return Err("agent_workspace_unavailable".into());
         }
         root.directory
-            .validate(&path)
+            .validate(authorized)
             .map_err(|_| "agent_workspace_unavailable".into())
     })
     .await

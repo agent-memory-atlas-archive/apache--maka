@@ -88,7 +88,10 @@ function candidate(state: State, props: ModelsProps): SelectedModel | null {
     const selection = choice ? { choice, thinkingLevel: original.thinkingLevel } : null;
     return selection && supports(selection) ? selection : null;
   }
-  return !props.selection && state.suggestDefault && state.defaultModel?.kind === 'ready'
+  return props.suggestDefault !== false &&
+    !props.selection &&
+    state.suggestDefault &&
+    state.defaultModel?.kind === 'ready'
     ? { choice: state.defaultModel.choice, thinkingLevel: null }
     : null;
 }

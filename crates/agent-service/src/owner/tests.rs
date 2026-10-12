@@ -62,6 +62,13 @@ mod queue;
 #[path = "tests/selection.rs"]
 mod selection;
 
+#[path = "tests/jev.rs"]
+mod jev_tests;
+#[path = "tests/web.rs"]
+mod web_tests;
+#[path = "tests/worktrees.rs"]
+mod worktrees;
+
 #[path = "tests/settings.rs"]
 mod settings;
 
@@ -431,7 +438,7 @@ impl Fixture {
         peer: Option<Arc<maka_application_bridge::transport::PeerPolicy>>,
         tooling: Option<service_tools::Setup>,
     ) -> Self {
-        Self::configured(base, cap, model, peer, tooling, false, false).await
+        Self::configured(base, cap, model, peer, tooling, |_| {}).await
     }
     async fn configured(
         base: &str,
@@ -439,8 +446,7 @@ impl Fixture {
         model: Option<ModelExecutor>,
         peer: Option<Arc<maka_application_bridge::transport::PeerPolicy>>,
         tooling: Option<service_tools::Setup>,
-        recall: bool,
-        scheduled_tasks: bool,
+        configure: impl FnOnce(&mut Configuration),
     ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("root");
@@ -503,8 +509,10 @@ impl Fixture {
             maka_config::oauth::enrollment::LoginCompletion::Committed(_)
         ));
         let mut settings = Configuration {
-            scheduled_tasks,
-            recall,
+            isolated_workspaces: false,
+            assistant: None,
+            scheduled_tasks: false,
+            recall: false,
             import_roots: vec![maka_runtime_host::server::DirectoryRootSpec {
                 label: "Import sources".into(),
                 path: workspace.clone(),
@@ -528,9 +536,13 @@ impl Fixture {
                 },
             ],
             max_active_runs: cap,
-            max_steps: if recall || scheduled_tasks { 6 } else { 1 },
+            max_steps: 1,
             tools: vec![],
         };
+        configure(&mut settings);
+        if settings.recall || settings.scheduled_tasks {
+            settings.max_steps = 6;
+        }
         if let Some(tooling) = &tooling {
             settings.tools = tooling.selections();
             settings.max_steps = if settings

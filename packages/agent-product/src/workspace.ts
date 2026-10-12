@@ -30,6 +30,7 @@ import { tuiText } from './tui-locale.js';
 import type {
   Action,
   ActionOutcome,
+  Emission,
   Shortcut,
   ModelSelection,
   AgentExecutorSelection,
@@ -83,6 +84,7 @@ import type {
 } from '../../plugin-sdk/src/index.js';
 import type {
   WorkspaceProps,
+  InsightsProps,
   PageChrome,
   PaletteCommand,
   Message,
@@ -272,10 +274,13 @@ export interface State {
   pageBack: Partial<Record<Page, number>>;
   recallAnchor: number | null;
   scheduledTasks: boolean;
+  web: boolean;
+  jev: boolean;
   scheduleAlerts: AgentScheduleAlerts;
   scheduleWatch: string | null;
   scheduleRequested: { sequence: number; taskId: string } | null;
   settingsCategory: SettingsCategory;
+  insightsScope: InsightsProps['scope'];
   sidebar: { open: boolean } | { command: TerminalPaneCommand | null };
   terminals: boolean;
   skills: boolean;
@@ -799,6 +804,7 @@ type RootCommand =
   | 'terminal-open'
   | 'skills-open'
   | 'details-open'
+  | 'usage-open'
   | 'create-workspace'
   | 'navigation-toggle'
   | 'settings'
@@ -807,6 +813,7 @@ type RootCommand =
   | 'recall-open'
   | 'scheduler-open'
   | 'apps-open'
+  | 'workhub-open'
   | 'deployment-open'
   | 'reload'
   | 'stop'
@@ -1022,6 +1029,17 @@ function rootCommands(
       hint: '',
       disabled: !route || !state.selected || state.loading,
     },
+    ...(target === 'tui'
+      ? [
+          {
+            kind: 'usage-open' as const,
+            id: 'usage-open',
+            label: tuiText(locale, 'insights-this-session'),
+            hint: '',
+            disabled: !route || !state.selected,
+          },
+        ]
+      : []),
     {
       kind: 'details-open',
       id: 'details-open',
@@ -1048,6 +1066,17 @@ function rootCommands(
             kind: 'appearance-open' as const,
             id: 'appearance-open',
             label: tuiText(locale, 'settings-appearance'),
+            hint: '',
+            disabled: !shellRoute,
+          },
+        ]
+      : []),
+    ...(state.embedding.workhub && !state.embedding.fixed
+      ? [
+          {
+            kind: 'workhub-open' as const,
+            id: 'workhub-open',
+            label: 'WorkHub',
             hint: '',
             disabled: !shellRoute,
           },
@@ -1133,6 +1162,12 @@ function rootCommands(
       )
     : commands;
 }
+function openUsage(state: State, session: AgentSession) {
+  state.insightsScope = { sequence: ++state.serial, sessionId: session.id, label: session.title };
+  state.settingsCategory = 'insights';
+  state.pages = ['settings'];
+  controlSidebar(state, 'dismiss_transient');
+}
 function sidebarLabel(state: State, text: ReturnType<typeof copy>) {
   return 'open' in state.sidebar
     ? state.sidebar.open
@@ -1184,9 +1219,13 @@ function rootCommand(
   } else if (kind === 'terminal-open') state.dialog = 'terminal';
   else if (kind === 'skills-open') state.dialog = 'skills';
   else if (kind === 'details-open') state.dialog = 'details';
+  else if (kind === 'usage-open' && state.selected) openUsage(state, state.selected);
   else if (kind === 'navigation-toggle') controlSidebar(state, 'toggle');
   else if (kind === 'settings') {
+    state.insightsScope = { sequence: ++state.serial, sessionId: null, label: '' };
     state.pages = [target === 'tui' ? 'settings' : 'connections'];
+    if (target === 'tui') controlSidebar(state, 'dismiss_transient');
+  } else if (kind === 'workhub-open') {
     if (target === 'tui') controlSidebar(state, 'dismiss_transient');
   } else if (kind === 'apps-open') {
     state.pages = ['apps'];
@@ -2192,6 +2231,7 @@ function frame<N extends Node>(
   state: State,
   values: ComponentValues,
   actions: Action[] = [],
+  events: Emission[] = [],
 ) {
   const target = presentation.target;
   const currentPage = state.pages.at(-1);
@@ -2255,7 +2295,7 @@ function frame<N extends Node>(
   const commands = rootCommands(state, locale, target);
   const createButton = ui.button(
     'create',
-    target === 'tui' ? '+ ' + tuiText(locale, 'sidebar-new-session') : text.new,
+    target === 'tui' ? '+  ' + tuiText(locale, 'sidebar-new-session') : text.new,
     !commands.some((command) => command.kind === 'create' && !command.disabled),
     target === 'tui',
     target === 'tui' ? { background: 0, align: 'start' } : {},
@@ -2269,6 +2309,51 @@ function frame<N extends Node>(
         ),
       ])
     : createButton;
+  const navigationLink = (
+    key: string,
+    label: string,
+    glyph: string,
+    ascii: string,
+    current = false,
+  ) =>
+    ui.button(key, `${theme.ascii ? ascii : glyph}  ${label}`, false, false, {
+      background: current ? theme.selected : 0,
+      align: 'start',
+    });
+  const navigationApps =
+    target === 'tui' && !state.embedding.fixed
+      ? [
+          ui.box('navigation-apps-gap', [], { terminal: { basis: 1 } }),
+          navigationLink('apps-open', text.appsTitle, '', '', state.pages.at(-1) === 'apps'),
+          ...(state.embedding.workhub ? [navigationLink('workhub-open', 'WorkHub', '◈', '*')] : []),
+          ...(state.scheduledTasks
+            ? [
+                navigationLink(
+                  'scheduler-open',
+                  text.scheduleTitle +
+                    (state.scheduleAlerts.pending ? ` (${state.scheduleAlerts.pending})` : ''),
+                  '⏲',
+                  'T',
+                  state.pages.at(-1) === 'scheduler',
+                ),
+              ]
+            : []),
+          navigationLink(
+            'recall-open',
+            text.recallTitle,
+            '⌕',
+            '/',
+            state.pages.at(-1) === 'recall',
+          ),
+          navigationLink(
+            'imports-open',
+            text.importsTitle,
+            '⇥',
+            '>',
+            state.pages.at(-1) === 'imports',
+          ),
+        ]
+      : [];
   const navigation = ui.box(
     'navigation-panel',
     [
@@ -2303,9 +2388,12 @@ function frame<N extends Node>(
                 ? target === 'tui'
                   ? tuiText(locale, 'sidebar-all')
                   : text.allSessions
-                : state.catalog
-                  ? `${text.needsYou} (${state.catalog.needsYouCount})`
-                  : text.needsYou;
+                : target === 'tui'
+                  ? tuiText(locale, 'sidebar-needs-you') +
+                    (state.catalog?.needsYouCount ? ` · ${state.catalog.needsYouCount}` : '')
+                  : state.catalog
+                    ? `${text.needsYou} (${state.catalog.needsYouCount})`
+                    : text.needsYou;
             const selected = state.catalogFilter === filter;
             return ui.item
               ? ui.item(
@@ -2326,7 +2414,7 @@ function frame<N extends Node>(
             ? [
                 ui.button(
                   'catalog-search',
-                  tuiText(locale, 'sidebar-search'),
+                  `${theme.ascii ? '/' : '⌕'} ${tuiText(locale, 'sidebar-search')}`,
                   false,
                   false,
                   { background: 0, align: 'start' },
@@ -2338,59 +2426,73 @@ function frame<N extends Node>(
         ],
         { row: true, focusGroup: target === 'tui', gap: target === 'tui' ? 2 : 1 },
       ),
-      ...(!state.catalogFailed && !catalogPending(state) && state.catalog?.sessions.length === 0
-        ? [
-            ui.box(
-              'catalog-empty-inset',
-              [
-                ui.text(
-                  'catalog-empty',
-                  state.catalogFilter === 'needs_you'
-                    ? text.noneNeedsYou
-                    : tuiText(locale, 'sidebar-empty'),
-                  12,
-                  theme.muted,
-                ),
-              ],
-              { padding: 1 },
-            ),
-          ]
-        : []),
-      ...(state.catalogFailed
-        ? [ui.text('catalog-error', text.sessionsUnavailable, 12, theme.muted)]
-        : []),
+      ...(target === 'tui' ? [ui.box('catalog-gap', [], { terminal: { basis: 1 } })] : []),
       ui.box(
-        'catalog-controls',
+        'catalog-body',
         [
-          ...(state.catalog?.before
+          ...(!state.catalogFailed && !catalogPending(state) && state.catalog?.sessions.length === 0
             ? [
-                ui.button(
-                  'catalog-previous',
-                  text.previousSessions,
-                  catalogBusy || state.catalogFailed,
+                ui.box(
+                  'catalog-empty-inset',
+                  [
+                    ui.text(
+                      'catalog-empty',
+                      (target === 'tui' ? '   ' : '') +
+                        (state.catalogFilter === 'needs_you'
+                          ? text.noneNeedsYou
+                          : tuiText(locale, 'sidebar-empty')),
+                      12,
+                      theme.muted,
+                    ),
+                  ],
+                  { padding: target === 'desktop' ? 1 : 0, terminal: { shrink: true } },
                 ),
               ]
             : []),
-          ...(state.catalog?.after
-            ? [ui.button('catalog-more', text.moreSessions, catalogBusy || state.catalogFailed)]
+          ...(state.catalogFailed
+            ? [ui.text('catalog-error', text.sessionsUnavailable, 12, theme.muted)]
             : []),
-          ...(target === 'desktop' || state.catalogFailed
-            ? [ui.button('catalog-refresh', text.refreshSessions, catalogBusy)]
-            : []),
+          ui.box(
+            'catalog-controls',
+            [
+              ...(state.catalog?.before
+                ? [
+                    ui.button(
+                      'catalog-previous',
+                      text.previousSessions,
+                      catalogBusy || state.catalogFailed,
+                    ),
+                  ]
+                : []),
+              ...(state.catalog?.after
+                ? [ui.button('catalog-more', text.moreSessions, catalogBusy || state.catalogFailed)]
+                : []),
+              ...(target === 'desktop' || state.catalogFailed
+                ? [ui.button('catalog-refresh', text.refreshSessions, catalogBusy)]
+                : []),
+            ],
+            { row: true, style: { wrap: true }, terminal: { wrap: true } },
+          ),
+          presentation.slot(
+            'navigation',
+            'navigation',
+            {
+              theme,
+              locale,
+              sessions: state.catalog?.sessions ?? [],
+              selected: state.selected?.id ?? null,
+              busy: catalogBusy,
+            },
+            { select: 'select' },
+          ),
+          ...navigationApps,
         ],
-        { row: true, style: { wrap: true }, terminal: { wrap: true } },
-      ),
-      presentation.slot(
-        'navigation',
-        'navigation',
         {
-          theme,
-          locale,
-          sessions: state.catalog?.sessions ?? [],
-          selected: state.selected?.id ?? null,
-          busy: catalogBusy,
+          gap: 0,
+          scroll: target === 'tui' ? 'manual' : 'none',
+          terminal: { grow: 1 },
+          style: { height: pixels(0), grow: 1, minHeight: 0 },
         },
-        { select: 'select' },
       ),
       ...(target === 'tui'
         ? [
@@ -2399,44 +2501,21 @@ function frame<N extends Node>(
               [
                 ...(!state.embedding.fixed
                   ? [
-                      ui.button('apps-open', text.appsTitle, false, false, {
-                        background: 0,
-                        align: 'start',
-                      }),
-                      ...(state.scheduledTasks
-                        ? [
-                            ui.button(
-                              'scheduler-open',
-                              text.scheduleTitle +
-                                (state.scheduleAlerts.pending
-                                  ? ` (${state.scheduleAlerts.pending})`
-                                  : ''),
-                              false,
-                              false,
-                              { background: 0, align: 'start' },
-                            ),
-                          ]
-                        : []),
-                      ui.button('recall-open', text.recallTitle, false, false, {
-                        background: 0,
-                        align: 'start',
-                      }),
-                      ui.button('imports-open', text.importsTitle, false, false, {
-                        background: 0,
-                        align: 'start',
-                      }),
-                      ui.button('projects-open', text.projectsTitle, false, false, {
-                        background: 0,
-                        align: 'start',
-                      }),
+                      navigationLink(
+                        'projects-open',
+                        text.projectsTitle,
+                        '▦',
+                        'P',
+                        state.pages.at(-1) === 'projects',
+                      ),
                     ]
                   : []),
-                ui.button(
+                navigationLink(
                   'settings',
-                  `${theme.ascii ? 'S' : '⛭'} ${tuiText(locale, 'route-settings')}`,
-                  false,
-                  false,
-                  { background: 0, align: 'start' },
+                  tuiText(locale, 'route-settings'),
+                  '⛭',
+                  'S',
+                  state.pages.at(-1) === 'settings',
                 ),
               ],
               { gap: 0 },
@@ -2802,6 +2881,7 @@ function frame<N extends Node>(
                 ...(!state.embedding.fixed
                   ? [
                       ui.button('projects-open', text.projectsTitle),
+                      ...(state.embedding.workhub ? [ui.button('workhub-open', 'WorkHub')] : []),
                       ui.button('apps-open', text.appsTitle),
                       ui.button('imports-open', text.importsTitle),
                       ...(state.scheduledTasks
@@ -3255,8 +3335,31 @@ function frame<N extends Node>(
     'page-content',
     [
       main,
-      ...(state.pages.at(-1) === 'settings'
-        ? [settingsView(presentation, state.preferences, theme, locale, state.settingsCategory)]
+      ...(state.openedPages.includes('settings')
+        ? [
+            ui.box(
+              'retained-settings',
+              [
+                settingsView(
+                  presentation,
+                  state.preferences,
+                  theme,
+                  locale,
+                  state.settingsCategory,
+                  currentPage === 'settings',
+                  state.insightsScope,
+                  state.web,
+                  state.jev,
+                  state.embedding.workhub === true,
+                ),
+              ],
+              {
+                visible: currentPage === 'settings',
+                terminal: { grow: 1 },
+                style: { width: fill, height: fill },
+              },
+            ),
+          ]
         : []),
       ...(state.openedPages.includes('deployment')
         ? [
@@ -3525,7 +3628,7 @@ function frame<N extends Node>(
             bookmarkView(
               presentation,
               state.bookmark,
-              'navigation-checkpoint-' + navigationKey(state),
+              navigationKey(state),
               navigationKey(state),
               navigationBookmark(state),
             ),
@@ -3856,6 +3959,7 @@ function frame<N extends Node>(
         ? { kind: 'window', binding: 'surface', title: 'maka', width: 1100, height: 760 }
         : { kind: 'terminal', binding: 'surface' };
   out.actions = actions;
+  out.events = events;
   out.subscriptions = [
     ...(state.scheduleWatch && !state.embedding.fixed
       ? [
@@ -3903,6 +4007,8 @@ export function workspace<N extends Node>(
   place = '',
   skills = false,
   scheduledTasks = false,
+  web = false,
+  jev = false,
 ): Component<State, WorkspaceProps, N> {
   const target = presentation.target;
   const configuredLocale = locale;
@@ -3938,10 +4044,13 @@ export function workspace<N extends Node>(
         pageBack: {},
         recallAnchor: null,
         scheduledTasks,
+        web,
+        jev,
         scheduleAlerts: { pending: 0, reminders: [] },
         scheduleWatch: scheduledTasks ? 'schedule-alerts-initial' : null,
         scheduleRequested: null,
         settingsCategory: 'appearance',
+        insightsScope: null,
         searchOpen: false,
         browse: null,
         sidebar: target === 'desktop' ? { open: true } : { command: null },
@@ -4008,7 +4117,7 @@ export function workspace<N extends Node>(
         const restored = observeBookmark(
           state.bookmark,
           input,
-          'navigation-checkpoint-' + navigationKey(state),
+          navigationKey(state),
           navigationBookmark(state),
           (value) => {
             const item = value as Navigation | null;
@@ -4027,7 +4136,19 @@ export function workspace<N extends Node>(
                   'scheduler',
                 ].includes(page),
               ) &&
-              ['appearance', 'interface', 'models', 'plugins'].includes(item.category)
+              [
+                'appearance',
+                'interface',
+                'models',
+                'sessions',
+                'host',
+                'plugins',
+                'assistant',
+                'insights',
+                ...(state.web ? ['web'] : []),
+                ...(state.jev ? ['jev'] : []),
+                ...(props.workhub ? ['subagents'] : []),
+              ].includes(item.category)
               ? item
               : null;
           },
@@ -4047,6 +4168,7 @@ export function workspace<N extends Node>(
         input = { ...input, key: 'attachment-close' };
       state.revision++;
       const actions: Action[] = [];
+      const events: Emission[] = [];
       const locale =
         target === 'tui'
           ? effectiveLocale(state.preferences, configuredLocale, values.locale?.[0])
@@ -4304,6 +4426,20 @@ export function workspace<N extends Node>(
           }
           return frame(presentation, configuredLocale, state, values, actions);
         }
+        if (
+          [
+            'assistant-preferences',
+            'session-defaults',
+            'network-settings',
+            'insights',
+            'web-settings',
+            'jev-settings',
+            'subagent-settings',
+          ].includes(input.child) &&
+          input.name === 'closed' &&
+          state.pages.at(-1) === 'settings'
+        )
+          state.pages.pop();
         if (input.child === 'apps') {
           if (input.name === 'closed' && state.pages.at(-1) === 'apps') state.pages.pop();
           if (input.name === 'manage' && state.pages.at(-1) === 'apps')
@@ -4415,8 +4551,10 @@ export function workspace<N extends Node>(
                 command &&
                 rootCommand(state, actions, locale, command.kind, target) &&
                 state.dialog === 'palette'
-              )
+              ) {
                 state.dialog = null;
+                if (command.kind === 'workhub-open') events.push({ name: 'workhub', value: {} });
+              }
             } else if (
               input.name === 'selected' &&
               !state.embedding.fixed &&
@@ -4428,7 +4566,7 @@ export function workspace<N extends Node>(
               state.dialog = null;
             }
           }
-          return frame(presentation, configuredLocale, state, values, actions);
+          return frame(presentation, configuredLocale, state, values, actions, events);
         }
 
         if (target === 'tui' && input.child === 'queue' && input.name === 'activated') {
@@ -4614,9 +4752,14 @@ export function workspace<N extends Node>(
           !mutationPending(state) &&
           !catalogPending(state)
         ) {
-          const { sessionId, details } = input.event as { sessionId: string; details?: boolean };
+          const { sessionId, details, usage } = input.event as {
+            sessionId: string;
+            details?: boolean;
+            usage?: boolean;
+          };
           const session = state.catalog?.sessions.find((item) => item.id === sessionId);
-          if (session) {
+          if (session && usage && target === 'tui') openUsage(state, session);
+          else if (session) {
             state.pages = [];
             if (state.selected?.id !== session.id) select(state, actions, session);
             if (details && !executionPending(state)) state.dialog = 'details';
@@ -5046,10 +5189,15 @@ export function workspace<N extends Node>(
           const command = rootCommands(state, locale, target).find(
             (command) => command.kind === input.key,
           );
-          if (command) rootCommand(state, actions, locale, command.kind, target);
+          if (
+            command &&
+            rootCommand(state, actions, locale, command.kind, target) &&
+            command.kind === 'workhub-open'
+          )
+            events.push({ name: 'workhub', value: {} });
         }
       }
-      return frame(presentation, configuredLocale, state, values, actions);
+      return frame(presentation, configuredLocale, state, values, actions, events);
     },
   };
 }

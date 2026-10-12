@@ -23,6 +23,8 @@ import {
   type AcpExecutorConfiguration,
   type SkillLibraryConfiguration,
   type WorkspaceProcessConfiguration,
+  type WorkspaceWebConfiguration,
+  type WorkspaceJevConfiguration,
   type CompositionInput,
   type CompositionNode,
   type PackageRef,
@@ -41,6 +43,13 @@ export const packageNames = [
   'directory-picker',
   'projects',
   'conversation-import',
+  'assistant-preferences',
+  'network-settings',
+  'session-defaults',
+  'web-settings',
+  'jev-settings',
+  'subagent-settings',
+  'insights',
   'recall',
   'scheduler',
   'apps',
@@ -55,6 +64,8 @@ export const packageNames = [
   'service-approval',
   'permission-approval',
   'questions',
+  'workspace-web',
+  'workspace-jev',
   'workspace-files',
   'workspace-processes',
   'protocol-processes',
@@ -134,6 +145,8 @@ export interface CompositionConfiguration {
   keys: Record<InstanceName, string> & Partial<Record<ExecutorInstanceName, string>>;
   agent: AgentConfiguration;
   processes?: WorkspaceProcessConfiguration;
+  web?: WorkspaceWebConfiguration;
+  jev?: WorkspaceJevConfiguration;
   coordinator?: AgentConfiguration;
   coordinatorProcesses?: WorkspaceProcessConfiguration;
   acpExecutors?: AcpExecutor[];
@@ -181,6 +194,8 @@ function settingsComposition(
       | 'settings'
       | 'receipts'
       | 'workspace-processes'
+      | 'workspace-web'
+      | 'workspace-jev'
       | 'skills'
       | 'skill-outcomes'
       | 'host-deployment-manager',
@@ -337,6 +352,44 @@ function settingsComposition(
           history: [local('history', 'History')],
         },
         'interface-deployment',
+      ),
+      'assistant-preferences': node(
+        'assistant-preferences',
+        {},
+        {
+          settings: [remote('settings', 'Settings')],
+          input: [local('input', 'TextInput')],
+          editor: [local('editor', 'Textarea')],
+          reader: [local('reader', 'Reader')],
+          receipts: [remote('receipts', 'Receipts')],
+          history: [local('history', 'History')],
+        },
+      ),
+      'network-settings': node(
+        'network-settings',
+        {},
+        {
+          settings: [remote('settings', 'Settings')],
+          input: [local('input', 'TextInput')],
+          secret: [local('input', 'SecretInput')],
+          reader: [local('reader', 'Reader')],
+          receipts: [remote('receipts', 'Receipts')],
+          history: [local('history', 'History')],
+        },
+      ),
+      insights: node(
+        'insights',
+        {},
+        {
+          ...(configuration.presentation === 'tui'
+            ? { checkpoint: [local('checkpoint', 'Checkpoint')] }
+            : {}),
+          settings: [remote('settings', 'Settings')],
+          input: [local('input', 'TextInput')],
+          reader: [local('reader', 'Reader')],
+          receipts: [remote('receipts', 'Receipts')],
+          history: [local('history', 'History')],
+        },
       ),
       connections: node(
         'connections',
@@ -517,6 +570,12 @@ function settingsComposition(
  * Keys and the Host deployment belong to the installation, not to a build.
  */
 export function composition(configuration: CompositionConfiguration): ApplicationSources {
+  return configuration.coordinator
+    ? workhubComposition(configuration, 'sessions')
+    : workspaceComposition(configuration);
+}
+
+function workspaceComposition(configuration: CompositionConfiguration): ApplicationSources {
   const { keys } = configuration;
   const { host, managementHost, ui, remoteExports, connections, local, remote, node, expose } =
     settingsComposition(configuration, 'gateway');
@@ -532,6 +591,15 @@ export function composition(configuration: CompositionConfiguration): Applicatio
   if (executors.length && !configuration.executorProcesses)
     throw new Error('ACP backends require an explicit executorProcesses installation ceiling');
   const executorPath = (name: string): ExecutorInstanceName => `acp-${name}`;
+  const webMethods = [
+    ...new Set(
+      configuration.agent.tools.filter((tool) => tool.import === 'web').map((tool) => tool.method),
+    ),
+  ];
+  if (webMethods.length && !configuration.web)
+    throw new Error('Web tools require an explicit network installation ceiling');
+  if (webMethods.some((method) => method !== 'fetch' && method !== 'search'))
+    throw new Error('Model Web tools select only fetch and search');
   const asksForms = configuration.agent.tools.some((tool) => tool.import === 'forms');
   const asksQuestions = configuration.agent.tools.some((tool) => tool.import === 'questions');
   const fileMethods = [
@@ -581,6 +649,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
       // These imports bind known native v1 contracts. Freeze presentation in
       // the configuration; tool names and response shapes cannot opt into it.
       tools: configuration.agent.tools.map((tool) => {
+        if (tool.import === 'web') return { ...tool, input: 'web' as const };
         if (tool.import === 'skills') return { ...tool, input: 'skill' as const };
         if (tool.presentation !== undefined) return tool;
         const contract =
@@ -613,6 +682,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
             })),
           }
         : {}),
+      ...(webMethods.length ? { web: [local('workspace-web', 'web')] } : {}),
       ...(skillCalls.length ? { skills: [local('skills', 'skills')] } : {}),
       ...(asksForms ? { forms: [local('forms', 'forms')] } : {}),
       ...(asksQuestions ? { questions: [local('questions', 'questions')] } : {}),
@@ -654,6 +724,59 @@ export function composition(configuration: CompositionConfiguration): Applicatio
   host.instances.gateway!.bindings!.agent = [local('agent', 'agent')];
   if (configuration.processes)
     host.instances.gateway!.bindings!.terminal = [local('workspace-processes', 'terminal')];
+  ui.instances['session-defaults'] = node(
+    'session-defaults',
+    { instance: [keys.agent] },
+    {
+      management: [remote('host-deployment-manager', 'Management')],
+      receipts: [remote('receipts', 'Receipts')],
+      history: [local('history', 'History')],
+    },
+  );
+  if (configuration.web) {
+    ui.instances['web-settings'] = node(
+      'web-settings',
+      {},
+      {
+        web: [remote('workspace-web', 'web')],
+        secret: [local('input', 'SecretInput')],
+        receipts: [remote('receipts', 'Receipts')],
+        history: [local('history', 'History')],
+      },
+    );
+    host.instances['workspace-web'] = node('workspace-web', { ...configuration.web });
+    host.instances.gateway!.bindings!.web = [local('workspace-web', 'web')];
+    remoteExports.push({
+      capability: { deployment: 'local', instance: [keys['workspace-web']], export: 'web' },
+      declaration: { contract: contracts.workspaceWeb, availability: 'required' },
+    });
+    Object.assign(connections.hosts.find((host) => host.name === 'local')!.endpoints, {
+      web: expose('gateway', 'web', ['snapshot', 'save', 'saveKey', 'deleteKey', 'checkKey'], true),
+    });
+  }
+  if (configuration.jev) {
+    ui.instances['jev-settings'] = node(
+      'jev-settings',
+      {},
+      {
+        jev: [remote('workspace-jev', 'jev')],
+        secret: [local('input', 'SecretInput')],
+        input: [local('input', 'TextInput')],
+        reader: [local('reader', 'Reader')],
+        receipts: [remote('receipts', 'Receipts')],
+        history: [local('history', 'History')],
+      },
+    );
+    host.instances['workspace-jev'] = node('workspace-jev', { ...configuration.jev });
+    host.instances.gateway!.bindings!.jev = [local('workspace-jev', 'jev')];
+    remoteExports.push({
+      capability: { deployment: 'local', instance: [keys['workspace-jev']], export: 'jev' },
+      declaration: { contract: contracts.workspaceJev, availability: 'required' },
+    });
+    Object.assign(connections.hosts.find((host) => host.name === 'local')!.endpoints, {
+      jev: expose('gateway', 'jev', ['snapshot', 'save', 'credential', 'evaluate'], true),
+    });
+  }
   if (configuration.skills) {
     host.instances.skills = node('skills', { ...configuration.skills });
     host.instances.gateway!.bindings!.skills = [local('skills', 'skills')];
@@ -699,6 +822,8 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         terminals: !!configuration.processes,
         skills: !!configuration.skills,
         scheduledTasks: !!configuration.agent.scheduledTasks,
+        web: !!configuration.web,
+        jev: !!configuration.jev,
         place: configuration.agent.workspaceRoots[0].path,
       },
       {
@@ -722,6 +847,12 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         directories: [local('directory-picker', 'DirectoryPicker')],
         projects: [local('projects', 'Projects')],
         imports: [local('conversation-import', 'Imports')],
+        assistantPreferences: [local('assistant-preferences', 'AssistantPreferences')],
+        networkSettings: [local('network-settings', 'NetworkSettings')],
+        sessionDefaults: [local('session-defaults', 'SessionDefaults')],
+        ...(configuration.web ? { webSettings: [local('web-settings', 'WebSettings')] } : {}),
+        ...(configuration.jev ? { jevSettings: [local('jev-settings', 'JevSettings')] } : {}),
+        insights: [local('insights', 'Insights')],
         recall: [local('recall', 'Recall')],
         scheduler: [local('scheduler', 'Scheduler')],
         apps: [local('apps', 'Apps')],
@@ -1036,6 +1167,18 @@ export function composition(configuration: CompositionConfiguration): Applicatio
             recovery: true,
           })),
         ]),
+        ...(webMethods.length
+          ? [
+              {
+                origin: [keys.agent],
+                consumer: [keys.agent],
+                provider: [keys['workspace-web']],
+                export: 'web',
+                methods: [...webMethods, 'capture'],
+                recovery: true,
+              },
+            ]
+          : []),
         ...(skillCalls.length
           ? [
               {
@@ -1125,12 +1268,15 @@ export function studioComposition(
 }
 
 /** One native coordinator and an explicitly selected worker, using ordinary UI bindings. */
-export function workhubComposition(configuration: CompositionConfiguration): ApplicationSources {
+export function workhubComposition(
+  configuration: CompositionConfiguration,
+  initialRoute: 'coordinator' | 'sessions' = 'coordinator',
+): ApplicationSources {
   if (!configuration.coordinator)
     throw new Error('WorkHub requires an explicit coordinator Agent configuration');
   const { keys, packages } = configuration;
-  const worker = composition(configuration);
-  const coordinator = composition({
+  const worker = workspaceComposition(configuration);
+  const coordinator = workspaceComposition({
     ...configuration,
     agent: configuration.coordinator,
     processes: configuration.coordinatorProcesses,
@@ -1274,7 +1420,7 @@ export function workhubComposition(configuration: CompositionConfiguration): App
     key: keys['workhub-root'],
     package: { source: 'pinned', package: packages['workhub-root'] },
     usePackage: 'entry',
-    configuration: { values: { locale: configuration.locale, worker: 'worker' } },
+    configuration: { values: { locale: configuration.locale, worker: 'worker', initialRoute } },
     bindings: {
       workhub: [
         { kind: 'remote', deployment: 'local', instance: [keys.workhub], export: 'workhub' },
@@ -1293,6 +1439,28 @@ export function workhubComposition(configuration: CompositionConfiguration): App
       surface: [local('surface', 'Surface')],
     },
   };
+  worker.ui.instances['subagent-settings'] = {
+    key: keys['subagent-settings'],
+    package: { source: 'pinned', package: packages['subagent-settings'] },
+    usePackage: 'entry',
+    configuration: { values: {} },
+    bindings: {
+      workhub: [
+        { kind: 'remote', deployment: 'local', instance: [keys.workhub], export: 'workhub' },
+      ],
+      agent: [{ kind: 'remote', deployment: 'local', instance: [keys.agent], export: 'agent' }],
+      models: [local('models', 'Models')],
+      input: [local('input', 'TextInput')],
+      reader: [local('reader', 'Reader')],
+      receipts: [
+        { kind: 'remote', deployment: 'local', instance: [keys.receipts], export: 'Receipts' },
+      ],
+      history: [local('history', 'History')],
+    },
+  };
+  worker.ui.instances.workspace!.bindings!.subagentSettings = [
+    local('subagent-settings', 'SubagentSettings'),
+  ];
   worker.ui.launch = local('workhub-root', 'WorkHub');
   worker.remoteExports.push(
     {
@@ -1372,6 +1540,9 @@ export function workhubComposition(configuration: CompositionConfiguration): App
         'execution',
         'execute',
         'executors',
+        'tools',
+        'snapshotPatch',
+        'readPatch',
         'work',
         'observe',
         'watch',

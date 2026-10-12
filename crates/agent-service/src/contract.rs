@@ -52,6 +52,12 @@ pub use permissions::*;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentConfiguration")]
 pub struct Configuration {
+    /// Permit creation of Host-owned Git worktrees from published directories.
+    #[serde(default)]
+    pub isolated_workspaces: bool,
+    /// Select Maka's assistant policy and workspace guidance explicitly.
+    #[serde(default)]
+    pub assistant: Option<AssistantConfiguration>,
     /// Enable model proposals and approved scheduled work for this Agent.
     #[serde(default)]
     pub scheduled_tasks: bool,
@@ -83,6 +89,15 @@ pub struct Configuration {
     /// Explicitly selected, frozen application service tools, alongside configured native tools.
     #[schemars(length(max = 128))]
     pub tools: Vec<ServiceTool>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentAssistantConfiguration")]
+pub struct AssistantConfiguration {
+    /// Read only the three instruction files in this home's .maka directory.
+    #[serde(default)]
+    #[schemars(length(min = 1, max = 4096))]
+    pub home: Option<String>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -119,6 +134,7 @@ pub enum ToolInput {
     #[default]
     Json,
     Skill,
+    Web,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -201,6 +217,11 @@ pub enum SessionPosition {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentCreate")]
 pub struct Create {
+    /// Immutable narrowing of this Agent's installed tools. None uses the installation;
+    /// an empty list permits no model tools. External executors cannot enforce this.
+    #[serde(default)]
+    #[schemars(length(max = 128), extend("uniqueItems" = true))]
+    pub tools: Option<Vec<String>>,
     #[schemars(length(min = 1, max = 128))]
     pub title: String,
     #[schemars(length(max = 32))]
@@ -217,6 +238,9 @@ pub struct Create {
 )]
 #[schemars(rename = "AgentWorkspaceSelection")]
 pub enum WorkspaceSelection {
+    IsolatedGit {
+        selection: DirectorySelection,
+    },
     Project {
         project: ProjectRef,
         selection: DirectorySelection,
@@ -279,6 +303,9 @@ pub enum DirectoryPage {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentWorkspace")]
 pub struct Workspace {
+    /// Native owner allocation; never accepted from a caller as workspace authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<Box<maka_fs_tools::worktree::Binding>>,
     /// Optional membership in this Agent's canonical Project catalog.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_id: Option<uuid::Uuid>,
@@ -311,6 +338,7 @@ pub struct Metadata {
 pub enum Rejection {
     TitleInvalid,
     LabelsInvalid,
+    ToolsUnavailable,
     WorkspaceUnavailable,
     SessionUnavailable,
     Closed,
@@ -326,7 +354,7 @@ pub enum Created {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "AgentMetadataResult")]
 pub enum MetadataResult {
-    Committed { session: Session },
+    Committed { session: Box<Session> },
     RevisionConflict { expected: u64, actual: u64 },
     Rejected { reason: Rejection },
 }
@@ -457,6 +485,8 @@ pub struct DataSource {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentSession")]
 pub struct Session {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<String>>,
     pub data_source: Box<DataSource>,
     pub permissions: WorkspacePermissions,
     pub boundary_revision: u64,
@@ -973,6 +1003,13 @@ pub enum ToolImagePage {
     },
 }
 
+#[derive(Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "AgentToolNames")]
+pub struct ToolNames {
+    #[schemars(length(max = 128))]
+    pub names: Vec<String>,
+}
 pub fn contract() -> Contract {
     fn method<I: JsonSchema, O: JsonSchema>(mode: MethodMode) -> Method {
         Method {
@@ -989,6 +1026,16 @@ pub fn contract() -> Contract {
         transport: Transport::Remote,
         interface: Interface::Service {
             methods: BTreeMap::from([
+                (
+                    "tools".into(),
+                    Method {
+                        progress: None,
+                        mode: MethodMode::Query,
+                        input: serde_json::json!({"type":"object","properties":{},"additionalProperties":false}),
+                        output: schemars::schema_for!(ToolNames).into(),
+                        resources: BTreeMap::new(),
+                    },
+                ),
                 (
                     "schedules".into(),
                     method::<ScheduleRead, Schedules>(MethodMode::Query),
@@ -1064,6 +1111,14 @@ pub fn contract() -> Contract {
                 (
                     "create".into(),
                     method::<Create, Created>(MethodMode::Mutation),
+                ),
+                (
+                    "snapshotPatch".into(),
+                    method::<ExecutionRead, PatchResult>(MethodMode::Mutation),
+                ),
+                (
+                    "readPatch".into(),
+                    method::<PatchRead, PatchPage>(MethodMode::Query),
                 ),
                 (
                     "metadata".into(),

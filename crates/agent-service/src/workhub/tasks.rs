@@ -18,6 +18,7 @@
  */
 
 mod controls;
+mod dependencies;
 mod notifications;
 mod preparation;
 use super::*;
@@ -56,7 +57,7 @@ type Link = Arc<OnceLock<Weak<Hub>>>;
 pub(super) struct Tasks {
     services: NativeServices,
     source: DeploymentRef,
-    workers: BTreeMap<String, Option<Binding>>,
+    pub(super) workers: BTreeMap<String, Option<Binding>>,
     failed: Arc<AtomicBool>,
     link: Link,
 }
@@ -86,6 +87,26 @@ impl Tasks {
     deny_unknown_fields
 )]
 enum Input {
+    ReadPatch {
+        control_id: String,
+        offset: u64,
+    },
+    Presets,
+    Tools {
+        worker: String,
+    },
+    CancelPending {
+        task_id: String,
+    },
+    RoutePreset {
+        #[serde(default)]
+        #[schemars(length(max = 16), extend("uniqueItems" = true))]
+        dependencies: Vec<String>,
+        preset: String,
+        title: String,
+        workspace: crate::contract::DirectorySelection,
+        note: String,
+    },
     Control {
         task_id: String,
         action: controls::Action,
@@ -115,6 +136,9 @@ enum Input {
         location: crate::contract::Directories,
     },
     Route {
+        #[serde(default)]
+        #[schemars(length(max = 16), extend("uniqueItems" = true))]
+        dependencies: Vec<String>,
         worker: String,
         target: Target,
         note: String,
@@ -151,6 +175,8 @@ impl DeliveryMethod {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Assignment {
+    #[serde(default)]
+    dependencies: Vec<String>,
     source: Invocation,
     tool_operation: String,
     worker: String,
@@ -217,7 +243,7 @@ pub(super) fn prepare(
         vec![ToolRegistration {
         definition: ToolDefinition {
             provider: None, name: NAME.into(),
-            description: "Coordinate work using the explicitly selected Agent services. List workers and sessions before routing. Executors lists a worker’s explicitly configured service backends; select either model/thinkingLevel or executor/settings when routing, never both. Executor service routing transfers the original user attachments and uses its own model settings; it does not use Host model credentials. Executor tasks cannot resume as native model invocations. Directories reads that worker’s published choices; pass complete selections to a new target. Route targets an existing session or creates a new one, transfers the original user attachments, then sends the original text and your note. Creation/upload preparations are not worker execution. Sessions browses the live catalog in ID order, returning display excerpts and an after cursor; pass that cursor unchanged to continue. Changes before the cursor require a fresh browse. Route preserves the original user request and adds your note. Admission is not completion. Inspect the returned taskId after uncertain replies; advance only resumes that same frozen dispatch and never redirects it. Wait observes an admitted task until it completes, needs input, pauses, or becomes unavailable; use it to receive the result during this conversation. Inspect returns bounded original answer pages; continue with its exact cursor. Control freezes stop/resume on that task's observed work; shared delivery cannot control the whole Run. Use controls and inspect_control after a missing reply, or advance_control for the same original operation. A requested stop is not confirmed termination. Preparation receipts stay with the original task. Unknown or an original resource capture requirement never authorizes a new route or recapture.".into(),
+            description: "Coordinate work using the explicitly selected Agent services. List workers and sessions before routing. Tools lists the worker's installed tool names. Presets lists saved subagent configurations; route_preset freezes that preset's worker, model, thinking level and restricted tools into a new session. Later preset edits do not change accepted tasks. Route and route_preset accept dependencies: existing taskIds that must complete successfully before this task starts. Their complete final answers are frozen into its input. Deferred tasks advance automatically; finish your coordinator response and await notifications instead of polling. Failed or shared dependencies reject downstream work; route replacement work explicitly. cancel_pending can cancel a deferred route only before its input is resolved; already_resolved is not a confirmed stop. Use control stop for admitted work. A new target may also explicitly narrow tools (null uses installed tools; [] disables all tools). Restricted sessions cannot use external executors. A new target or preset may select isolatedWorkspace to create a separate Git worktree from a clean published repository. The source stays unchanged. After completion, control snapshot_patch freezes the original task result as an immutable patch; use read_patch with that controlId and the exact next offset to read every page. A Busy result requires a new explicit snapshot control after cleanup; never claim a patch was applied to the source. Executors lists a worker’s explicitly configured service backends; select either model/thinkingLevel or executor/settings when routing, never both. Executor service routing transfers the original user attachments and uses its own model settings; it does not use Host model credentials. Executor tasks cannot resume as native model invocations. Directories reads that worker’s published choices; pass complete selections to a new target. Route targets an existing session or creates a new one, transfers the original user attachments, then sends the original text and your note. Creation/upload preparations are not worker execution. Sessions browses the live catalog in ID order, returning display excerpts and an after cursor; pass that cursor unchanged to continue. Changes before the cursor require a fresh browse. Route preserves the original user request and adds your note. Admission is not completion. Inspect the returned taskId after uncertain replies; advance only resumes that same frozen dispatch and never redirects it. Wait observes an admitted task until it completes, needs input, pauses, or becomes unavailable; use it to receive the result during this conversation. Inspect returns bounded original answer pages; continue with its exact cursor. Control freezes stop/resume on that task's observed work; shared delivery cannot control the whole Run. Use controls and inspect_control after a missing reply, or advance_control for the same original operation. A requested stop is not confirmed termination. Preparation receipts stay with the original task. Unknown or an original resource capture requirement never authorizes a new route or recapture.".into(),
             input_schema: schemars::schema_for!(Input).into(), output_schema: None, freeform: None,
         },
         nesting: ToolNesting::DirectOnly, semantics: ToolSemantics::ExclusiveStep,
@@ -393,7 +419,64 @@ impl Hub {
         if self.tasks.cleanup_failed() || cancellation.is_cancelled() {
             return Err("workhub_closed".into());
         }
+        let input = if let Input::RoutePreset {
+            preset,
+            title,
+            workspace,
+            note,
+            dependencies,
+        } = input
+        {
+            let id = task_id(&context.invocation, &context.operation_id);
+            if self
+                .agent
+                .0
+                .store
+                .plugin_data(&namespace(), &self.task_key(&id)?)
+                .await
+                .map_err(|_| "workhub_store_unavailable")?
+                .is_some()
+            {
+                return self.task(&id, true, None, cancellation).await;
+            }
+            let preset = self
+                .presets()
+                .await?
+                .entries
+                .into_iter()
+                .find(|p| p.id == preset && p.enabled)
+                .ok_or("workhub_preset_unavailable")?;
+            Input::Route {
+                dependencies,
+                worker: preset.worker,
+                target: Target::New {
+                    isolated_workspace: preset.isolated_workspace,
+                    title,
+                    workspace,
+                    tools: Some(preset.tools),
+                },
+                note,
+                model: Some(preset.model),
+                thinking_level: preset.thinking_level,
+                executor: None,
+            }
+        } else {
+            input
+        };
+        let catalog_method = if matches!(input, Input::Tools { .. }) {
+            "tools"
+        } else {
+            "executors"
+        };
         match input {
+            Input::ReadPatch { control_id, offset } => {
+                self.read_control_patch(&control_id, offset, cancellation)
+                    .await
+            }
+            Input::RoutePreset { .. } => unreachable!("preset resolved above"),
+            Input::CancelPending { task_id } => self.cancel_pending(&task_id, cancellation).await,
+            Input::Presets => serde_json::to_value(self.presets().await?)
+                .map_err(|_| "workhub_encoding_failed".into()),
             Input::Control { task_id, action } => {
                 self.control_start(&task_id, action, context, cancellation)
                     .await
@@ -409,7 +492,7 @@ impl Hub {
             Input::Workers => Ok(
                 serde_json::json!({"workers":self.tasks.workers.iter().map(|(name,binding)| serde_json::json!({"name":name,"available":binding.is_some()})).collect::<Vec<_>>()}),
             ),
-            Input::Executors { worker } => {
+            Input::Tools { worker } | Input::Executors { worker } => {
                 self.tasks
                     .workers
                     .get(&worker)
@@ -427,7 +510,7 @@ impl Hub {
                         .call(
                             &worker,
                             0,
-                            "executors".into(),
+                            catalog_method.into(),
                             serde_json::json!({}),
                             Attachments::default(),
                         )?
@@ -494,6 +577,7 @@ impl Hub {
                 }).await
             }
             Input::Route {
+                dependencies,
                 worker,
                 target,
                 note,
@@ -528,6 +612,7 @@ impl Hub {
                         return Err("workhub_source_unavailable".into());
                     };
                     target.validate()?;
+                    self.validate_dependencies(&dependencies).await?;
                     if note.trim().is_empty() || note.len() > 16 * 1024 {
                         return Err("workhub_route_invalid".into());
                     }
@@ -563,6 +648,7 @@ impl Hub {
                     }
                     input["message"] = serde_json::json!(message);
                     let assignment = Assignment {
+                        dependencies,
                         return_route: self.agent.0.return_route(&context.invocation).await?,
                         notification: None,
                         source: context.invocation,
@@ -801,6 +887,21 @@ impl Hub {
             return Err("workhub_closed".into());
         }
         let assignment = self.assignment(id).await?;
+        let dependency_input = match self
+            .dependency_input(id, &assignment, advance, cancellation.clone())
+            .await?
+        {
+            Ok(input) => input,
+            Err(status) => return encode_task(id, &assignment, status),
+        };
+        if advance && !assignment.dependencies.is_empty() {
+            let source = self.agent.0.session(&assignment.source.session_id).await?;
+            if source.archived
+                || source.configuration.workspace != assignment.return_route.workspace
+            {
+                return encode_task(id, &assignment, TaskStatus::Unavailable);
+            }
+        }
         let same_binding = self
             .tasks
             .workers
@@ -820,6 +921,7 @@ impl Hub {
                 Err(status) => return encode_task(id, &assignment, status),
             };
             let mut input = assignment.input.clone();
+            if let Some(message) = dependency_input { input["message"] = serde_json::json!(message); }
             input["sessionId"] = serde_json::json!(delivery.session_id);
             input["attachments"] = serde_json::json!(delivery.attachments);
             let reply = match self.dispatch(&request, Call {
@@ -896,6 +998,7 @@ impl Hub {
 fn encode_task(id: &str, assignment: &Assignment, status: TaskStatus) -> Result<Value, String> {
     serde_json::to_value(Task {
         task_id: id.into(),
+        dependencies: assignment.dependencies.clone(),
         worker: assignment.worker.clone(),
         operation: assignment.operation,
         status,

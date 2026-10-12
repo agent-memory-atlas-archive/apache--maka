@@ -28,6 +28,7 @@ pub use quote::Quote;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "PricingQuery")]
 pub enum Query {
     Start,
     Continue { revision: u64, offset: u64 },
@@ -40,6 +41,7 @@ pub enum Query {
     rename_all_fields = "camelCase",
     deny_unknown_fields
 )]
+#[schemars(rename = "PricingEntry")]
 pub enum Entry {
     Builtin {
         pricing: Pricing,
@@ -52,6 +54,7 @@ pub enum Entry {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[schemars(rename = "PricingResetEffect")]
 pub enum ResetEffect {
     RestoreBuiltin,
     BecomeUnpriced,
@@ -64,6 +67,7 @@ pub enum ResetEffect {
     rename_all_fields = "camelCase",
     deny_unknown_fields
 )]
+#[schemars(rename = "PricingPage")]
 pub enum Page {
     Page {
         revision: u64,
@@ -84,6 +88,7 @@ pub enum Page {
     rename_all_fields = "camelCase",
     deny_unknown_fields
 )]
+#[schemars(rename = "PricingMutation")]
 pub enum Mutation {
     Upsert { pricing: Pricing },
     Delete { model_key: String },
@@ -91,6 +96,7 @@ pub enum Mutation {
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "PricingUpdate")]
 pub struct Update {
     pub expected_revision: u64,
     pub mutation: Mutation,
@@ -103,6 +109,7 @@ pub struct Update {
     rename_all_fields = "camelCase",
     deny_unknown_fields
 )]
+#[schemars(rename = "PricingUpdated")]
 pub enum Updated {
     Committed {
         revision: u64,

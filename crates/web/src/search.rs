@@ -24,6 +24,7 @@ use url::Url;
 
 #[derive(Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(rename = "WebQuery")]
 pub struct Query {
     #[schemars(length(min = 1, max = 200))]
     pub query: String,
@@ -47,7 +48,8 @@ impl Query {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[schemars(rename = "WebResults")]
 #[serde(rename_all = "camelCase")]
 pub struct Results {
     pub query: String,
@@ -55,7 +57,8 @@ pub struct Results {
     pub truncated: bool,
     pub omitted_results: usize,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[schemars(rename = "WebRow")]
 pub struct Row {
     pub title: String,
     pub url: String,
@@ -279,4 +282,24 @@ mod tests {
             .is_err()
         );
     }
+}
+
+pub fn native(
+    model: &maka_runtime::tools::ModelToolContext,
+) -> Option<maka_runtime::tools::ProviderTool> {
+    use maka_runtime::tools::{ProviderTool, ProviderToolProtocol};
+    let protocol = model.provider_tools?;
+    if model.capabilities.web_search != Some(true) {
+        return None;
+    }
+    Some(match protocol {
+        ProviderToolProtocol::OpenaiResponses => ProviderTool {
+            id: "openai.web_search".into(),
+            args: serde_json::json!({"searchContextSize":"medium"}),
+        },
+        ProviderToolProtocol::AnthropicMessages => ProviderTool {
+            id: "anthropic.web_search_20250305".into(),
+            args: serde_json::json!({"maxUses":8}),
+        },
+    })
 }

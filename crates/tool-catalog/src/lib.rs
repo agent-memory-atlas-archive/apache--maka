@@ -21,6 +21,7 @@
 pub mod availability;
 mod catalog;
 pub mod plugins;
+pub mod request;
 pub use catalog::*;
 pub use maka_runtime::tools::{
     PreparationFuture, PreparedEffect, ToolCallContext, ToolHandler, ToolPreparer,

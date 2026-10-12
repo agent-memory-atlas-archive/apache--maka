@@ -126,11 +126,41 @@ async fn accounting_pages_bound_bytes_without_dropping_records_or_reading_respon
     }
     assert_eq!(seen.len(), 80);
     assert!(
-        matches!(log.usage_summary(query).await,
+        matches!(log.usage_summary(query.clone()).await,
         Err(maka_event_log::StoreError::InvalidTransition(message))
             if message.contains("response capacity")),
         "oversized complete breakdowns fail rather than silently dropping groups"
     );
+    // Native Settings can page the same oversized breakdown without changing
+    // its full totals or fence, and without losing any long model identity.
+    let mut offset = 0;
+    let mut models = BTreeSet::new();
+    loop {
+        let report = log
+            .usage_summary_page(
+                query.clone(),
+                maka_runtime::accounting::Group::ByModel,
+                offset,
+            )
+            .await
+            .unwrap();
+        assert_eq!(report.through, query.through.unwrap());
+        assert_eq!(report.summary.models.calls, 80);
+        assert!(serde_json::to_vec(&report.summary).unwrap().len() <= 48 * 1024);
+        assert!(report.summary.by_model.len() <= 32);
+        assert!(report.summary.by_provider.is_empty() && report.summary.by_tool.is_empty());
+        for row in report.summary.by_model {
+            assert!(models.insert(row.model_id));
+        }
+        match report.next_offset {
+            Some(next) => {
+                assert!(next > offset);
+                offset = next;
+            }
+            None => break,
+        }
+    }
+    assert_eq!(models.len(), 80);
     log.close().await.unwrap();
 }
 

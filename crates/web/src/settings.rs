@@ -22,41 +22,49 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 const SETTINGS: &str = "settings";
-pub(crate) const KEY: &str = "tavily";
+pub const KEY: &str = "tavily";
 const CHECK: &str = "credential-check";
 
-#[derive(Clone, Copy, Default, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(
+    Clone, Copy, Default, Debug, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema,
+)]
+#[schemars(rename = "WebSource")]
 #[serde(rename_all = "snake_case")]
 pub enum Source {
     #[default]
     Model,
     Tavily,
 }
-#[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
+#[schemars(rename = "WebSettings")]
 #[serde(deny_unknown_fields)]
 pub struct Settings {
     pub enabled: bool,
     pub source: Source,
 }
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
+#[schemars(rename = "WebSnapshot")]
 pub struct Snapshot {
     pub revision: Option<u64>,
     pub settings: Settings,
     pub credential: Credential,
 }
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
+#[schemars(rename = "WebCredential")]
 pub struct Credential {
     pub revision: Option<u64>,
     pub configured: bool,
     pub check: Option<Check>,
 }
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(rename = "WebCheck")]
 #[serde(deny_unknown_fields)]
 pub struct Check {
     pub credential_revision: u64,
     pub outcome: CheckOutcome,
 }
-#[derive(Clone, Copy, Deserialize, Serialize)]
+#[derive(Clone, Copy, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(rename = "WebCheckOutcome")]
 #[serde(rename_all = "snake_case")]
 pub enum CheckOutcome {
     Valid,
@@ -66,7 +74,7 @@ pub enum CheckOutcome {
     Timeout,
 }
 #[derive(Clone)]
-pub(crate) struct Repository {
+pub struct Repository {
     pub store: Arc<dyn storage::Store>,
     pub credentials: Arc<dyn credentials::Credentials>,
 }

@@ -481,6 +481,7 @@ async fn project_installation_keeps_its_reviewed_workspace_and_relative_resource
     .await
     .unwrap();
     let workspace = crate::contract::Workspace {
+        worktree: None,
         project_id: None,
         path: project.to_str().unwrap().into(),
         directory_identity,

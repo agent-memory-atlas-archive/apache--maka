@@ -25,7 +25,7 @@ use maka_event_log::message_admissions::{PendingExecution, PendingMessageAdmissi
 #[serde(deny_unknown_fields)]
 pub(crate) struct ReturnRoute {
     model: crate::model::AcceptedModel,
-    workspace: Workspace,
+    pub(crate) workspace: Workspace,
 }
 impl Owner {
     pub(crate) fn background<F, Fut>(&self, task: F)
@@ -88,6 +88,7 @@ impl Owner {
             return Ok(None);
         }
         let basis = MessageBasis {
+            allowed_tools: session.configuration.tools.clone(),
             background: None,
             model: Some(route.model.clone()),
             executor: None,
@@ -96,7 +97,7 @@ impl Owner {
             tools: self.tool_basis.clone(),
             internal_tools: self.internal_tools.clone(),
             internal_bindings: self.internal_bindings.clone(),
-            behavior: self.behavior.clone(),
+            behavior: self.capture_behavior(&route.workspace).await?,
             max_steps: self.settings.max_steps,
         };
         let message: MessageInput = text.into();

@@ -45,6 +45,7 @@ serde.workspace = true
 schemars.workspace = true
 libc.workspace = true
 unicode-segmentation.workspace = true
+unicode-linebreak = "0.1.5"
 unicode-width.workspace = true
 url = "2.5.8"
 image = { version = "0.25", default-features = false, features = ["png", "tiff", "bmp"] }

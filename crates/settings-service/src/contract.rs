@@ -250,6 +250,58 @@ pub fn contract() -> Contract {
         interface: Interface::Service {
             methods: BTreeMap::from([
                 (
+                    "network".into(),
+                    method::<crate::network::Read, crate::network::Snapshot>(MethodMode::Query),
+                ),
+                (
+                    "updateNetwork".into(),
+                    Method {
+                        resources: BTreeMap::from([(
+                            "secret".into(),
+                            maka_plugin_core::contract::ResourceType {
+                                name: "maka.text.utf8".into(),
+                                version: 1,
+                            }
+                            .optional(),
+                        )]),
+                        ..method::<crate::network::Update, crate::network::Updated>(
+                            MethodMode::Mutation,
+                        )
+                    },
+                ),
+                (
+                    "usage".into(),
+                    method::<crate::usage::Read, crate::usage::Page>(MethodMode::Query),
+                ),
+                (
+                    "usageSummary".into(),
+                    method::<crate::usage::SummaryRead, crate::usage::Report>(MethodMode::Query),
+                ),
+                (
+                    "prices".into(),
+                    method::<maka_runtime::pricing::Query, maka_runtime::pricing::Page>(
+                        MethodMode::Query,
+                    ),
+                ),
+                (
+                    "updatePrice".into(),
+                    method::<maka_runtime::pricing::Update, crate::usage::PricingResult>(
+                        MethodMode::Mutation,
+                    ),
+                ),
+                (
+                    "assistantPreferences".into(),
+                    method::<crate::preferences::Read, crate::preferences::Preferences>(
+                        MethodMode::Query,
+                    ),
+                ),
+                (
+                    "updateAssistantPreferences".into(),
+                    method::<crate::preferences::Update, crate::preferences::Updated>(
+                        MethodMode::Mutation,
+                    ),
+                ),
+                (
                     "connections".into(),
                     method::<ConnectionsRead, ConnectionsPage>(MethodMode::Query),
                 ),

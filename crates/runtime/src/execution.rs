@@ -75,7 +75,7 @@ pub enum ToolMode {
 }
 
 /// Public model identity. Credentials and provider handles never belong here.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ModelBinding {
     pub connection_id: String,
     pub connection_slug: String,

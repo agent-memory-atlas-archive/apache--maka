@@ -28,6 +28,7 @@ use contract::{Control, ControlOutcome, ControlStatus};
     deny_unknown_fields
 )]
 pub(super) enum Action {
+    SnapshotPatch,
     Stop,
     Resume {
         model: crate::ModelSelection,
@@ -48,6 +49,10 @@ struct Intent {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum Selection {
+    SnapshotPatch {
+        session: String,
+        invocation: String,
+    },
     Stop {
         session: String,
         invocation: String,
@@ -68,6 +73,13 @@ enum Selection {
 impl Selection {
     fn call(&self) -> (&'static str, Value) {
         match self {
+            Self::SnapshotPatch {
+                session,
+                invocation,
+            } => (
+                "snapshotPatch",
+                serde_json::json!({"sessionId":session,"invocationId":invocation}),
+            ),
             Self::Stop {
                 session,
                 invocation,
@@ -98,6 +110,9 @@ impl Selection {
     fn outcome(&self, value: Value) -> Result<ControlOutcome, String> {
         let invalid = |_| "workhub_control_result_invalid".to_owned();
         Ok(match self {
+            Self::SnapshotPatch { .. } => ControlOutcome::Patch {
+                result: serde_json::from_value(value).map_err(invalid)?,
+            },
             Self::Stop { .. } => ControlOutcome::Stop {
                 result: serde_json::from_value(value).map_err(invalid)?,
             },
@@ -112,6 +127,43 @@ impl Selection {
 }
 
 impl Hub {
+    pub(super) async fn read_control_patch(
+        &self,
+        id: &str,
+        offset: u64,
+        cancellation: CancellationToken,
+    ) -> Result<Value, String> {
+        let intent = self.control_intent(id).await?;
+        let Selection::SnapshotPatch {
+            session,
+            invocation,
+        } = intent.selection
+        else {
+            return Err("workhub_control_has_no_patch".into());
+        };
+        let assignment = self.assignment(&intent.task_id).await?;
+        if !self
+            .tasks
+            .workers
+            .get(&assignment.worker)
+            .and_then(Option::as_ref)
+            .is_some_and(|binding| binding.execution_basis() == assignment.binding)
+        {
+            return Err("workhub_original_worker_unavailable".into());
+        }
+        let request = self.tasks.services.request(
+            Identity::Agent {
+                invocation: intent.source,
+                operation_id: Some(intent.tool_operation),
+            },
+            cancellation,
+        )?;
+        self.observe_request(&request, async {
+            let value = request.call(&assignment.worker, 0, "readPatch".into(), serde_json::json!({"execution":{"sessionId":session,"invocationId":invocation},"offset":offset}), Attachments::default())?.await?;
+            let page: crate::contract::PatchPage = serde_json::from_value(value).map_err(|_| "workhub_patch_invalid")?;
+            serde_json::to_value(page).map_err(|_| "workhub_encoding_failed".into())
+        }).await
+    }
     fn control_key(&self, id: &str) -> Result<String, String> {
         let suffix = id.strip_prefix("wc_").ok_or("workhub_control_invalid")?;
         // Reuse the exact bounded digest validation used for task identities.
@@ -225,6 +277,10 @@ impl Hub {
                         return Err("workhub_delivery_invalid".into());
                     }
                     match action {
+                        Action::SnapshotPatch => Selection::SnapshotPatch {
+                            session,
+                            invocation: execution.invocation_id,
+                        },
                         Action::Stop => Selection::Stop {
                             session,
                             invocation: execution.invocation_id,

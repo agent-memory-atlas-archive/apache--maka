@@ -158,13 +158,6 @@ async fn inherited_prune_and_checkpoint_exclude_later_branch_archives_history_an
         ContextEvent::Archived(e) => e.invocation.run_id != "unrelated",
         ContextEvent::ModelItems(e) => e.invocation.run_id != "unrelated",
     }));
-    assert!(
-        matches!(
-            log.read_model_context("session", Some("child")).await,
-            Err(StoreError::PrefixTooLarge)
-        ),
-        "a later excluded archive cannot shrink the inherited tool's byte budget"
-    );
     continuation::close(&log, &child).await;
     let child_boundary =
         continuation::claim(&log, "second-claim", &child, first_claim.base.clone()).await;
@@ -172,6 +165,14 @@ async fn inherited_prune_and_checkpoint_exclude_later_branch_archives_history_an
         .read_lineage_context(&child_boundary.source, 100, 65536)
         .await
         .unwrap();
+    assert!(
+        matches!(
+            log.read_lineage_context(&child_boundary.source, 100, 8192)
+                .await,
+            Err(StoreError::PrefixTooLarge)
+        ),
+        "a later excluded archive cannot shrink the inherited tool's explicit byte budget"
+    );
     let raw = log
         .scoped_prefix(child_context.source_evidence.scope.clone(), 100, 65536)
         .await

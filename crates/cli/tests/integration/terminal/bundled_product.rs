@@ -18,7 +18,11 @@
  */
 
 mod apps;
+mod insights;
+mod preferences;
 mod scheduler;
+mod subagents;
+mod web;
 
 use super::*;
 use maka_event_log::root::{RootNamespaces, RootOwner};

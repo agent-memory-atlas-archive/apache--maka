@@ -35,7 +35,7 @@ use maka_runtime::{
 };
 use maka_tool_catalog::plugins::{Binding, BindingProvider, BindingRequest, PluginTool};
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 

@@ -18,13 +18,25 @@
  */
 
 import type { ComponentInput } from '../../plugin-sdk/src/index.js';
-import type { Theme } from './contracts.js';
+import type { Theme, InsightsProps } from './contracts.js';
 import { saveAppearanceSetting, type AppearanceEditor } from './appearance-editor.js';
 import { tuiText } from './tui-locale.js';
 import type { ThemeName } from './terminal-theme.js';
 import type { Node, Presentation } from './view.js';
 
-export const settingsCategories = ['appearance', 'interface', 'models', 'plugins'] as const;
+export const settingsCategories = [
+  'appearance',
+  'interface',
+  'models',
+  'sessions',
+  'host',
+  'plugins',
+  'assistant',
+  'insights',
+  'web',
+  'jev',
+  'subagents',
+] as const;
 export type SettingsCategory = (typeof settingsCategories)[number];
 interface SettingsState {
   preferences: AppearanceEditor;
@@ -52,7 +64,10 @@ export function settingsEvent(state: SettingsState, input: ComponentInput, base:
     return true;
   }
   if (input.key === 'settings-retry') {
-    state.preferences.command = { kind: 'read', sequence: ++state.preferences.sequence };
+    state.preferences.command = {
+      kind: 'read',
+      sequence: ++state.preferences.sequence,
+    };
     state.preferences.error = null;
     return true;
   }
@@ -86,22 +101,168 @@ export function settingsView<N extends Node>(
   theme: Theme,
   locale: string,
   category: SettingsCategory,
+  open = true,
+  scope: InsightsProps['scope'] = null,
+  web = false,
+  jev = false,
+  subagents = false,
 ): N {
   const ui = presentation.paint(theme),
     t = (key: string) => tuiText(locale, key);
+  const categories = settingsCategories.filter(
+    (key) => (key !== 'web' || web) && (key !== 'jev' || jev) && (key !== 'subagents' || subagents),
+  );
   const appearance = state.saved?.appearance ?? theme.configuration;
   const busy = state.command !== null || state.checkpoint?.state.kind !== 'ready';
+  const icons: Record<string, [string, string]> = {
+    'settings-palette': ['◐', 'T'],
+    'appearance-open': ['◒', 'C'],
+    'settings-language': ['文', 'L'],
+    'settings-symbols': ['◇', 'A'],
+    'settings-motion': ['≈', 'M'],
+    'settings-connections': ['⇄', 'C'],
+    'settings-plugins': ['◇', 'P'],
+  };
+  const icon = (key: string) =>
+    ui.box(
+      key + '-icon',
+      [ui.text(key + '-glyph', icons[key]![appearance.ascii ? 1 : 0], 14, theme.subtle)],
+      { terminal: { basis: 4 } },
+    );
   const choice = (key: string, options: [string, string][], current: string) =>
-    ui.choice!(
+    ui.box(
+      key + '-row',
+      [
+        icon(key),
+        ui.box(
+          key + '-control',
+          [
+            ui.choice!(
+              key,
+              t(key),
+              options.map(([key, label]) => ({ key, label })),
+              current,
+              busy,
+            ),
+          ],
+          { terminal: { grow: 1 } },
+        ),
+      ],
+      { row: true, gap: 0 },
+    );
+  const link = (key: string, label: string, disabled = false) =>
+    ui.item!(
       key,
-      t(key),
-      options.map(([key, label]) => ({ key, label })),
-      current,
-      busy,
+      ui.box(
+        key + '-row',
+        [
+          icon(key),
+          ui.box(key + '-label', [ui.text(key + '-text', label, 14, theme.text)], {
+            terminal: { grow: 1 },
+          }),
+          ui.text(key + '-arrow', appearance.ascii ? '>' : '›', 14, theme.subtle),
+        ],
+        { row: true, gap: 0 },
+      ),
+      false,
+      disabled,
     );
   const title = (key: SettingsCategory) =>
     t(key === 'plugins' ? 'route-plugins' : 'settings-' + key);
   const sections: Record<SettingsCategory, N[]> = {
+    subagents: subagents
+      ? [
+          presentation.slot(
+            'subagent-settings',
+            'subagentSettings',
+            { theme, locale, open, busy: false, shell: { back: 0 } },
+            { closed: 'subagent-settings-closed' },
+          ),
+        ]
+      : [],
+    host: [
+      presentation.slot(
+        'network-settings',
+        'networkSettings',
+        { theme, locale, open, busy: false, shell: { back: 0 } },
+        { closed: 'network-settings-closed' },
+      ),
+    ],
+    sessions: [
+      presentation.slot(
+        'session-defaults',
+        'sessionDefaults',
+        {
+          theme,
+          locale,
+          open,
+          busy: false,
+          shell: { back: 0 },
+        },
+        { closed: 'session-defaults-closed' },
+      ),
+    ],
+    web: web
+      ? [
+          presentation.slot(
+            'web-settings',
+            'webSettings',
+            {
+              theme,
+              locale,
+              open,
+              busy: false,
+              shell: { back: 0 },
+            },
+            { closed: 'web-settings-closed' },
+          ),
+        ]
+      : [],
+    jev: jev
+      ? [
+          presentation.slot(
+            'jev-settings',
+            'jevSettings',
+            {
+              theme,
+              locale,
+              open,
+              busy: false,
+              shell: { back: 0 },
+            },
+            { closed: 'jev-settings-closed' },
+          ),
+        ]
+      : [],
+    assistant: [
+      presentation.slot(
+        'assistant-preferences',
+        'assistantPreferences',
+        {
+          theme,
+          locale,
+          open,
+          busy: false,
+          shell: { back: 0 },
+        },
+        { closed: 'assistant-preferences-closed' },
+      ),
+    ],
+    insights: [
+      presentation.slot(
+        'insights',
+        'insights',
+        {
+          scope,
+          theme,
+          locale,
+          open,
+          busy: false,
+          shell: { back: 0 },
+        },
+        { closed: 'insights-closed' },
+      ),
+    ],
     appearance: [
       choice(
         'settings-palette',
@@ -116,10 +277,7 @@ export function settingsView<N extends Node>(
         ],
         appearance.theme ?? (appearance.scheme === 'light' ? 'paper' : 'maka'),
       ),
-      ui.button('appearance-open', t('theme-customize'), busy, false, {
-        background: 0,
-        align: 'start',
-      }),
+      link('appearance-open', t('theme-customize'), busy),
     ],
     interface: [
       choice(
@@ -149,20 +307,10 @@ export function settingsView<N extends Node>(
         appearance.motion === false ? 'off' : 'on',
       ),
     ],
-    models: [
-      ui.button('settings-connections', t('route-connections'), false, false, {
-        background: 0,
-        align: 'start',
-      }),
-    ],
-    plugins: [
-      ui.button('settings-plugins', t('route-plugins'), false, false, {
-        background: 0,
-        align: 'start',
-      }),
-    ],
+    models: [link('settings-connections', t('route-connections'))],
+    plugins: [link('settings-plugins', t('route-plugins'))],
   };
-  return ui.box(
+  const page = ui.box(
     'settings-page',
     [
       ...(state.error ? [ui.text('settings-error', t(state.error), 13, theme.warning)] : []),
@@ -177,7 +325,7 @@ export function settingsView<N extends Node>(
         [
           ui.box(
             'settings-categories',
-            settingsCategories.map((key) =>
+            categories.map((key) =>
               ui.item!(
                 'settings-category-' + key,
                 ui.text('settings-category-label-' + key, title(key), 14, theme.text),
@@ -195,7 +343,7 @@ export function settingsView<N extends Node>(
             terminal: { basis: 0 },
           }),
           ui.box('settings-gap-after', [], { terminal: { basis: 0 } }),
-          ...settingsCategories.flatMap((key) => [
+          ...categories.flatMap((key) => [
             ui.box(
               'settings-heading-' + key,
               [ui.text('settings-heading-label-' + key, title(key), 14, theme.text, 650)],
@@ -209,9 +357,14 @@ export function settingsView<N extends Node>(
                   terminal: { basis: 64, shrink: true },
                 }),
               ],
-              { row: true, gap: 0 },
+              {
+                row: true,
+                gap: 0,
+              },
             ),
-            ui.box('settings-section-gap-' + key, [], { terminal: { basis: 1 } }),
+            ui.box('settings-section-gap-' + key, [], {
+              terminal: { basis: 1 },
+            }),
           ]),
         ],
         {
@@ -224,13 +377,18 @@ export function settingsView<N extends Node>(
             scroll: 'none',
             children: {
               'settings-categories': {
-                basis_fraction: { numerator: 1, denominator: 3, min: 0, max: 22 },
+                basis_fraction: {
+                  numerator: 1,
+                  denominator: 3,
+                  min: 0,
+                  max: 22,
+                },
               },
               'settings-gap-before': { basis: 2 },
               'settings-divider': { basis: 1 },
               'settings-gap-after': { basis: 2 },
               ...Object.fromEntries(
-                settingsCategories.flatMap((key) => [
+                categories.flatMap((key) => [
                   ['settings-heading-' + key, { basis: 0 }],
                   ['settings-section-gap-' + key, { basis: 0 }],
                   [
@@ -249,5 +407,14 @@ export function settingsView<N extends Node>(
       padding: 0,
       terminal: { grow: 1 },
     },
+  );
+  return ui.box(
+    'settings-inset',
+    [
+      ui.box('settings-left-inset', [], { terminal: { basis: 1 } }),
+      page,
+      ui.box('settings-right-inset', [], { terminal: { basis: 1 } }),
+    ],
+    { row: true, gap: 0, terminal: { grow: 1 } },
   );
 }

@@ -22,10 +22,12 @@
 /// Public wire types and generated contracts. 公开协议类型与生成契约。
 pub mod acp;
 pub mod contract;
+mod credentials;
 pub mod executor;
 pub mod files;
 pub mod forms;
 mod interaction_wait;
+pub mod jev;
 mod model;
 mod owner;
 mod permissions;
@@ -36,6 +38,7 @@ pub mod skills;
 mod source_path;
 mod storage;
 mod tools;
+pub mod web;
 pub mod workhub;
 mod workspace;
 pub use contract::{Configuration, ModelSelection, configuration_schema, contract};
@@ -55,6 +58,8 @@ pub fn provide(registry: &mut NativeRegistry) -> Result<(), String> {
     processes::provide(registry)?;
     questions::provide(registry)?;
     forms::provide(registry)?;
+    web::provide(registry)?;
+    jev::provide(registry)?;
     workhub::provide(registry)?;
     registry.insert(
         IMPLEMENTATION.into(),

@@ -19,16 +19,28 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Breakdown selected for a bounded summary page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+#[schemars(rename = "UsageGroup")]
+pub enum Group {
+    ByProvider,
+    ByModel,
+    ByTool,
+}
+
 /// Sum of reported counters, qualified by calls that omitted this counter.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "UsageTokens")]
 pub struct Tokens {
     pub known: u64,
     pub missing: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "UsageCost")]
 pub struct Cost {
     pub known_usd: f64,
     /// Calls without a persisted valuation; includes unpriced calls.
@@ -36,8 +48,9 @@ pub struct Cost {
     pub unpriced: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "UsageModelTotals")]
 pub struct ModelTotals {
     pub calls: u64,
     pub success: u64,
@@ -54,8 +67,9 @@ pub struct ModelTotals {
     pub cost: Cost,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "UsageToolTotals")]
 pub struct ToolTotals {
     /// Includes pre-dispatch refusals, which are counted separately below.
     pub calls: u64,
@@ -69,8 +83,9 @@ pub struct ToolTotals {
     pub mean_latency_ms: Option<f64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "UsageSummary")]
 pub struct Summary {
     pub models: ModelTotals,
     pub tools: ToolTotals,
@@ -81,30 +96,34 @@ pub struct Summary {
     pub pending: Pending,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "UsagePending")]
 pub struct Pending {
     pub models: u64,
     pub tools: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "UsageProviderSummary")]
 pub struct ProviderSummary {
     /// Unknown identity is not inferred from a transport protocol or current settings.
     pub provider_id: Option<String>,
     pub totals: ModelTotals,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "UsageModelSummary")]
 pub struct ModelSummary {
     pub model_id: String,
     pub totals: ModelTotals,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "UsageToolSummary")]
 pub struct ToolSummary {
     pub name: String,
     pub totals: ToolTotals,

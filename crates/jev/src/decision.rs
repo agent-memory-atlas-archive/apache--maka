@@ -20,20 +20,23 @@
 use crate::settings::{Repository, Secrets, Settings};
 use futures_util::future::BoxFuture;
 use maka_plugins::{call, http, preferences::Preferences, services::method};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 /// Consumers inject this Service and forward their admitted scope.
 pub const SERVICE: &str = "maka.jev.evaluate";
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(rename = "JevEvaluation")]
 pub struct Evaluation {
     pub state: Value,
     pub questions: BTreeMap<String, Question>,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "JevQuestion")]
 pub enum Question {
     Noul {
         instructions: Value,
@@ -103,21 +106,24 @@ impl Evaluation {
         Ok(())
     }
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(rename = "JevEvaluationResult")]
 pub struct EvaluationResult {
     pub model: String,
     pub answers: BTreeMap<String, Answer>,
     pub usage: Usage,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(rename = "JevUsage")]
 pub struct Usage {
     pub input_tokens: u64,
     pub output_tokens: u64,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "JevAnswer")]
 pub enum Answer {
     Noul {
         noul: f64,
@@ -156,7 +162,7 @@ pub enum Error {
     Settlement,
 }
 impl Error {
-    pub(crate) fn outcome_unknown(&self) -> bool {
+    pub fn outcome_unknown(&self) -> bool {
         matches!(
             self,
             Self::Network | Self::Timeout | Self::Cancelled | Self::Settlement
@@ -164,7 +170,7 @@ impl Error {
     }
 }
 #[derive(Clone)]
-pub(crate) struct Jev {
+pub struct Jev {
     pub settings: Repository,
     pub http: Arc<dyn http::Client>,
     pub preferences: Arc<dyn Preferences>,

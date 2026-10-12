@@ -95,6 +95,47 @@ pub struct ExecutionRead {
     #[schemars(length(min = 1, max = 128))]
     pub invocation_id: String,
 }
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "AgentPatchRead")]
+pub struct PatchRead {
+    pub execution: ExecutionRead,
+    #[schemars(range(max = 52_428_800u64))]
+    pub offset: u64,
+}
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentWorkspacePatch")]
+pub struct WorkspacePatch {
+    pub artifact_id: String,
+    pub session_id: String,
+    pub turn_id: String,
+    pub base_commit: String,
+    pub bytes: u64,
+}
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "AgentPatchResult")]
+pub enum PatchResult {
+    Unavailable,
+    Busy,
+    Changed,
+    Ready { patch: WorkspacePatch },
+}
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "AgentPatchPage")]
+pub enum PatchPage {
+    Unavailable,
+    Ready {
+        patch: WorkspacePatch,
+        offset: u64,
+        #[schemars(with = "maka_runtime::schema::RequiredNullable<u64>")]
+        next: Option<u64>,
+        #[schemars(length(max = 8192))]
+        text: String,
+    },
+}
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "AgentExecutionResult")]

@@ -184,13 +184,17 @@ impl Node {
             | Self::Dialog { key, .. } => key,
             Self::Component(slot) => &slot.key,
         };
-        if depth > 32
-            || keys.len() >= 4096
-            || key.is_empty()
-            || key.len() > 128
-            || !keys.insert(key.clone())
-        {
-            return Err("invalid or duplicate UI node identity".into());
+        if depth > 32 {
+            return Err("UI node nesting exceeds limit".into());
+        }
+        if keys.len() >= 4096 {
+            return Err("UI node count exceeds limit".into());
+        }
+        if key.is_empty() || key.len() > 128 {
+            return Err("invalid UI node identity".into());
+        }
+        if !keys.insert(key.clone()) {
+            return Err(format!("duplicate UI node identity: {key:?}"));
         }
         if let Self::Stack { shortcuts, .. } = self {
             crate::shortcut::validate(shortcuts, cfg!(target_os = "macos"))?;

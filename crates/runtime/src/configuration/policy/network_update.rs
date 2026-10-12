@@ -21,6 +21,7 @@ use super::{NetworkProxy, ProxyProtocol, codec};
 use crate::configuration::{
     CredentialLocator, CredentialStatus, CredentialVersionBasis, PasswordKind, validation,
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -31,7 +32,7 @@ pub fn locator() -> CredentialLocator {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CredentialTarget {
     pub protocol: ProxyProtocol,
@@ -140,7 +141,8 @@ pub fn decode(mut value: Value) -> Result<Update, String> {
     input.normalize()?;
     Ok(input)
 }
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "NetworkProxyUpdateResult")]
 #[serde(
     tag = "kind",
     rename_all = "snake_case",
@@ -161,7 +163,9 @@ pub enum UpdateResult {
         actual: CredentialTarget,
     },
     CredentialStale {
+        #[schemars(with = "crate::schema::RequiredNullable<CredentialVersionBasis>")]
         expected: Option<CredentialVersionBasis>,
+        #[schemars(with = "crate::schema::RequiredNullable<CredentialVersionBasis>")]
         actual: Option<CredentialVersionBasis>,
     },
 }

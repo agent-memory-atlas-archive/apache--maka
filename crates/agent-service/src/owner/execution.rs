@@ -284,6 +284,7 @@ impl Owner {
         .await
         .map_err(public_error)?;
         let basis = MessageBasis {
+            allowed_tools: session.configuration.tools.clone(),
             background: None,
             internal_tools: self.internal_tools.clone(),
             internal_bindings: self.internal_bindings.clone(),
@@ -318,7 +319,7 @@ impl Owner {
             configuration,
             work: RunWork::Continuation {
                 source: source_boundary,
-                tools: self.tools.clone(),
+                tools: self.selected_tools(session.configuration.tools.as_deref()),
                 max_steps: basis.max_steps,
             },
         };

@@ -21,7 +21,10 @@
 mod connections;
 pub mod contract;
 mod credential;
+pub mod network;
+pub mod preferences;
 mod service;
+pub mod usage;
 use futures_util::future::BoxFuture;
 use maka_runtime_host::application::{NativeActivation, NativeOwner, NativeRegistry};
 use std::sync::Arc;
@@ -46,7 +49,10 @@ pub fn provide(registry: &mut NativeRegistry) -> Result<(), String> {
                     let store = maka_config::ConfigurationStore::for_root(root)
                         .await
                         .map_err(|_| "settings_store_unavailable")?;
-                    Ok::<_, String>(Arc::new(service::Settings(Arc::new(store))))
+                    Ok::<_, String>(Arc::new(service::Settings {
+                        configuration: Arc::new(store),
+                        log: persistence.store().clone(),
+                    }))
                 }
                 .await;
                 match opened {

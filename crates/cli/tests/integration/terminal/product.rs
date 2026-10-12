@@ -1050,12 +1050,7 @@ fn workhub_launch_preserves_coordinator_worker_drafts_and_original_sessions() {
     for first in [true, false] {
         let mut args = vec!["application", "launch", "--root", ui.to_str().unwrap()];
         if first {
-            args.extend([
-                "--configuration",
-                configuration.to_str().unwrap(),
-                "--product",
-                "workhub",
-            ]);
+            args.extend(["--configuration", configuration.to_str().unwrap()]);
         }
         let started = Instant::now();
         eprintln!("WorkHub launch first={first}, root={}", ui.display());
@@ -1068,14 +1063,15 @@ fn workhub_launch_preserves_coordinator_worker_drafts_and_original_sessions() {
         tui.wait_until_with_timeout(
             |screen| {
                 screen.contains(if first {
-                    "Set up WorkHub"
+                    "WorkHub"
                 } else {
-                    "coordinator draft retained"
+                    "worker draft retained"
                 })
             },
             Duration::from_secs(if first { 60 } else { 30 }),
         );
         eprintln!("WorkHub first={first}: ready in {:?}", started.elapsed());
+        press(&mut tui, "WorkHub");
         if first {
             press(&mut tui, "Set up WorkHub");
             tui.wait_for("Choose a workspace");
@@ -1112,7 +1108,7 @@ fn workhub_launch_preserves_coordinator_worker_drafts_and_original_sessions() {
                 .screen
                 .contains("coordinator draft retained")
         );
-        press(&mut tui, "Coordinator");
+        press(&mut tui, "WorkHub");
         tui.wait_for("coordinator draft retained");
         assert!(
             !tui.screen

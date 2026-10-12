@@ -242,7 +242,11 @@ impl Owner {
         }
         let session = self.session(&invocation.session_id).await?;
         basis.validate_background_target(&session)?;
-        if session.archived || session.configuration.workspace != basis.workspace {
+        if session.archived
+            || session.configuration.workspace != basis.workspace
+            || session.configuration.tools != basis.allowed_tools
+            || (basis.executor.is_some() && basis.allowed_tools.is_some())
+        {
             return Err("agent_session_configuration_changed".into());
         }
         workspace::validate(
@@ -331,7 +335,7 @@ impl Owner {
                     work: RunWork::Message {
                         message: delivered.message.content.clone(),
                         source_messages: vec![delivered],
-                        tools: self.tools.clone(),
+                        tools: self.selected_tools(basis.allowed_tools.as_deref()),
                         max_steps: basis.max_steps,
                         allow_prior_unknown: false,
                     },

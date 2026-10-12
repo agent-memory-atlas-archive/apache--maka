@@ -81,7 +81,7 @@ impl Owner {
         input: Directories,
         scope: &Scope,
     ) -> Result<DirectoryPage, String> {
-        self.import_work(scope, move |owner, _| {
+        self.resource_work(scope, move |owner, _| {
             Box::pin(async move {
                 let private = owner
                     .store
@@ -95,35 +95,6 @@ impl Owner {
         .await
     }
 
-    // An observer can leave, but the original Call and native owner retain the
-    // worker through parsing, database closure, and the accepted SQL transaction.
-    async fn import_work<T: std::marker::Send + 'static>(
-        self: &Arc<Self>,
-        scope: &Scope,
-        work: impl FnOnce(Arc<Self>, Scope) -> BoxFuture<'static, Result<T, String>>
-        + std::marker::Send
-        + 'static,
-    ) -> Result<T, String> {
-        let owner = self.clone();
-        let scope = scope.clone();
-        let mut ticket = scope
-            .resources
-            .reserve()
-            .map_err(|_| "agent_import_closed")?;
-        self.workers
-            .spawn(async move {
-                ticket.start();
-                let result = if scope.cancellation.is_cancelled() || owner.stop.is_cancelled() {
-                    Err("agent_import_cancelled".into())
-                } else {
-                    work(owner, scope).await
-                };
-                ticket.complete(Ok(()));
-                result
-            })
-            .await
-            .map_err(|_| "agent_import_unknown".to_owned())?
-    }
     async fn import_sources(&self) -> Result<Sources, Failure> {
         let record = self
             .store
@@ -186,7 +157,7 @@ impl Owner {
         let Ok(permit) = self.import_capacity.clone().try_acquire_owned() else {
             return Ok(ImportsPage::Busy);
         };
-        self.import_work(scope, move |owner, scope| {
+        self.resource_work(scope, move |owner, scope| {
             Box::pin(async move {
                 let _permit = permit;
                 Ok(owner
@@ -324,7 +295,7 @@ impl Owner {
         let Ok(permit) = self.import_capacity.clone().try_acquire_owned() else {
             return Ok(ImportResult::Busy);
         };
-        self.import_work(scope, move |owner, scope| {
+        self.resource_work(scope, move |owner, scope| {
             Box::pin(async move {
                 let _permit = permit;
                 match owner.import_change(input, operation, &scope).await {
@@ -382,6 +353,7 @@ impl Owner {
                         &owner,
                         &transcript.source,
                         &SessionConfiguration {
+                            tools: None,
                             title,
                             labels: vec![],
                             workspace,

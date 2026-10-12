@@ -21,22 +21,25 @@ use super::{ModelAttempt, ToolAttempt};
 use serde::{Deserialize, Serialize};
 
 /// A physical model call or tool attempt, never copied conversation membership.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", content = "attempt", rename_all = "snake_case")]
+#[schemars(rename = "UsageActivity")]
 pub enum Activity {
     Model(ModelAttempt),
     Tool(ToolAttempt),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[schemars(rename = "UsageActivityKind")]
 pub enum ActivityKind {
     Model,
     Tool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[schemars(rename = "UsageActivityStatus")]
 pub enum ActivityStatus {
     Success,
     Error,
@@ -46,8 +49,9 @@ pub enum ActivityStatus {
 }
 
 /// Filters only the activity list, never headline accounting for the range.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "UsageSelection")]
 pub struct Selection {
     pub kind: Option<ActivityKind>,
     pub status: Option<ActivityStatus>,

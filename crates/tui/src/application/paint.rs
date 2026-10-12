@@ -51,17 +51,35 @@ fn lines(text: &str, width: u16) -> Vec<String> {
     for source in text.split('\n') {
         let mut line = String::new();
         let mut cells = 0;
-        for grapheme in source.graphemes(true) {
-            let size = grapheme.width();
-            if size > usize::from(width) {
-                continue;
-            }
-            if cells + size > usize::from(width) {
+        let mut start = 0;
+        for (end, _) in unicode_linebreak::linebreaks(source) {
+            let word = &source[start..end];
+            start = end;
+            let word_width = word.trim_end().width();
+            // Use line boundaries rather than word boundaries so punctuation
+            // stays with its word. Oversized tokens still break at graphemes.
+            if cells > 0
+                && word_width <= usize::from(width)
+                && cells + word_width > usize::from(width)
+            {
                 result.push(std::mem::take(&mut line));
                 cells = 0;
             }
-            line.push_str(grapheme);
-            cells += size;
+            for grapheme in word.graphemes(true) {
+                let size = grapheme.width();
+                if size > usize::from(width) {
+                    continue;
+                }
+                if cells + size > usize::from(width) {
+                    result.push(std::mem::take(&mut line));
+                    cells = 0;
+                    if grapheme.chars().all(char::is_whitespace) {
+                        continue;
+                    }
+                }
+                line.push_str(grapheme);
+                cells += size;
+            }
         }
         result.push(line);
     }

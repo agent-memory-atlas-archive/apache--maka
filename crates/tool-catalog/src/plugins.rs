@@ -179,6 +179,7 @@ impl ToolCatalog {
             discovery: self.discovery,
             plugins: None,
             workspace: self.workspace.clone(),
+            request_bindings: self.request_bindings.clone(),
         })
     }
 }

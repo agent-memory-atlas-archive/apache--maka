@@ -49,7 +49,7 @@ impl EventLog {
                 Box::pin(async move {
                     Ok(sqlx::query_scalar(
                         "SELECT EXISTS(SELECT 1 FROM session_control
-                WHERE json_extract(configuration, '$.workspace.hostCwd')=? AND id<>?)",
+                WHERE COALESCE(json_extract(configuration, '$.workspace.path'), json_extract(configuration, '$.workspace.hostCwd'))=? AND id<>?)",
                     )
                     .bind(cwd)
                     .bind(session)
@@ -71,7 +71,7 @@ impl EventLog {
                     json_extract(e.event_json, '$.invocation.session_id') = s.id), 0) AS sequence,
                  EXISTS(SELECT 1 FROM shell_runs r WHERE r.session_id = s.id AND
                     json_extract(r.record_json, '$.state.outcome.kind') = 'orphaned') AS orphaned
-                 FROM session_control s WHERE json_extract(s.configuration, '$.workspace.hostCwd') = ?
+                 FROM session_control s WHERE COALESCE(json_extract(s.configuration, '$.workspace.path'), json_extract(s.configuration, '$.workspace.hostCwd')) = ?
                  ORDER BY s.id LIMIT 257"
             ).bind(cwd).fetch_all(&mut *tx).await?;
             if rows.len() > 256 { return Err(StoreError::PrefixTooLarge); }

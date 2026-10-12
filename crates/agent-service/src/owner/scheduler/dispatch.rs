@@ -108,10 +108,13 @@ impl Owner {
         .map_err(public_error)?;
         Ok(Approval::Execution {
             basis: Box::new(MessageBasis {
+                allowed_tools: session.configuration.tools.clone(),
                 background: Some(target.clone()),
                 internal_tools: self.internal_tools.clone(),
                 internal_bindings: self.internal_bindings.clone(),
-                behavior: self.behavior.clone(),
+                behavior: self
+                    .capture_behavior(&session.configuration.workspace)
+                    .await?,
                 model: Some(source.accepted),
                 executor: None,
                 workspace: session.configuration.workspace,
@@ -317,6 +320,7 @@ impl Owner {
                             &session_id,
                             &basis.fingerprint,
                             &SessionConfiguration {
+                                tools: basis.allowed_tools.clone(),
                                 title: fire.title.clone(),
                                 labels: vec![],
                                 workspace: boundary.workspace.clone(),

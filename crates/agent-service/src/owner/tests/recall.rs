@@ -122,7 +122,7 @@ pub(super) async fn tool(socket: &mut TcpStream, name: &str, input: Value) {
 async fn recall_native_model_tools_expand_exclude_active_turn_and_retain_material_copy() {
     tokio::time::timeout(Duration::from_secs(60), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let f = Fixture::configured(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None,None,None,true,false).await;
+        let f = Fixture::configured(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None,None,None,|settings| settings.recall=true).await;
         images::enable_vision(&f).await;
         let source = imported(&f, "Earlier conversation", &f.owner.prefix).await;
         let found = f.query("recall",json!({"terms":["café"],"session_id":source})).await.unwrap();
@@ -166,4 +166,132 @@ async fn recall_native_model_tools_expand_exclude_active_turn_and_retain_materia
         assert_eq!(f.store.read_artifact_chunk(&target,&copied.id,0,1024).await.unwrap().unwrap().bytes,bytes);
         f.app.shutdown().await.unwrap();
     }).await.unwrap();
+}
+
+#[tokio::test]
+async fn recall_native_privacy_revokes_offered_tools_and_pending_queries() {
+    tokio::time::timeout(Duration::from_secs(45), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let f = Fixture::configured(
+            &format!("http://{}/v1", listener.local_addr().unwrap()),
+            1,
+            None,
+            None,
+            None,
+            |settings| settings.recall = true,
+        )
+        .await;
+        let source = imported(&f, "Private source", &f.owner.prefix).await;
+        let target = f.create("Privacy transition").await;
+        let query = json!({"terms":["café"],"session_id":source});
+        assert_eq!(
+            f.query("recall", query.clone()).await.unwrap()["passages"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        f.send(&target).await.unwrap();
+        let (mut offered, _) = listener.accept().await.unwrap();
+        let sent = request(&mut offered).await;
+        for name in ["Recall", "RecallMore", "RecallMaterial"] {
+            assert!(
+                sent["tools"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|tool| tool["function"]["name"] == name)
+            );
+        }
+        // Hold the real search capacity while an admitted UI query waits.
+        let held = f
+            .owner
+            .recall
+            .capacity
+            .clone()
+            .acquire_many_owned(2)
+            .await
+            .unwrap();
+        let pending = f.query("recall", query.clone());
+        tokio::pin!(pending);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), &mut pending)
+                .await
+                .is_err()
+        );
+        let before = f.config.runtime_policy().await.unwrap();
+        assert!(matches!(
+            f.config
+                .set_privacy(
+                    before.revision,
+                    maka_runtime::configuration::policy::PrivacyPolicy {
+                        incognito_active: true
+                    }
+                )
+                .await
+                .unwrap(),
+            maka_runtime::configuration::policy::RuntimePolicyMutationResult::Committed { .. }
+        ));
+        drop(held);
+        assert!(pending.await.unwrap_err().contains("privacy mode"));
+        assert!(
+            f.query("recall", query.clone())
+                .await
+                .unwrap_err()
+                .contains("privacy mode")
+        );
+        // The provider saw the tool before the toggle. Its late call must fail
+        // execution authorization and its next request must omit all Recall tools.
+        tool(&mut offered, "Recall", query.clone()).await;
+        let (mut next, _) = listener.accept().await.unwrap();
+        let sent = request(&mut next).await;
+        assert!(!sent["tools"].as_array().into_iter().flatten().any(|tool| {
+            tool["function"]["name"]
+                .as_str()
+                .is_some_and(|name| name.starts_with("Recall"))
+        }));
+        assert!(!sent.to_string().contains("original café answer"));
+        response(&mut next).await;
+        f.drained().await;
+        let facts = service_tools::facts(&f, &target).await;
+        assert!(!facts.iter().any(|fact| matches!(
+            fact,
+            Fact::ToolSettled {
+                outcome: ToolOutcome::Succeeded { .. },
+                ..
+            }
+        )));
+        let before = f.config.runtime_policy().await.unwrap();
+        f.config
+            .set_privacy(
+                before.revision,
+                maka_runtime::configuration::policy::PrivacyPolicy {
+                    incognito_active: false,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            f.query("recall", query).await.unwrap()["passages"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        f.send(&target).await.unwrap();
+        let (mut restored, _) = listener.accept().await.unwrap();
+        assert!(
+            request(&mut restored).await["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|tool| tool["function"]["name"] == "Recall")
+        );
+        response(&mut restored).await;
+        f.drained().await;
+        f.app.shutdown().await.unwrap();
+        f.config.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
 }

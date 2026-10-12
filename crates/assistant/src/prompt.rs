@@ -20,7 +20,7 @@
 use maka_plugins::preferences::Snapshot;
 use maka_runtime::execution::SystemPrompt;
 
-mod workspace;
+pub mod workspace;
 
 pub(super) async fn resolve(
     snapshot: Snapshot,
@@ -70,7 +70,7 @@ Do not expose hidden reasoning or repeat commands, tool names, counts, durations
 Skip progress updates only when no tool is needed or exactly one obvious, quick tool call answers the whole request.
 End the turn with a distinct final answer that states the outcome."#;
 
-pub(super) fn compose(snapshot: Snapshot) -> SystemPrompt {
+pub fn compose(snapshot: Snapshot) -> SystemPrompt {
     let preferences = snapshot.personalization;
     let name: String = preferences.display_name.trim().chars().take(60).collect();
     let tone: String = preferences

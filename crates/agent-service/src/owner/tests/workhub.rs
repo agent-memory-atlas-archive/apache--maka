@@ -331,6 +331,9 @@ async fn activate_worker_mode(
                             "execution",
                             "execute",
                             "executors",
+                            "tools",
+                            "snapshotPatch",
+                            "readPatch",
                             "work",
                             "observe",
                             "watch",
@@ -1618,4 +1621,211 @@ async fn workhub_routes_external_executor_through_original_worker_and_recovers_a
         assert!(tokio::time::timeout(Duration::from_millis(30),listener.accept()).await.is_err());
         fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
     }).await.unwrap();
+}
+
+#[tokio::test]
+async fn workhub_presets_freeze_selected_worker_tools_and_recover_after_restart() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut fixture=Fixture::configured(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None,None,None,|settings| settings.isolated_workspaces=true).await;
+        worktrees::git(&fixture.workspace,&["init","--quiet"]);
+        worktrees::git(&fixture.workspace,&["config","user.email","test@example.invalid"]);
+        worktrees::git(&fixture.workspace,&["config","user.name","Fixture"]);
+        std::fs::write(fixture.workspace.join("tracked.txt"),"base\n").unwrap();
+        worktrees::git(&fixture.workspace,&["add","tracked.txt"]);
+        worktrees::git(&fixture.workspace,&["commit","--quiet","-m","base"]);
+        activate_workers(&mut fixture,true,true,true).await;
+        let ready=resolve(&fixture,selection(&fixture).await,Uuid::new_v4()).await;
+        let coordinator=ready["session"]["id"].as_str().unwrap().to_owned();
+        let directory=query_import(&fixture,"worker","directories",json!({"kind":"roots"})).await["roots"][0]["selection"].clone();
+        let preset=json!({"id":"reasoner","name":"Reasoner","description":"Reason without tools", "worker":"worker", "tools":[], "model":fixture.selection().await,"thinkingLevel":null,"enabled":true,"isolatedWorkspace":true});
+        let client=fixture.app.client();
+        let prepared=client.prepare_mutation(binding(&fixture).await,"savePresets".into(),json!({"revision":null,"entries":[preset]}),scope(&fixture.issuer,true),Uuid::new_v4(),Attachments::default().into()).await.unwrap();
+        let original=prepared.reference().clone();
+        let intent=fixture.store.record_application_intent(original.source.clone(),prepared.consumer().instance().clone(),original.clone(),Value::Null).await.unwrap();
+        let reply=client.mutate(prepared,intent).await.unwrap().result().await;
+        assert!(matches!(reply.receipt,Receipt::Recorded{outcome:OperationOutcome::Returned{ref value},cleanup:maka_plugin_core::operation::OperationCleanup::Confirmed} if value["kind"] == "saved"));
+        fixture.mutation(2,"send",json!({"sessionId":coordinator,"message":"Delegate reasoning", "model":fixture.selection().await}),Uuid::new_v4()).await.unwrap();
+        let (mut socket,_)=listener.accept().await.unwrap();request(&mut socket).await;
+        task_response(&mut socket,json!({"operation":"route_preset","preset":"reasoner","title":"Restricted reasoning","workspace":directory,"note":"Solve the task"})).await;
+        let mut task=None;
+        for _ in 0..2 {
+            let (mut socket,_)=listener.accept().await.unwrap();let input=request(&mut socket).await;
+            if is_coordinator(&input) {task=Some(tool_value(&input));} else {
+                assert!(input["tools"].is_null() || input["tools"].as_array().unwrap().is_empty());
+            }
+            response(&mut socket).await;
+        }
+        let task=task.unwrap();assert_eq!(task["status"]["kind"],"started");
+        let worker=task["status"]["sessionId"].as_str().unwrap();
+        idle(&fixture,EXPORT,&coordinator).await;idle(&fixture,"worker",worker).await;
+        assert_eq!(query_import(&fixture,"worker","observe",json!({"sessionId":worker})).await["session"]["tools"],json!([]));
+        let observed=query_import(&fixture,"worker","observe",json!({"sessionId":worker})).await;
+        let path=std::path::PathBuf::from(observed["session"]["workspace"]["path"].as_str().unwrap());
+        assert!(path.starts_with(fixture.root.canonicalize().unwrap().join("subagent-worktrees")));
+        std::fs::write(path.join("tracked.txt"),"worker patch\n").unwrap();
+        let control=control_turn(&fixture,&listener,&coordinator,json!({"operation":"control","taskId":task["taskId"],"action":{"kind":"snapshot_patch"}})).await;
+        assert_eq!(control["status"]["outcome"]["result"]["kind"],"ready","{control}");
+        let page=control_turn(&fixture,&listener,&coordinator,json!({"operation":"read_patch","controlId":control["controlId"],"offset":0})).await;
+        assert_eq!(page["kind"],"ready","{page}");
+        assert!(page["text"].as_str().unwrap().contains("+worker patch"));
+        assert!(page["next"].is_null());
+        assert_eq!(std::fs::read_to_string(fixture.workspace.join("tracked.txt")).unwrap(),"base\n");
+        activate_workers(&mut fixture,false,true,true).await;
+        assert_eq!(query_import(&fixture,hub::EXPORT,"presets",json!({})).await["entries"][0]["id"],"reasoner");
+        let restored=query_import(&fixture,hub::EXPORT,"task",json!({"taskId":task["taskId"]})).await;
+        assert_eq!(restored["status"]["invocationId"],task["status"]["invocationId"]);
+        assert_eq!(query_import(&fixture,"worker","observe",json!({"sessionId":worker})).await["session"]["tools"],json!([]));
+        fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn workhub_dependencies_wait_cancel_and_dispatch_once_with_complete_original_answers() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut fixture = Fixture::new(
+            &format!("http://{}/v1", listener.local_addr().unwrap()),
+            1,
+            None,
+        )
+        .await;
+        activate_workers(&mut fixture, true, true, true).await;
+        let worker = worker_session(&fixture).await;
+        let (coordinator, parent, mut running) = active_task(&fixture, &listener, &worker).await;
+        let directory = query_import(&fixture, "worker", "directories", json!({"kind":"roots"}))
+            .await["roots"][0]["selection"]
+            .clone();
+        let route = |title: &str, model: ModelSelection| {
+            json!({"operation":"route","worker":"worker",
+            "target":{"kind":"new","title":title,"workspace":directory,"tools":[]},
+            "dependencies":[parent],"note":"Use the completed dependency", "model":model})
+        };
+        let cancelled = control_turn(
+            &fixture,
+            &listener,
+            &coordinator,
+            route("Never start", fixture.selection().await),
+        )
+        .await;
+        let downstream = control_turn(
+            &fixture,
+            &listener,
+            &coordinator,
+            route("After evidence", fixture.selection().await),
+        )
+        .await;
+        assert_eq!(cancelled["status"]["kind"], "blocked");
+        assert_eq!(downstream["status"]["kind"], "blocked");
+        assert_eq!(downstream["dependencies"], json!([parent]));
+        assert_eq!(
+            query_import(
+                &fixture,
+                "worker",
+                "list",
+                json!({"filter":"all","position":{"kind":"start"}})
+            )
+            .await["sessions"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        let result = control_turn(
+            &fixture,
+            &listener,
+            &coordinator,
+            json!({"operation":"cancel_pending","taskId":cancelled["taskId"]}),
+        )
+        .await;
+        assert_eq!(result["kind"], "cancelled");
+        let evidence = "Complete original evidence. 中文 ".repeat(90);
+        response_with_text(&mut running, &evidence).await;
+        let child = loop {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let input = request(&mut socket).await;
+            if is_coordinator(&input) {
+                response(&mut socket).await;
+                continue;
+            }
+            let messages = input["messages"].as_array().unwrap();
+            assert!(
+                messages.iter().any(|message| message["content"]
+                    .as_str()
+                    .is_some_and(|text| text.contains(&evidence))),
+                "dependency pagination must deliver the complete final answer"
+            );
+            assert!(input["tools"].is_null() || input["tools"].as_array().unwrap().is_empty());
+            let observed = query_import(
+                &fixture,
+                hub::EXPORT,
+                "task",
+                json!({"taskId":downstream["taskId"]}),
+            )
+            .await;
+            response_with_text(&mut socket, "Dependent work completed").await;
+            break observed;
+        };
+        let child_session = child["status"]["sessionId"].as_str().unwrap();
+        idle(&fixture, "worker", child_session).await;
+        assert_eq!(
+            query_import(
+                &fixture,
+                hub::EXPORT,
+                "task",
+                json!({"taskId":cancelled["taskId"]})
+            )
+            .await["status"]["kind"],
+            "cancelled"
+        );
+        activate_workers(&mut fixture, false, true, true).await;
+        let restored = query_import(
+            &fixture,
+            hub::EXPORT,
+            "task",
+            json!({"taskId":downstream["taskId"]}),
+        )
+        .await;
+        assert_eq!(
+            restored["status"]["invocationId"],
+            child["status"]["invocationId"]
+        );
+        assert_eq!(
+            restored["status"]["progress"]["execution"]["state"],
+            "completed"
+        );
+        assert_eq!(
+            query_import(
+                &fixture,
+                hub::EXPORT,
+                "task",
+                json!({"taskId":cancelled["taskId"]})
+            )
+            .await["status"]["kind"],
+            "cancelled"
+        );
+        let intents = fixture
+            .store
+            .application_intents(fixture.app.source().unwrap().deployment, id(1), 0, 128)
+            .await
+            .unwrap();
+        assert_eq!(
+            intents
+                .iter()
+                .filter(|intent| intent.reference.method == "send")
+                .count(),
+            2
+        );
+        assert_eq!(
+            intents
+                .iter()
+                .filter(|intent| intent.reference.method == "create")
+                .count(),
+            1
+        );
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
 }

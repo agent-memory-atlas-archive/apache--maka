@@ -24,20 +24,22 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[schemars(rename = "UsageToolStatus")]
 pub enum ToolStatus {
     Success,
     Error,
     Unknown,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(
     tag = "kind",
     rename_all = "snake_case",
     rename_all_fields = "camelCase"
 )]
+#[schemars(rename = "UsageToolResult")]
 pub enum ToolResult {
     /// No effect was admitted, so no execution duration is reported.
     Rejected { reason: RejectionKind },
@@ -47,8 +49,9 @@ pub enum ToolResult {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "UsageToolAttempt")]
 pub struct ToolAttempt {
     pub request_id: String,
     pub invocation: Invocation,

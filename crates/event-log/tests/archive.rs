@@ -397,11 +397,14 @@ async fn archive_atomic_retry_reopen_scope_and_source_integrity() {
             .effective_source_digest,
         adopted.effective_source_digest
     );
-    assert!(
-        matches!(
-            log.read_model_context("unpruned-copy", None).await,
-            Err(StoreError::PrefixTooLarge)
-        ),
+    let unpruned = log.read_model_context("unpruned-copy", None).await.unwrap();
+    assert_eq!(
+        unpruned.tail.iter().find_map(|entry| match entry {
+            ContextEvent::Canonical(entry) if entry.event.id == target.event().id =>
+                Some(&entry.event),
+            _ => None,
+        }),
+        Some(target.event()),
         "later source pruning cannot replace history already owned by a copy"
     );
     let copy_invocation = Invocation {
@@ -642,7 +645,16 @@ async fn inherited_results_prune_and_compact_without_changing_siblings_or_frozen
             .candidates
             .is_empty()
     );
-    assert!(log.read_model_context("sibling", None).await.is_err());
+    let sibling = log.read_model_context("sibling", None).await.unwrap();
+    assert_eq!(
+        sibling.tail.iter().find_map(|entry| match entry {
+            ContextEvent::Canonical(entry) if entry.event.id == target.event().id =>
+                Some(&entry.event),
+            _ => None,
+        }),
+        Some(target.event()),
+        "branch pruning cannot replace its sibling's original result"
+    );
     assert_eq!(
         log.read_frozen_model_context(&frozen.source_evidence, 100, 65536)
             .await
@@ -843,18 +855,30 @@ async fn bounded_prune_candidates_do_not_materialize_the_old_tail() {
         .await
         .unwrap();
     open(&log, "old", false).await;
+    let mut originals = Vec::new();
     for n in 0..40 {
-        tool(&log, "old", &format!("step-{n}"), "x".repeat(220_000)).await;
+        originals.push(tool(&log, "old", &format!("step-{n}"), "x".repeat(220_000)).await);
     }
     end(&log, "old").await;
     open(&log, "recent", false).await;
     end(&log, "recent").await;
     open(&log, "current", false).await;
     tool(&log, "current", "current-result", "small".into()).await;
-    assert!(matches!(
-        log.read_model_context("session", Some("current")).await,
-        Err(StoreError::PrefixTooLarge)
-    ));
+    let complete = log
+        .read_model_context("session", Some("current"))
+        .await
+        .unwrap();
+    for original in &originals {
+        assert_eq!(
+            complete.tail.iter().find_map(|entry| match entry {
+                ContextEvent::Canonical(entry) if entry.event.id == original.event().id =>
+                    Some(&entry.event),
+                _ => None,
+            }),
+            Some(original.event()),
+            "the full model context must preserve every original result"
+        );
+    }
     let guard = log
         .prepare_prune_candidates("session", Some("current"), 0, 0, None)
         .await

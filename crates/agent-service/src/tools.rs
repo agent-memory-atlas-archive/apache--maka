@@ -20,6 +20,7 @@
 //! Explicit service-to-tool projection. Imports describe bindings, not grants.
 mod approval;
 pub(crate) mod image;
+mod web;
 use crate::contract::{ServiceTool, ToolConfirmation, ToolInput, ToolResult};
 use futures_util::FutureExt;
 use maka_event_log::EventLog;
@@ -57,8 +58,10 @@ pub(crate) fn catalog(
     store: Arc<EventLog>,
     selected: &[ServiceTool],
     additional: Vec<ToolRegistration>,
+    workers: tokio_util::task::TaskTracker,
 ) -> Result<(ToolCatalog, Vec<SelectedTool>), String> {
     let mut basis = Vec::new();
+    let mut web_bindings = Vec::new();
     let skill_contract = crate::skills::contract();
     let tool_names: Arc<Vec<String>> = Arc::new(
         selected
@@ -106,12 +109,26 @@ pub(crate) fn catalog(
             }
             let input_schema = match selection.input {
                 ToolInput::Json => {
+                    if binding.contract() == &crate::web::contract()
+                        && crate::web::contract::model_input_schema(&selection.method).is_some()
+                    {
+                        return Err("agent_web_tool_projection_required".into());
+                    }
                     if binding.contract() == &skill_contract
                         && crate::skills::model_input_schema(&selection.method).is_some()
                     {
                         return Err("agent_skill_tool_projection_required".into());
                     }
                     method.input.clone()
+                }
+                ToolInput::Web => {
+                    if binding.contract() != &crate::web::contract()
+                        || selection.result != ToolResult::Json
+                    {
+                        return Err("agent_web_tool_contract_invalid".into());
+                    }
+                    crate::web::contract::model_input_schema(&selection.method)
+                        .ok_or("agent_web_tool_method_invalid")?
                 }
                 ToolInput::Skill => {
                     if binding.contract() != &skill_contract || selection.result != ToolResult::Json
@@ -126,6 +143,37 @@ pub(crate) fn catalog(
                 selection: selection.clone(),
                 binding: binding.execution_basis().into(),
             });
+            let service = Service {
+                services: services.clone(),
+                store: store.clone(),
+                binding: binding.execution_basis().into(),
+                target: format!(
+                    "{} · {} v{} · {} / {} · {}",
+                    selection.import,
+                    binding.contract().name,
+                    binding.contract().version,
+                    serde_json::to_string(binding.provider().instance())
+                        .expect("instance identity"),
+                    binding.export(),
+                    binding
+                        .provider()
+                        .remote_target()
+                        .map_or("local", |target| target.deployment.as_str())
+                ),
+                tool_names: tool_names.clone(),
+                selection: selection.clone(),
+                mode: method.mode,
+                web_basis: None,
+            };
+            if selection.input == ToolInput::Web {
+                web_bindings.push((
+                    selection.name.clone(),
+                    Arc::new(web::Binding {
+                        service: service.clone(),
+                        workers: workers.clone(),
+                    }),
+                ));
+            }
             Ok(ToolRegistration {
                 definition: ToolDefinition {
                     provider: None,
@@ -144,35 +192,22 @@ pub(crate) fn catalog(
                 } else {
                     ToolSemantics::Parallel
                 },
-                handler: ToolHandler::Prepared(Arc::new(Service {
-                    services: services.clone(),
-                    store: store.clone(),
-                    binding: binding.execution_basis().into(),
-                    target: format!(
-                        "{} · {} v{} · {} / {} · {}",
-                        selection.import,
-                        binding.contract().name,
-                        binding.contract().version,
-                        serde_json::to_string(binding.provider().instance())
-                            .expect("instance identity"),
-                        binding.export(),
-                        binding
-                            .provider()
-                            .remote_target()
-                            .map_or("local", |target| target.deployment.as_str())
-                    ),
-                    tool_names: tool_names.clone(),
-                    selection: selection.clone(),
-                    mode: method.mode,
-                })),
+                handler: ToolHandler::Prepared(Arc::new(service)),
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    let catalog = ToolCatalog::new(registrations.into_iter().chain(additional))
+    let mut catalog = ToolCatalog::new(registrations.into_iter().chain(additional))
         .map_err(|_| "agent_tool_catalog_invalid")?;
+    for (name, binding) in web_bindings {
+        catalog = catalog
+            .with_request_binding([name].into(), binding)
+            .map_err(|_| "agent_web_binding_invalid")?;
+    }
     Ok((catalog, basis))
 }
+#[derive(Clone)]
 struct Service {
+    web_basis: Option<crate::web::contract::Basis>,
     tool_names: Arc<Vec<String>>,
     services: NativeServices,
     store: Arc<EventLog>,
@@ -193,6 +228,7 @@ impl ToolPreparer for Service {
         cancellation: CancellationToken,
     ) -> PreparationFuture {
         let tool_names = self.tool_names.clone();
+        let web_basis = self.web_basis.clone();
         let services = self.services.clone();
         let store = self.store.clone();
         let binding = self.binding.clone();
@@ -230,11 +266,25 @@ impl ToolPreparer for Service {
                     }
                     let input = match selection.input {
                         ToolInput::Json => input,
+                        ToolInput::Web => {
+                            let basis = web_basis.ok_or_else(|| {
+                                ToolError::Failed("Web tool has no request capture".into())
+                            })?;
+                            serde_json::json!({"input":input,"basis":basis})
+                        }
                         ToolInput::Skill => {
-                            let workspace = crate::permissions::live(&store, &context.invocation)
-                                .await?
-                                .workspace;
-                            serde_json::json!({"input": input, "tools": tool_names.as_ref(), "workspace":workspace})
+                            let configuration =
+                                crate::permissions::live(&store, &context.invocation).await?;
+                            let names: Vec<_> = tool_names
+                                .iter()
+                                .filter(|name| {
+                                    configuration
+                                        .tools
+                                        .as_ref()
+                                        .is_none_or(|allowed| allowed.contains(name))
+                                })
+                                .collect();
+                            serde_json::json!({"input": input, "tools": names, "workspace":configuration.workspace})
                         }
                     };
                     let operation = operation_id(&context);

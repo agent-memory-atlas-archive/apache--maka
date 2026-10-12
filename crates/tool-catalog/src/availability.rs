@@ -112,15 +112,16 @@ impl Availability {
             None => Ok(self.catalog.clone()),
         }
         .map_err(|error| ToolError::Failed(error.to_string()))?;
+        let request = crate::plugins::BindingRequest {
+            behavior: self.behavior.clone(),
+            model,
+            invocation,
+            cwd,
+            tools: catalog.names().into_iter().collect(),
+            cancellation,
+        };
+        catalog.bind_native_request(request.clone()).await?;
         let context = if let Some(captured) = &captured {
-            let request = crate::plugins::BindingRequest {
-                behavior: self.behavior.clone(),
-                model,
-                invocation,
-                cwd,
-                tools: catalog.names().into_iter().collect(),
-                cancellation,
-            };
             catalog.bind_request(captured, request).await?
         } else {
             Default::default()

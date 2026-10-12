@@ -117,9 +117,13 @@ impl Hub {
                 .key
                 .strip_prefix(&format!("{}tasks/", self.agent.0.prefix))
                 .ok_or("workhub_task_invalid")?;
-            // A query validates the original assignment/source and today's worker grants.
-            // It never advances preparations, dispatches work, or follows a Session tip.
-            let value = match self.task(id, false, None, stop.clone()).await {
+            // Accepted deferred routes own their dependency wait. Once ready, advance
+            // only their original frozen preparation and dispatch; unknown receipts
+            // retain the existing no-recapture/no-redispatch rules.
+            let value = match self
+                .task(id, !assignment.dependencies.is_empty(), None, stop.clone())
+                .await
+            {
                 Ok(value) => value,
                 Err(error) if !self.tasks.cleanup_failed() => {
                     // One unavailable worker must not starve other tasks on this page.
@@ -220,7 +224,8 @@ impl Hub {
 }
 fn terminal(task: &Value) -> bool {
     let status = &task["status"];
-    status["kind"] == "rejected"
+    status["kind"] == "cancelled"
+        || status["kind"] == "rejected"
         || status["progress"]["kind"] == "cancelled"
         || (status["progress"]["kind"] == "delivered"
             && matches!(

@@ -168,6 +168,10 @@ function status(task: WorkHubTask | null, text: Copy): string {
   if (!task) return text.workhubUnavailable;
   const current = task.status;
   switch (current.kind) {
+    case 'blocked':
+      return text.workhubDependencies + ' (' + current.dependencies.length + ')';
+    case 'cancelled':
+      return text.workhubCancelled;
     case 'preparing': {
       if (current.state.kind === 'uncertain') return text.workhubUnknown;
       if (current.state.kind === 'unavailable') return text.workhubUnavailable;
@@ -217,6 +221,7 @@ export function workhubRoot<N extends Node>(
   presentation: Presentation<N>,
   configuredLocale: string,
   worker: string,
+  initialRoute: 'coordinator' | 'sessions' = 'coordinator',
 ): Component<State, Record<string, never>, N> {
   function frame(state: State, values: ComponentValues, actions: Action[] = []) {
     if (!state.pending && !state.failed) {
@@ -332,6 +337,7 @@ export function workhubRoot<N extends Node>(
               ),
             ],
             {
+              visible: state.route !== 'sessions',
               row: true,
               gap,
               terminal: { wrap: true },
@@ -417,9 +423,10 @@ export function workhubRoot<N extends Node>(
               'worker',
               {
                 embedded: true,
+                workhub: true,
                 ...(state.workerSelection ? { session: state.workerSelection } : {}),
               } satisfies WorkspaceProps,
-              {},
+              { workhub: 'workhub' },
             ),
           ]),
           page('tasks', [
@@ -496,7 +503,7 @@ export function workhubRoot<N extends Node>(
         {
           revision: 0,
           serial: 0,
-          route: 'coordinator',
+          route: initialRoute,
           pending: null,
           restoring: true,
           historyAfter: 0,
@@ -658,6 +665,14 @@ export function workhubRoot<N extends Node>(
             workspace: event.event as AgentDirectorySelection,
           });
         }
+      } else if (
+        event.kind === 'component' &&
+        event.child === 'worker-workspace' &&
+        event.name === 'workhub'
+      ) {
+        state.route = 'coordinator';
+        state.watchRevision++;
+        state.watchFailures = [];
       } else if (event.kind === 'raw') {
         const key = event.key;
         if (key.startsWith('workhub-route-')) {
