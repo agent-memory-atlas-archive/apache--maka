@@ -1,0 +1,12 @@
+{
+  "extends": "../../../packages/plugin-sdk/tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "incremental": false,
+    "composite": false,
+    "rootDir": "../../..",
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": ["src", "../../../plugins/**/*.ts"]
+}

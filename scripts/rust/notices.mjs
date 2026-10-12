@@ -28,8 +28,8 @@ import { rustTarget } from './build-cli.mjs';
 import { licenseFiles, licenseName } from './license-files.mjs';
 
 const repository = fileURLToPath(new URL('../../', import.meta.url));
-const documentPath = 'crates/cli/THIRD_PARTY_NOTICES.txt';
-const manifestPath = 'crates/cli/notices.json';
+const documentPath = 'products/maka/cli/THIRD_PARTY_NOTICES.txt';
+const manifestPath = 'products/maka/cli/notices.json';
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 
 async function inputs(root) {
@@ -41,12 +41,12 @@ async function inputs(root) {
     'scripts/apply-dependency-patches.mjs',
     'scripts/rust/notices.mjs',
     'scripts/rust/bundle-providers.mjs',
-    'packages/agent-product/scripts/build.mjs',
-    'packages/agent-product/package.json',
-    'crates/cli/build.rs',
-    'crates/cli/build/product.rs',
+    'products/maka/bundle/scripts/build.mjs',
+    'products/maka/bundle/package.json',
+    'products/maka/cli/build.rs',
+    'products/maka/cli/build/product.rs',
     'scripts/rust/notices-sources.json',
-    'crates/computer-use/THIRD_PARTY_NOTICES',
+    'platform/computer-use/THIRD_PARTY_NOTICES',
     'scripts/rust/v8-source.json',
     'scripts/rust/build-v8.mjs',
     'scripts/rust/compile-v8.mjs',
@@ -58,10 +58,17 @@ async function inputs(root) {
   ];
   for await (const entry of glob(
     [
-      'crates/**/Cargo.toml',
-      'crates/js-runtime/trusted/*.js',
-      'crates/js-runtime/third-party/**/*',
-      'packages/agent-product/src/**/*.ts',
+      'platform/**/Cargo.toml',
+      'plugins/**/Cargo.toml',
+      'products/**/Cargo.toml',
+      'tools/**/Cargo.toml',
+      'platform/js-runtime/trusted/*.js',
+      'platform/js-runtime/third-party/**/*',
+      'products/maka/bundle/src/**/*.ts',
+      'products/maka/bundle/package-inputs.json',
+      'plugins/**/*.ts',
+      'plugins/**/*.mjs',
+      'scripts/plugins/*.mjs',
       'packages/plugin-sdk/src/**/*.ts',
       'patches/*.patch',
       'third-party/**/*',
@@ -263,7 +270,7 @@ export async function generateNotices(root = repository) {
         add(
           component,
           source,
-          await readFile(join(root, 'crates/computer-use/THIRD_PARTY_NOTICES'), 'utf8'),
+          await readFile(join(root, 'platform/computer-use/THIRD_PARTY_NOTICES'), 'utf8'),
         );
       } else if (supplements[pkg.name + '@' + pkg.version]) {
         for (const entry of supplements[pkg.name + '@' + pkg.version]) {
@@ -289,16 +296,15 @@ export async function generateNotices(root = repository) {
   try {
     const meta = join(stage, 'inputs.json');
     run(process.execPath, ['scripts/rust/bundle-providers.mjs', stage, meta], root);
-    run(process.execPath, ['packages/agent-product/scripts/build.mjs'], root);
+    const product = join(stage, 'product');
+    run(process.execPath, ['products/maka/bundle/scripts/build.mjs', '--output', product], root);
     const bundled = new Set();
     const inputs = [
       // Standalone validators contain Ajv-generated code without importing its
       // compiler at runtime. Preserve that code's notice as well as imports.
       fileURLToPath(import.meta.resolve('ajv/dist/standalone/index.js')),
       ...Object.keys(JSON.parse(await readFile(meta, 'utf8')).inputs),
-      ...JSON.parse(
-        await readFile(join(root, 'packages/agent-product/dist/bundle-inputs.json'), 'utf8'),
-      ),
+      ...JSON.parse(await readFile(join(product, 'bundle-inputs.json'), 'utf8')),
     ];
     for (const input of inputs) {
       let path = dirname(resolve(root, input));

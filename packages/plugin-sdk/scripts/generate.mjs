@@ -28,27 +28,12 @@ if (!['generate', 'check'].includes(mode) || process.argv.length !== 3)
   throw new Error('Usage: generate.mjs <generate|check>');
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const catalog = JSON.parse(
-  execFileSync(
-    'cargo',
-    [
-      'run',
-      '--locked',
-      '--quiet',
-      '-p',
-      'maka-cli',
-      '--bin',
-      'maka',
-      '--',
-      'application',
-      'schema',
-    ],
-    {
-      cwd: root,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'inherit'],
-      maxBuffer: 4 * 1024 * 1024,
-    },
-  ),
+  execFileSync('cargo', ['run', '--locked', '--quiet', '-p', 'maka-schema'], {
+    cwd: root,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'inherit'],
+    maxBuffer: 4 * 1024 * 1024,
+  }),
 );
 const header = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8').split(
   '\n\n',
@@ -108,6 +93,32 @@ outputs.set(
     'export const configurations = ' +
     JSON.stringify(catalog.configurations, null, 2) +
     ' as const;\n',
+);
+function reference(value, values, prefix) {
+  const encoded = JSON.stringify(value);
+  const match = Object.entries(values).find(
+    ([, candidate]) => JSON.stringify(candidate) === encoded,
+  );
+  return match ? `${prefix}.${match[0]}` : encoded;
+}
+const definitions = Object.entries(catalog.native).map(
+  ([name, definition]) =>
+    `${JSON.stringify(name)}: { implementation: ${JSON.stringify(definition.implementation)}, ` +
+    `configuration: ${reference(definition.configuration, catalog.configurations, 'configurations')}, ` +
+    `exports: { ${Object.entries(definition.exports)
+      .map(
+        ([name, contract]) =>
+          `${JSON.stringify(name)}: ${reference(contract, catalog.contracts, 'contracts')}`,
+      )
+      .join(', ')} } }`,
+);
+outputs.set(
+  new URL('../src/native.ts', import.meta.url),
+  banner +
+    "import { contracts } from './contracts.js';\nimport { configurations } from './configurations.js';\n\n" +
+    'export const nativeImplementations = /* @__PURE__ */ (() => ({\n' +
+    definitions.join(',\n') +
+    '\n}))();\n',
 );
 for (const [url, source] of outputs) {
   const content = execFileSync(

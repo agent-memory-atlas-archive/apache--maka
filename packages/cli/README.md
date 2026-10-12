@@ -73,4 +73,4 @@ For keys without pins, native CI exports `v8-prebuilt-*` artifacts with archives
 
 After dependency changes, run `node scripts/rust/notices.mjs generate` and review the snapshot. It collects full and nested license texts from pinned dependency sources; reviewed exceptions for missing upstream license files live in `notices-sources.json`. Release builds validate the snapshot's source-input binding and append notices from the actual V8 build graph and Rust standard library. The license TSV is an inventory, not a substitute for these texts.
 
-No install script downloads or executes an unverified helper. Runtime behavior lives in `crates/cli`.
+No install script downloads or executes an unverified helper. Runtime behavior lives in `products/maka/cli`.

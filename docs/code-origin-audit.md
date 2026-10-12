@@ -19,7 +19,7 @@
 
 # Source provenance
 
-Third-party source and dependency patch attribution is recorded in [LICENSE](../LICENSE). Apply-patch adaptations have a detailed record in [crates/apply-patch/SOURCE.md](../crates/apply-patch/SOURCE.md); native Computer Use notices live in [crates/computer-use/THIRD_PARTY_NOTICES](../crates/computer-use/THIRD_PARTY_NOTICES).
+Third-party source and dependency patch attribution is recorded in [LICENSE](../LICENSE). Apply-patch adaptations have a detailed record in [plugins/workspace/workspace-files/patch/SOURCE.md](../plugins/workspace/workspace-files/patch/SOURCE.md); native Computer Use notices live in [platform/computer-use/THIRD_PARTY_NOTICES](../platform/computer-use/THIRD_PARTY_NOTICES).
 
 ### Source archive non-text inventory
 

@@ -29,8 +29,11 @@ on:
       - deny.toml
       - Cargo.toml
       - Cargo.lock
-      - 'crates/**/Cargo.toml'
-      - crates/cli/DEPENDENCIES.rust.tsv
+      - 'platform/**/Cargo.toml'
+      - 'plugins/**/Cargo.toml'
+      - 'products/**/Cargo.toml'
+      - 'tools/**/Cargo.toml'
+      - products/maka/cli/DEPENDENCIES.rust.tsv
       - package.json
       - package-lock.json
       - 'packages/*/package.json'
@@ -42,8 +45,11 @@ on:
       - deny.toml
       - Cargo.toml
       - Cargo.lock
-      - 'crates/**/Cargo.toml'
-      - crates/cli/DEPENDENCIES.rust.tsv
+      - 'platform/**/Cargo.toml'
+      - 'plugins/**/Cargo.toml'
+      - 'products/**/Cargo.toml'
+      - 'tools/**/Cargo.toml'
+      - products/maka/cli/DEPENDENCIES.rust.tsv
       - package.json
       - package-lock.json
       - 'packages/*/package.json'

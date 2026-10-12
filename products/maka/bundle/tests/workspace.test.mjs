@@ -1,0 +1,289 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { execFileSync } from 'node:child_process';
+import { readFileSync, readdirSync, mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const sdk = await import(pathToFileURL(resolve(root, 'dist/authoring/sdk.mjs')));
+
+test('each bundled UI exports the exact contracts admitted by its original manifest', async () => {
+  let checked = 0;
+  for (const name of readdirSync(resolve(root, 'dist/packages'))) {
+    const directory = resolve(root, 'dist/packages', name);
+    const manifest = JSON.parse(readFileSync(resolve(directory, 'maka.extension.json'), 'utf8'));
+    for (const target of ['desktop', 'tui']) {
+      const entry = manifest.application.entries[target];
+      if (entry?.implementation.kind !== 'javascript') continue;
+      const guest = await import(pathToFileURL(resolve(directory, entry.implementation.module)));
+      const declarations = guest.activate({ locale: 'en', scheme: 'light' });
+      assert.deepEqual(Object.keys(declarations).sort(), Object.keys(entry.exports).sort());
+      for (const [key, declaration] of Object.entries(declarations)) {
+        assert.deepEqual(
+          declaration.contract,
+          entry.exports[key].contract,
+          `${name}/${target}/${key}`,
+        );
+        checked++;
+      }
+    }
+  }
+  assert.ok(checked >= 50);
+});
+
+test('typed scene constructors serialize directly into the actual Rust scene schemas', async () => {
+  const desktopText = sdk.ui.desktop.text({ key: 'desktop-text', text: '界面', color: 0xffffff });
+  const terminalText = sdk.ui.terminal.text({
+    key: 'terminal-text',
+    text: '界面',
+    color: 0xffffff,
+  });
+  const desktop = sdk.ui.desktop.stack({
+    key: 'desktop',
+    direction: 'column',
+    gap: 8,
+    padding: 0,
+    background: 0,
+    children: [desktopText],
+    scroll: 'anchor',
+  });
+  const terminal = sdk.ui.terminal.stack({
+    key: 'terminal',
+    direction: 'column',
+    gap: 1,
+    padding: 0,
+    background: 0,
+    children: [terminalText],
+    scroll: 'anchor',
+  });
+  const desktopScenes = [
+    desktop,
+    desktopText,
+    sdk.ui.desktop.button({ key: 'button', label: 'Save' }),
+    sdk.ui.desktop.dialog({
+      key: 'dialog',
+      label: 'Dialog',
+      background: desktop,
+      content: desktopText,
+      open: true,
+    }),
+    sdk.ui.desktop.popup({
+      key: 'popup',
+      label: 'Menu',
+      trigger: desktopText,
+      content: desktop,
+      open: true,
+    }),
+    sdk.ui.desktop.canvas({
+      key: 'canvas',
+      contents: {
+        commands: [
+          { kind: 'line', from: { x: 0, y: 0 }, to: { x: 20, y: 20 }, color: 0xffffff, width: 1 },
+        ],
+        regions: [],
+      },
+    }),
+    sdk.ui.desktop.reading({
+      key: 'reading',
+      binding: 'reading',
+      props: { content: desktop },
+      on: { observed: 'viewport' },
+    }),
+  ];
+  const terminalScenes = [
+    terminal,
+    terminalText,
+    sdk.ui.terminal.button({ key: 'button', label: 'Save' }),
+    sdk.ui.terminal.dialog({
+      key: 'dialog',
+      label: 'Dialog',
+      background: terminal,
+      content: terminalText,
+      open: true,
+      width: 40,
+      height: 10,
+      background_color: 0,
+      border_color: 0xffffff,
+    }),
+    sdk.ui.terminal.reading({
+      key: 'reading',
+      binding: 'reading',
+      props: { content: terminal },
+      on: { observed: 'viewport' },
+    }),
+  ];
+  const encoded = JSON.stringify(desktop);
+  assert.deepEqual(JSON.parse(encoded), {
+    key: 'desktop',
+    direction: 'column',
+    gap: 8,
+    padding: 0,
+    background: 0,
+    children: [{ key: 'desktop-text', text: '界面', color: 0xffffff, kind: 'text' }],
+    scroll: 'anchor',
+    kind: 'stack',
+  });
+  assert.equal(Object.getOwnPropertySymbols(desktop).length, 1);
+  assert.equal(encoded.includes('maka.scene.target'), false);
+  assert.equal(desktopScenes.at(-1).member, 0);
+  if (process.env.MAKA_PRODUCT_CLI_CHECK) {
+    const binary = resolve(
+      root,
+      '../../..',
+      process.env.CARGO_TARGET_DIR ?? 'target',
+      'debug/maka',
+    );
+    const catalog = JSON.parse(
+      execFileSync(binary, ['application', 'schema'], {
+        encoding: 'utf8',
+        maxBuffer: 4 * 1024 * 1024,
+      }),
+    );
+    const { default: Ajv } = await import('ajv/dist/2020.js');
+    for (const [name, scenes] of [
+      ['DesktopScene', desktopScenes],
+      ['TerminalScene', terminalScenes],
+    ]) {
+      const validate = new Ajv({ strict: false }).compile({
+        $ref: '#/$defs/' + name,
+        $defs: catalog.schema.$defs,
+      });
+      for (const scene of scenes)
+        assert.equal(
+          validate(JSON.parse(JSON.stringify(scene))),
+          true,
+          JSON.stringify(validate.errors),
+        );
+    }
+  }
+});
+
+test('WorkHub product authors two independent Agent graphs with explicit native grants in actual CLI', {
+  skip: !process.env.MAKA_PRODUCT_CLI_CHECK,
+}, async () => {
+  const binary = resolve(root, '../../..', process.env.CARGO_TARGET_DIR ?? 'target', 'debug/maka');
+  const directory = mkdtempSync(resolve(tmpdir(), 'maka-workhub-composition-'));
+  try {
+    const agent = {
+      workspaceRoots: [{ label: 'Project', path: '/private/product-workspace' }],
+      maxActiveRuns: 1,
+      permissions: { access: 'workspace_write', requestPermissions: true },
+      maxSteps: 2,
+      tools: [],
+    };
+    for (const presentation of ['desktop', 'tui']) {
+      const configuration = {
+        presentation,
+        locale: 'en',
+        scheme: 'light',
+        agent,
+        coordinator: {
+          ...agent,
+          tools: [
+            {
+              name: 'Execute',
+              description: 'Run a command',
+              import: 'processes',
+              method: 'execute',
+              result: 'json',
+              confirmation: 'preapproved',
+            },
+          ],
+        },
+        coordinatorProcesses: {
+          filesystem: { default: 'read', rules: [], denyGlobs: [] },
+          network: 'denied',
+          helper: null,
+        },
+        hostRoot: resolve(directory, 'unopened-host'),
+      };
+      const path = resolve(directory, 'configuration.json');
+      writeFileSync(path, JSON.stringify(configuration));
+      const output = resolve(directory, presentation);
+      execFileSync(
+        binary,
+        [
+          'application',
+          'compose',
+          '--configuration',
+          path,
+          '--output',
+          output,
+          '--product',
+          'workhub',
+        ],
+        { encoding: 'utf8', env: { ...process.env, PATH: directory, NODE_PATH: '' } },
+      );
+      const read = (name) => JSON.parse(readFileSync(resolve(output, `${name}.json`), 'utf8'));
+      const { keys } = read('installation'),
+        host = read('host'),
+        ui = read('ui');
+      assert.equal(existsSync(configuration.hostRoot), false);
+      assert.deepEqual(host.instances.workhub.bindings.worker, [
+        { kind: 'instance', path: ['agent'], export: 'agent' },
+      ]);
+      assert.deepEqual(
+        host.instances['coordinator-workspace-processes'].configuration.values.sessionOwner,
+        [keys.workhub],
+      );
+      assert.equal(
+        host.instances['coordinator-workspace-processes'].configuration.values.sessionKind,
+        'workhub',
+      );
+      assert.equal(host.instances['workspace-processes'], undefined);
+      assert.deepEqual(ui.launch, { kind: 'instance', path: ['workhub-root'], export: 'WorkHub' });
+      assert.equal(ui.instances.workspace.bindings.agent[0].instance[0], keys.agent);
+      assert.equal(
+        ui.instances['coordinator-workspace'].bindings.agent[0].instance[0],
+        keys.workhub,
+      );
+      assert.equal(
+        ui.instances['coordinator-directory-picker'].bindings.agent[0].instance[0],
+        keys.workhub,
+      );
+      const grants = read('connections').hosts.find((host) => host.name === 'local').native;
+      assert.ok(
+        grants.some(
+          (grant) =>
+            grant.origin[0] === keys.workhub &&
+            grant.provider[0] === keys.agent &&
+            grant.methods.includes('send'),
+        ),
+      );
+      assert.ok(
+        grants.some(
+          (grant) =>
+            grant.origin[0] === keys.workhub &&
+            grant.provider[0] === keys['coordinator-workspace-processes'] &&
+            grant.methods.includes('execute'),
+        ),
+      );
+      assert.equal(
+        grants.some((grant) => grant.origin[0] === keys.agent),
+        false,
+      );
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

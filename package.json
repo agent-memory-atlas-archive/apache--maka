@@ -10,7 +10,7 @@
   "type": "module",
   "workspaces": [
     "packages/plugin-sdk",
-    "packages/agent-product",
+    "products/maka/bundle",
     "packages/cli"
   ],
   "scripts": {

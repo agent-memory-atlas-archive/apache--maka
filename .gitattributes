@@ -5,9 +5,9 @@
 /patches/*.patch whitespace=-space-before-tab,-blank-at-eol
 /patches/*.diff whitespace=-space-before-tab,-blank-at-eol
 # Empty trailing columns belong to the generated cargo-deny TSV schema.
-/crates/cli/DEPENDENCIES.rust.tsv whitespace=-blank-at-eol
+/products/maka/cli/DEPENDENCIES.rust.tsv whitespace=-blank-at-eol
 # Preserve whitespace in redistributed upstream license texts.
-/crates/cli/THIRD_PARTY_NOTICES.txt whitespace=-blank-at-eol
+/products/maka/cli/THIRD_PARTY_NOTICES.txt whitespace=-blank-at-eol
 /scripts/rust/licenses/*.txt whitespace=-blank-at-eol
 /third-party/gpui-fast/assets/fonts/ibm-plex-sans/license.txt whitespace=-blank-at-eol
 /third-party/gpui-fast/assets/fonts/lilex/OFL.txt whitespace=-blank-at-eol

@@ -1,0 +1,434 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+//! Durable session control metadata. Execution history remains in runtime_events.
+
+mod activity;
+mod admission;
+mod catalog;
+pub(crate) use admission::retain;
+pub(crate) mod copy;
+pub use copy::{AbandonRevision, SessionCopy, SessionCopyResult};
+mod execution;
+mod import;
+pub use import::{ImportProgress, ImportState};
+mod material;
+pub use material::MaterialCollection;
+mod metadata;
+mod origin;
+mod processes;
+pub(crate) mod removal;
+pub use origin::PluginSession;
+pub use removal::{
+    RemovalAuthority, RemovalPlan, RemoveFamilyResult, SessionRemovalResult, SessionRetirement,
+};
+pub(crate) mod read_state;
+pub(crate) use activity::{initialize_execution, project_execution, register_functions};
+pub(crate) use execution::advance_revision;
+pub use execution::{CatalogMessage, SessionExecution, SessionExecutionState};
+pub use metadata::SessionMutation;
+pub use read_state::SessionReadState;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use sqlx::{Connection, Row, SqliteConnection};
+
+use crate::{EventLog, StoreError};
+
+pub const MAX_CONFIGURATION_BYTES: usize = 64 * 1024;
+pub const MAX_SESSION_PAGE: usize = 32;
+const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SessionRecord<T> {
+    pub id: String,
+    pub revision: u64,
+    pub created_at: u64,
+    pub updated_at: u64,
+    pub archived: bool,
+    pub configuration: T,
+    /// Exact stored configuration basis, independent of execution-driven revision.
+    #[serde(skip)]
+    pub configuration_digest: String,
+    #[serde(default)]
+    pub read_state: SessionReadState,
+    /// Bounded execution projection read in the same snapshot as metadata.
+    #[serde(skip)]
+    pub execution: Option<SessionExecution>,
+    /// Message activity does not imply a local execution (for example, imported history).
+    #[serde(skip)]
+    pub last_message: Option<CatalogMessage>,
+    /// Oldest unresolved interaction, read from canonical facts in the same snapshot.
+    #[serde(skip)]
+    pub pending_interaction_since: Option<u64>,
+    pub lineage: Option<Box<maka_agent_facts::session::Lineage>>,
+    pub copy_state: Option<maka_agent_facts::session::CopyState>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub enum CatalogScope {
+    Profile,
+    Session(String),
+    Workspace(String),
+    /// Server-owned namespace. This is a data filter, never authorization.
+    IdPrefix(String),
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct CatalogFilter {
+    pub include_archived: bool,
+    pub pending_only: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct SessionPage<T> {
+    pub revision: String,
+    pub sessions: Vec<SessionRecord<T>>,
+    /// All unresolved-interaction sessions in this scope, independent of page size.
+    pub pending_session_count: u64,
+    pub next_cursor: Option<String>,
+    pub previous_cursor: Option<String>,
+}
+
+/// Keyset position within one revisioned session catalog.
+#[derive(Clone, Copy, Debug)]
+pub enum SessionPosition<'a> {
+    Start,
+    /// Inclusive anchor for a fresh snapshot, with backward fallback at the tail.
+    At(&'a str),
+    After(&'a str),
+    Before(&'a str),
+}
+impl<'a> From<Option<&'a str>> for SessionPosition<'a> {
+    fn from(cursor: Option<&'a str>) -> Self {
+        cursor.map_or(Self::Start, Self::After)
+    }
+}
+
+impl EventLog {
+    pub async fn probe_session_create<T: DeserializeOwned + Send + 'static>(
+        &self,
+        id: &str,
+        fingerprint: &str,
+    ) -> Result<Option<SessionRecord<T>>, StoreError> {
+        self.validate_root()?;
+        validate_id(id)?;
+        let (id, fingerprint) = (id.to_owned(), fingerprint.to_owned());
+        self.connection
+            .run(move |connection| {
+                Box::pin(async move {
+                    let mut tx = connection.begin().await?;
+                    probe(&mut tx, &id, &fingerprint).await
+                })
+            })
+            .await
+    }
+
+    /// Configuration is opaque here; callers must validate its domain semantics.
+    pub async fn create_session<T: Serialize + DeserializeOwned + Send + 'static>(
+        &self,
+        id: &str,
+        fingerprint: &str,
+        configuration: &T,
+        now: u64,
+    ) -> Result<SessionRecord<T>, StoreError> {
+        self.create_session_owned(id, fingerprint, configuration, now, None)
+            .await
+    }
+
+    /// Creator identity, optional management and Session creation share one transaction.
+    /// Only Host admission supplies the bound package/scope.
+    pub async fn create_plugin_session<T: Serialize + DeserializeOwned + Send + 'static>(
+        &self,
+        claim: &PluginSession,
+        configuration: &T,
+        now: u64,
+    ) -> Result<SessionRecord<T>, StoreError> {
+        claim.validate()?;
+        self.create_session_owned(
+            &claim.session_id,
+            &claim.fingerprint,
+            configuration,
+            now,
+            Some(claim.clone()),
+        )
+        .await
+    }
+
+    async fn create_session_owned<T: Serialize + DeserializeOwned + Send + 'static>(
+        &self,
+        id: &str,
+        fingerprint: &str,
+        configuration: &T,
+        now: u64,
+        origin: Option<PluginSession>,
+    ) -> Result<SessionRecord<T>, StoreError> {
+        self.validate_root()?;
+        validate_id(id)?;
+        validate_time(now)?;
+        let configuration = serde_json::to_string(configuration)?;
+        if configuration.len() > MAX_CONFIGURATION_BYTES {
+            return Err(invalid("session configuration exceeds 64 KiB"));
+        }
+        let (id, fingerprint) = (id.to_owned(), fingerprint.to_owned());
+        self.connection
+            .run(move |connection| {
+                Box::pin(async move {
+                    let mut tx = connection.begin_with("BEGIN IMMEDIATE").await?;
+                    if let Some(record) = probe(&mut tx, &id, &fingerprint).await? {
+                        origin::check(&mut tx, &id, origin.as_ref()).await?;
+                        return Ok(record);
+                    }
+                    if let Some(origin) = &origin {
+                        origin::insert(&mut tx, origin).await?;
+                    }
+                    insert(&mut tx, &id, &fingerprint, &configuration, now).await?;
+                    let record = read(&mut tx, &id)
+                        .await?
+                        .ok_or(StoreError::SessionNotFound)?;
+                    tx.commit().await.map_err(StoreError::CommitUnknown)?;
+                    Ok(record)
+                })
+            })
+            .await
+    }
+
+    pub async fn get_session<T: DeserializeOwned + Send + 'static>(
+        &self,
+        id: &str,
+    ) -> Result<Option<SessionRecord<T>>, StoreError> {
+        self.validate_root()?;
+        validate_id(id)?;
+        let id = id.to_owned();
+        self.connection
+            .run(move |connection| {
+                Box::pin(async move {
+                    let mut tx = connection.begin().await?;
+                    if removal::read(&mut tx, &id)
+                        .await?
+                        .is_some_and(SessionRetirement::removes)
+                    {
+                        return Ok(None);
+                    }
+                    read(&mut tx, &id).await
+                })
+            })
+            .await
+    }
+
+    /// A continuation requires the revision returned with its first page.
+    pub async fn list_sessions<T: DeserializeOwned + Send + 'static>(
+        &self,
+        expected_revision: Option<&str>,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<SessionPage<T>, StoreError> {
+        self.session_page(
+            CatalogScope::Profile,
+            expected_revision,
+            cursor.into(),
+            limit,
+            CatalogFilter {
+                include_archived: true,
+                pending_only: false,
+            },
+        )
+        .await
+    }
+
+    /// Metadata within a Host-authorized scope; never plugin-defined SQL.
+    pub async fn scoped_sessions<T: DeserializeOwned + Send + 'static>(
+        &self,
+        scope: CatalogScope,
+        expected_revision: Option<&str>,
+        position: SessionPosition<'_>,
+        filter: CatalogFilter,
+    ) -> Result<SessionPage<T>, StoreError> {
+        self.session_page(scope, expected_revision, position, MAX_SESSION_PAGE, filter)
+            .await
+    }
+}
+
+pub(crate) async fn insert(
+    tx: &mut SqliteConnection,
+    id: &str,
+    fingerprint: &str,
+    configuration: &str,
+    now: u64,
+) -> Result<(), StoreError> {
+    validate_id(id)?;
+    validate_time(now)?;
+    if configuration.len() > MAX_CONFIGURATION_BYTES {
+        return Err(invalid("session configuration exceeds 64 KiB"));
+    }
+    let reserved: Option<String> =
+        sqlx::query_scalar("SELECT fingerprint FROM plugin_sessions WHERE session_id = ?")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if reserved.is_some_and(|reserved| reserved != fingerprint) {
+        return Err(StoreError::SessionConflict);
+    }
+    let inserted = sqlx::query(
+        "INSERT INTO session_control SELECT ?, ?, 1, ?, ?, 0, ?
+         WHERE NOT EXISTS (SELECT 1 FROM session_control WHERE id = ?)
+           AND NOT EXISTS (SELECT 1 FROM session_history_copies WHERE session_id = ?)
+           AND NOT EXISTS (SELECT 1 FROM session_retirements WHERE session_id = ?)
+           AND NOT EXISTS (SELECT 1 FROM event_log e JOIN imported_invocations i USING(invocation_id) WHERE e.event_session = ?)
+           AND NOT EXISTS (SELECT 1 FROM session_imports WHERE session_id = ? AND state != 'published')",
+    )
+    .bind(id)
+    .bind(fingerprint)
+    .bind(now as i64)
+    .bind(now as i64)
+    .bind(configuration)
+    .bind(id)
+    .bind(id)
+    .bind(id)
+    .bind(id)
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
+    if inserted.rows_affected() != 1 {
+        return Err(StoreError::SessionConflict);
+    }
+    advance_catalog(tx).await
+}
+
+pub(crate) async fn read<T: DeserializeOwned>(
+    connection: &mut SqliteConnection,
+    id: &str,
+) -> Result<Option<SessionRecord<T>>, StoreError> {
+    let raw = sqlx::query(
+        "SELECT id, revision, created_at, updated_at, archived, configuration,
+            (SELECT lineage_json FROM session_history_copies WHERE session_id = id),
+            (SELECT state FROM session_history_copies WHERE session_id = id)
+         FROM session_control WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(&mut *connection)
+    .await?;
+    if let Some(row) = raw {
+        let configuration: String = row.try_get(5)?;
+        if configuration.len() > MAX_CONFIGURATION_BYTES {
+            return Err(invalid("oversized stored session configuration"));
+        }
+        let configuration_digest =
+            maka_agent_facts::artifact::content_digest(configuration.as_bytes());
+        let configuration = serde_json::from_str(&configuration)?;
+        let lineage = row
+            .try_get::<Option<String>, _>(6)?
+            .map(|json| serde_json::from_str(&json))
+            .transpose()?;
+        let copy_state = row
+            .try_get::<Option<String>, _>(7)?
+            .map(|state| state.parse().map_err(invalid))
+            .transpose()?;
+        let execution = execution::read(connection, id).await?;
+        let last_message = execution::last_message(connection, id).await?;
+        let read_state = read_state::read(connection, id).await?;
+        let pending_since: Option<i64> = sqlx::query_scalar(
+            "SELECT MIN(created_at) FROM interaction_requests request
+             WHERE session_id = ? AND NOT EXISTS (
+                 SELECT 1 FROM interaction_outcomes outcome
+                 WHERE outcome.request_id = request.request_id)",
+        )
+        .bind(id)
+        .fetch_one(&mut *connection)
+        .await?;
+        let pending_interaction_since = pending_since
+            .map(|time| u64::try_from(time).map_err(|_| invalid("invalid interaction timestamp")))
+            .transpose()?;
+        Ok(Some(SessionRecord {
+            id: row.try_get(0)?,
+            revision: number(&row, 1)?,
+            created_at: number(&row, 2)?,
+            updated_at: number(&row, 3)?,
+            archived: row.try_get(4)?,
+            configuration,
+            configuration_digest,
+            execution,
+            last_message,
+            read_state,
+            pending_interaction_since,
+            lineage,
+            copy_state,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+pub(crate) async fn advance_catalog(connection: &mut SqliteConnection) -> Result<(), StoreError> {
+    if sqlx::query(
+        "UPDATE session_catalog_revision SET revision = revision + 1 WHERE singleton = 1 AND revision < ?",
+    ).bind(MAX_SAFE_INTEGER as i64).execute(connection).await?.rows_affected() != 1 {
+        return Err(invalid("session catalog revision exhausted"));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_id(id: &str) -> Result<(), StoreError> {
+    if id.is_empty()
+        || id.len() > 128
+        || !id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        return Err(invalid("invalid session ID"));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_time(now: u64) -> Result<(), StoreError> {
+    if now > MAX_SAFE_INTEGER {
+        return Err(invalid("timestamp exceeds safe integer range"));
+    }
+    Ok(())
+}
+
+fn invalid(message: &str) -> StoreError {
+    StoreError::InvalidTransition(message.into())
+}
+
+fn number(row: &sqlx::sqlite::SqliteRow, column: usize) -> Result<u64, StoreError> {
+    let value: i64 = row.try_get(column)?;
+    if value < 0 || value > MAX_SAFE_INTEGER as i64 {
+        return Err(invalid("stored session number exceeds safe integer range"));
+    }
+    Ok(value as u64)
+}
+
+async fn probe<T: DeserializeOwned>(
+    connection: &mut SqliteConnection,
+    id: &str,
+    fingerprint: &str,
+) -> Result<Option<SessionRecord<T>>, StoreError> {
+    removal::require_accepting(connection, id).await?;
+    if fingerprint.is_empty() || fingerprint.len() > 512 {
+        return Err(invalid("invalid session fingerprint length"));
+    }
+    let previous: Option<String> =
+        sqlx::query_scalar("SELECT fingerprint FROM session_control WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&mut *connection)
+            .await?;
+    if previous.is_some_and(|previous| previous != fingerprint) {
+        return Err(StoreError::SessionConflict);
+    }
+    read(connection, id).await
+}

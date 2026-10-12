@@ -28,7 +28,7 @@ export const links = {
   discussions: `${repo}/discussions`,
   devList: 'https://lists.apache.org/list.html?dev@maka.apache.org',
   cli: `${main}/packages/cli/README.md`,
-  eventLog: `${main}/crates/event-log/README.md`,
+  eventLog: `${main}/platform/event-log/README.md`,
   docs: `${main}/docs/README.md`,
   security: `${main}/SECURITY.md`,
   asf: 'https://www.apache.org/',

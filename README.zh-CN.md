@@ -36,13 +36,16 @@ just setup
 just run
 ```
 
-`just run` 打开终端产品，首次确认当前工作目录并安装内置工具与技能，后续重开已保存的应用。`just run --help` 查看 CLI 命令。`just build --release` 生成 `target/release/maka`，Windows 下为 `maka.exe`。Node.js 负责构建时打包提供商 SDK，生成的可执行文件在内嵌 V8 中运行 JavaScript。 用 `just run application run --root PATH --deployment UUID --connections FILE` 启动已校验的终端组合，编写和安装方式见[普通 Agent 产品](packages/agent-product/README.zh-CN.md)。
+`just run` 打开终端产品，首次确认当前工作目录并安装内置工具与技能，后续重开已保存的应用。`just run --help` 查看 CLI 命令。`just build --release` 生成 `target/release/maka`，Windows 下为 `maka.exe`。Node.js 负责构建时打包提供商 SDK，生成的可执行文件在内嵌 V8 中运行 JavaScript。 用 `just run application run --root PATH --deployment UUID --connections FILE` 启动已校验的终端组合，编写和安装方式见[普通 Agent 产品](products/maka/bundle/README.zh-CN.md)。
 
 ## 目录
 
 | 目录 | 用途 |
 | --- | --- |
-| `crates/` | Runtime Host、CLI/TUI、插件与原生平台能力 |
+| `platform/` | 应用内核、Host/UI owner、JavaScript 后端和原生渲染器 |
+| `plugins/` | 插件声明、业务实现及共享领域契约 |
+| `products/maka/` | 原生工厂选择、产品组合、CLI 和桌面入口 |
+| `tools/schema/` | 无需构建完整产品的契约与 schema 导出 |
 | `packages/plugin-sdk/` | JavaScript 插件的 Host、组件与原生呈现契约，由规范定义生成 |
 | `packages/cli/` | 启动各平台 Rust 可执行文件的 npm 薄封装 |
 | `scripts/rust/` | 内嵌 SDK 打包与绑定源码的 npm 分发 |

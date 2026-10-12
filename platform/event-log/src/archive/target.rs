@@ -1,0 +1,109 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use super::ArchiveError;
+use crate::{StoreError, sequence_number};
+use maka_agent_facts::event::Invocation;
+use maka_agent_facts::tool_call::ToolCallIdentity;
+use maka_agent_facts::tool_call::ToolOrigin;
+use maka_agent_facts::tool_output::DurableToolProjection;
+use sqlx::{Row, SqliteConnection};
+
+pub(super) struct Target {
+    pub sequence: u64,
+    pub event_id: String,
+    pub invocation: Invocation,
+    pub call: ToolCallIdentity,
+    pub name: String,
+    pub step_sequence: u64,
+    pub projection: DurableToolProjection,
+}
+
+pub(super) async fn read(
+    connection: &mut SqliteConnection,
+    session: &str,
+    id: &str,
+) -> Result<Option<Target>, StoreError> {
+    let row = sqlx::query(concat!("WITH ", crate::model_items::accepted_calls!(),
+        " SELECT t.sequence, t.event_id, t.operation_id, json_extract(t.event_json, '$.invocation') AS ti,
+         json_extract(d.event_json, '$.invocation') AS di, json_extract(d.event_json, '$.fact.call') AS call,
+         json_extract(d.event_json, '$.fact.name') AS name,
+         json_extract(t.event_json, '$.fact.outcome.kind') AS outcome,
+         CASE WHEN length(CAST(json_extract(t.event_json, '$.fact.outcome.model_projection') AS BLOB)) <= 2097152
+           THEN json_extract(t.event_json, '$.fact.outcome.model_projection') END AS projection,
+         CASE WHEN length(CAST(json_extract(t.event_json, '$.fact.outcome.message') AS BLOB)) <= 262144
+           THEN json_extract(t.event_json, '$.fact.outcome.message') END AS message,
+         c.sequence AS completed,
+         (json_extract(t.event_json,'$.id')=t.event_id
+           AND json_extract(t.event_json,'$.invocation.invocation_id')=t.invocation_id
+           AND json_extract(t.event_json,'$.fact.operation_id')=t.operation_id
+           AND json_extract(t.event_json,'$.fact.kind')='tool_settled'
+           AND json_extract(d.event_json,'$.id')=d.event_id
+           AND json_extract(d.event_json,'$.fact.operation_id')=d.operation_id
+           AND json_extract(d.event_json,'$.fact.kind')='tool_dispatched'
+           AND c.invocation_id=t.invocation_id
+           AND json_extract(c.call,'$.name')=json_extract(d.event_json,'$.fact.name')
+           AND json_extract(c.call,'$.provider_executed')=0
+           AND c.sequence<d.sequence AND d.sequence<t.sequence) AS identities
+         FROM session_history_events t LEFT JOIN runtime_events d ON d.invocation_id = t.invocation_id
+           AND d.operation_id = t.operation_id AND d.kind = 'tool_dispatched'
+         LEFT JOIN accepted_calls c ON c.invocation_id = t.invocation_id
+           AND c.step_id = json_extract(d.event_json, '$.fact.call.origin.step_id')
+           AND json_extract(c.call,'$.id') = json_extract(d.event_json,'$.fact.call.tool_call_id')
+         WHERE t.event_id = ? AND t.kind = 'tool_settled' AND t.owner_session_id = ?",
+    )).bind(id).bind(session).fetch_optional(&mut *connection).await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let decoded = (|| -> Option<Target> {
+        if !row.try_get::<bool, _>("identities").ok()? {
+            return None;
+        }
+        let invocation: Invocation =
+            serde_json::from_str(row.try_get::<&str, _>("ti").ok()?).ok()?;
+        let dispatch: Invocation = serde_json::from_str(row.try_get::<&str, _>("di").ok()?).ok()?;
+        let call: ToolCallIdentity =
+            serde_json::from_str(row.try_get::<&str, _>("call").ok()?).ok()?;
+        if invocation != dispatch || !matches!(call.origin, ToolOrigin::Provider { .. }) {
+            return None;
+        }
+        let outcome: &str = row.try_get("outcome").ok()?;
+        let projection = match outcome {
+            "succeeded" => serde_json::from_str(row.try_get::<&str, _>("projection").ok()?).ok()?,
+            "failed" | "unknown" => DurableToolProjection::Text {
+                text: row.try_get("message").ok()?,
+            },
+            _ => return None,
+        };
+        Some(Target {
+            sequence: sequence_number(row.try_get("sequence").ok()?).ok()?,
+            event_id: row.try_get("event_id").ok()?,
+            invocation,
+            call,
+            name: row.try_get("name").ok()?,
+            step_sequence: sequence_number(row.try_get("completed").ok()?).ok()?,
+            projection,
+        })
+    })()
+    .ok_or(ArchiveError::Corrupt)?;
+    if decoded.step_sequence >= decoded.sequence {
+        return Err(ArchiveError::Corrupt.into());
+    }
+    Ok(Some(decoded))
+}

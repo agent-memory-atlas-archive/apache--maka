@@ -1,0 +1,92 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+[package]
+name = "maka-agent-native"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+maka-agent-facts.workspace = true
+maka-agent-ports.workspace = true
+maka-capabilities.workspace = true
+maka-files-native.workspace = true
+maka-workspace-support.workspace = true
+maka-skills-api.workspace = true
+maka-agent-authority.workspace = true
+
+maka-web-api.workspace = true
+maka-agent-api.workspace = true
+base64 = "0.22.1"
+cap-std.workspace = true
+maka-agent-engine.workspace = true
+maka-assistant.workspace = true
+maka-config.workspace = true
+maka-event-log.workspace = true
+maka-fs-tools.workspace = true
+maka-js-runtime.workspace = true
+maka-model.workspace = true
+maka-network.workspace = true
+maka-plugin-core.workspace = true
+maka-presentation.workspace = true
+maka-providers.workspace = true
+maka-host-runtime.workspace = true
+maka-sandbox.workspace = true
+maka-skills.workspace = true
+maka-scheduler.workspace = true
+maka-session-import.workspace = true
+maka-tools.workspace = true
+maka-web.workspace = true
+futures-util.workspace = true
+jsonschema.workspace = true
+libc.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+maka-external-agent.workspace = true
+maka-workspace-api.workspace = true
+maka-interactions-api.workspace = true
+maka-packages.workspace = true
+sqlx.workspace = true
+maka-host-js.workspace = true
+rusqlite = { workspace = true, features = ["functions"] }
+maka-settings-native.workspace = true
+maka-ui-runtime.workspace = true
+maka-render-terminal.workspace = true
+maka-transport.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["net", "io-util"] }
+
+maka-skills-native.workspace = true
+
+maka-acp-native.workspace = true
+
+maka-processes-native.workspace = true
+
+maka-interactions-native.workspace = true
+
+maka-jev-native.workspace = true

@@ -90,3 +90,5 @@ export type HostService = Record<
   string,
   (input: unknown, observation: HostObservation, context: RequestContext) => unknown
 >;
+
+export { nativeImplementations } from './native.js';

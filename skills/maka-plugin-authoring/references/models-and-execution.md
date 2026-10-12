@@ -28,8 +28,8 @@ configuration schemas instead of reproducing their state in a UI plugin.
 The application SDK does not currently export a JavaScript `models.register`,
 executor-session factory or global model interception API. Extending model execution
 requires an explicit native/provider integration with its actual owning runtime.
-In a checkout inspect `crates/agent-service/src/model.rs`, `owner.rs`, `tools.rs`,
-`crates/settings-service` and the underlying provider/model crates.
+In a checkout inspect `plugins/agent/native/src/model.rs`, `owner.rs`, `tools.rs`,
+`plugins/settings/native` and the underlying provider/model crates.
 
 Changes must preserve admission and recovery: accepted queue contents retain their
 original source, requested model and configuration facts; opaque tool/provider

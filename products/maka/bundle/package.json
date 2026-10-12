@@ -1,0 +1,16 @@
+{
+  "name": "@maka-agent/product",
+  "version": "0.2.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node scripts/build.mjs && node --test --test-concurrency=1 tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "ajv": "8.18.0",
+    "ajv-formats": "3.0.1"
+  }
+}

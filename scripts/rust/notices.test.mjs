@@ -29,12 +29,12 @@ test('release notices reject changed dependency inputs and edited texts', async 
   const repository = new URL('../../', import.meta.url);
   try {
     const manifest = JSON.parse(
-      await readFile(new URL('crates/cli/notices.json', repository), 'utf8'),
+      await readFile(new URL('products/maka/cli/notices.json', repository), 'utf8'),
     );
     const files = [
       ...Object.keys(manifest.inputs),
-      'crates/cli/notices.json',
-      'crates/cli/THIRD_PARTY_NOTICES.txt',
+      'products/maka/cli/notices.json',
+      'products/maka/cli/THIRD_PARTY_NOTICES.txt',
     ];
     for (const name of files) {
       await mkdir(dirname(join(root, name)), { recursive: true });
@@ -43,10 +43,10 @@ test('release notices reject changed dependency inputs and edited texts', async 
     await verifyNotices(root);
     for (const name of [
       'Cargo.lock',
-      'crates/cli/Cargo.toml',
+      'products/maka/cli/Cargo.toml',
       'patches/zod+4.6.5.patch',
-      'packages/agent-product/scripts/build.mjs',
-      'packages/agent-product/src/connection-form.ts',
+      'products/maka/bundle/scripts/build.mjs',
+      'plugins/settings/connection-form/index.ts',
       'packages/plugin-sdk/src/contracts.ts',
     ]) {
       const original = await readFile(join(root, name));
@@ -58,7 +58,7 @@ test('release notices reject changed dependency inputs and edited texts', async 
       await writeFile(join(root, name), original);
     }
     await writeFile(
-      join(root, 'crates/cli/THIRD_PARTY_NOTICES.txt'),
+      join(root, 'products/maka/cli/THIRD_PARTY_NOTICES.txt'),
       'license inventory without notices',
     );
     await assert.rejects(verifyNotices(root), /notices are stale/);

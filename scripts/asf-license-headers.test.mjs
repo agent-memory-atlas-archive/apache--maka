@@ -208,10 +208,10 @@ describe('ASF header detection is looser than acceptance', () => {
 describe('ASF header classification', () => {
   test('covers product, script, and documentation source', () => {
     for (const path of [
-      'crates/config/src/lib.rs',
+      'plugins/settings/store/src/lib.rs',
       'scripts/asf-source-release.mjs',
-      'crates/tui/locales/zh-CN.ftl',
-      'crates/cli/src/main.rs',
+      'platform/render-terminal/locales/zh-CN.ftl',
+      'products/maka/cli/src/main.rs',
       'Dockerfile',
       'justfile',
       '.husky/pre-commit',
@@ -220,7 +220,7 @@ describe('ASF header classification', () => {
     ]) {
       assert.equal(classifyPath(path).status, 'covered', path);
     }
-    assert.equal(commentStyleFor('crates/tui/locales/zh-CN.ftl'), 'hash');
+    assert.equal(commentStyleFor('platform/render-terminal/locales/zh-CN.ftl'), 'hash');
   });
 
   test('excludes the reviewed categories', () => {
@@ -229,12 +229,12 @@ describe('ASF header classification', () => {
       'package.json': 'no-comment-syntax',
       'patches/node-pty+1.2.0-beta.15.patch': 'third-party-source',
       'Cargo.lock': 'generated-files',
-      'crates/providers/data/catalog-facts.json': 'no-comment-syntax',
-      'crates/computer-use/skills/maka-cua/SKILL.md': 'verbatim-runtime-payloads',
-      'crates/computer-use/src/api.md': 'verbatim-runtime-payloads',
-      'crates/computer-use/THIRD_PARTY_NOTICES': 'third-party-license-texts',
+      'plugins/agent/providers/data/catalog-facts.json': 'no-comment-syntax',
+      'platform/computer-use/skills/maka-cua/SKILL.md': 'verbatim-runtime-payloads',
+      'platform/computer-use/src/api.md': 'verbatim-runtime-payloads',
+      'platform/computer-use/THIRD_PARTY_NOTICES': 'third-party-license-texts',
       '.github/pull_request_template.md': 'verbatim-github-templates',
-      'crates/cli/DEPENDENCIES.rust.tsv': 'third-party-license-texts',
+      'products/maka/cli/DEPENDENCIES.rust.tsv': 'third-party-license-texts',
       '.gitattributes': 'no-creative-content',
     };
     for (const [path, rule] of Object.entries(excluded)) {
@@ -244,10 +244,10 @@ describe('ASF header classification', () => {
 
   test('excludes the mixed-origin files Maka adapted from upstream projects', () => {
     for (const path of [
-      'crates/apply-patch/src/lib.rs',
-      'crates/apply-patch/src/parser.rs',
-      'crates/apply-patch/src/update.rs',
-      'crates/js-runtime/third-party/deno-telemetry/telemetry.ts',
+      'plugins/workspace/workspace-files/patch/src/lib.rs',
+      'plugins/workspace/workspace-files/patch/src/parser.rs',
+      'plugins/workspace/workspace-files/patch/src/update.rs',
+      'platform/js-runtime/third-party/deno-telemetry/telemetry.ts',
     ]) {
       assert.deepEqual(
         classifyPath(path),
@@ -269,11 +269,11 @@ describe('ASF header classification', () => {
    */
   test('does not extend a reviewed exclusion to a directory', () => {
     for (const path of [
-      'crates/computer-use/skills/new-skill/SKILL.md',
-      'crates/computer-use/skills/README.md',
-      'crates/computer-use/skills/another-skill/SKILL.md',
-      'crates/computer-use/src/README.md',
-      'crates/computer-use/src/session.rs',
+      'platform/computer-use/skills/new-skill/SKILL.md',
+      'platform/computer-use/skills/README.md',
+      'platform/computer-use/skills/another-skill/SKILL.md',
+      'platform/computer-use/src/README.md',
+      'platform/computer-use/src/session.rs',
     ]) {
       assert.notEqual(classifyPath(path).status, 'excluded', path);
     }
@@ -310,7 +310,7 @@ describe('ASF header classification', () => {
 describe('ASF header audit', () => {
   test('reports unclassified files separately from missing headers', () => {
     const result = auditSourceFiles({
-      files: ['LICENSE', 'crates/config/src/lib.rs', 'vendor/thing.kt'],
+      files: ['LICENSE', 'plugins/settings/store/src/lib.rs', 'vendor/thing.kt'],
       mode: 'archive',
     });
     assert.deepEqual(result.unclassified, ['vendor/thing.kt']);

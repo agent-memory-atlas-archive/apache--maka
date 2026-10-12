@@ -70,14 +70,14 @@ describe('unread paths', () => {
   });
 
   it('excludes both spellings the notice generator emits', () => {
-    assert.equal(readable([file('crates/cli/THIRD_PARTY_NOTICES.rust.txt', 900)]), 0);
-    assert.equal(readable([file('crates/computer-use/THIRD_PARTY_NOTICES.txt', 900)]), 0);
+    assert.equal(readable([file('products/maka/cli/THIRD_PARTY_NOTICES.rust.txt', 900)]), 0);
+    assert.equal(readable([file('platform/computer-use/THIRD_PARTY_NOTICES.txt', 900)]), 0);
   });
 
   it('excludes generated sources, snapshots and binaries', () => {
     assert.equal(readable([file('crates/example/src/catalog.generated.rs', 5000)]), 0);
     assert.equal(readable([file('scripts/model-metadata/models-dev-api.snapshot.json', 4000)]), 0);
-    assert.equal(readable([file('crates/event-log/tests/fixtures/runtime.sqlite', 1)]), 0);
+    assert.equal(readable([file('platform/event-log/tests/fixtures/runtime.sqlite', 1)]), 0);
     assert.equal(readable([file('assets/logo.png', 1)]), 0);
   });
 
@@ -86,9 +86,9 @@ describe('unread paths', () => {
   });
 
   it('keeps hand-authored sources, including tests and locale copy', () => {
-    assert.equal(readable([file('crates/cli/src/main.rs', 20, 4)]), 24);
-    assert.equal(readable([file('crates/agent/tests/session.rs', 300)]), 300);
-    assert.equal(readable([file('crates/tui/src/i18n.rs', 80)]), 80);
+    assert.equal(readable([file('products/maka/cli/src/main.rs', 20, 4)]), 24);
+    assert.equal(readable([file('plugins/agent/engine/tests/session.rs', 300)]), 300);
+    assert.equal(readable([file('platform/render-terminal/src/i18n.rs', 80)]), 80);
     // Named for the notices but hand-written policy prose.
     assert.equal(readable([file('docs/README.md', 40)]), 40);
   });

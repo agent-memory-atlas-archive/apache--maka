@@ -1,0 +1,221 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use super::provider::{ModelRequest, Provider};
+use agent_client_protocol::schema::v2 as acp;
+use maka_event_log::root::{RootNamespaces, RootOwner};
+use maka_host_runtime::{
+    application::{host::Client as Native, transport::wire::Reply},
+    ipc::LocalListener,
+};
+use serde_json::{Value, json};
+use std::{collections::BTreeMap, path::PathBuf};
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
+pub struct Fixture {
+    pub _root: tempfile::TempDir,
+    pub workspace: PathBuf,
+    pub database: PathBuf,
+    pub session: String,
+    pub provider: Provider,
+    pub model_requests: mpsc::Receiver<ModelRequest>,
+    pub client: Native,
+    pub native: Native,
+    pub stop: CancellationToken,
+    pub _cleanup: tokio_util::sync::DropGuard,
+    pub server: tokio::task::JoinHandle<Result<(), String>>,
+}
+impl Fixture {
+    pub async fn open() -> Self {
+        let directory = tempfile::tempdir().unwrap();
+        maka_event_log::root::private_directory(directory.path()).unwrap();
+        let namespaces = RootNamespaces {
+            ownership: directory.path().join("owners"),
+            control: directory.path().join("control"),
+        };
+        let root = directory.path().join("root");
+        let workspace = directory.path().join("workspace");
+        std::fs::create_dir(&workspace).unwrap();
+        let workspace = workspace.canonicalize().unwrap();
+        let (provider, model_requests) = Provider::controlled().await;
+        super::provider::configure(
+            RootOwner::create(&root, &namespaces).unwrap(),
+            &provider.base_url,
+        )
+        .await;
+        let host = crate::application::open_host(
+            RootOwner::open(&root, &namespaces).unwrap(),
+            Default::default(),
+            crate::application::Roots::Configured(Some(vec![
+                maka_host_runtime::DirectoryRootSpec {
+                    label: "Test".into(),
+                    path: workspace.to_str().unwrap().into(),
+                },
+            ])),
+        )
+        .await
+        .unwrap();
+        #[cfg(unix)]
+        let endpoint = directory.path().join("host.sock");
+        #[cfg(windows)]
+        let endpoint = PathBuf::from(format!(r"\\.\pipe\maka-acp-{}", uuid::Uuid::new_v4()));
+        let listener = LocalListener::bind(&endpoint).unwrap();
+        let epoch = host.epoch();
+        let stop = CancellationToken::new();
+        let server = tokio::spawn({
+            let stop = stop.clone();
+            async move { host.serve_local(listener, stop).await }
+        });
+        let native = Native::connect(&endpoint, Some(epoch)).await.unwrap();
+        let roots = query(&native, "agent", "directories", json!({"kind":"roots"})).await;
+        let created = mutate(&native, "agent", "create", json!({"title":"SDK session","labels":[],"workspace":{"kind":"directory","selection":roots["roots"][0]["selection"]}})).await;
+        let session = created["session"]["id"].as_str().unwrap().to_owned();
+        let client = Native::connect(&endpoint, Some(epoch)).await.unwrap();
+        Self {
+            _root: directory,
+            workspace,
+            database: root.join(maka_event_log::root::ROOT_DATABASE),
+            session,
+            provider,
+            model_requests,
+            client,
+            native,
+            _cleanup: stop.clone().drop_guard(),
+            stop,
+            server,
+        }
+    }
+}
+pub async fn until_idle(
+    receive: &mut mpsc::Receiver<acp::SessionUpdate>,
+    updates: &mut Vec<acp::SessionUpdate>,
+) -> Option<acp::StopReason> {
+    loop {
+        let update = receive
+            .recv()
+            .await
+            .expect("SDK update stream closed before idle");
+        let idle = match &update {
+            acp::SessionUpdate::StateUpdate(acp::StateUpdate::Idle(idle)) => {
+                Some(idle.stop_reason.clone())
+            }
+            _ => None,
+        };
+        updates.push(update);
+        if let Some(reason) = idle {
+            return reason;
+        }
+    }
+}
+
+pub async fn query(client: &Native, endpoint: &str, method: &str, input: Value) -> Value {
+    let mut call = client
+        .call(endpoint, method.into(), input, Default::default())
+        .await
+        .unwrap();
+    call.start().await.unwrap();
+    let Reply::Finished { result, cleanup } = call.receive().await.unwrap() else {
+        panic!("query result")
+    };
+    cleanup.unwrap();
+    result.unwrap()
+}
+pub async fn mutate(client: &Native, endpoint: &str, method: &str, input: Value) -> Value {
+    let mut call = client
+        .call(endpoint, method.into(), input, Default::default())
+        .await
+        .unwrap();
+    call.start().await.unwrap();
+    assert!(matches!(
+        call.receive().await.unwrap(),
+        Reply::Prepared { .. }
+    ));
+    let Reply::Mutation { reply, cleanup } = call.confirm().await.unwrap() else {
+        panic!("mutation receipt")
+    };
+    cleanup.unwrap();
+    let maka_plugin_core::operation::Receipt::Recorded {
+        outcome: maka_plugin_core::operation::OperationOutcome::Returned { value },
+        cleanup: maka_plugin_core::operation::OperationCleanup::Confirmed,
+    } = reply.receipt
+    else {
+        panic!("recorded result")
+    };
+    value
+}
+pub async fn canonical(
+    client: &Native,
+    session: &str,
+) -> Vec<maka_agent_api::contract::HistoryChunk> {
+    let mut through = None;
+    let mut position = json!({"kind":"start"});
+    let mut history = Vec::new();
+    for _ in 0..64 {
+        let page = query(client, "agent", "history", json!({"sessionId":session,"through":through,"position":position,"includeThinking":true})).await;
+        match serde_json::from_value(page).unwrap() {
+            maka_agent_api::contract::HistoryPage::Preparing { through: fence } => {
+                through = Some(fence);
+            }
+            maka_agent_api::contract::HistoryPage::Ready {
+                through: fence,
+                chunks,
+                after,
+                ..
+            } => {
+                if let Some(through) = through {
+                    assert_eq!(fence, through);
+                }
+                through = Some(fence);
+                history.extend(chunks);
+                let Some(cursor) = after else {
+                    return history;
+                };
+                position = json!({"kind":"after","cursor":cursor});
+            }
+        }
+    }
+    panic!("fixture history did not reach its original fence")
+}
+
+/// Apply the SDK's append/replacement contract, so replay is compared by actual
+/// displayed message content and identity rather than notification counts.
+pub fn messages(updates: &[acp::SessionUpdate]) -> BTreeMap<(String, String), String> {
+    let mut messages = BTreeMap::<(String, String), String>::new();
+    for update in updates {
+        let value = serde_json::to_value(update).unwrap();
+        let Some(id) = value["messageId"].as_str() else {
+            continue;
+        };
+        let kind = value["sessionUpdate"].as_str().unwrap();
+        let entry = messages
+            .entry((kind.trim_end_matches("_chunk").into(), id.into()))
+            .or_default();
+        if kind.ends_with("_chunk") {
+            entry.push_str(value["content"]["text"].as_str().expect("text fixture"));
+        } else {
+            *entry = value["content"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|block| block["text"].as_str().expect("text fixture"))
+                .collect();
+        }
+    }
+    messages
+}

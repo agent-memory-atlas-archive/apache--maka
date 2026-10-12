@@ -191,9 +191,9 @@ export const exclusionRules = [
     justification:
       'Generated PEM certificates and a public test-only key for loopback TLS acceptance. Their format is consumed directly by TLS parsers; provenance and regeneration guidance live in the adjacent README.md.',
     matches: isOneOf(
-      'crates/network/tests/fixtures/ca.pem',
-      'crates/network/tests/fixtures/localhost.pem',
-      'crates/network/tests/fixtures/localhost.key',
+      'platform/network/tests/fixtures/ca.pem',
+      'platform/network/tests/fixtures/localhost.pem',
+      'platform/network/tests/fixtures/localhost.key',
     ),
   },
   {
@@ -208,9 +208,9 @@ export const exclusionRules = [
       'Third-party license and notice texts redistributed with the product. An ASF header on any of them would assert ASF provenance over content ASF does not own. The upstream texts additionally have to stay byte-identical to what their projects published. Some aggregated notices are generator output that a hand-written header would not survive.',
     matches: (path) =>
       isOneOf(
-        'crates/cli/DEPENDENCIES.rust.tsv',
-        'crates/computer-use/THIRD_PARTY_NOTICES',
-        'crates/cli/THIRD_PARTY_NOTICES.txt',
+        'products/maka/cli/DEPENDENCIES.rust.tsv',
+        'platform/computer-use/THIRD_PARTY_NOTICES',
+        'products/maka/cli/THIRD_PARTY_NOTICES.txt',
       )(path) || path.startsWith('scripts/rust/licenses/'),
   },
   {
@@ -220,16 +220,16 @@ export const exclusionRules = [
     matches: (path) =>
       isOneOf(
         // Codex Apache-2.0 adaptations; exact origins and modifications in SOURCE.md / LICENSE.
-        'crates/apply-patch/src/lib.rs',
-        'crates/apply-patch/src/parser.rs',
-        'crates/apply-patch/src/seek_sequence.rs',
-        'crates/apply-patch/src/text_file.rs',
-        'crates/apply-patch/src/update.rs',
-        'crates/sandbox/src/seatbelt/base.sbpl',
-        'crates/sandbox/src/seatbelt/network.sbpl',
+        'plugins/workspace/workspace-files/patch/src/lib.rs',
+        'plugins/workspace/workspace-files/patch/src/parser.rs',
+        'plugins/workspace/workspace-files/patch/src/seek_sequence.rs',
+        'plugins/workspace/workspace-files/patch/src/text_file.rs',
+        'plugins/workspace/workspace-files/patch/src/update.rs',
+        'platform/sandbox/src/seatbelt/base.sbpl',
+        'platform/sandbox/src/seatbelt/network.sbpl',
         // Verbatim Deno MIT sources; exact revision and license in LICENSE.
-        'crates/js-runtime/third-party/deno-telemetry/telemetry.ts',
-        'crates/js-runtime/third-party/deno-telemetry/util.ts',
+        'platform/js-runtime/third-party/deno-telemetry/telemetry.ts',
+        'platform/js-runtime/third-party/deno-telemetry/util.ts',
       )(path) ||
       gpuiUpstreamFiles.has(path) ||
       isUnder('patches', '.patch')(path),
@@ -245,8 +245,8 @@ export const exclusionRules = [
     justification:
       'Bundled skills and runtime API documentation are embedded verbatim and delivered to the model as instructions or tool output. Skill bytes also participate in catalog and installation digests. A header would become agent prompt text and change those digests. Each payload is listed, so new content is reviewed rather than inheriting this reason from its directory.',
     matches: isOneOf(
-      'crates/computer-use/skills/maka-cua/SKILL.md',
-      'crates/computer-use/src/api.md',
+      'platform/computer-use/skills/maka-cua/SKILL.md',
+      'platform/computer-use/src/api.md',
     ),
   },
   {
@@ -307,7 +307,7 @@ const provenanceMarkers = [
  */
 const reviewedProvenance = new Map([
   [
-    'crates/apply-patch/SOURCE.md',
+    'plugins/workspace/workspace-files/patch/SOURCE.md',
     'Maka-authored adaptation record quoting the attributed upstream copyright.',
   ],
   ['website/src/copy/en.ts', 'Website footer copy includes the ASF copyright statement.'],

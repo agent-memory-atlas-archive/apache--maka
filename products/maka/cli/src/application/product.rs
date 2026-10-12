@@ -1,0 +1,303 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+//! Product authoring loads checked packages from development output or release assets.
+use super::{HostError, Input, Package, RemoteObservation, read_json};
+use clap::{Args, ValueEnum};
+use maka_js_runtime::plugin::Vm;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::{collections::BTreeMap, io::Write, path::PathBuf};
+
+mod headless;
+mod launch;
+pub(crate) use headless::{Roots, open_host};
+pub(crate) use launch::Launch;
+
+#[cfg(maka_embedded_product)]
+struct Bundled {
+    name: &'static str,
+    files: &'static [(&'static str, &'static [u8])],
+}
+include!(concat!(env!("OUT_DIR"), "/product-assets.rs"));
+
+#[derive(Clone, Copy, ValueEnum)]
+pub(super) enum Product {
+    Agent,
+    Studio,
+    Workhub,
+}
+
+#[derive(Args)]
+pub(crate) struct Compose {
+    /// Installation configuration and explicit grants; omitted identities are generated once.
+    #[arg(long, value_name = "FILE")]
+    configuration: PathBuf,
+    /// New output directory for checked sources, connection input and exact packages.
+    #[arg(long, value_name = "DIRECTORY")]
+    output: PathBuf,
+    #[arg(long, value_enum, default_value = "agent")]
+    product: Product,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Sources {
+    host: Input,
+    management_host: Input,
+    ui: Input,
+    remote_exports: Vec<RemoteObservation>,
+    connections: Value,
+}
+
+impl Compose {
+    pub(super) async fn run(self) -> Result<(), HostError> {
+        let configuration = read_json(&self.configuration)?;
+        let packages = tokio::task::spawn_blocking(packages).await??;
+        let (sources, installation) = author(self.product, configuration, &packages).await?;
+        tokio::task::spawn_blocking(move || export(self.output, sources, installation, packages))
+            .await??;
+        println!("Checked product sources and immutable packages written");
+        Ok(())
+    }
+}
+
+#[cfg(maka_embedded_product)]
+fn packages() -> Result<BTreeMap<String, Package>, HostError> {
+    BUNDLED
+        .iter()
+        .map(|bundled| {
+            let files = bundled
+                .files
+                .iter()
+                .map(|(name, bytes)| ((*name).into(), bytes.to_vec()))
+                .collect();
+            Ok((bundled.name.into(), Package::new(files)?))
+        })
+        .collect()
+}
+
+#[cfg(not(maka_embedded_product))]
+fn development_bundle() -> PathBuf {
+    std::env::var_os("MAKA_PRODUCT_BUNDLE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| DEVELOPMENT_BUNDLE.into())
+}
+#[cfg(not(maka_embedded_product))]
+fn packages() -> Result<BTreeMap<String, Package>, HostError> {
+    let directory = std::path::absolute(development_bundle())?;
+    let names: Vec<String> = serde_json::from_value(read_json(&directory.join("packages.json"))?)?;
+    let mut packages = BTreeMap::new();
+    for name in names {
+        if name.is_empty()
+            || name.len() > 128
+            || !name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
+        {
+            return Err("invalid development package name".into());
+        }
+        let package = Package::read_from(&directory.join("packages").join(&name))?;
+        if packages.insert(name, package).is_some() {
+            return Err("duplicate development package name".into());
+        }
+    }
+    Ok(packages)
+}
+fn authoring() -> Result<String, HostError> {
+    #[cfg(maka_embedded_product)]
+    {
+        Ok(AUTHORING.into())
+    }
+    #[cfg(not(maka_embedded_product))]
+    {
+        Ok(std::fs::read_to_string(
+            development_bundle().join("authoring/composition.mjs"),
+        )?)
+    }
+}
+
+async fn author(
+    product: Product,
+    mut configuration: Value,
+    packages: &BTreeMap<String, Package>,
+) -> Result<(Sources, Value), HostError> {
+    let values = configuration
+        .as_object_mut()
+        .ok_or("installation configuration must be an object")?;
+    let references: BTreeMap<_, _> = packages
+        .iter()
+        .map(|(name, package)| (name, package.application_ref()))
+        .collect();
+    // Caller-supplied package locators cannot substitute for actual build bytes.
+    values.insert("packages".into(), serde_json::to_value(references)?);
+    for key in ["hostDeployment", "managementDeployment"] {
+        values
+            .entry(key)
+            .or_insert_with(|| Value::String(uuid::Uuid::new_v4().to_string()));
+    }
+    let source = authoring()?;
+    let vm = Vm::pure(Default::default())?;
+    let result: Result<Value, HostError> = match vm.load("maka-product-authoring".into(), source) {
+        Ok(module) => {
+            let result = async {
+                if !values.contains_key("keys") {
+                    // The ordinary authoring code supplies every installation
+                    // identity, including configuration-dependent instances.
+                    let names: Vec<String> = serde_json::from_value(
+                        module
+                            .call(
+                                vec!["installationNames".into()],
+                                vec![Value::Object(values.clone())],
+                            )
+                            .await?,
+                    )?;
+                    let keys: BTreeMap<_, _> = names
+                        .into_iter()
+                        .map(|name| (name, uuid::Uuid::new_v4().to_string()))
+                        .collect();
+                    values.insert("keys".into(), serde_json::to_value(keys)?);
+                }
+                let method = match product {
+                    Product::Agent => "composition",
+                    Product::Studio => "studioComposition",
+                    Product::Workhub => "workhubComposition",
+                };
+                Ok(module
+                    .call(vec![method.into()], vec![Value::Object(values.clone())])
+                    .await?)
+            }
+            .await;
+            let closed = module.close().await.map_err(HostError::from);
+            result.and_then(|value| closed.map(|()| value))
+        }
+        Err(error) => Err(error.into()),
+    };
+    vm.shutdown().await;
+    let sources: Sources = serde_json::from_value(result?)?;
+    let checked: Vec<_> = packages.values().cloned().collect();
+    for (input, remote) in [
+        (&sources.host, &[][..]),
+        (&sources.management_host, &[][..]),
+        (&sources.ui, sources.remote_exports.as_slice()),
+    ] {
+        maka_event_log::applications::validate_application(input, remote, &checked)?;
+    }
+    let connections: maka_transport::Configuration =
+        serde_json::from_value(sources.connections.clone())?;
+    connections.validate().map_err(HostError::from)?;
+    values.remove("packages");
+    Ok((sources, configuration))
+}
+
+fn export(
+    output: PathBuf,
+    sources: Sources,
+    installation: Value,
+    packages: BTreeMap<String, Package>,
+) -> Result<(), HostError> {
+    let output = std::path::absolute(output)?;
+    // All source validation precedes filesystem effects. Existing output,
+    // including an empty directory or a symlink, is never replaced.
+    std::fs::create_dir(&output)?;
+    maka_event_log::root::private_directory(&output)?;
+    let package_directory = output.join("packages");
+    std::fs::create_dir(&package_directory)?;
+    let mut references = BTreeMap::new();
+    for (name, package) in packages {
+        package.export_to(&package_directory.join(format!("{name}.maka-plugin")))?;
+        references.insert(name, package.application_ref());
+    }
+    for (name, value) in [
+        ("host", serde_json::to_value(sources.host)?),
+        (
+            "management-host",
+            serde_json::to_value(sources.management_host)?,
+        ),
+        ("ui", serde_json::to_value(sources.ui)?),
+        (
+            "remote-exports",
+            serde_json::to_value(sources.remote_exports)?,
+        ),
+        ("connections", sources.connections),
+        ("packages", serde_json::to_value(references)?),
+        ("installation", installation),
+    ] {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(output.join(format!("{name}.json")))?;
+        serde_json::to_writer(&mut file, &value)?;
+        file.write_all(b"\n")?;
+    }
+    Ok(())
+}
+
+async fn installation(options: Value) -> Result<Value, HostError> {
+    let source = authoring()?;
+    let vm = maka_js_runtime::plugin::Vm::pure(Default::default())?;
+    let result = match vm.load("maka-product-installation".into(), source) {
+        Ok(module) => {
+            let result = module
+                .call(vec!["installation".into()], vec![options])
+                .await
+                .map_err(HostError::from);
+            let closed = module.close().await.map_err(HostError::from);
+            result.and_then(|value| closed.map(|()| value))
+        }
+        Err(error) => Err(error.into()),
+    };
+    vm.shutdown().await;
+    result
+}
+fn selected(
+    input: &Input,
+    observations: &[RemoteObservation],
+    packages: &[Package],
+) -> Result<Vec<Package>, HostError> {
+    let mut declarations = maka_plugin_core::package::Packages::default();
+    for package in packages {
+        declarations.insert(
+            package.application_ref(),
+            package
+                .manifest()
+                .application
+                .as_ref()
+                .ok_or("missing application declaration")?
+                .clone(),
+        )?;
+    }
+    let remote = observations
+        .iter()
+        .map(|observation| {
+            (
+                observation.capability.clone(),
+                observation.declaration.clone(),
+            )
+        })
+        .collect();
+    let plan = maka_plugin_core::plan::Plan::prepare(input, &declarations, &remote)?;
+    let required: std::collections::BTreeSet<_> = plan
+        .instances()
+        .values()
+        .map(|instance| &instance.package)
+        .collect();
+    Ok(packages
+        .iter()
+        .filter(|package| required.contains(&package.application_ref()))
+        .cloned()
+        .collect())
+}

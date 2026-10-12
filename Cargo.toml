@@ -17,52 +17,64 @@
 
 [workspace]
 exclude = ["third-party/gpui-fast", "third-party/async-io", "third-party/sqlx-sqlite", "third-party/image-webp"]
-default-members = ["crates/cli"]
+default-members = ["products/maka/cli"]
 members = [
+    "plugins/agent/facts",
+    "platform/packages",
+    "plugins/agent/ports",
+    "platform/capabilities",
+    "products/maka/native",
+    "plugins/interactions/native",
+    "plugins/agent/acp-executor/native",
+    "plugins/skills/native",
+    "plugins/workspace/workspace-jev/native",
+    "plugins/workspace/workspace-processes/native",
+    "plugins/workspace/workspace-files/native",
+    "plugins/workspace/support",
     "third-party/gpui-kit/crates/base",
-    "crates/acp",
-    "crates/agent",
-    "crates/agent-service",
-    "crates/apply-patch",
-    "crates/assistant",
-    "crates/application-bridge",
-    "crates/background-health",
-    "crates/cli",
-    "crates/config",
-    "crates/desktop",
-    "crates/computer-use",
-    "crates/event-log",
-    "crates/external-agent",
-    "crates/fs-tools",
-    "crates/goal",
-    "crates/graph",
-    "crates/insights",
-    "crates/jev",
-    "crates/js-runtime",
-    "crates/model",
-    "crates/network",
-    "crates/plugins",
-    "crates/plugin-core",
-    "crates/presentation",
-    "crates/process",
-    "crates/providers",
-    "crates/responses",
-    "crates/runtime",
-    "crates/runtime-host",
-    "crates/sandbox",
-    "crates/scheduler",
-    "crates/settings-service",
-    "crates/session-import",
-    "crates/session-recap",
-    "crates/session-title",
-    "crates/skills",
-    "crates/tool-catalog",
-    "crates/tools",
-    "crates/tui",
-    "crates/ui",
-    "crates/ui-gpui",
-    "crates/web",
-    "crates/workhub",
+    "products/maka/acp",
+    "plugins/agent/engine",
+    "plugins/agent/native",
+    "plugins/workspace/workspace-files/patch",
+    "plugins/agent/assistant",
+    "platform/transport",
+    "platform/background-health",
+    "products/maka/cli",
+    "plugins/settings/store",
+    "products/maka/desktop",
+    "platform/computer-use",
+    "platform/event-log",
+    "plugins/agent/acp-executor/engine",
+    "plugins/workspace/workspace-files/engine",
+    "plugins/agent/goal",
+    "plugins/agent/graph",
+    "plugins/agent/insights",
+    "plugins/workspace/workspace-jev/engine",
+    "platform/js-runtime",
+    "plugins/agent/model",
+    "platform/network",
+    "platform/plugin-core",
+    "platform/presentation",
+    "platform/process",
+    "plugins/agent/providers",
+    "plugins/agent/responses",
+    "platform/host-runtime",
+    "platform/host-js",
+    "platform/sandbox",
+    "plugins/agent/scheduler/engine",
+    "plugins/settings/native",
+    "plugins/agent/session-import",
+    "plugins/agent/session-recap",
+    "plugins/agent/session-title",
+    "plugins/skills/core",
+    "plugins/agent/tool-catalog",
+    "plugins/agent/tools",
+    "platform/render-terminal",
+    "platform/ui-runtime",
+    "platform/ui-js",
+    "platform/render-gpui",
+    "plugins/workspace/workspace-web/native",
+    "plugins/workhub/core",
 ]
 resolver = "3"
 
@@ -73,12 +85,31 @@ license = "Apache-2.0"
 publish = false
 
 [workspace.dependencies]
+maka-agent-facts = { path = "plugins/agent/facts" }
+maka-packages = { path = "platform/packages" }
+maka-agent-ports = { path = "plugins/agent/ports" }
+maka-capabilities = { path = "platform/capabilities" }
+maka-product-native = { path = "products/maka/native" }
+maka-interactions-native = { path = "plugins/interactions/native" }
+maka-acp-native = { path = "plugins/agent/acp-executor/native" }
+maka-skills-native = { path = "plugins/skills/native" }
+maka-jev-native = { path = "plugins/workspace/workspace-jev/native" }
+maka-processes-native = { path = "plugins/workspace/workspace-processes/native" }
+maka-files-native = { path = "plugins/workspace/workspace-files/native" }
+maka-workspace-support = { path = "plugins/workspace/support" }
+maka-schema = { path = "tools/schema" }
+maka-interactions-api = { path = "plugins/interactions/api" }
+maka-skills-api = { path = "plugins/skills/api" }
+maka-workspace-api = { path = "plugins/workspace/api" }
+maka-agent-authority = { path = "plugins/agent/authority" }
+maka-web-api = { path = "plugins/workspace/workspace-web/api" }
+maka-agent-api = { path = "plugins/agent/api" }
 gpui-kit = { git = "https://github.com/longbridge/gpui-kit", rev = "29c04574dc838a8e59e84c9c9f3c4d15983222ce", default-features = false, features = ["gpui-fast"] }
-maka-application-bridge = { path = "crates/application-bridge" }
+maka-transport = { path = "platform/transport" }
 cua-driver-sdk = { git = "https://github.com/maka-agent/cua", rev = "79c9b58a1b61f66ae966635c464e54cb2c8151d6" }
 cua-driver-contract = { git = "https://github.com/maka-agent/cua", rev = "79c9b58a1b61f66ae966635c464e54cb2c8151d6" }
 agent-client-protocol = { version = "2.2.0", default-features = false, features = ["unstable_protocol_v2"] }
-apply-patch = { path = "crates/apply-patch" }
+apply-patch = { path = "plugins/workspace/workspace-files/patch" }
 cap-fs-ext = "4.0.3"
 cap-std = "4.0.3"
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
@@ -92,45 +123,45 @@ gix = { version = "=0.87.1", default-features = false, features = ["sha1", "sha2
 imagesize = { version = "=0.15.0", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 jsonschema = { version = "0.56.0", default-features = false }
 libc = "0.2"
-maka-acp = { path = "crates/acp" }
-maka-agent = { path = "crates/agent" }
-maka-agent-service = { path = "crates/agent-service" }
-maka-assistant = { path = "crates/assistant" }
-maka-background-health = { path = "crates/background-health" }
-maka-config = { path = "crates/config" }
-maka-computer-use = { path = "crates/computer-use" }
-maka-event-log = { path = "crates/event-log" }
-maka-external-agent = { path = "crates/external-agent" }
-maka-fs-tools = { path = "crates/fs-tools" }
-maka-goal = { path = "crates/goal" }
-maka-graph = { path = "crates/graph" }
-maka-insights = { path = "crates/insights" }
-maka-jev = { path = "crates/jev" }
-maka-js-runtime = { path = "crates/js-runtime" }
-maka-model = { path = "crates/model" }
-maka-network = { path = "crates/network" }
-maka-plugins = { path = "crates/plugins" }
-maka-plugin-core = { path = "crates/plugin-core" }
-maka-presentation = { path = "crates/presentation" }
-maka-process = { path = "crates/process" }
-maka-providers = { path = "crates/providers" }
-maka-responses = { path = "crates/responses" }
-maka-runtime = { path = "crates/runtime" }
-maka-runtime-host = { path = "crates/runtime-host" }
-maka-sandbox = { path = "crates/sandbox" }
-maka-scheduler = { path = "crates/scheduler" }
-maka-settings-service = { path = "crates/settings-service" }
-maka-session-import = { path = "crates/session-import" }
-maka-session-recap = { path = "crates/session-recap" }
-maka-session-title = { path = "crates/session-title" }
-maka-skills = { path = "crates/skills" }
-maka-tool-catalog = { path = "crates/tool-catalog" }
-maka-tools = { path = "crates/tools" }
-maka-tui = { path = "crates/tui" }
-maka-ui = { path = "crates/ui" }
-maka-ui-gpui = { path = "crates/ui-gpui" }
-maka-web = { path = "crates/web" }
-maka-workhub = { path = "crates/workhub" }
+maka-acp = { path = "products/maka/acp" }
+maka-agent-engine = { path = "plugins/agent/engine" }
+maka-agent-native = { path = "plugins/agent/native" }
+maka-assistant = { path = "plugins/agent/assistant" }
+maka-background-health = { path = "platform/background-health" }
+maka-config = { path = "plugins/settings/store" }
+maka-computer-use = { path = "platform/computer-use" }
+maka-event-log = { path = "platform/event-log" }
+maka-external-agent = { path = "plugins/agent/acp-executor/engine" }
+maka-fs-tools = { path = "plugins/workspace/workspace-files/engine" }
+maka-goal = { path = "plugins/agent/goal" }
+maka-graph = { path = "plugins/agent/graph" }
+maka-insights = { path = "plugins/agent/insights" }
+maka-jev = { path = "plugins/workspace/workspace-jev/engine" }
+maka-js-runtime = { path = "platform/js-runtime" }
+maka-model = { path = "plugins/agent/model" }
+maka-network = { path = "platform/network" }
+maka-plugin-core = { path = "platform/plugin-core" }
+maka-presentation = { path = "platform/presentation" }
+maka-process = { path = "platform/process" }
+maka-providers = { path = "plugins/agent/providers" }
+maka-responses = { path = "plugins/agent/responses" }
+maka-host-runtime = { path = "platform/host-runtime" }
+maka-host-js = { path = "platform/host-js" }
+maka-sandbox = { path = "platform/sandbox" }
+maka-scheduler = { path = "plugins/agent/scheduler/engine" }
+maka-settings-native = { path = "plugins/settings/native" }
+maka-session-import = { path = "plugins/agent/session-import" }
+maka-session-recap = { path = "plugins/agent/session-recap" }
+maka-session-title = { path = "plugins/agent/session-title" }
+maka-skills = { path = "plugins/skills/core" }
+maka-tool-catalog = { path = "plugins/agent/tool-catalog" }
+maka-tools = { path = "plugins/agent/tools" }
+maka-render-terminal = { path = "platform/render-terminal" }
+maka-ui-runtime = { path = "platform/ui-runtime" }
+maka-ui-js = { path = "platform/ui-js" }
+maka-render-gpui = { path = "platform/render-gpui" }
+maka-web = { path = "plugins/workspace/workspace-web/native" }
+maka-workhub = { path = "plugins/workhub/core" }
 pulldown-cmark = { version = "0.13.4", default-features = false }
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "gzip", "brotli", "deflate", "socks"] }

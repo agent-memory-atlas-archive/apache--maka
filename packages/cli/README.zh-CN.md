@@ -74,4 +74,4 @@ GitHub 使用已登记的 `npm-publication.yml`。在功能分支可运行 `gh w
 
 依赖变化后运行 `node scripts/rust/notices.mjs generate` 并审查许可证快照。它从固定依赖版本收集全文和嵌套声明，少数上游缺少独立许可文件的例外记录在 `notices-sources.json`。发布校验快照与源码输入的绑定，并追加实际 V8 构建图和 Rust 标准库声明；许可证 TSV 仅用作清单，不能代替全文。
 
-安装脚本不会下载或执行未经验证的辅助程序。运行时行为由 `crates/cli` 实现。
+安装脚本不会下载或执行未经验证的辅助程序。运行时行为由 `products/maka/cli` 实现。

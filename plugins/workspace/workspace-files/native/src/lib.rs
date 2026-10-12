@@ -1,0 +1,404 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+//! Explicit selected-workspace file service. JSON paths never grant directory access.
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use futures_util::future::BoxFuture;
+use maka_agent_api::contract::{Workspace, WorkspaceAccess};
+use maka_agent_api::session::SessionConfiguration;
+use maka_agent_facts::tools::ToolCallContext;
+use maka_agent_facts::tools::ToolError;
+use maka_agent_facts::tools::ToolExecutor;
+use maka_event_log::EventLog;
+use maka_fs_tools::{MutationExecutor, ReadExecutor, ReadLimits, ReadOutput, WriteCoordinator};
+use maka_host_runtime::application::{
+    Context, Handler, NativeActivation, NativeOwner, NativeRegistry,
+};
+use maka_sandbox::{
+    Network, Sandbox,
+    filesystem::{Access, Policy, Rule},
+    grant::Permissions,
+};
+use serde_json::Value;
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+use tokio_util::sync::CancellationToken;
+
+pub mod attachments;
+mod permissions;
+
+use maka_workspace_api::files::*;
+pub fn provide(registry: &mut NativeRegistry) -> Result<(), String> {
+    // One coordinator for every activation of this compiled provider. It owns
+    // no work; accepted request Scopes retain the actual joined executors.
+    let writes = Arc::new(WriteCoordinator::default());
+    registry.insert(
+        maka_workspace_api::files::IMPLEMENTATION.into(),
+        Arc::new(move |context, _| {
+            let writes = writes.clone();
+            Box::pin(async move {
+                let opened = (|| {
+                    let persistence = context
+                        .persistence()
+                        .ok_or("workspace_files_require_persistence")?;
+                    let root = persistence
+                        .store()
+                        .owned_root()
+                        .map_err(|_| "workspace_files_root_unavailable")?;
+                    let state_root =
+                        maka_fs_tools::workspace::project::host_path(root.canonical_path())
+                            .map_err(|_| "workspace_files_root_unavailable")?
+                            .into();
+                    Ok::<_, String>(Arc::new(Files {
+                        store: persistence.store().clone(),
+                        writes,
+                        state_root,
+                    }))
+                })();
+                match opened {
+                    Ok(owner) => NativeActivation {
+                        exports: Ok(BTreeMap::from([(
+                            EXPORT.into(),
+                            maka_plugin_core::runtime::Published {
+                                contract: contract(),
+                                value: owner.clone() as Arc<dyn Handler>,
+                            },
+                        )])),
+                        owner,
+                    },
+                    Err(error) => NativeActivation {
+                        exports: Err(error),
+                        owner: Arc::new(()),
+                    },
+                }
+            })
+        }),
+    )
+}
+struct Files {
+    store: Arc<EventLog>,
+    writes: Arc<WriteCoordinator>,
+    state_root: PathBuf,
+}
+impl Handler for Files {
+    fn call(
+        &self,
+        name: String,
+        input: Value,
+        context: Context,
+    ) -> BoxFuture<'static, Result<Value, String>> {
+        let store = self.store.clone();
+        let writes = self.writes.clone();
+        let state_root = self.state_root.clone();
+        Box::pin(async move {
+            let (_, mutation) = method(&name).ok_or("workspace_file_method_unavailable")?;
+            let invocation = context
+                .scope()
+                .identity
+                .agent()
+                .ok_or("workspace_files_require_agent")?
+                .clone();
+            let operation_id = context
+                .scope()
+                .identity
+                .operation_id()
+                .ok_or("workspace_files_require_tool")?
+                .into();
+            if mutation && context.operation().is_none() {
+                return Err("workspace_file_mutation_required".into());
+            }
+            let tool_context = ToolCallContext {
+                invocation,
+                operation_id,
+            };
+            let mut ticket = context
+                .scope()
+                .resources
+                .reserve()
+                .map_err(|e| e.to_string())?;
+            ticket.start();
+            let result = execute(
+                &store,
+                writes,
+                state_root,
+                &name,
+                input,
+                tool_context,
+                &context,
+            )
+            .await;
+            let cleanup = match &result {
+                Err(ToolError::CleanupUnconfirmed(message)) => Err(message.clone()),
+                _ => Ok(()),
+            };
+            ticket.complete(cleanup);
+            let result = match result {
+                Ok(Output::Image { bytes, mime_type }) => {
+                    for (index, chunk) in
+                        bytes.chunks(maka_agent_api::IMAGE_CHUNK_BYTES).enumerate()
+                    {
+                        let frame = maka_agent_api::contract::ImageFrame::Chunk {
+                            mime_type: mime_type.clone(),
+                            total_bytes: bytes.len(),
+                            offset: index * maka_agent_api::IMAGE_CHUNK_BYTES,
+                            data: STANDARD.encode(chunk),
+                        };
+                        context
+                            .emit(serde_json::to_value(frame).map_err(|e| e.to_string())?)
+                            .await?;
+                    }
+                    return serde_json::to_value(maka_agent_api::contract::ImageFrame::Complete)
+                        .map_err(|e| e.to_string());
+                }
+                Ok(Output::Json(value)) => FileResult::Completed { value },
+                Err(error) if name == "readImage" => return Err(error.to_string()),
+                Err(ToolError::Failed(message) | ToolError::Io { message, .. }) => {
+                    FileResult::Failed { message }
+                }
+                Err(error) => return Err(error.to_string()),
+            };
+            serde_json::to_value(result).map_err(|_| "workspace_file_result_unavailable".into())
+        })
+    }
+}
+impl NativeOwner for Files {
+    fn prepare_retirement(
+        &self,
+    ) -> Option<Box<dyn maka_host_runtime::application::NativeRetirement>> {
+        Some(Box::new(()))
+    }
+    fn close(&self) -> BoxFuture<'static, Result<(), String>> {
+        // No detached workers. Provider retirement waits for admitted call Scopes.
+        Box::pin(async { Ok(()) })
+    }
+}
+struct Captured {
+    path: PathBuf,
+    directory: cap_std::fs::Dir,
+    sandbox: Sandbox,
+    ceiling: Sandbox,
+}
+fn capture(
+    workspace: &Workspace,
+    access: WorkspaceAccess,
+    state_root: &Path,
+) -> Result<Captured, ToolError> {
+    let path = PathBuf::from(&workspace.path);
+    let directory =
+        maka_fs_tools::directory::open(&path, &workspace.directory_identity).map_err(failed)?;
+    if maka_fs_tools::workspace::read_directory_identity(
+        path.clone(),
+        directory.try_clone().map_err(failed)?,
+    )
+    .map_err(failed)?
+        != workspace.identity
+    {
+        return Err(failed("Workspace marker identity changed"));
+    }
+    let mode = match access {
+        WorkspaceAccess::ReadOnly => maka_sandbox::Mode::ReadOnly,
+        WorkspaceAccess::WorkspaceWrite => maka_sandbox::Mode::WorkspaceWrite,
+    };
+    let (base, metadata) =
+        maka_fs_tools::workspace::permissions::resolve(mode, &path).map_err(failed)?;
+    // Both restrictions intersect independently: a nested selected path cannot
+    // reopen private Host state by being more specific than a deny rule.
+    let directory_ceiling = Sandbox::Managed {
+        filesystem: Policy {
+            default: Access::Deny,
+            rules: vec![Rule::subtree(&path, Access::Write)],
+            deny_globs: vec![],
+        },
+        network: Network::Denied,
+    };
+    let host_ceiling = Sandbox::Managed {
+        filesystem: Policy {
+            default: Access::Write,
+            rules: maka_workspace_support::private_rules(workspace, state_root).map_err(failed)?,
+            deny_globs: vec![],
+        },
+        network: Network::Denied,
+    };
+    let ceiling = metadata
+        .intersect(&directory_ceiling)
+        .and_then(|s| s.intersect(&host_ceiling))
+        .map_err(failed)?;
+    let sandbox = base.intersect(&ceiling).map_err(failed)?;
+    // Policy resolution may inspect workspace metadata; never accept replacement
+    // of the original directory during those reads.
+    maka_fs_tools::directory::open(&path, &workspace.directory_identity).map_err(failed)?;
+    Ok(Captured {
+        path,
+        directory,
+        sandbox,
+        ceiling,
+    })
+}
+pub enum Output {
+    Json(Value),
+    Image { bytes: Vec<u8>, mime_type: String },
+}
+async fn execute(
+    store: &EventLog,
+    writes: Arc<WriteCoordinator>,
+    state_root: PathBuf,
+    name: &str,
+    input: Value,
+    tool_context: ToolCallContext,
+    context: &Context,
+) -> Result<Output, ToolError> {
+    let (tool, _) = method(name).ok_or_else(|| failed("Workspace file method unavailable"))?;
+    let image = name == "readImage";
+    let cancellation = &context.scope().cancellation;
+    cancelled(cancellation)?;
+    let configuration =
+        maka_agent_authority::permissions::live(store, &tool_context.invocation).await?;
+    if tool == maka_fs_tools::READ_NAME {
+        let read: maka_agent_facts::read::ReadInput =
+            serde_json::from_value(input.clone()).map_err(failed)?;
+        let mut request = read.resolve().map_err(failed)?;
+        if let Some(mut address) =
+            maka_agent_facts::read::ResourceAddress::parse(request.path()).map_err(failed)?
+        {
+            if !matches!(
+                address,
+                maka_agent_facts::read::ResourceAddress::Attachment(_)
+            ) {
+                return Err(failed(
+                    "This Files service supports only attachment resources",
+                ));
+            }
+            if !request.is_continuation() {
+                address = store
+                    .resolve_read_resource(&tool_context.invocation.session_id, address)
+                    .await
+                    .map_err(failed)?
+                    .ok_or_else(|| failed("Attachment was not found in this Session"))?;
+                request.bind_resource(&address).map_err(failed)?;
+            }
+            return attachments::read(
+                store,
+                &tool_context.invocation.session_id,
+                address.id(),
+                &request,
+                image,
+                cancellation,
+            )
+            .await;
+        }
+    }
+
+    let workspace = configuration.workspace.clone();
+    let access = configuration.permissions.access;
+    let mut captured =
+        tokio::task::spawn_blocking(move || capture(&workspace, access, &state_root))
+            .await
+            .map_err(failed)??;
+    if matches!(
+        tool,
+        maka_fs_tools::WRITE_NAME | maka_fs_tools::EDIT_NAME | maka_fs_tools::PATCH_NAME
+    ) {
+        captured = permissions::authorize(
+            store,
+            captured,
+            &configuration,
+            tool,
+            &input,
+            &tool_context,
+            cancellation,
+        )
+        .await?;
+    }
+    let Sandbox::Managed { filesystem, .. } = &captured.sandbox else {
+        return Err(failed("Workspace filesystem policy unavailable"));
+    };
+    let policy = Arc::new(filesystem.compile().map_err(failed)?);
+    // This original SQL snapshot is the filesystem admission point, ordered
+    // against permission CAS and invocation closure in the same Root worker.
+    let current = maka_agent_authority::permissions::live(store, &tool_context.invocation).await?;
+    if current.boundary_revision != configuration.boundary_revision
+        || current.workspace != configuration.workspace
+    {
+        return Err(failed(
+            "Workspace permissions changed before file admission",
+        ));
+    }
+    cancelled(cancellation)?;
+    if matches!(
+        tool,
+        maka_fs_tools::WRITE_NAME | maka_fs_tools::EDIT_NAME | maka_fs_tools::PATCH_NAME
+    ) {
+        let executor = MutationExecutor::from_directory(
+            captured.path,
+            captured.directory,
+            writes,
+            Some(policy),
+        )?;
+        executor
+            .invoke(tool.into(), input, cancellation.clone())
+            .await
+            .map(Output::Json)
+    } else {
+        let executor = ReadExecutor::from_directory(
+            captured.path,
+            captured.directory,
+            ReadLimits::default(),
+            Some(policy),
+        )?;
+        if tool == maka_fs_tools::READ_NAME {
+            let input: maka_agent_facts::read::ReadInput =
+                serde_json::from_value(input).map_err(failed)?;
+            match executor
+                .read(input.resolve().map_err(failed)?, cancellation.clone())
+                .await?
+            {
+                ReadOutput::Text(_) if image => {
+                    Err(failed("Workspace readImage requires image content"))
+                }
+                ReadOutput::Text(page) => {
+                    serde_json::to_value(page).map(Output::Json).map_err(failed)
+                }
+                ReadOutput::Image { bytes, mime_type } if image => {
+                    Ok(Output::Image { bytes, mime_type })
+                }
+                ReadOutput::Image { .. } => {
+                    Err(failed("Workspace readText accepts UTF-8 text, not images"))
+                }
+            }
+        } else {
+            executor
+                .invoke(tool.into(), input, cancellation.clone())
+                .await
+                .map(Output::Json)
+        }
+    }
+}
+fn cancelled(cancellation: &CancellationToken) -> Result<(), ToolError> {
+    if cancellation.is_cancelled() {
+        Err(failed("Workspace file operation cancelled"))
+    } else {
+        Ok(())
+    }
+}
+fn failed(message: impl std::fmt::Display) -> ToolError {
+    ToolError::Failed(message.to_string())
+}

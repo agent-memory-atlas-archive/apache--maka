@@ -36,13 +36,16 @@ just setup
 just run
 ```
 
-`just run` opens the terminal product. First launch confirms the current workspace and installs the bundled tools and skills; later launches reopen the saved application. Use `just run --help` for CLI commands. `just build --release` produces `target/release/maka` (`maka.exe` on Windows). Node.js bundles provider SDKs at build time; the resulting executable runs its embedded JavaScript in V8. To launch a checked terminal composition, use `just run application run --root PATH --deployment UUID --connections FILE`. Product authoring and installation are described in [the ordinary agent product](packages/agent-product/README.md).
+`just run` opens the terminal product. First launch confirms the current workspace and installs the bundled tools and skills; later launches reopen the saved application. Use `just run --help` for CLI commands. `just build --release` produces `target/release/maka` (`maka.exe` on Windows). Node.js bundles provider SDKs at build time; the resulting executable runs its embedded JavaScript in V8. To launch a checked terminal composition, use `just run application run --root PATH --deployment UUID --connections FILE`. Product authoring and installation are described in [the ordinary agent product](products/maka/bundle/README.md).
 
 ## Repository
 
 | Directory | Purpose |
 | --- | --- |
-| `crates/` | Runtime Host, CLI/TUI, plugins and native platform capabilities |
+| `platform/` | Application kernel, Host/UI owners, JavaScript backends and native renderers |
+| `plugins/` | Authored plugin declarations, business implementations and shared domain contracts |
+| `products/maka/` | Native factory selection, product composition, CLI and desktop entry points |
+| `tools/schema/` | Contract/schema export without building the product |
 | `packages/plugin-sdk/` | Generated Host, component and native presentation contracts for JavaScript plugins |
 | `packages/cli/` | npm launcher for platform-specific Rust executables |
 | `scripts/rust/` | Embedded SDK bundling and source-bound npm packaging |

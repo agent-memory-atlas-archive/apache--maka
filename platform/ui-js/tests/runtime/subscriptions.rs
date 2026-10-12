@@ -1,0 +1,716 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use super::{support, timer};
+use maka_plugin_core::{
+    composition::{PresentationTarget, Target},
+    contract::{
+        Availability, Cardinality, Contract, Export, Import, Interface, Method, MethodMode,
+        Transport,
+    },
+    package::{Declaration, EntryDeclaration, EntryTarget, Implementation},
+    runtime::Mount,
+};
+use maka_ui_runtime::{
+    Application, ComponentCall, ComponentOutput, ComponentSlot, Emission, EventOrigin, Frame,
+    NativeCapability, NativeComponent, NativeExport, NativeView, Surface, actions::*,
+};
+use serde_json::{Value, json};
+use std::{
+    collections::BTreeMap,
+    rc::Rc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
+use tokio_util::sync::CancellationToken;
+
+fn service_contract() -> Contract {
+    Contract {
+        name: "test.Stream".into(),
+        version: 1,
+        transport: Transport::Local,
+        interface: Interface::Service {
+            methods: BTreeMap::from([
+                (
+                    "read".into(),
+                    Method {
+                        progress: None,
+                        mode: MethodMode::Subscription,
+                        input: json!({}),
+                        output: json!({"type":"integer"}),
+                        resources: BTreeMap::new(),
+                    },
+                ),
+                (
+                    "panic".into(),
+                    Method {
+                        progress: None,
+                        mode: MethodMode::Mutation,
+                        input: json!({}),
+                        output: json!({}),
+                        resources: BTreeMap::new(),
+                    },
+                ),
+                (
+                    "query".into(),
+                    Method {
+                        progress: None,
+                        mode: MethodMode::Query,
+                        input: json!({}),
+                        output: json!({"type":"integer"}),
+                        resources: BTreeMap::new(),
+                    },
+                ),
+            ]),
+        },
+    }
+}
+struct Sequence(Arc<AtomicUsize>, Mode);
+impl NativeService for Sequence {
+    fn call(&self, _: ServiceRequest) -> ServiceFuture {
+        Box::pin(async {
+            ServiceCompletion {
+                result: Ok(json!(0)),
+                cleanup: Ok(()),
+            }
+        })
+    }
+    fn mutation(&self, _: ServiceRequest) -> Result<Arc<dyn NativeMutation>, String> {
+        panic!("actual native mutation factory panic")
+    }
+    fn subscribe(&self, _: ServiceRequest, stop: CancellationToken) -> StreamFuture {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        sequence(0, stop, self.1)
+    }
+}
+fn sequence(index: usize, stop: CancellationToken, mode: Mode) -> StreamFuture {
+    Box::pin(async move {
+        if stop.is_cancelled() || index == 3 {
+            return StreamCompletion::Finished(ServiceCompletion {
+                result: Ok(json!(3)),
+                cleanup: if matches!(mode, Mode::FailedCleanup) {
+                    Err("actual cleanup unknown".into())
+                } else {
+                    Ok(())
+                },
+            });
+        }
+        StreamCompletion::Item {
+            value: match mode {
+                Mode::BadItem => json!("wrong schema"),
+                Mode::WideItem => json!("x".repeat(64 * 1024)),
+                _ => json!(index),
+            },
+            next: sequence(index + 1, stop, mode),
+        }
+    })
+}
+#[derive(Clone, Copy)]
+enum Mode {
+    Causal,
+    Budget,
+    Many,
+    Panic,
+    BadItem,
+    WideItem,
+    FailedCleanup,
+}
+struct Parent(Mode);
+impl NativeComponent<()> for Parent {
+    fn call(
+        &self,
+        call: ComponentCall<'_>,
+        _: &maka_ui_runtime::abi::ValueBindings,
+    ) -> maka_ui_runtime::Result<ComponentOutput<NativeView<()>>> {
+        let mut state = match &call {
+            ComponentCall::Mount { .. } => {
+                json!({"revision":0,"selector":0,"cycle":0,"queried":false})
+            }
+            ComponentCall::Event { state, .. } | ComponentCall::Update { state, .. } => {
+                let mut next = (*state).clone();
+                next["revision"] = json!(state["revision"].as_u64().unwrap() + 1);
+                next
+            }
+        };
+        if let ComponentCall::Event {
+            origin, key, input, ..
+        } = &call
+        {
+            match origin {
+                EventOrigin::Raw if *key == "inc" && !matches!(self.0, Mode::Panic) => {
+                    state["selector"] = json!(1);
+                    state["cycle"] = json!(state["cycle"].as_u64().unwrap() + 1);
+                }
+                EventOrigin::Component { .. } => state["selector"] = (*input).clone(),
+                EventOrigin::Action => state["feedback"] = (*input).clone(),
+                _ => {}
+            }
+        }
+        let budget = matches!(self.0, Mode::Budget)
+            && matches!(
+                &call,
+                ComponentCall::Event {
+                    origin: EventOrigin::Raw,
+                    key: "inc",
+                    ..
+                }
+            );
+        if budget {
+            state["blob"] = json!("x".repeat(600 * 1024));
+        }
+        let mut slots = Vec::new();
+        if matches!(self.0, Mode::Causal) {
+            slots.push(ComponentSlot {
+                key: "child".into(),
+                binding: "child".into(),
+                member: 0,
+                props: json!({"cycle":state["cycle"]}),
+                on: BTreeMap::from([("change".into(), "changed".into())]),
+            });
+        }
+        let mut output = Frame {
+            revision: state["revision"].as_u64().unwrap(),
+            state: state.clone(),
+            surface: Some(Surface::Window {
+                binding: "surface".into(),
+                title: "Native stream".into(),
+                width: 640,
+                height: 400,
+            }),
+            view: NativeView::new(
+                Rc::new(()),
+                BTreeMap::from([("inc".into(), json!({}))]),
+                slots,
+            )?,
+        }
+        .output(vec![]);
+        let count = if matches!(self.0, Mode::Many) { 16 } else { 1 };
+        output.subscriptions = (0..count)
+            .map(|i| Action {
+                recovery: Value::Null,
+                continuations: Vec::new(),
+                key: format!("feed{i}"),
+                binding: "stream".into(),
+                member: 0,
+                method: "read".into(),
+                input: if budget {
+                    json!("x".repeat(600 * 1024))
+                } else {
+                    state["selector"].clone()
+                },
+                resources: BTreeMap::new(),
+            })
+            .collect();
+        if matches!(self.0, Mode::Many)
+            && matches!(
+                &call,
+                ComponentCall::Event {
+                    origin: EventOrigin::Action,
+                    ..
+                }
+            )
+            && !state["queried"].as_bool().unwrap()
+        {
+            output.frame.state["queried"] = json!(true);
+            output.actions.push(Action {
+                recovery: Value::Null,
+                continuations: Vec::new(),
+                key: "probe".into(),
+                binding: "stream".into(),
+                member: 0,
+                method: "query".into(),
+                input: Value::Null,
+                resources: BTreeMap::new(),
+            });
+        }
+        if matches!(self.0, Mode::Panic)
+            && matches!(
+                &call,
+                ComponentCall::Event {
+                    origin: EventOrigin::Raw,
+                    ..
+                }
+            )
+        {
+            output.actions.push(Action {
+                recovery: Value::Null,
+                continuations: Vec::new(),
+                key: "panic".into(),
+                binding: "stream".into(),
+                member: 0,
+                method: "panic".into(),
+                input: Value::Null,
+                resources: BTreeMap::new(),
+            });
+        }
+        Ok(output)
+    }
+}
+struct Child;
+impl NativeComponent<()> for Child {
+    fn call(
+        &self,
+        call: ComponentCall<'_>,
+        _: &maka_ui_runtime::abi::ValueBindings,
+    ) -> maka_ui_runtime::Result<ComponentOutput<NativeView<()>>> {
+        let (revision, cycle, emit) = match call {
+            ComponentCall::Mount { props } => (0, props["cycle"].clone(), false),
+            ComponentCall::Update { state, props } => (
+                state["revision"].as_u64().unwrap() + 1,
+                props["cycle"].clone(),
+                props["cycle"] != state["cycle"],
+            ),
+            _ => panic!("no child raw inputs"),
+        };
+        let events = if emit {
+            vec![Emission {
+                name: "change".into(),
+                value: json!(0),
+            }]
+        } else {
+            vec![]
+        };
+        Ok(Frame {
+            revision,
+            state: json!({"revision":revision,"cycle":cycle}),
+            surface: None,
+            view: NativeView::new(Rc::new(()), BTreeMap::new(), vec![])?,
+        }
+        .output(events))
+    }
+}
+fn component_contract(name: &str, events: BTreeMap<String, Value>) -> Contract {
+    Contract {
+        name: name.into(),
+        version: 1,
+        transport: Transport::Local,
+        interface: Interface::Component {
+            props: json!({"type":"object"}),
+            events,
+            captures: BTreeMap::new(),
+        },
+    }
+}
+fn native_package(name: &str, implementation: &str, contract: Contract) -> maka_packages::Package {
+    support::package(
+        name,
+        Declaration {
+            entries: BTreeMap::from([(
+                EntryTarget::Desktop,
+                EntryDeclaration {
+                    scene: None,
+                    implementation: Implementation::Native {
+                        implementation: implementation.into(),
+                    },
+                    configuration: json!({"type":"object"}),
+                    imports: BTreeMap::new(),
+                    exports: BTreeMap::from([(
+                        "Export".into(),
+                        Export {
+                            contract,
+                            availability: Availability::Required,
+                        },
+                    )]),
+                },
+            )]),
+            composition: None,
+        },
+        None,
+    )
+}
+fn fixture_data(
+    mode: Mode,
+) -> (
+    maka_plugin_core::composition::Input,
+    Vec<maka_packages::Package>,
+    maka_ui_runtime::NativeRegistry<()>,
+    Arc<AtomicUsize>,
+) {
+    let (mut input, mut packages) = support::fixture("");
+    let original = packages.pop().unwrap();
+    let mut declaration = original.manifest().application.clone().unwrap();
+    let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
+    entry.scene = None;
+    entry.implementation = Implementation::Native {
+        implementation: "test.parent".into(),
+    };
+    let parent_contract = entry.exports["App"].contract.clone();
+    let child_contract = component_contract(
+        "test.Child",
+        BTreeMap::from([("change".into(), json!({"type":"integer"}))]),
+    );
+    for (name, contract) in [
+        ("stream", service_contract()),
+        ("child", child_contract.clone()),
+    ] {
+        entry.imports.insert(
+            name.into(),
+            Import {
+                contract,
+                cardinality: Cardinality::One,
+            },
+        );
+    }
+    let package = support::package("native.parent", declaration, None);
+    input.instances.get_mut("app").unwrap().package = package.application_ref().into();
+    packages.push(package);
+    let service = native_package("native.stream", "test.stream", service_contract());
+    let child = native_package("native.child", "test.child", child_contract.clone());
+    for (name, key, package) in [("stream", 3, &service), ("child", 4, &child)] {
+        input
+            .instances
+            .insert(name.into(), support::node(package, key));
+        input.instances.get_mut("app").unwrap().bindings.insert(
+            name.into(),
+            vec![Target::Instance {
+                path: vec![name.into()],
+                export: "Export".into(),
+            }],
+        );
+    }
+    packages.extend([service, child]);
+    let starts = Arc::new(AtomicUsize::new(0));
+    let observed = starts.clone();
+    let mut native = support::scene::registry(PresentationTarget::Desktop);
+    native
+        .register("test.parent", move |_, _| {
+            Ok(BTreeMap::from([(
+                "App".into(),
+                NativeExport {
+                    contract: parent_contract.clone(),
+                    value: NativeCapability::Component(Rc::new(Parent(mode))),
+                },
+            )]))
+        })
+        .unwrap();
+    native
+        .register("test.child", move |_, _| {
+            Ok(BTreeMap::from([(
+                "Export".into(),
+                NativeExport {
+                    contract: child_contract.clone(),
+                    value: NativeCapability::Component(Rc::new(Child)),
+                },
+            )]))
+        })
+        .unwrap();
+    native
+        .register("test.stream", move |_, _| {
+            Ok(BTreeMap::from([(
+                "Export".into(),
+                NativeExport {
+                    contract: service_contract(),
+                    value: NativeCapability::Service(Arc::new(Sequence(observed.clone(), mode))),
+                },
+            )]))
+        })
+        .unwrap();
+    (input, packages, native, starts)
+}
+fn fixture(mode: Mode, timer: &tokio::runtime::Runtime) -> (Application, Arc<AtomicUsize>) {
+    let (input, packages, native, starts) = fixture_data(mode);
+    (
+        Application::new(
+            &input,
+            packages,
+            timer.handle().clone(),
+            maka_ui_js::execution(Default::default()),
+            native,
+            Default::default(),
+        )
+        .unwrap(),
+        starts,
+    )
+}
+
+fn start(app: &mut Application, root: &Mount) -> ActionTask {
+    app.capture_actions(root, |_| panic!("no resources"))
+        .unwrap();
+    app.start_task(root).unwrap().unwrap()
+}
+fn run(timer: &tokio::runtime::Runtime, task: ActionTask) -> (uuid::Uuid, TaskCompletion) {
+    (
+        task.id,
+        timer.block_on(async {
+            tokio::time::timeout(Duration::from_secs(10), task.future)
+                .await
+                .unwrap()
+        }),
+    )
+}
+fn finish(
+    timer: &tokio::runtime::Runtime,
+    app: &mut Application,
+    root: &Mount,
+    mut task: ActionTask,
+) {
+    loop {
+        let (id, completion) = run(timer, task);
+        let next = app.finish_task(id, completion).unwrap();
+        app.deliver_action_results(root, |_, _, _| Ok(false))
+            .unwrap();
+        if let Some(value) = next {
+            task = value
+        } else {
+            break;
+        }
+    }
+}
+fn close(app: &mut Application, roots: &[Mount]) {
+    for root in roots {
+        app.retire(root).unwrap();
+    }
+    for mount in app.retiring_mounts() {
+        app.close(&mount, Ok(())).unwrap();
+    }
+    app.shutdown().unwrap();
+}
+
+#[test]
+fn native_full_callback_budget_includes_subscription_declarations_and_rolls_back() {
+    let timer = timer();
+    let (mut app, starts) = fixture(Mode::Budget, &timer);
+    let root = app.mount_launch(json!({})).unwrap();
+    assert!(
+        app.dispatch(&root, 0, "inc", Value::Null)
+            .unwrap_err()
+            .to_string()
+            .contains("1 MiB")
+    );
+    assert_eq!(app.frame(&root).unwrap().revision, 0);
+    assert_eq!(app.pending_action_count(), 1);
+    assert_eq!(starts.load(Ordering::SeqCst), 0);
+    let task = start(&mut app, &root);
+    finish(&timer, &mut app, &root, task);
+    assert_eq!(starts.load(Ordering::SeqCst), 1);
+    close(&mut app, &[root]);
+}
+#[test]
+fn temporary_causal_demand_changes_do_not_restart_original_committed_execution() {
+    let timer = timer();
+    let (mut app, starts) = fixture(Mode::Causal, &timer);
+    let root = app.mount_launch(json!({})).unwrap();
+    let (id, item) = run(&timer, start(&mut app, &root));
+    let next = app.finish_task(id, item).unwrap().unwrap();
+    app.deliver_action_results(&root, |_, _, _| Ok(false))
+        .unwrap();
+    app.dispatch(
+        &root,
+        app.frame(&root).unwrap().revision,
+        "inc",
+        Value::Null,
+    )
+    .unwrap();
+    assert_eq!(app.frame(&root).unwrap().state["selector"], 0);
+    app.capture_actions(&root, |_| panic!("no recapture"))
+        .unwrap();
+    assert!(app.start_task(&root).unwrap().is_none());
+    assert_eq!(app.accepted_action_count(), 1);
+    let (next_id, item) = run(&timer, next);
+    assert_eq!(next_id, id);
+    assert!(matches!(
+        &item,
+        TaskCompletion::Subscription(StreamCompletion::Item { .. })
+    ));
+    let next = app.finish_task(id, item).unwrap().unwrap();
+    app.deliver_action_results(&root, |_, _, _| Ok(false))
+        .unwrap();
+    finish(&timer, &mut app, &root, next);
+    assert_eq!(starts.load(Ordering::SeqCst), 1);
+    close(&mut app, &[root]);
+}
+#[test]
+fn one_pending_feedback_does_not_double_charge_each_of_48_live_requests() {
+    let timer = timer();
+    let (mut app, starts) = fixture(Mode::Many, &timer);
+    let roots = (0..3)
+        .map(|_| app.mount_launch(json!({})).unwrap())
+        .collect::<Vec<_>>();
+    let mut successors = Vec::new();
+    for root in &roots {
+        app.capture_actions(root, |_| panic!("no resources"))
+            .unwrap();
+        while let Some(task) = app.start_task(root).unwrap() {
+            let (id, item) = run(&timer, task);
+            successors.push(app.finish_task(id, item).unwrap().unwrap());
+        }
+    }
+    assert_eq!(starts.load(Ordering::SeqCst), 48);
+    assert_eq!(app.pending_action_count(), 48);
+    assert_eq!(
+        app.deliver_action_results(&roots[0], |_, _, _| Ok(false))
+            .unwrap(),
+        16
+    );
+    assert!(!app.is_retiring(&roots[0]));
+    assert_eq!(app.pending_action_count(), 49);
+    let probe = start(&mut app, &roots[0]);
+    let (id, result) = run(&timer, probe);
+    assert!(app.finish_task(id, result).unwrap().is_none());
+    app.deliver_action_results(&roots[0], |_, _, _| Ok(false))
+        .unwrap();
+    for root in &roots {
+        app.retire(root).unwrap();
+    }
+    for task in successors {
+        let (id, result) = run(&timer, task);
+        assert!(app.finish_task(id, result).unwrap().is_none());
+    }
+    assert_eq!(app.accepted_action_count(), 0);
+    close(&mut app, &roots);
+}
+
+#[test]
+fn mutation_factory_panic_cancels_stream_waiting_ack_and_preserves_failed_preparation_fence() {
+    use maka_event_log::{
+        EventLog,
+        root::{RootNamespaces, RootOwner},
+    };
+    let timer = timer();
+    let dir = tempfile::tempdir().unwrap();
+    let ns = RootNamespaces {
+        ownership: dir.path().join("owners"),
+        control: dir.path().join("control"),
+    };
+    let store = Arc::new(
+        timer
+            .block_on(EventLog::for_root(Arc::new(
+                RootOwner::create(&dir.path().join("root"), &ns).unwrap(),
+            )))
+            .unwrap(),
+    );
+    let (input, packages, native, starts) = fixture_data(Mode::Panic);
+    let source = timer
+        .block_on(store.commit_application(uuid::Uuid::new_v4(), 0, input, vec![], packages))
+        .unwrap();
+    let mut app = timer
+        .block_on(Application::start_from_store(
+            store.clone(),
+            source,
+            PresentationTarget::Desktop,
+            timer.handle().clone(),
+            maka_ui_js::execution(Default::default()),
+            native,
+            vec![],
+        ))
+        .unwrap();
+    let root = app.mount_launch(json!({})).unwrap();
+    let (id, item) = run(&timer, start(&mut app, &root));
+    let next = app.finish_task(id, item).unwrap().unwrap();
+    // Do not deliver/ACK the pending item. Another original service request
+    // retires the native provider and dependent consumer synchronously.
+    app.dispatch(&root, 0, "inc", Value::Null).unwrap();
+    app.capture_actions(&root, |_| panic!("resource-free"))
+        .unwrap();
+    assert!(app.start_task(&root).unwrap().is_none());
+    assert!(app.is_retiring(&root));
+    let failures = app.failed_action_ids();
+    assert_eq!(failures.len(), 1);
+    let (stream_id, actual) = run(&timer, next);
+    assert_eq!(stream_id, id);
+    assert!(matches!(
+        &actual,
+        TaskCompletion::Subscription(StreamCompletion::Finished(_))
+    ));
+    assert!(app.finish_task(id, actual).unwrap().is_none());
+    assert_eq!(starts.load(Ordering::SeqCst), 1);
+    assert_eq!(app.accepted_action_count(), 0);
+    assert!(
+        !app.can_shutdown(),
+        "panic preparation remains an independent real cleanup fence"
+    );
+    app.complete_action_cleanup(failures[0], Ok(())).unwrap();
+    close(&mut app, &[root]);
+    timer.block_on(store.shutdown()).unwrap();
+}
+
+#[test]
+fn invalid_native_items_stop_before_feedback_and_complete_original_source() {
+    for (mode, message) in [(Mode::BadItem, "integer"), (Mode::WideItem, "64 KiB")] {
+        let timer = timer();
+        let (mut app, starts) = fixture(mode, &timer);
+        let root = app.mount_launch(json!({})).unwrap();
+        let (id, item) = run(&timer, start(&mut app, &root));
+        let successor = app.finish_task(id, item).unwrap().unwrap();
+        assert_eq!(
+            app.deliver_action_results(&root, |_, _, _| Ok(false))
+                .unwrap(),
+            0,
+            "invalid item must never enter the component"
+        );
+        let (_, actual) = run(&timer, successor);
+        assert!(matches!(
+            &actual,
+            TaskCompletion::Subscription(StreamCompletion::Finished(_))
+        ));
+        assert!(app.finish_task(id, actual).unwrap().is_none());
+        assert_eq!(
+            app.deliver_action_results(&root, |_, _, _| Ok(false))
+                .unwrap(),
+            1
+        );
+        let feedback = &app.frame(&root).unwrap().state["feedback"];
+        assert_eq!(feedback["status"], "failed");
+        assert!(feedback["reason"].as_str().unwrap().contains(message));
+        assert_eq!(starts.load(Ordering::SeqCst), 1);
+        assert_eq!(app.accepted_action_count(), 0);
+        close(&mut app, &[root]);
+    }
+}
+#[test]
+fn completed_stream_with_failed_cleanup_preserves_work_until_actual_confirmation() {
+    let timer = timer();
+    let (mut app, _) = fixture(Mode::FailedCleanup, &timer);
+    let root = app.mount_launch(json!({})).unwrap();
+    let mut task = start(&mut app, &root);
+    let id = task.id;
+    loop {
+        let (_, completion) = run(&timer, task);
+        match app.finish_task(id, completion) {
+            Ok(Some(next)) => {
+                app.deliver_action_results(&root, |_, _, _| Ok(false))
+                    .unwrap();
+                task = next;
+            }
+            Err(error) => {
+                assert!(error.to_string().contains("actual cleanup unknown"));
+                break;
+            }
+            Ok(None) => panic!("failed cleanup is not successful settlement"),
+        }
+    }
+    assert!(app.is_retiring(&root));
+    assert_eq!(app.accepted_action_count(), 1);
+    assert_eq!(app.failed_action_ids(), vec![id]);
+    for mount in app.retiring_mounts() {
+        app.close(&mount, Ok(())).unwrap();
+    }
+    assert!(!app.can_shutdown());
+    assert!(
+        app.complete_action_cleanup(id, Err("still unconfirmed".into()))
+            .is_err()
+    );
+    assert_eq!(app.accepted_action_count(), 1);
+    app.complete_action_cleanup(id, Ok(())).unwrap();
+    assert_eq!(app.accepted_action_count(), 0);
+    app.shutdown().unwrap();
+}

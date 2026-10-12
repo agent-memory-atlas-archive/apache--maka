@@ -31,12 +31,12 @@
       "!**/dist",
       "!**/node_modules",
       "!package-lock.json",
-      "!crates/providers/data/*.json",
-      "!crates/config/data/*.json",
+      "!plugins/agent/providers/data/*.json",
+      "!plugins/settings/store/data/*.json",
       "!website/**",
       // Verbatim Deno sources; tests verify their exact bytes.
-      "!crates/js-runtime/third-party/deno-telemetry/telemetry.ts",
-      "!crates/js-runtime/third-party/deno-telemetry/util.ts"
+      "!platform/js-runtime/third-party/deno-telemetry/telemetry.ts",
+      "!platform/js-runtime/third-party/deno-telemetry/util.ts"
     ]
   },
   // Formatter enabled together with the one-time whole-tree baseline commit

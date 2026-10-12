@@ -1,0 +1,365 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use super::*;
+use std::path::Path;
+
+pub(super) async fn preferences(path: &Path) -> preferences::Store {
+    preferences::Store::new(
+        Arc::new(
+            maka_event_log::EventLog::open(
+                &path.join(format!("preferences-{}.sqlite", uuid::Uuid::new_v4())),
+            )
+            .await
+            .unwrap(),
+        ),
+        "test_".into(),
+    )
+}
+pub(super) fn scope() -> Scope {
+    maka_capabilities::call::Issuer::default()
+        .issue(
+            maka_capabilities::call::Identity::Remote {
+                request_id: uuid::Uuid::new_v4(),
+            },
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .unwrap()
+}
+pub(super) fn write(root: &Path, id: &str, body: &str) {
+    std::fs::create_dir_all(root.join(id)).unwrap();
+    std::fs::write(
+        root.join(id).join("SKILL.md"),
+        format!("---\nname: {id}\ndescription: Reference for {id}\n---\n{body}"),
+    )
+    .unwrap();
+}
+pub(super) fn source(id: &str, path: &Path) -> Source {
+    Source {
+        id: id.into(),
+        label: id.into(),
+        path: path.to_str().unwrap().into(),
+    }
+}
+fn first() -> List {
+    List {
+        workspace: None,
+        query: String::new(),
+        cursor: None,
+    }
+}
+
+#[tokio::test]
+async fn original_discovery_paging_and_exact_body_reads_reject_stale_or_repurposed_cursors() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a");
+    let b = dir.path().join("b");
+    let body = "本地 skill 说明 🦀\n".repeat(2000);
+    for i in 0..40 {
+        write(
+            &a,
+            &format!("skill-{i:02}"),
+            if i == 0 { &body } else { "original" },
+        );
+    }
+    write(&b, "skill-00", "shadowed");
+    std::fs::create_dir_all(b.join("broken")).unwrap();
+    std::fs::write(b.join("broken/SKILL.md"), "missing frontmatter").unwrap();
+    let library = Library::open(
+        Configuration {
+            home: None,
+            project_roots: vec![],
+            bundled: false,
+            manage: false,
+            preferences: true,
+            sources: vec![source("a", &a), source("b", &b)],
+        },
+        dir.path().join("private"),
+        preferences(dir.path()).await,
+    )
+    .unwrap();
+    let call = scope();
+    let Page::Page {
+        revision,
+        entries,
+        after,
+        ..
+    } = library
+        .snapshot(&call)
+        .await
+        .unwrap()
+        .list(first())
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(entries.len(), 32);
+    let cursor = after.unwrap();
+    assert!(
+        library
+            .snapshot(&call)
+            .await
+            .unwrap()
+            .list(List {
+                workspace: None,
+                query: "other".into(),
+                cursor: Some(cursor.clone())
+            })
+            .is_err()
+    );
+    let Page::Page {
+        entries: remaining,
+        after,
+        ..
+    } = library
+        .snapshot(&call)
+        .await
+        .unwrap()
+        .list(List {
+            workspace: None,
+            query: String::new(),
+            cursor: Some(cursor),
+        })
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert!(after.is_none());
+    assert_eq!(entries.len() + remaining.len(), 42);
+    assert_eq!(
+        remaining
+            .iter()
+            .find(|entry| entry.reference == "source:b:skill-00")
+            .unwrap()
+            .shadowed_by
+            .as_deref(),
+        Some("source:a:skill-00")
+    );
+    assert!(
+        !remaining
+            .iter()
+            .find(|entry| entry.reference == "source:b:broken")
+            .unwrap()
+            .valid
+    );
+    let mut text = String::new();
+    let mut offset = 0;
+    loop {
+        let Document::Page {
+            text: page,
+            after,
+            total_bytes,
+            ..
+        } = library
+            .snapshot(&call)
+            .await
+            .unwrap()
+            .read(Read {
+                workspace: None,
+                reference: "source:a:skill-00".into(),
+                revision: revision.clone(),
+                offset,
+            })
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert!(page.len() <= TEXT_BYTES);
+        assert_eq!(total_bytes, body.trim().len());
+        text.push_str(&page);
+        let Some(next) = after else {
+            break;
+        };
+        assert!(next > offset);
+        offset = next;
+    }
+    assert_eq!(text, body.trim());
+    write(&a, "skill-00", "updated");
+    assert!(matches!(
+        library
+            .snapshot(&call)
+            .await
+            .unwrap()
+            .read(Read {
+                workspace: None,
+                reference: "source:a:skill-00".into(),
+                revision,
+                offset: 0
+            })
+            .unwrap(),
+        Document::Changed
+    ));
+    call.finish().await.unwrap();
+    assert!(library.snapshot(&call).await.is_err());
+}
+
+#[tokio::test]
+async fn selected_directory_handles_and_private_root_ceiling_remain_authoritative() {
+    let dir = tempfile::tempdir().unwrap();
+    let selected = dir.path().join("selected");
+    let private = dir.path().join("private");
+    let outside = dir.path().join("outside");
+    write(&selected, "allowed", "captured original");
+    write(&private, "hidden", "private secret");
+    write(&outside, "unselected", "outside secret");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(outside.join("unselected"), selected.join("link")).unwrap();
+    let library = Library::open(
+        Configuration {
+            home: None,
+            project_roots: vec![],
+            bundled: false,
+            manage: false,
+            preferences: true,
+            sources: vec![source("selected", &selected), source("private", &private)],
+        },
+        private.canonicalize().unwrap(),
+        preferences(dir.path()).await,
+    )
+    .unwrap();
+    std::fs::rename(&selected, dir.path().join("original")).unwrap();
+    write(&selected, "allowed", "replacement must not redirect");
+    let call = scope();
+    let Page::Page {
+        revision,
+        entries,
+        diagnostics,
+        ..
+    } = library
+        .snapshot(&call)
+        .await
+        .unwrap()
+        .list(first())
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].reference, "source:selected:allowed");
+    assert!(diagnostics.iter().any(|s| s.starts_with("private:")));
+    for reference in [
+        "source:private:hidden",
+        "source:selected:link",
+        "source:selected:../../outside/unselected",
+    ] {
+        assert!(matches!(
+            library
+                .snapshot(&call)
+                .await
+                .unwrap()
+                .read(Read {
+                    workspace: None,
+                    reference: reference.into(),
+                    revision: revision.clone(),
+                    offset: 0
+                })
+                .unwrap(),
+            Document::Unavailable
+        ));
+    }
+    let Document::Page { text, .. } = library
+        .snapshot(&call)
+        .await
+        .unwrap()
+        .read(Read {
+            workspace: None,
+            reference: entries[0].reference.clone(),
+            revision,
+            offset: 0,
+        })
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(text, "captured original");
+    call.finish().await.unwrap();
+}
+
+#[tokio::test]
+async fn cancellation_never_turns_discovery_failure_into_an_empty_catalog() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "one", "content");
+    let library = Library::open(
+        Configuration {
+            home: None,
+            project_roots: vec![],
+            bundled: false,
+            manage: false,
+            preferences: true,
+            sources: vec![source("local", dir.path())],
+        },
+        dir.path().join("private"),
+        preferences(dir.path()).await,
+    )
+    .unwrap();
+    let call = scope();
+    call.cancellation.cancel();
+    assert!(library.snapshot(&call).await.is_err());
+    call.finish().await.unwrap();
+    assert!(
+        Library::open(
+            Configuration {
+                home: None,
+                project_roots: vec![],
+                bundled: false,
+                manage: false,
+                preferences: true,
+                sources: vec![source("same", dir.path()), source("same", dir.path())]
+            },
+            dir.path().join("private"),
+            preferences(dir.path()).await
+        )
+        .is_err()
+    );
+}
+
+#[tokio::test]
+async fn escaped_instruction_pages_remain_within_the_remote_delivery_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let body = "\u{0001}".repeat(TEXT_BYTES * 2);
+    write(dir.path(), "escaped", &body);
+    let library = Library::open(
+        Configuration {
+            home: None,
+            project_roots: vec![],
+            bundled: false,
+            manage: false,
+            preferences: true,
+            sources: vec![source("local", dir.path())],
+        },
+        dir.path().join("private"),
+        preferences(dir.path()).await,
+    )
+    .unwrap();
+    let call = scope();
+    let snapshot = library.snapshot(&call).await.unwrap();
+    let revision = snapshot.revision.clone();
+    let page = snapshot
+        .read(Read {
+            workspace: None,
+            reference: "source:local:escaped".into(),
+            revision,
+            offset: 0,
+        })
+        .unwrap();
+    let value = encode(page).unwrap();
+    assert_eq!(value["text"].as_str().unwrap(), &body[..TEXT_BYTES]);
+    assert_eq!(value["after"], TEXT_BYTES);
+    call.finish().await.unwrap();
+}

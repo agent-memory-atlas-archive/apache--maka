@@ -42,7 +42,7 @@ every call still passes Host policy. Public `Identity` is observation, not permi
 execution semantics. Leave opaque owners activation-specific when that cannot be
 proven; do not override it to force a recovery test to pass.
 
-Relevant examples: `crates/agent-service/src/skills.rs`, `owner/skills.rs`, `tools.rs`
-and `crates/runtime-host/src/application/native_context.rs`. Native UI objects remain
+Relevant examples: `plugins/skills/native/src/lib.rs`, `plugins/workspace/workspace-web/native/src/host.rs`
+and `platform/host-runtime/src/application/native_context.rs`. Native UI objects remain
 in their presenter owner/main-thread lifecycle; the plugin kernel owns descriptions,
 checked bindings and teardown coordination, not framework objects.

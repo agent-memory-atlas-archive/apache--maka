@@ -30,7 +30,7 @@ const { build, transform } = require('esbuild');
 const output = process.argv[2];
 if (!output) throw new Error('Cargo output directory is required');
 const locked = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
-const entry = resolve(root, 'crates/js-runtime/trusted/adapter.js');
+const entry = resolve(root, 'platform/js-runtime/trusted/adapter.js');
 for (const name of ['@ai-sdk/openai', '@ai-sdk/anthropic', '@ai-sdk/openai-compatible']) {
   if (
     require(`${name}/package.json`).version !== locked.packages[`node_modules/${name}`]?.version
@@ -70,7 +70,7 @@ if (process.argv[3]) await writeFile(process.argv[3], JSON.stringify(result.meta
 // Transpilation needs neither a build-time V8 nor a compiler in the running host.
 for (const name of ['telemetry', 'util']) {
   const source = readFileSync(
-    join(root, 'crates/js-runtime/third-party/deno-telemetry', `${name}.ts`),
+    join(root, 'platform/js-runtime/third-party/deno-telemetry', `${name}.ts`),
     'utf8',
   );
   const { code } = await transform(source, {

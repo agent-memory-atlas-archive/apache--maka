@@ -24,12 +24,16 @@ default:
 setup:
     npm ci --no-audit --no-fund
 
+# Build the authored plugin selection without rebuilding Rust.
+product:
+    npm --workspace @maka-agent/product run build
+
 # Run the native CLI or TUI.
-run *args:
+run *args: product
     cargo run --locked -p maka-cli -- "$@"
 
 # Build the native CLI and Desktop; additional arguments go to Cargo.
-build *args:
+build *args: product
     cargo build --locked -p maka-cli -p maka-desktop "$@"
 
 # Check all maintained code and behavior.

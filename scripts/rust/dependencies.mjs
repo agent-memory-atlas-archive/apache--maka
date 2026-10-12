@@ -39,7 +39,7 @@ for (const crate of ['cli', 'desktop']) {
     [
       ...cargo,
       '--manifest-path',
-      `crates/${crate}/Cargo.toml`,
+      `products/maka/${crate}/Cargo.toml`,
       '--exclude-dev',
       'list',
       '--format',
@@ -71,7 +71,7 @@ const inventory =
         [name, ...columns.map((license) => (declared.has(license) ? 'X' : ''))].join('\t'),
       ),
   ].join('\n') + '\n';
-const output = new URL('../../crates/cli/DEPENDENCIES.rust.tsv', import.meta.url);
+const output = new URL('../../products/maka/cli/DEPENDENCIES.rust.tsv', import.meta.url);
 if (mode === 'generate') {
   writeFileSync(output, inventory);
 } else if (readFileSync(output, 'utf8').replaceAll('\r\n', '\n') !== inventory) {
