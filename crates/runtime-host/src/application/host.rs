@@ -17,8 +17,11 @@
  * under the License.
  */
 
-//! Public current-account Host. One Application owns every accepted execution.
+//! Authenticated public Host. One Application owns every accepted execution.
+mod access;
 mod client;
+pub mod websocket;
+pub use access::Pairing;
 mod protocol;
 pub use client::{Client, LocalCall};
 pub use protocol::{Status, VERSION};
@@ -29,9 +32,11 @@ use super::transport::{
 };
 use super::{Application, NativeRegistry, Result};
 use crate::ipc::{LocalListener, LocalStream};
+use access::{Authority, Principal};
 use maka_event_log::EventLog;
 use maka_plugin_core::{composition::InstanceId, deployment::DeploymentRef};
 use protocol::{Connected, Opening, Request, Response, SessionControl};
+use sha2::Digest;
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
@@ -40,6 +45,7 @@ use std::{
 use tokio::sync::Semaphore;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use uuid::Uuid;
+use websocket::WebSocketListener;
 
 const SESSIONS: usize = 8;
 const CONNECTIONS: usize = 144;
@@ -49,6 +55,9 @@ const CONNECTIONS: usize = 144;
 pub struct Host {
     application: Application,
     store: Arc<EventLog>,
+    access: Arc<maka_config::ConfigurationStore>,
+    access_grant: String,
+    access_gate: tokio::sync::Mutex<()>,
     epoch: Uuid,
     source: DeploymentRef,
     policy: Arc<PeerPolicy>,
@@ -58,6 +67,7 @@ pub struct Host {
     stop: CancellationToken,
 }
 struct Session {
+    principal: Principal,
     peer: Arc<Peers>,
     transport: Arc<Server>,
 }
@@ -69,6 +79,7 @@ impl Host {
         selections: BTreeMap<String, HostEndpoint>,
         grants: Vec<NativeGrant>,
     ) -> Result<Arc<Self>> {
+        let root = store.owned_root().map_err(|error| error.to_string())?;
         let policy = Arc::new(PeerPolicy::with_native_grants(grants)?);
         let application = Application::start_from_store(
             store.clone(),
@@ -86,10 +97,27 @@ impl Host {
                 return Err(error);
             }
         };
+        let access = match maka_config::ConfigurationStore::for_root(root).await {
+            Ok(access) => Arc::new(access),
+            Err(error) => {
+                application.shutdown().await?;
+                return Err(error.to_string());
+            }
+        };
+        let access_grant = format!(
+            "application.owner:{:x}",
+            sha2::Sha256::digest(
+                serde_json::to_vec(&(application.source(), &selections))
+                    .map_err(|error| error.to_string())?
+            )
+        );
         Ok(Arc::new(Self {
             source: application.source().expect("persisted Host").clone(),
             application,
             store,
+            access,
+            access_grant,
+            access_gate: tokio::sync::Mutex::new(()),
             policy,
             endpoints,
             epoch: Uuid::new_v4(),
@@ -130,9 +158,21 @@ impl Host {
     /// and the held Unix peer credentials. No request chooses its own principal.
     pub async fn serve_local(
         self: &Arc<Self>,
-        mut listener: LocalListener,
+        listener: LocalListener,
         cancel: CancellationToken,
     ) -> Result<()> {
+        self.serve(listener, None, cancel).await
+    }
+    pub async fn serve(
+        self: &Arc<Self>,
+        mut listener: LocalListener,
+        websocket: Option<WebSocketListener>,
+        cancel: CancellationToken,
+    ) -> Result<()> {
+        enum Incoming {
+            Local(LocalStream),
+            Remote(tokio::net::TcpStream),
+        }
         let tasks = TaskTracker::new();
         let capacity = Arc::new(Semaphore::new(CONNECTIONS));
         let accepted = loop {
@@ -141,7 +181,16 @@ impl Host {
                 () = self.stop.cancelled() => break Ok(()),
                 () = cancel.cancelled() => break Ok(()),
                 value = listener.accept() => match value {
-                    Ok(stream) => stream,
+                    Ok(stream) => Incoming::Local(stream),
+                    Err(error) => break Err(error.to_string()),
+                },
+                value = async {
+                    match &websocket {
+                        Some(listener) => listener.listener.accept().await,
+                        None => std::future::pending().await,
+                    }
+                } => match value {
+                    Ok((stream, _)) => Incoming::Remote(stream),
                     Err(error) => break Err(error.to_string()),
                 },
             };
@@ -150,10 +199,25 @@ impl Host {
                 continue;
             };
             let host = self.clone();
+            let origins = websocket
+                .as_ref()
+                .map(|listener| listener.allowed_origins.clone());
             tasks.spawn(async move {
                 let _permit = permit;
                 // A malformed or disconnected peer fails only its own channel.
-                let _ = host.connection(stream).await;
+                match stream {
+                    Incoming::Local(stream) => {
+                        let _ = host.connection(stream).await;
+                    }
+                    Incoming::Remote(stream) => {
+                        let _ = websocket::connection(
+                            stream,
+                            host,
+                            origins.expect("WebSocket listener"),
+                        )
+                        .await;
+                    }
+                }
             });
         };
         self.stop.cancel();
@@ -169,6 +233,12 @@ impl Host {
         {
             return Err("Host peer must belong to the current account".into());
         }
+        self.channel(stream, Authority::Local).await
+    }
+    async fn channel<S>(self: &Arc<Self>, stream: S, authority: Authority) -> Result<()>
+    where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+    {
         let (input, mut output) = tokio::io::split(stream);
         let mut input = wire::Reader::new(input);
         let opening: Opening = tokio::select! {
@@ -180,8 +250,41 @@ impl Host {
             return Err("Host protocol or incarnation changed".into());
         }
         match opening.request {
-            Request::Status => wire::write(&mut output, &Response::Status(self.status())).await,
+            Request::Status => {
+                let gate = self.access_gate.lock().await;
+                self.identify(&authority, opening.client_instance.as_deref())
+                    .await?;
+                drop(gate);
+                wire::write(&mut output, &Response::Status(self.status())).await
+            }
+            Request::PrepareAccess { principal } => {
+                authority.local()?;
+                wire::write(
+                    &mut output,
+                    &Response::Pairing(self.prepare_access(principal).await),
+                )
+                .await
+            }
+            Request::RevokeAccess { credential } => {
+                authority.local()?;
+                wire::write(
+                    &mut output,
+                    &Response::Revoked(self.revoke_access(credential).await),
+                )
+                .await
+            }
+            Request::FinalizeAccess => {
+                wire::write(
+                    &mut output,
+                    &Response::Finalized(
+                        self.finalize_access(&authority, opening.client_instance)
+                            .await,
+                    ),
+                )
+                .await
+            }
             Request::Retire => {
+                authority.local()?;
                 // No connection count or RPC completion substitutes for native
                 // producer fences and actual accepted background work.
                 let result = self.application.shutdown_if_idle().await;
@@ -191,6 +294,10 @@ impl Host {
                 wire::write(&mut output, &Response::Retired(result)).await
             }
             Request::Connect => {
+                let gate = self.access_gate.lock().await;
+                let principal = self
+                    .identify(&authority, opening.client_instance.as_deref())
+                    .await?;
                 let id = Uuid::new_v4();
                 let session = {
                     let mut sessions = self.sessions.lock().unwrap();
@@ -198,6 +305,7 @@ impl Host {
                         return Err("Host session capacity exhausted or Host is closing".into());
                     }
                     let session = Arc::new(Session {
+                        principal,
                         peer: Peers::new(Peer::new(
                             self.source.clone(),
                             self.consumers.values().cloned().collect(),
@@ -211,6 +319,7 @@ impl Host {
                     sessions.insert(id, session.clone());
                     session
                 };
+                drop(gate);
                 let result = async {
                     let connected = Connected {
                         version: VERSION, epoch: self.epoch, session: id, source: self.source.clone(),
@@ -225,6 +334,7 @@ impl Host {
                     tokio::select! {
                         biased;
                         () = self.stop.cancelled() => Ok(()),
+                        () = session.transport.wait_for_close() => Ok(()),
                         result = input.read::<SessionControl>() => result.map(|SessionControl::Close| ()),
                     }
                 }.await;
@@ -239,6 +349,10 @@ impl Host {
                 result
             }
             Request::Call { session } => {
+                let gate = self.access_gate.lock().await;
+                let principal = self
+                    .identify(&authority, opening.client_instance.as_deref())
+                    .await?;
                 let session = self
                     .sessions
                     .lock()
@@ -246,6 +360,10 @@ impl Host {
                     .get(&session)
                     .cloned()
                     .ok_or("Host session is unavailable")?;
+                if session.principal != principal {
+                    return Err("Host session belongs to another authenticated principal".into());
+                }
+                drop(gate);
                 wire::write(&mut output, &Response::Accepted).await?;
                 // Carry buffered bytes into the existing bounded transport.
                 session
@@ -265,6 +383,10 @@ impl Host {
             session.transport.close().await?;
         }
         self.application.shutdown().await?;
+        self.access
+            .shutdown()
+            .await
+            .map_err(|error| error.to_string())?;
         self.store.drain().await;
         self.sessions.lock().unwrap().clear();
         Ok(())

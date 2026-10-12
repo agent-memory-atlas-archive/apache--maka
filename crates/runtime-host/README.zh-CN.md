@@ -138,7 +138,11 @@ endpoint 与 native grants。每个认证会话持有原批准和 transport，�
 该会话的调用清理，不影响其他会话。公开 mutation 使用 `Call::confirm` 和
 `Client::mutate_owned`，由 Host gateway 在最终准入前记录自身 caller intent；私有 UI
 通道仍要求原 caller commit，并拒绝 Host confirmation。公开状态中的计数仅供观察，
-退出委托 `Application::shutdown_if_idle` 及真实清理。CLI、ACP 和认证 WebSocket 入口仍待迁移。
+退出委托 `Application::shutdown_if_idle` 及真实清理。同一应用协议也通过有界二进制
+WebSocket 消息运行，HTTP 先检查凭据和 Origin。配对只批准确切的持久来源与公开 endpoint
+选择，确认前会过期，并绑定导入客户端身份。会话准入与凭据撤销共用一个 gate；撤销只关闭
+该凭据的原 transport。原生生命周期与凭据管理操作仅允许本地 owner；旧操作名不授权应用
+调用。CLI 和 ACP 入口仍待迁移。
 
 caller 历史按稳定 consumer 与 operation 保留首次 source 和原 Ref，跨 source 修订或目标变化
 仍读取原记录；不同 Ref 冲突。caller 记录不宣称业务结果，不产生 Host 授权。记录失败或 commit

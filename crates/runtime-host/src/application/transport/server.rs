@@ -211,15 +211,21 @@ impl Server {
                 .map_err(|_| "Application connection owner disappeared".to_string())?
         })
     }
+    /// Revoke admission and cancel original channels without acknowledging cleanup.
+    pub fn request_close(&self) {
+        let mut gate = self.admission.lock().unwrap();
+        *gate = true;
+        self.stop.cancel();
+        self.tasks.close();
+    }
+    /// Observe the close request, not physical cleanup.
+    pub fn wait_for_close(&self) -> impl Future<Output = ()> + Send + 'static {
+        self.stop.clone().cancelled_owned()
+    }
     /// Err retains failed Scope/connection custody. It never acknowledges SQL
     /// or Application cleanup, which the embedding observes independently next.
     pub async fn close(&self) -> Result<()> {
-        {
-            let mut gate = self.admission.lock().unwrap();
-            *gate = true;
-            self.stop.cancel();
-            self.tasks.close();
-        }
+        self.request_close();
         self.tasks.wait().await;
         let failed = self.failed.lock().unwrap();
         if failed.is_empty() {

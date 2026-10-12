@@ -204,7 +204,13 @@ and drains its calls without affecting other sessions. Public mutations use
 intent before final admission. Private UI channels require their original caller
 commit and reject Host confirmation. Public status counts are observations;
 retirement delegates to `Application::shutdown_if_idle` and physical cleanup.
-The CLI, ACP and authenticated WebSocket entrypoints still require migration.
+The same application wire runs over bounded binary WebSocket messages after HTTP
+credential and Origin checks. Pairing grants the exact persisted source and
+published endpoint selection, expires before finalization, and binds the importing
+client identity. Session admission and credential revocation share one gate;
+revocation closes only that credential's original transports. Native lifecycle and
+credential controls remain local-owner operations. Legacy operation grants do not
+authorize application calls. The CLI and ACP entrypoints still require migration.
 
 `Context::mutate` performs the same caller commit and final admission sequence in
 the original Host caller source. Native and JavaScript mutations share execution

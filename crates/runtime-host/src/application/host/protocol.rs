@@ -30,6 +30,8 @@ pub const VERSION: u32 = 1;
 pub(super) struct Opening {
     pub version: u32,
     pub epoch: Option<Uuid>,
+    #[serde(default)]
+    pub client_instance: Option<String>,
     pub request: Request,
 }
 #[derive(Serialize, Deserialize)]
@@ -39,6 +41,9 @@ pub(super) enum Request {
     Call { session: Uuid },
     Status,
     Retire,
+    PrepareAccess { principal: String },
+    RevokeAccess { credential: String },
+    FinalizeAccess,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(
@@ -53,6 +58,9 @@ pub(super) enum Response {
     Status(Status),
     Retired(Result<bool>),
     Closed,
+    Pairing(Result<super::Pairing>),
+    Revoked(Result<bool>),
+    Finalized(Result<()>),
 }
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]

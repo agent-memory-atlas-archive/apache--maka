@@ -49,6 +49,7 @@ impl Client {
         wire::write(
             &mut anchor,
             &Opening {
+                client_instance: None,
                 version: VERSION,
                 epoch,
                 request: Request::Connect,
@@ -106,6 +107,7 @@ impl Client {
         wire::write(
             &mut output,
             &Opening {
+                client_instance: None,
                 version: VERSION,
                 epoch: Some(self.connected.epoch),
                 request: Request::Call {
@@ -140,6 +142,22 @@ impl Client {
             _ => Err("Host session cleanup remains unconfirmed".into()),
         }
     }
+    pub async fn prepare_access(
+        address: &Path,
+        epoch: Uuid,
+        principal: String,
+    ) -> Result<super::Pairing> {
+        match control(address, Some(epoch), Request::PrepareAccess { principal }).await? {
+            Response::Pairing(result) => result,
+            _ => Err("Host pairing response mismatch".into()),
+        }
+    }
+    pub async fn revoke_access(address: &Path, epoch: Uuid, credential: String) -> Result<bool> {
+        match control(address, Some(epoch), Request::RevokeAccess { credential }).await? {
+            Response::Revoked(result) => result,
+            _ => Err("Host revocation response mismatch".into()),
+        }
+    }
     pub async fn status(address: &Path, epoch: Option<Uuid>) -> Result<Status> {
         match control(address, epoch, Request::Status).await? {
             Response::Status(status) => Ok(status),
@@ -160,6 +178,7 @@ async fn control(address: &Path, epoch: Option<Uuid>, request: Request) -> Resul
     wire::write(
         &mut stream,
         &Opening {
+            client_instance: None,
             version: VERSION,
             epoch,
             request,
