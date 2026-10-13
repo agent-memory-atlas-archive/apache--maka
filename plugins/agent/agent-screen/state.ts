@@ -197,6 +197,7 @@ export interface State {
   hasBackends: boolean;
   modelSetup: ModelSetup['kind'];
   modelOpenRequest: number | null;
+  connectionSetupRequest: number | null;
   catalogEpoch: number;
   modelRefreshing: boolean;
   searchOpen: boolean;
@@ -215,6 +216,7 @@ export interface State {
   settingsCategory: SettingsCategory;
   insightsScope: InsightsProps['scope'];
   sidebar: { open: boolean } | { command: TerminalPaneCommand | null };
+  inspector: 'details' | 'terminal' | null;
   terminals: boolean;
   skills: boolean;
   place: string;

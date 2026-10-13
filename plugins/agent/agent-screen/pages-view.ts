@@ -263,8 +263,18 @@ export function pagesView<N extends Node>(
                 presentation.slot(
                   'connections',
                   'connections',
-                  { theme, locale, ...pageShell('connections') },
-                  { chrome: 'page-chrome', closed: 'settings-closed', changed: 'settings-changed' },
+                  {
+                    theme,
+                    locale,
+                    ...pageShell('connections'),
+                    setupRequest: state.connectionSetupRequest,
+                  },
+                  {
+                    chrome: 'page-chrome',
+                    closed: 'settings-closed',
+                    changed: 'settings-changed',
+                    completed: 'setup-completed',
+                  },
                 ),
               ],
               {

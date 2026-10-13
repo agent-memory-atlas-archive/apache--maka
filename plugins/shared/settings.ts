@@ -26,18 +26,27 @@ import type { Node, Presentation } from './view.js';
 
 export const settingsCategories = [
   'appearance',
-  'interface',
   'models',
   'sessions',
-  'host',
-  'plugins',
   'assistant',
   'insights',
   'web',
-  'jev',
-  'subagents',
+  'advanced',
 ] as const;
 export type SettingsCategory = (typeof settingsCategories)[number];
+export function settingsCategory(value: string): SettingsCategory | null {
+  const moved: Record<string, SettingsCategory> = {
+    interface: 'appearance',
+    host: 'advanced',
+    plugins: 'advanced',
+    jev: 'advanced',
+    subagents: 'assistant',
+  };
+  return (
+    moved[value] ??
+    (settingsCategories.includes(value as SettingsCategory) ? (value as SettingsCategory) : null)
+  );
+}
 interface SettingsState {
   preferences: AppearanceEditor;
   settingsCategory: SettingsCategory;
@@ -109,9 +118,7 @@ export function settingsView<N extends Node>(
 ): N {
   const ui = presentation.paint(theme),
     t = (key: string) => tuiText(locale, key);
-  const categories = settingsCategories.filter(
-    (key) => (key !== 'web' || web) && (key !== 'jev' || jev) && (key !== 'subagents' || subagents),
-  );
+  const categories = settingsCategories.filter((key) => key !== 'web' || web);
   const appearance = state.saved?.appearance ?? theme.configuration;
   const busy = state.command !== null || state.checkpoint?.state.kind !== 'ready';
   const icons: Record<string, [string, string]> = {
@@ -167,9 +174,8 @@ export function settingsView<N extends Node>(
       false,
       disabled,
     );
-  const title = (key: SettingsCategory) =>
-    t(key === 'plugins' ? 'route-plugins' : 'settings-' + key);
-  const sections: Record<SettingsCategory, N[]> = {
+  const title = (key: string) => t(key === 'plugins' ? 'route-plugins' : 'settings-' + key);
+  const sections: Record<string, N[]> = {
     subagents: subagents
       ? [
           presentation.slot(
@@ -307,9 +313,26 @@ export function settingsView<N extends Node>(
         appearance.motion === false ? 'off' : 'on',
       ),
     ],
-    models: [link('settings-connections', t('route-connections'))],
+    models: [
+      presentation.slot(
+        'settings-models',
+        'connections',
+        { theme, locale },
+        { changed: 'settings-models-changed', closed: 'settings-models-closed' },
+      ),
+    ],
     plugins: [link('settings-plugins', t('route-plugins'))],
   };
+  sections.appearance!.push(...sections.interface!);
+  sections.assistant!.push(...sections.subagents!);
+  sections.advanced = [
+    ui.text('network-heading', t('settings-host'), 14, theme.text, 500),
+    ...sections.host!,
+    ...(jev
+      ? [ui.text('tools-heading', t('settings-jev'), 14, theme.text, 500), ...sections.jev!]
+      : []),
+    ...sections.plugins!,
+  ];
   const page = ui.box(
     'settings-page',
     [

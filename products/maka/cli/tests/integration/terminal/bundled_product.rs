@@ -630,7 +630,6 @@ fn bundled_connections_search_scroll_click_and_chatgpt_credentials() {
     tui.wait_for("› Settings");
     tui.send(b"\r");
     click(&mut tui, "Models");
-    click(&mut tui, "Model connections");
     tui.wait_for("No connections yet.");
     click(&mut tui, "Add connection");
     tui.wait_until(|s| {
@@ -718,14 +717,12 @@ fn bundled_language_switch_updates_and_remains_responsive() {
     tui.wait_for("› Settings");
     tui.send(b"\r");
     click(&mut tui, "Models");
-    click(&mut tui, "Model connections");
     tui.wait_for("No connections yet.");
     click(&mut tui, "Add connection");
     tui.wait_for("ChatGPT Subscription");
     tui.send(b"\x1b");
     tui.wait_for("Add connection");
-    tui.send(b"\x1b");
-    click(&mut tui, "Interface");
+    click(&mut tui, "Appearance");
     click(&mut tui, "Language");
     click(&mut tui, "简体中文");
     tui.wait_until_with_timeout(|s| s.contains("语言"), Duration::from_secs(3));

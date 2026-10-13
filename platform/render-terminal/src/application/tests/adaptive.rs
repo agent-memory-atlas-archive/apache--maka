@@ -264,3 +264,60 @@ fn adaptive_hidden_nested_dialog_uses_original_omission_and_foreground_publicati
     );
     close(&mut p);
 }
+
+#[test]
+fn adaptive_divider_drag_and_keyboard_resize_preserve_the_editor_and_clamp_width() {
+    let (_runtime, mut p, _) = fixture();
+    draw(&mut p, 120, 20);
+    let editor = p.focus.clone().unwrap();
+    p.input(Event::Paste("Draft 中🙂".into())).unwrap();
+    draw(&mut p, 120, 20);
+    for (kind, column) in [
+        (MouseEventKind::Down(MouseButton::Left), 31),
+        (MouseEventKind::Drag(MouseButton::Left), 43),
+        (MouseEventKind::Up(MouseButton::Left), 43),
+    ] {
+        p.input(Event::Mouse(MouseEvent {
+            kind,
+            column,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+        draw(&mut p, 120, 20);
+        assert!(
+            p.focus.as_ref().unwrap().same(&editor),
+            "resizing keeps draft focus"
+        );
+    }
+    assert_eq!(inline(&p), 44);
+    assert!(!state(&p).panes["pane"].resizing);
+    draw(&mut p, 65, 20);
+    assert_eq!(inline(&p), 37, "keep enough space for the main content");
+    draw(&mut p, 120, 20);
+    assert_eq!(inline(&p), 44, "widening restores the chosen size");
+    p.input(Event::Key(KeyEvent::new(
+        KeyCode::BackTab,
+        KeyModifiers::SHIFT,
+    )))
+    .unwrap();
+    draw(&mut p, 120, 20);
+    assert_eq!(p.focus.as_ref().unwrap().key, "pane");
+    p.input(key(KeyCode::Left)).unwrap();
+    draw(&mut p, 120, 20);
+    assert_eq!(inline(&p), 43);
+    p.input(key(KeyCode::Home)).unwrap();
+    draw(&mut p, 120, 20);
+    assert_eq!(inline(&p), 32);
+    p.input(key(KeyCode::Tab)).unwrap();
+    draw(&mut p, 120, 20);
+    assert!(p.focus.as_ref().unwrap().same(&editor));
+    let mount = p.application.child_mount(&p.root, "editor").unwrap();
+    assert_eq!(
+        editor_owner(&*p.resources.owners[&mount.id()].state)
+            .editor
+            .text(),
+        "Draft 中🙂"
+    );
+    close(&mut p);
+}

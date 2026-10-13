@@ -30,6 +30,7 @@ import type {
   Component,
   EditorCommand,
   EditorObservation,
+  EditorTextRef,
   Emission,
   OperationReply,
   InputProps,
@@ -52,6 +53,7 @@ import {
 const names = ['title', 'labels'] as const;
 type FieldName = (typeof names)[number];
 interface Field {
+  baseline: EditorTextRef | null;
   observation: EditorObservation | null;
   command: EditorCommand | null;
   sequence: number;
@@ -241,6 +243,8 @@ function settle(state: State, reply: OperationReply, events: Emission[]) {
     state.revokeGrants = false;
     state.conflict = false;
     state.notice = 'detailsSaved';
+    for (const name of names)
+      state.fields[name].baseline = state.current!.captured[name].snapshot.text;
     events.push({ name: 'changed', value: { sessionId: value.session.id } });
   } else if (value.kind === 'revision_conflict') {
     state.conflict = true;
@@ -286,9 +290,18 @@ function frame<N extends Node>(
       ui.box(
         'details-fields',
         [
-          ...(target === 'desktop'
-            ? [ui.text('details-heading', text.detailsTitle, 17, props.theme.text, 550)]
-            : []),
+          ui.box(
+            'details-header',
+            [
+              ui.box(
+                'details-heading-cell',
+                [ui.text('details-heading', text.detailsTitle, 17, props.theme.text, 550)],
+                { terminal: { grow: 1 } },
+              ),
+              ui.button('close', text.closeModels),
+            ],
+            { row: true, gap: 1 },
+          ),
           ...(state.target
             ? [
                 ui.text(
@@ -408,7 +421,7 @@ function frame<N extends Node>(
         {
           gap: target === 'desktop' ? 8 : 1,
           scroll: 'anchor',
-          terminal: { grow: 1, basis: 0 },
+          terminal: { shrink: true },
           style: { width: fill, maxHeight: 420 },
         },
       ),
@@ -424,7 +437,7 @@ function frame<N extends Node>(
       ui.box(
         'details-actions',
         [
-          ui.button('save', text.detailsSave, !canSave(state, props)),
+          ui.button('save', text.detailsSave, !canSave(state, props), true),
           ui.button('review', text.detailsReview, locked || !state.target),
           ...(state.current?.reference
             ? [
@@ -444,7 +457,6 @@ function frame<N extends Node>(
             false,
             target === 'tui' ? { background: 0, align: 'start' } : {},
           ),
-          ui.button('close', text.cancel),
         ],
         {
           row: true,
@@ -640,6 +652,7 @@ export function sessionDetails<N extends Node>(
         command: null,
         sequence: 0,
         phase: 'initial',
+        baseline: null,
       });
       const state: State = {
         revision: 0,
@@ -663,7 +676,28 @@ export function sessionDetails<N extends Node>(
     },
     update(state, props) {
       state.revision++;
-      if (props.open && !state.target && props.session) {
+      if (
+        props.open &&
+        props.session &&
+        (!state.target ||
+          ((state.target.id !== props.session.id ||
+            state.target.revision !== props.session.revision) &&
+            !busy(state) &&
+            !state.reviewed &&
+            !state.revokeGrants &&
+            sameValue(state.permissions, state.target.permissions) &&
+            names.every(
+              (name) =>
+                !state.fields[name].observation ||
+                sameValue(
+                  state.fields[name].baseline,
+                  state.fields[name].observation!.snapshot.text,
+                ),
+            )))
+      ) {
+        for (const name of names) state.fields[name].phase = 'initial';
+        state.conflict = false;
+        state.notice = null;
         state.target = props.session;
         state.permissions = { ...props.session.permissions };
       }
@@ -690,6 +724,7 @@ export function sessionDetails<N extends Node>(
             receipt.sequence === field.command.sequence
           ) {
             field.phase = receipt.outcome.status === 'applied' ? 'ready' : 'failed';
+            if (field.phase === 'ready') field.baseline = field.observation.snapshot.text;
             field.command = null;
           }
           if (active(state, props)) initialize(state);

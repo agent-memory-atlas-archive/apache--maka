@@ -107,3 +107,26 @@ export function matchesProvider(search: Search, provider: SettingsProvider) {
     ),
   );
 }
+
+export function providerGroup(provider: SettingsProvider): { key: string; label: string } {
+  const name = provider.identity.name.toLowerCase();
+  if (['openai-compatible', 'openai-responses-compatible', 'anthropic-compatible'].includes(name))
+    return { key: 'custom', label: 'provider-custom' };
+  const families: [string, string][] = [
+    ['alibaba', 'Alibaba'],
+    ['minimax', 'MiniMax'],
+    ['tencent', 'Tencent'],
+    ['volcengine', 'Volcengine'],
+    ['xiaomi', 'Xiaomi'],
+    ['stepfun', 'StepFun'],
+    ['zai', 'Z.AI'],
+    ['moonshot', 'Moonshot / Kimi'],
+    ['kimi', 'Moonshot / Kimi'],
+    ['ollama', 'Ollama'],
+    ['opencode', 'OpenCode'],
+  ];
+  const family = families.find(([prefix]) => name === prefix || name.startsWith(prefix + '-'));
+  return family
+    ? { key: family[1], label: family[1] }
+    : { key: provider.descriptor.label, label: provider.descriptor.label };
+}

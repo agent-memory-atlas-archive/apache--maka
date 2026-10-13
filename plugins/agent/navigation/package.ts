@@ -24,7 +24,7 @@ import { one, uiEntries } from '../../shared/package.js';
 const entries = uiEntries({
   contract: own.navigationContract,
   export: 'Navigation',
-  imports: {},
+  imports: { reading: one(sdk.contracts.readingArea) },
 });
 export default {
   schemaVersion: 2,

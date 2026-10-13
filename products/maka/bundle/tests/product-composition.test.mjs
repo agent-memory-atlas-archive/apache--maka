@@ -18,6 +18,8 @@
  */
 
 import assert from 'node:assert/strict';
+import Ajv from 'ajv/dist/2020.js';
+import addFormats from 'ajv-formats';
 import { test } from 'node:test';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync, mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs';
@@ -286,4 +288,111 @@ test('WorkHub product authors two independent Agent graphs with explicit native 
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('workspace and navigation mount only declared child capabilities with valid props', async () => {
+  const appearance = await import('../dist/packages/appearance/tui.js');
+  const theme = appearance.activate({ scheme: 'dark' }).Appearance.value;
+  const ajv = new Ajv({
+    strict: false,
+    formats: { uint64: true, uint32: true, uint16: true, int16: true, uint: true },
+  });
+  addFormats(ajv);
+  function check(node, imports) {
+    if (!node || typeof node !== 'object') return;
+    if (node.kind === 'component') {
+      assert.ok(imports[node.binding], `undeclared child: ${node.binding}`);
+      const schema = imports[node.binding].contract.interface.props;
+      if (schema) {
+        const valid = ajv.compile(schema);
+        assert.ok(valid(node.props), `${node.key}: ${JSON.stringify(valid.errors)}`);
+      }
+    }
+    for (const value of Object.values(node))
+      if (Array.isArray(value)) value.forEach((child) => check(child, imports));
+      else check(value, imports);
+  }
+  for (const target of ['tui', 'desktop']) {
+    for (const name of ['agent-screen', 'navigation']) {
+      const module = await import(`../dist/packages/${name}/${target}.js`);
+      module.activate({ locale: 'en' });
+      const manifest = JSON.parse(
+        readFileSync(resolve(root, 'dist/packages', name, 'maka.extension.json'), 'utf8'),
+      );
+      const props =
+        name === 'agent-screen'
+          ? {}
+          : {
+              theme,
+              locale: 'en',
+              sessions: [],
+              selected: null,
+              busy: false,
+              loading: false,
+              older: false,
+              newer: false,
+            };
+      const out = module.component.mount(props, { appearance: [theme] });
+      check(out.frame.view, manifest.application.entries[target].imports);
+    }
+  }
+});
+
+test('inline approval Escape returns to the retained task and composer', async () => {
+  const appearance = await import('../dist/packages/appearance/tui.js');
+  const theme = appearance.activate({ scheme: 'dark' }).Appearance.value;
+  const module = await import('../dist/packages/agent-screen/tui.js');
+  module.activate({ locale: 'en' });
+  const values = { appearance: [theme] };
+  let out = module.component.mount({}, values);
+  out.frame.state.selected = {
+    id: 'task-a',
+    title: 'Task A',
+    labels: [],
+    revision: 1,
+    updatedAt: 1,
+    archived: false,
+    activity: 'idle',
+    boundaryRevision: 0,
+    hasUnread: false,
+    dataSource: {
+      stateDomain: 'a'.repeat(64),
+      deployment: '00000000-0000-0000-0000-000000000001',
+      namespace: ['00000000-0000-0000-0000-000000000002'],
+    },
+    permissions: { access: 'workspace_write', requestPermissions: true },
+    workspace: { path: '/project', directoryIdentity: 'a'.repeat(64), identity: 'workspace-a' },
+  };
+  out.frame.state.dialog = 'approval';
+  out = module.component.update(out.frame.state, {}, values);
+  const nodes = (node) =>
+    node && typeof node === 'object'
+      ? [
+          node,
+          ...Object.values(node).flatMap((value) =>
+            Array.isArray(value) ? value.flatMap(nodes) : nodes(value),
+          ),
+        ]
+      : [];
+  const before = nodes(out.frame.view);
+  const composer = before.find((n) => n.kind === 'component' && n.key === 'composer');
+  const shortcut = before
+    .flatMap((n) => n.shortcuts ?? [])
+    .find((s) => s.key === 'escape' && s.input === 'question-close');
+  assert.ok(shortcut?.enabled, 'inline interaction keeps the dialog Escape affordance');
+  out = module.component.event(
+    out.frame.state,
+    { kind: 'raw', key: shortcut.input, event: { kind: 'activate' } },
+    {},
+    values,
+  );
+  assert.equal(out.frame.state.dialog, null);
+  assert.equal(out.frame.state.selected.id, 'task-a');
+  const after = nodes(out.frame.view).find((n) => n.kind === 'component' && n.key === 'composer');
+  assert.equal(
+    after.props.context,
+    composer.props.context,
+    'closing approval preserves the native draft owner',
+  );
+  assert.equal(after.props.command, composer.props.command);
 });

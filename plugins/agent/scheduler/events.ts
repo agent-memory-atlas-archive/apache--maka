@@ -30,6 +30,7 @@ import type {
   Emission,
   OperationReply,
   TextChunk,
+  ReadingObservation,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { type SchedulerProps, type SelectedModel } from '../../shared/contracts.js';
 import { sameValue } from '../../shared/value.js';
@@ -42,6 +43,8 @@ import {
   initialize,
   inspectAction,
   list,
+  moveList,
+  sessions,
   locked,
   mutate,
   request,
@@ -65,13 +68,36 @@ export function handleEvent<N extends Node>(
     events: Emission[] = [];
   if (input.kind === 'component' && input.child === 'schedule-reading' && input.name === 'input')
     input = input.event as ComponentInput;
-  if (input.kind === 'action' && input.key === state.watch?.key) {
+  if (
+    input.kind === 'component' &&
+    input.child === 'schedule-reading' &&
+    input.name === 'observed'
+  ) {
+    const observed = input.event as ReadingObservation;
+    if (
+      observed.scroll &&
+      observed.scroll.readingRevision > state.scrollRevision &&
+      observed.viewport?.readingRevision === observed.readingRevision &&
+      observed.pendingCommand == null
+    ) {
+      state.scrollRevision = observed.scroll.readingRevision;
+      if (
+        !locked(state, props) &&
+        (observed.scroll.direction === 'up' ? observed.viewport.atStart : observed.viewport.atEnd)
+      ) {
+        if (state.picker) sessions(state, actions, observed.scroll.direction);
+        else if (state.route === 'list') moveList(state, observed.scroll.direction);
+      }
+    }
+  } else if (input.kind === 'action' && input.key === state.watch?.key) {
     const outcome = input.event as ActionOutcome;
     if (outcome.status === 'updated') {
       state.watchFailed = false;
       const page = outcome.value as AgentSchedules;
-      if (page.kind === 'page') state.page = page;
-      else if (page.kind === 'task') {
+      if (page.kind === 'page') {
+        state.page = page;
+        state.listLoading = false;
+      } else if (page.kind === 'task') {
         state.detail = page.detail ?? null;
         const next = state.nextAction;
         state.nextAction = null;
@@ -90,6 +116,7 @@ export function handleEvent<N extends Node>(
             });
         }
       } else if (page.kind === 'changed') {
+        if (state.page) state.page.revision = page.revision;
         list(state);
         state.notice = 'scheduleChanged';
       }
@@ -252,27 +279,20 @@ export function handleEvent<N extends Node>(
             state.form.timing = selected as Timing;
           if (key === 'misfire' && ['skip', 'latest'].includes(selected ?? ''))
             state.form.misfire = selected as Form['misfire'];
-        } else if (key === 'source' || key.startsWith('sessions-')) {
-          state.picker = true;
-          const cursor =
-            key === 'sessions-next'
-              ? state.sessions?.after
-              : key === 'sessions-previous'
-                ? state.sessions?.before
-                : null;
-          request(state, actions, { kind: 'sessions' }, 'agent', 'list', {
-            filter: 'all',
-            position: cursor
-              ? {
-                  kind: key === 'sessions-next' ? 'after' : 'before',
-                  cursor,
-                  revision: state.sessions!.revision,
-                }
-              : { kind: 'start' },
-          });
+        } else if (key === 'source' || key === 'sessions-refresh') {
+          sessions(state, actions);
         } else if (state.picker && key.startsWith('source-')) {
           const session = state.sessions?.sessions.find((s) => key === 'source-' + s.id);
-          if (session && !session.archived && state.form) {
+          if (
+            session &&
+            presentation.target === 'tui' &&
+            (input.event as { kind?: string }).kind === 'activate'
+          ) {
+            state.focused = key;
+            const at = state.sessions!.sessions.indexOf(session);
+            if (at >= state.sessions!.sessions.length - 3) sessions(state, actions, 'down');
+            else if (at < 3) sessions(state, actions, 'up');
+          } else if (session && !session.archived && state.form) {
             state.form.target = {
               sessionId: session.id,
               workspace: session.workspace,
@@ -289,10 +309,18 @@ export function handleEvent<N extends Node>(
           if (state.route === 'detail' && state.detail)
             watch(state, { kind: 'get', taskId: state.detail.task.id });
           else list(state);
-        } else if (key === 'next' && state.page?.nextCursor) list(state, state.page.nextCursor);
-        else if (key.startsWith('task-')) {
+        } else if (key.startsWith('task-')) {
           const task = state.page?.tasks.find((t) => key === 'task-' + t.id);
-          if (task) detail(state, task.id);
+          if (
+            task &&
+            presentation.target === 'tui' &&
+            (input.event as { kind?: string }).kind === 'activate'
+          ) {
+            state.focused = key;
+            const at = state.page!.tasks.indexOf(task);
+            if (at >= state.page!.tasks.length - 3) moveList(state, 'down');
+            else if (at < 3) moveList(state, 'up');
+          } else if (task) detail(state, task.id);
         } else if (key === 'acknowledge' && state.detail?.pendingFire)
           mutate(state, actions, {
             kind: 'acknowledge',

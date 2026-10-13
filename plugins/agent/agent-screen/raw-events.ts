@@ -243,25 +243,10 @@ export function handleRaw<N extends Node>(
       state.catalog = null;
       catalog(state);
     }
-  } else if (['catalog-refresh', 'catalog-more', 'catalog-previous'].includes(input.key)) {
-    if (!mutationPending(state) && !catalogPending(state)) {
-      const page = state.catalog;
-      if (input.key === 'catalog-refresh') catalog(state);
-      else if (!state.catalogFailed && page) {
-        if (input.key === 'catalog-more' && page.after)
-          catalog(state, {
-            kind: 'after',
-            revision: page.revision,
-            cursor: page.after,
-          });
-        else if (input.key === 'catalog-previous' && page.before)
-          catalog(state, {
-            kind: 'before',
-            revision: page.revision,
-            cursor: page.before,
-          });
-      }
-    }
+  } else if (input.key === 'catalog-refresh') {
+    if (!mutationPending(state) && !catalogPending(state)) catalog(state);
+  } else if (input.key === 'inspector-close' && !state.dialog) {
+    state.inspector = null;
   } else if (input.key === 'palette-open' && state.dialog === null) {
     state.dialog = 'palette';
     state.copyRequest = ++state.serial;

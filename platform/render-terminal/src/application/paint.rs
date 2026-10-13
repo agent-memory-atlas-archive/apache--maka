@@ -1307,6 +1307,7 @@ impl Presenter {
                 pass.panes.push(super::adaptive::Geometry {
                     key: key.clone(),
                     width: area.width,
+                    x: area.x,
                     inline_width: inline,
                     target: state.panes[key].target(node, area.width),
                     time: measurements.cache.time,
@@ -1320,17 +1321,52 @@ impl Presenter {
                     let divider = Placement::new(
                         CellRect::new(area.x + i64::from(inline) - 1, area.y, 1, area.height),
                         area.clip,
-                    )
-                    .visible();
-                    for y in divider.y..divider.bottom() {
+                    );
+                    let target = Target {
+                        identity: TargetIdentity {
+                            mount: mount.clone(),
+                            key: key.clone(),
+                            owner: self.resources.owners[&mount.id()].identity.clone(),
+                            scope: scene.input_scope.clone(),
+                        },
+                        revision: self.application.frame(mount)?.revision,
+                        area: divider,
+                        tab_index: 0,
+                        autofocus: false,
+                        kind: TargetKind::Native,
+                        ancestors: scene.ancestry.clone(),
+                    };
+                    let focused = self.focus.as_ref().is_some_and(|old| old.same(&target));
+                    let hovered = self.hover.as_ref().is_some_and(|old| old.same(&target));
+                    let style = Style::default().fg(color(if focused || hovered {
+                        overlay.title_color.unwrap_or(overlay.border_color)
+                    } else {
+                        overlay.border_color
+                    }));
+                    for y in divider.visible().y..divider.visible().bottom() {
                         buffer.set_stringn(
-                            divider.x,
+                            divider.visible().x,
                             y,
-                            if overlay.ascii { "|" } else { "│" },
+                            if overlay.ascii {
+                                "|"
+                            } else if focused || hovered {
+                                "┃"
+                            } else {
+                                "│"
+                            },
                             1,
-                            Style::default().fg(color(overlay.border_color)),
+                            style,
                         );
                     }
+                    if hovered || focused {
+                        scene.tooltip = Some((
+                            scene.input_scope.clone(),
+                            divider,
+                            format!("{} · ← → · Home", overlay.label),
+                            style,
+                        ));
+                    }
+                    scene.targets.push(target);
                 }
                 let body = Placement::new(
                     CellRect::new(

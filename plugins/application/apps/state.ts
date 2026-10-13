@@ -77,6 +77,9 @@ export interface State extends PageState {
   route: 'list' | 'app' | 'choose' | 'configure' | 'bindings' | 'file';
   catalog: BindingCandidatesPage | null;
   selected: string | null;
+  listWindow: number;
+  scrollRevision: number;
+  focused: string | null;
   opened: string[];
   draft: Draft | null;
   fields: { name: Field; setting: Field };

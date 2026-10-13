@@ -76,8 +76,8 @@ async function client(presentation, entries = []) {
       out = component.event(out.frame.state, input, props, {});
       return this;
     },
-    raw(key) {
-      return this.event({ kind: 'raw', key, event: { kind: 'activate' } });
+    raw(key, kind = 'submit') {
+      return this.event({ kind: 'raw', key, event: { kind } });
     },
     child(child, name, event) {
       return this.event({ kind: 'component', child, name, event });

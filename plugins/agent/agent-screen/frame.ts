@@ -144,10 +144,160 @@ export function frame<N extends Node>(
     actions,
   );
   const pageContent = pagesView(presentation, state, theme, locale, values, main);
+  const inlineInteraction =
+    target === 'tui' && (state.dialog === 'approval' || state.dialog === 'question');
+  const interactionSlots = [
+    ...(state.interaction?.record?.request.kind === 'service_approval' ||
+    state.interaction?.record?.request.kind === 'permissions'
+      ? [
+          presentation.slot(
+            `${state.interaction.record.request.kind === 'permissions' ? 'permission' : 'service'}-approval-${state.interaction.attempt}`,
+            state.interaction.record.request.kind === 'permissions'
+              ? 'permissionApproval'
+              : 'serviceApproval',
+            {
+              theme,
+              locale,
+              open: state.dialog === 'approval',
+              record: state.interaction.record,
+              busy:
+                mutationPending(state) ||
+                state.selected?.id !== state.interaction.sessionId ||
+                !!state.selected?.archived,
+              checking: Object.values(state.pending).some(
+                (r) => r.kind === 'interaction' || r.kind === 'receipt' || r.kind === 'respond',
+              ),
+              status: state.uncertain
+                ? text.interactionUnknown
+                : state.interaction.notice
+                  ? text[state.interaction.notice]
+                  : state.selected?.id !== state.interaction.sessionId
+                    ? text.interactionChanged
+                    : '',
+            } satisfies ServiceApprovalProps,
+            { closed: 'closed', submit: 'submit', check: 'check' },
+          ),
+        ]
+      : state.interaction?.record
+        ? [
+            presentation.slot(
+              questionChild(state),
+              state.interaction.record.request.kind === 'form' ? 'formEditor' : 'questionEditor',
+              {
+                theme,
+                locale,
+                open: state.dialog === 'question',
+                record: state.interaction.record,
+                busy:
+                  mutationPending(state) ||
+                  state.selected?.id !== state.interaction.sessionId ||
+                  !!state.selected?.archived,
+                checking: Object.values(state.pending).some(
+                  (r) => r.kind === 'interaction' || r.kind === 'receipt' || r.kind === 'respond',
+                ),
+                status: state.uncertain
+                  ? text.interactionUnknown
+                  : state.interaction.notice
+                    ? text[state.interaction.notice]
+                    : state.selected?.id !== state.interaction.sessionId
+                      ? text.interactionChanged
+                      : '',
+              } satisfies QuestionEditorProps,
+              { closed: 'closed', submit: 'submit', check: 'check' },
+            ),
+          ]
+        : [
+            ui.box(
+              'question-loading',
+              [
+                ui.button('question-close', text.closeModels),
+                ui.text(
+                  'question-loading-text',
+                  state.interaction?.notice ? text[state.interaction.notice] : text.questionLoading,
+                ),
+                ui.button(
+                  'question-check',
+                  text.check,
+                  Object.values(state.pending).some((r) => r.kind === 'interaction'),
+                ),
+              ],
+              {
+                visible: state.dialog === 'question' || state.dialog === 'approval',
+                terminal: { grow: 1 },
+              },
+            ),
+          ]),
+  ];
+  const inspectorOpen =
+    conversationRoute(state) && !!state.selected && (state.inspector !== null || inlineInteraction);
+  const inspectorSlots = [
+    presentation.slot(
+      'terminal-panel',
+      'terminals',
+      {
+        theme,
+        locale,
+        open:
+          target === 'tui'
+            ? inspectorOpen && !inlineInteraction && state.inspector === 'terminal'
+            : state.dialog === 'terminal',
+        enabled: state.terminals,
+        busy: mutationPending(state),
+        session: state.selected,
+      },
+      { closed: 'closed' },
+    ),
+    presentation.slot(
+      'session-details',
+      'details',
+      {
+        theme,
+        locale,
+        open:
+          target === 'tui'
+            ? inspectorOpen && !inlineInteraction && state.inspector === 'details'
+            : state.dialog === 'details',
+        session: state.selected,
+        busy: mutationPending(state),
+      },
+      { changed: 'changed', closed: 'closed' },
+    ),
+  ];
+  const workspace =
+    target === 'tui'
+      ? ui.box(
+          'workspace',
+          [
+            ui.box('workspace-main', [pageContent], {
+              gap: 0,
+              terminal: inspectorOpen ? { basis: 0, shrink: true } : { grow: 1 },
+            }),
+            ui.box('workspace-inspector', [...inspectorSlots, ...interactionSlots], {
+              visible: inspectorOpen,
+              gap: 0,
+              padding: 1,
+              surface: true,
+              terminal: { grow: 1 },
+            }),
+          ],
+          {
+            gap: 0,
+            terminal: { grow: 1 },
+            wide: {
+              min_width: 100,
+              direction: 'row',
+              children: {
+                'workspace-main': { grow: 1, basis: 0 },
+                'workspace-inspector': { basis: 44, shrink: true },
+              },
+            },
+          },
+        )
+      : pageContent;
   const conversation = ui.box(
     'agent-screen',
     state.embedding.fixed
-      ? [pageContent]
+      ? [workspace]
       : target === 'desktop'
         ? [
             ui.box('sidebar', [navigation], {
@@ -164,7 +314,7 @@ export function frame<N extends Node>(
                 'page',
                 [
                   ui.box('page-inset-start', [], { terminal: { basis: 1 } }),
-                  pageContent,
+                  workspace,
                   ui.box('page-inset-end', [], { terminal: { basis: 1 } }),
                 ],
                 { row: true, gap: 0, terminal: { grow: 1 } },
@@ -220,6 +370,12 @@ export function frame<N extends Node>(
       style: { width: fill, height: fill, align: 'center' },
       terminal: { grow: 1 },
       shortcuts: [
+        ...(inlineInteraction
+          ? [{ key: 'escape', modifiers: [], input: 'question-close', enabled: true } as Shortcut]
+          : []),
+        ...(inspectorOpen && !state.dialog && !state.preferences.open
+          ? [{ key: 'escape', modifiers: [], input: 'inspector-close', enabled: true } as Shortcut]
+          : []),
         ...(state.pages.at(-1) === 'settings' && state.dialog === null && !state.preferences.open
           ? ([{ key: 'escape', modifiers: [], input: 'page-back', enabled: true }] as Shortcut[])
           : []),
@@ -315,92 +471,7 @@ export function frame<N extends Node>(
                 ),
               ]
             : []),
-          ...(state.interaction?.record?.request.kind === 'service_approval' ||
-          state.interaction?.record?.request.kind === 'permissions'
-            ? [
-                presentation.slot(
-                  `${state.interaction.record.request.kind === 'permissions' ? 'permission' : 'service'}-approval-${state.interaction.attempt}`,
-                  state.interaction.record.request.kind === 'permissions'
-                    ? 'permissionApproval'
-                    : 'serviceApproval',
-                  {
-                    theme,
-                    locale,
-                    open: state.dialog === 'approval',
-                    record: state.interaction.record,
-                    busy:
-                      mutationPending(state) ||
-                      state.selected?.id !== state.interaction.sessionId ||
-                      !!state.selected?.archived,
-                    checking: Object.values(state.pending).some(
-                      (r) =>
-                        r.kind === 'interaction' || r.kind === 'receipt' || r.kind === 'respond',
-                    ),
-                    status: state.uncertain
-                      ? text.interactionUnknown
-                      : state.interaction.notice
-                        ? text[state.interaction.notice]
-                        : state.selected?.id !== state.interaction.sessionId
-                          ? text.interactionChanged
-                          : '',
-                  } satisfies ServiceApprovalProps,
-                  { closed: 'closed', submit: 'submit', check: 'check' },
-                ),
-              ]
-            : state.interaction?.record
-              ? [
-                  presentation.slot(
-                    questionChild(state),
-                    state.interaction.record.request.kind === 'form'
-                      ? 'formEditor'
-                      : 'questionEditor',
-                    {
-                      theme,
-                      locale,
-                      open: state.dialog === 'question',
-                      record: state.interaction.record,
-                      busy:
-                        mutationPending(state) ||
-                        state.selected?.id !== state.interaction.sessionId ||
-                        !!state.selected?.archived,
-                      checking: Object.values(state.pending).some(
-                        (r) =>
-                          r.kind === 'interaction' || r.kind === 'receipt' || r.kind === 'respond',
-                      ),
-                      status: state.uncertain
-                        ? text.interactionUnknown
-                        : state.interaction.notice
-                          ? text[state.interaction.notice]
-                          : state.selected?.id !== state.interaction.sessionId
-                            ? text.interactionChanged
-                            : '',
-                    } satisfies QuestionEditorProps,
-                    { closed: 'closed', submit: 'submit', check: 'check' },
-                  ),
-                ]
-              : [
-                  ui.box(
-                    'question-loading',
-                    [
-                      ui.button('question-close', text.closeModels),
-                      ui.text(
-                        'question-loading-text',
-                        state.interaction?.notice
-                          ? text[state.interaction.notice]
-                          : text.questionLoading,
-                      ),
-                      ui.button(
-                        'question-check',
-                        text.check,
-                        Object.values(state.pending).some((r) => r.kind === 'interaction'),
-                      ),
-                    ],
-                    {
-                      visible: state.dialog === 'question' || state.dialog === 'approval',
-                      terminal: { grow: 1 },
-                    },
-                  ),
-                ]),
+          ...(target === 'desktop' ? interactionSlots : []),
           presentation.slot(
             'queue-editor',
             'queueEditor',
@@ -449,31 +520,7 @@ export function frame<N extends Node>(
             { theme, locale, open: state.dialog === 'help' },
             { closed: 'closed' },
           ),
-          presentation.slot(
-            'terminal-panel',
-            'terminals',
-            {
-              theme,
-              locale,
-              open: state.dialog === 'terminal',
-              enabled: state.terminals,
-              busy: mutationPending(state),
-              session: state.selected,
-            },
-            { closed: 'closed' },
-          ),
-          presentation.slot(
-            'session-details',
-            'details',
-            {
-              theme,
-              locale,
-              open: state.dialog === 'details',
-              session: state.selected,
-              busy: mutationPending(state),
-            },
-            { changed: 'changed', closed: 'closed' },
-          ),
+          ...(target === 'desktop' ? inspectorSlots : []),
           presentation.slot(
             'directory-picker',
             'directories',
@@ -508,7 +555,7 @@ export function frame<N extends Node>(
           style: { width: fill, minWidth: 0 },
         },
       ),
-      state.dialog !== null,
+      state.dialog !== null && !inlineInteraction,
       state.dialog === 'terminal' ? { width: pixels(900) } : {},
       state.dialog === 'attachments'
         ? {

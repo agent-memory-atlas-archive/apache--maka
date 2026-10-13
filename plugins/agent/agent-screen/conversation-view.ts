@@ -219,10 +219,14 @@ export function conversationView<N extends Node>(
           : null,
       fileCommand: state.attachments.paste?.command ?? null,
       running: !!state.run,
+      sendLabel: canExecute(state)
+        ? text.send
+        : state.modelSetup === 'connect'
+          ? text.configureModels
+          : text.chooseModel,
       enabled:
         !!state.selected &&
         !state.selected.archived &&
-        canExecute(state) &&
         !state.loading &&
         state.notice !== 'unavailable',
       command: state.command,
@@ -434,20 +438,8 @@ export function conversationView<N extends Node>(
                           : []),
                         ui.button(
                           'home-new',
-                          canExecute(state)
-                            ? '+ ' + tuiText(locale, 'sidebar-new-session') + '   Ctrl+N'
-                            : state.hasBackends
-                              ? text.executionBackend
-                              : tuiText(
-                                  locale,
-                                  state.modelSetup === 'connect'
-                                    ? 'route-connections'
-                                    : 'default-model-title',
-                                ) + '   Ctrl+N',
-                          catalogBusy ||
-                            (!canExecute(state) &&
-                              !state.hasBackends &&
-                              state.modelSetup === 'loading'),
+                          '+ ' + tuiText(locale, 'sidebar-new-session') + '   Ctrl+N',
+                          catalogBusy,
                           true,
                           { background: 0 },
                         ),

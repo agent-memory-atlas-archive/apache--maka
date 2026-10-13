@@ -235,6 +235,9 @@ export interface NavigationProps {
   sessions: AgentSession[];
   selected: string | null;
   busy: boolean;
+  loading?: boolean;
+  older?: boolean;
+  newer?: boolean;
 }
 export interface SourcePage {
   kind: 'message' | SourceField;
@@ -300,6 +303,7 @@ export interface QueueEditorProps {
   command: EditorCommand | null;
 }
 export interface ComposerProps {
+  sendLabel?: string;
   dataSource: AgentDataSource | null;
   attachments: AttachmentDrafts['files'];
   drafts: DraftStatus[];
@@ -739,14 +743,22 @@ export const studioContract = component('maka.studio.Workbench', object({}));
 export const recoveryContract = component('maka.agent.Recovery', object({}));
 export const navigationContract = component(
   'maka.agent.Navigation',
-  object({
-    theme: { $ref: '#/$defs/Theme' },
-    locale,
-    sessions: { type: 'array', maxItems: 32, items: { $ref: '#/$defs/AgentSession' } },
-    selected: { anyOf: [string, { type: 'null' }] },
-    busy: { type: 'boolean' },
-  }),
+  object(
+    {
+      theme: { $ref: '#/$defs/Theme' },
+      locale,
+      sessions: { type: 'array', maxItems: 32, items: { $ref: '#/$defs/AgentSession' } },
+      selected: { anyOf: [string, { type: 'null' }] },
+      busy: { type: 'boolean' },
+      loading: { type: 'boolean' },
+      older: { type: 'boolean' },
+      newer: { type: 'boolean' },
+    },
+    ['theme', 'locale', 'sessions', 'selected', 'busy'],
+  ),
   {
+    older: object({}),
+    newer: object({}),
     select: object(
       { sessionId: string, details: { type: 'boolean' }, usage: { type: 'boolean' } },
       ['sessionId'],
@@ -1065,37 +1077,57 @@ export const composerFooterContract = component(
 );
 export const composerContract = component(
   'maka.agent.Composer',
-  object({
-    context: { anyOf: [{ type: 'string', minLength: 1, maxLength: 512 }, { type: 'null' }] },
-    dataSource: { anyOf: [{ $ref: '#/$defs/AgentDataSource' }, { type: 'null' }] },
-    attachments: {
-      type: 'array',
-      maxItems: 64,
-      items: object({
-        ...native.agent.interface.methods.uploadAttachment.output.$defs.AgentAttachment.properties,
-        dataSource: { $ref: '#/$defs/AgentDataSource' },
-      }),
+  object(
+    {
+      sendLabel: string,
+      context: { anyOf: [{ type: 'string', minLength: 1, maxLength: 512 }, { type: 'null' }] },
+      dataSource: { anyOf: [{ $ref: '#/$defs/AgentDataSource' }, { type: 'null' }] },
+      attachments: {
+        type: 'array',
+        maxItems: 64,
+        items: object({
+          ...native.agent.interface.methods.uploadAttachment.output.$defs.AgentAttachment
+            .properties,
+          dataSource: { $ref: '#/$defs/AgentDataSource' },
+        }),
+      },
+      drafts: {
+        type: 'array',
+        maxItems: 32,
+        items: object({
+          owner: string,
+          status: { enum: ['checking', 'unknown', 'failed', 'applying'] },
+          restore: { anyOf: [{ $ref: '#/$defs/EditorRestoration' }, { type: 'null' }] },
+        }),
+      },
+      filePaste: editor.props.properties.filePaste,
+      fileCommand: editor.props.properties.fileCommand,
+      autoFocus: { type: 'boolean' },
+      hasAttachments: { type: 'boolean' },
+      theme: { $ref: '#/$defs/Theme' },
+      locale,
+      busy: { type: 'boolean' },
+      running: { type: 'boolean' },
+      enabled: { type: 'boolean' },
+      command: editor.props.properties.command,
     },
-    drafts: {
-      type: 'array',
-      maxItems: 32,
-      items: object({
-        owner: string,
-        status: { enum: ['checking', 'unknown', 'failed', 'applying'] },
-        restore: { anyOf: [{ $ref: '#/$defs/EditorRestoration' }, { type: 'null' }] },
-      }),
-    },
-    filePaste: editor.props.properties.filePaste,
-    fileCommand: editor.props.properties.fileCommand,
-    autoFocus: { type: 'boolean' },
-    hasAttachments: { type: 'boolean' },
-    theme: { $ref: '#/$defs/Theme' },
-    locale,
-    busy: { type: 'boolean' },
-    running: { type: 'boolean' },
-    enabled: { type: 'boolean' },
-    command: editor.props.properties.command,
-  }),
+    [
+      'context',
+      'dataSource',
+      'attachments',
+      'drafts',
+      'filePaste',
+      'fileCommand',
+      'autoFocus',
+      'hasAttachments',
+      'theme',
+      'locale',
+      'busy',
+      'running',
+      'enabled',
+      'command',
+    ],
+  ),
   {
     send: editor.events.changed,
     changed: editor.events.changed,
@@ -1227,6 +1259,7 @@ export const modelDefaultContract: Contract = {
   },
 };
 export interface ConnectionsProps extends PageShellProps {
+  setupRequest?: number | null;
   theme: Theme;
   locale: string;
 }
@@ -1293,14 +1326,21 @@ export const credentialContract: Contract = {
         Theme: themeSchema,
       },
     },
-    events: { chrome: pageChrome, closed: object({}), changed: object({}) },
+    events: { chrome: pageChrome, closed: object({}), changed: object({}), completed: object({}) },
     captures: {},
   },
 };
 export const connectionsContract = component(
   'maka.agent.Connections',
-  pageProps({ theme: { $ref: '#/$defs/Theme' }, locale }),
-  { chrome: pageChrome, closed: object({}), changed: object({}) },
+  pageProps(
+    {
+      theme: { $ref: '#/$defs/Theme' },
+      locale,
+      setupRequest: { type: ['integer', 'null'], minimum: 0 },
+    },
+    ['theme', 'locale'],
+  ),
+  { chrome: pageChrome, closed: object({}), changed: object({}), completed: object({}) },
 );
 
 export const deploymentContract = component(

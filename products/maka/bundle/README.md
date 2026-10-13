@@ -44,6 +44,14 @@ The first launch confirms the workspace and installs the selected terminal produ
 node products/maka/bundle/scripts/build.mjs --output /tmp/maka-product-bundle
 ```
 
+## Terminal interaction
+
+Tasks can be created and drafted before a model is configured. Sending without a model opens connection setup; completing setup returns to the original draft and model picker. Providers are grouped by service, with variants and advanced configuration disclosed when needed.
+
+The task sidebar stays alongside the workspace. Drag its divider to resize it, or focus the divider with Tab and use Left/Right; Home restores the default width. Details and running terminals open in a side panel. Narrow workspaces show the active panel in place of the conversation; closing it restores the conversation and draft. Esc dismisses the nearest temporary surface first.
+
+Model, connection, project and task lists load or reveal further rows as they scroll. Rendered windows remain bounded, and overlapping rows keep the viewport anchored when the window moves. Scrolling does not take keyboard focus; arrows and Enter provide the corresponding list actions. Approvals and questions appear with the current task, while operation history remains available for recovery.
+
 ## Author an installation
 
 The CLI can produce checked sources and packages without Node at runtime:

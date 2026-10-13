@@ -45,6 +45,7 @@ export function connectionForm<N extends Node>(
           providers: [],
           search: searchState(),
           providerActive: 0,
+          providerGroup: null,
           providerFocus: null,
           providersFailed: false,
           fields: Object.fromEntries(
@@ -56,6 +57,7 @@ export function connectionForm<N extends Node>(
                 command: null,
                 sequence: 0,
                 initialized: false,
+                initialText: null,
                 failed: false,
               },
             ]),

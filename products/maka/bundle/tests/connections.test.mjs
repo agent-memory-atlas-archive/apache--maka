@@ -349,9 +349,9 @@ for (const platform of ['tui', 'desktop']) {
       connection: { connectionId: target.connectionId, revision: next.revision + 1 },
     });
     c.raw('done');
-    assert.ok(c.out.events.some((e) => e.name === 'closed'));
+    assert.ok(c.out.events.some((e) => e.name === 'completed'));
   });
-  test(`${platform} model pages can return to earlier choices`, async () => {
+  test(`${platform} models extend on scroll and keep earlier choices without paging controls`, async () => {
     const c = await client('models', platform, {
       catalogEpoch: 0,
       openRequest: null,
@@ -375,25 +375,50 @@ for (const platform of ['tui', 'desktop']) {
     });
     c.query('model-query', 1, '');
     c.raw('toggle');
-    c.raw('more');
+    const scroll = (revision, direction, end) =>
+      c.event({
+        kind: 'component',
+        child: 'model-rows',
+        name: 'observed',
+        event: {
+          readingRevision: revision,
+          scroll: { readingRevision: revision, direction },
+          pendingCommand: null,
+          viewport: { readingRevision: revision, atStart: !end, atEnd: end, visibleChildKeys: [] },
+        },
+      });
+    c.event({
+      kind: 'component',
+      child: 'model-rows',
+      name: 'observed',
+      event: {
+        readingRevision: 1,
+        scroll: { readingRevision: 1, direction: 'down' },
+        pendingCommand: null,
+        viewport: { readingRevision: 0, atStart: true, atEnd: false, visibleChildKeys: [] },
+      },
+    });
+    assert.equal(c.state.scrollRevision, 0, 'wait for the viewport produced by the scroll');
+    scroll(1, 'down', true);
     assert.deepEqual(c.action('models').input, { kind: 'continue', revision: 3, cursor });
     c.reply(c.action('models'), {
       kind: 'ready',
       revision: 3,
-      choices: [choice('second')],
+      choices: Array.from({ length: 80 }, (_, at) => choice('model-' + at)),
       defaultModel: { kind: 'none' },
       next: null,
     });
-    c.raw('previous-page');
-    assert.deepEqual(c.action('models').input, { kind: 'start', query: '' });
-    c.reply(c.action('models'), {
-      kind: 'ready',
-      revision: 3,
-      choices: [choice('first')],
-      defaultModel: { kind: 'none' },
-      next: cursor,
-    });
     assert.equal(c.state.choices[0].label, 'first');
+    assert.equal(c.state.choices.length, 81);
+    scroll(2, 'down', true);
+    assert.equal(c.state.windowStart, 32);
+    scroll(3, 'up', false);
+    assert.equal(c.state.windowStart, 0);
+    assert.equal(c.state.choices[0].label, 'first');
+    assert.equal(c.out.actions.length, 0, 'reverse scrolling uses the already loaded rows');
+    const firstKey = c.state.choiceKeys[JSON.stringify(['a', 'first'])];
+    c.raw(firstKey, 'activate');
+    assert.equal(c.state.draft.choice.label, 'first');
   });
   test(`${platform} ChatGPT login retains progress, cancellation and original receipt`, async () => {
     const c = await client('credential', platform, { target });

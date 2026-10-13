@@ -26,6 +26,8 @@ use std::{rc::Rc, time::Instant};
 pub(super) struct State {
     expanded: Option<bool>,
     sequence: u64,
+    custom_width: Option<u16>,
+    pub resizing: bool,
     transition: Option<Transition>,
     pub geometry: Option<Geometry>,
 }
@@ -38,6 +40,7 @@ struct Transition {
 pub(super) struct Geometry {
     pub key: String,
     pub width: u16,
+    pub x: i64,
     pub inline_width: u16,
     pub target: u16,
     pub time: Instant,
@@ -54,7 +57,12 @@ impl State {
             unreachable!()
         };
         if width >= *inline_min_width && self.expanded.unwrap_or(width >= *auto_inline_min_width) {
-            *pane_width
+            self.custom_width.unwrap_or(*pane_width).clamp(
+                (*pane_width).min(16),
+                width
+                    .saturating_sub(inline_min_width.saturating_sub(*pane_width))
+                    .max((*pane_width).min(16)),
+            )
         } else {
             0
         }
@@ -94,6 +102,67 @@ impl State {
     }
 }
 impl SceneState {
+    pub fn pane_input(
+        &mut self,
+        node: &Node,
+        event: &crossterm::event::Event,
+    ) -> super::WidgetInput {
+        use crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
+        let Node::AdaptivePane {
+            key,
+            pane_width,
+            inline_min_width,
+            ..
+        } = node
+        else {
+            return super::WidgetInput::Unhandled;
+        };
+        let Some(pane) = self.panes.get_mut(key) else {
+            return super::WidgetInput::Unhandled;
+        };
+        let Some(geometry) = &pane.geometry else {
+            return super::WidgetInput::Unhandled;
+        };
+        if geometry.inline_width == 0 {
+            pane.resizing = false;
+            return super::WidgetInput::Unhandled;
+        }
+        let width = match event {
+            Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) => {
+                pane.resizing = true;
+                return super::WidgetInput::PreserveFocus;
+            }
+            Event::Mouse(mouse)
+                if mouse.kind == MouseEventKind::Drag(MouseButton::Left) && pane.resizing =>
+            {
+                (i64::from(mouse.column) - geometry.x + 1).clamp(0, i64::from(u16::MAX)) as u16
+            }
+            Event::Mouse(mouse)
+                if mouse.kind == MouseEventKind::Up(MouseButton::Left) && pane.resizing =>
+            {
+                pane.resizing = false;
+                return super::WidgetInput::PreserveFocus;
+            }
+            Event::Key(key) if key.kind != KeyEventKind::Release && key.modifiers.is_empty() => {
+                match key.code {
+                    KeyCode::Left => geometry.inline_width.saturating_sub(1),
+                    KeyCode::Right => geometry.inline_width.saturating_add(1),
+                    KeyCode::Home => *pane_width,
+                    _ => return super::WidgetInput::Unhandled,
+                }
+            }
+            _ => return super::WidgetInput::Unhandled,
+        };
+        let min = (*pane_width).min(16);
+        let max = geometry
+            .width
+            .saturating_sub(inline_min_width.saturating_sub(*pane_width))
+            .max(min);
+        pane.custom_width = Some(width.clamp(min, max));
+        pane.expanded = Some(true);
+        pane.transition = None;
+        super::WidgetInput::PreserveFocus
+    }
     pub fn commit_panes(&mut self, node: &Node) {
         fn visit(state: &mut SceneState, node: &Node, keys: &mut Vec<String>) {
             match node {
@@ -203,6 +272,7 @@ mod tests {
         state.present(Geometry {
             key: "pane".into(),
             width: 120,
+            x: 0,
             inline_width: width,
             target: 0,
             time: midway,
@@ -221,6 +291,7 @@ mod tests {
         state.present(Geometry {
             key: "pane".into(),
             width: 59,
+            x: 0,
             inline_width: 0,
             target: 0,
             time: midway,

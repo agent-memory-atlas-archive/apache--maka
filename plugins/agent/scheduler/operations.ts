@@ -78,13 +78,50 @@ export function watch(state: State, input: AgentScheduleRead) {
   state.watchFailed = false;
 }
 
-export function list(state: State, cursor: string | null = null) {
+export function list(state: State, cursor: string | null = state.listCursor) {
+  state.listCursor = cursor;
+  state.listLoading = true;
   state.route = 'list';
   state.detail = null;
   watch(state, {
     kind: 'list',
     cursor,
     expectedRevision: cursor ? (state.page?.revision ?? null) : null,
+  });
+}
+
+export function moveList(state: State, direction: 'up' | 'down') {
+  if (state.listLoading || !state.page) return;
+  if (direction === 'up' && state.listPrevious.length) list(state, state.listPrevious.pop()!);
+  else if (direction === 'down' && state.page.nextCursor) {
+    state.listPrevious.push(state.listCursor);
+    const rows = state.page.tasks;
+    list(state, rows[Math.max(0, Math.floor(rows.length / 2) - 1)]?.id ?? state.page.nextCursor);
+  }
+}
+
+export function sessions(
+  state: State,
+  actions: Action[],
+  direction: 'start' | 'up' | 'down' = 'start',
+) {
+  if (state.pending) return;
+  const page = state.sessions;
+  if ((direction === 'up' && !page?.before) || (direction === 'down' && !page?.after)) return;
+  const middle = page?.sessions[Math.floor(page.sessions.length / 2)];
+  state.picker = true;
+  request(state, actions, { kind: 'sessions' }, 'agent', 'list', {
+    filter: 'all',
+    position:
+      direction === 'start'
+        ? { kind: 'start' }
+        : direction === 'down' && middle && page!.sessions.length > 1
+          ? { kind: 'at', cursor: middle.id }
+          : {
+              kind: direction === 'up' ? 'before' : 'after',
+              cursor: direction === 'up' ? (middle?.id ?? page!.before) : page!.after,
+              revision: page!.revision,
+            },
   });
 }
 

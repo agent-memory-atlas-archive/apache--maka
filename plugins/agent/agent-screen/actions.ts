@@ -97,10 +97,6 @@ export function selectedBackend(state: State): Backend {
 
 function createSession(state: State, actions: Action[], locale: string) {
   if (mutationPending(state) || catalogPending(state)) return;
-  if (!canExecute(state)) {
-    openModelSetup(state);
-    return;
-  }
   const title = copy(locale).new;
   if (state.selected?.archived) state.dialog = 'directories';
   else if (state.selected)
@@ -115,8 +111,9 @@ function createSession(state: State, actions: Action[], locale: string) {
     });
 }
 
-function openModelSetup(state: State) {
+export function openModelSetup(state: State) {
   if (state.modelSetup === 'connect' && !state.hasBackends) {
+    state.connectionSetupRequest = ++state.serial;
     state.pages = ['connections'];
   } else state.modelOpenRequest = ++state.serial;
 }
@@ -746,13 +743,16 @@ export function rootCommand(
   else if (kind === 'model-setup') openModelSetup(state);
   else if (kind === 'create-workspace') {
     state.pages = [];
-    if (!canExecute(state)) openModelSetup(state);
-    else state.dialog = 'directories';
+    state.dialog = 'directories';
     if (target === 'tui') controlSidebar(state, 'dismiss_transient');
-  } else if (kind === 'terminal-open') state.dialog = 'terminal';
-  else if (kind === 'skills-open') state.dialog = 'skills';
-  else if (kind === 'details-open') state.dialog = 'details';
-  else if (kind === 'usage-open' && state.selected) openUsage(state, state.selected);
+  } else if (kind === 'terminal-open') {
+    if (target === 'tui') state.inspector = state.inspector === 'terminal' ? null : 'terminal';
+    else state.dialog = 'terminal';
+  } else if (kind === 'skills-open') state.dialog = 'skills';
+  else if (kind === 'details-open') {
+    if (target === 'tui') state.inspector = state.inspector === 'details' ? null : 'details';
+    else state.dialog = 'details';
+  } else if (kind === 'usage-open' && state.selected) openUsage(state, state.selected);
   else if (kind === 'navigation-toggle') controlSidebar(state, 'toggle');
   else if (kind === 'settings') {
     state.insightsScope = { sequence: ++state.serial, sessionId: null, label: '' };

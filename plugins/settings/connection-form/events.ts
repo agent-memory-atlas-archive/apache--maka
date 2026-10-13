@@ -88,6 +88,7 @@ export function handleEvent<N extends Node>(
       ) {
         field.failed = r.outcome.status !== 'applied';
         field.initialized = !field.failed;
+        if (field.initialized) field.initialText = field.observation.snapshot.text;
         field.command = null;
       } else if (field.enabled && !field.initialized && !field.failed && !field.command)
         prefill(state, name);
@@ -224,8 +225,14 @@ export function handleEvent<N extends Node>(
       if (
         !state.current &&
         !state.enabledEdited &&
-        ((!state.provider && !state.baseline) ||
-          (state.baseline && !Object.values(state.fields).some((field) => field.enabled)))
+        !Object.values(state.fields).some(
+          (field) =>
+            field.enabled &&
+            field.initialized &&
+            field.initialText &&
+            field.observation &&
+            !sameValue(field.initialText, field.observation.snapshot.text),
+        )
       )
         events.push({ name: 'closed', value: {} });
       else state.confirmation = 'leave';
@@ -329,6 +336,9 @@ export function handleEvent<N extends Node>(
           field.enabled = false;
           field.initialized = false;
         }
+      } else if (key.startsWith('provider-group-') && !state.provider) {
+        const group = key.slice('provider-group-'.length);
+        state.providerGroup = state.providerGroup === group ? null : group;
       } else if (key === 'connection-enabled') {
         state.enabled = !state.enabled;
         state.enabledEdited = true;

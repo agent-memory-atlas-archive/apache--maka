@@ -170,7 +170,7 @@ export function headerView<N extends Node>(
                     [
                       ui.button(
                         key,
-                        [theme.ascii ? 'i' : 'ⓘ', '>_', theme.ascii ? ':' : '⌘'][at]!,
+                        [text.detailsOpen, text.terminalTitle, text.paletteTitle][at]!,
                         key !== 'palette-open' && (!conversationRoute(state) || !state.selected),
                         false,
                         { background: 0 },
@@ -178,11 +178,11 @@ export function headerView<N extends Node>(
                         [text.detailsOpen, text.terminalTitle, text.paletteTitle + ' · Ctrl+K'][at],
                       ),
                     ],
-                    { terminal: { basis: 3 } },
+                    { terminal: { shrink: false } },
                   ),
                 ),
               ],
-              { row: true, gap: 0, terminal: { basis: 9 } },
+              { row: true, gap: 1, terminal: { shrink: true, wrap: true } },
             ),
           ]),
       ...((target === 'desktop' ? state.interactions?.entries : [])

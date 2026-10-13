@@ -81,23 +81,56 @@ export function frame<N extends Node>(
           ),
         )
       : state.route === 'choose'
-        ? (state.catalog?.candidates ?? []).map((choice, index) =>
-            ui.button('candidate-' + index, choice.label, disabled, false, { align: 'start' }),
-          )
+        ? (state.catalog?.candidates ?? [])
+            .slice(state.listWindow, state.listWindow + 64)
+            .map((choice, offset) =>
+              ui.item
+                ? ui.item(
+                    'candidate-' + (state.listWindow + offset),
+                    ui.text('candidate-label-' + (state.listWindow + offset), choice.label),
+                    state.focused === 'candidate-' + (state.listWindow + offset),
+                    disabled && state.pending?.request.kind !== 'catalog',
+                    { followFocus: true, submit: true },
+                  )
+                : ui.button(
+                    'candidate-' + (state.listWindow + offset),
+                    choice.label,
+                    disabled,
+                    false,
+                    { align: 'start' },
+                  ),
+            )
         : state.route === 'bindings'
-          ? (draft?.choices?.candidates ?? []).map((choice, index) =>
-              ui.button(
-                'binding-' + index,
-                choice.label,
-                disabled,
-                choice.kind === 'bound' &&
+          ? (draft?.choices?.candidates ?? [])
+              .slice(state.listWindow, state.listWindow + 64)
+              .map((choice, offset) => {
+                const index = state.listWindow + offset;
+                const selected =
+                  choice.kind === 'bound' &&
                   !!draft?.choosing &&
                   (draft.bindings[draft.choosing.name] ?? []).some((t) =>
                     sameValue(t, choice.target),
-                  ),
-                { align: 'start' },
-              ),
-            )
+                  );
+                return ui.item
+                  ? ui.item(
+                      'binding-' + index,
+                      ui.text('binding-label-' + index, choice.label),
+                      selected,
+                      disabled && state.pending?.request.kind !== 'bindings',
+                      { followFocus: true, submit: true },
+                    )
+                  : ui.button(
+                      'binding-' + index,
+                      choice.label,
+                      disabled,
+                      choice.kind === 'bound' &&
+                        !!draft?.choosing &&
+                        (draft.bindings[draft.choosing.name] ?? []).some((t) =>
+                          sameValue(t, choice.target),
+                        ),
+                      { align: 'start' },
+                    );
+              })
           : [];
   const title =
     state.route === 'app'
@@ -160,7 +193,8 @@ export function frame<N extends Node>(
                     : []),
                 ],
                 {
-                  scroll: 'manual',
+                  scroll: 'anchor',
+                  focusGroup: true,
                   gap: 1,
                   terminal: { grow: 1, basis: 0 },
                   style: { width: fill, height: fill, minHeight: 0 },
@@ -168,7 +202,7 @@ export function frame<N extends Node>(
               ),
               command: null,
             },
-            { input: 'list-input' },
+            { input: 'list-input', observed: 'list-viewport' },
           ),
         ],
         {
@@ -350,12 +384,7 @@ export function frame<N extends Node>(
               ui.button('manage', text.appsManage, disabled),
             ]
           : state.route === 'choose'
-            ? [
-                ui.button('file', text.appsInstall, disabled),
-                ...(state.catalog?.next
-                  ? [ui.button('catalog-more', text.deploymentMore, disabled)]
-                  : []),
-              ]
+            ? [ui.button('file', text.appsInstall, disabled)]
             : state.route === 'configure'
               ? [
                   ui.button(
@@ -383,9 +412,6 @@ export function frame<N extends Node>(
                   ? [
                       ui.button('bindings-done', text.appsContinue, disabled),
                       ui.button('bindings-clear', text.appsBindingClear, disabled),
-                      ...(draft?.choices?.next
-                        ? [ui.button('bindings-more', text.deploymentMore, disabled)]
-                        : []),
                     ]
                   : [ui.button('close-current', text.appsClose, disabled)],
         { row: true, terminal: { wrap: true }, style: { wrap: true }, gap: 1 },

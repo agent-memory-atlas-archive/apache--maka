@@ -993,7 +993,7 @@ export function credential<N extends Node>(
             );
           else if (input.key === 'setup-models') setup(state, actions);
           else if (input.key === 'done' && state.setup === 'ready')
-            events.push({ name: 'closed', value: {} });
+            events.push({ name: 'completed', value: {} });
           else if (input.key === 'advanced') state.advanced = !state.advanced;
           else if (input.key === 'save') save(state, props, actions);
           else if (input.key === 'refresh-status') readStatus(state, actions);

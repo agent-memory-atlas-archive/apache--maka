@@ -21,6 +21,7 @@ import type {
   ConnectionVersionBasis,
   EditorCommand,
   EditorObservation,
+  EditorTextRef,
   OperationReply,
   ReadingCommand,
   RecoveryRef,
@@ -64,6 +65,7 @@ export interface Field {
   command: EditorCommand | null;
   sequence: number;
   initialized: boolean;
+  initialText: EditorTextRef | null;
   failed: boolean;
 }
 
@@ -87,6 +89,7 @@ export interface State extends PageState {
   providers: SettingsProvider[];
   search: Search;
   providerActive: number;
+  providerGroup: string | null;
   providerFocus: ReadingCommand | null;
   providersFailed: boolean;
   fields: Record<FieldName, Field>;

@@ -33,7 +33,7 @@ for (const target of ['tui', 'desktop'])
     const props = { theme, locale: 'en', open: true, busy: false };
     let out = component.mount(props, {});
     const event = (input) => (out = component.event(out.frame.state, input, props, {}));
-    const raw = (key) => event({ kind: 'raw', key, event: { kind: 'activate' } });
+    const raw = (key) => event({ kind: 'raw', key, event: { kind: 'submit' } });
     const child = (child, name, value) => event({ kind: 'component', child, name, event: value });
     const finish = (value) =>
       event({ kind: 'action', key: out.actions[0].key, event: { status: 'succeeded', value } });
@@ -100,7 +100,17 @@ for (const target of ['tui', 'desktop'])
       before: null,
       needsYouCount: 0,
     });
-    raw('next');
+    event({
+      kind: 'component',
+      child: 'recall-reading',
+      name: 'observed',
+      event: {
+        readingRevision: 1,
+        scroll: { readingRevision: 1, direction: 'down' },
+        viewport: { readingRevision: 1, atStart: false, atEnd: true, visibleChildKeys: [] },
+        pendingCommand: null,
+      },
+    });
     assert.deepEqual(out.actions[0].input.position, {
       kind: 'after',
       revision: 'catalog-fence',

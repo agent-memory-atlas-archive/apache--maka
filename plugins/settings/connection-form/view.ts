@@ -34,7 +34,8 @@ import {
   type Node,
   type Presentation,
 } from '../../shared/view.js';
-import { matchesProvider } from '../search.js';
+import { matchesProvider, providerGroup } from '../search.js';
+import { tuiText } from '../../shared/tui-locale.js';
 import { busy, canRemove, canSave, fresh, sameConnection } from './operations.js';
 import { advancedFields, names, type FieldName, type State } from './state.js';
 
@@ -65,6 +66,56 @@ export function frame<N extends Node>(
   const identity: Identity | undefined =
     state.baseline?.target.provider ?? state.provider?.identity;
 
+  const groups = new Map<
+    string,
+    { label: string; rows: { provider: (typeof state.providers)[number]; at: number }[] }
+  >();
+  state.providers.forEach((provider, at) => {
+    if (!matchesProvider(state.search, provider)) return;
+    const group = providerGroup(provider);
+    if (!groups.has(group.key))
+      groups.set(group.key, {
+        label: group.key === 'custom' ? tuiText(props.locale, group.label) : group.label,
+        rows: [],
+      });
+    groups.get(group.key)!.rows.push({ provider, at });
+  });
+  const providerRows = [...groups].flatMap(([key, group]) => {
+    const expanded = !!state.search.query || state.providerGroup === key || group.rows.length === 1;
+    return [
+      ...(group.rows.length > 1
+        ? [
+            ui.button(
+              'provider-group-' + key,
+              `${props.theme.ascii ? (expanded ? '-' : '+') : expanded ? '▾' : '▸'} ${group.label}`,
+              locked,
+              false,
+              { align: 'start', background: 0 },
+            ),
+          ]
+        : []),
+      ...(expanded
+        ? group.rows.map(({ provider, at }) =>
+            ui.item
+              ? ui.item(
+                  'provider-' + at,
+                  ui.text(
+                    'provider-label-' + at,
+                    (group.rows.length > 1 ? '  ' : '') + provider.descriptor.label,
+                    14,
+                    props.theme.text,
+                    400,
+                    { truncate: true },
+                  ),
+                  state.providerActive === at,
+                  locked,
+                  { followFocus: true, submit: true },
+                )
+              : ui.button('provider-' + at, provider.descriptor.label, locked),
+          )
+        : []),
+    ];
+  });
   const form = ui.box(
     'form',
     [
@@ -156,38 +207,13 @@ export function frame<N extends Node>(
               'provider-list',
               {
                 command: state.providerFocus,
-                content: ui.box(
-                  'provider-rows',
-                  state.providers.flatMap((provider, at) =>
-                    !matchesProvider(state.search, provider)
-                      ? []
-                      : [
-                          ui.item
-                            ? ui.item(
-                                'provider-' + at,
-                                ui.text(
-                                  'provider-label-' + at,
-                                  provider.descriptor.label,
-                                  14,
-                                  props.theme.text,
-                                  400,
-                                  { truncate: true },
-                                ),
-                                state.providerActive === at,
-                                locked,
-                                { followFocus: true, submit: true },
-                              )
-                            : ui.button('provider-' + at, provider.descriptor.label, locked),
-                        ],
-                  ),
-                  {
-                    focusGroup: target === 'tui',
-                    scroll: 'manual',
-                    gap: target === 'tui' ? 0 : 8,
-                    terminal: { grow: 1, basis: 0 },
-                    style: { width: fill, height: pixels(240), minHeight: 0 },
-                  },
-                ),
+                content: ui.box('provider-rows', providerRows, {
+                  focusGroup: target === 'tui',
+                  scroll: 'manual',
+                  gap: target === 'tui' ? 0 : 8,
+                  terminal: { grow: 1, basis: 0 },
+                  style: { width: fill, height: pixels(240), minHeight: 0 },
+                }),
               },
               { input: 'provider-input' },
             ),
@@ -215,15 +241,6 @@ export function frame<N extends Node>(
               { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
             ),
           ]),
-      ...(state.baseline || state.provider
-        ? [
-            ui.button(
-              'form-advanced',
-              state.advanced ? text.basicSettings : text.advancedSettings,
-              locked,
-            ),
-          ]
-        : []),
       ...(!state.baseline && state.provider
         ? [ui.text('setup-help', text.connectionSetupHelp, 13, props.theme.muted)]
         : []),
@@ -351,6 +368,15 @@ export function frame<N extends Node>(
           },
         );
       }),
+      ...(state.baseline || state.provider
+        ? [
+            ui.button(
+              'form-advanced',
+              state.advanced ? text.basicSettings : text.advancedSettings,
+              locked,
+            ),
+          ]
+        : []),
       ...(state.advanced
         ? [
             ui.button(
@@ -369,7 +395,7 @@ export function frame<N extends Node>(
       visible: !state.historyOpen && !state.confirmation,
       scroll: target === 'tui' && (state.provider || state.baseline) ? 'anchor' : 'none',
       gap: target === 'desktop' ? 16 : 1,
-      terminal: { grow: 1 },
+      terminal: state.provider || state.baseline ? { shrink: true } : { grow: 1 },
     },
   );
   const footer = ui.box(

@@ -38,6 +38,7 @@ import type {
   OperationReply,
   RecoveryRef,
   ReadingCommand,
+  ReadingObservation,
   TextChunk,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { projectsContract, type ProjectsProps } from '../../shared/contracts.js';
@@ -47,7 +48,8 @@ import { sameValue } from '../../shared/value.js';
 import { compactLabel, fill, output, type Node, type Presentation } from '../../shared/view.js';
 
 type Request =
-  | { kind: 'page' | 'directory' | 'name' | 'mutate' | 'receipt' }
+  | { kind: 'page'; append: boolean }
+  | { kind: 'directory' | 'name' | 'mutate' | 'receipt' }
   | { kind: 'history'; after: number };
 interface State extends PageState {
   revision: number;
@@ -55,6 +57,8 @@ interface State extends PageState {
   focus: ReadingCommand | null;
   serial: number;
   projects: AgentProject[];
+  windowStart: number;
+  scrollRevision: number;
   next: AgentProjectCursor | null;
   selected: string | null;
   pending: { key: string; request: Request } | null;
@@ -89,7 +93,10 @@ function request(
   actions.push({ key, binding, member: 0, method, input, resources });
 }
 function page(state: State, actions: Action[], cursor: AgentProjectCursor | null = null) {
-  request(state, actions, { kind: 'page' }, 'agent', 'projects', { kind: 'list', cursor });
+  request(state, actions, { kind: 'page', append: cursor !== null }, 'agent', 'projects', {
+    kind: 'list',
+    cursor,
+  });
 }
 function history(state: State, actions: Action[], after = 0) {
   state.restoring = true;
@@ -173,7 +180,7 @@ export function projects<N extends Node>(
       ),
       ui.button(prefix + 'relocate-' + project.reference.id, text.projectsRelocate, disabled),
     ];
-    const rows = state.projects.map((project) => {
+    const rows = state.projects.slice(state.windowStart, state.windowStart + 64).map((project) => {
       const id = project.reference.id;
       const content = ui.box(
         'summary-' + id,
@@ -201,10 +208,16 @@ export function projects<N extends Node>(
         return ui.contextMenu(
           'project-' + id,
           text.projectsActions,
-          ui.item('select-' + id, content, state.selected === id, disabled, {
-            followFocus: true,
-            submit: true,
-          }),
+          ui.item(
+            'select-' + id,
+            content,
+            state.selected === id,
+            disabled && state.pending?.request.kind !== 'page',
+            {
+              followFocus: true,
+              submit: true,
+            },
+          ),
           controls(project),
         );
       return ui.box(
@@ -245,14 +258,14 @@ export function projects<N extends Node>(
           {
             command: state.focus,
             content: ui.box('project-rows', rows, {
-              scroll: 'manual',
+              scroll: 'anchor',
               focusGroup: true,
               gap: 1,
               terminal: { grow: 1, basis: 0 },
               style: { width: fill, height: fill, minHeight: 0 },
             }),
           },
-          { input: 'list-input' },
+          { input: 'list-input', observed: 'list-viewport' },
         ),
         ...(selected
           ? [
@@ -268,7 +281,6 @@ export function projects<N extends Node>(
           [
             ui.button('add', text.projectsAdd, disabled),
             ui.button('refresh', text.directoryRefresh, disabled),
-            ...(state.next ? [ui.button('more', text.projectsMore, disabled)] : []),
           ],
           { row: true, terminal: { wrap: true }, style: { wrap: true } },
         ),
@@ -440,6 +452,8 @@ export function projects<N extends Node>(
           focus: null,
           serial: 0,
           projects: [],
+          windowStart: 0,
+          scrollRevision: 0,
           next: null,
           selected: null,
           pending: null,
@@ -485,6 +499,29 @@ export function projects<N extends Node>(
           events: Emission[] = [];
         if (input.kind === 'component' && input.child === 'project-list' && input.name === 'input')
           input = input.event as ComponentInput;
+        if (
+          input.kind === 'component' &&
+          input.child === 'project-list' &&
+          input.name === 'observed'
+        ) {
+          const observed = input.event as ReadingObservation;
+          if (
+            observed.scroll &&
+            observed.scroll.readingRevision > state.scrollRevision &&
+            observed.viewport?.readingRevision === observed.readingRevision &&
+            observed.pendingCommand == null
+          ) {
+            state.scrollRevision = observed.scroll.readingRevision;
+            if (!locked(state, props)) {
+              if (observed.scroll.direction === 'up' && observed.viewport.atStart)
+                state.windowStart = Math.max(0, state.windowStart - 32);
+              else if (observed.scroll.direction === 'down' && observed.viewport.atEnd) {
+                if (state.windowStart + 64 < state.projects.length) state.windowStart += 32;
+                else if (state.next) page(state, actions, state.next);
+              }
+            }
+          }
+        }
         if (input.kind === 'component' && input.child === 'project-name') {
           if (input.name === 'changed') {
             state.observation = input.event as EditorObservation;
@@ -587,12 +624,20 @@ export function projects<N extends Node>(
           else {
             const value = result.value as AgentProjectsPage;
             if (value.kind === 'projects' && r.kind === 'page') {
-              state.projects = value.projects;
+              if (!r.append) state.windowStart = 0;
+              state.projects = r.append
+                ? [
+                    ...state.projects,
+                    ...value.projects.filter(
+                      (p) => !state.projects.some((old) => old.reference.id === p.reference.id),
+                    ),
+                  ]
+                : value.projects;
               state.next = value.next;
-              state.selected = value.projects.some((p) => p.reference.id === state.selected)
+              state.selected = state.projects.some((p) => p.reference.id === state.selected)
                 ? state.selected
                 : (value.projects[0]?.reference.id ?? null);
-              if (presentation.target === 'tui' && state.selected)
+              if (presentation.target === 'tui' && state.selected && !r.append)
                 state.focus = {
                   sequence: (state.focus?.sequence ?? 0) + 1,
                   target: { kind: 'focus_item', key: 'select-' + state.selected },
@@ -655,8 +700,7 @@ export function projects<N extends Node>(
             } else if (key === 'refresh') {
               state.notice = null;
               page(state, actions);
-            } else if (key === 'more' && state.next) page(state, actions, state.next);
-            else if (key === 'confirm' && state.confirm) mutate(state, actions, state.confirm);
+            } else if (key === 'confirm' && state.confirm) mutate(state, actions, state.confirm);
             else if (
               key === 'rename-save' &&
               state.rename &&
@@ -694,6 +738,20 @@ export function projects<N extends Node>(
                 const id = project.reference.id;
                 if (key === 'select-' + id) {
                   state.selected = id;
+                  const at = state.projects.indexOf(project);
+                  if (at < state.windowStart + 3 && state.windowStart > 0)
+                    state.windowStart = Math.max(0, state.windowStart - 32);
+                  else if (
+                    at >= state.windowStart + 61 &&
+                    state.windowStart + 64 < state.projects.length
+                  )
+                    state.windowStart += 32;
+                  else if (
+                    (input.event as { kind?: string }).kind !== 'submit' &&
+                    at >= state.projects.length - 3 &&
+                    state.next
+                  )
+                    page(state, actions, state.next);
                   if (
                     (input.event as { kind?: string }).kind === 'submit' &&
                     !project.archived &&

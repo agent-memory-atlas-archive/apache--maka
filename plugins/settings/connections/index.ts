@@ -24,6 +24,7 @@ import type {
   ComponentInput,
   ConnectionTarget,
   ReadingCommand,
+  ReadingObservation,
   Emission,
   SettingsConnectionsPage,
   SettingsConnectionSummary,
@@ -39,6 +40,8 @@ import { tuiText } from '../../shared/tui-locale.js';
 import { fill, output, type Presentation, type Node } from '../../shared/view.js';
 interface State extends PageState {
   revision: number;
+  setupRequest: number | null;
+  setupRequested: boolean;
   serial: number;
   pending: {
     key: string;
@@ -55,6 +58,8 @@ interface State extends PageState {
   catalogRevision: number | null;
   next: number | null;
   selected: string | null;
+  windowStart: number;
+  scrollRevision: number;
   focus: ReadingCommand | null;
   defaultTarget: ConnectionTarget | null;
   failed: boolean;
@@ -108,74 +113,78 @@ function frame<N extends Node>(
     .filter(({ connection }) =>
       matches(state.search, connection.name, connection.slug, connection.provider.name),
     );
-  // Bound the scene separately from the searchable catalog's 1,024 entries.
-  const rows = matched.slice(0, 128).flatMap(({ connection, at }) => {
-    const id = connection.basis.connectionId;
-    const selected = state.selected === id;
-    const actions = [
-      ui.button('open-' + at, text.signInConnection, state.pending?.kind === 'detail'),
-      ui.button('edit-' + at, text.editConnection, state.pending?.kind === 'detail'),
-    ];
-    if (ui.item) {
-      const identity =
-        connection.slug === connection.provider.name
-          ? connection.slug
-          : `${connection.slug} · ${connection.provider.name}`;
-      const detail =
-        state.defaultTarget?.connectionId === id
-          ? `${tuiText(props.locale, 'connection-default')}: ${state.defaultTarget.modelId} · ${identity}`
-          : `${tuiText(props.locale, 'connection-models', { count: String(connection.enabledModelCount) })} · ${identity}`;
-      const item = ui.item(
-        'select-' + id,
-        ui.box(
-          'summary-' + id,
-          [
-            ui.text(
-              'name-' + id,
-              `${selected ? (props.theme.ascii ? '>' : '›') : ' '} ${connection.name}${connection.enabled ? '' : ' · ' + text.connectionDisabled}`,
-              14,
-              props.theme.text,
-              400,
-              { truncate: true },
-            ),
-            ui.text('detail-' + id, '  ' + detail, 13, props.theme.muted, 400, { truncate: true }),
-          ],
-          { gap: 0 },
-        ),
-        selected,
-        state.pending?.kind === 'detail',
-        { followFocus: true, submit: true },
-      );
-      return connection.editable
-        ? ui.contextMenu!(
-            'connection-' + id,
-            tuiText(props.locale, 'connection-actions'),
-            item,
-            actions,
-          )
-        : item;
-    }
-    return [
-      ui.box(
-        'connection-' + id,
-        [
-          ui.text('name-' + id, compactLabel(connection.name, 100), 16, props.theme.text, 550),
-          ui.text(
-            'provider-' + id,
-            connection.provider.name + ' · ' + connection.slug,
-            13,
-            props.theme.muted,
+  // Keep overlapping rows mounted when extending the native scroll window.
+  const rows = matched
+    .slice(state.windowStart, state.windowStart + 64)
+    .flatMap(({ connection, at }) => {
+      const id = connection.basis.connectionId;
+      const selected = state.selected === id;
+      const actions = [
+        ui.button('open-' + at, text.signInConnection, state.pending?.kind === 'detail'),
+        ui.button('edit-' + at, text.editConnection, state.pending?.kind === 'detail'),
+      ];
+      if (ui.item) {
+        const identity =
+          connection.slug === connection.provider.name
+            ? connection.slug
+            : `${connection.slug} · ${connection.provider.name}`;
+        const detail =
+          state.defaultTarget?.connectionId === id
+            ? `${tuiText(props.locale, 'connection-default')}: ${state.defaultTarget.modelId} · ${identity}`
+            : `${tuiText(props.locale, 'connection-models', { count: String(connection.enabledModelCount) })} · ${identity}`;
+        const item = ui.item(
+          'select-' + id,
+          ui.box(
+            'summary-' + id,
+            [
+              ui.text(
+                'name-' + id,
+                `${selected ? (props.theme.ascii ? '>' : '›') : ' '} ${connection.name}${connection.enabled ? '' : ' · ' + text.connectionDisabled}`,
+                14,
+                props.theme.text,
+                400,
+                { truncate: true },
+              ),
+              ui.text('detail-' + id, '  ' + detail, 13, props.theme.muted, 400, {
+                truncate: true,
+              }),
+            ],
+            { gap: 0 },
           ),
-          ui.box('connection-actions-' + id, actions, {
-            visible: connection.editable,
-            row: true,
-            gap: 8,
-          }),
-        ],
-        { gap: 6, padding: 16, surface: true, style: { width: fill } },
-      ),
-    ];
-  });
+          selected,
+          state.pending?.kind === 'detail',
+          { followFocus: true, submit: true },
+        );
+        return connection.editable
+          ? ui.contextMenu!(
+              'connection-' + id,
+              tuiText(props.locale, 'connection-actions'),
+              item,
+              actions,
+            )
+          : item;
+      }
+      return [
+        ui.box(
+          'connection-' + id,
+          [
+            ui.text('name-' + id, compactLabel(connection.name, 100), 16, props.theme.text, 550),
+            ui.text(
+              'provider-' + id,
+              connection.provider.name + ' · ' + connection.slug,
+              13,
+              props.theme.muted,
+            ),
+            ui.box('connection-actions-' + id, actions, {
+              visible: connection.editable,
+              row: true,
+              gap: 8,
+            }),
+          ],
+          { gap: 6, padding: 16, surface: true, style: { width: fill } },
+        ),
+      ];
+    });
   const catalog = ui.box(
     'connections',
     [
@@ -202,9 +211,6 @@ function frame<N extends Node>(
         ],
         { gap: 0, style: { width: fill, height: pixels(36) } },
       ),
-      ...(matched.length > 128
-        ? [ui.text('search-limit', text.refineConnectionSearch, 13, props.theme.muted)]
-        : []),
       ...(state.search.error ? [ui.text('search-error', text[state.search.error])] : []),
       ...(!rows.length && state.search.query && !state.pending
         ? [ui.text('no-matches', text.noSearchResults)]
@@ -222,13 +228,13 @@ function frame<N extends Node>(
           command: state.focus,
           content: ui.box('connection-rows', rows, {
             focusGroup: target === 'tui',
-            scroll: 'manual',
+            scroll: 'anchor',
             gap: target === 'tui' ? 1 : 16,
             terminal: { grow: 1, basis: 0 },
             style: { width: fill, height: fill, minHeight: 0 },
           }),
         },
-        { input: 'connection-input' },
+        { input: 'connection-input', observed: 'connection-viewport' },
       ),
       ui.box(
         'page-actions',
@@ -294,7 +300,9 @@ function frame<N extends Node>(
               'form-' + state.mount,
               'form',
               {
-                ...props,
+                theme: props.theme,
+                locale: props.locale,
+                shell: props.shell,
                 catalogRevision: state.catalogRevision!,
                 connection: state.detail,
                 existingSlugs: state.connections.map((c) => c.slug),
@@ -307,8 +315,13 @@ function frame<N extends Node>(
               presentation.slot(
                 'credential-' + state.mount,
                 'credential',
-                { ...props, target: state.detail.target },
-                { closed: 'closed', changed: 'changed', chrome: 'chrome' },
+                {
+                  theme: props.theme,
+                  locale: props.locale,
+                  shell: props.shell,
+                  target: state.detail.target,
+                },
+                { closed: 'closed', changed: 'changed', chrome: 'chrome', completed: 'completed' },
               ),
             ]
           : []),
@@ -327,6 +340,8 @@ export function connections<N extends Node>(
       mount(props) {
         const state: State = {
           revision: 0,
+          setupRequest: props.setupRequest ?? null,
+          setupRequested: props.setupRequest != null,
           serial: 0,
           pending: null,
           search: searchState(),
@@ -337,6 +352,8 @@ export function connections<N extends Node>(
           catalogRevision: null,
           next: null,
           selected: null,
+          windowStart: 0,
+          scrollRevision: 0,
           focus: null,
           defaultTarget: null,
           failed: false,
@@ -346,6 +363,13 @@ export function connections<N extends Node>(
       },
       update(state, props) {
         state.revision++;
+        if (props.setupRequest != null && props.setupRequest !== state.setupRequest) {
+          state.setupRequest = props.setupRequest;
+          state.setupRequested = true;
+          state.route = 'catalog';
+          state.detail = null;
+          return frame(presentation, state, props, page(state));
+        }
         return frame(presentation, state, props);
       },
       event(state, input, props) {
@@ -359,6 +383,7 @@ export function connections<N extends Node>(
         const actions: Action[] = [],
           events: Emission[] = [];
         if (searchEvent(state.search, input, 'connection-query', actions)) {
+          state.windowStart = 0;
           const first = state.connections.find((c) =>
             matches(state.search, c.name, c.slug, c.provider.name),
           );
@@ -368,6 +393,31 @@ export function connections<N extends Node>(
               sequence: (state.focus?.sequence ?? 0) + 1,
               target: { kind: 'reveal_child', key: 'select-' + state.selected },
             };
+        } else if (
+          input.kind === 'component' &&
+          input.child === 'connection-list' &&
+          input.name === 'observed'
+        ) {
+          const observed = input.event as ReadingObservation;
+          if (
+            observed.scroll &&
+            observed.scroll.readingRevision > state.scrollRevision &&
+            observed.viewport?.readingRevision === observed.readingRevision &&
+            observed.pendingCommand == null
+          ) {
+            state.scrollRevision = observed.scroll.readingRevision;
+            const count = state.connections.filter((c) =>
+              matches(state.search, c.name, c.slug, c.provider.name),
+            ).length;
+            if (observed.scroll.direction === 'up' && observed.viewport.atStart)
+              state.windowStart = Math.max(0, state.windowStart - 32);
+            else if (
+              observed.scroll.direction === 'down' &&
+              observed.viewport.atEnd &&
+              state.windowStart + 64 < count
+            )
+              state.windowStart += 32;
+          }
         } else if (input.kind === 'action' && input.key === state.pending?.key) {
           const pending = state.pending;
           state.pending = null;
@@ -381,20 +431,26 @@ export function connections<N extends Node>(
               state.catalogRevision = null;
               actions.push(...page(state));
             } else {
+              if (!pending.append) state.windowStart = 0;
               state.connections = pending.append
                 ? [...state.connections, ...resultPage.connections]
                 : resultPage.connections;
               state.catalogRevision = resultPage.revision;
               state.next = resultPage.next;
               state.defaultTarget = resultPage.defaultTarget;
-              const visible = state.connections
-                .filter((connection) =>
-                  matches(state.search, connection.name, connection.slug, connection.provider.name),
-                )
-                .slice(0, 128);
+              const visible = state.connections.filter((connection) =>
+                matches(state.search, connection.name, connection.slug, connection.provider.name),
+              );
               if (!visible.some((connection) => connection.basis.connectionId === state.selected))
                 state.selected = visible[0]?.basis.connectionId ?? null;
               if (state.next !== null) actions.push(...page(state, true));
+              else if (state.setupRequested) {
+                state.setupRequested = false;
+                if (!state.connections.length) {
+                  state.route = 'form';
+                  state.mount++;
+                }
+              }
               if (presentation.target === 'tui' && state.selected && !pending.append)
                 state.focus = {
                   sequence: (state.focus?.sequence ?? 0) + 1,
@@ -427,6 +483,11 @@ export function connections<N extends Node>(
           } else if (input.name === 'changed') {
             state.created = (input.event as { created?: ConnectionVersionBasis }).created;
             events.push({ name: 'changed', value: {} });
+          } else if (input.name === 'completed') {
+            state.detail = null;
+            state.route = 'catalog';
+            events.push({ name: 'completed', value: {} });
+            actions.push(...page(state));
           } else if (input.name === 'closed') {
             state.detail = null;
             state.route = 'catalog';
@@ -434,7 +495,9 @@ export function connections<N extends Node>(
               state.detailRoute = 'credential';
               actions.push(...request(state, 'detail', state.created, state.created));
               state.created = undefined;
-            } else actions.push(...page(state));
+            } else if (props.setupRequest != null && input.child.startsWith('form-'))
+              events.push({ name: 'closed', value: {} });
+            else actions.push(...page(state));
           }
         } else if (input.kind === 'raw' && state.route === 'catalog') {
           if (input.key === 'back') events.push({ name: 'closed', value: {} });
@@ -452,6 +515,14 @@ export function connections<N extends Node>(
               matches(state.search, connection.name, connection.slug, connection.provider.name)
             ) {
               state.selected = connection.basis.connectionId;
+              const matched = state.connections.filter((c) =>
+                matches(state.search, c.name, c.slug, c.provider.name),
+              );
+              const at = matched.indexOf(connection);
+              if (at < state.windowStart + 3 && state.windowStart > 0)
+                state.windowStart = Math.max(0, state.windowStart - 32);
+              else if (at >= state.windowStart + 61 && state.windowStart + 64 < matched.length)
+                state.windowStart += 32;
               if ((input.event as { kind?: string }).kind === 'submit' && connection.editable) {
                 state.detailRoute = 'credential';
                 actions.push(...request(state, 'detail', connection.basis, connection.basis));

@@ -29,6 +29,7 @@ import type {
   Emission,
   InputProps,
   ReadingCommand,
+  ReadingObservation,
   TextChunk,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { recallContract, type RecallProps } from '../../shared/contracts.js';
@@ -51,6 +52,7 @@ interface State extends PageState {
   catalog: AgentSessionPage | null;
   notice: keyof Copy | null;
   focus: ReadingCommand | null;
+  scrollRevision: number;
 }
 function day(value: string, end: boolean) {
   if (!value) return null;
@@ -160,7 +162,16 @@ function catalog(
     position:
       direction === 'start'
         ? { kind: 'start' }
-        : { kind: direction, cursor, revision: page!.revision },
+        : direction === 'after' && page!.sessions.length > 1
+          ? { kind: 'at', cursor: page!.sessions[Math.floor(page!.sessions.length / 2)]!.id }
+          : {
+              kind: direction,
+              cursor:
+                direction === 'before'
+                  ? (page!.sessions[Math.floor(page!.sessions.length / 2)]?.id ?? cursor)
+                  : cursor,
+              revision: page!.revision,
+            },
   });
 }
 export function recall<N extends Node>(
@@ -180,10 +191,21 @@ export function recall<N extends Node>(
       rows.push(ui.button('all', text.recallAll, disabled));
       for (const session of state.catalog?.sessions ?? [])
         rows.push(
-          ui.button('session-' + session.id, compactLabel(session.title, 120), disabled, false, {
-            width: fill,
-            justify: 'start',
-          }),
+          ui.item
+            ? ui.item(
+                'session-' + session.id,
+                ui.text('label-' + session.id, compactLabel(session.title, 120)),
+                state.session?.id === session.id,
+                !props.open || props.busy,
+                { followFocus: true, submit: true },
+              )
+            : ui.button(
+                'session-' + session.id,
+                compactLabel(session.title, 120),
+                disabled,
+                false,
+                { width: fill, justify: 'start' },
+              ),
         );
     } else {
       for (const [index, session] of (state.page?.titles ?? []).entries())
@@ -269,7 +291,7 @@ export function recall<N extends Node>(
       { visible: !state.picker, gap: 1 },
     );
     const content = ui.box('recall-content', rows, {
-      scroll: 'manual',
+      scroll: 'anchor',
       gap: 1,
       focusGroup: state.picker,
       terminal: { grow: 1, basis: 0 },
@@ -295,21 +317,14 @@ export function recall<N extends Node>(
         presentation.reading(
           'recall-reading',
           { content, command: state.focus },
-          { input: 'recall-input' },
+          { input: 'recall-input', observed: 'recall-viewport' },
         ),
         ...(state.picker
           ? [
-              ui.box(
-                'recall-paging',
-                [
-                  ui.button('refresh', text.directoryRefresh, disabled),
-                  ...(state.catalog?.before
-                    ? [ui.button('previous', text.sourcePrevious, disabled)]
-                    : []),
-                  ...(state.catalog?.after ? [ui.button('next', text.sourceNext, disabled)] : []),
-                ],
-                { row: true, gap: 1 },
-              ),
+              ui.box('recall-paging', [ui.button('refresh', text.directoryRefresh, disabled)], {
+                row: true,
+                gap: 1,
+              }),
             ]
           : []),
       ],
@@ -343,6 +358,7 @@ export function recall<N extends Node>(
             catalog: null,
             notice: null,
             focus: null,
+            scrollRevision: 0,
           },
           props,
         );
@@ -361,7 +377,27 @@ export function recall<N extends Node>(
           input.name === 'input'
         )
           input = input.event as ComponentInput;
-        if (input.kind === 'action' && input.key === state.pending?.key) {
+        if (
+          input.kind === 'component' &&
+          input.child === 'recall-reading' &&
+          input.name === 'observed'
+        ) {
+          const observed = input.event as ReadingObservation;
+          if (
+            observed.scroll &&
+            observed.scroll.readingRevision > state.scrollRevision &&
+            observed.viewport?.readingRevision === observed.readingRevision &&
+            observed.pendingCommand == null
+          ) {
+            state.scrollRevision = observed.scroll.readingRevision;
+            if (state.picker && props.open && !props.busy && !state.pending) {
+              if (observed.scroll.direction === 'up' && observed.viewport.atStart)
+                catalog(state, actions, 'before');
+              else if (observed.scroll.direction === 'down' && observed.viewport.atEnd)
+                catalog(state, actions, 'after');
+            }
+          }
+        } else if (input.kind === 'action' && input.key === state.pending?.key) {
           const pending = state.pending,
             result = input.event as ActionOutcome;
           state.pending = null;
@@ -413,12 +449,7 @@ export function recall<N extends Node>(
               state.picker = true;
               state.notice = null;
               catalog(state, actions);
-            } else if (state.picker && ['refresh', 'previous', 'next'].includes(input.key))
-              catalog(
-                state,
-                actions,
-                input.key === 'previous' ? 'before' : input.key === 'next' ? 'after' : 'start',
-              );
+            } else if (state.picker && input.key === 'refresh') catalog(state, actions);
             else if (state.picker && input.key === 'all') {
               state.session = null;
               state.picker = false;
@@ -426,7 +457,15 @@ export function recall<N extends Node>(
               const session = state.catalog?.sessions.find(
                 (session) => input.kind === 'raw' && 'session-' + session.id === input.key,
               );
-              if (session) {
+              if (
+                session &&
+                presentation.target === 'tui' &&
+                (input.event as { kind?: string }).kind === 'activate'
+              ) {
+                const at = state.catalog!.sessions.indexOf(session);
+                if (at >= state.catalog!.sessions.length - 3) catalog(state, actions, 'after');
+                else if (at < 3) catalog(state, actions, 'before');
+              } else if (session) {
                 state.session = session;
                 state.picker = false;
               }

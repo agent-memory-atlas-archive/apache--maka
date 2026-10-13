@@ -86,6 +86,11 @@ export interface State extends PageState {
   open: boolean;
   requested: number;
   route: 'list' | 'detail' | 'form';
+  listCursor: string | null;
+  listPrevious: (string | null)[];
+  listLoading: boolean;
+  scrollRevision: number;
+  focused: string | null;
   page: Extract<AgentSchedules, { kind: 'page' }> | null;
   detail: AgentScheduledDetail | null;
   watch: { key: string; input: AgentScheduleRead } | null;

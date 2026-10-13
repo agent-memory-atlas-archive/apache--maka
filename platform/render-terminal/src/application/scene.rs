@@ -99,17 +99,15 @@ pub(super) fn compile_with_inputs(
 }
 impl super::Widget for Node {
     fn cancel_pointer(&self, state: &mut dyn std::any::Any) {
-        state
-            .downcast_mut::<super::scroll::SceneState>()
-            .unwrap()
-            .scrollbar_drag = None;
+        let state = state.downcast_mut::<super::scroll::SceneState>().unwrap();
+        state.scrollbar_drag = None;
+        for pane in state.panes.values_mut() {
+            pane.resizing = false;
+        }
     }
     fn pointer_capture(&self, state: &dyn std::any::Any) -> bool {
-        state
-            .downcast_ref::<super::scroll::SceneState>()
-            .unwrap()
-            .scrollbar_drag
-            .is_some()
+        let state = state.downcast_ref::<super::scroll::SceneState>().unwrap();
+        state.scrollbar_drag.is_some() || state.panes.values().any(|pane| pane.resizing)
     }
     fn scene(&self) -> Option<&Node> {
         Some(self)
@@ -122,6 +120,9 @@ impl super::Widget for Node {
     fn deactivate(&self, state: &mut dyn std::any::Any) {
         let state = state.downcast_mut::<super::scroll::SceneState>().unwrap();
         state.scrollbar_drag = None;
+        for pane in state.panes.values_mut() {
+            pane.resizing = false;
+        }
         state.dialogs.clear();
         state.focus.clear();
     }
@@ -175,6 +176,12 @@ impl super::Widget for Node {
         key: &str,
         event: &crossterm::event::Event,
     ) -> maka_ui_runtime::Result<super::WidgetInput> {
+        if let Some(node @ Node::AdaptivePane { .. }) = self.overlay(key) {
+            return Ok(state
+                .downcast_mut::<super::scroll::SceneState>()
+                .unwrap()
+                .pane_input(node, event));
+        }
         if let Some(Node::Choice(choice)) = self.overlay(key) {
             return Ok(state
                 .downcast_mut::<super::scroll::SceneState>()

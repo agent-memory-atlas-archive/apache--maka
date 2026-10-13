@@ -1132,7 +1132,7 @@ function agentComposition(configuration: CompositionConfiguration): ApplicationS
           'morph-mark': node('morph-mark', { ...welcomeMark }),
         }
       : {}),
-    navigation: node('navigation'),
+    navigation: node('navigation', {}, { reading: [local('reading-area', 'ReadingArea')] }),
     'image-viewer': node(
       'image-viewer',
       {},

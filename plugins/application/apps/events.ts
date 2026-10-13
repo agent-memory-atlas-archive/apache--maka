@@ -31,6 +31,7 @@ import type {
   OperationReply,
   PackageSettingsPage,
   TextChunk,
+  ReadingObservation,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { type AppsProps } from '../../shared/contracts.js';
 import { settingOptions } from '../../shared/instance-settings.js';
@@ -69,6 +70,37 @@ export function handleEvent<N extends Node>(
     events: Emission[] = [];
   if (input.kind === 'component' && input.child === 'apps-list' && input.name === 'input')
     input = input.event as ComponentInput;
+  const extendList = (direction: 'up' | 'down') => {
+    const page =
+      state.route === 'choose'
+        ? state.catalog
+        : state.route === 'bindings'
+          ? state.draft?.choices
+          : null;
+    if (!page) return;
+    if (direction === 'up') state.listWindow = Math.max(0, state.listWindow - 32);
+    else if (state.listWindow + 64 < page.candidates.length) state.listWindow += 32;
+    else if (page.next && !state.pending) {
+      if (state.route === 'choose') catalog(state, actions, configuration, page.source, page.next);
+      else bindings(state, actions, page.next);
+    }
+  };
+  if (input.kind === 'component' && input.child === 'apps-list' && input.name === 'observed') {
+    const observed = input.event as ReadingObservation;
+    if (
+      observed.scroll &&
+      observed.scroll.readingRevision > state.scrollRevision &&
+      observed.viewport?.readingRevision === observed.readingRevision &&
+      observed.pendingCommand == null
+    ) {
+      state.scrollRevision = observed.scroll.readingRevision;
+      if (
+        !locked(state, props) &&
+        (observed.scroll.direction === 'up' ? observed.viewport.atStart : observed.viewport.atEnd)
+      )
+        extendList(observed.scroll.direction);
+    }
+  }
   if (input.kind === 'component') {
     const name =
       input.child === 'apps-name' ? 'name' : input.child === 'apps-setting' ? 'setting' : null;
@@ -150,8 +182,16 @@ export function handleEvent<N extends Node>(
       else {
         const page = result.value as BindingCandidatesPage;
         if (r.input.source && !sameValue(page.source, r.input.source)) state.notice = 'appsChanged';
-        else if (r.kind === 'catalog') state.catalog = page;
-        else if (state.draft) state.draft.choices = page;
+        else if (r.kind === 'catalog')
+          state.catalog =
+            r.input.after && state.catalog
+              ? { ...page, candidates: [...state.catalog.candidates, ...page.candidates] }
+              : page;
+        else if (state.draft)
+          state.draft.choices =
+            r.input.after && state.draft.choices
+              ? { ...page, candidates: [...state.draft.choices.candidates, ...page.candidates] }
+              : page;
       }
     } else if (r.kind === 'settings') {
       if (result.status !== 'succeeded') state.notice = 'appsUnavailable';
@@ -294,12 +334,23 @@ export function handleEvent<N extends Node>(
                 ],
               },
             };
+        } else if (
+          (key.startsWith('candidate-') || key.startsWith('binding-')) &&
+          presentation.target === 'tui' &&
+          (input.event as { kind?: string }).kind === 'activate'
+        ) {
+          state.focused = key;
+          const at = Number(key.slice(key.startsWith('candidate-') ? 10 : 8));
+          const count =
+            state.route === 'choose'
+              ? (state.catalog?.candidates.length ?? 0)
+              : (state.draft?.choices?.candidates.length ?? 0);
+          if (at < state.listWindow + 3 && state.listWindow > 0) extendList('up');
+          else if (at >= Math.min(state.listWindow + 61, count - 3)) extendList('down');
         } else if (key.startsWith('candidate-') && state.route === 'choose') {
           const candidate = state.catalog?.candidates[Number(key.slice(10))];
           if (candidate) choose(state, candidate, actions);
-        } else if (key === 'catalog-more' && state.catalog?.next)
-          catalog(state, actions, configuration, state.catalog.source, state.catalog.next);
-        else if (key === 'review' && state.route === 'configure') capture(state, actions, 'name');
+        } else if (key === 'review' && state.route === 'configure') capture(state, actions, 'name');
         else if (key.startsWith('setting-choice-') && d?.page) {
           const f = d.page.fields[Number(key.slice(15))];
           const option = f && settingOptions(f)[Number((input.event as { key?: string }).key)];
@@ -359,8 +410,6 @@ export function handleEvent<N extends Node>(
                 : [candidate.target];
           }
         } else if (key === 'bindings-clear' && d?.choosing) d.bindings[d.choosing.name] = [];
-        else if (key === 'bindings-more' && d?.choices?.next)
-          bindings(state, actions, d.choices.next);
         else if (key === 'bindings-done') state.route = 'configure';
       }
     }

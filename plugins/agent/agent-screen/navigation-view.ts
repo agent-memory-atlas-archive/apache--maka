@@ -199,18 +199,6 @@ export function navigationView<N extends Node>(
           ui.box(
             'catalog-controls',
             [
-              ...(state.catalog?.before
-                ? [
-                    ui.button(
-                      'catalog-previous',
-                      text.previousSessions,
-                      catalogBusy || state.catalogFailed,
-                    ),
-                  ]
-                : []),
-              ...(state.catalog?.after
-                ? [ui.button('catalog-more', text.moreSessions, catalogBusy || state.catalogFailed)]
-                : []),
               ...(target === 'desktop' || state.catalogFailed
                 ? [ui.button('catalog-refresh', text.refreshSessions, catalogBusy)]
                 : []),
@@ -225,15 +213,17 @@ export function navigationView<N extends Node>(
               locale,
               sessions: state.catalog?.sessions ?? [],
               selected: state.selected?.id ?? null,
-              busy: catalogBusy,
+              busy,
+              loading: catalogPending(state),
+              older: !!state.catalog?.before,
+              newer: !!state.catalog?.after,
             },
-            { select: 'select' },
+            { select: 'select', older: 'older', newer: 'newer' },
           ),
-          ...navigationApps,
         ],
         {
           gap: 0,
-          scroll: target === 'tui' ? 'manual' : 'none',
+          scroll: 'none',
           terminal: { grow: 1 },
           style: { height: pixels(0), grow: 1, minHeight: 0 },
         },
@@ -243,6 +233,7 @@ export function navigationView<N extends Node>(
             ui.box(
               'navigation-footer',
               [
+                ...navigationApps,
                 ...(!state.embedding.fixed
                   ? [
                       navigationLink(

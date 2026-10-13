@@ -57,6 +57,7 @@ import { draftReady, observeDraft, retryDraft, type DraftCheckpoint } from '../.
 
 import {
   canExecute,
+  openModelSetup,
   catalog,
   catalogPending,
   checkInteraction,
@@ -249,12 +250,17 @@ export function handleComponent<N extends Node>(
     return frame(presentation, configuredLocale, state, values, actions);
   }
   if (input.child === 'terminal-panel') {
-    if (input.name === 'closed' && state.dialog === 'terminal') state.dialog = null;
+    if (input.name === 'closed') {
+      if (state.dialog === 'terminal') state.dialog = null;
+      if (state.inspector === 'terminal') state.inspector = null;
+    }
     return frame(presentation, configuredLocale, state, values, actions);
   }
   if (input.child === 'session-details') {
-    if (input.name === 'closed' && state.dialog === 'details') state.dialog = null;
-    else if (input.name === 'changed') {
+    if (input.name === 'closed') {
+      if (state.dialog === 'details') state.dialog = null;
+      if (state.inspector === 'details') state.inspector = null;
+    } else if (input.name === 'changed') {
       if (state.selected?.id === (input.event as { sessionId: string }).sessionId)
         observe(state, actions);
     }
@@ -478,8 +484,25 @@ export function handleComponent<N extends Node>(
       state.tailReceipt = receipt;
       follow(state, actions);
     }
-  } else if (input.name === 'closed' && input.child === state.pages.at(-1)) state.pages.pop();
-  else if (input.child === 'connections' && input.name === 'changed') {
+  } else if (input.child === 'connections' && input.name === 'completed') {
+    if (state.connectionSetupRequest !== null && state.pages.at(-1) === 'connections') {
+      state.pages.pop();
+      state.connectionSetupRequest = null;
+      state.modelOpenRequest = ++state.serial;
+    }
+  } else if (
+    input.name === 'closed' &&
+    input.child === 'settings-models' &&
+    state.pages.at(-1) === 'settings'
+  ) {
+    state.pages.pop();
+  } else if (input.name === 'closed' && input.child === state.pages.at(-1)) {
+    state.pages.pop();
+    if (input.child === 'connections') state.connectionSetupRequest = null;
+  } else if (
+    (input.child === 'connections' || input.child === 'settings-models') &&
+    input.name === 'changed'
+  ) {
     state.catalogEpoch++;
     state.modelSetup = 'loading';
     state.modelRefreshing = !!state.model;
@@ -507,13 +530,13 @@ export function handleComponent<N extends Node>(
     !mutationPending(state) &&
     state.selected &&
     !state.selected.archived &&
-    canExecute(state) &&
     !state.loading &&
     (!state.run || (target === 'tui' && state.queue !== null)) &&
     !state.command
   ) {
     const draft = input.event as EditorObservation;
-    if (draft.snapshot.marked) state.notice = 'draftKept';
+    if (!canExecute(state)) openModelSetup(state);
+    else if (draft.snapshot.marked) state.notice = 'draftKept';
     else if (draft.snapshot.text.bytes > 65536) state.notice = 'tooLarge';
     else
       intent(
@@ -566,6 +589,7 @@ export function handleComponent<N extends Node>(
     conversationRoute(state) &&
     !state.dialog
   ) {
+    state.connectionSetupRequest = ++state.serial;
     state.pages = ['connections'];
   } else if (
     input.child === 'models' &&
@@ -576,13 +600,28 @@ export function handleComponent<N extends Node>(
   ) {
     state.model = input.event as SelectedModel;
     state.modelRefreshing = false;
+  } else if (input.child === 'navigation' && (input.name === 'older' || input.name === 'newer')) {
+    const page = state.catalog;
+    if (page && !mutationPending(state) && !catalogPending(state)) {
+      // Keep half of the original rows in the next bounded window. Native
+      // reading preserves their screen position and focus across the reply.
+      const middle = page.sessions[Math.floor(page.sessions.length / 2)];
+      if (middle && input.name === 'newer' && page.after)
+        catalog(
+          state,
+          page.sessions.length > 1
+            ? { kind: 'at', cursor: middle.id }
+            : { kind: 'after', revision: page.revision, cursor: page.after },
+        );
+      else if (middle && input.name === 'older' && page.before)
+        catalog(state, { kind: 'before', revision: page.revision, cursor: middle.id });
+    }
   } else if (
     input.child === 'navigation' &&
     !state.embedding.fixed &&
     input.name === 'select' &&
     state.dialog === null &&
-    !mutationPending(state) &&
-    !catalogPending(state)
+    !mutationPending(state)
   ) {
     const { sessionId, details, usage } = input.event as {
       sessionId: string;
@@ -594,7 +633,10 @@ export function handleComponent<N extends Node>(
     else if (session) {
       state.pages = [];
       if (state.selected?.id !== session.id) select(state, actions, session);
-      if (details && !executionPending(state)) state.dialog = 'details';
+      if (details && !executionPending(state)) {
+        if (target === 'tui') state.inspector = 'details';
+        else state.dialog = 'details';
+      }
       if (target === 'tui') controlSidebar(state, 'dismiss_transient');
     }
   } else if (input.child === 'image-viewer' && input.name === 'closed') {

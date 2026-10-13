@@ -30,6 +30,7 @@ import type {
 import { appearanceEvent, effectiveLocale } from '../../shared/appearance-editor.js';
 import { observeBookmark, retryBookmark } from '../../shared/bookmark.js';
 import type { AgentScreenProps, Theme } from '../../shared/contracts.js';
+import { settingsCategory } from '../../shared/settings.js';
 import { resolveLocale } from '../../shared/locale.js';
 import { type Node, type Presentation } from '../../shared/view.js';
 
@@ -79,20 +80,8 @@ export function handleEvent<N extends Node>(
               'scheduler',
             ].includes(page),
           ) &&
-          [
-            'appearance',
-            'interface',
-            'models',
-            'sessions',
-            'host',
-            'plugins',
-            'assistant',
-            'insights',
-            ...(state.web ? ['web'] : []),
-            ...(state.jev ? ['jev'] : []),
-            ...(props.workhub ? ['subagents'] : []),
-          ].includes(item.category)
-          ? item
+          settingsCategory(item.category) !== null
+          ? { ...item, category: settingsCategory(item.category)! }
           : null;
       },
     );

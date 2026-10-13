@@ -32,6 +32,7 @@ import type {
   ComponentInput,
   ThinkingLevel,
   ReadingCommand,
+  ReadingObservation,
 } from '../../../packages/plugin-sdk/src/index.js';
 import type { ModelsProps, SelectedModel, ModelSetup } from '../../shared/contracts.js';
 import { modelsContract } from '../../shared/contracts.js';
@@ -62,10 +63,13 @@ interface State {
   draft: SelectedModel | null;
   thinkingOpen: boolean;
   choices: SettingsModelChoice[];
+  windowStart: number;
+  choiceKeys: Record<string, string>;
+  nextChoiceKey: number;
   pageQuery: string | null;
   catalogRevision: number | null;
   next: SettingsModelCursor | null;
-  pageStarts: SettingsModelCursor[];
+  scrollRevision: number;
   failed: boolean;
 }
 function supports(selection: SelectedModel) {
@@ -95,6 +99,10 @@ function candidate(state: State, props: ModelsProps): SelectedModel | null {
     state.defaultModel?.kind === 'ready'
     ? { choice: state.defaultModel.choice, thinkingLevel: null }
     : null;
+}
+function modelKey(state: State, choice: SettingsModelChoice) {
+  const identity = JSON.stringify([choice.selection.connectionId, choice.selection.modelId]);
+  return (state.choiceKeys[identity] ??= `choose-${state.nextChoiceKey++}`);
 }
 function sameModel(a: SettingsModelChoice, b: SettingsModelChoice) {
   return (
@@ -159,9 +167,12 @@ function defaultsInteractive(state: State, props: ModelsProps) {
   return state.open && state.defaultsOpen && !props.busy;
 }
 function reveal(state: State) {
+  if (!state.choices[state.active]) return;
+  if (state.active < state.windowStart || state.active >= state.windowStart + 64)
+    state.windowStart = Math.max(0, state.active - 32);
   state.reveal = {
     sequence: (state.reveal?.sequence ?? 0) + 1,
-    target: { kind: 'reveal_child', key: `choose-${state.active}` },
+    target: { kind: 'reveal_child', key: modelKey(state, state.choices[state.active]!) },
   };
 }
 function editableChoices(state: State, props: ModelsProps) {
@@ -169,15 +180,15 @@ function editableChoices(state: State, props: ModelsProps) {
     state.open &&
     !state.defaultsOpen &&
     !props.busy &&
-    !state.pending &&
-    !state.failed &&
+    (!state.pending || (state.pending.kind === 'page' && !state.pending.first)) &&
+    (!state.failed || state.choices.length > 0) &&
     !state.queryError &&
     !dirty(state)
   );
 }
 function capture(state: State, choice: SelectedModel | null = null): Action[] {
   const basis = state.observation?.snapshot.text;
-  if (state.pending || !basis) return [];
+  if (!basis || (state.pending && !(choice && state.pending.kind === 'page'))) return [];
   if (basis.bytes > 1024) {
     state.queryError = 'searchTooLong';
     return [];
@@ -207,12 +218,9 @@ function read(state: State, more = false): Action[] {
   if (dirty(state)) return capture(state);
   return readPage(state, more);
 }
-function readPage(state: State, more = false, previous = false): Action[] {
+function readPage(state: State, more = false): Action[] {
   if (state.pending) return [];
-  if (previous) state.pageStarts.pop();
-  else if (more && state.next) state.pageStarts.push(state.next);
-  else state.pageStarts = [];
-  const cursor = state.pageStarts.at(-1);
+  const cursor = more ? state.next : null;
   const key = `models-${++state.serial}`;
   state.pending = { kind: 'page', key, query: state.query, first: !cursor };
   state.failed = false;
@@ -260,58 +268,61 @@ function frame<N extends Node>(
     truncate: true,
   });
 
-  const modelRows = state.choices.map((choice, at) => {
-    const active = !!state.draft && sameModel(state.draft.choice, choice);
-    if (ui.item) {
-      const detail =
-        choice.label === choice.selection.modelId
-          ? choice.connectionName
-          : `${choice.connectionName} · ${choice.selection.modelId}`;
-      return ui.item(
-        `choose-${at}`,
-        ui.box(
-          `model-${at}`,
-          [
-            ui.text(
-              `model-name-${at}`,
-              `${active ? (props.theme.ascii ? '>' : '›') : ' '} ${choice.label}`,
-              13,
-              props.theme.text,
-              400,
-              { truncate: true },
-            ),
-            ui.text(`model-detail-${at}`, `  ${detail}`, 13, props.theme.muted, 400, {
-              truncate: true,
-            }),
-          ],
-          { gap: 0 },
-        ),
-        active,
+  const modelRows = state.choices
+    .slice(state.windowStart, state.windowStart + 64)
+    .map((choice, offset) => {
+      const at = state.windowStart + offset;
+      const active = !!state.draft && sameModel(state.draft.choice, choice);
+      if (ui.item) {
+        const detail =
+          choice.label === choice.selection.modelId
+            ? choice.connectionName
+            : `${choice.connectionName} · ${choice.selection.modelId}`;
+        return ui.item(
+          modelKey(state, choice),
+          ui.box(
+            `model-${at}`,
+            [
+              ui.text(
+                `model-name-${at}`,
+                `${active ? (props.theme.ascii ? '>' : '›') : ' '} ${choice.label}`,
+                13,
+                props.theme.text,
+                400,
+                { truncate: true },
+              ),
+              ui.text(`model-detail-${at}`, `  ${detail}`, 13, props.theme.muted, 400, {
+                truncate: true,
+              }),
+            ],
+            { gap: 0 },
+          ),
+          active,
+          !editableChoices(state, props),
+          { followFocus: true, submit: true },
+        );
+      }
+      const button = ui.button(
+        modelKey(state, choice),
+        `${choice.label} · ${choice.connectionName}`,
         !editableChoices(state, props),
-        { followFocus: true, submit: true },
+        false,
+        {
+          width: fill,
+          minWidth: 0,
+          truncate: true,
+          justify: 'start',
+          ...(active ? { background: props.theme.selected } : {}),
+        },
       );
-    }
-    const button = ui.button(
-      `choose-${at}`,
-      `${choice.label} · ${choice.connectionName}`,
-      !editableChoices(state, props),
-      false,
-      {
-        width: fill,
-        minWidth: 0,
-        truncate: true,
-        justify: 'start',
-        ...(active ? { background: props.theme.selected } : {}),
-      },
-    );
 
-    return button;
-  });
+      return button;
+    });
   const viewport = presentation.reading(
     'model-rows',
     {
       content: ui.box('model-viewport', modelRows, {
-        scroll: 'manual',
+        scroll: 'anchor',
         focusGroup: target === 'tui',
         gap: target === 'desktop' ? 2 : 0,
         terminal: { grow: 1 },
@@ -324,12 +335,7 @@ function frame<N extends Node>(
   const controls = ui.box(
     'model-actions',
     [
-      ...(state.pageStarts.length
-        ? [ui.button('previous-page', text.previousModels, !editableChoices(state, props))]
-        : []),
-      ...(state.next
-        ? [ui.button('more', text.nextModelPage, !editableChoices(state, props))]
-        : []),
+      ui.button('connections', text.configureModels, props.busy),
       ui.button(
         'refresh',
         target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.refreshModels,
@@ -486,7 +492,6 @@ function frame<N extends Node>(
                   13,
                   props.theme.muted,
                 ),
-                ui.button('connections', text.configureModels, props.busy),
               ]
             : []),
           ...(state.draft && state.active < 0
@@ -617,10 +622,13 @@ export function models<N extends Node>(
         draft: null,
         thinkingOpen: false,
         choices: [],
+        windowStart: 0,
+        choiceKeys: {},
+        nextChoiceKey: 0,
         pageQuery: null,
         catalogRevision: null,
         next: null,
-        pageStarts: [],
+        scrollRevision: 0,
         failed: false,
       };
       return frame(presentation, state, props, read(state));
@@ -643,12 +651,13 @@ export function models<N extends Node>(
           thinkingOpen: false,
           suggestDefault: false,
           choices: [],
+          windowStart: 0,
           pageQuery: null,
           pending: null,
           catalogRevision: null,
           defaultModel: null,
           next: null,
-          pageStarts: [],
+          scrollRevision: 0,
         };
         return frame(
           presentation,
@@ -742,10 +751,20 @@ export function models<N extends Node>(
             // A page's choices and cursor always travel with its original
             // revision, even while the native search input has newer metadata.
             const current = request.query === state.query;
-            state.choices = current ? page.choices : [];
+            if (request.first) state.windowStart = 0;
+            state.choices = current
+              ? request.first
+                ? page.choices
+                : [
+                    ...state.choices,
+                    ...page.choices.filter(
+                      (choice) => !state.choices.some((loaded) => sameModel(loaded, choice)),
+                    ),
+                  ]
+              : [];
             state.next = current ? (page.next ?? null) : null;
             state.pageQuery = current ? request.query : null;
-            if (state.draft || (state.open && !state.defaultsOpen)) {
+            if (request.first && (state.draft || (state.open && !state.defaultsOpen))) {
               const choice = state.draft
                 ? [
                     ...state.choices,
@@ -766,6 +785,28 @@ export function models<N extends Node>(
             if (initial) {
               state.staleSelection = false;
               events.push({ name: 'selected', value: initial });
+            }
+          }
+        }
+      } else if (
+        input.kind === 'component' &&
+        input.child === 'model-rows' &&
+        input.name === 'observed'
+      ) {
+        const observed = input.event as ReadingObservation;
+        if (
+          observed.scroll &&
+          observed.scroll.readingRevision > state.scrollRevision &&
+          observed.viewport?.readingRevision === observed.readingRevision &&
+          observed.pendingCommand == null
+        ) {
+          state.scrollRevision = observed.scroll.readingRevision;
+          if (interactive(state, props)) {
+            if (observed.scroll.direction === 'up' && observed.viewport.atStart)
+              state.windowStart = Math.max(0, state.windowStart - 32);
+            else if (observed.scroll.direction === 'down' && observed.viewport.atEnd) {
+              if (state.windowStart + 64 < state.choices.length) state.windowStart += 32;
+              else if (!state.pending && state.next) actions.push(...read(state, true));
             }
           }
         }
@@ -811,11 +852,7 @@ export function models<N extends Node>(
           state.defaultsOpen = false;
           actions.push(...resume(state, props));
         } else if (!props.busy) {
-          if (
-            input.key === 'connections' &&
-            editableChoices(state, props) &&
-            !state.choices.length
-          ) {
+          if (input.key === 'connections' && interactive(state, props)) {
             close(state);
             events.push({ name: 'connections', value: null });
           } else if (input.key === 'toggle') {
@@ -859,14 +896,6 @@ export function models<N extends Node>(
           } else if (input.key === 'default-refresh') actions.push(...readPage(state));
           else if (input.key === 'refresh') actions.push(...read(state));
           else if (
-            input.key === 'previous-page' &&
-            editableChoices(state, props) &&
-            state.pageStarts.length
-          ) {
-            actions.push(...readPage(state, false, true));
-          } else if (input.key === 'more' && !state.pending) {
-            if (state.next) actions.push(...read(state, true));
-          } else if (
             presentation.target === 'desktop' &&
             (input.key === 'next-choice' || input.key === 'previous-choice') &&
             editableChoices(state, props)
@@ -881,17 +910,26 @@ export function models<N extends Node>(
             const choice = state.choices[state.active];
             if (choice) selectDraft(state, choice);
             reveal(state);
-          } else if (editableChoices(state, props) && /^choose-(0|[1-9][0-9]*)$/.test(input.key)) {
-            const choice = state.choices[Number(input.key.slice(7))];
+          } else if (editableChoices(state, props) && input.key.startsWith('choose-')) {
+            const choice = state.choices.find((choice) => modelKey(state, choice) === input.key);
             if (choice) {
-              state.active = Number(input.key.slice(7));
+              state.active = state.choices.indexOf(choice);
               selectDraft(state, choice);
+              if (state.active < state.windowStart + 3 && state.windowStart > 0)
+                state.windowStart = Math.max(0, state.windowStart - 32);
+              else if (
+                state.active >= state.windowStart + 61 &&
+                state.windowStart + 64 < state.choices.length
+              )
+                state.windowStart += 32;
               if (
                 (input.event as { kind?: string }).kind === 'submit' &&
                 state.draft &&
                 supports(state.draft)
               )
                 actions.push(...capture(state, state.draft));
+              else if (state.next && state.active >= state.choices.length - 3)
+                actions.push(...read(state, true));
             }
           }
         }

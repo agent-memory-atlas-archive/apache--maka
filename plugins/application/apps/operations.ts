@@ -73,6 +73,7 @@ export function catalog(
   source: DeploymentRef | null = null,
   after: string | null = null,
 ) {
+  if (!after && !state.pending) state.listWindow = 0;
   const input: BindingCandidatesRead = {
     source,
     consumer: { kind: 'root', name: configuration.root },
@@ -101,6 +102,7 @@ export function bindings(state: State, actions: Action[], after: string | null =
   const d = state.draft,
     source = state.catalog?.source;
   if (!source || d?.candidate.kind !== 'package' || !d.choosing) return;
+  if (!after && !state.pending) state.listWindow = 0;
   const input: BindingCandidatesRead = {
     source,
     consumer: { kind: 'package', package: d.candidate.package },

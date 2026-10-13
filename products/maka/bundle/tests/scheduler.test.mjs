@@ -114,7 +114,7 @@ async function client(target) {
       out = checkFrame(component.event(out.frame.state, input, props, {}));
       return this;
     },
-    raw(key, event = { kind: 'activate' }) {
+    raw(key, event = { kind: 'submit' }) {
       return this.event({ kind: 'raw', key, event });
     },
     child(child, name, event) {

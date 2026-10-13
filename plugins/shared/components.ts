@@ -71,6 +71,8 @@ interface Revision {
 }
 interface Navigation extends Revision {
   toggled: string[];
+  scrollRevision: number;
+  focused: string | null;
 }
 interface SessionGroup {
   key: string;
@@ -311,7 +313,7 @@ export function components<N extends Node>(
           ? [
               ui.button(
                 'stop',
-                target === 'tui' ? (props.theme.ascii ? 'x' : '■') : text.stop,
+                text.stop,
                 props.busy,
                 false,
                 target === 'tui' ? { background: 0 } : {},
@@ -322,15 +324,7 @@ export function components<N extends Node>(
                 ? [
                     ui.button(
                       'send',
-                      target === 'tui'
-                        ? props.running
-                          ? props.theme.ascii
-                            ? '+'
-                            : '↳'
-                          : props.theme.ascii
-                            ? '>'
-                            : '➤'
-                        : text.send,
+                      props.sendLabel ?? text.send,
                       !available,
                       true,
                       target === 'tui' ? { background: 0 } : {},
@@ -343,15 +337,7 @@ export function components<N extends Node>(
           : [
               ui.button(
                 'send',
-                target === 'tui'
-                  ? props.running
-                    ? props.theme.ascii
-                      ? '+'
-                      : '↳'
-                    : props.theme.ascii
-                      ? '>'
-                      : '➤'
-                  : text.send,
+                props.sendLabel ?? text.send,
                 !available,
                 true,
                 target === 'tui' ? { background: 0 } : {},
@@ -363,7 +349,7 @@ export function components<N extends Node>(
       {
         row: true,
         gap: target === 'tui' ? 0 : undefined,
-        terminal: { basis: props.running ? 6 : 3 },
+        terminal: { shrink: false },
         style: { justify: 'between', align: 'center', width: fill },
       },
     );
@@ -450,148 +436,155 @@ export function components<N extends Node>(
     const ui = presentation.paint(props.theme);
     return output(
       state,
-      ui.box(
-        'session-groups',
-        sessionGroups(props).flatMap((group, index) => {
-          const open = groupOpen(state, group.key);
-          const heading = `${open ? (props.theme.ascii ? 'v' : '▾') : props.theme.ascii ? '>' : '▸'} ${group.label}  ${group.sessions.length}`;
-          const label = ui.text(`${group.key}-label`, heading, 12, props.theme.muted, 500, {
-            truncate: true,
-          });
-          return [
-            ...(index ? [ui.box(`${group.key}-gap`, [], { terminal: { basis: 1 } })] : []),
-            ui.item
-              ? ui.item(group.key, label, false, props.busy)
-              : ui.button(group.key, heading, props.busy, false, {
-                  width: fill,
-                  minWidth: 0,
-                  justify: 'start',
-                  truncate: true,
-                }),
-            ...(open
-              ? group.sessions.map((session, at) => {
-                  const current = session.id === props.selected;
-                  const row = ui.item
-                    ? ui.item(
-                        session.id,
-                        ui.box(
-                          `session-row-${index}-${at}`,
-                          [
+      presentation.reading(
+        'session-list',
+        {
+          content: ui.box(
+            'session-groups',
+            sessionGroups(props).flatMap((group, index) => {
+              const open = groupOpen(state, group.key);
+              const heading = `${open ? (props.theme.ascii ? 'v' : '▾') : props.theme.ascii ? '>' : '▸'} ${group.label}  ${group.sessions.length}`;
+              const label = ui.text(`${group.key}-label`, heading, 12, props.theme.muted, 500, {
+                truncate: true,
+              });
+              return [
+                ...(index ? [ui.box(`${group.key}-gap`, [], { terminal: { basis: 1 } })] : []),
+                ui.item
+                  ? ui.item(group.key, label, false, props.busy)
+                  : ui.button(group.key, heading, props.busy, false, {
+                      width: fill,
+                      minWidth: 0,
+                      justify: 'start',
+                      truncate: true,
+                    }),
+                ...(open
+                  ? group.sessions.map((session, at) => {
+                      const current = session.id === props.selected;
+                      const row = ui.item
+                        ? ui.item(
+                            session.id,
                             ui.box(
-                              `session-status-${index}-${at}`,
+                              `session-row-${index}-${at}`,
                               [
-                                ...(session.activity === 'working'
+                                ui.box(
+                                  `session-status-${index}-${at}`,
+                                  [
+                                    ...(session.activity === 'working'
+                                      ? [
+                                          ui.activity(
+                                            `session-glyph-${index}-${at}`,
+                                            'orbit',
+                                            props.theme.accent,
+                                            '  ',
+                                            ' ',
+                                          ),
+                                        ]
+                                      : [
+                                          ui.text(
+                                            `session-glyph-${index}-${at}`,
+                                            session.activity === 'waiting'
+                                              ? props.theme.ascii
+                                                ? '  ! '
+                                                : '  ◇ '
+                                              : session.hasUnread
+                                                ? props.theme.ascii
+                                                  ? '  * '
+                                                  : '  ● '
+                                                : '    ',
+                                            13,
+                                            session.activity === 'waiting'
+                                              ? props.theme.warning
+                                              : props.theme.accent,
+                                          ),
+                                        ]),
+                                  ],
+                                  { terminal: { basis: 4, shrink: false } },
+                                ),
+                                ui.box(
+                                  `session-name-${index}-${at}`,
+                                  [
+                                    ui.text(
+                                      `session-label-${index}-${at}`,
+                                      session.title,
+                                      13,
+                                      session.archived ? props.theme.muted : props.theme.text,
+                                      session.hasUnread ? 650 : 400,
+                                      { truncate: true },
+                                    ),
+                                  ],
+                                  { terminal: { grow: 1, shrink: true } },
+                                ),
+                                ...(session.activity === 'waiting'
                                   ? [
-                                      ui.activity(
-                                        `session-glyph-${index}-${at}`,
-                                        'orbit',
+                                      ui.text(
+                                        `session-waiting-${index}-${at}`,
+                                        ` ${copy(props.locale).needsYou} `,
+                                        12,
                                         props.theme.accent,
-                                        '  ',
-                                        ' ',
+                                        400,
+                                        { truncate: true },
                                       ),
                                     ]
-                                  : [
-                                      ui.text(
-                                        `session-glyph-${index}-${at}`,
-                                        session.activity === 'waiting'
-                                          ? props.theme.ascii
-                                            ? '  ! '
-                                            : '  ◇ '
-                                          : session.hasUnread
-                                            ? props.theme.ascii
-                                              ? '  * '
-                                              : '  ● '
-                                            : '    ',
-                                        13,
-                                        session.activity === 'waiting'
-                                          ? props.theme.warning
-                                          : props.theme.accent,
-                                      ),
-                                    ]),
+                                  : []),
                               ],
-                              { terminal: { basis: 4, shrink: false } },
+                              { row: true, gap: 0 },
                             ),
-                            ui.box(
-                              `session-name-${index}-${at}`,
-                              [
-                                ui.text(
-                                  `session-label-${index}-${at}`,
-                                  session.title,
-                                  13,
-                                  session.archived ? props.theme.muted : props.theme.text,
-                                  session.hasUnread ? 650 : 400,
-                                  { truncate: true },
-                                ),
-                              ],
-                              { terminal: { grow: 1, shrink: true } },
+                            current,
+                            props.busy,
+                            { followFocus: true, submit: true },
+                          )
+                        : ui.button(
+                            session.id,
+                            session.title +
+                              (session.activity === 'waiting'
+                                ? ' · ' + copy(props.locale).needsYou
+                                : session.activity === 'working'
+                                  ? ' · ' + copy(props.locale).working
+                                  : session.hasUnread
+                                    ? ' · ' + copy(props.locale).unread
+                                    : ''),
+                            props.busy,
+                            false,
+                            {
+                              width: fill,
+                              minWidth: 0,
+                              justify: 'start',
+                              truncate: true,
+                              ...(current ? { background: props.theme.selected } : {}),
+                            },
+                          );
+                      return ui.contextMenu
+                        ? ui.contextMenu('session-menu-' + session.id, session.title, row, [
+                            ui.button(
+                              'details-' + session.id,
+                              copy(props.locale).detailsTitle,
+                              props.busy,
                             ),
-                            ...(session.activity === 'waiting'
+                            ...(target === 'tui'
                               ? [
-                                  ui.text(
-                                    `session-waiting-${index}-${at}`,
-                                    ` ${copy(props.locale).needsYou} `,
-                                    12,
-                                    props.theme.accent,
-                                    400,
-                                    { truncate: true },
+                                  ui.button(
+                                    'usage-' + session.id,
+                                    tuiText(props.locale, 'insights-this-session'),
+                                    props.busy,
                                   ),
                                 ]
                               : []),
-                          ],
-                          { row: true, gap: 0 },
-                        ),
-                        current,
-                        props.busy,
-                      )
-                    : ui.button(
-                        session.id,
-                        session.title +
-                          (session.activity === 'waiting'
-                            ? ' · ' + copy(props.locale).needsYou
-                            : session.activity === 'working'
-                              ? ' · ' + copy(props.locale).working
-                              : session.hasUnread
-                                ? ' · ' + copy(props.locale).unread
-                                : ''),
-                        props.busy,
-                        false,
-                        {
-                          width: fill,
-                          minWidth: 0,
-                          justify: 'start',
-                          truncate: true,
-                          ...(current ? { background: props.theme.selected } : {}),
-                        },
-                      );
-                  return ui.contextMenu
-                    ? ui.contextMenu('session-menu-' + session.id, session.title, row, [
-                        ui.button(
-                          'details-' + session.id,
-                          copy(props.locale).detailsTitle,
-                          props.busy,
-                        ),
-                        ...(target === 'tui'
-                          ? [
-                              ui.button(
-                                'usage-' + session.id,
-                                tuiText(props.locale, 'insights-this-session'),
-                                props.busy,
-                              ),
-                            ]
-                          : []),
-                      ])
-                    : row;
-                })
-              : []),
-          ];
-        }),
-        {
-          scroll: 'anchor',
-          focusGroup: target === 'tui',
-          gap: target === 'tui' ? 0 : 2,
-          style: { width: fill, height: pixels(0), grow: 1, minHeight: 0 },
-          terminal: { grow: 1 },
+                          ])
+                        : row;
+                    })
+                  : []),
+              ];
+            }),
+            {
+              scroll: 'anchor',
+              focusGroup: target === 'tui',
+              gap: target === 'tui' ? 0 : 2,
+              style: { width: fill, height: pixels(0), grow: 1, minHeight: 0 },
+              terminal: { grow: 1 },
+            },
+          ),
         },
+        { input: 'session-input', observed: 'session-viewport' },
       ),
     );
   };
@@ -1353,11 +1346,46 @@ export function components<N extends Node>(
       },
     },
     navigation: {
-      mount: (props) => navigationFrame({ revision: 0, toggled: [] }, props),
+      mount: (props) =>
+        navigationFrame({ revision: 0, toggled: [], scrollRevision: 0, focused: null }, props),
       update: (state, props) => navigationFrame({ ...state, revision: state.revision + 1 }, props),
       event(state, input, props) {
         const next = { ...state, revision: state.revision + 1 };
         const events: Parameters<typeof output>[2] = [];
+        if (input.kind === 'component' && input.child === 'session-list') {
+          if (input.name === 'input') input = input.event as ComponentInput;
+          else if (input.name === 'observed') {
+            const observed = input.event as ReadingObservation;
+            const scroll = observed.scroll && observed.scroll.readingRevision > next.scrollRevision;
+            if (
+              scroll &&
+              observed.viewport?.readingRevision === observed.readingRevision &&
+              observed.pendingCommand == null
+            )
+              next.scrollRevision = observed.scroll!.readingRevision;
+            if (
+              !props.busy &&
+              !props.loading &&
+              observed.pendingCommand == null &&
+              observed.viewport?.readingRevision === observed.readingRevision
+            ) {
+              if (
+                props.newer &&
+                scroll &&
+                observed.scroll!.direction === 'down' &&
+                observed.viewport.atEnd
+              )
+                events.push({ name: 'newer', value: {} });
+              else if (
+                props.older &&
+                scroll &&
+                observed.scroll!.direction === 'up' &&
+                observed.viewport.atStart
+              )
+                events.push({ name: 'older', value: {} });
+            }
+          }
+        }
         if (input.kind === 'raw' && !props.busy) {
           const groups = sessionGroups(props);
           const group = groups.find((group) => group.key === input.key);
@@ -1375,7 +1403,20 @@ export function components<N extends Node>(
                   'details-' + session.id === input.key ||
                   'usage-' + session.id === input.key,
               );
-            if (session)
+            if (
+              session &&
+              target === 'tui' &&
+              (input.event as { kind?: string }).kind === 'activate' &&
+              input.key === session.id
+            ) {
+              const at = props.sessions.indexOf(session);
+              if (!props.loading && next.focused !== session.id) {
+                if (props.newer && at >= props.sessions.length - 3)
+                  events.push({ name: 'newer', value: {} });
+                else if (props.older && at < 3) events.push({ name: 'older', value: {} });
+              }
+              next.focused = session.id;
+            } else if (session)
               events.push({
                 name: 'select',
                 value: {

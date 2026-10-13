@@ -324,13 +324,21 @@ export function frame<N extends Node>(
   if (state.picker) {
     for (const session of state.sessions?.sessions ?? [])
       content.push(
-        ui.button(
-          'source-' + session.id,
-          compactLabel(session.title, 120),
-          disabled || session.archived,
-          false,
-          { width: fill, justify: 'start' },
-        ),
+        ui.item
+          ? ui.item(
+              'source-' + session.id,
+              ui.text('source-label-' + session.id, compactLabel(session.title, 120)),
+              state.focused === 'source-' + session.id,
+              !props.open || props.busy || session.archived,
+              { followFocus: true, submit: true },
+            )
+          : ui.button(
+              'source-' + session.id,
+              compactLabel(session.title, 120),
+              disabled || session.archived,
+              false,
+              { width: fill, justify: 'start' },
+            ),
       );
   } else if (state.route === 'list') {
     if (ui.item)
@@ -357,10 +365,15 @@ export function frame<N extends Node>(
       const row = ui.box(
         'schedule-row-' + task.id,
         [
-          ui.button('task-' + task.id, compactLabel(task.title, 120), disabled, false, {
-            width: fill,
-            justify: 'start',
-          }),
+          ...(ui.item
+            ? []
+            : [
+                ui.button('task-' + task.id, compactLabel(task.title, 120), disabled, false, {
+                  width: fill,
+                  justify: 'start',
+                }),
+              ]),
+          ...(ui.item ? [ui.text('schedule-title-' + task.id, compactLabel(task.title, 120))] : []),
           ui.text(
             'schedule-summary-' + task.id,
             `${status(task, text)} · ${text.scheduleNext}: ${date(task.nextFireAt)}`,
@@ -379,15 +392,21 @@ export function frame<N extends Node>(
         ],
         { gap: 0 },
       );
+      const item = ui.item
+        ? ui.item('task-' + task.id, row, state.focused === 'task-' + task.id, disabled, {
+            followFocus: true,
+            submit: true,
+          })
+        : row;
       content.push(
         ui.contextMenu
           ? ui.contextMenu(
               'schedule-menu-' + task.id,
               compactLabel(task.title, 120),
-              row,
+              item,
               controls(task, 'context-'),
             )
-          : row,
+          : item,
       );
     }
     if (state.page && !state.page.tasks.length)
@@ -521,13 +540,13 @@ export function frame<N extends Node>(
             {
               content: ui.box('schedule-content', content, {
                 gap: 1,
-                scroll: 'manual',
-                focusGroup: state.picker,
+                scroll: 'anchor',
+                focusGroup: state.picker || state.route === 'list',
                 terminal: { grow: 1, basis: 0 },
                 style: { width: fill, height: fill },
               }),
             },
-            { input: 'schedule-input' },
+            { input: 'schedule-input', observed: 'schedule-viewport' },
           ),
         ],
         {
@@ -539,22 +558,13 @@ export function frame<N extends Node>(
       ui.box(
         'schedule-footer',
         state.picker
-          ? [
-              ui.button('sessions-refresh', text.directoryRefresh, disabled),
-              ...(state.sessions?.before
-                ? [ui.button('sessions-previous', text.sourcePrevious, disabled)]
-                : []),
-              ...(state.sessions?.after
-                ? [ui.button('sessions-next', text.sourceNext, disabled)]
-                : []),
-            ]
+          ? [ui.button('sessions-refresh', text.directoryRefresh, disabled)]
           : state.route === 'form'
             ? [ui.button('review', text.scheduleReview, editing, true)]
             : state.route === 'list'
               ? [
                   ...(!ui.item ? [ui.button('new', text.scheduleNew, disabled, true)] : []),
                   ui.button('refresh', text.directoryRefresh, disabled),
-                  ...(state.page?.nextCursor ? [ui.button('next', text.sourceNext, disabled)] : []),
                 ]
               : [ui.button('refresh', text.directoryRefresh, disabled)],
         { row: true, gap: 1, terminal: { wrap: true }, style: { wrap: true } },
