@@ -114,6 +114,9 @@ impl Owner {
             return Err("agent_closed".into());
         }
         let id = &target.session_id;
+        if self.graph_selected(id).await? {
+            return Err("graph_background_conflict".into());
+        }
         let session = self.session(id).await?;
         if session.configuration.workspace != target.workspace
             || session.configuration.permissions != target.permissions
@@ -146,6 +149,7 @@ impl Owner {
         .await
         .map_err(public_error)?;
         let mut basis = MessageBasis {
+            graph: None,
             collaboration_mode: CollaborationMode::Agent,
             background_kind: kind,
             tool_discovery: self.settings.tool_discovery,

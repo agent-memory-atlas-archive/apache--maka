@@ -107,6 +107,7 @@ impl Coordinator {
             schedule,
             control: Control {
                 epoch,
+                selected: true,
                 schedule_revision: 0,
                 stop_requested: false,
                 stop_target: None,

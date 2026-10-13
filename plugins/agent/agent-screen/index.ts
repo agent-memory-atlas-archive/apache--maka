@@ -25,6 +25,7 @@ import { type Presentation, type Node } from '../../shared/view.js';
 
 import { newGoalState } from './goal.js';
 import { newPlanState } from './plan.js';
+import { newGraphState } from './graph.js';
 import { type State } from './state.js';
 import { intent, catalog } from './actions.js';
 import { frame } from './frame.js';
@@ -39,6 +40,7 @@ export function agentScreen<N extends Node>(
   scheduledTasks = false,
   web = false,
   jev = false,
+  graphs = false,
 ): Component<State, AgentScreenProps, N> {
   const target = presentation.target;
   const configuredLocale = locale;
@@ -79,6 +81,7 @@ export function agentScreen<N extends Node>(
         jev,
         goal: newGoalState(),
         plan: newPlanState(),
+        graph: newGraphState(graphs),
         recap: { receipt: null, loaded: false, loading: null, failed: false, confirmation: null },
         checklist: { watch: null, page: null, failed: false },
         scheduleAlerts: { pending: 0, reminders: [] },

@@ -29,6 +29,7 @@ use uuid::Uuid;
 mod code_mode;
 mod computer;
 mod goal;
+mod graph;
 mod health;
 mod plan;
 mod recap;

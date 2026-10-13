@@ -1847,3 +1847,6 @@ async fn workhub_dependencies_wait_cancel_and_dispatch_once_with_complete_origin
     .await
     .unwrap();
 }
+
+#[path = "workhub_graph.rs"]
+mod graph_tests;

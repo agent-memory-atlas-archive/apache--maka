@@ -191,9 +191,27 @@ impl Hub {
         }
         Ok(intent)
     }
+    pub(super) async fn require_control_session(
+        &self,
+        id: &str,
+        session: &str,
+    ) -> Result<(), String> {
+        let intent = self.control_intent(id).await?;
+        if self.assignment(&intent.task_id).await?.source.session_id != session {
+            return Err("workhub_control_source_invalid".into());
+        }
+        Ok(())
+    }
     pub(in crate::workhub) async fn controls(
         &self,
         after: Option<String>,
+    ) -> Result<Value, String> {
+        self.controls_scope(after, None).await
+    }
+    pub(super) async fn controls_scope(
+        &self,
+        after: Option<String>,
+        session: Option<&str>,
     ) -> Result<Value, String> {
         let prefix = format!("{}controls/", self.agent.0.prefix);
         let page = self
@@ -226,6 +244,9 @@ impl Hub {
             if let Data::Present(value) = entry.record.data {
                 let intent: Intent =
                     serde_json::from_value(value).map_err(|_| "workhub_control_invalid")?;
+                if session.is_some_and(|id| intent.source.session_id != id) {
+                    continue;
+                }
                 entries.push(serde_json::json!({"taskId":intent.task_id,"controlId":id}));
             }
         }

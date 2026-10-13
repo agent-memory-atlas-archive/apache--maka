@@ -19,6 +19,7 @@
 
 mod controls;
 mod dependencies;
+pub(crate) mod graph;
 mod notifications;
 mod preparation;
 use super::*;
@@ -57,9 +58,10 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 const NAME: &str = "workhub_tasks";
-type Link = Arc<OnceLock<Weak<Hub>>>;
+pub(crate) type Link = Arc<OnceLock<Weak<Hub>>>;
 #[derive(Clone)]
 pub(super) struct Tasks {
+    pub(crate) graphs: Arc<graph::Graphs>,
     services: NativeServices,
     source: DeploymentRef,
     pub(super) workers: BTreeMap<String, Option<Binding>>,
@@ -140,17 +142,7 @@ enum Input {
         worker: String,
         location: crate::contract::Directories,
     },
-    Route {
-        #[serde(default)]
-        #[schemars(length(max = 16), extend("uniqueItems" = true))]
-        dependencies: Vec<String>,
-        worker: String,
-        target: Target,
-        note: String,
-        model: Option<crate::ModelSelection>,
-        thinking_level: Option<maka_agent_facts::execution::ThinkingLevel>,
-        executor: Option<maka_agent_api::executor::Selection>,
-    },
+    Route(Route),
     Wait {
         task_id: String,
     },
@@ -161,6 +153,19 @@ enum Input {
     Advance {
         task_id: String,
     },
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Route {
+    #[serde(default)]
+    #[schemars(length(max = 16), extend("uniqueItems" = true))]
+    dependencies: Vec<String>,
+    worker: String,
+    target: Target,
+    note: String,
+    model: Option<crate::ModelSelection>,
+    thinking_level: Option<maka_agent_facts::execution::ThinkingLevel>,
+    executor: Option<maka_agent_api::executor::Selection>,
 }
 #[derive(Clone, Copy, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -180,6 +185,8 @@ impl DeliveryMethod {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Assignment {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    graph: Option<graph::TaskSource>,
     #[serde(default)]
     dependencies: Vec<String>,
     source: Invocation,
@@ -242,7 +249,8 @@ pub(super) fn prepare(
         }
     }
     let link = Arc::new(OnceLock::new());
-    let additional = if workers.is_empty() {
+    let graphs = Arc::new(graph::Graphs::new(link.clone(), !workers.is_empty()));
+    let mut additional = if workers.is_empty() {
         vec![]
     } else {
         vec![ToolRegistration {
@@ -255,9 +263,13 @@ pub(super) fn prepare(
         handler: ToolHandler::Prepared(Arc::new(Tool(link.clone()))),
     }]
     };
+    if !workers.is_empty() {
+        additional.extend(graph::registrations(link.clone()));
+    }
     Ok((
         serde_json::to_value(settings.agent).map_err(|_| "workhub_configuration_invalid")?,
         Tasks {
+            graphs,
             services,
             source: context
                 .persistence()
@@ -297,6 +309,40 @@ impl ToolPreparer for Tool {
             hub.coordinator_source(&context.invocation)
                 .await
                 .map_err(|_| ToolRejection::Unavailable)?;
+            // A graph supervisor cannot bypass its frozen scheduling authority
+            // after Stop/Leave through the ordinary WorkHub entry point.
+            if matches!(
+                &input,
+                Input::Route(_)
+                    | Input::RoutePreset { .. }
+                    | Input::CancelPending { .. }
+                    | Input::Control {
+                        action: controls::Action::Stop | controls::Action::Resume { .. },
+                        ..
+                    }
+            ) {
+                let configuration = hub
+                    .agent
+                    .0
+                    .store
+                    .invocation_configuration(&context.invocation)
+                    .await
+                    .map_err(|_| ToolRejection::Unavailable)?
+                    .ok_or(ToolRejection::Unavailable)?;
+                if configuration
+                    .orchestration_mode
+                    .as_str()
+                    .starts_with("maka.graph.")
+                    || configuration
+                        .orchestration_mode
+                        .as_str()
+                        .starts_with("maka.swarm.")
+                {
+                    return Err(ToolRejection::PolicyDenied {
+                        message: "graph_decision_required: use update_agent_graph".into(),
+                    });
+                }
+            }
             Ok(PreparedEffect::new(move |cancel| {
                 Box::pin(async move {
                     hub.tasks_input(input, context, cancel)
@@ -319,10 +365,7 @@ impl Hub {
         &self,
         invocation: &Invocation,
     ) -> Result<maka_event_log::turns::TurnBoundary, String> {
-        let intent = self.intent().await?.ok_or("workhub_coordinator_missing")?;
-        if self.agent.0.operation_id(&intent.operation) != invocation.session_id {
-            return Err("workhub_source_invalid".into());
-        }
+        self.agent.0.session(&invocation.session_id).await?;
         let boundary = self
             .agent
             .0
@@ -349,6 +392,13 @@ impl Hub {
         Ok(format!("{}tasks/{id}", self.agent.0.prefix))
     }
     pub(super) async fn task_list(&self, after: Option<String>) -> Result<Value, String> {
+        self.task_list_scope(after, None).await
+    }
+    async fn task_list_scope(
+        &self,
+        after: Option<String>,
+        session: Option<&str>,
+    ) -> Result<Value, String> {
         let prefix = format!("{}tasks/", self.agent.0.prefix);
         let page = self
             .agent
@@ -377,8 +427,16 @@ impl Hub {
             if let Data::Present(value) = entry.record.data {
                 let assignment: Assignment =
                     serde_json::from_value(value).map_err(|_| "workhub_task_invalid")?;
+                if session.is_some_and(|id| assignment.source.session_id != id) {
+                    continue;
+                }
                 let title = match &assignment.target {
                     Target::New { title, .. } => title.as_str(),
+                    Target::Existing { .. } if assignment.graph.is_some() => {
+                        assignment.input["message"]
+                            .as_str()
+                            .ok_or("workhub_task_invalid")?
+                    }
                     Target::Existing { .. } => assignment.input["message"]
                         .as_str()
                         .ok_or("workhub_task_invalid")?
@@ -408,7 +466,10 @@ impl Hub {
         let record: Assignment =
             serde_json::from_value(value).map_err(|_| "workhub_task_invalid")?;
         if !self.agent.0.owns(&record.source.session_id)
-            || task_id(&record.source, &record.tool_operation) != id
+            || record.graph.as_ref().map_or_else(
+                || task_id(&record.source, &record.tool_operation),
+                |graph| graph::graph_task_id(&graph.graph_id, &graph.work_id),
+            ) != id
             || record.operation != child_id(id)
         {
             return Err("workhub_task_invalid".into());
@@ -423,6 +484,26 @@ impl Hub {
     ) -> Result<Value, String> {
         if self.tasks.cleanup_failed() || cancellation.is_cancelled() {
             return Err("workhub_closed".into());
+        }
+        match &input {
+            Input::CancelPending { task_id }
+            | Input::Control { task_id, .. }
+            | Input::Wait { task_id }
+            | Input::Inspect { task_id, .. }
+            | Input::Advance { task_id } => {
+                if self.assignment(task_id).await?.source.session_id
+                    != context.invocation.session_id
+                {
+                    return Err("workhub_task_source_invalid".into());
+                }
+            }
+            Input::ReadPatch { control_id, .. }
+            | Input::InspectControl { control_id }
+            | Input::AdvanceControl { control_id } => {
+                self.require_control_session(control_id, &context.invocation.session_id)
+                    .await?;
+            }
+            _ => {}
         }
         let input = if let Input::RoutePreset {
             preset,
@@ -451,7 +532,7 @@ impl Hub {
                 .into_iter()
                 .find(|p| p.id == preset && p.enabled)
                 .ok_or("workhub_preset_unavailable")?;
-            Input::Route {
+            Input::Route(Route {
                 dependencies,
                 worker: preset.worker,
                 target: Target::New {
@@ -464,7 +545,7 @@ impl Hub {
                 model: Some(preset.model),
                 thinking_level: preset.thinking_level,
                 executor: None,
-            }
+            })
         } else {
             input
         };
@@ -486,14 +567,20 @@ impl Hub {
                 self.control_start(&task_id, action, context, cancellation)
                     .await
             }
-            Input::Controls { after } => self.controls(after).await,
+            Input::Controls { after } => {
+                self.controls_scope(after, Some(&context.invocation.session_id))
+                    .await
+            }
             Input::InspectControl { control_id } => {
                 self.control(&control_id, false, cancellation).await
             }
             Input::AdvanceControl { control_id } => {
                 self.control(&control_id, true, cancellation).await
             }
-            Input::Assignments { after } => self.task_list(after).await,
+            Input::Assignments { after } => {
+                self.task_list_scope(after, Some(&context.invocation.session_id))
+                    .await
+            }
             Input::Workers => Ok(
                 serde_json::json!({"workers":self.tasks.workers.iter().map(|(name,binding)| serde_json::json!({"name":name,"available":binding.is_some()})).collect::<Vec<_>>()}),
             ),
@@ -581,15 +668,7 @@ impl Hub {
 
                 }).await
             }
-            Input::Route {
-                dependencies,
-                worker,
-                target,
-                note,
-                model,
-                thinking_level,
-                executor,
-            } => {
+            Input::Route(route) => {
                 let id = task_id(&context.invocation, &context.operation_id);
                 // A same-tool replay reads its original decision before today's capabilities.
                 if self
@@ -601,70 +680,12 @@ impl Hub {
                     .map_err(|_| "workhub_store_unavailable")?
                     .is_none()
                 {
-                    let binding = self
-                        .tasks
-                        .workers
-                        .get(&worker)
-                        .and_then(Option::as_ref)
-                        .ok_or("workhub_worker_unavailable")?;
-                    let original = self.coordinator_source(&context.invocation).await?;
-                    let maka_agent_facts::input::InvocationInput::Message {
-                        content,
-                        source_messages,
-                        ..
-                    } = original.root_input()
+                    let Some(assignment) =
+                        self.prepare_assignment(&context, &id, route, None).await?
                     else {
-                        return Err("workhub_source_unavailable".into());
-                    };
-                    target.validate()?;
-                    self.validate_dependencies(&dependencies).await?;
-                    if note.trim().is_empty() || note.len() > 16 * 1024 {
-                        return Err("workhub_route_invalid".into());
-                    }
-                    let (delivery, mut input) = match (model, executor) {
-                        (Some(model), None) => (
-                            DeliveryMethod::Send,
-                            serde_json::json!({"model":model,"thinkingLevel":thinking_level}),
-                        ),
-                        (None, Some(executor)) if thinking_level.is_none() => (
-                            DeliveryMethod::Execute,
-                            serde_json::json!({"executor":executor}),
-                        ),
-                        _ => return Err("workhub_execution_selection_invalid".into()),
-                    };
-                    let attachments = self
-                        .transfers(
-                            &context.invocation,
-                            content.attachments.as_deref().unwrap_or_default(),
-                        )
-                        .await?;
-                    let original = if source_messages.len() == 1 {
-                        &source_messages[0].unprepared_content.text
-                    } else {
-                        &content.text
-                    };
-                    let message = format!(
-                        "Original user request:\n{original}\n\nCoordinator instructions:\n{note}"
-                    );
-                    if message.len() > 64 * 1024 {
                         return Ok(
                             serde_json::json!({"kind":"rejected","reason":"input_too_large"}),
                         );
-                    }
-                    input["message"] = serde_json::json!(message);
-                    let assignment = Assignment {
-                        dependencies,
-                        return_route: self.agent.0.return_route(&context.invocation).await?,
-                        notification: None,
-                        source: context.invocation,
-                        tool_operation: context.operation_id,
-                        worker,
-                        binding: binding.execution_basis().into(),
-                        operation: child_id(&id),
-                        delivery,
-                        input,
-                        target,
-                        attachments,
                     };
                     if cancellation.is_cancelled() {
                         return Err("workhub_cancelled".into());
@@ -698,6 +719,100 @@ impl Hub {
             }
             Input::Advance { task_id } => self.task(&task_id, true, None, cancellation).await,
         }
+    }
+    /// Freeze one original task without dispatching it. Graph decisions use
+    /// this same assignment in their atomic schedule/outbox transaction.
+    async fn prepare_assignment(
+        &self,
+        context: &ToolCallContext,
+        id: &str,
+        route: Route,
+        graph: Option<graph::TaskSource>,
+    ) -> Result<Option<Assignment>, String> {
+        let Route {
+            dependencies,
+            worker,
+            target,
+            note,
+            model,
+            thinking_level,
+            executor,
+        } = route;
+        let binding = self
+            .tasks
+            .workers
+            .get(&worker)
+            .and_then(Option::as_ref)
+            .ok_or("workhub_worker_unavailable")?;
+        let original = self.coordinator_source(&context.invocation).await?;
+        let maka_agent_facts::input::InvocationInput::Message {
+            content,
+            source_messages,
+            ..
+        } = original.root_input()
+        else {
+            return Err("workhub_source_unavailable".into());
+        };
+        target.validate()?;
+        self.validate_dependencies(&dependencies).await?;
+        for dependency in &dependencies {
+            if self.assignment(dependency).await?.source.session_id != context.invocation.session_id
+            {
+                return Err("workhub_dependency_source_invalid".into());
+            }
+        }
+        if note.trim().is_empty()
+            || (graph.is_none() && note.len() > 16 * 1024)
+            || (graph.is_some() && (note.chars().count() > 60_000 || note.contains('\0')))
+        {
+            return Err("workhub_route_invalid".into());
+        }
+        let (delivery, mut input) = match (model, executor) {
+            (Some(model), None) => (
+                DeliveryMethod::Send,
+                serde_json::json!({"model":model,"thinkingLevel":thinking_level}),
+            ),
+            (None, Some(executor)) if thinking_level.is_none() => (
+                DeliveryMethod::Execute,
+                serde_json::json!({"executor":executor}),
+            ),
+            _ => return Err("workhub_execution_selection_invalid".into()),
+        };
+        let attachments = self
+            .transfers(
+                &context.invocation,
+                content.attachments.as_deref().unwrap_or_default(),
+            )
+            .await?;
+        let original = if source_messages.len() == 1 {
+            &source_messages[0].unprepared_content.text
+        } else {
+            &content.text
+        };
+        let message = if graph.is_some() {
+            format!("Task:\n{note}")
+        } else {
+            format!("Original user request:\n{original}\n\nCoordinator instructions:\n{note}")
+        };
+        if message.len() > 64 * 1024 {
+            return Ok(None);
+        }
+        input["message"] = serde_json::json!(message);
+        Ok(Some(Assignment {
+            graph,
+            dependencies,
+            return_route: self.agent.0.return_route(&context.invocation).await?,
+            notification: None,
+            source: context.invocation.clone(),
+            tool_operation: context.operation_id.clone(),
+            worker,
+            binding: binding.execution_basis().into(),
+            operation: child_id(id),
+            delivery,
+            input,
+            target,
+            attachments,
+        }))
     }
     async fn wait_task(
         &self,
@@ -892,6 +1007,34 @@ impl Hub {
             return Err("workhub_closed".into());
         }
         let assignment = self.assignment(id).await?;
+        // The graph gate orders stop/finish against new physical dispatch. Reads
+        // still recover the original operation after the current epoch closes.
+        let _graph_gate = if advance && assignment.graph.is_some() {
+            Some(self.tasks.graphs.gate.lock().await)
+        } else {
+            None
+        };
+        let advance = advance && self.graph_can_advance(&assignment).await?;
+
+        if assignment.graph.is_some()
+            && self.graph_retired(&assignment).await?
+            && self
+                .agent
+                .0
+                .store
+                .application_intent(
+                    self.tasks.source.deployment,
+                    self.agent.0.data_source.namespace.clone(),
+                    assignment.operation,
+                )
+                .await
+                .map_err(|_| "workhub_original_operation_unavailable")?
+                .is_none()
+        {
+            // No original dispatch was admitted. Preparations have already joined
+            // before releasing the graph gate; a retired epoch cannot send later.
+            return encode_task(id, &assignment, TaskStatus::Cancelled);
+        }
         let dependency_input = match self
             .dependency_input(id, &assignment, advance, cancellation.clone())
             .await?

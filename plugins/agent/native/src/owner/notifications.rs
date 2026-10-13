@@ -93,6 +93,7 @@ impl Owner {
             return Ok(None);
         }
         let mut basis = MessageBasis {
+            graph: None,
             collaboration_mode: session.configuration.collaboration_mode,
             background_kind: BackgroundKind::Schedule,
             tool_discovery: self.settings.tool_discovery,
@@ -109,6 +110,8 @@ impl Owner {
             max_steps: self.settings.max_steps,
         };
         self.prepare_plan_behavior(&source.session_id, &mut basis)
+            .await?;
+        self.prepare_graph_behavior(&source.session_id, &mut basis, false)
             .await?;
         let message: MessageInput = text.into();
         let delivered = RootSourceMessage {

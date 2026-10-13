@@ -26,6 +26,7 @@ const entries = uiEntries({
   export: 'AgentScreen',
   imports: {
     agent: one(sdk.contracts.agent),
+    workhub: { contract: sdk.contracts.workhubCoordinator, cardinality: { kind: 'optional' } },
     reading: one(sdk.contracts.readingArea),
     file: one(sdk.contracts.filePicker),
     models: one(own.executionPickerContract),
@@ -82,6 +83,7 @@ const entries = uiEntries({
       scheduledTasks: { type: 'boolean' },
       web: { type: 'boolean' },
       jev: { type: 'boolean' },
+      graphs: { type: 'boolean' },
       place: { type: 'string', maxLength: 4096 },
     },
     ['locale'],

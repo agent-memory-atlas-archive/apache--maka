@@ -24,9 +24,9 @@ use maka_event_log::message_admissions::PendingMessageAdmission;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Notification {
-    identity: String,
-    admission: PendingMessageAdmission,
-    accepted: bool,
+    pub(super) identity: String,
+    pub(super) admission: PendingMessageAdmission,
+    pub(super) accepted: bool,
 }
 impl Tasks {
     pub(in crate::workhub) fn start_notifications(&self, agent: &Arc<Owner>) {
@@ -41,6 +41,8 @@ impl Tasks {
             let mut commits = hub.agent.0.store.subscribe_commits();
             let mut after = None;
             let mut previous_error = None;
+            let mut graph_scan = 0;
+            let mut graph_pending = false;
             loop {
                 if stop.is_cancelled() || hub.tasks.cleanup_failed() {
                     return;
@@ -48,11 +50,19 @@ impl Tasks {
                 let Some(producer) = hub.agent.0.producer().await else {
                     return;
                 };
+                if after.is_none() {
+                    graph_scan = hub.tasks.graphs.begin_scan();
+                    graph_pending = false;
+                }
                 let result = hub.notification_page(after.take(), stop.clone()).await;
                 drop(producer);
                 match result {
-                    Ok(next) => {
+                    Ok((next, pending)) => {
                         after = next;
+                        graph_pending |= pending;
+                        if after.is_none() {
+                            hub.tasks.graphs.end_scan(graph_scan, graph_pending);
+                        }
                         previous_error = None;
                     }
                     Err(error) => {
@@ -91,7 +101,8 @@ impl Hub {
         &self,
         after: Option<String>,
         stop: CancellationToken,
-    ) -> Result<Option<String>, String> {
+    ) -> Result<(Option<String>, bool), String> {
+        let mut graph_pending = false;
         let page = self
             .agent
             .0
@@ -109,7 +120,7 @@ impl Hub {
         let more = page.entries.len() > 16 || page.next_after.is_some();
         for entry in page.entries.into_iter().take(16) {
             if stop.is_cancelled() {
-                return Ok(None);
+                return Ok((None, true));
             }
             next = Some(entry.key.clone());
             let Data::Present(value) = entry.record.data else {
@@ -121,6 +132,19 @@ impl Hub {
                 .key
                 .strip_prefix(&format!("{}tasks/", self.agent.0.prefix))
                 .ok_or("workhub_task_invalid")?;
+            if assignment.graph.is_some() {
+                match self
+                    .graph_notification(id, entry.record.revision, assignment, stop.clone())
+                    .await
+                {
+                    Ok(pending) => graph_pending |= pending,
+                    Err(_) if !self.tasks.cleanup_failed() && !stop.is_cancelled() => {
+                        graph_pending = true
+                    }
+                    Err(error) => return Err(error),
+                }
+                continue;
+            }
             // Accepted deferred routes own their dependency wait. Once ready, advance
             // only their original frozen preparation and dispatch; unknown receipts
             // retain the existing no-recapture/no-redispatch rules.
@@ -132,7 +156,7 @@ impl Hub {
                 Err(error) if !self.tasks.cleanup_failed() => {
                     // One unavailable worker must not starve other tasks on this page.
                     if stop.is_cancelled() {
-                        return Ok(None);
+                        return Ok((None, true));
                     }
                     let _ = error;
                     continue;
@@ -223,7 +247,7 @@ impl Hub {
                 Err(_) => return Err("workhub_notification_commit_unknown".into()),
             }
         }
-        Ok(if more { next } else { None })
+        Ok((if more { next } else { None }, graph_pending))
     }
 }
 fn terminal(task: &Value) -> bool {

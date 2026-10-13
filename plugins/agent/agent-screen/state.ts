@@ -67,6 +67,7 @@ import { type DraftRecord, type DraftStep } from '../../shared/drafts.js';
 
 import type { GoalState, GoalRequest } from './goal.js';
 import type { PlanState, PlanRequest } from './plan.js';
+import type { GraphState, GraphRequest } from './graph.js';
 
 type Notice = keyof Copy | null;
 
@@ -77,6 +78,7 @@ export type Backend =
 export type Request =
   | GoalRequest
   | PlanRequest
+  | GraphRequest
   | DraftStep
   | { kind: 'observe'; epoch: number }
   | { kind: 'recapRead'; epoch: number; attempt: number }
@@ -153,7 +155,8 @@ export type Mutation =
           | 'recapGenerate'
           | 'goalChange'
           | 'planChange'
-          | 'planMode';
+          | 'planMode'
+          | 'graphChange';
       }
     >
   | { kind: 'restored' };
@@ -269,6 +272,7 @@ export interface State {
   jev: boolean;
   goal: GoalState;
   plan: PlanState;
+  graph: GraphState;
   recap: {
     receipt: AgentRecapReceipt | null;
     loaded: boolean;
@@ -287,7 +291,16 @@ export interface State {
   settingsCategory: SettingsCategory;
   insightsScope: InsightsProps['scope'];
   sidebar: { open: boolean } | { command: TerminalPaneCommand | null };
-  inspector: 'details' | 'terminal' | 'outputs' | 'checklist' | 'recap' | 'goal' | 'plan' | null;
+  inspector:
+    | 'details'
+    | 'terminal'
+    | 'outputs'
+    | 'checklist'
+    | 'recap'
+    | 'goal'
+    | 'plan'
+    | 'graph'
+    | null;
   terminals: boolean;
   skills: boolean;
   place: string;
@@ -301,6 +314,7 @@ export interface State {
     | 'recap'
     | 'goal'
     | 'plan'
+    | 'graph'
     | 'details'
     | 'help'
     | 'queue'
@@ -398,6 +412,7 @@ export type RootCommand =
   | 'recap-open'
   | 'goal-open'
   | 'plan-open'
+  | 'graph-open'
   | 'details-open'
   | 'usage-open'
   | 'create-workspace'

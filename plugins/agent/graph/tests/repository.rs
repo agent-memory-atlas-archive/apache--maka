@@ -278,3 +278,114 @@ async fn decisions_recover_after_lost_reply_and_fence_intents_across_epoch_repla
     drop(storage);
     Arc::try_unwrap(log).ok().unwrap().close().await.unwrap();
 }
+
+#[tokio::test]
+async fn graph_decision_and_native_task_outbox_commit_together_without_replacement_on_replay() {
+    use maka_capabilities::storage::Data;
+    let temp = tempfile::tempdir().unwrap();
+    let log = Arc::new(
+        EventLog::open(&temp.path().join("atomic.sqlite"))
+            .await
+            .unwrap(),
+    );
+    let storage = Arc::new(Storage {
+        log,
+        namespace: Namespace::new("example.coordinator", Scope::Profile).unwrap(),
+        lose_reply: AtomicBool::new(false),
+    });
+    let repository = Repository::new(storage.clone(), "planner").unwrap();
+    let epoch = repository.open("root", Mode::Swarm, None, 1).await.unwrap();
+    let mut decision = update(epoch.graph_id.clone());
+    decision.add_work.truncate(1);
+    let task = |key: &str, text: &str| Mutation {
+        key: key.into(),
+        expected_revision: None,
+        data: Data::Present(serde_json::json!({"frozenInput":text})),
+    };
+    storage.lose_reply.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        repository
+            .commit_update_with(
+                decision.clone(),
+                0,
+                2,
+                vec![task("native/tasks/original", "accepted")]
+            )
+            .await,
+        Err(maka_graph::Error::Storage(StoreError::OutcomeUnknown(_)))
+    ));
+    assert_eq!(
+        storage
+            .read("native/tasks/original".into())
+            .await
+            .unwrap()
+            .unwrap()
+            .data,
+        Data::Present(serde_json::json!({"frozenInput":"accepted"}))
+    );
+    let recovered = repository
+        .commit_update_with(
+            decision.clone(),
+            0,
+            999,
+            vec![task("native/tasks/replacement", "changed")],
+        )
+        .await
+        .unwrap();
+    assert_eq!(recovered.committed_at, 2);
+    assert_eq!(recovered.revision, 1);
+    assert!(
+        storage
+            .read("native/tasks/replacement".into())
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    let mut stale = decision.clone();
+    stale.source.operation_id = "different decision".into();
+    stale.add_work[0].work_id = WorkId::new();
+    assert!(matches!(
+        repository
+            .commit_update_with(
+                stale.clone(),
+                0,
+                3,
+                vec![task("native/tasks/stale", "stale")]
+            )
+            .await,
+        Err(maka_graph::Error::Conflict)
+    ));
+    assert!(
+        storage
+            .read("native/tasks/stale".into())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    // A task conflict must also roll back the graph header and decision record.
+    assert!(matches!(
+        repository
+            .commit_update_with(
+                stale,
+                1,
+                3,
+                vec![task("native/tasks/original", "overwrite")]
+            )
+            .await,
+        Err(maka_graph::Error::Conflict)
+    ));
+    assert_eq!(
+        repository
+            .current("root")
+            .await
+            .unwrap()
+            .unwrap()
+            .schedule_revision,
+        1
+    );
+    assert_eq!(
+        repository.updates(&epoch.graph_id, 0, 1).await.unwrap(),
+        vec![recovered]
+    );
+}

@@ -137,6 +137,17 @@ export type RuntimeProtocol =
   | AgentToolNames
   | WorkHubPresets
   | WorkHubPresetsResult
+  | WorkHubGraphRead
+  | WorkHubGraphView
+  | WorkHubGraphWorkRead
+  | GraphWorkDefinition
+  | WorkHubGraphResultRead
+  | WorkHubGraphResult
+  | WorkHubGraphHistoryRead
+  | WorkHubGraphHistory
+  | WorkHubGraphChange
+  | WorkHubGraphChanged
+  | WorkHubGraphReceiptRead
   | WorkHubResolve
   | WorkHubCoordinator
   | WorkHubConfiguration
@@ -1714,6 +1725,77 @@ export type WorkHubPresetsResult =
   | {
       kind: 'invalid';
     };
+export type GraphId = string;
+export type WorkId = string;
+export type GraphMode = 'graph' | 'swarm';
+export type GraphStatus =
+  | 'empty'
+  | 'active'
+  | 'waiting'
+  | 'closing'
+  | 'stopped'
+  | 'completed'
+  | 'failed';
+export type GraphTarget =
+  | {
+      agentId: string;
+      kind: 'agent';
+    }
+  | {
+      presetId: string;
+      kind: 'preset';
+    }
+  | {
+      executorId: string;
+      kind: 'executor';
+    }
+  | {
+      operatorId: OperatorId;
+      kind: 'operator';
+    };
+export type OperatorId = string;
+export type GraphWorkState =
+  | 'requested'
+  | 'waiting'
+  | 'running'
+  | 'blocked'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'stopped'
+  | 'superseded';
+export type AgentExecutionState =
+  | 'admitted'
+  | 'running'
+  | 'waiting'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+export type WorkHubGraphAction =
+  | {
+      mode: GraphMode;
+      kind: 'start';
+    }
+  | {
+      kind: 'stop';
+    }
+  | {
+      kind: 'leave';
+    };
+export type WorkHubGraphChanged =
+  | {
+      epoch: GraphEpoch;
+      kind: 'committed';
+    }
+  | {
+      current?: GraphEpoch | null;
+      kind: 'conflict';
+    }
+  | {
+      reason: string;
+      kind: 'rejected';
+    };
 export type WorkHubCoordinator =
   | {
       kind: 'missing';
@@ -1927,14 +2009,6 @@ export type AgentWork =
       pendingInteractions: number;
       kind: 'delivered';
     };
-export type AgentExecutionState =
-  | 'admitted'
-  | 'running'
-  | 'waiting'
-  | 'paused'
-  | 'completed'
-  | 'failed'
-  | 'cancelled';
 export type WorkHubControlStatus =
   | {
       kind: 'pending';
@@ -7223,6 +7297,261 @@ export interface ModelSelection {
   revision: number;
   modelId: string;
 }
+export interface WorkHubGraphRead {
+  sessionId: string;
+  graphId?: GraphId | null;
+  after?: WorkId | null;
+}
+export interface WorkHubGraphView {
+  enabled: boolean;
+  currentEpoch?: GraphEpoch | null;
+  selectedMode?: GraphMode | null;
+  epoch?: GraphEpoch | null;
+  revision: number;
+  status: GraphStatus;
+  quiescent: boolean;
+  /**
+   * @maxItems 16
+   */
+  work:
+    | []
+    | [WorkHubGraphWork]
+    | [WorkHubGraphWork, WorkHubGraphWork]
+    | [WorkHubGraphWork, WorkHubGraphWork, WorkHubGraphWork]
+    | [WorkHubGraphWork, WorkHubGraphWork, WorkHubGraphWork, WorkHubGraphWork]
+    | [WorkHubGraphWork, WorkHubGraphWork, WorkHubGraphWork, WorkHubGraphWork, WorkHubGraphWork]
+    | [
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+      ]
+    | [
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+      ]
+    | [
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+      ]
+    | [
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+      ]
+    | [
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+      ]
+    | [
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+      ]
+    | [
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+      ]
+    | [
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+      ]
+    | [
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+      ]
+    | [
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+      ]
+    | [
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+        WorkHubGraphWork,
+      ];
+  after?: WorkId | null;
+  finish?: GraphFinish | null;
+}
+export interface GraphEpoch {
+  rootSessionId: string;
+  epoch: number;
+  graphId: GraphId;
+  createdAt: number;
+  mode: GraphMode;
+}
+export interface WorkHubGraphWork {
+  workId: WorkId;
+  taskId: string;
+  target: GraphTarget;
+  status: GraphWorkState;
+  instructionExcerpt: string;
+  instructionTruncated: boolean;
+  resultId?: string | null;
+  failure?: string | null;
+}
+export interface GraphFinish {
+  resultIds: string[];
+  reason: string;
+}
+export interface WorkHubGraphWorkRead {
+  sessionId: string;
+  graphId: GraphId;
+  workId: WorkId;
+}
+export interface GraphWorkDefinition {
+  workId: WorkId;
+  target: GraphTarget;
+  instruction: string;
+  inputIds: string[];
+  selectedResultInputs?: HistoricalInput[];
+  replaces?: string | null;
+}
+export interface HistoricalInput {
+  sourceGraphId: GraphId;
+  resultId: string;
+}
+export interface WorkHubGraphResultRead {
+  sessionId: string;
+  graphId: GraphId;
+  workId: WorkId;
+  resultId: string;
+  offset: number;
+}
+export interface WorkHubGraphResult {
+  workId: WorkId;
+  resultId: string;
+  execution: AgentExecution;
+  text: string;
+  nextOffset?: number | null;
+}
+/**
+ * Canonical physical execution receipt, independent of the current Session tip.
+ */
+export interface AgentExecution {
+  sessionId: string;
+  turnId: string;
+  runId: string;
+  invocationId: string;
+  /**
+   * Run-local event count, not the root-global transcript cursor.
+   */
+  highWater: number;
+  state: AgentExecutionState;
+}
+export interface WorkHubGraphHistoryRead {
+  sessionId: string;
+  before?: number | null;
+}
+export interface WorkHubGraphHistory {
+  /**
+   * @maxItems 32
+   */
+  epochs: GraphEpoch[];
+  currentEpoch?: number | null;
+  nextBefore?: number | null;
+}
+export interface WorkHubGraphChange {
+  sessionId: string;
+  expectedGraphId?: GraphId | null;
+  action: WorkHubGraphAction;
+}
+export interface WorkHubGraphReceiptRead {
+  reference: RecoveryRef;
+}
 export interface WorkHubResolve {
   /**
    * Used only when freezing the first coordinator creation intent.
@@ -7412,20 +7741,6 @@ export interface WorkHubTask {
   worker: string;
   operation: string;
   status: WorkHubTaskStatus;
-}
-/**
- * Canonical physical execution receipt, independent of the current Session tip.
- */
-export interface AgentExecution {
-  sessionId: string;
-  turnId: string;
-  runId: string;
-  invocationId: string;
-  /**
-   * Run-local event count, not the root-global transcript cursor.
-   */
-  highWater: number;
-  state: AgentExecutionState;
 }
 export interface AgentAnswerPage {
   text: string;

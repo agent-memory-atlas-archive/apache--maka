@@ -290,7 +290,15 @@ impl Owner {
         // user selects a model whose default differs from the original Run.
         source.accepted.tool_mode = configuration.tool_mode;
         source.accepted.editing_tools = configuration.editing_tools;
+        let graph = match self
+            .resume_graph(&input.session_id, &configuration.orchestration_mode)
+            .await
+        {
+            Ok(graph) => graph,
+            Err(_) => return Ok(parked(Reason::SourceNotResumable)),
+        };
         let basis = MessageBasis {
+            graph,
             collaboration_mode: configuration.collaboration_mode,
             background_kind: BackgroundKind::Schedule,
             tool_discovery: configuration.tool_discovery,

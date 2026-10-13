@@ -40,6 +40,8 @@ import type {
 } from '../../../packages/plugin-sdk/src/index.js';
 import { goalChanged, goalFieldResult } from './goal.js';
 import { planChanged, planModeChanged, planHistoryResult } from './plan.js';
+import { graphChanged, graphReadResult } from './graph.js';
+import type { WorkHubGraphChanged } from '../../../packages/plugin-sdk/src/index.js';
 import type {
   AgentPlanResult,
   AgentPlanHistory,
@@ -95,6 +97,9 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
       state.catalogFilter = 'all';
       catalog(state, { kind: 'at', cursor: created.session.id });
     }
+  } else if (request.kind === 'graphChange') {
+    if (request.epoch === state.epoch && request.sessionId === state.selected?.id)
+      graphChanged(state, value as WorkHubGraphChanged);
   } else if (request.kind === 'planChange' || request.kind === 'planMode') {
     if (request.epoch === state.epoch && request.sessionId === state.selected?.id) {
       if (request.kind === 'planChange') planChanged(state, value as AgentPlanResult);
@@ -238,6 +243,15 @@ export function receipt(state: State, actions: Action[], request: Mutation, repl
   } else {
     state.uncertain = { reference: reply.reference, request };
     state.notice = 'unknown';
+    if (reply.reference.method === 'changeGraph')
+      intent(
+        state,
+        actions,
+        { kind: 'graphReceipt', reference: reply.reference },
+        'workhub',
+        'graphReceipt',
+        { reference: reply.reference },
+      );
     if (reply.reference.method === 'changePlan')
       intent(
         state,
@@ -260,6 +274,18 @@ export function receipt(state: State, actions: Action[], request: Mutation, repl
 }
 
 export function queryFailed(state: State, request: Request) {
+  if (request.kind === 'graphChange' || request.kind === 'graphRead') {
+    if (request.epoch === state.epoch) {
+      state.graph.failed = true;
+      if (request.kind === 'graphRead' && state.graph.loading === request.attempt)
+        state.graph.loading = null;
+    }
+    return;
+  }
+  if (request.kind === 'graphReceipt') {
+    state.notice = 'unknown';
+    return;
+  }
   if (
     request.kind === 'planChange' ||
     request.kind === 'planMode' ||
@@ -367,9 +393,13 @@ export function querySucceeded(state: State, actions: Action[], request: Request
     case 'goalField':
       goalFieldResult(state, actions, request, value);
       break;
+    case 'graphRead':
+      graphReadResult(state, request, value);
+      break;
     case 'planHistory':
       planHistoryResult(state, request, value as AgentPlanHistory);
       break;
+    case 'graphReceipt':
     case 'planReceipt':
     case 'goalReceipt': {
       const original = state.uncertain;
