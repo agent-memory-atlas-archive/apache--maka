@@ -197,6 +197,7 @@ export interface Visit {
   session: AgentSession;
   epoch: number;
   progress: {
+    turnId: string | null;
     through: number;
     goal: string;
     action: string;

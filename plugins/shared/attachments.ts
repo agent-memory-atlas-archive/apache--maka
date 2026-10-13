@@ -292,11 +292,7 @@ export function attachmentView<N extends Node>(
         ui.box(
           'attachment-browser-view',
           [
-            ui.box(
-              'attachment-browser-body',
-              [ui.text('attachment-help', text.attachmentHelp, 13, theme.muted), ...fileContent],
-              { scroll: 'manual', terminal: { grow: 1 } },
-            ),
+            ui.box('attachment-browser-body', fileContent, { gap: 0, terminal: { grow: 1 } }),
             ui.box(
               'attachment-browser-controls',
               [

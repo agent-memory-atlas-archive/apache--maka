@@ -39,7 +39,6 @@ export function appendLive(
   invocationId: string,
   text: string,
 ) {
-  if (state.visits.find((visit) => visit.id === state.selected?.id)?.following === false) return;
   const messageId = part.messageId;
   const field = part.textKind === 'thinking' ? 'thinking' : 'body';
   if (
@@ -50,6 +49,13 @@ export function appendLive(
     )
   )
     return;
+  const previous = state.live.at(-1);
+  const adjacent =
+    previous?.closedAt === null &&
+    previous.messageId === messageId &&
+    previous.invocationId === invocationId &&
+    previous.stepId === part.stepId &&
+    previous.field === field;
   const ids = new Set(state.live.map((fragment) => fragment.messageId));
   let remaining = 16000 - state.live.reduce((total, fragment) => total + fragment.text.length, 0);
   // Thinking shares the existing prefix budget but leaves room for an answer
@@ -57,18 +63,30 @@ export function appendLive(
   if (field === 'thinking') {
     const thinking = state.live.filter((fragment) => fragment.field === 'thinking');
     const thinkingIds = new Set(thinking.map((fragment) => fragment.messageId));
-    if (thinking.length >= 32 || (!thinkingIds.has(messageId) && thinkingIds.size >= 8)) return;
+    if (
+      (!adjacent && thinking.length >= 32) ||
+      (!thinkingIds.has(messageId) && thinkingIds.size >= 8)
+    )
+      return;
     remaining = Math.min(
       remaining,
       8000 - thinking.reduce((total, fragment) => total + fragment.text.length, 0),
     );
   }
   // A truncated surrogate can leave one unused code unit; keep the prefix closed.
-  if (remaining <= 1 || state.live.length >= 64 || (!ids.has(messageId) && ids.size >= 16)) return;
+  if (
+    remaining <= 1 ||
+    (!adjacent && state.live.length >= 64) ||
+    (!ids.has(messageId) && ids.size >= 16)
+  )
+    return;
   text = text.slice(0, remaining);
   const last = text.charCodeAt(text.length - 1);
   if (last >= 0xd800 && last <= 0xdbff) text = text.slice(0, -1);
-  if (text)
+  if (text && adjacent) {
+    previous.text += text;
+    previous.sequence = sequence;
+  } else if (text)
     state.live.push({
       sequence,
       messageId,
@@ -90,9 +108,16 @@ export function closeLive(state: State, sequence: number, invocationId: string, 
       fragment.closedAt = sequence;
 }
 
+function chunkId(chunk: NonNullable<State['window']>['page']['chunks'][number]) {
+  return (
+    (chunk.field === 'thinking' ? 'thinking-' + chunk.messageId : chunk.messageId) +
+    (chunk.offset ? '-offset-' + chunk.offset : '')
+  );
+}
+
 export function messages(state: State): Message[] {
   const canonical: Message[] = (state.window?.page.chunks ?? []).map((chunk) => ({
-    id: chunk.field === 'thinking' ? 'thinking-' + chunk.messageId : chunk.messageId,
+    id: chunkId(chunk),
     contentKey: `canonical-${chunk.sequence}-${chunk.offset}${chunk.field === 'thinking' ? '-thinking' : ''}`,
     role: chunk.field === 'thinking' ? 'thinking' : chunk.role,
     timestamp: chunk.timestamp,
@@ -143,7 +168,7 @@ export function turnTimings(state: State, displayed: Message[]): TimelineProps['
     turns.set(chunk.turnId, {
       ...chunk.timing,
       turnId: chunk.turnId,
-      afterMessageId: chunk.field === 'thinking' ? 'thinking-' + chunk.messageId : chunk.messageId,
+      afterMessageId: chunkId(chunk),
     });
   }
   if (state.window?.latest && state.run) {

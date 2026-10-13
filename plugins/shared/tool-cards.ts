@@ -78,6 +78,7 @@ export function toolCards(
     .map((message) => ({
       message:
         message.tool?.call &&
+        bySequence.get(message.source!)?.length === 1 &&
         (message.role === 'tool_call' ||
           (!bySequence.has(message.tool.call.sequence) &&
             (resultsByCall.get(message.tool.call.sequence)?.size ?? 0) === 1))

@@ -61,6 +61,7 @@ interface State {
   reveal: ReadingCommand | null;
   open: boolean;
   draft: SelectedModel | null;
+  thinkingByModel: Record<string, ThinkingLevel | null>;
   thinkingOpen: boolean;
   choices: SettingsModelChoice[];
   windowStart: number;
@@ -111,11 +112,10 @@ function sameModel(a: SettingsModelChoice, b: SettingsModelChoice) {
   );
 }
 function selectDraft(state: State, choice: SettingsModelChoice) {
-  const prior = state.draft;
-  const same =
-    prior?.choice.selection.connectionId === choice.selection.connectionId &&
-    prior.choice.selection.modelId === choice.selection.modelId;
-  const selection = { choice, thinkingLevel: same ? prior.thinkingLevel : null };
+  const selection = {
+    choice,
+    thinkingLevel: state.thinkingByModel[modelKey(state, choice)] ?? null,
+  };
   state.draft = selection;
   state.active = state.choices.findIndex((row) => sameModel(row, choice));
   state.thinkingOpen = false;
@@ -124,6 +124,9 @@ function open(state: State, props: ModelsProps) {
   state.open = true;
   state.thinkingOpen = false;
   state.draft = state.staleSelection ? null : props.selection;
+  state.thinkingByModel = state.draft
+    ? { [modelKey(state, state.draft.choice)]: state.draft.thinkingLevel }
+    : {};
   const choice = state.draft
     ? state.choices.find((row) => sameModel(row, state.draft!.choice))
     : state.choices[0];
@@ -242,6 +245,7 @@ function close(state: State) {
   state.open = false;
   state.thinkingOpen = false;
   state.draft = null;
+  state.thinkingByModel = {};
   if (state.pending?.kind === 'text') state.pending.choice = null;
 }
 function frame<N extends Node>(
@@ -259,7 +263,11 @@ function frame<N extends Node>(
     state.publishedSetup = state.setup;
   }
   const chosen = state.staleSelection ? null : props.selection?.choice;
-  const trigger = ui.button('toggle', chosen ? chosen.label : text.chooseModel, props.busy, false, {
+  const effort = props.selection?.thinkingLevel;
+  const label = chosen
+    ? chosen.label + (effort ? ` · ${text.thinking} ${text[thinkingCopy[effort]]}` : '')
+    : text.chooseModel;
+  const trigger = ui.button('toggle', label, props.busy, false, {
     width: fill,
     minWidth: 0,
     justify: 'start',
@@ -623,6 +631,7 @@ export function models<N extends Node>(
         reveal: null,
         open: false,
         draft: null,
+        thinkingByModel: {},
         thinkingOpen: false,
         choices: [],
         windowStart: 0,
@@ -894,6 +903,8 @@ export function models<N extends Node>(
                 ...state.draft,
                 thinkingLevel: value === 'default' ? null : (value as ThinkingLevel),
               };
+              state.thinkingByModel[modelKey(state, state.draft.choice)] =
+                state.draft.thinkingLevel;
               state.thinkingOpen = false;
             }
           } else if (input.key === 'default-refresh') actions.push(...readPage(state));
@@ -925,13 +936,7 @@ export function models<N extends Node>(
                 state.windowStart + 64 < state.choices.length
               )
                 state.windowStart += 32;
-              if (
-                (input.event as { kind?: string }).kind === 'submit' &&
-                state.draft &&
-                supports(state.draft)
-              )
-                actions.push(...capture(state, state.draft));
-              else if (state.next && state.active >= state.choices.length - 3)
+              if (state.next && state.active >= state.choices.length - 3)
                 actions.push(...read(state, true));
             }
           }

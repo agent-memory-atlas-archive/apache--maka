@@ -922,6 +922,15 @@ fn follow_end_uses_actual_flush_and_manual_interaction_survives_recipe_updates()
     refresh(&mut presenter);
     flushed(&mut presenter, 10, 5);
     assert_eq!(scroll_state(&presenter, "body"), (3, 3));
+    // One queued gesture is applied against the same presented frame, then
+    // streaming extends the content before its next paint.
+    wheel(&mut presenter, false, 1, 1);
+    wheel(&mut presenter, false, 1, 1);
+    source.borrow_mut()["children"][0]["children"][0]["text"] =
+        json!("0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13");
+    refresh(&mut presenter);
+    flushed(&mut presenter, 10, 5);
+    assert_eq!(scroll_state(&presenter, "body"), (0, 0));
     assert!(Rc::ptr_eq(
         &owner,
         &presenter.resources.owners[&presenter.root.id()].identity

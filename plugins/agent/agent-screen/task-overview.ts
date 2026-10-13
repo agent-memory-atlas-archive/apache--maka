@@ -29,17 +29,22 @@ import type { State, Visit } from './state.js';
 // replace current progress, and an ended turn never claims a verified delivery.
 export function taskProgress(state: State, locale: string): Visit['progress'] {
   const visit = state.visits.find((entry) => entry.id === state.selected?.id);
-  const previous = visit?.progress ?? null;
+  const page = state.window?.page;
+  const turnId =
+    state.run?.turnId ??
+    (state.window?.latest ? page?.chunks.at(-1)?.turnId : null) ??
+    visit?.progress?.turnId ??
+    null;
+  const previous = visit?.progress?.turnId === turnId ? visit.progress : null;
   const queuedGoal = state.queue?.entries.find((entry) => entry.kind === 'in_flight')?.preview;
   if (queuedGoal && previous) previous.goal = compactLabel(queuedGoal, 100);
-  const page = state.window?.page;
   if (!page || !state.window?.latest || page.through < (previous?.through ?? 0)) return previous;
-  const last = page.chunks.at(-1);
-  const turn = last ? page.chunks.filter((chunk) => chunk.turnId === last.turnId) : [];
+  const turn = page.chunks.filter((chunk) => chunk.turnId === turnId);
   const goal = turn.find((chunk) => chunk.role === 'user' && chunk.field === 'body');
   const tool = [...turn].reverse().find((chunk) => chunk.tool);
   const timing = [...turn].reverse().find((chunk) => chunk.timing)?.timing;
   const progress = {
+    turnId,
     through: page.through,
     goal: queuedGoal
       ? compactLabel(queuedGoal, 100)

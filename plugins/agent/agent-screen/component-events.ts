@@ -777,23 +777,26 @@ export function handleComponent<N extends Node>(
         };
         readHistorySource(state, actions, { kind: 'start' });
       }
-    } else if (
-      input.name === 'older' &&
-      page.before &&
-      !Object.values(state.pending).some(
-        (request) => request.kind === 'history' && request.epoch === state.epoch,
+    } else if (input.name === 'older' && page.before) {
+      // A short page is both at its start and end. Asking for older content
+      // must suspend following even while that native viewport still fits.
+      const visit = state.visits.find((entry) => entry.id === state.selected?.id);
+      if (visit) visit.following = false;
+      if (
+        !Object.values(state.pending).some(
+          (request) => request.kind === 'history' && request.epoch === state.epoch,
+        )
       )
-    )
-      history(
-        state,
-        actions,
-        { kind: 'before', cursor: page.before },
-        page.through,
-        false,
-        false,
-        target === 'tui',
-      );
-    else if (
+        history(
+          state,
+          actions,
+          { kind: 'before', cursor: page.before },
+          page.through,
+          false,
+          false,
+          target === 'tui',
+        );
+    } else if (
       input.name === 'newer' &&
       page.after &&
       !Object.values(state.pending).some(

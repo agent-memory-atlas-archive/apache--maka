@@ -1629,9 +1629,22 @@ export function components<N extends Node>(
           observed.pendingCommand == null
         ) {
           next.scrollRevision = observed.scroll.readingRevision;
-          if (observed.scroll.direction === 'up' && observed.viewport.atStart && props.older)
+          const rows = toolCards(props.messages);
+          const edgeRows = Math.max(1, Math.min(2, Math.floor(rows.length / 2)));
+          const visible = new Set(observed.viewport.visibleChildKeys);
+          const visibleRow = ({ message }: (typeof rows)[number]) =>
+            visible.has('message-' + message.id) || visible.has('time-' + message.contentKey);
+          if (
+            observed.scroll.direction === 'up' &&
+            props.older &&
+            (observed.viewport.atStart || rows.slice(0, edgeRows).some(visibleRow))
+          )
             out.events.push({ name: 'older', value: {} });
-          else if (observed.scroll.direction === 'down' && observed.viewport.atEnd && props.newer)
+          else if (
+            observed.scroll.direction === 'down' &&
+            props.newer &&
+            (observed.viewport.atEnd || rows.slice(-edgeRows).some(visibleRow))
+          )
             out.events.push({ name: 'newer', value: {} });
         }
         if (

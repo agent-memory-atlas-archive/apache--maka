@@ -70,6 +70,11 @@ async function client(name, platform, extra = {}) {
       out = component.event(out.frame.state, input, props, {});
       return this;
     },
+    update(next) {
+      Object.assign(props, next);
+      out = component.update(out.frame.state, props, {});
+      return this;
+    },
     raw(key, kind = 'submit') {
       return this.event({ kind: 'raw', key, event: { kind } });
     },
@@ -97,6 +102,65 @@ async function client(name, platform, extra = {}) {
   };
 }
 for (const platform of ['tui', 'desktop']) {
+  test(`${platform} model and thinking edits stay open and survive navigation until applied`, async () => {
+    const choice = (id) => ({
+      selection: { connectionId: 'a', revision: 1, modelId: id },
+      connectionName: 'A',
+      label: id,
+      thinkingLevels: ['low', 'high'],
+      defaultThinkingLevel: 'low',
+    });
+    const a = choice('a'),
+      b = choice('b');
+    const selection = { choice: a, thinkingLevel: 'high' };
+    const c = await client('models', platform, {
+      catalogEpoch: 0,
+      openRequest: null,
+      selection,
+      busy: false,
+    });
+    const page = (choices) => ({
+      kind: 'ready',
+      revision: 3,
+      choices,
+      defaultModel: { kind: 'none' },
+      next: null,
+    });
+    c.reply(c.action('models'), page([a, b]));
+    c.query('model-query', 1, '').raw('toggle');
+    const key = (id) => c.state.choiceKeys[JSON.stringify(['a', id])];
+    c.raw(key('b'));
+    assert.equal(c.state.open, true, 'clicking a model leaves its thinking control available');
+    assert.equal(c.action('read'), undefined, 'row selection does not commit');
+    c.raw('thinking-low');
+    c.raw(key('a'), 'activate');
+    assert.equal(c.state.draft.thinkingLevel, 'high');
+    c.raw(key('b'), 'activate');
+    assert.equal(c.state.draft.thinkingLevel, 'low');
+    c.query('model-query', 2, 'a');
+    c.reply(c.action('read'), { text: 'a' });
+    c.reply(c.action('models'), page([a]));
+    assert.equal(c.state.draft.thinkingLevel, 'high', 'search preserves the applied effort');
+    c.query('model-query', 3, '');
+    c.reply(c.action('models'), page([a, b]));
+    c.raw(key('b')).raw('apply');
+    c.reply(c.action('read'), { text: '' });
+    const applied = c.out.events.find((event) => event.name === 'selected').value;
+    assert.equal(applied.thinkingLevel, 'low');
+    assert.equal(applied.choice.selection.modelId, 'b');
+    assert.equal(c.state.open, false);
+    c.update({ selection: applied }).raw('toggle');
+    c.raw(key('a'), 'activate').raw(key('b'), 'activate');
+    assert.equal(
+      c.state.draft.thinkingLevel,
+      'low',
+      'reopened selection survives keyboard navigation',
+    );
+    c.raw('thinking-high').raw('close').raw('toggle');
+    assert.equal(c.state.draft.thinkingLevel, 'low', 'cancel discards unapplied edits');
+    c.raw('thinking-default').raw(key('a'), 'activate').raw(key('b'), 'activate');
+    assert.equal(c.state.draft.thinkingLevel, null, 'explicit default survives navigation');
+  });
   test(`${platform} provider search Enter selects its visible result and exposes anonymous endpoints`, async () => {
     const c = await client('connection-form', platform);
     const anonymous = {

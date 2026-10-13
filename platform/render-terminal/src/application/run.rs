@@ -78,6 +78,7 @@ pub fn run(
         }
     }
     let mut exit_key = ExitKey::default();
+    let mut queued_input = None;
     loop {
         if failure.is_some()
             || ((!presenter.surface.is_live()
@@ -119,6 +120,7 @@ pub fn run(
                 // original root. A late receipt cannot close a replacement.
                 screen.take();
                 exit_key = ExitKey::default();
+                queued_input = None;
                 let cleanup = guard.finish().map_err(|e| sanitize(&e.to_string()));
                 if let Err(error) = presenter.surface_closed(&original, cleanup) {
                     presenter.report(&error);
@@ -165,8 +167,13 @@ pub fn run(
                 }
                 presenter.present(scene.expect("successful paint"));
             }
-            if event::poll(Duration::from_millis(16)).map_err(|e| e.to_string())? {
-                let input = event::read().map_err(|e| e.to_string())?;
+            if queued_input.is_some()
+                || event::poll(Duration::from_millis(16)).map_err(|e| e.to_string())?
+            {
+                let input = match queued_input.take() {
+                    Some(input) => input,
+                    None => event::read().map_err(|e| e.to_string())?,
+                };
                 if exit_key.ready(Some(&input), Instant::now()) {
                     return Ok(true);
                 }
@@ -190,7 +197,24 @@ pub fn run(
                             Instant::now(),
                         ));
                 }
+                let scrolling = is_wheel(&input);
                 presenter.input(input).map_err(|e| e.to_string())?;
+                // A trackpad gesture arrives as many small wheel events. Apply
+                // the queued gesture before another live update and repaint,
+                // so streaming cannot repeatedly move the tail ahead of it.
+                // Keep other gestures for the next presented frame.
+                let until = Instant::now() + Duration::from_millis(8);
+                while scrolling
+                    && Instant::now() < until
+                    && event::poll(Duration::ZERO).map_err(|e| e.to_string())?
+                {
+                    let input = event::read().map_err(|e| e.to_string())?;
+                    if !is_wheel(&input) {
+                        queued_input = Some(input);
+                        break;
+                    }
+                    presenter.input(input).map_err(|e| e.to_string())?;
+                }
                 if let Err(error) = presenter.flush_clipboard(&mut std::io::stdout().lock()) {
                     presenter.report(&error);
                 }
@@ -232,6 +256,10 @@ pub fn run(
         }
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+fn is_wheel(event: &Event) -> bool {
+    matches!(event, Event::Mouse(mouse) if matches!(mouse.kind,
+        crossterm::event::MouseEventKind::ScrollUp | crossterm::event::MouseEventKind::ScrollDown))
 }
 fn is_copy(event: &Event) -> bool {
     matches!(event,Event::Key(key) if key.kind!=KeyEventKind::Release && matches!(key.code,KeyCode::Char('c'|'C')) && key.modifiers==KeyModifiers::CONTROL|KeyModifiers::SHIFT)

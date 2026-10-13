@@ -363,6 +363,7 @@ export function querySucceeded(state: State, actions: Action[], request: Request
       ) {
         state.run = observation.run ?? null;
         state.runThrough = observation.through;
+        if (!state.run && state.notice === 'stopping') state.notice = null;
       }
       if (!state.watch)
         state.parts = observation.parts.map((part) => ({
@@ -475,6 +476,11 @@ export function querySucceeded(state: State, actions: Action[], request: Request
     }
     case 'history': {
       if (request.epoch !== state.epoch || request.navigation !== state.navigation) break;
+      if (
+        request.implicit &&
+        state.visits.find((visit) => visit.id === state.selected?.id)?.following === false
+      )
+        break;
       const page = value as AgentHistoryPage;
       if (page.through !== request.through) {
         queryFailed(state, request);
@@ -513,12 +519,19 @@ export function querySucceeded(state: State, actions: Action[], request: Request
         break;
       }
       const old = state.window;
-      const splitMessage = old?.page.chunks.some((oldChunk) =>
-        page.chunks.some(
-          (chunk) => chunk.sequence === oldChunk.sequence && chunk.field === oldChunk.field,
-        ),
-      );
-      if (request.extend && old?.page.through === page.through && !splitMessage) {
+      if (request.extend && !page.chunks.length) {
+        const position =
+          request.position.kind === 'before' && page.before
+            ? { kind: 'before' as const, cursor: page.before }
+            : request.position.kind === 'after' && page.after
+              ? { kind: 'after' as const, cursor: page.after }
+              : null;
+        if (position) {
+          history(state, actions, position, page.through, request.latest, false, true);
+          break;
+        }
+      }
+      if (request.extend && old?.page.through === page.through) {
         const before = request.position.kind === 'before';
         const chunks = before
           ? [...page.chunks, ...old.page.chunks]

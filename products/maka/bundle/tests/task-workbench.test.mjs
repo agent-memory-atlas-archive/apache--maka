@@ -359,6 +359,62 @@ test('returning to a streaming task preserves its visible prefix until latest is
   assert.equal(c.action('history').input.through, 50);
 });
 
+test('returning to a running task buffers every delta while preserving the reading position', () => {
+  const run = { invocationId: 'run-a', turnId: 'turn-1', state: 'running' };
+  const c = client()
+    .observe(1, run)
+    .history(page(1, [chunk(1, 'Goal', { role: 'user' })]));
+  const reader = c.reader();
+  c.select('Task B').observe(1).history(page(1, []));
+  c.select('Task A').observe(1, run);
+  const landing = structuredClone(c.state.landing);
+  const events = [
+    {
+      sequence: 2,
+      invocationId: 'run-a',
+      turnId: 'turn-1',
+      fact: {
+        kind: 'part_started',
+        messageId: 'stream-a',
+        stepId: 'step-a',
+        partId: 'text',
+        textKind: 'text',
+      },
+    },
+    ...Array.from({ length: 100 }, (_, i) => ({
+      sequence: i + 3,
+      invocationId: 'run-a',
+      turnId: 'turn-1',
+      fact: { kind: 'delta', stepId: 'step-a', partId: 'text', text: `片段${i}🙂 ` },
+    })),
+  ];
+  c.event({
+    kind: 'action',
+    key: c.state.watch.key,
+    event: {
+      status: 'updated',
+      value: {
+        kind: 'events',
+        through: 102,
+        nextAfter: 102,
+        events,
+      },
+    },
+  });
+  assert.equal(c.find('task-state').text, 'Working');
+  assert.equal(c.find(reader).props.live, false, 'new text does not re-enable following');
+  assert.deepEqual(c.state.landing, landing);
+  assert.equal(c.action('history'), undefined);
+  const expected = events
+    .slice(1)
+    .map((event) => event.fact.text)
+    .join('');
+  assert.equal(c.state.live.map((fragment) => fragment.text).join(''), expected);
+  c.raw('task-latest').history(page(102, [chunk(1, 'Goal', { role: 'user' })]));
+  assert.equal(c.find(reader).props.live, true);
+  assert.ok(c.find(reader).props.messages.some((message) => message.text === expected));
+});
+
 test('output review opens original structured evidence and full output at the same history fence', () => {
   const tool = {
     toolUseId: 'write-1',
@@ -413,4 +469,138 @@ test('long task visits stay within the UI call envelope while recent readers rem
     .history(page(50, [chunk(40, 'long output '.repeat(9000))]));
   assert.ok(c.state.visits.length <= 3);
   assert.ok(Buffer.byteLength(JSON.stringify(c.out)) < 1024 * 1024);
+});
+
+test('prefetching adjacent sections of one long message preserves the visible section and anchor', () => {
+  const part = (offset, text) => chunk(10, text, { offset, totalBytes: 60000 });
+  const cursor = (offset) => ({ sequence: 10, offset, field: 'body' });
+  const c = client()
+    .observe(20)
+    .history(page(20, [part(40000, 'Tail')], { before: cursor(40000) }));
+  const reader = c.reader();
+  const landing = structuredClone(c.state.landing);
+  const tail = c.find(reader).props.messages[0];
+  c.child(reader, 'older').history(
+    page(20, [part(20000, 'Middle')], {
+      before: cursor(20000),
+      after: cursor(40000),
+    }),
+  );
+  assert.deepEqual(c.state.landing, landing);
+  assert.deepEqual(c.find(reader).props.messages.at(-1), tail);
+  assert.equal(new Set(c.find(reader).props.messages.map((message) => message.id)).size, 2);
+  c.child(reader, 'older').history(page(20, [part(0, 'Start')], { after: cursor(20000) }));
+  assert.deepEqual(c.state.landing, landing);
+  assert.deepEqual(
+    c.find(reader).props.messages.map((message) => message.text),
+    ['Start', 'Middle', 'Tail'],
+  );
+  assert.equal(new Set(c.find(reader).props.messages.map((message) => message.id)).size, 3);
+});
+
+test('scrolling traverses empty history pages without another gesture or losing the visible anchor', () => {
+  const cursor = (sequence) => ({ sequence, offset: 0, field: 'body' });
+  for (const direction of ['older', 'newer']) {
+    const backward = direction === 'older';
+    const c = client()
+      .observe(100)
+      .history(
+        page(100, [chunk(50, 'Visible')], {
+          before: cursor(40),
+          after: cursor(60),
+        }),
+      );
+    const reader = c.reader();
+    const landing = structuredClone(c.state.landing);
+    c.child(reader, direction).history(
+      page(100, [], {
+        before: cursor(30),
+        after: cursor(70),
+      }),
+    );
+    assert.deepEqual(c.action('history').input.position, {
+      kind: backward ? 'before' : 'after',
+      cursor: cursor(backward ? 30 : 70),
+    });
+    assert.equal(c.action('history').input.through, 100);
+    assert.deepEqual(
+      c.find(reader).props.messages.map((message) => message.text),
+      ['Visible'],
+    );
+    c.history(
+      page(100, [chunk(backward ? 20 : 80, 'Adjacent')], {
+        before: backward ? null : cursor(70),
+        after: backward ? cursor(30) : null,
+      }),
+    );
+    assert.deepEqual(c.state.landing, landing);
+    assert.deepEqual(
+      c.find(reader).props.messages.map((message) => message.text),
+      backward ? ['Adjacent', 'Visible'] : ['Visible', 'Adjacent'],
+    );
+  }
+});
+
+test('a new turn cannot inherit the previous turn goal when its user message is outside the tail page', () => {
+  const c = client()
+    .observe(10)
+    .history(page(10, [chunk(1, 'Old goal', { role: 'user' })]));
+  assert.equal(c.find('task-goal').text, 'Old goal');
+  c.raw('task-latest').history(page(10, [chunk(9, 'New output', { turnId: 'turn-2' })]));
+  assert.equal(c.find('task-goal'), undefined);
+  c.raw('task-latest').history(
+    page(10, [chunk(8, 'New goal', { turnId: 'turn-2', role: 'user' })]),
+  );
+  assert.equal(c.find('task-goal').text, 'New goal');
+  c.raw('task-latest').history(page(10, [chunk(9, 'New output', { turnId: 'turn-2' })]));
+  assert.equal(c.find('task-goal').text, 'New goal');
+});
+
+test('reading older content on a short page suspends automatic following including an in-flight tail reply', () => {
+  const c = client()
+    .observe(10, { invocationId: 'run-a', turnId: 'turn-1', state: 'running' })
+    .history(
+      page(10, [chunk(9, 'Visible')], {
+        before: { sequence: 8, offset: 0, field: 'body' },
+      }),
+    );
+  const reader = c.reader();
+  c.state.latestKnown = 20;
+  c.child(reader, 'tailReady', { landing: c.state.landing.sequence, readingRevision: 1 });
+  const pending = c.action('history');
+  assert.ok(pending);
+  c.child(reader, 'older');
+  c.reply(pending, page(20, [chunk(19, 'New output')]));
+  assert.deepEqual(
+    c.find(reader).props.messages.map((message) => message.text),
+    ['Visible'],
+  );
+  c.child(reader, 'older').history(
+    page(10, [chunk(7, 'Older')], {
+      after: { sequence: 8, offset: 0, field: 'body' },
+    }),
+  );
+  c.child(reader, 'tailReady', { landing: c.state.landing.sequence, readingRevision: 2 });
+  assert.equal(c.action('history'), undefined);
+  assert.equal(c.find(reader).props.live, false);
+  assert.deepEqual(
+    c.find(reader).props.messages.map((message) => message.text),
+    ['Older', 'Visible'],
+  );
+  c.raw('task-latest').history(page(20, [chunk(19, 'New output')]));
+  assert.equal(c.find(reader).props.live, true);
+});
+
+test('a settled stop observation clears the stopping notice and shows the canonical stopped outcome', () => {
+  const c = client();
+  c.state.notice = 'stopping';
+  c.observe(10).history(
+    page(10, [
+      chunk(9, 'Partial output', {
+        timing: { startedAt: 1, finished: { at: 2, outcome: 'aborted' } },
+      }),
+    ]),
+  );
+  assert.equal(c.state.notice, null);
+  assert.equal(c.find('task-state').text, 'Stopped');
 });

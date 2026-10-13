@@ -93,6 +93,23 @@ fn close(presenter: &mut Presenter) {
     presenter.shutdown().unwrap();
 }
 #[test]
+fn wheel_above_a_short_page_reports_the_original_reading_boundary() {
+    let (_runtime, mut presenter, _) = native(vec![source("one", "first")]);
+    draw(&mut presenter, 30, 12);
+    mouse(&mut presenter, MouseEventKind::ScrollUp, 10, 8);
+    draw(&mut presenter, 30, 12);
+    presenter.sync_native().unwrap();
+    let observed = observation(&presenter);
+    assert_eq!(observed["scroll"]["direction"], "up");
+    assert_eq!(observed["viewport"]["atStart"], true);
+    assert_eq!(observed["viewport"]["atEnd"], true);
+    assert_eq!(
+        observed["viewport"]["readingRevision"],
+        observed["readingRevision"]
+    );
+    close(&mut presenter);
+}
+#[test]
 fn selected_child_follows_original_native_focus_and_only_committed_group_geometry() {
     let group = |key: &str, child| json!({"kind":"stack","key":key,"direction":"column","gap":0,"padding":0,"background":0,"children":[child]});
     let (_runtime, mut presenter, props) = native(vec![

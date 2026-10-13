@@ -126,7 +126,10 @@ function readingProps(
           )
           .flatMap((entry) => (entry.toolUseId === null ? [] : [entry.toolUseId]))
       : [],
-    live: !!state.run && !!state.window?.latest,
+    live:
+      !!state.run &&
+      !!state.window?.latest &&
+      state.visits.find((visit) => visit.id === state.selected?.id)?.following !== false,
   };
 }
 

@@ -589,9 +589,9 @@ export function frame<N extends Node>(
       state.dialog === 'terminal' ? { width: pixels(900) } : {},
       state.dialog === 'attachments'
         ? {
-            width: 64,
+            width: state.attachments.selection?.browse ? 80 : 64,
             height: state.attachments.selection?.browse
-              ? 20
+              ? 28
               : Math.min(20, attached.length * 3 + 7),
           }
         : {},
