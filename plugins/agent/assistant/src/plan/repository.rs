@@ -29,7 +29,8 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
-pub struct Repository {
+pub struct Repository<A = maka_capabilities::authorization::Id> {
+    authority: std::marker::PhantomData<A>,
     storage: Arc<dyn Store>,
     prefix: String,
     session: String,
@@ -44,19 +45,19 @@ struct Head {
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Decision {
+struct Decision<A> {
     operation_id: String,
     fingerprint: String,
-    snapshot: Snapshot,
+    snapshot: Snapshot<A>,
 }
 
 /// Immutable revisions at a fixed watermark, ordered oldest first. Continuations
 /// keep `through_revision` even when another caller advances the current state.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct HistoryPage {
+pub struct HistoryPage<A = maka_capabilities::authorization::Id> {
     pub through_revision: u64,
-    pub snapshots: Vec<Snapshot>,
+    pub snapshots: Vec<Snapshot<A>>,
     pub next_after: Option<u64>,
 }
 
@@ -64,7 +65,7 @@ const MAX_SNAPSHOT_BYTES: usize = 256 * 1024;
 const MAX_PAGE_BYTES: usize = 512 * 1024;
 const MAX_PAGE_ITEMS: usize = 8;
 
-impl Repository {
+impl<A: Clone + Serialize + DeserializeOwned> Repository<A> {
     /// Package/scope is already bound by Host. Entry and Session divide the
     /// plugin's domain data, not authorization to query or execute a Session.
     pub fn new(storage: Arc<dyn Store>, entry: &str, session: &str) -> Result<Self, Error> {
@@ -74,6 +75,7 @@ impl Repository {
         }
         identifier(session)?;
         Ok(Self {
+            authority: std::marker::PhantomData,
             storage,
             session: session.into(),
             prefix: format!("plans/{}/", digest(&(entry, session))?),
@@ -81,13 +83,13 @@ impl Repository {
         })
     }
 
-    pub async fn current(&self) -> Result<Snapshot, Error> {
+    pub async fn current(&self) -> Result<Snapshot<A>, Error> {
         self.head().await.map(|(_, snapshot)| snapshot)
     }
 
     /// Returns the original outcome, not a newer Session state. This is safe
     /// after a lost reply; changed inputs under the same operation are rejected.
-    pub async fn receipt(&self, request: &Request) -> Result<Option<Snapshot>, Error> {
+    pub async fn receipt(&self, request: &Request<A>) -> Result<Option<Snapshot<A>>, Error> {
         let Some(decision) = self.operation(&request.operation_id).await? else {
             return Ok(None);
         };
@@ -99,14 +101,14 @@ impl Repository {
 
     /// Observe a pinned decision after a lost reply, without reconstructing
     /// its authorization or retrying it. Absence is not proof of rejection.
-    pub async fn outcome(&self, operation_id: &str) -> Result<Option<Snapshot>, Error> {
+    pub async fn outcome(&self, operation_id: &str) -> Result<Option<Snapshot<A>>, Error> {
         Ok(self
             .operation(operation_id)
             .await?
             .map(|decision| decision.snapshot))
     }
 
-    async fn operation(&self, operation_id: &str) -> Result<Option<Decision>, Error> {
+    async fn operation(&self, operation_id: &str) -> Result<Option<Decision<A>>, Error> {
         identifier(operation_id)?;
         let record = self.storage.read(self.operation_key(operation_id)?).await?;
         let Some(record) = record else {
@@ -122,7 +124,17 @@ impl Repository {
         Ok(Some(decision))
     }
 
-    pub async fn apply(&self, request: &Request, now: u64) -> Result<Snapshot, Error> {
+    pub async fn apply(&self, request: &Request<A>, now: u64) -> Result<Snapshot<A>, Error> {
+        self.apply_with(request, now, vec![]).await
+    }
+
+    /// Commit caller receipts with the same domain decision and CAS head.
+    pub async fn apply_with(
+        &self,
+        request: &Request<A>,
+        now: u64,
+        mut receipts: Vec<Mutation>,
+    ) -> Result<Snapshot<A>, Error> {
         if let Some(snapshot) = self.receipt(request).await? {
             return Ok(snapshot);
         }
@@ -164,7 +176,8 @@ impl Repository {
         if expected.is_none() {
             writes.push(mutation(self.index.clone(), None, &self.session)?);
         }
-        match self.storage.batch(writes).await {
+        receipts.append(&mut writes);
+        match self.storage.batch(receipts).await {
             Ok(_) => Ok(snapshot),
             Err(StoreError::Conflict { .. }) => {
                 // A concurrent exact retry may have won the same CAS. Never
@@ -198,7 +211,7 @@ impl Repository {
         }
     }
 
-    pub async fn at(&self, revision: u64) -> Result<Snapshot, Error> {
+    pub async fn at(&self, revision: u64) -> Result<Snapshot<A>, Error> {
         self.decision(revision)
             .await
             .map(|decision| decision.snapshot)
@@ -209,7 +222,7 @@ impl Repository {
         &self,
         through_revision: Option<u64>,
         after: u64,
-    ) -> Result<HistoryPage, Error> {
+    ) -> Result<HistoryPage<A>, Error> {
         let (_, current) = self.head().await?;
         let through = through_revision.unwrap_or(current.revision);
         if after > through || through > current.revision {
@@ -241,7 +254,7 @@ impl Repository {
         Ok(page)
     }
 
-    async fn head(&self) -> Result<(Option<u64>, Snapshot), Error> {
+    async fn head(&self) -> Result<(Option<u64>, Snapshot<A>), Error> {
         let Some(record) = self.storage.read(format!("{}head", self.prefix)).await? else {
             return Ok((None, Snapshot::default()));
         };
@@ -253,7 +266,7 @@ impl Repository {
         Ok((Some(revision), decision.snapshot))
     }
 
-    async fn decision(&self, revision: u64) -> Result<Decision, Error> {
+    async fn decision(&self, revision: u64) -> Result<Decision<A>, Error> {
         if revision == 0 || revision >= 1 << 53 {
             return Err(Error::Corrupt("invalid Plan revision".into()));
         }
@@ -262,7 +275,7 @@ impl Repository {
             .read(self.decision_key(revision))
             .await?
             .ok_or_else(|| Error::Corrupt("Plan revision has no decision receipt".into()))?;
-        let decision: Decision = decode(record)?;
+        let decision: Decision<A> = decode(record)?;
         if decision.snapshot.revision != revision {
             return Err(Error::Corrupt(
                 "Plan decision revision disagrees with its key".into(),

@@ -31,7 +31,11 @@ use std::collections::BTreeMap;
 mod goal;
 #[path = "contract_imports.rs"]
 mod imports;
+#[path = "contract_plan.rs"]
+mod plan;
 pub use goal::*;
+pub use maka_agent_facts::execution::CollaborationMode;
+pub use plan::*;
 #[path = "contract_todo.rs"]
 mod todo;
 pub use todo::*;
@@ -79,6 +83,9 @@ pub struct Configuration {
     /// Enable explicitly approved, bounded Goal continuation.
     #[serde(default)]
     pub goals: bool,
+    /// Enable planning, reviewed approval and execution progress.
+    #[serde(default)]
+    pub plans: bool,
     /// Enable the session-scoped, model-maintained checklist.
     #[serde(default)]
     pub todo: bool,
@@ -356,6 +363,9 @@ pub struct Workspace {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentMetadata")]
 pub struct Metadata {
+    /// Changing collaboration is only allowed while the Session is idle.
+    #[serde(default)]
+    pub collaboration_mode: Option<CollaborationMode>,
     /// Omission leaves the permission boundary and its approvals unchanged.
     #[serde(default)]
     pub permissions: Option<PermissionChange>,
@@ -375,6 +385,7 @@ pub enum Rejection {
     TitleInvalid,
     LabelsInvalid,
     ToolsUnavailable,
+    Busy,
     WorkspaceUnavailable,
     SessionUnavailable,
     Closed,
@@ -521,6 +532,8 @@ pub struct DataSource {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentSession")]
 pub struct Session {
+    #[serde(default)]
+    pub collaboration_mode: CollaborationMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<String>>,
     pub data_source: Box<DataSource>,
@@ -1084,6 +1097,26 @@ pub fn contract() -> Contract {
                         output: schemars::schema_for!(ToolNames).into(),
                         resources: BTreeMap::new(),
                     },
+                ),
+                (
+                    "plan".into(),
+                    method::<PlanRead, PlanView>(MethodMode::Query),
+                ),
+                (
+                    "watchPlan".into(),
+                    method::<PlanRead, PlanView>(MethodMode::Subscription),
+                ),
+                (
+                    "planHistory".into(),
+                    method::<PlanHistoryRead, PlanHistory>(MethodMode::Query),
+                ),
+                (
+                    "planReceipt".into(),
+                    method::<PlanReceiptRead, Option<PlanResult>>(MethodMode::Query),
+                ),
+                (
+                    "changePlan".into(),
+                    method::<PlanChange, PlanResult>(MethodMode::Mutation),
                 ),
                 (
                     "goal".into(),

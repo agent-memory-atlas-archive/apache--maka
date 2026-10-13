@@ -24,6 +24,8 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionConfiguration {
     #[serde(default)]
+    pub collaboration_mode: maka_agent_facts::execution::CollaborationMode,
+    #[serde(default)]
     pub tools: Option<Vec<String>>,
     pub title: String,
     pub title_is_manual: bool,

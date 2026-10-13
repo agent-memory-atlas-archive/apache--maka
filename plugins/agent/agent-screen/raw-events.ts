@@ -36,6 +36,7 @@ import {
 } from '../../shared/attachments.js';
 
 import { goalAction } from './goal.js';
+import { planAction } from './plan.js';
 import { draftReady } from '../../shared/drafts.js';
 
 import {
@@ -255,7 +256,7 @@ export function handleRaw<N extends Node>(
     history(state, actions, { kind: 'tail' }, state.latestKnown, true);
   } else if (input.key === 'catalog-refresh') {
     if (!mutationPending(state) && !catalogPending(state)) catalog(state);
-  } else if (goalAction(state, actions, input.key)) {
+  } else if (planAction(state, actions, input.key) || goalAction(state, actions, input.key)) {
     // Goal fields and controls retain their captured session and revision.
   } else if (input.key === 'recap-close') {
     if (state.dialog === 'recap') closeDialog(state);

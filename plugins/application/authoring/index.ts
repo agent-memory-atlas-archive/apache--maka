@@ -35,7 +35,7 @@ interface State {
   after: number;
   latest: CallerIntent | null;
   pending: { key: string; stage: string } | null;
-  request: UiAuthoringRequest | null;
+  requestId: string | null;
   halted: boolean;
   wake: boolean;
 }
@@ -131,15 +131,15 @@ export function worker<N extends Node>(
     return out;
   };
   const complete = (state: State, outcome: ActionOutcome) =>
-    action(state, 'complete', 'requests', 'complete', { id: state.request!.id, outcome }, true, {
+    action(state, 'complete', 'requests', 'complete', { id: state.requestId!, outcome }, true, {
       uiAuthoring: 'complete',
-      id: state.request!.id,
+      id: state.requestId!,
     });
-  const execute = (state: State): Action => {
-    const { method, input } = state.request!.command;
+  const execute = (state: State, request: UiAuthoringRequest): Action => {
+    const { method, input } = request.command;
     return action(state, 'apply', 'management', method, input, mutations.has(method), {
       uiAuthoring: 'apply',
-      id: state.request!.id,
+      id: request.id,
     });
   };
   return {
@@ -151,7 +151,7 @@ export function worker<N extends Node>(
         after: 0,
         latest: null,
         pending: null,
-        request: null,
+        requestId: null,
         halted: false,
         wake: false,
       };
@@ -201,10 +201,7 @@ export function worker<N extends Node>(
         state.scanning = false;
         const saved = state.latest?.recovery as { uiAuthoring?: string; id?: string } | undefined;
         if (saved?.uiAuthoring === 'apply' && saved.id) {
-          state.request = {
-            id: saved.id,
-            command: { method: 'instances', input: { kind: 'start' } },
-          };
+          state.requestId = saved.id;
           return frame(state, [
             recover(state, 'apply', 'managerReceipts', state.latest!.reference),
           ]);
@@ -220,12 +217,13 @@ export function worker<N extends Node>(
           state.halted = true;
           return frame(state);
         }
-        state.request = (result as { request: UiAuthoringRequest | null }).request;
-        return frame(state, state.request ? [execute(state)] : state.wake ? [claim(state)] : []);
+        const request = (result as { request: UiAuthoringRequest | null }).request;
+        state.requestId = request?.id ?? null;
+        return frame(state, request ? [execute(state, request)] : state.wake ? [claim(state)] : []);
       }
       if (stage === 'apply') return frame(state, [complete(state, outcome)]);
       if (stage === 'complete') {
-        state.request = null;
+        state.requestId = null;
         if (result !== true) {
           state.halted = true;
           return frame(state);

@@ -17,6 +17,9 @@
  * under the License.
  */
 
+#[path = "tests/plan.rs"]
+mod plan_tests;
+
 #[path = "tests/goal.rs"]
 mod goal_tests;
 
@@ -530,6 +533,7 @@ impl Fixture {
             assistant: None,
             scheduled_tasks: false,
             goals: false,
+            plans: false,
             todo: false,
             automatic_titles: false,
             recaps: false,

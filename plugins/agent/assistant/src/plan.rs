@@ -51,10 +51,10 @@ pub enum Error {
 /// An exact operation is replayable even after subsequent state changes.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Request {
+pub struct Request<A = maka_capabilities::authorization::Id> {
     pub operation_id: String,
     pub expected_revision: u64,
-    pub command: Command,
+    pub command: Command<A>,
 }
 
 /// The caller must obtain the appropriate public Remote or invocation capability
@@ -66,7 +66,7 @@ pub struct Request {
     rename_all_fields = "camelCase",
     deny_unknown_fields
 )]
-pub enum Command {
+pub enum Command<A = maka_capabilities::authorization::Id> {
     Propose {
         turn_id: String,
         artifact: Artifact,
@@ -81,7 +81,7 @@ pub enum Command {
         proposal_id: String,
         proposal_revision: u64,
         behavior: BehaviorId,
-        grant: maka_capabilities::authorization::Id,
+        grant: A,
     },
     Dispatch {
         execution_id: String,
@@ -91,7 +91,7 @@ pub enum Command {
     },
     Reconcile {
         execution_id: String,
-        grant: maka_capabilities::authorization::Id,
+        grant: A,
     },
     Accept {
         execution_id: String,
@@ -115,12 +115,12 @@ pub enum Command {
     },
     Resume {
         execution_id: String,
-        grant: maka_capabilities::authorization::Id,
+        grant: A,
     },
     Cancel {
         execution_id: String,
         reason: String,
-        grant: Option<maka_capabilities::authorization::Id>,
+        grant: Option<A>,
     },
     Settle {
         execution_id: String,
@@ -136,16 +136,27 @@ pub enum Settlement {
     Interrupted { reason: String },
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Snapshot {
-    pub revision: u64,
-    pub proposal: Option<Proposal>,
-    pub execution: Option<Execution>,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Snapshot<A = maka_capabilities::authorization::Id> {
+    pub revision: u64,
+    pub proposal: Option<Proposal>,
+    pub execution: Option<Execution<A>>,
+}
+
+impl<A> Default for Snapshot<A> {
+    fn default() -> Self {
+        Self {
+            revision: 0,
+            proposal: None,
+            execution: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "PlanProposal")]
 pub struct Proposal {
     pub id: String,
     pub plan_id: String,
@@ -158,8 +169,9 @@ pub struct Proposal {
     pub submitted_at: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[schemars(rename = "PlanProposalStatus")]
 pub enum ProposalStatus {
     PendingApproval,
     RevisionRequested,
@@ -169,14 +181,14 @@ pub enum ProposalStatus {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Execution {
+pub struct Execution<A = maka_capabilities::authorization::Id> {
     pub id: String,
     pub proposal_id: String,
     pub artifact: Artifact,
     pub steps: Vec<Progress>,
     /// Frozen before calling Host. Recover the exact operation, never a new attempt.
     pub request: Submit,
-    pub grant: maka_capabilities::authorization::Id,
+    pub grant: A,
     pub dispatched: bool,
     pub cancellation: Option<String>,
     pub phase: Phase,
@@ -205,6 +217,7 @@ pub enum Phase {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(rename = "PlanProgress")]
 pub struct Progress {
     pub id: String,
     pub status: StepStatus,
@@ -213,6 +226,7 @@ pub struct Progress {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[schemars(rename = "PlanStepStatus")]
 pub enum StepStatus {
     Pending,
     InProgress,

@@ -262,7 +262,9 @@ impl Owner {
         else {
             return Ok(parked(Reason::SourceNotResumable));
         };
-        if configuration.model.is_none() {
+        if configuration.model.is_none()
+            || configuration.orchestration_mode.as_str() == plan::EXECUTION
+        {
             return Ok(parked(Reason::SourceNotResumable));
         }
         let workspace = &session.configuration.workspace;
@@ -289,6 +291,7 @@ impl Owner {
         source.accepted.tool_mode = configuration.tool_mode;
         source.accepted.editing_tools = configuration.editing_tools;
         let basis = MessageBasis {
+            collaboration_mode: configuration.collaboration_mode,
             background_kind: BackgroundKind::Schedule,
             tool_discovery: configuration.tool_discovery,
             allowed_tools: session.configuration.tools.clone(),
@@ -313,7 +316,7 @@ impl Owner {
         // Replay the original prepared prompt. Native service tools continue to
         // resolve the live Session permission boundary through their actual owner.
         let tools = self.selected_tools(
-            session.configuration.tools.as_deref(),
+            &basis,
             configuration.tool_discovery,
             configuration.editing_tools,
         );

@@ -20,9 +20,12 @@
 pub use maka_sandbox::{Approval as ApprovalPolicy, Mode as SandboxMode};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CollaborationMode {
+    #[default]
     Agent,
     Plan,
 }

@@ -46,6 +46,7 @@ import { type Backend, type Request, type State, type RootCommand } from './stat
 import { toolCards } from '../../shared/tool-cards.js';
 import { readingKey } from './state.js';
 import { newGoalState, watchGoal } from './goal.js';
+import { newPlanState, watchPlan } from './plan.js';
 import { messages } from './messages.js';
 
 export function intent(
@@ -301,6 +302,8 @@ export function select(state: State, actions: Action[], session: AgentSession | 
   state.recallAnchor = null;
   state.selected = session;
   state.epoch++;
+  state.plan = newPlanState();
+  if (session) watchPlan(state);
   state.goal = newGoalState();
   if (session) watchGoal(state);
   state.recap = { receipt: null, loaded: false, loading: null, failed: false, confirmation: null };
@@ -420,6 +423,9 @@ export function mutationPending(state: State) {
         'queue',
         'receipt',
         'recapGenerate',
+        'planChange',
+        'planMode',
+        'planReceipt',
         'goalChange',
         'goalField',
         'goalReceipt',
@@ -717,6 +723,13 @@ export function rootCommands(
         ]
       : []),
     {
+      kind: 'plan-open',
+      id: 'plan-open',
+      label: text.planTitle,
+      hint: '',
+      disabled: !route || !state.selected || state.plan.page?.enabled === false,
+    },
+    {
       kind: 'goal-open',
       id: 'goal-open',
       label: text.goalTitle,
@@ -936,6 +949,10 @@ export function rootCommand(
     if (!state.checklist.watch) watchChecklist(state);
     if (target === 'tui') state.inspector = state.inspector === 'checklist' ? null : 'checklist';
     else state.dialog = 'checklist';
+  } else if (kind === 'plan-open') {
+    if (!state.plan.watch) watchPlan(state);
+    if (target === 'tui') state.inspector = state.inspector === 'plan' ? null : 'plan';
+    else state.dialog = 'plan';
   } else if (kind === 'goal-open') {
     if (!state.goal.watch) watchGoal(state);
     if (target === 'tui') state.inspector = state.inspector === 'goal' ? null : 'goal';

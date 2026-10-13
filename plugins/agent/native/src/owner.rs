@@ -31,6 +31,7 @@ mod goal;
 mod imports;
 mod interactions;
 mod notifications;
+mod plan;
 mod projects;
 pub(crate) use notifications::ReturnRoute;
 mod patches;
@@ -66,6 +67,8 @@ use maka_agent_api::session::SessionConfiguration;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MessageBasis {
+    #[serde(default, skip_serializing_if = "is_agent_collaboration")]
+    collaboration_mode: CollaborationMode,
     #[serde(default, skip_serializing_if = "BackgroundKind::is_schedule")]
     background_kind: BackgroundKind,
     #[serde(default)]
@@ -89,12 +92,16 @@ struct MessageBasis {
     tools: Vec<crate::tools::SelectedTool>,
     max_steps: usize,
 }
-#[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+fn is_agent_collaboration(mode: &CollaborationMode) -> bool {
+    *mode == CollaborationMode::Agent
+}
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum BackgroundKind {
     #[default]
     Schedule,
     Goal(Uuid),
+    Plan(String),
 }
 impl BackgroundKind {
     fn is_schedule(&self) -> bool {
@@ -134,6 +141,7 @@ pub(crate) struct Owner {
     scheduler: Arc<scheduler::Scheduler>,
     todo: Arc<todo::Todo>,
     goals: Arc<goal::Goals>,
+    plans: Arc<plan::Plans>,
     recap_storage: Arc<maka_host_runtime::storage::Storage>,
     auxiliary: auxiliary::Auxiliary,
     pub settings: Configuration,
@@ -154,6 +162,7 @@ pub(crate) struct Owner {
     tools: maka_tools::ToolCatalog,
     tool_basis: Vec<crate::tools::SelectedTool>,
     editing_tools: Vec<(String, maka_agent_facts::execution::EditingTools)>,
+    planning_tools: Vec<String>,
     skills: Option<skills::Library>,
     executors: crate::executor::Executors,
     runs: Arc<Mutex<Runs>>,
@@ -274,6 +283,13 @@ impl Owner {
         if settings.scheduled_tasks {
             additional.extend(scheduler.tools());
         }
+        let plans = Arc::new(plan::Plans::new(
+            persistence.store().clone(),
+            prefix.clone(),
+        ));
+        if settings.plans {
+            additional.extend(plans.tools());
+        }
         let goals = Arc::new(goal::Goals::new(
             persistence.store().clone(),
             prefix.clone(),
@@ -306,6 +322,22 @@ impl Owner {
             workers.clone(),
         )
         .and_then(|mut catalog| {
+            if settings.plans {
+                catalog.planning.push("SubmitPlan".into());
+                catalog.tools = catalog
+                    .tools
+                    .with_always_visible(&["SubmitPlan", "update_plan", "cancel_plan"])
+                    .and_then(|tools| {
+                        tools.with_request_binding(
+                            ["SubmitPlan", "update_plan", "cancel_plan"]
+                                .into_iter()
+                                .map(str::to_owned)
+                                .collect(),
+                            plans.clone(),
+                        )
+                    })
+                    .map_err(|error| error.to_string())?;
+            }
             if settings.goals {
                 catalog.tools = catalog
                     .tools
@@ -313,6 +345,9 @@ impl Owner {
                     .map_err(|error| error.to_string())?;
             }
             if settings.recall {
+                catalog
+                    .planning
+                    .extend(["Recall", "RecallMore", "RecallMaterial"].map(str::to_owned));
                 catalog.tools = catalog
                     .tools
                     .with_request_binding(
@@ -329,6 +364,7 @@ impl Owner {
             tools,
             basis: tool_basis,
             editing: editing_tools,
+            planning: planning_tools,
         } = match prepared_tools {
             Ok(tools) => tools,
             Err(error) => {
@@ -353,6 +389,7 @@ impl Owner {
             Arc::new(crate::model::Prices(configuration.clone())),
         );
         Ok(Arc::new(Self {
+            plans,
             goals,
             auxiliary,
             todo,
@@ -380,6 +417,7 @@ impl Owner {
             tools,
             tool_basis,
             editing_tools,
+            planning_tools,
             skills,
             executors,
             runs: Arc::default(),
@@ -531,6 +569,7 @@ impl Owner {
                 &id,
                 &operation.fingerprint,
                 &SessionConfiguration {
+                    collaboration_mode: CollaborationMode::Agent,
                     tools,
                     title: input.title,
                     title_is_manual: !input.automatic_title,
@@ -611,13 +650,34 @@ impl Owner {
             });
         }
         use maka_event_log::sessions::SessionMutation;
-        let permissions = input.permissions.is_some();
+        let mode_changed = input
+            .collaboration_mode
+            .is_some_and(|mode| mode != session.configuration.collaboration_mode);
+        if mode_changed {
+            if input.collaboration_mode == Some(CollaborationMode::Plan) && !self.settings.plans {
+                return Ok(MetadataResult::Rejected {
+                    reason: Rejection::ToolsUnavailable,
+                });
+            }
+            if runs.controls.contains_key(&input.session_id)
+                || !self.store.message_queue(&input.session_id).await.map_err(|_| "agent_queue_unavailable")?.entries.is_empty()
+                || self.store.latest_turn_boundary(&input.session_id).await.map_err(|_| "agent_execution_unavailable")?
+                    .is_some_and(|boundary| matches!(boundary.state, maka_event_log::turns::InvocationState::Ended { outcome: maka_agent_facts::event::InvocationOutcome::HandoffPaused { .. }, .. })) {
+                return Ok(MetadataResult::Rejected { reason: Rejection::Busy });
+            }
+        }
+        let permissions = input.permissions.is_some() || mode_changed;
         let update = move |configuration: &mut SessionConfiguration| {
+            // Changing collaboration mode does not rename the conversation.
+            if input.collaboration_mode.is_none() || configuration.title != input.title {
+                configuration.title_is_manual = true;
+            }
             configuration.title = input.title;
-            configuration.title_is_manual = true;
             configuration.labels = input.labels;
-            if let Some(change) = input.permissions
-                && (change.settings != configuration.permissions || change.revoke_grants)
+            if mode_changed
+                || input.permissions.as_ref().is_some_and(|change| {
+                    change.settings != configuration.permissions || change.revoke_grants
+                })
             {
                 configuration.boundary_revision = configuration
                     .boundary_revision
@@ -628,7 +688,12 @@ impl Owner {
                             "permission boundary revision exhausted".into(),
                         )
                     })?;
+            }
+            if let Some(change) = input.permissions {
                 configuration.permissions = change.settings;
+            }
+            if let Some(mode) = input.collaboration_mode {
+                configuration.collaboration_mode = mode;
             }
             Ok(())
         };
@@ -663,20 +728,21 @@ impl Owner {
     }
     fn selected_tools(
         &self,
-        allowed: Option<&[String]>,
+        basis: &MessageBasis,
         discovery: bool,
         editing: Option<maka_agent_facts::execution::EditingTools>,
     ) -> maka_tools::ToolCatalog {
-        let selected = match allowed {
-            None => self.tools.clone(),
+        let selected = plan::select(&self.tools, basis, &self.planning_tools);
+        let selected = match basis.allowed_tools.as_deref() {
+            None => selected.clone(),
             Some(allowed) => {
-                let names = self.tools.names();
+                let names = selected.names();
                 let excluded: Vec<_> = names
                     .iter()
                     .filter(|name| !allowed.contains(name))
                     .map(String::as_str)
                     .collect();
-                self.tools.excluding(&excluded)
+                selected.excluding(&excluded)
             }
         };
         let selected = match editing {
@@ -811,7 +877,13 @@ impl Owner {
         )
         .await?;
         let external = executor.is_some();
-        let basis = MessageBasis {
+        if session.configuration.collaboration_mode == CollaborationMode::Plan
+            && (!self.settings.plans || external)
+        {
+            return Err("agent_planning_unavailable".into());
+        }
+        let mut basis = MessageBasis {
+            collaboration_mode: session.configuration.collaboration_mode,
             background_kind: BackgroundKind::Schedule,
             tool_discovery: !external && self.settings.tool_discovery,
             allowed_tools: session.configuration.tools.clone(),
@@ -840,6 +912,7 @@ impl Owner {
             },
             max_steps: self.settings.max_steps,
         };
+        self.prepare_plan_behavior(&id, &mut basis).await?;
         let identity = self.operation_id(operation);
         let invocation = queued.clone().unwrap_or_else(|| Invocation {
             session_id: id.clone(),
@@ -859,7 +932,7 @@ impl Owner {
                     vec![]
                 } else {
                     self.selected_tools(
-                        session.configuration.tools.as_deref(),
+                        &basis,
                         false,
                         basis.model.as_ref().and_then(|model| model.editing_tools),
                     )
@@ -990,6 +1063,7 @@ impl Owner {
             || !self.workers.is_empty()
             || !self.auxiliary.resources.is_idle()
             || self.goals.keeps_host_awake()
+            || self.plans.keeps_host_awake()
         {
             return None;
         }
@@ -1015,6 +1089,7 @@ impl Owner {
             let scheduler = owner.scheduler.finish().await;
             let todo = owner.todo.finish().await;
             let goals = owner.goals.finish().await;
+            let plans = owner.plans.finish().await;
             let recap = owner.recap_storage.finish().await;
             let auxiliary = owner.auxiliary.resources.finish().await;
             let configuration = owner.configuration.shutdown().await;
@@ -1025,6 +1100,7 @@ impl Owner {
             scheduler?;
             todo?;
             goals?;
+            plans?;
             recap?;
             auxiliary.map_err(|error| error.to_string())?;
             configuration.map_err(|_| "agent_configuration_cleanup_unconfirmed".into())

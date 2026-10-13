@@ -50,6 +50,7 @@ import {
 
 import { checklistView } from './checklist-view.js';
 import { goalView, goalTerminal } from './goal.js';
+import { planView } from './plan.js';
 import { recapView } from './recap-view.js';
 import { attachmentView } from '../../shared/attachments.js';
 
@@ -100,6 +101,8 @@ export function frame<N extends Node>(
   }
   retainSelectedDraft(state.drafts, state.selected);
   if (
+    !state.restoring &&
+    !state.uncertain &&
     !Object.values(state.pending).some(
       (request) => request.kind === 'draftPage' || request.kind === 'draftReceipt',
     )
@@ -238,6 +241,7 @@ export function frame<N extends Node>(
   const inspectorOpen =
     conversationRoute(state) && !!state.selected && (state.inspector !== null || inlineInteraction);
   const inspectorSlots = [
+    planView(presentation, state, theme, locale),
     goalView(presentation, state, theme, locale),
     checklistView(presentation, state, theme, locale),
     recapView(presentation, state, theme, locale),
@@ -412,6 +416,27 @@ export function frame<N extends Node>(
             ),
           ]
         : []),
+      ...(conversationRoute(state) &&
+      state.selected &&
+      state.inspector !== 'plan' &&
+      state.dialog !== 'plan' &&
+      (state.selected.collaborationMode === 'plan' ||
+        state.plan.page?.current.proposal?.status === 'pending_approval' ||
+        state.plan.page?.current.execution?.phase === 'active')
+        ? [
+            ui.button(
+              'plan-open',
+              state.plan.page?.current.proposal?.status === 'pending_approval'
+                ? text.planProposal_pending_approval
+                : state.plan.page?.current.execution?.phase === 'active'
+                  ? text.planExecution_active
+                  : text.planPlanning,
+              !!state.dialog,
+              false,
+              { align: 'start', width: fill },
+            ),
+          ]
+        : []),
       conversation,
       ...(target === 'tui' && (!state.embedding.fixed || state.embedding.session)
         ? [
@@ -508,19 +533,21 @@ export function frame<N extends Node>(
                     : text.approvalTitle
                 : state.dialog === 'directories'
                   ? text.directoryTitle
-                  : state.dialog === 'goal'
-                    ? text.goalTitle
-                    : state.dialog === 'recap'
-                      ? text.recapTitle
-                      : state.dialog === 'checklist'
-                        ? text.checklistTitle
-                        : state.dialog === 'details'
-                          ? text.detailsTitle
-                          : state.dialog === 'queue'
-                            ? text.queueEdit
-                            : state.dialog === 'help'
-                              ? text.helpTitle
-                              : text.paletteTitle,
+                  : state.dialog === 'plan'
+                    ? text.planTitle
+                    : state.dialog === 'goal'
+                      ? text.goalTitle
+                      : state.dialog === 'recap'
+                        ? text.recapTitle
+                        : state.dialog === 'checklist'
+                          ? text.checklistTitle
+                          : state.dialog === 'details'
+                            ? text.detailsTitle
+                            : state.dialog === 'queue'
+                              ? text.queueEdit
+                              : state.dialog === 'help'
+                                ? text.helpTitle
+                                : text.paletteTitle,
       background,
       ui.box(
         'dialog-content',
@@ -672,6 +699,9 @@ export function frame<N extends Node>(
   out.actions = actions;
   out.events = events;
   out.subscriptions = [
+    ...(state.plan.watch
+      ? [{ ...state.plan.watch, binding: 'agent', member: 0, method: 'watchPlan', resources: {} }]
+      : []),
     ...(state.goal.watch
       ? [{ ...state.goal.watch, binding: 'agent', member: 0, method: 'watchGoal', resources: {} }]
       : []),

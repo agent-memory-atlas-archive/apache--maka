@@ -233,7 +233,7 @@ impl Owner {
     }
 
     async fn repository_sessions(&self) -> Result<Vec<String>, Error> {
-        Repository::sessions(self.storage.as_ref(), &self.entry).await
+        Repository::<Id>::sessions(self.storage.as_ref(), &self.entry).await
     }
 
     async fn reconcile(&self, session: &str) -> Result<bool, Error> {

@@ -180,6 +180,11 @@ export const configurations = {
         type: 'boolean',
         default: false,
       },
+      plans: {
+        description: 'Enable planning, reviewed approval and execution progress.',
+        type: 'boolean',
+        default: false,
+      },
       todo: {
         description: 'Enable the session-scoped, model-maintained checklist.',
         type: 'boolean',
@@ -677,6 +682,11 @@ export const configurations = {
           goals: {
             type: 'boolean',
             description: 'Enable explicitly approved, bounded Goal continuation.',
+            default: false,
+          },
+          plans: {
+            type: 'boolean',
+            description: 'Enable planning, reviewed approval and execution progress.',
             default: false,
           },
           todo: {

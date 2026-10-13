@@ -19,10 +19,10 @@
 
 use super::*;
 
-impl Snapshot {
+impl<A: Clone> Snapshot<A> {
     pub(super) fn apply(
         &mut self,
-        command: &Command,
+        command: &Command<A>,
         operation: &str,
         session: &str,
         now: u64,
@@ -133,7 +133,7 @@ impl Snapshot {
                         orchestration_mode: Some(behavior.clone()),
                     },
                     phase: Phase::AwaitingAdmission,
-                    grant: *grant,
+                    grant: grant.clone(),
                     dispatched: false,
                     cancellation: None,
                     updated_at: now,
@@ -159,7 +159,7 @@ impl Snapshot {
                 execution.request.operation_id = format!("plan_{operation}");
                 execution.freeze_request()?;
                 execution.phase = Phase::AwaitingAdmission;
-                execution.grant = *grant;
+                execution.grant = grant.clone();
                 execution.dispatched = false;
                 execution.cancellation = None;
                 execution.updated_at = now;
@@ -186,7 +186,7 @@ impl Snapshot {
                 ) {
                     return Err(Error::Conflict);
                 }
-                execution.grant = *grant;
+                execution.grant = grant.clone();
                 execution.updated_at = now;
             }
             Command::Defer { execution_id } => {
@@ -304,7 +304,7 @@ impl Snapshot {
                 };
                 execution.cancellation = Some(reason.clone());
                 if let Some(grant) = grant {
-                    execution.grant = *grant;
+                    execution.grant = grant.clone();
                 }
                 execution.updated_at = now;
                 if let Some(proposal) = &mut self.proposal
@@ -356,13 +356,13 @@ impl Snapshot {
         Ok(())
     }
 
-    fn execution(&self, id: &str) -> Result<&Execution, Error> {
+    fn execution(&self, id: &str) -> Result<&Execution<A>, Error> {
         self.execution
             .as_ref()
             .filter(|e| e.id == id)
             .ok_or(Error::Conflict)
     }
-    fn execution_mut(&mut self, id: &str) -> Result<&mut Execution, Error> {
+    fn execution_mut(&mut self, id: &str) -> Result<&mut Execution<A>, Error> {
         self.execution
             .as_mut()
             .filter(|e| e.id == id)
@@ -370,7 +370,7 @@ impl Snapshot {
     }
 }
 
-impl Execution {
+impl<A> Execution<A> {
     fn active(&self, invocation: &Invocation) -> Result<&Receipt, Error> {
         match &self.phase {
             Phase::Active { receipt } if &receipt.invocation == invocation => Ok(receipt),

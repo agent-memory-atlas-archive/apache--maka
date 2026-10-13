@@ -124,6 +124,7 @@ export function installation(
     scheduledTasks: true,
     todo: true,
     goals: true,
+    plans: true,
     automaticTitles: true,
     recaps: true,
     tools,

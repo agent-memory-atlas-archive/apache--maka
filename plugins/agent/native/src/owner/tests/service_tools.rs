@@ -130,6 +130,7 @@ impl NativeOwner for Counter {
     }
 }
 pub(super) struct Setup {
+    tool_name: Option<&'static str>,
     title: Option<maka_agent_facts::display::Text>,
     counter: Option<Arc<Counter>>,
     granted: bool,
@@ -156,12 +157,17 @@ pub(super) struct Setup {
     confirmation: contract::ToolConfirmation,
 }
 impl Setup {
+    pub(super) fn named(mut self, name: &'static str) -> Self {
+        self.tool_name = Some(name);
+        self
+    }
     pub(super) fn titled(mut self, title: maka_agent_facts::display::Text) -> Self {
         self.title = Some(title);
         self
     }
     fn javascript() -> Self {
         Self {
+            tool_name: None,
             title: None,
             counter: None,
             granted: true,
@@ -190,6 +196,7 @@ impl Setup {
     }
     fn native(counter: Arc<Counter>, granted: bool) -> Self {
         Self {
+            tool_name: None,
             title: None,
             counter: Some(counter),
             granted,
@@ -224,6 +231,7 @@ impl Setup {
     }
     pub(super) fn questions() -> Self {
         Self {
+            tool_name: None,
             title: None,
             counter: None,
             granted: true,
@@ -524,7 +532,9 @@ impl Setup {
             } else {
                 contract::ToolResult::Json
             },
-            name: if self.web {
+            name: if let Some(name) = self.tool_name {
+                name
+            } else if self.web {
                 "WebFetch"
             } else if self.files.is_some() || self.images.is_some() {
                 "WorkspaceFile"

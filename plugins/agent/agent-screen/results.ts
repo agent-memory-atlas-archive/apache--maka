@@ -39,6 +39,12 @@ import type {
   TextChunk,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { goalChanged, goalFieldResult } from './goal.js';
+import { planChanged, planModeChanged, planHistoryResult } from './plan.js';
+import type {
+  AgentPlanResult,
+  AgentPlanHistory,
+  AgentMetadataResult,
+} from '../../../packages/plugin-sdk/src/index.js';
 import { sameValue } from '../../shared/value.js';
 
 import { sameFile } from '../../shared/attachments.js';
@@ -88,6 +94,11 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
     ) {
       state.catalogFilter = 'all';
       catalog(state, { kind: 'at', cursor: created.session.id });
+    }
+  } else if (request.kind === 'planChange' || request.kind === 'planMode') {
+    if (request.epoch === state.epoch && request.sessionId === state.selected?.id) {
+      if (request.kind === 'planChange') planChanged(state, value as AgentPlanResult);
+      else planModeChanged(state, value as AgentMetadataResult);
     }
   } else if (request.kind === 'goalChange') {
     if (request.epoch === state.epoch && request.sessionId === state.selected?.id)
@@ -227,6 +238,15 @@ export function receipt(state: State, actions: Action[], request: Mutation, repl
   } else {
     state.uncertain = { reference: reply.reference, request };
     state.notice = 'unknown';
+    if (reply.reference.method === 'changePlan')
+      intent(
+        state,
+        actions,
+        { kind: 'planReceipt', reference: reply.reference },
+        'agent',
+        'planReceipt',
+        { reference: reply.reference },
+      );
     if (reply.reference.method === 'changeGoal')
       intent(
         state,
@@ -240,6 +260,23 @@ export function receipt(state: State, actions: Action[], request: Mutation, repl
 }
 
 export function queryFailed(state: State, request: Request) {
+  if (
+    request.kind === 'planChange' ||
+    request.kind === 'planMode' ||
+    request.kind === 'planHistory'
+  ) {
+    if (request.epoch === state.epoch) {
+      state.notice = 'planUnavailable';
+      if (request.kind === 'planHistory' && state.plan.history?.loading === request.attempt)
+        state.plan.history.loading = null;
+    }
+    return;
+  }
+  if (request.kind === 'planReceipt') {
+    state.notice = 'unknown';
+    return;
+  }
+
   if (request.kind === 'goalField' || request.kind === 'goalChange') {
     if (request.epoch === state.epoch) {
       state.goal.capture = null;
@@ -330,6 +367,10 @@ export function querySucceeded(state: State, actions: Action[], request: Request
     case 'goalField':
       goalFieldResult(state, actions, request, value);
       break;
+    case 'planHistory':
+      planHistoryResult(state, request, value as AgentPlanHistory);
+      break;
+    case 'planReceipt':
     case 'goalReceipt': {
       const original = state.uncertain;
       if (value && original && sameValue(original.reference, request.reference))
