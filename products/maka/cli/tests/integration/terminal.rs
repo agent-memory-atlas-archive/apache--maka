@@ -192,11 +192,15 @@ impl Pty {
         }
     }
     #[track_caller]
-    fn wait_until(&mut self, predicate: impl Fn(&str) -> bool) {
+    fn wait_until(&mut self, predicate: impl FnMut(&str) -> bool) {
         self.wait_until_with_timeout(predicate, Duration::from_secs(10));
     }
     #[track_caller]
-    fn wait_until_with_timeout(&mut self, predicate: impl Fn(&str) -> bool, timeout: Duration) {
+    fn wait_until_with_timeout(
+        &mut self,
+        mut predicate: impl FnMut(&str) -> bool,
+        timeout: Duration,
+    ) {
         let deadline = Instant::now() + timeout;
         loop {
             self.read();

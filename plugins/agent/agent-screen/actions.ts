@@ -194,6 +194,7 @@ export function follow(state: State, actions: Action[]) {
     !window?.latest ||
     !(
       state.latestKnown > window.page.through ||
+      window.page.after !== null ||
       state.live.some(
         (fragment) => fragment.closedAt !== null && fragment.closedAt <= window.page.through,
       )
@@ -223,7 +224,25 @@ export function follow(state: State, actions: Action[]) {
     )
   ) {
     state.followAttempt = { ...receipt, through: state.latestKnown };
-    history(state, actions, { kind: 'tail' }, state.latestKnown, true, true);
+    const last = window.page.chunks.at(-1)!;
+    history(
+      state,
+      actions,
+      {
+        kind: 'after',
+        cursor: window.page.after ?? {
+          sequence: last.sequence,
+          // Refresh the boundary segment's recorded timing/tool metadata at
+          // the new fence, then append the following immutable segments.
+          offset: last.offset,
+          field: last.field,
+        },
+      },
+      window.page.after ? window.page.through : state.latestKnown,
+      true,
+      true,
+      true,
+    );
   }
 }
 

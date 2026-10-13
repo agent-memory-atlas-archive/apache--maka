@@ -22,6 +22,8 @@ use maka_event_log::root::{RootNamespaces, RootOwner};
 use serde_json::json;
 use unicode_width::UnicodeWidthStr;
 
+mod chat;
+
 fn click(tui: &mut Pty, label: &str) {
     tui.wait_for(label);
     let screen = tui.screen.snapshot().unwrap().screen;

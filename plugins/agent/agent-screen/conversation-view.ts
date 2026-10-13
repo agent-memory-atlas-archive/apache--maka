@@ -96,6 +96,7 @@ function readingProps(
       !!state.window &&
       (!state.window.latest ||
         state.latestKnown > state.window.page.through ||
+        state.window.page.after !== null ||
         state.live.some(
           (fragment) =>
             fragment.closedAt !== null && fragment.closedAt <= state.window!.page.through,
@@ -127,7 +128,6 @@ function readingProps(
           .flatMap((entry) => (entry.toolUseId === null ? [] : [entry.toolUseId]))
       : [],
     live:
-      !!state.run &&
       !!state.window?.latest &&
       state.visits.find((visit) => visit.id === state.selected?.id)?.following !== false,
   };
@@ -159,6 +159,7 @@ export function conversationView<N extends Node>(
   const timelineEvents = {
     older: 'older',
     newer: 'newer',
+    fill: 'fill',
     latest: 'latest',
     markRead: 'mark-read',
     source: 'source',

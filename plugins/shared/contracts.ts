@@ -86,7 +86,7 @@ export interface Theme {
 }
 export interface Message {
   id: string;
-  // Immutable byte-segment identity; 1–123 ASCII letters, digits, underscores or hyphens.
+  // Stable message field/byte-segment identity, including the streaming prefix.
   contentKey: string;
   role: Role | 'thinking';
   timestamp: number | null;
@@ -887,6 +887,7 @@ export const timelineContract = component(
   {
     older: object({}),
     newer: object({}),
+    fill: object({}),
     latest: object({}),
     source: object({
       sequence: { type: 'integer', minimum: 1 },

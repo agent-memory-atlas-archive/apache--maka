@@ -1617,6 +1617,24 @@ export function components<N extends Node>(
         const observed = next.observation;
         if (
           target === 'tui' &&
+          props.live &&
+          !props.latest &&
+          props.older &&
+          !props.source &&
+          !props.browse &&
+          !next.search &&
+          !props.loading &&
+          input.kind === 'component' &&
+          input.child === 'reading' &&
+          input.name === 'observed' &&
+          observed?.viewport?.atStart &&
+          observed.viewport.atEnd &&
+          observed.viewport.readingRevision === observed.readingRevision &&
+          observed.pendingCommand == null
+        )
+          out.events.push({ name: 'fill', value: {} });
+        if (
+          target === 'tui' &&
           !props.source &&
           !next.search &&
           !props.loading &&
@@ -1646,6 +1664,13 @@ export function components<N extends Node>(
             (observed.viewport.atEnd || rows.slice(-edgeRows).some(visibleRow))
           )
             out.events.push({ name: 'newer', value: {} });
+          else if (
+            observed.scroll.direction === 'down' &&
+            observed.viewport.atEnd &&
+            !props.newer &&
+            (!props.live || props.latest)
+          )
+            out.events.push({ name: 'latest', value: {} });
         }
         if (
           !props.source &&

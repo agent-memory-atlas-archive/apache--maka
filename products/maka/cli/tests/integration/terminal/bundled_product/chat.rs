@@ -1,0 +1,291 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use super::*;
+use maka_agent_facts::configuration::CatalogMutationResult;
+use std::path::Path;
+use std::{
+    net::{TcpListener, TcpStream},
+    sync::{Arc, mpsc},
+};
+use uuid::Uuid;
+
+fn request(socket: &mut TcpStream) -> serde_json::Value {
+    socket
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .unwrap();
+    let mut bytes = Vec::new();
+    let boundary = loop {
+        let mut buffer = [0; 4096];
+        let count = socket.read(&mut buffer).unwrap();
+        assert_ne!(count, 0);
+        bytes.extend_from_slice(&buffer[..count]);
+        assert!(bytes.len() < 512 * 1024);
+        if let Some(at) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+            break at + 4;
+        }
+    };
+    let headers = String::from_utf8_lossy(&bytes[..boundary]);
+    assert!(
+        headers
+            .to_ascii_lowercase()
+            .contains("authorization: bearer chat-fixture-key")
+    );
+    let length: usize = headers
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse().unwrap())
+        })
+        .unwrap();
+    while bytes.len() < boundary + length {
+        let mut buffer = [0; 4096];
+        let count = socket.read(&mut buffer).unwrap();
+        assert_ne!(count, 0);
+        bytes.extend_from_slice(&buffer[..count]);
+    }
+    serde_json::from_slice(&bytes[boundary..boundary + length]).unwrap()
+}
+fn packet(socket: &mut TcpStream, value: serde_json::Value) {
+    let data = format!("data: {value}\n\n");
+    write!(socket, "{:x}\r\n{}\r\n", data.len(), data).unwrap();
+    socket.flush().unwrap();
+}
+fn delta(socket: &mut TcpStream, text: &str) {
+    packet(
+        socket,
+        json!({"id":"chat-fixture","choices":[{"index":0,"delta":{"content":text},"finish_reason":null}]}),
+    );
+}
+fn complete(socket: &mut TcpStream) {
+    packet(
+        socket,
+        json!({"id":"chat-fixture","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}),
+    );
+    socket
+        .write_all(b"e\r\ndata: [DONE]\n\n\r\n0\r\n\r\n")
+        .unwrap();
+    socket.flush().unwrap();
+}
+fn paste(tui: &mut Pty, text: &str) {
+    tui.send(format!("\x1b[200~{text}\x1b[201~").as_bytes());
+}
+fn next_request(
+    tui: &mut Pty,
+    received: &mpsc::Receiver<(serde_json::Value, TcpStream)>,
+) -> (serde_json::Value, TcpStream) {
+    let mut next = None;
+    // Keep consuming the PTY while the model request is admitted. A real
+    // terminal continuously reads stdout; blocking on the server channel can
+    // fill its output buffer and prevent the next UI input from being handled.
+    tui.wait_until_with_timeout(
+        |_| {
+            next = received.try_recv().ok();
+            next.is_some()
+        },
+        Duration::from_secs(30),
+    );
+    next.unwrap()
+}
+fn evidence(tui: &Pty, name: &str) {
+    if let Ok(path) = std::env::var("MAKA_CHAT_UX_EVIDENCE") {
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(
+            Path::new(&path).join(format!("{name}.txt")),
+            tui.screen.snapshot().unwrap().screen,
+        )
+        .unwrap();
+        std::fs::write(Path::new(&path).join("terminal.ansi"), &tui.output).unwrap();
+    }
+}
+fn first_paragraph(screen: &str) -> Option<(usize, &str)> {
+    screen.lines().enumerate().find_map(|(row, line)| {
+        let start = line.find("Paragraph ")?;
+        let end = line[start..].find("stable.")? + start + "stable.".len();
+        Some((row, &line[start..end]))
+    })
+}
+
+#[test]
+#[ignore = "real bundled product, local streamed model and foreground PTY"]
+fn bundled_chat_sends_follows_renders_markdown_and_scrolls_original_history() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let (requests, received) = mpsc::channel();
+    let server = std::thread::spawn(move || {
+        for _ in 0..9 {
+            let (mut socket, _) = listener.accept().unwrap();
+            let value = request(&mut socket);
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n").unwrap();
+            socket.flush().unwrap();
+            if requests.send((value, socket)).is_err() {
+                break;
+            }
+        }
+    });
+    let directory = tempfile::tempdir().unwrap();
+    let workspace = directory.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let host = directory.path().join("host");
+    let ui = directory.path().join("ui");
+    let configuration = directory.path().join("installation.json");
+    let namespaces = RootNamespaces::for_current_account().unwrap();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let owner = Arc::new(RootOwner::create(&host, &namespaces).unwrap());
+        let config = Arc::new(maka_config::ConfigurationStore::for_root(owner).await.unwrap());
+        let provider = json!({"packageId":"maka.providers","entryId":"maka.providers","scope":"profile","name":"openai-compatible"});
+        let CatalogMutationResult::Committed { connection: Some(basis), .. } = config.create_connection(serde_json::from_value(json!({
+            "expectedCatalogRevision":0,"connection":{"slug":"chat-fixture","name":"Chat fixture","provider":provider,"configuration":{"baseUrl":base},"enabled":true,"enabledModelIds":["fixture-model"]}
+        })).unwrap()).await.unwrap() else { panic!("connection commit") };
+        let maka_config::oauth::enrollment::LoginPreparation::Ready(ticket) = config.prepare_oauth_login(serde_json::from_value(json!({
+            "expectedCredential":null,"attemptId":Uuid::new_v4().to_string(),
+            "target":{"kind":"existing","expected":{"connectionId":basis.connection_id,"revision":basis.revision,"provider":provider,"slug":"chat-fixture","configuration":{"baseUrl":base}},"configuration":{"baseUrl":base}},
+            "authentication":{"method":"api-key","input":{"apiKey":"chat-fixture-key"}}
+        })).unwrap()).await.unwrap() else { panic!("credential preparation") };
+        assert!(ticket.claim().await.unwrap());
+        assert!(matches!(ticket.complete(maka_agent_facts::provider::Credential {secret:"chat-fixture-key".into(),refresh_at:None},1).await.unwrap(), maka_config::oauth::enrollment::LoginCompletion::Committed(_)));
+        assert!(matches!(config.set_default_target(serde_json::from_value(json!({"expectedCatalogRevision":config.catalog().await.unwrap().revision,"target":{"connectionId":basis.connection_id,"modelId":"fixture-model"}})).unwrap()).await.unwrap(),CatalogMutationResult::Committed{..}));
+        config.shutdown().await.unwrap();
+    });
+    std::fs::write(&configuration, serde_json::to_vec(&json!({
+        "presentation":"tui", "locale":"en", "scheme":"dark", "hostRoot":host,
+        "agent":{"workspaceRoots":[{"label":"Workspace","path":workspace}],"maxActiveRuns":1,"maxSteps":4,"tools":[],"permissions":{"access":"read_only","requestPermissions":true}}
+    })).unwrap()).unwrap();
+    let mut tui = Pty::spawn(&[
+        "application",
+        "launch",
+        "--root",
+        ui.to_str().unwrap(),
+        "--configuration",
+        configuration.to_str().unwrap(),
+    ]);
+    tui.wait_until_with_timeout(|s| s.contains("Settings"), Duration::from_secs(60));
+    tui.send(b"\x0b");
+    tui.wait_for("Commands");
+    tui.send(b"New conversation");
+    tui.wait_for("› New conversation");
+    tui.send(b"\r");
+    tui.wait_for("Message…");
+    for turn in 0..8 {
+        click(&mut tui, "Message…");
+        let prompt = format!("Original prompt {turn:02}");
+        paste(&mut tui, &prompt);
+        tui.wait_for(&prompt);
+        tui.send(b"\r");
+        let (request, mut socket) = next_request(&mut tui, &received);
+        assert_eq!(request["model"], "fixture-model");
+        assert!(request.to_string().contains(&prompt));
+        delta(
+            &mut socket,
+            &format!("# Answer {turn:02}\n\n**Rendered** original reply."),
+        );
+        tui.wait_for("Rendered");
+        if turn == 0 {
+            evidence(&tui, "streaming");
+            let screen = tui.screen.snapshot().unwrap().screen;
+            assert!(
+                screen
+                    .lines()
+                    .any(|line| line.contains(&format!("❯ {prompt}"))),
+                "sent message must appear in the transcript during streaming: {screen}"
+            );
+            assert!(
+                !screen.contains("**Rendered**"),
+                "live Markdown must render: {screen}"
+            );
+        }
+        complete(&mut socket);
+        tui.wait_until(|s| {
+            s.contains("Send")
+                && !s.contains("Queue for next turn")
+                && s.contains(&format!("Answer {turn:02}"))
+        });
+    }
+    tui.wait_until(|s| {
+        s.lines()
+            .filter(|line| line.contains("❯ Original prompt"))
+            .count()
+            >= 3
+    });
+    evidence(&tui, "history-tail");
+    // Wheel targets the transcript independently of composer keyboard focus.
+    for _ in 0..16 {
+        tui.send(b"\x1b[<64;70;10M");
+    }
+    tui.wait_for("Original prompt 00");
+    evidence(&tui, "history-start");
+    click(&mut tui, "Message…");
+    paste(&mut tui, "Continue from history");
+    tui.send(b"\r");
+    let (_, mut socket) = next_request(&mut tui, &received);
+    delta(&mut socket, "# Continuing\n\n**Live** after history.");
+    tui.wait_until(|screen| {
+        screen.contains("Live")
+            && screen
+                .lines()
+                .any(|line| line.contains("❯ Continue from history"))
+    });
+    evidence(&tui, "sent-from-history");
+    let long = (0..80)
+        .map(|row| {
+            format!(
+                "\n\nParagraph {row:02}: reading and streaming keep the original paragraph stable."
+            )
+        })
+        .collect::<String>();
+    delta(&mut socket, &long);
+    tui.wait_for("Paragraph 79");
+    for _ in 0..6 {
+        let previous = tui.screen.snapshot().unwrap().screen;
+        let paragraph = first_paragraph(&previous).unwrap().1;
+        tui.send(b"\x1b[<64;70;10M");
+        tui.wait_until(|screen| {
+            first_paragraph(screen).is_some_and(|(_, current)| current != paragraph)
+        });
+    }
+    tui.wait_until(|s| !s.contains("Paragraph 79"));
+    let held = tui.screen.snapshot().unwrap().screen;
+    evidence(&tui, "held-before");
+    delta(&mut socket, "\n\nNewest streamed paragraph");
+    // A queue state change has to reach the UI before checking the held viewport.
+    complete(&mut socket);
+    tui.wait_until(|s| s.contains("Send") && !s.contains("Queue for next turn"));
+    let after = tui.screen.snapshot().unwrap().screen;
+    evidence(&tui, "held-after");
+    let (held_row, paragraph) = first_paragraph(&held).unwrap();
+    assert!(
+        after
+            .lines()
+            .nth(held_row)
+            .is_some_and(|line| line.contains(paragraph)),
+        "appended output must retain the read paragraph: {after}"
+    );
+    assert!(!after.contains("Newest streamed paragraph"));
+    evidence(&tui, "held-history");
+    click(&mut tui, "Latest messages");
+    tui.wait_for("Newest streamed paragraph");
+    evidence(&tui, "restored-following");
+    tui.send(b"\x11");
+    tui.finish();
+    server.join().unwrap();
+    assert!(!tui.screen.snapshot().unwrap().alternate_screen);
+    drop(RootOwner::open(&host, &namespaces).unwrap());
+}

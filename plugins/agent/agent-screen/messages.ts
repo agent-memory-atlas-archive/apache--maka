@@ -118,7 +118,7 @@ function chunkId(chunk: NonNullable<State['window']>['page']['chunks'][number]) 
 export function messages(state: State): Message[] {
   const canonical: Message[] = (state.window?.page.chunks ?? []).map((chunk) => ({
     id: chunkId(chunk),
-    contentKey: `canonical-${chunk.sequence}-${chunk.offset}${chunk.field === 'thinking' ? '-thinking' : ''}`,
+    contentKey: 'body-' + chunkId(chunk),
     role: chunk.field === 'thinking' ? 'thinking' : chunk.role,
     timestamp: chunk.timestamp,
     text: chunk.text,
@@ -138,17 +138,18 @@ export function messages(state: State): Message[] {
       )
     )
       continue;
-    const key = fragment.messageId + (fragment.field === 'thinking' ? '-thinking' : '');
+    const key =
+      fragment.field === 'thinking' ? 'thinking-' + fragment.messageId : fragment.messageId;
     let message = live.get(key);
     if (!message) {
       message = {
-        id: 'live-' + key,
-        contentKey: 'live-' + key,
+        id: key,
+        contentKey: 'body-' + key,
         role: fragment.field === 'thinking' ? 'thinking' : 'assistant',
         timestamp: null,
         text: '',
         tool: null,
-        continued: true,
+        continued: false,
         source: null,
         image: false,
       };
@@ -176,7 +177,7 @@ export function turnTimings(state: State, displayed: Message[]): TimelineProps['
     if (timing && !timing.finished) {
       for (const fragment of state.live) {
         const id =
-          'live-' + fragment.messageId + (fragment.field === 'thinking' ? '-thinking' : '');
+          fragment.field === 'thinking' ? 'thinking-' + fragment.messageId : fragment.messageId;
         if (
           fragment.invocationId === state.run.invocationId &&
           displayed.some((message) => message.id === id)

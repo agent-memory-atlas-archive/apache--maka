@@ -527,21 +527,40 @@ export function querySucceeded(state: State, actions: Action[], request: Request
               ? { kind: 'after' as const, cursor: page.after }
               : null;
         if (position) {
-          history(state, actions, position, page.through, request.latest, false, true);
+          history(state, actions, position, page.through, request.latest, request.implicit, true);
           break;
         }
       }
-      if (request.extend && old?.page.through === page.through) {
+      if (request.extend && old && (old.page.through === page.through || request.implicit)) {
         const before = request.position.kind === 'before';
-        const chunks = before
+        const adjacent = before
           ? [...page.chunks, ...old.page.chunks]
           : [...old.page.chunks, ...page.chunks];
+        const chunks = [
+          ...new Map(
+            adjacent.map(
+              (chunk) => [`${chunk.sequence}-${chunk.field}-${chunk.offset}`, chunk] as const,
+            ),
+          ).values(),
+        ].map((chunk) => {
+          // Text segments are immutable; the recorded tool pair and Turn
+          // boundary can advance at a newer fence. Use the Host's exact row
+          // references rather than inferring a result from text or tool names.
+          const current = page.chunks.find(
+            (next) =>
+              next.tool?.toolUseId === chunk.tool?.toolUseId &&
+              (next.tool?.call?.sequence === chunk.sequence ||
+                next.tool?.result?.sequence === chunk.sequence),
+          );
+          return current ? { ...chunk, tool: current.tool } : chunk;
+        });
         let bytes = chunks.reduce((total, chunk) => total + utf8Bytes(chunk.text), 0);
         let first = before ? page.before : old.page.before;
         let last = before ? old.page.after : page.after;
-        // Adjacent canonical pages share one fence. Retain the displayed edge
-        // and its native anchor. Keep two complete pages so loading an adjacent
-        // page cannot evict the message that anchors the current viewport.
+        // Filling spare viewport space must never evict the visible tail.
+        if (before && request.implicit && (chunks.length > 16 || bytes > 131072)) break;
+        // Cursor-adjacent immutable text keeps its original reading owner when
+        // the live fence advances. Retain a bounded window around that anchor.
         while (chunks.length > 16 || bytes > 131072) {
           const removed = before ? chunks.pop()! : chunks.shift()!;
           bytes -= utf8Bytes(removed.text);
@@ -554,7 +573,7 @@ export function querySucceeded(state: State, actions: Action[], request: Request
         }
         state.window = {
           page: { ...page, chunks, before: first, after: last },
-          latest: last === null,
+          latest: request.latest || last === null,
         };
       } else {
         state.window = { page, latest: request.latest };
@@ -568,13 +587,17 @@ export function querySucceeded(state: State, actions: Action[], request: Request
       state.live = state.live.filter(
         (fragment) =>
           fragment.sequence > page.through ||
-          ((fragment.closedAt === null || fragment.closedAt > page.through) &&
+          ((fragment.closedAt === null ||
+            fragment.closedAt > page.through ||
+            page.after !== null) &&
             !page.chunks.some(
               (chunk) =>
                 chunk.messageId === fragment.messageId &&
                 (chunk.field ?? 'body') === fragment.field,
             )),
       );
+      state.followAttempt = null;
+      follow(state, actions);
       break;
     }
     case 'queueBody': {
@@ -643,6 +666,24 @@ export function querySucceeded(state: State, actions: Action[], request: Request
       if (!chunk.text.trim() && request.attachments.length === 0) {
         state.notice = 'empty';
         break;
+      }
+      // Sending explicitly continues this conversation at its latest messages.
+      // Do this with the original send intent, before its asynchronous receipt.
+      if (state.selected?.id === request.sessionId) {
+        state.searchOpen = false;
+        state.browse = null;
+        if (
+          state.window?.latest &&
+          state.window.page.after === null &&
+          state.window.page.through === state.latestKnown
+        ) {
+          const visit = state.visits.find((entry) => entry.id === state.selected?.id);
+          if (visit) visit.following = true;
+          state.navigation++;
+          state.landing = { sequence: state.landing.sequence + 1, edge: 'end' };
+          state.tailReceipt = null;
+          state.followAttempt = null;
+        } else history(state, actions, { kind: 'tail' }, state.latestKnown, true);
       }
       intent(
         state,

@@ -777,6 +777,24 @@ export function handleComponent<N extends Node>(
         };
         readHistorySource(state, actions, { kind: 'start' });
       }
+    } else if (
+      input.name === 'fill' &&
+      page.before &&
+      state.window?.latest &&
+      state.visits.find((visit) => visit.id === state.selected?.id)?.following !== false &&
+      !Object.values(state.pending).some(
+        (request) => request.kind === 'history' && request.epoch === state.epoch,
+      )
+    ) {
+      history(
+        state,
+        actions,
+        { kind: 'before', cursor: page.before },
+        page.through,
+        true,
+        true,
+        true,
+      );
     } else if (input.name === 'older' && page.before) {
       // A short page is both at its start and end. Asking for older content
       // must suspend following even while that native viewport still fits.
