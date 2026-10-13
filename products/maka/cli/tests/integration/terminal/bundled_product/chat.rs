@@ -26,6 +26,8 @@ use std::{
 };
 use uuid::Uuid;
 
+mod code_mode;
+
 fn request(socket: &mut TcpStream) -> serde_json::Value {
     socket
         .set_read_timeout(Some(Duration::from_secs(30)))
