@@ -280,6 +280,10 @@ impl Choice {
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "TerminalDialogAppearance")]
 pub struct DialogAppearance {
+    /// Place a controlled dialog next to its background, preferring above it.
+    /// The viewport bounds remain authoritative on small terminals.
+    #[serde(default)]
+    pub anchor_to_background: bool,
     #[serde(default)]
     pub ascii: bool,
     pub label: String,

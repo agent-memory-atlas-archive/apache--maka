@@ -44,6 +44,8 @@ async fn pending(store: &EventLog, host: &EventLog) -> (Uuid, Uuid, Uuid) {
     ]});
     let selection = connections.clone();
     let preparation = Preparation {
+        product: None,
+        previous_connections: None,
         restore: BTreeMap::new(),
         sources: Sources {
             host: input(),

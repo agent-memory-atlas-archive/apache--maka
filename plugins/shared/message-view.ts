@@ -181,9 +181,9 @@ export function messageView<N extends Node>(
         ...(time && key === 'message-body-' + message.id
           ? {
               wide: {
-                min_width: 60,
+                min_width: 88,
                 direction: 'row' as const,
-                children: { ['time-' + message.id]: { basis: Math.min(time.length + 1, 24) } },
+                children: { ['time-' + message.id]: { basis: Math.min(time.length + 2, 24) } },
               },
             }
           : {}),
@@ -236,7 +236,7 @@ export function messageView<N extends Node>(
               ? [
                   ui.box(
                     'time-' + message.id,
-                    [ui.text('timestamp-' + message.id, time, 12, theme.subtle)],
+                    [ui.text('timestamp-' + message.id, ' ' + time, 12, theme.subtle)],
                     { surface: user, terminal: { basis: 0 } },
                   ),
                 ]

@@ -1415,3 +1415,42 @@ fn revealed_container_focus_waits_for_flush_and_preserves_user_navigation() {
         .unwrap();
     presenter.shutdown().unwrap();
 }
+
+#[test]
+fn anchored_model_dialog_follows_its_trigger_across_viewport_sizes() {
+    let scene = json!({
+        "kind":"stack","key":"root","direction":"column","gap":0,"padding":0,"background":0,
+        "children":[
+            {"kind":"stack","key":"work","direction":"column","gap":0,"padding":0,"background":0,"layout":{"grow":1},"children":[]},
+            {"kind":"dialog","key":"models","label":"Models","open":true,"anchor_to_background":true,
+             "width":20,"height":8,"padding":0,"background_color":0,"border_color":0xffffff,
+             "background":{"kind":"button","key":"trigger","label":"Choose model"},
+             "content":{"kind":"button","key":"model","label":"Local model"}}
+        ]
+    });
+    let (_runtime, mut presenter) = native(View::Scene(scene), Rc::new(Cell::new(true)));
+    for (cols, rows) in [(80, 24), (65, 30), (14, 6)] {
+        flushed(&mut presenter, cols, rows);
+        let selected = presenter
+            .scene
+            .iter()
+            .find(|target| target.key == "model")
+            .unwrap()
+            .area
+            .visible();
+        assert_eq!(
+            selected.x, 1,
+            "model list stays next to the trigger's left edge"
+        );
+        assert_eq!(
+            selected.y,
+            rows - 3,
+            "model list opens directly above the footer"
+        );
+        assert!(selected.right() <= cols && selected.bottom() <= rows);
+    }
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
+    presenter.shutdown().unwrap();
+}

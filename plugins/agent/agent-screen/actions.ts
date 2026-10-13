@@ -43,6 +43,8 @@ import {
 import { draftReady } from '../../shared/drafts.js';
 
 import { type Backend, type Request, type State, type RootCommand } from './state.js';
+import { toolCards } from '../../shared/tool-cards.js';
+import { readingKey } from './state.js';
 import { messages } from './messages.js';
 
 export function intent(
@@ -152,6 +154,10 @@ export function history(
   extend = false,
 ) {
   if (!state.selected) return;
+  if (latest && !implicit) {
+    const visit = state.visits.find((entry) => entry.id === state.selected?.id);
+    if (visit) visit.following = true;
+  }
   if (!implicit && !extend) state.loading = true;
   const navigation = ++state.navigation;
   intent(
@@ -171,30 +177,45 @@ export function history(
     'history',
     { sessionId: state.selected.id, through, position, includeThinking: true },
     {},
-    implicit ? [{ child: 'timeline', method: 'tail', input: null }] : [],
+    implicit ? [{ child: readingKey(state), method: 'tail', input: null }] : [],
   );
 }
 
 export function follow(state: State, actions: Action[]) {
-  const receipt = state.tailReceipt;
+  const window = state.window;
   if (
-    receipt?.landing === state.landing.sequence &&
-    !state.source &&
-    !state.searchOpen &&
-    state.browse === null &&
-    !state.image &&
-    !state.loading &&
-    state.window?.latest &&
-    (state.latestKnown > state.window.page.through ||
+    state.source ||
+    state.inspector === 'outputs' ||
+    state.searchOpen ||
+    state.browse !== null ||
+    state.image ||
+    state.loading ||
+    state.notice === 'unavailable' ||
+    !window?.latest ||
+    !(
+      state.latestKnown > window.page.through ||
       state.live.some(
-        (fragment) => fragment.closedAt !== null && fragment.closedAt <= state.window!.page.through,
-      )) &&
-    !Object.values(state.pending).some(
+        (fragment) => fragment.closedAt !== null && fragment.closedAt <= window.page.through,
+      )
+    ) ||
+    Object.values(state.pending).some(
       (request) =>
         request.kind === 'history' &&
         request.epoch === state.epoch &&
         request.navigation === state.navigation,
-    ) &&
+    )
+  )
+    return;
+  // The introductory view has no mounted reader or reading anchor. New facts
+  // must still appear, including failures that finish before a first text delta.
+  if (!window.page.chunks.length && !window.page.before && !window.page.after) {
+    history(state, actions, { kind: 'tail' }, state.latestKnown, true);
+    return;
+  }
+  const receipt = state.tailReceipt;
+  if (
+    receipt?.landing === state.landing.sequence &&
+    state.visits.find((visit) => visit.id === state.selected?.id)?.following !== false &&
     !(
       state.followAttempt?.through === state.latestKnown &&
       state.followAttempt.landing === receipt.landing &&
@@ -207,14 +228,69 @@ export function follow(state: State, actions: Action[]) {
 }
 
 export function select(state: State, actions: Action[], session: AgentSession | null) {
-  state.searchOpen = false;
-  state.browse = null;
+  const previous = state.visits.find((visit) => visit.id === state.selected?.id);
+  if (previous)
+    Object.assign(previous, {
+      session: state.selected!,
+      window: state.window,
+      live: state.live,
+      source: state.source
+        ? { ...state.source, loading: false, failed: state.source.failed || state.source.loading }
+        : null,
+      image: state.image,
+      landing: state.landing,
+      searchOpen: state.searchOpen,
+      browse: state.browse,
+      inspector: state.inspector,
+    });
+  let visit = session
+    ? state.visits.find(
+        (entry) => entry.id === session.id && sameValue(entry.dataSource, session.dataSource),
+      )
+    : undefined;
+  if (session && !visit) {
+    visit = {
+      id: session.id,
+      dataSource: session.dataSource,
+      key: state.visits.length === 0 ? 'timeline' : `timeline-${++state.serial}`,
+      window: null,
+      live: [],
+      following: true,
+      source: null,
+      image: null,
+      landing: { sequence: 0, edge: 'end' },
+      searchOpen: false,
+      browse: null,
+      inspector: null,
+      output: null,
+      outputFocus: null,
+      session,
+      epoch: state.epoch + 1,
+      progress: null,
+    };
+  }
+  if (visit)
+    state.visits = [
+      ...state.visits.filter((entry) => entry !== visit && entry.id !== visit.id),
+      visit,
+    ].slice(-3);
+  state.searchOpen = visit?.searchOpen ?? false;
+  state.browse = visit?.browse ?? null;
+  state.inspector = visit?.inspector ?? null;
   state.recallAnchor = null;
   state.selected = session;
   state.epoch++;
-  state.window = null;
-  state.source = null;
-  state.image = null;
+  state.window = visit?.window ?? null;
+  if (visit?.window) visit.following = false;
+  state.source = visit?.source ?? null;
+  state.image = visit?.image ?? null;
+  state.live = visit?.live ?? [];
+  if (visit) {
+    visit.window = null;
+    visit.source = null;
+    visit.live = [];
+  }
+  state.landing = visit?.landing ?? { sequence: 0, edge: 'end' };
   state.tailReceipt = null;
   state.fileContext = null;
   state.followAttempt = null;
@@ -225,8 +301,7 @@ export function select(state: State, actions: Action[], session: AgentSession | 
   state.interactions = null;
   state.watch = null;
   state.runThrough = 0;
-  state.live = [];
-  state.latestKnown = 0;
+  state.latestKnown = state.window?.page.through ?? 0;
   state.loading = session !== null;
   state.notice = null;
   if (session) observe(state, actions);
@@ -430,6 +505,13 @@ export function rootCommands(
   const commands: (PaletteCommand & { kind: RootCommand })[] = [
     ...(target === 'tui'
       ? [
+          {
+            kind: 'outputs-open' as const,
+            id: 'outputs-open',
+            label: tuiText(locale, 'task-outputs'),
+            hint: 'F4',
+            disabled: !route || !state.selected || state.loading || !!state.source || !!state.image,
+          },
           {
             kind: 'browse' as const,
             id: 'browse',
@@ -725,7 +807,19 @@ export function rootCommand(
     )
   )
     return false;
-  if (kind === 'browse') {
+  if (kind === 'outputs-open') {
+    state.inspector = 'outputs';
+    const visit = state.visits.find((entry) => entry.id === state.selected?.id);
+    if (visit) {
+      const first = toolCards(messages(state)).find(
+        ({ message }) => message.role === 'assistant' || message.tool,
+      )?.message;
+      visit.outputFocus = {
+        sequence: ++state.serial,
+        target: first ? { kind: 'focus_item', key: 'output-item-' + first.id } : { kind: 'start' },
+      };
+    }
+  } else if (kind === 'browse') {
     state.searchOpen = false;
     state.browse = ++state.serial;
     state.tailReceipt = null;

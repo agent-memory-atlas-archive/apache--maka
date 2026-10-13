@@ -46,6 +46,8 @@ pub(super) enum Command {
     Compose(product::Compose),
     /// Restore the originally installed product composition, preserving identities and stored data.
     RestoreDefaults(product::Restore),
+    /// Preview new defaults merged with local customizations; use --apply to synchronize.
+    UpdateDefaults(product::Update),
     /// Download, validate and install a plugin bundle into an inactive deployment.
     InstallUrl(install::InstallUrl),
     /// Initialize or reopen an ordinary bundled terminal product.
@@ -148,6 +150,7 @@ impl Command {
         match self {
             Self::Compose(args) => args.run().await?,
             Self::RestoreDefaults(args) => args.run().await?,
+            Self::UpdateDefaults(args) => args.run().await?,
             Self::InstallUrl(args) => args.run().await?,
             Self::Launch(args) => args.run().await?,
             Self::Serve(args) => serve::run(args).await?,
@@ -262,14 +265,38 @@ impl Check {
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(source: &Path) -> Result<T, HostError> {
+    // A bundled product's remote declarations are part of its editable source
+    // and can exceed 512 KiB. Use the same bound as deployment documents.
+    const LIMIT: usize = maka_plugin_core::deployment::management::MAX_DOCUMENT_BYTES;
     let mut bytes = Vec::new();
     std::fs::File::open(source)?
-        .take(512 * 1024 + 1)
+        .take((LIMIT + 1) as u64)
         .read_to_end(&mut bytes)?;
-    if bytes.len() > 512 * 1024 {
-        return Err("application input exceeds 512 KiB".into());
+    if bytes.len() > LIMIT {
+        return Err("application input exceeds 1 MiB".into());
     }
     Ok(serde_json::from_slice(&bytes)?)
+}
+
+#[cfg(test)]
+mod source_input_tests {
+    use super::*;
+
+    #[test]
+    fn authoring_reads_large_contract_documents_with_the_deployment_bound() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("remote-exports.json");
+        let value = serde_json::json!({"contract": "x".repeat(768 * 1024)});
+        std::fs::write(&file, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(read_json::<serde_json::Value>(&file).unwrap(), value);
+        std::fs::write(&file, vec![b' '; 1024 * 1024 + 1]).unwrap();
+        assert!(
+            read_json::<serde_json::Value>(&file)
+                .unwrap_err()
+                .to_string()
+                .contains("1 MiB")
+        );
+    }
 }
 
 async fn open_store(root: PathBuf) -> Result<maka_event_log::EventLog, HostError> {

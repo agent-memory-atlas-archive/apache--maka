@@ -511,6 +511,18 @@ export function components<N extends Node>(
                                       session.hasUnread ? 650 : 400,
                                       { truncate: true },
                                     ),
+                                    ...(props.previews?.[session.id]
+                                      ? [
+                                          ui.text(
+                                            `session-preview-${index}-${at}`,
+                                            props.previews[session.id]!,
+                                            12,
+                                            props.theme.muted,
+                                            400,
+                                            { truncate: true },
+                                          ),
+                                        ]
+                                      : []),
                                   ],
                                   { terminal: { grow: 1, shrink: true } },
                                 ),
@@ -848,9 +860,9 @@ export function components<N extends Node>(
       if (!timing) return [messageNode];
       const mark = timing.finished
         ? {
-            completed: props.theme.ascii ? '+' : '✓',
-            failed: '!',
-            aborted: props.theme.ascii ? 'x' : '■',
+            completed: tuiText(props.locale, 'task-ended'),
+            failed: tuiText(props.locale, 'task-failed'),
+            aborted: tuiText(props.locale, 'task-stopped'),
           }[timing.finished.outcome]
         : props.theme.ascii
           ? '.'
@@ -895,7 +907,9 @@ export function components<N extends Node>(
               ),
             ]
           : messages),
-        ...(props.loading ? [ui.text('loading', text.loading, 14, props.theme.muted)] : []),
+        ...(props.loading && target !== 'tui'
+          ? [ui.text('loading', text.loading, 14, props.theme.muted)]
+          : []),
       ],
       {
         gap: target === 'desktop' ? 24 : 1,

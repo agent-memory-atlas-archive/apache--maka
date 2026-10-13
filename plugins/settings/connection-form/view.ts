@@ -162,10 +162,22 @@ export function frame<N extends Node>(
                   readOnly: false,
                   disabled: !!state.provider || !!state.baseline,
                 },
-                { changed: 'provider-query' },
+                { changed: 'provider-query', submitted: 'submitted' },
               ),
             ],
-            { gap: 0, style: { width: fill, height: pixels(36) } },
+            {
+              gap: 0,
+              shortcuts:
+                target === 'tui'
+                  ? ['down', 'up'].map((key) => ({
+                      key,
+                      modifiers: [],
+                      input: 'provider-focus',
+                      enabled: !locked && providerRows.length > 0,
+                    }))
+                  : [],
+              style: { width: fill, height: pixels(36) },
+            },
           ),
           ...(state.search.error ? [ui.text('search-error', text[state.search.error])] : []),
         ],
@@ -242,7 +254,16 @@ export function frame<N extends Node>(
             ),
           ]),
       ...(!state.baseline && state.provider
-        ? [ui.text('setup-help', text.connectionSetupHelp, 13, props.theme.muted)]
+        ? [
+            ui.text(
+              'setup-help',
+              state.provider.descriptor.anonymous
+                ? tuiText(props.locale, 'anonymous-setup')
+                : text.connectionSetupHelp,
+              13,
+              props.theme.muted,
+            ),
+          ]
         : []),
       // Keep native owners mounted when advanced settings are collapsed.
       ...names.map((name) => {
@@ -318,7 +339,8 @@ export function frame<N extends Node>(
                     readOnly: locked || !f.enabled,
                     disabled: false,
                     tabIndex: f.enabled ? 0 : -1,
-                    autoFocus: false,
+                    autoFocus:
+                      name === (state.provider?.descriptor.anonymous ? 'endpoint' : 'name'),
                     command: f.command,
                     ...(['slug', 'name', 'endpoint'].includes(name) ? {} : { softWrap: true }),
                   },
@@ -361,7 +383,8 @@ export function frame<N extends Node>(
               (name !== 'endpoint' ||
                 state.advanced ||
                 !!state.baseline ||
-                !!state.provider?.descriptor.customEndpoint),
+                !!state.provider?.descriptor.customEndpoint ||
+                !!state.provider?.descriptor.anonymous),
             gap: target === 'desktop' ? 8 : 1,
             padding: 0,
             style: { width: fill },
@@ -406,7 +429,9 @@ export function frame<N extends Node>(
         [
           ui.button(
             'form-save',
-            state.baseline ? text.saveConnection : text.continueSignIn,
+            state.baseline || state.provider?.descriptor.anonymous
+              ? text.saveConnection
+              : text.continueSignIn,
             !canSave(state, props),
             true,
           ),

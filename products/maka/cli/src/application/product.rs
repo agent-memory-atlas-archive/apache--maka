@@ -27,9 +27,11 @@ use std::{collections::BTreeMap, io::Write, path::PathBuf};
 mod headless;
 mod launch;
 mod restore;
+mod update;
 pub(crate) use headless::{Roots, open_host};
 pub(crate) use launch::Launch;
 pub(super) use restore::Restore;
+pub(super) use update::Update;
 
 pub(super) fn root_path(root: Option<PathBuf>) -> Result<PathBuf, HostError> {
     match root {
@@ -47,7 +49,8 @@ struct Bundled {
 }
 include!(concat!(env!("OUT_DIR"), "/product-assets.rs"));
 
-#[derive(Clone, Copy, ValueEnum)]
+#[derive(Clone, Copy, ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(super) enum Product {
     Agent,
     Studio,
@@ -66,7 +69,7 @@ pub(crate) struct Compose {
     product: Product,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Sources {
     host: Input,
@@ -165,7 +168,7 @@ async fn author(
     let result: Result<Value, HostError> = match vm.load("maka-product-authoring".into(), source) {
         Ok(module) => {
             let result = async {
-                if !values.contains_key("keys") {
+                {
                     // The ordinary authoring code supplies every installation
                     // identity, including configuration-dependent instances.
                     let names: Vec<String> = serde_json::from_value(
@@ -176,11 +179,15 @@ async fn author(
                             )
                             .await?,
                     )?;
-                    let keys: BTreeMap<_, _> = names
-                        .into_iter()
-                        .map(|name| (name, uuid::Uuid::new_v4().to_string()))
-                        .collect();
-                    values.insert("keys".into(), serde_json::to_value(keys)?);
+                    let keys = values
+                        .entry("keys")
+                        .or_insert_with(|| serde_json::json!({}))
+                        .as_object_mut()
+                        .ok_or("installation keys must be an object")?;
+                    for name in names {
+                        keys.entry(name)
+                            .or_insert_with(|| Value::String(uuid::Uuid::new_v4().to_string()));
+                    }
                 }
                 let method = match product {
                     Product::Agent => "composition",

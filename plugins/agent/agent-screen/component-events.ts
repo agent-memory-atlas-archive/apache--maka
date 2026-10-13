@@ -85,6 +85,7 @@ import {
 import { frame } from './frame.js';
 import { utf8Bytes } from './messages.js';
 import { type Page, type State } from './state.js';
+import { readingKey } from './state.js';
 
 export function handleComponent<N extends Node>(
   presentation: Presentation<N>,
@@ -454,7 +455,7 @@ export function handleComponent<N extends Node>(
           { sessionId: state.selected.id, expectedRevision: event.revision, edit },
         );
     }
-  } else if (input.child === 'timeline' && input.name === 'messageCopy') {
+  } else if (input.child === readingKey(state) && input.name === 'messageCopy') {
     const copied = input.event as MessageCopyObservation | null;
     if (
       !copied ||
@@ -465,7 +466,7 @@ export function handleComponent<N extends Node>(
         copied.landing === state.landing.sequence)
     )
       state.messageCopy = copied;
-  } else if (input.child === 'timeline' && input.name === 'fileContext') {
+  } else if (input.child === readingKey(state) && input.name === 'fileContext') {
     const context = input.event as TimelineFileContext | null;
     if (
       !context ||
@@ -474,11 +475,11 @@ export function handleComponent<N extends Node>(
         context.landing === state.landing.sequence)
     )
       state.fileContext = context;
-  } else if (input.child === 'timeline' && input.name === 'browseClosed') {
+  } else if (input.child === readingKey(state) && input.name === 'browseClosed') {
     if ((input.event as { request: number }).request === state.browse) state.browse = null;
-  } else if (input.child === 'timeline' && input.name === 'searchClosed') {
+  } else if (input.child === readingKey(state) && input.name === 'searchClosed') {
     state.searchOpen = false;
-  } else if (input.child === 'timeline' && input.name === 'tailReady') {
+  } else if (input.child === readingKey(state) && input.name === 'tailReady') {
     const receipt = input.event as NonNullable<State['tailReceipt']>;
     if (receipt.landing === state.landing.sequence) {
       state.tailReceipt = receipt;
@@ -644,7 +645,7 @@ export function handleComponent<N extends Node>(
     state.followAttempt = null;
     follow(state, actions);
   } else if (
-    input.child === 'timeline' &&
+    input.child === readingKey(state) &&
     input.name === 'viewImage' &&
     state.selected &&
     state.window &&
@@ -660,7 +661,7 @@ export function handleComponent<N extends Node>(
         through: state.window.page.through,
         sequence: chunk.tool!.result!.sequence,
       };
-  } else if (input.child === 'timeline' && state.source) {
+  } else if (input.child === readingKey(state) && state.source) {
     const source = state.source;
     if (input.name === 'sourceBack') state.source = null;
     else if (!source.loading && input.name === 'sourceField') {
@@ -689,7 +690,7 @@ export function handleComponent<N extends Node>(
                   : null;
       if (position) readHistorySource(state, actions, position);
     }
-  } else if (input.child === 'timeline' && !state.loading && state.window) {
+  } else if (input.child === readingKey(state) && !state.loading && state.window) {
     const page = state.window.page;
     if (
       input.name === 'markRead' &&

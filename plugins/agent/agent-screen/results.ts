@@ -43,6 +43,7 @@ import { sameFile } from '../../shared/attachments.js';
 import { draftPage, draftReceipt, draftFailed } from '../../shared/drafts.js';
 
 import { type Request, type Mutation, type DisplayPart, type State } from './state.js';
+import { readingKey } from './state.js';
 import { utf8Bytes, appendLive, closeLive } from './messages.js';
 import {
   intent,
@@ -493,7 +494,21 @@ export function querySucceeded(state: State, actions: Action[], request: Request
             includeThinking: true,
           },
           {},
-          request.implicit ? [{ child: 'timeline', method: 'tail', input: null }] : [],
+          request.implicit ? [{ child: readingKey(state), method: 'tail', input: null }] : [],
+        );
+        break;
+      }
+      // A bounded canonical page may contain only non-text state rows. The
+      // latest visible result can be on the preceding page, including a failed
+      // turn with no assistant reply. Keep the same fence while finding it.
+      if (request.latest && !request.extend && !page.chunks.length && page.before) {
+        history(
+          state,
+          actions,
+          { kind: 'before', cursor: page.before },
+          page.through,
+          true,
+          request.implicit,
         );
         break;
       }

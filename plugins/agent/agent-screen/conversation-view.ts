@@ -18,7 +18,7 @@
  */
 
 import type { Action, RowsProps } from '../../../packages/plugin-sdk/src/index.js';
-import type { Theme } from '../../shared/contracts.js';
+import type { Theme, TimelineProps } from '../../shared/contracts.js';
 import { copy } from '../../shared/locale.js';
 import { tuiText } from '../../shared/tui-locale.js';
 import { sameValue } from '../../shared/value.js';
@@ -34,12 +34,101 @@ import {
   conversationRoute,
   executionPending,
   mutationPending,
-  reviewTarget,
-  rootCommands,
 } from './actions.js';
+import { taskOverview } from './task-overview.js';
 import { headerView } from './header-view.js';
 import { messages, turnTimings, utf8Bytes } from './messages.js';
-import { type State } from './state.js';
+import { readingKey, type State } from './state.js';
+
+function readingProps(
+  state: State,
+  theme: Theme,
+  locale: string,
+  target: 'tui' | 'desktop',
+): TimelineProps {
+  const timelineMessages = messages(state);
+  return {
+    theme,
+    locale,
+    messages: timelineMessages,
+    timings: turnTimings(state, timelineMessages),
+    copyRequest: target === 'tui' && !state.image ? state.copyRequest : null,
+    browse: state.browse,
+    markReadEnabled:
+      !!state.selected?.hasUnread &&
+      !state.selected.archived &&
+      !mutationPending(state) &&
+      conversationRoute(state) &&
+      state.dialog === null &&
+      !state.source &&
+      !state.image,
+    search:
+      target === 'tui' && state.searchOpen && state.selected
+        ? {
+            sessionId: state.selected.id,
+            epoch:
+              state.visits.find((visit) => visit.id === state.selected?.id)?.epoch ?? state.epoch,
+            through: state.latestKnown,
+          }
+        : null,
+    source: state.source
+      ? {
+          kind: state.source.field === 'body' ? 'message' : state.source.field,
+          fields: state.source.fields,
+          format: state.source.format ?? 'text',
+          ready: state.source.ready,
+          key: `${state.source.field}-${state.source.through}-${state.source.chunk.sequence}-${state.source.chunk.offset}`,
+          text: state.source.chunk.text,
+          atStart: state.source.chunk.offset === 0,
+          atEnd:
+            state.source.chunk.offset + utf8Bytes(state.source.chunk.text) ===
+            state.source.chunk.totalBytes,
+          loading: state.source.loading,
+          failed: state.source.failed,
+          navigation: state.source.landing.sequence,
+          landing: state.source.landing.edge,
+        }
+      : null,
+    loading: state.loading,
+    older: !!state.window?.page.before,
+    newer: !!state.window?.page.after,
+    latest:
+      !!state.window &&
+      (!state.window.latest ||
+        state.latestKnown > state.window.page.through ||
+        state.live.some(
+          (fragment) =>
+            fragment.closedAt !== null && fragment.closedAt <= state.window!.page.through,
+        )),
+    landing: state.landing,
+    toolContext:
+      state.selected && state.window && state.window.page.through > 0
+        ? { sessionId: state.selected.id, through: state.window.page.through }
+        : null,
+    liveTools:
+      state.window?.latest && state.run
+        ? [
+            ...new Set(
+              state.window.page.chunks.flatMap((chunk) =>
+                chunk.turnId === state.run!.turnId && chunk.tool ? [chunk.tool.toolUseId] : [],
+              ),
+            ),
+          ]
+        : [],
+    waitingTools: state.window?.latest
+      ? (state.interactions?.entries ?? [])
+          .filter(
+            (entry) =>
+              !(
+                state.interaction?.record?.requestId === entry.requestId &&
+                state.interaction.record.outcome
+              ),
+          )
+          .flatMap((entry) => (entry.toolUseId === null ? [] : [entry.toolUseId]))
+      : [],
+    live: !!state.run && !!state.window?.latest,
+  };
+}
 
 export function conversationView<N extends Node>(
   presentation: Presentation<N>,
@@ -55,107 +144,77 @@ export function conversationView<N extends Node>(
     ui = presentation.paint(theme),
     busy = mutationPending(state);
   const catalogBusy = busy || catalogPending(state);
-  const timelineMessages = messages(state);
-  const timeline = presentation.slot(
-    'timeline',
-    'timeline',
-    {
-      theme,
-      locale,
-      messages: timelineMessages,
-      timings: turnTimings(state, timelineMessages),
-      copyRequest: target === 'tui' && !state.image ? state.copyRequest : null,
-      browse: state.browse,
-      markReadEnabled:
-        !!state.selected?.hasUnread &&
-        !state.selected.archived &&
-        !busy &&
-        conversationRoute(state) &&
-        state.dialog === null &&
-        !state.source &&
-        !state.image,
-      search:
-        target === 'tui' && state.searchOpen && state.selected
-          ? { sessionId: state.selected.id, epoch: state.epoch, through: state.latestKnown }
-          : null,
-      source: state.source
-        ? {
-            kind: state.source.field === 'body' ? 'message' : state.source.field,
-            fields: state.source.fields,
-            format: state.source.format ?? 'text',
-            ready: state.source.ready,
-            key: `${state.source.field}-${state.source.through}-${state.source.chunk.sequence}-${state.source.chunk.offset}`,
-            text: state.source.chunk.text,
-            atStart: state.source.chunk.offset === 0,
-            atEnd:
-              state.source.chunk.offset + utf8Bytes(state.source.chunk.text) ===
-              state.source.chunk.totalBytes,
-            loading: state.source.loading,
-            failed: state.source.failed,
-            navigation: state.source.landing.sequence,
-            landing: state.source.landing.edge,
-          }
-        : null,
-      loading: state.loading,
-      older: !!state.window?.page.before,
-      newer: !!state.window?.page.after,
-      latest:
-        !!state.window &&
-        (!state.window.latest ||
-          state.latestKnown > state.window.page.through ||
-          state.live.some(
-            (fragment) =>
-              fragment.closedAt !== null && fragment.closedAt <= state.window!.page.through,
-          )),
-      landing: state.landing,
-      toolContext:
-        state.selected && state.window && state.window.page.through > 0
-          ? { sessionId: state.selected.id, through: state.window.page.through }
-          : null,
-      liveTools:
-        state.window?.latest && state.run
-          ? [
-              ...new Set(
-                state.window.page.chunks.flatMap((chunk) =>
-                  chunk.turnId === state.run!.turnId && chunk.tool ? [chunk.tool.toolUseId] : [],
-                ),
-              ),
-            ]
-          : [],
-      waitingTools: state.window?.latest
-        ? (state.interactions?.entries ?? [])
-            .filter(
-              (entry) =>
-                !(
-                  state.interaction?.record?.requestId === entry.requestId &&
-                  state.interaction.record.outcome
-                ),
-            )
-            .flatMap((entry) => (entry.toolUseId === null ? [] : [entry.toolUseId]))
-        : [],
-      live: !!state.run && !!state.window?.latest,
-    },
-    {
-      older: 'older',
-      newer: 'newer',
-      latest: 'latest',
-      markRead: 'mark-read',
-      source: 'source',
-      toolSource: 'tool-source',
-      fileContext: 'fileContext',
-      messageCopy: 'messageCopy',
-      viewImage: 'view-image',
-      sourceFirst: 'source-first',
-      sourcePrevious: 'source-previous',
-      sourceNext: 'source-next',
-      sourceLast: 'source-last',
-      sourceBack: 'source-back',
-      sourceRetry: 'source-retry',
-      sourceField: 'source-field',
-      tailReady: 'tail-ready',
-      searchClosed: 'search-closed',
-      browseClosed: 'browse-closed',
-    },
+  const timelineProps = readingProps(state, theme, locale, target);
+  const visit = state.visits.find((entry) => entry.key === readingKey(state));
+  // Keep bounded native readers, without serializing a second copy of every
+  // message and theme in component state. Evict oldest background content first.
+  while (
+    state.visits.length > 1 &&
+    utf8Bytes(JSON.stringify(state.visits.filter((entry) => entry !== visit))) > 160000
+  )
+    state.visits.splice(0, 1);
+  const timelineEvents = {
+    older: 'older',
+    newer: 'newer',
+    latest: 'latest',
+    markRead: 'mark-read',
+    source: 'source',
+    toolSource: 'tool-source',
+    fileContext: 'fileContext',
+    messageCopy: 'messageCopy',
+    viewImage: 'view-image',
+    sourceFirst: 'source-first',
+    sourcePrevious: 'source-previous',
+    sourceNext: 'source-next',
+    sourceLast: 'source-last',
+    sourceBack: 'source-back',
+    sourceRetry: 'source-retry',
+    sourceField: 'source-field',
+    tailReady: 'tail-ready',
+    searchClosed: 'search-closed',
+    browseClosed: 'browse-closed',
+  };
+  const timeline = ui.box(
+    'task-readers',
+    [
+      ...state.visits.map((entry) => {
+        const props =
+          entry === visit
+            ? timelineProps
+            : readingProps(
+                {
+                  ...state,
+                  selected: entry.session,
+                  window: entry.window,
+                  source: entry.source,
+                  image: entry.image,
+                  landing: entry.landing,
+                  searchOpen: entry.searchOpen,
+                  browse: entry.browse,
+                  run: null,
+                  live: entry.live,
+                  interactions: null,
+                  interaction: null,
+                  loading: false,
+                  latestKnown: entry.window?.page.through ?? 0,
+                  copyRequest: null,
+                },
+                theme,
+                locale,
+                target,
+              );
+        if (entry !== visit) props.markReadEnabled = false;
+        return ui.box(
+          'task-reader-' + entry.key,
+          [presentation.slot(entry.key, 'timeline', props, timelineEvents)],
+          { visible: entry === visit, terminal: { grow: 1 }, style: { width: fill, height: fill } },
+        );
+      }),
+      ...(!visit
+        ? [presentation.slot('timeline-empty', 'timeline', timelineProps, timelineEvents)]
+        : []),
+    ],
+    { terminal: { grow: 1 }, style: { width: fill, height: fill } },
   );
   const imageViewer = presentation.slot(
     'image-viewer',
@@ -220,7 +279,9 @@ export function conversationView<N extends Node>(
       fileCommand: state.attachments.paste?.command ?? null,
       running: !!state.run,
       sendLabel: canExecute(state)
-        ? text.send
+        ? state.run
+          ? tuiText(locale, 'task-queue')
+          : text.send
         : state.modelSetup === 'connect'
           ? text.configureModels
           : text.chooseModel,
@@ -269,7 +330,7 @@ export function conversationView<N extends Node>(
       };
       return {
         key: entry.messageId,
-        text: ` ${entry.kind === 'steering' ? (theme.ascii ? '^' : '↗') : entry.kind === 'in_flight' ? (theme.ascii ? '...' : '…') : theme.ascii ? '+' : '↳'} ${entry.preview}`,
+        text: `${tuiText(locale, entry.kind === 'steering' ? 'task-steering' : entry.kind === 'in_flight' ? 'task-current' : 'task-followup')} · ${entry.preview}`,
         actions:
           entry.kind === 'in_flight'
             ? []
@@ -379,6 +440,8 @@ export function conversationView<N extends Node>(
     !state.loading &&
     !!state.window &&
     !state.window.page.chunks.length &&
+    !state.window.page.before &&
+    !state.window.page.after &&
     !state.live.length &&
     !state.run &&
     !state.source &&
@@ -509,25 +572,22 @@ export function conversationView<N extends Node>(
             ui.box(
               'session-body',
               [
+                taskOverview(presentation, state, theme, locale),
                 ui.box(
                   'conversation',
                   [
                     ui.box(
-                      'welcome-mark',
+                      'task-introduction',
                       [
-                        presentation.slot(
-                          'welcome',
-                          'welcome',
-                          {
-                            background: theme.terminal?.background ?? theme.background >>> 8,
-                            foreground: theme.terminal?.foreground ?? theme.text >>> 8,
-                            motion: theme.motion,
-                            ascii: theme.ascii,
-                          },
-                          {},
+                        ui.text('task-prompt', tuiText(locale, 'task-empty'), 18, theme.text, 650),
+                        ui.text(
+                          'task-prompt-help',
+                          tuiText(locale, 'task-empty-help'),
+                          13,
+                          theme.muted,
                         ),
                       ],
-                      { visible: welcome, terminal: { grow: 1 } },
+                      { visible: welcome, gap: 1 },
                     ),
                     ui.box('retained-timeline', [timeline], {
                       visible: !state.image && !welcome,
@@ -544,16 +604,8 @@ export function conversationView<N extends Node>(
                 ui.box(
                   'retained-composer',
                   [
-                    ...(reviewTarget(state)
-                      ? [
-                          ui.button(
-                            'interaction-open',
-                            `Ctrl G · ${text.reviewRequest}`,
-                            !rootCommands(state, locale, target).some(
-                              (command) => command.kind === 'interaction-open' && !command.disabled,
-                            ),
-                          ),
-                        ]
+                    ...(state.run
+                      ? [ui.text('queue-help', tuiText(locale, 'task-queue-help'), 12, theme.muted)]
                       : []),
                     presentation.slot('queue', 'rows', queueProps, {
                       activated: 'queue-action',
@@ -644,16 +696,6 @@ export function conversationView<N extends Node>(
                 ui.box('model-metadata', [models], {
                   terminal: { grow: 1, shrink: true },
                 }),
-                ...(status
-                  ? [
-                      ui.text(
-                        'status',
-                        status,
-                        12,
-                        state.run?.state === 'waiting_for_user' ? theme.warning : theme.muted,
-                      ),
-                    ]
-                  : []),
               ],
               { row: true, gap: 1 },
             ),

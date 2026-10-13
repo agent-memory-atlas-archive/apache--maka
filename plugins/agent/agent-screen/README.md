@@ -31,6 +31,7 @@
 | `events.ts`, `component-events.ts`, `raw-events.ts` | Lifecycle/action routing, child callbacks and raw commands within one candidate-frame transaction |
 | `frame.ts` | Retained root composition, dialogs and subscriptions |
 | `conversation-view.ts` | Conversation, composer and its footer |
+| `task-overview.ts`, `outputs-view.ts` | Recorded task state and bounded output/evidence views |
 | `navigation-view.ts`, `header-view.ts`, `pages-view.ts` | Navigation, header and retained product pages |
 | `tui.ts`, `desktop.ts`, `package.ts` | Target adapters and package declaration |
 

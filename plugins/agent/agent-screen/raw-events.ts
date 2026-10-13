@@ -46,6 +46,7 @@ import {
   conversationRoute,
   focusAttachments,
   intent,
+  history,
   mutationPending,
   openInteraction,
   rootCommand,
@@ -243,6 +244,10 @@ export function handleRaw<N extends Node>(
       state.catalog = null;
       catalog(state);
     }
+  } else if (input.key === 'task-latest' && !state.loading && state.selected && !state.dialog) {
+    state.source = null;
+    state.image = null;
+    history(state, actions, { kind: 'tail' }, state.latestKnown, true);
   } else if (input.key === 'catalog-refresh') {
     if (!mutationPending(state) && !catalogPending(state)) catalog(state);
   } else if (input.key === 'inspector-close' && !state.dialog) {

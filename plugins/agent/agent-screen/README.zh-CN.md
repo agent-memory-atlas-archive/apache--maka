@@ -31,6 +31,7 @@
 | `events.ts`、`component-events.ts`、`raw-events.ts` | 同一候选帧事务内的统一路由、子组件回调和原始命令 |
 | `frame.ts` | 根组合、对话框及订阅 |
 | `conversation-view.ts` | 对话、输入区和 footer |
+| `task-overview.ts`、`outputs-view.ts` | 真实任务状态与有界产物／验证视图 |
 | `navigation-view.ts`、`header-view.ts`、`pages-view.ts` | 导航、标题栏和保留状态的产品页面 |
 | `tui.ts`、`desktop.ts`、`package.ts` | 展示目标适配和插件声明 |
 

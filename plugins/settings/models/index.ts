@@ -590,7 +590,10 @@ function frame<N extends Node>(
           radius: props.theme.menu.radius,
         },
       })
-    : ui.dialog('model-popup', text.models, trigger, content, state.open, undefined, { width: 64 });
+    : ui.dialog('model-popup', text.models, trigger, content, state.open, undefined, {
+        width: 64,
+        anchorToBackground: true,
+      });
   const out = output(state, view, events);
   out.actions = actions;
   return out;

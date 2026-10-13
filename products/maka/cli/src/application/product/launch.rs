@@ -66,6 +66,10 @@ pub(crate) struct Launch {
 #[serde(deny_unknown_fields)]
 pub(super) struct Preparation {
     #[serde(default)]
+    pub(super) product: Option<super::update::Baseline>,
+    #[serde(default)]
+    pub(super) previous_connections: Option<Value>,
+    #[serde(default)]
     pub(super) restore: BTreeMap<Uuid, u64>,
     pub(super) sources: Sources,
     // Exact immutable files, independent of whatever binary resumes this work.
@@ -98,7 +102,12 @@ impl Launch {
                     None => return Ok(None),
                 },
             };
-            prepare(&store, configuration, self.product.unwrap_or(Product::Agent)).await.map(Some)
+            let selected = prepare(&store, configuration, self.product.unwrap_or(Product::Agent)).await?;
+            if existing && super::update::begin(&store).await? {
+                prepare(&store, None, Product::Agent).await.map(Some)
+            } else {
+                Ok(Some(selected))
+            }
         }.await;
         let (deployment, configuration) = match result {
             Ok(Some(value)) => value,
@@ -227,11 +236,16 @@ pub(super) async fn prepare(
                 .ok_or("launcher record missing after commit")?
         }
     };
-    let connections: Configuration = serde_json::from_value(record.configuration.clone())?;
+    let mut connections: Configuration = serde_json::from_value(record.configuration.clone())?;
     let (root, domain, host, management) = targets(&connections)?;
     if let Some(bytes) = record.pending {
         let preparation: Preparation = serde_json::from_slice(&bytes)?;
-        if preparation.sources.connections != record.configuration {
+        if preparation
+            .previous_connections
+            .as_ref()
+            .unwrap_or(&preparation.sources.connections)
+            != &record.configuration
+        {
             return Err("original launcher connection input changed".into());
         }
         let packages = decode_packages(preparation.packages)?;
@@ -285,7 +299,18 @@ pub(super) async fn prepare(
                     .await?;
                 }
             }
-            store.complete_application_launch(record.deployment).await?;
+            if let Some(baseline) = preparation.product {
+                store
+                    .complete_application_product(
+                        record.deployment,
+                        preparation.sources.connections.clone(),
+                        serde_json::to_value(baseline)?,
+                    )
+                    .await?;
+                connections = serde_json::from_value(preparation.sources.connections.clone())?;
+            } else {
+                store.complete_application_launch(record.deployment).await?;
+            }
             Ok::<_, HostError>(())
         }
         .await;
@@ -324,7 +349,7 @@ async fn begin(
         let owner = host_store.owned_root()?;
         configuration["hostRoot"] = serde_json::to_value(owner.canonical_path())?;
         let packages = tokio::task::spawn_blocking(packages).await??;
-        let (mut sources, _) = author(product, configuration, &packages).await?;
+        let (mut sources, installation) = author(product, configuration, &packages).await?;
         for host in sources.connections["hosts"].as_array_mut().ok_or("product connections missing")? {
             if host["location"]["kind"] == "process" {
                 host["location"]["stateDomain"] = Value::String(owner.root_id().into());
@@ -339,6 +364,8 @@ async fn begin(
         }
         let selection = sources.connections.clone();
         let preparation = Preparation {
+            product: Some(super::update::Baseline { product, installation, sources: sources.clone() }),
+            previous_connections: None,
             restore: BTreeMap::new(),
             sources,
             packages: packages.values().map(|package| package.files().iter().map(|(path, bytes)| (path.clone(), STANDARD.encode(bytes))).collect()).collect(),

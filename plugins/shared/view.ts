@@ -126,7 +126,12 @@ interface Painter<N extends Node> {
     content: N,
     open: boolean,
     style?: DesktopStyle,
-    terminalSize?: { width?: number; height?: number; padding?: number },
+    terminalSize?: {
+      width?: number;
+      height?: number;
+      padding?: number;
+      anchorToBackground?: boolean;
+    },
   ): N;
   box(key: string, children: N[], options?: BoxOptions): N;
 }
@@ -270,7 +275,7 @@ function terminalPaint(theme: Theme): Painter<TerminalNode> {
         content,
         command,
         pane_width: 32,
-        inline_min_width: 60,
+        inline_min_width: 88,
         auto_inline_min_width: 90,
         motion: theme.motion,
         overlay: {
@@ -393,6 +398,7 @@ function terminalPaint(theme: Theme): Painter<TerminalNode> {
         content,
         open,
         width: terminalSize.width ?? 72,
+        anchor_to_background: terminalSize.anchorToBackground ?? false,
         height: terminalSize.height ?? 20,
         padding: terminalSize.padding ?? 1,
         background_color: color(theme.background),

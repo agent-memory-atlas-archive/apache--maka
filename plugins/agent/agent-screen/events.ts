@@ -34,12 +34,20 @@ import { settingsCategory } from '../../shared/settings.js';
 import { resolveLocale } from '../../shared/locale.js';
 import { type Node, type Presentation } from '../../shared/view.js';
 
+import { messages } from './messages.js';
+import { toolCards } from '../../shared/tool-cards.js';
 import { follow, select } from './actions.js';
 import { handleComponent } from './component-events.js';
 import { frame } from './frame.js';
 import { handleRaw } from './raw-events.js';
 import { delivery, queryFailed, querySucceeded, receipt } from './results.js';
-import { navigationBookmark, navigationKey, type Navigation, type State } from './state.js';
+import {
+  readingKey,
+  navigationBookmark,
+  navigationKey,
+  type Navigation,
+  type State,
+} from './state.js';
 
 export function handleEvent<N extends Node>(
   presentation: Presentation<N>,
@@ -88,6 +96,58 @@ export function handleEvent<N extends Node>(
     if (restored) {
       state.pages = restored.pages;
       state.settingsCategory = restored.category;
+    }
+  }
+  if (input.kind === 'raw' && input.key === 'outputs-latest')
+    input = { ...input, key: 'task-latest' };
+  if (
+    input.kind === 'component' &&
+    input.child === 'output-reading-' + readingKey(state) &&
+    input.name === 'input'
+  )
+    input = input.event as ComponentInput;
+  if (input.kind === 'raw' && state.inspector === 'outputs' && !state.dialog) {
+    if (
+      input.key.startsWith('output-item-') &&
+      (input.event as { kind?: string }).kind === 'submit'
+    ) {
+      const visit = state.visits.find((entry) => entry.id === state.selected?.id);
+      const id = input.key.slice('output-item-'.length);
+      const row = toolCards(messages(state)).find(({ message }) => message.id === id)?.message;
+      if (visit && row?.tool) visit.output = visit.output === id ? null : id;
+      else if (row?.source != null && !state.loading) {
+        state.inspector = null;
+        input = {
+          kind: 'component',
+          key: input.key,
+          child: readingKey(state),
+          name: 'source',
+          event: { sequence: row.source, field: 'body' },
+        };
+      }
+    } else if (input.key.startsWith('output-result-') || input.key.startsWith('output-source-')) {
+      const result = input.key.startsWith('output-result-');
+      const sequence = Number(
+        input.key.slice(result ? 'output-result-'.length : 'output-source-'.length),
+      );
+      if (Number.isSafeInteger(sequence) && sequence > 0 && !state.loading) {
+        state.inspector = null;
+        input = {
+          kind: 'component',
+          key: input.key,
+          child: readingKey(state),
+          name: result ? 'toolSource' : 'source',
+          event: { sequence, field: result ? 'result' : 'body' },
+        };
+      }
+    } else if (input.key === 'outputs-older' || input.key === 'outputs-newer') {
+      input = {
+        kind: 'component',
+        key: input.key,
+        child: readingKey(state),
+        name: input.key === 'outputs-older' ? 'older' : 'newer',
+        event: {},
+      };
     }
   }
   if (input.kind === 'component' && input.child === 'attachment-list' && input.name === 'input')
@@ -171,7 +231,7 @@ export function handleEvent<N extends Node>(
         else queryFailed(state, request);
         // A newer original paint/intent may have arrived while this read
         // was pending. The last attempted basis prevents self-retry.
-        if (request.kind === 'history' && request.implicit) follow(state, actions);
+        if (request.kind === 'history' && outcome.status === 'succeeded') follow(state, actions);
       }
     }
   } else if (input.kind === 'component') {

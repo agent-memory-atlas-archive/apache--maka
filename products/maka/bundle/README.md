@@ -36,7 +36,9 @@ just run
 just run --root /tmp/maka-workhub --product workhub
 ```
 
-The first launch confirms the workspace and installs the selected terminal product. Later launches reopen its saved configuration. The default UI Root is `~/.maka/application`, with its Host Root under `host`. Settings and Plugins edit the installed application; startup options do not overwrite an existing installation.
+The first launch confirms the workspace and installs the selected terminal product. Later launches automatically update an unchanged default composition to the bundled version, preserving installation identities, task data and saved settings. A customized composition stays unchanged. The default UI Root is `~/.maka/application`, with its Host Root under `host`; startup options cannot reconfigure an existing installation.
+
+For a customized composition, close Maka and run `maka application update-defaults` to preview a three-way merge of the previous defaults, local composition and new defaults. Use `--apply` to synchronize when the preview has no conflicts; `--root PATH` selects another installation. Independent changes merge by field; conflicting values, deletions and ordered lists report JSON Pointer paths and prevent the entire update. The preview validates the merged composition and actual packages. Completed synchronization records the new default baseline, and interrupted writes resume on reopening. Development stores created before this baseline was recorded must be removed and initialized again.
 
 `just product` rebuilds the TypeScript bundle. Development binaries load `dist`, or the directory named by `MAKA_PRODUCT_BUNDLE`; TypeScript changes do not require Rust recompilation. Release binaries embed the bundle. Use a separate output directory when building an artifact alongside a running development build:
 
@@ -51,6 +53,12 @@ Tasks can be created and drafted before a model is configured. Sending without a
 The task sidebar stays alongside the workspace. Drag its divider to resize it, or focus the divider with Tab and use Left/Right; Home restores the default width. Details and running terminals open in a side panel. Narrow workspaces show the active panel in place of the conversation; closing it restores the conversation and draft. Esc dismisses the nearest temporary surface first.
 
 Model, connection, project and task lists load or reveal further rows as they scroll. Rendered windows remain bounded, and overlapping rows keep the viewport anchored when the window moves. Scrolling does not take keyboard focus; arrows and Enter provide the corresponding list actions. Approvals and questions appear with the current task, while operation history remains available for recovery.
+
+The task header shows the current recorded state and goal. “Turn ended” describes execution, not verified delivery. F4 opens outputs and verification: expand file changes or command results, or read their original source. This panel follows the loaded history window; its earlier/newer controls expose other records.
+
+The three most recently visited tasks retain their reading owners, search and auxiliary context within a bounded content budget. Drafts use their existing independent storage. Returning to a task preserves the visible content, including a streaming prefix; “Latest” explicitly catches up with newer records. Running submissions are labelled “Queue next turn”; the queue can move a queued message into the current execution where supported.
+
+At narrow widths the task sidebar collapses automatically, retaining its chosen width for later. Model selection opens near the input area. Anonymous providers expose their endpoint without requiring advanced settings or sign-in.
 
 ## Author an installation
 

@@ -212,6 +212,11 @@ export function navigationView<N extends Node>(
               theme,
               locale,
               sessions: state.catalog?.sessions ?? [],
+              previews: Object.fromEntries(
+                state.visits
+                  .filter((visit) => visit.progress?.goal)
+                  .map((visit) => [visit.id, visit.progress!.goal]),
+              ),
               selected: state.selected?.id ?? null,
               busy,
               loading: catalogPending(state),

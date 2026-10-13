@@ -61,6 +61,14 @@ export function handleEvent<N extends Node>(
   const target = presentation.target;
   if (input.kind === 'component' && input.child === 'provider-list' && input.name === 'input')
     input = input.event as ComponentInput;
+  if (
+    input.kind === 'component' &&
+    input.child === 'provider-query' &&
+    input.name === 'submitted'
+  ) {
+    const at = state.providers.findIndex((provider) => matchesProvider(state.search, provider));
+    input = { kind: 'raw', key: 'provider-' + at, event: { kind: 'submit' } };
+  }
   state.revision++;
   const actions: Action[] = [],
     events: Emission[] = [];
@@ -211,7 +219,14 @@ export function handleEvent<N extends Node>(
           ? 'form-history-back'
           : 'form-cancel'
         : input.key;
-    if (key === 'form-save') save(state, props, actions, validation);
+    if (key === 'provider-focus' && !state.provider && !state.baseline) {
+      const at = state.providers.findIndex((provider) => matchesProvider(state.search, provider));
+      if (at >= 0)
+        state.providerFocus = {
+          sequence: (state.providerFocus?.sequence ?? 0) + 1,
+          target: { kind: 'focus_item', key: 'provider-' + at },
+        };
+    } else if (key === 'form-save') save(state, props, actions, validation);
     else if (
       key === 'form-remove' &&
       canRemove(state, props) &&
@@ -373,7 +388,9 @@ export function handleEvent<N extends Node>(
           state.search.pending = null;
           for (const name of ['name', 'slug', 'endpoint'] as FieldName[]) {
             state.fields[name].enabled =
-              name !== 'endpoint' || !!provider.descriptor.customEndpoint;
+              name !== 'endpoint' ||
+              !!provider.descriptor.customEndpoint ||
+              !!provider.descriptor.anonymous;
             prefill(state, name);
           }
         }

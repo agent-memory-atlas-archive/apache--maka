@@ -95,7 +95,7 @@ async fn launcher_requires_root_and_bounds_stored_configuration_before_reading()
             .is_err()
     );
     store.connection.run(|connection| Box::pin(async move {
-        sqlx::query("INSERT INTO application_launch VALUES (1,?,json_object('large',printf('%.*c',1048576,'x')),NULL)")
+        sqlx::query("INSERT INTO application_launch (singleton,deployment,configuration,pending) VALUES (1,?,json_object('large',printf('%.*c',1048576,'x')),NULL)")
             .bind(Uuid::new_v4().to_string()).execute(connection).await?;
         Ok(())
     })).await.unwrap();
@@ -119,5 +119,70 @@ async fn unknown_commit_is_not_reported_as_success_or_replaced() {
         .await;
     assert!(matches!(result, Err(StoreError::CommitUnknown(_))));
     assert!(store.application_launch().await.unwrap().is_none());
+    store.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn product_baseline_and_connections_publish_atomically_with_completion() {
+    let (_dir, store) = crate::applications::tests::store().await;
+    let id = Uuid::new_v4();
+    store
+        .begin_application_launch(Launch {
+            deployment: id,
+            configuration: json!({"old":true}),
+            pending: Some(vec![1]),
+        })
+        .await
+        .unwrap();
+    assert!(
+        store
+            .complete_application_product(Uuid::new_v4(), json!({}), json!({}))
+            .await
+            .is_err()
+    );
+    assert!(store.application_product().await.unwrap().is_none());
+    store.connection.run(|connection| Box::pin(async move {
+        sqlx::raw_sql("CREATE TABLE product_probe (id TEXT REFERENCES application_deployments(id) DEFERRABLE INITIALLY DEFERRED); CREATE TRIGGER reject_product AFTER UPDATE ON application_launch BEGIN INSERT INTO product_probe VALUES ('missing'); END;").execute(connection).await?;
+        Ok(())
+    })).await.unwrap();
+    assert!(matches!(
+        store
+            .complete_application_product(id, json!({"new":true}), json!({"baseline":2}))
+            .await,
+        Err(StoreError::CommitUnknown(_))
+    ));
+    let original = store.application_launch().await.unwrap().unwrap();
+    assert_eq!(original.configuration, json!({"old":true}));
+    assert_eq!(original.pending, Some(vec![1]));
+    assert!(store.application_product().await.unwrap().is_none());
+    store
+        .connection
+        .run(|connection| {
+            Box::pin(async move {
+                sqlx::query("DROP TRIGGER reject_product")
+                    .execute(connection)
+                    .await?;
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+    store
+        .complete_application_product(id, json!({"new":true}), json!({"baseline":2}))
+        .await
+        .unwrap();
+    assert_eq!(
+        store.application_product().await.unwrap(),
+        Some(json!({"baseline":2}))
+    );
+    let completed = store.application_launch().await.unwrap().unwrap();
+    assert_eq!(completed.configuration, json!({"new":true}));
+    assert!(completed.pending.is_none());
+    assert!(
+        store
+            .complete_application_product(id, json!({}), json!({}))
+            .await
+            .is_err()
+    );
     store.close().await.unwrap();
 }

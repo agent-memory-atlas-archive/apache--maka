@@ -63,6 +63,8 @@ import {
   select,
   uploadPastedFile,
 } from './actions.js';
+import { taskProgress } from './task-overview.js';
+import { outputsView } from './outputs-view.js';
 import { conversationView } from './conversation-view.js';
 import { navigationView } from './navigation-view.js';
 import { pagesView } from './pages-view.js';
@@ -134,6 +136,7 @@ export function frame<N extends Node>(
     busy = mutationPending(state);
   const catalogBusy = busy || catalogPending(state);
   const commands = rootCommands(state, locale, target);
+  if (target === 'tui') taskProgress(state, locale);
   const navigation = navigationView(presentation, state, theme, locale);
   const { main, header, attached } = conversationView(
     presentation,
@@ -231,6 +234,7 @@ export function frame<N extends Node>(
   const inspectorOpen =
     conversationRoute(state) && !!state.selected && (state.inspector !== null || inlineInteraction);
   const inspectorSlots = [
+    outputsView(presentation, state, theme, locale),
     presentation.slot(
       'terminal-panel',
       'terminals',
@@ -388,6 +392,12 @@ export function frame<N extends Node>(
           ),
         },
         { key: 'f1', modifiers: [], input: 'help-open', enabled: true },
+        {
+          key: 'f4',
+          modifiers: [],
+          input: 'outputs-open',
+          enabled: commands.some((command) => command.kind === 'outputs-open' && !command.disabled),
+        },
         {
           key: 'g',
           modifiers: ['primary'],

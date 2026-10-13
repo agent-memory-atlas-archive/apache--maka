@@ -89,7 +89,6 @@ Object.assign(entries.tui.imports, {
   rows: one(sdk.contracts.rows),
   checkpoint: one(sdk.contracts.valueCheckpoint),
   themeFile: one(sdk.contracts.textFile),
-  welcome: one(sdk.contracts.morphMark),
   input: one(sdk.contracts.textInput),
 });
 for (const target of ['desktop', 'tui'] as const)

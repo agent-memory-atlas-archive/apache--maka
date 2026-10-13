@@ -95,6 +95,8 @@ async fn restore(store: &EventLog) -> Result<DeploymentRef, HostError> {
         let management = originals.pop().unwrap();
         let host = originals.pop().unwrap();
         let preparation = launch::Preparation {
+            product: None,
+            previous_connections: None,
             restore: revisions,
             sources: Sources {
                 host: host.source.input,
@@ -234,6 +236,8 @@ mod tests {
                 configuration: configuration.clone(),
                 pending: Some(
                     serde_json::to_vec(&launch::Preparation {
+                        product: None,
+                        previous_connections: None,
                         restore: BTreeMap::new(),
                         sources: Sources {
                             host: input(),
@@ -270,6 +274,8 @@ mod tests {
 
         let host = launch::open(host_path.clone(), false, None).await.unwrap();
         let preparation = launch::Preparation {
+            product: None,
+            previous_connections: None,
             restore: BTreeMap::from([(host_id, 3), (manager, 3), (ui, 3)]),
             sources: Sources {
                 host: input(),

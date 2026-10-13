@@ -687,6 +687,11 @@ export type TerminalScene =
       copy_selection_label?: string | null;
       background: TerminalScene;
       content: TerminalScene;
+      /**
+       * Place a controlled dialog next to its background, preferring above it.
+       * The viewport bounds remain authoritative on small terminals.
+       */
+      anchor_to_background?: boolean;
       ascii?: boolean;
       label: string;
       /**
@@ -705,6 +710,11 @@ export type TerminalScene =
       background: TerminalScene;
       content: TerminalScene;
       open: boolean;
+      /**
+       * Place a controlled dialog next to its background, preferring above it.
+       * The viewport bounds remain authoritative on small terminals.
+       */
+      anchor_to_background?: boolean;
       ascii?: boolean;
       label: string;
       /**
@@ -5476,6 +5486,11 @@ export interface TerminalChoiceOption {
  * Appearance shared by controlled dialogs and transient adaptive panes.
  */
 export interface TerminalDialogAppearance {
+  /**
+   * Place a controlled dialog next to its background, preferring above it.
+   * The viewport bounds remain authoritative on small terminals.
+   */
+  anchor_to_background?: boolean;
   ascii?: boolean;
   label: string;
   /**

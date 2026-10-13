@@ -39,6 +39,7 @@ export function appendLive(
   invocationId: string,
   text: string,
 ) {
+  if (state.visits.find((visit) => visit.id === state.selected?.id)?.following === false) return;
   const messageId = part.messageId;
   const field = part.textKind === 'thinking' ? 'thinking' : 'body';
   if (

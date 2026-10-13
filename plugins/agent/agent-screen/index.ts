@@ -89,6 +89,7 @@ export function agentScreen<N extends Node>(
         inspector: null,
         image: null,
         window: null,
+        visits: [],
         source: null,
         navigation: 0,
         landing: { sequence: 0, edge: 'end' },

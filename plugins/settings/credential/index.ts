@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { tuiText } from '../../shared/tui-locale.js';
 import type {
   Action,
   ActionOutcome,
@@ -388,13 +389,21 @@ function frame<N extends Node>(
           ? text.keyLoading
           : state.status.configured
             ? text.keyConfigured
-            : text.keyAbsent;
+            : state.provider?.descriptor.anonymous
+              ? tuiText(props.locale, 'anonymous-credential')
+              : text.keyAbsent;
   const canReview =
     !busy(state) && !state.confirmation && props.target.connectionId === state.target.connectionId;
   const form = ui.box(
     'credential-form',
     [
-      ...pageHeader(presentation, state, props, events, text.signInConnection),
+      ...pageHeader(
+        presentation,
+        state,
+        props,
+        events,
+        state.provider?.descriptor.anonymous ? text.connectionProvider : text.signInConnection,
+      ),
       ui.text(
         'connection',
         compactLabel(

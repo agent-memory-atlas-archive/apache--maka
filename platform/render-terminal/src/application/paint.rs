@@ -1412,7 +1412,7 @@ impl Presenter {
                             key: key.clone(),
                             opening: std::rc::Rc::downgrade(opening),
                             parent_path: scene.input_path.clone(),
-                            anchor: None,
+                            anchor: Some(area),
                         });
                     }
                 }

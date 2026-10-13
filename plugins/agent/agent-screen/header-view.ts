@@ -18,6 +18,7 @@
  */
 
 import type { Theme } from '../../shared/contracts.js';
+import { tuiText } from '../../shared/tui-locale.js';
 import { copy } from '../../shared/locale.js';
 import { fill, pixels, type Presentation, type Node } from '../../shared/view.js';
 
@@ -149,13 +150,6 @@ export function headerView<N extends Node>(
             ui.box(
               'header-task',
               [
-                ...(state.selected && conversationRoute(state)
-                  ? [
-                      state.run?.state === 'waiting_for_user'
-                        ? ui.text('task-face', '-_-', 14, theme.warning)
-                        : ui.activity('task-face', state.run ? 'spring' : 'familiar', theme.accent),
-                    ]
-                  : []),
                 ui.box('header-title', [title], { terminal: { shrink: true } }),
                 ui.box('header-title-trailing', [], { terminal: { grow: 1 } }),
               ],
@@ -164,22 +158,33 @@ export function headerView<N extends Node>(
             ui.box(
               'toolbar',
               [
-                ...(['details-open', 'terminal-open', 'palette-open'] as const).map((key, at) =>
-                  ui.box(
-                    `${key}-cell`,
-                    [
-                      ui.button(
-                        key,
-                        [text.detailsOpen, text.terminalTitle, text.paletteTitle][at]!,
-                        key !== 'palette-open' && (!conversationRoute(state) || !state.selected),
-                        false,
-                        { background: 0 },
-                        undefined,
-                        [text.detailsOpen, text.terminalTitle, text.paletteTitle + ' · Ctrl+K'][at],
-                      ),
-                    ],
-                    { terminal: { shrink: false } },
-                  ),
+                ...(['outputs-open', 'details-open', 'terminal-open', 'palette-open'] as const).map(
+                  (key, at) =>
+                    ui.box(
+                      `${key}-cell`,
+                      [
+                        ui.button(
+                          key,
+                          [
+                            tuiText(locale, 'task-outputs'),
+                            text.detailsOpen,
+                            text.terminalTitle,
+                            text.paletteTitle,
+                          ][at]!,
+                          key !== 'palette-open' && (!conversationRoute(state) || !state.selected),
+                          false,
+                          { background: 0 },
+                          undefined,
+                          [
+                            tuiText(locale, 'task-outputs'),
+                            text.detailsOpen,
+                            text.terminalTitle,
+                            text.paletteTitle + ' · Ctrl+K',
+                          ][at],
+                        ),
+                      ],
+                      { terminal: { shrink: false } },
+                    ),
                 ),
               ],
               { row: true, gap: 1, terminal: { shrink: true, wrap: true } },

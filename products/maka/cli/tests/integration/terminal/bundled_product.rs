@@ -666,13 +666,29 @@ fn bundled_connections_search_scroll_click_and_chatgpt_credentials() {
         .chars()
         .count()
         + 2;
+    let scroll_started = Instant::now();
     tui.send(format!("\x1b[<65;{};{}M", column, row + 2).as_bytes());
     tui.wait_until(|s| !s.contains("ChatGPT Subscription"));
+    eprintln!(
+        "provider wheel to visible change: {:?}",
+        scroll_started.elapsed()
+    );
     click(&mut tui, "Search providers");
+    let search_started = Instant::now();
     tui.send(b"chatgpt");
     tui.wait_until(|s| s.contains("ChatGPT Subscription") && !s.contains("Anthropic"));
-    click(&mut tui, "ChatGPT Subscription");
+    eprintln!(
+        "provider input to filtered frame: {:?}",
+        search_started.elapsed()
+    );
+    let selection_started = Instant::now();
+    tui.send(b"\x1b[B");
+    tui.send(b"\r");
     tui.wait_for("Continue to sign in");
+    eprintln!(
+        "provider selection to form: {:?}",
+        selection_started.elapsed()
+    );
     let screen = tui.screen.snapshot().unwrap().screen;
     assert!(screen.contains("Name"), "{screen}");
     assert!(!screen.contains("Next field"), "{screen}");

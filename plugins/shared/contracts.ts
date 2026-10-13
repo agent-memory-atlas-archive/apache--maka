@@ -230,6 +230,7 @@ export interface ModelDefaultProps {
   busy: boolean;
 }
 export interface NavigationProps {
+  previews?: Record<string, string>;
   theme: Theme;
   locale: string;
   sessions: AgentSession[];
@@ -745,6 +746,11 @@ export const navigationContract = component(
   'maka.agent.Navigation',
   object(
     {
+      previews: {
+        type: 'object',
+        maxProperties: 32,
+        additionalProperties: { type: 'string', maxLength: 512 },
+      },
       theme: { $ref: '#/$defs/Theme' },
       locale,
       sessions: { type: 'array', maxItems: 32, items: { $ref: '#/$defs/AgentSession' } },

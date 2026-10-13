@@ -97,6 +97,17 @@ async function client(name, platform, extra = {}) {
   };
 }
 for (const platform of ['tui', 'desktop']) {
+  test(`${platform} provider search Enter selects its visible result and exposes anonymous endpoints`, async () => {
+    const c = await client('connection-form', platform);
+    const anonymous = {
+      ...provider,
+      descriptor: { ...provider.descriptor, anonymous: true, authentication: [] },
+    };
+    c.reply(c.action('providers'), { providers: [anonymous], next: null });
+    c.event({ kind: 'component', child: 'provider-query', name: 'submitted', event: {} });
+    assert.deepEqual(c.state.provider, anonymous);
+    assert.equal(c.state.fields.endpoint.enabled, true);
+  });
   test(`${platform} provider search scans all pages and ignores stale editor reads`, async () => {
     const c = await client('connection-form', platform);
     c.reply(c.action('providers'), {

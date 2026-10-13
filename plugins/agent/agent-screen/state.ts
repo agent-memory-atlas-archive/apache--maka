@@ -45,6 +45,7 @@ import type {
   EditorCommand,
   EditorObservation,
   TerminalPaneCommand,
+  ReadingCommand,
 } from '../../../packages/plugin-sdk/src/index.js';
 import type {
   AgentScreenProps,
@@ -176,7 +177,40 @@ export function navigationKey(state: State): string {
   );
 }
 
+// Bounded visited workspaces keep their original native reading owners. These
+// are presentation snapshots only; run, queue and permission facts are refreshed.
+export interface Visit {
+  id: string;
+  dataSource: AgentDataSource;
+  key: string;
+  window: State['window'];
+  live: State['live'];
+  following: boolean;
+  source: State['source'];
+  image: State['image'];
+  landing: State['landing'];
+  searchOpen: boolean;
+  browse: number | null;
+  inspector: State['inspector'];
+  output: string | null;
+  outputFocus: ReadingCommand | null;
+  session: AgentSession;
+  epoch: number;
+  progress: {
+    through: number;
+    goal: string;
+    action: string;
+    outcome: 'completed' | 'failed' | 'aborted' | null;
+    toolIssue: boolean;
+  } | null;
+}
+
+export function readingKey(state: State): string {
+  return state.visits.find((visit) => visit.id === state.selected?.id)?.key ?? 'timeline-empty';
+}
+
 export interface State {
+  visits: Visit[];
   bookmark: Bookmark<Navigation>;
   embedding: AgentScreenProps;
   externalSelection: AgentScreenProps['session'] | null;
@@ -216,7 +250,7 @@ export interface State {
   settingsCategory: SettingsCategory;
   insightsScope: InsightsProps['scope'];
   sidebar: { open: boolean } | { command: TerminalPaneCommand | null };
-  inspector: 'details' | 'terminal' | null;
+  inspector: 'details' | 'terminal' | 'outputs' | null;
   terminals: boolean;
   skills: boolean;
   place: string;
@@ -307,6 +341,7 @@ export interface State {
 
 export type RootCommand =
   | 'browse'
+  | 'outputs-open'
   | 'copy-file-path'
   | 'copy-message'
   | 'copy-source'

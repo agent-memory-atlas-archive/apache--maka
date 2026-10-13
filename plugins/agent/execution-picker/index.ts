@@ -458,7 +458,7 @@ function frame<N extends Node>(
     content,
     state.open,
     undefined,
-    { width: 64 },
+    { width: 64, anchorToBackground: true },
   );
   const out = output(state, view, events);
   out.actions = actions;

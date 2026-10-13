@@ -908,7 +908,6 @@ function agentComposition(configuration: CompositionConfiguration): ApplicationS
               rows: [local('rows', 'Rows')],
               checkpoint: [local('checkpoint', 'Checkpoint')],
               themeFile: [local('text-file', 'TextFile')],
-              welcome: [local('morph-mark', 'MorphMark')],
               input: [local('input', 'TextInput')],
             }
           : {}),
