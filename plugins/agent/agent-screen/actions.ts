@@ -300,6 +300,7 @@ export function select(state: State, actions: Action[], session: AgentSession | 
   state.recallAnchor = null;
   state.selected = session;
   state.epoch++;
+  state.recap = { receipt: null, loaded: false, loading: null, failed: false, confirmation: null };
   state.checklist = { watch: null, page: null, failed: false };
   if (session) watchChecklist(state);
   state.window = visit?.window ?? null;
@@ -327,6 +328,31 @@ export function select(state: State, actions: Action[], session: AgentSession | 
   state.loading = session !== null;
   state.notice = null;
   if (session) observe(state, actions);
+}
+
+export function readRecap(state: State, actions: Action[]) {
+  if (!state.selected || state.recap.loading !== null) return;
+  state.recap.confirmation = null;
+  state.recap.failed = false;
+  const attempt = ++state.serial;
+  state.recap.loading = attempt;
+  intent(state, actions, { kind: 'recapRead', epoch: state.epoch, attempt }, 'agent', 'recap', {
+    sessionId: state.selected.id,
+    operationId: state.recap.receipt?.operationId ?? null,
+  });
+}
+export function canGenerateRecap(state: State) {
+  return (
+    !!state.selected &&
+    !!state.model &&
+    !state.executor &&
+    !state.modelRefreshing &&
+    state.recap.loaded &&
+    !state.recap.failed &&
+    state.recap.loading === null &&
+    state.recap.receipt?.kind !== 'pending' &&
+    !mutationPending(state)
+  );
 }
 
 export function watchChecklist(state: State, offset = 0) {
@@ -390,6 +416,7 @@ export function mutationPending(state: State) {
         'stop',
         'queue',
         'receipt',
+        'recapGenerate',
       ].includes(request.kind),
     )
   );
@@ -684,6 +711,13 @@ export function rootCommands(
         ]
       : []),
     {
+      kind: 'recap-open',
+      id: 'recap-open',
+      label: text.recapTitle,
+      hint: '',
+      disabled: !route || !state.selected,
+    },
+    {
       kind: 'checklist-open',
       id: 'checklist-open',
       label: text.checklistTitle,
@@ -889,6 +923,10 @@ export function rootCommand(
     if (!state.checklist.watch) watchChecklist(state);
     if (target === 'tui') state.inspector = state.inspector === 'checklist' ? null : 'checklist';
     else state.dialog = 'checklist';
+  } else if (kind === 'recap-open') {
+    readRecap(state, actions);
+    if (target === 'tui') state.inspector = state.inspector === 'recap' ? null : 'recap';
+    else state.dialog = 'recap';
   } else if (kind === 'details-open') {
     if (target === 'tui') state.inspector = state.inspector === 'details' ? null : 'details';
     else state.dialog = 'details';

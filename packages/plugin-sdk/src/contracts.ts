@@ -8694,6 +8694,133 @@ export const contracts = {
           },
           resources: {},
         },
+        generateRecap: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentRecapGenerate',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+              },
+              model: {
+                $ref: '#/$defs/ModelSelection',
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'model'],
+            $defs: {
+              ModelSelection: {
+                description:
+                  'Exact public selection observed by a caller, checked once at run admission.',
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  modelId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 512,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision', 'modelId'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentRecapReceipt',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  operationId: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  through: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'pending',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'operationId', 'through'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  operationId: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  through: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  text: {
+                    type: 'string',
+                  },
+                  modelId: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'ready',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'operationId', 'through', 'text', 'modelId'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  operationId: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  through: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  reason: {
+                    $ref: '#/$defs/AgentRecapFailure',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'operationId', 'through', 'reason'],
+              },
+            ],
+            $defs: {
+              AgentRecapFailure: {
+                type: 'string',
+                enum: ['empty_or_oversized_output', 'incomplete_output', 'model_unavailable'],
+              },
+            },
+          },
+          resources: {},
+        },
         history: {
           mode: 'query',
           input: {
@@ -13977,6 +14104,118 @@ export const contracts = {
                   'excerpt',
                   'matchedTerms',
                 ],
+              },
+            },
+          },
+          resources: {},
+        },
+        recap: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentRecapRead',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+              },
+              operationId: {
+                type: ['string', 'null'],
+                format: 'uuid',
+                default: null,
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'Nullable_AgentRecapReceipt',
+            anyOf: [
+              {
+                $ref: '#/$defs/AgentRecapReceipt',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            $defs: {
+              AgentRecapReceipt: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      operationId: {
+                        type: 'string',
+                        format: 'uuid',
+                      },
+                      through: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'pending',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'operationId', 'through'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      operationId: {
+                        type: 'string',
+                        format: 'uuid',
+                      },
+                      through: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      text: {
+                        type: 'string',
+                      },
+                      modelId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'ready',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'operationId', 'through', 'text', 'modelId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      operationId: {
+                        type: 'string',
+                        format: 'uuid',
+                      },
+                      through: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      reason: {
+                        $ref: '#/$defs/AgentRecapFailure',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'failed',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'operationId', 'through', 'reason'],
+                  },
+                ],
+              },
+              AgentRecapFailure: {
+                type: 'string',
+                enum: ['empty_or_oversized_output', 'incomplete_output', 'model_unavailable'],
               },
             },
           },
@@ -35252,6 +35491,31 @@ export const contracts = {
                 oneOf: [
                   {
                     description:
+                      'One auxiliary request owned by an admitted native application mutation.',
+                    type: 'object',
+                    properties: {
+                      source: {
+                        $ref: '#/$defs/DeploymentRef',
+                      },
+                      namespace: {
+                        $ref: '#/$defs/InstanceId',
+                      },
+                      operation: {
+                        type: 'string',
+                        format: 'uuid',
+                      },
+                      fingerprint: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'application_operation',
+                      },
+                    },
+                    required: ['kind', 'source', 'namespace', 'operation', 'fingerprint'],
+                  },
+                  {
+                    description:
                       'One Host-owned title request, authorized by the first committed user opening.\nIt may finish after that invocation ends and cannot execute tools.',
                     type: 'object',
                     properties: {
@@ -35296,6 +35560,34 @@ export const contracts = {
                     required: ['kind', 'id'],
                   },
                 ],
+              },
+              DeploymentRef: {
+                type: 'object',
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['stateDomain', 'deployment', 'revision'],
+              },
+              InstanceId: {
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
               },
               ModelBinding: {
                 description:

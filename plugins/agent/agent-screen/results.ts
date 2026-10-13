@@ -19,6 +19,7 @@
 
 import type {
   Action,
+  AgentRecapReceipt,
   AgentDeliveryPage,
   InteractionRecord,
   AgentInteractionResult,
@@ -86,6 +87,15 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
       state.catalogFilter = 'all';
       catalog(state, { kind: 'at', cursor: created.session.id });
     }
+  } else if (request.kind === 'recapGenerate') {
+    if (request.epoch === state.epoch && request.sessionId === state.selected?.id)
+      state.recap = {
+        receipt: value as AgentRecapReceipt,
+        loaded: true,
+        loading: null,
+        failed: false,
+        confirmation: null,
+      };
   } else if (request.kind === 'markRead') {
     const result = value as AgentMarkReadResult;
     if (result.kind === 'observed' && result.session.id === request.sessionId) {
@@ -216,6 +226,17 @@ export function receipt(state: State, actions: Action[], request: Mutation, repl
 }
 
 export function queryFailed(state: State, request: Request) {
+  if (request.kind === 'recapRead' || request.kind === 'recapGenerate') {
+    if (
+      request.epoch === state.epoch &&
+      (request.kind === 'recapGenerate' || request.attempt === state.recap.loading)
+    ) {
+      state.recap.loading = null;
+      state.recap.failed = true;
+      state.recap.confirmation = null;
+    }
+    return;
+  }
   if (request.kind === 'draftPage' || request.kind === 'draftReceipt') {
     draftFailed(state.drafts, request);
     return;
@@ -281,6 +302,17 @@ export function queryFailed(state: State, request: Request) {
 
 export function querySucceeded(state: State, actions: Action[], request: Request, value: unknown) {
   switch (request.kind) {
+    case 'recapRead': {
+      if (request.epoch === state.epoch && request.attempt === state.recap.loading)
+        state.recap = {
+          receipt: value as AgentRecapReceipt | null,
+          loaded: true,
+          loading: null,
+          failed: false,
+          confirmation: null,
+        };
+      break;
+    }
     case 'openSession': {
       if (!sameValue(request.selection, state.externalSelection)) break;
       const observed = value as AgentObservation;

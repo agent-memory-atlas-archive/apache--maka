@@ -24,6 +24,19 @@ export function resolveLocale(configured: string, native: unknown): string {
 }
 
 export const en = {
+  recapTitle: 'Session recap',
+  recapEmpty: 'No saved recap yet.',
+  recapLoading: 'Reading saved recap…',
+  recapPending:
+    'Generation is pending or its outcome is unknown. Refresh reads the original result without generating again.',
+  recapFailed: 'The recap is unavailable. Refresh to check the saved result.',
+  recapRefresh: 'Refresh saved result',
+  recapGenerate: 'Generate a new recap',
+  recapConfirm: 'Generate recap',
+  recapFee: 'This sends conversation history to the selected model and may incur model charges:',
+  recapModel: 'Select a model to generate a recap.',
+  recapSaved: 'Saved recap',
+
   checklistTitle: 'Checklist',
   checklistLoading: 'Loading checklist…',
   checklistRetry: 'Retry',
@@ -966,6 +979,18 @@ export const en = {
 } as const;
 export type Copy = { [K in keyof typeof en]: string };
 const zhCN: Copy = {
+  recapTitle: '会话回顾',
+  recapEmpty: '还没有保存的回顾。',
+  recapLoading: '正在读取已保存的回顾…',
+  recapPending: '生成尚未完成或结果未知。刷新只读取原始结果，不会再次生成。',
+  recapFailed: '回顾暂不可用。请刷新检查已保存的结果。',
+  recapRefresh: '刷新已保存的结果',
+  recapGenerate: '生成新的回顾',
+  recapConfirm: '生成回顾',
+  recapFee: '将会话历史发送给所选模型，可能产生模型费用：',
+  recapModel: '请选择模型以生成回顾。',
+  recapSaved: '已保存的回顾',
+
   checklistTitle: '清单',
   checklistLoading: '正在加载清单…',
   checklistRetry: '重试',
@@ -1858,6 +1883,18 @@ const zhCN: Copy = {
   connecting: '正在连接…',
 };
 const zhTW: Copy = {
+  recapTitle: '對話回顧',
+  recapEmpty: '還沒有儲存的回顧。',
+  recapLoading: '正在讀取已儲存的回顧…',
+  recapPending: '生成尚未完成或結果未知。重新整理僅讀取原始結果，不會再次生成。',
+  recapFailed: '回顧暫不可用。請重新整理檢查已儲存的結果。',
+  recapRefresh: '重新整理已儲存的結果',
+  recapGenerate: '生成新的回顧',
+  recapConfirm: '生成回顧',
+  recapFee: '將對話歷史傳送給所選模型，可能產生模型費用：',
+  recapModel: '請選擇模型以生成回顧。',
+  recapSaved: '已儲存的回顧',
+
   checklistTitle: '清單',
   checklistLoading: '正在載入清單…',
   checklistRetry: '重試',

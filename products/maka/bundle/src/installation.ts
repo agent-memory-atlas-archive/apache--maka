@@ -118,6 +118,7 @@ export function installation(
     scheduledTasks: true,
     todo: true,
     automaticTitles: true,
+    recaps: true,
     tools,
     skillLibrary: 'skills',
   };

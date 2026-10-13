@@ -346,3 +346,148 @@ async fn original_resource_capture_is_required_nullable_and_part_of_the_fingerpr
     assert!(original.reference().is_err());
     store.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn auxiliary_model_requires_exact_pending_application_operation_and_cannot_replay() {
+    use crate::usage::AuxiliarySource;
+    use maka_agent_facts::execution::ModelBinding;
+    let (_dir, store) = store().await;
+    let request = request(&store).await;
+    let reference = request.reference().unwrap();
+    store
+        .create_session("recap", "create", &serde_json::json!({}), 1)
+        .await
+        .unwrap();
+    let binding = ModelBinding {
+        connection_id: "connection".into(),
+        connection_slug: "named".into(),
+        model: "chosen".into(),
+    };
+    assert!(
+        store
+            .begin_auxiliary_operation_model(
+                reference.clone(),
+                binding.clone(),
+                "recap".into(),
+                None
+            )
+            .await
+            .is_err()
+    );
+    let Dispatch::New(claim) = store.dispatch_operation(request.clone()).await.unwrap() else {
+        panic!("new claim")
+    };
+    for changed in [
+        RecoveryRef {
+            operation: Uuid::new_v4(),
+            ..reference.clone()
+        },
+        RecoveryRef {
+            namespace: InstanceId(vec![Uuid::new_v4()]),
+            ..reference.clone()
+        },
+        RecoveryRef {
+            fingerprint: "a".repeat(64),
+            ..reference.clone()
+        },
+        RecoveryRef {
+            source: maka_plugin_core::deployment::DeploymentRef {
+                revision: reference.source.revision + 1,
+                ..reference.source.clone()
+            },
+            ..reference.clone()
+        },
+    ] {
+        assert!(
+            store
+                .begin_auxiliary_operation_model(changed, binding.clone(), "recap".into(), None)
+                .await
+                .is_err()
+        );
+    }
+    assert!(
+        store
+            .begin_auxiliary_model(
+                AuxiliarySource::ApplicationOperation {
+                    source: reference.source.clone(),
+                    namespace: reference.namespace.clone(),
+                    operation: reference.operation,
+                    fingerprint: reference.fingerprint.clone(),
+                },
+                None
+            )
+            .await
+            .is_err(),
+        "a displayed usage source is not admission evidence"
+    );
+    let attempt = store
+        .begin_auxiliary_operation_model(reference.clone(), binding.clone(), "recap".into(), None)
+        .await
+        .unwrap();
+    assert!(
+        store
+            .begin_auxiliary_operation_model(
+                reference.clone(),
+                binding.clone(),
+                "recap".into(),
+                None
+            )
+            .await
+            .is_err()
+    );
+    store
+        .settle_auxiliary_model(attempt, crate::usage::Outcome::Unknown)
+        .await
+        .unwrap();
+    assert!(
+        store
+            .begin_auxiliary_operation_model(
+                reference.clone(),
+                binding.clone(),
+                "recap".into(),
+                None
+            )
+            .await
+            .is_err(),
+        "unknown cost is never safe to replay"
+    );
+    store
+        .finish_operation(
+            &claim,
+            OperationOutcome::Returned {
+                value: serde_json::Value::Null,
+            },
+            OperationCleanup::Confirmed,
+        )
+        .await
+        .unwrap();
+    assert!(
+        store
+            .begin_auxiliary_operation_model(reference, binding.clone(), "recap".into(), None)
+            .await
+            .is_err()
+    );
+    let mut completed = request;
+    completed.operation = Uuid::new_v4();
+    let original = completed.reference().unwrap();
+    let Dispatch::New(claim) = store.dispatch_operation(completed).await.unwrap() else {
+        panic!("new claim")
+    };
+    store
+        .finish_operation(
+            &claim,
+            OperationOutcome::Returned {
+                value: serde_json::Value::Null,
+            },
+            OperationCleanup::Confirmed,
+        )
+        .await
+        .unwrap();
+    assert!(
+        store
+            .begin_auxiliary_operation_model(original, binding, "recap".into(), None)
+            .await
+            .is_err(),
+        "completed operations cannot start auxiliary work"
+    );
+}

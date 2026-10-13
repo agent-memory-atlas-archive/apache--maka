@@ -32,6 +32,9 @@ mod imports;
 #[path = "contract_todo.rs"]
 mod todo;
 pub use todo::*;
+#[path = "contract_recap.rs"]
+mod recap;
+pub use recap::*;
 #[path = "contract_scheduler.rs"]
 mod scheduler;
 pub use scheduler::*;
@@ -76,6 +79,9 @@ pub struct Configuration {
     /// Generate a bounded auxiliary title for automatically named conversations.
     #[serde(default)]
     pub automatic_titles: bool,
+    /// Enable explicit, bounded session recap requests and cached reads.
+    #[serde(default)]
+    pub recaps: bool,
     /// Explicit access to this Agent’s earlier conversations for model tools.
     #[serde(default)]
     pub recall: bool,
@@ -1076,6 +1082,14 @@ pub fn contract() -> Contract {
                 (
                     "checklist".into(),
                     method::<ChecklistRead, Checklist>(MethodMode::Query),
+                ),
+                (
+                    "recap".into(),
+                    method::<RecapRead, Option<RecapReceipt>>(MethodMode::Query),
+                ),
+                (
+                    "generateRecap".into(),
+                    method::<RecapGenerate, RecapReceipt>(MethodMode::Mutation),
                 ),
                 (
                     "watchChecklist".into(),

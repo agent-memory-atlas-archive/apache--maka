@@ -47,6 +47,13 @@ pub enum Outcome {
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[schemars(rename = "UsageAuxiliarySource")]
 pub enum AuxiliarySource {
+    /// One auxiliary request owned by an admitted native application mutation.
+    ApplicationOperation {
+        source: maka_plugin_core::deployment::DeploymentRef,
+        namespace: maka_plugin_core::composition::InstanceId,
+        operation: Uuid,
+        fingerprint: String,
+    },
     /// One Host-owned title request, authorized by the first committed user opening.
     /// It may finish after that invocation ends and cannot execute tools.
     SessionTitle {

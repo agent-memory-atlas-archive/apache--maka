@@ -41,6 +41,7 @@ import type {
   AgentList,
   AgentScheduleAlerts,
   AgentChecklist,
+  AgentRecapReceipt,
   FileCapture,
   RecoveryRef,
   EditorCommand,
@@ -73,6 +74,8 @@ export type Backend =
 export type Request =
   | DraftStep
   | { kind: 'observe'; epoch: number }
+  | { kind: 'recapRead'; epoch: number; attempt: number }
+  | { kind: 'recapGenerate'; epoch: number; sessionId: string }
   | {
       kind: 'history';
       epoch: number;
@@ -133,7 +136,17 @@ export type Request =
 export type Mutation =
   | Extract<
       Request,
-      { kind: 'create' | 'send' | 'stop' | 'queue' | 'respond' | 'markRead' | 'uploadAttachment' }
+      {
+        kind:
+          | 'create'
+          | 'send'
+          | 'stop'
+          | 'queue'
+          | 'respond'
+          | 'markRead'
+          | 'uploadAttachment'
+          | 'recapGenerate';
+      }
     >
   | { kind: 'restored' };
 
@@ -246,6 +259,13 @@ export interface State {
   scheduledTasks: boolean;
   web: boolean;
   jev: boolean;
+  recap: {
+    receipt: AgentRecapReceipt | null;
+    loaded: boolean;
+    loading: number | null;
+    failed: boolean;
+    confirmation: ModelSelection | null;
+  };
   checklist: {
     watch: { key: string; input: { sessionId: string; offset: number } } | null;
     page: AgentChecklist | null;
@@ -257,7 +277,7 @@ export interface State {
   settingsCategory: SettingsCategory;
   insightsScope: InsightsProps['scope'];
   sidebar: { open: boolean } | { command: TerminalPaneCommand | null };
-  inspector: 'details' | 'terminal' | 'outputs' | 'checklist' | null;
+  inspector: 'details' | 'terminal' | 'outputs' | 'checklist' | 'recap' | null;
   terminals: boolean;
   skills: boolean;
   place: string;
@@ -268,6 +288,7 @@ export interface State {
     | 'palette'
     | 'directories'
     | 'checklist'
+    | 'recap'
     | 'details'
     | 'help'
     | 'queue'
@@ -362,6 +383,7 @@ export type RootCommand =
   | 'terminal-open'
   | 'skills-open'
   | 'checklist-open'
+  | 'recap-open'
   | 'details-open'
   | 'usage-open'
   | 'create-workspace'

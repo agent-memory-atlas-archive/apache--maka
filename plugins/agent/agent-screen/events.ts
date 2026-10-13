@@ -229,7 +229,8 @@ export function handleEvent<N extends Node>(
             request.kind === 'queue' ||
             request.kind === 'respond' ||
             request.kind === 'markRead' ||
-            request.kind === 'uploadAttachment')
+            request.kind === 'uploadAttachment' ||
+            request.kind === 'recapGenerate')
         )
           receipt(state, actions, request, outcome.reply);
         else if (outcome.status === 'succeeded')

@@ -207,6 +207,9 @@ export type RuntimeProtocol =
   | AgentCreate
   | AgentChecklistRead
   | AgentChecklist
+  | AgentRecapRead
+  | AgentRecapGenerate
+  | AgentRecapReceipt
   | AgentScheduleRead
   | AgentSchedules
   | AgentScheduleChange
@@ -2036,6 +2039,14 @@ export type UsageOrigin =
 export type ModelPurpose = 'main' | 'summary';
 export type UsageAuxiliarySource =
   | {
+      source: DeploymentRef;
+      namespace: InstanceId;
+      operation: string;
+      fingerprint: string;
+      kind: 'application_operation';
+      [k: string]: unknown | undefined;
+    }
+  | {
       invocation: Invocation;
       kind: 'session_title';
       [k: string]: unknown | undefined;
@@ -2943,6 +2954,29 @@ export type AgentWorkspaceSelection =
       kind: 'session';
     };
 export type AgentTodoStatus = 'pending' | 'in_progress' | 'completed';
+export type AgentRecapReceipt =
+  | {
+      operationId: string;
+      through: number;
+      kind: 'pending';
+    }
+  | {
+      operationId: string;
+      through: number;
+      text: string;
+      modelId: string;
+      kind: 'ready';
+    }
+  | {
+      operationId: string;
+      through: number;
+      reason: AgentRecapFailure;
+      kind: 'failed';
+    };
+export type AgentRecapFailure =
+  | 'empty_or_oversized_output'
+  | 'incomplete_output'
+  | 'model_unavailable';
 export type AgentScheduleRead =
   | {
       cursor?: string | null;
@@ -6502,6 +6536,10 @@ export interface AgentConfiguration {
    */
   automaticTitles?: boolean;
   /**
+   * Enable explicit, bounded session recap requests and cached reads.
+   */
+  recaps?: boolean;
+  /**
    * Explicit access to this Agent’s earlier conversations for model tools.
    */
   recall?: boolean;
@@ -8663,6 +8701,14 @@ export interface AgentChecklist {
 export interface AgentTodoItem {
   content: string;
   status: AgentTodoStatus;
+}
+export interface AgentRecapRead {
+  sessionId: string;
+  operationId?: string | null;
+}
+export interface AgentRecapGenerate {
+  sessionId: string;
+  model: ModelSelection;
 }
 export interface AgentScheduledSummary {
   id: string;

@@ -83,6 +83,15 @@ impl Handler for Agent {
                 }
                 "tools" => encode(owner.tool_names()),
                 "checklist" => encode(owner.checklist(&decode(input)?).await?),
+                "recap" => encode(owner.recap(decode(input)?, context.scope()).await?),
+                "generateRecap" => {
+                    let operation = context.operation().ok_or("agent_mutation_required")?;
+                    encode(
+                        owner
+                            .generate_recap(decode(input)?, context.scope(), operation)
+                            .await?,
+                    )
+                }
                 "watchChecklist" => {
                     let input: ChecklistRead = decode(input)?;
                     let mut changes = owner.checklist_changes();

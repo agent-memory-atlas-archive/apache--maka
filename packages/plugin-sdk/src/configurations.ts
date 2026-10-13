@@ -185,6 +185,11 @@ export const configurations = {
         type: 'boolean',
         default: false,
       },
+      recaps: {
+        description: 'Enable explicit, bounded session recap requests and cached reads.',
+        type: 'boolean',
+        default: false,
+      },
       recall: {
         description: 'Explicit access to this Agent’s earlier conversations for model tools.',
         type: 'boolean',
@@ -673,6 +678,11 @@ export const configurations = {
             type: 'boolean',
             description:
               'Generate a bounded auxiliary title for automatically named conversations.',
+            default: false,
+          },
+          recaps: {
+            type: 'boolean',
+            description: 'Enable explicit, bounded session recap requests and cached reads.',
             default: false,
           },
           recall: {

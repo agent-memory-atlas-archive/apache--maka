@@ -35,6 +35,7 @@ pub(crate) use notifications::ReturnRoute;
 mod patches;
 mod queue;
 mod recall;
+mod recap;
 mod scheduler;
 mod skills;
 mod title;
@@ -117,6 +118,7 @@ pub(crate) struct Owner {
     pub recall: Arc<recall::Recall>,
     scheduler: Arc<scheduler::Scheduler>,
     todo: Arc<todo::Todo>,
+    recap_storage: Arc<maka_host_runtime::storage::Storage>,
     auxiliary: auxiliary::Auxiliary,
     pub settings: Configuration,
     pub prefix: String,
@@ -257,6 +259,15 @@ impl Owner {
             additional.extend(scheduler.tools());
         }
         let todo = Arc::new(todo::Todo::new(persistence.store().clone(), prefix.clone()));
+        let recap_storage = Arc::new(maka_host_runtime::storage::Storage::new(
+            persistence.store().clone(),
+            prefix.clone(),
+            maka_capabilities::storage::Namespace::new(
+                "maka.session-recap",
+                maka_plugin_core::scope::Scope::Profile,
+            )
+            .expect("recap namespace"),
+        ));
         if settings.todo {
             additional.extend(todo.tools());
         }
@@ -315,6 +326,7 @@ impl Owner {
         Ok(Arc::new(Self {
             auxiliary,
             todo,
+            recap_storage,
             scheduler,
             recall,
             store: persistence.store().clone(),
@@ -970,6 +982,7 @@ impl Owner {
             owner.engine.drain().await;
             let scheduler = owner.scheduler.finish().await;
             let todo = owner.todo.finish().await;
+            let recap = owner.recap_storage.finish().await;
             let auxiliary = owner.auxiliary.resources.finish().await;
             let configuration = owner.configuration.shutdown().await;
             let runs = owner.runs.lock().await;
@@ -978,6 +991,7 @@ impl Owner {
             }
             scheduler?;
             todo?;
+            recap?;
             auxiliary.map_err(|error| error.to_string())?;
             configuration.map_err(|_| "agent_configuration_cleanup_unconfirmed".into())
         })

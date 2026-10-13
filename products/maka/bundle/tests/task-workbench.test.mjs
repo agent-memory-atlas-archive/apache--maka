@@ -681,3 +681,155 @@ test('the checklist follows its session, pages live progress, and rejects stale 
   );
   assert.equal(c.state.checklist.failed, false);
 });
+
+const recapModel = {
+  choice: {
+    selection: { connectionId: 'fixture', revision: 1, modelId: 'model' },
+    connectionName: 'Fixture',
+    label: 'Model',
+    thinkingLevels: [],
+    defaultThinkingLevel: null,
+  },
+  thinkingLevel: null,
+};
+const recapReady = {
+  kind: 'ready',
+  operationId: '00000000-0000-0000-0000-000000000099',
+  through: 8,
+  text: 'Tests passed; deployment is next. 中文🙂',
+  modelId: 'model',
+};
+const recapReference = {
+  source: { ...dataSource, revision: 1 },
+  namespace: dataSource.namespace,
+  export: 'agent',
+  method: 'generateRecap',
+  operation: '00000000-0000-0000-0000-000000000098',
+  fingerprint: 'a'.repeat(64),
+  recovery: 'journal_v1',
+  contract: {},
+};
+
+test('recap requires explicit model fee confirmation, preserves the draft, and refreshes the original cache', () => {
+  const c = client()
+    .observe(8)
+    .history(page(8, [chunk(1, 'Verified source')]));
+  c.child('models', 'selected', recapModel);
+  const draft = structuredClone({ draft: c.state.draft, command: c.state.command });
+  c.raw('recap-open');
+  assert.equal(c.state.inspector, 'recap');
+  assert.equal(c.action('generateRecap'), undefined);
+  const read = c.action('recap');
+  assert.equal(read.input.sessionId, 'Task A');
+  c.reply(read, null);
+  assert.match(JSON.stringify(c.find('recap-empty')), /No saved recap/u);
+  c.raw('recap-generate');
+  assert.match(JSON.stringify(c.find('recap-fee')), /may incur model charges.*model/u);
+  assert.equal(c.action('generateRecap'), undefined);
+  c.raw('recap-confirm');
+  const generate = c.action('generateRecap');
+  assert.deepEqual(generate.input, { sessionId: 'Task A', model: recapModel.choice.selection });
+  c.raw('recap-confirm');
+  assert.equal(
+    c.action('generateRecap'),
+    undefined,
+    'confirmation cannot admit duplicate paid work',
+  );
+  c.event({
+    kind: 'action',
+    key: generate.key,
+    event: {
+      status: 'operation',
+      reply: {
+        reference: recapReference,
+        receipt: {
+          kind: 'recorded',
+          outcome: { kind: 'returned', value: recapReady },
+          cleanup: { kind: 'confirmed' },
+        },
+      },
+    },
+  });
+  assert.match(JSON.stringify(c.find('recap-text')), /Tests passed; deployment is next/u);
+  c.raw('recap-refresh');
+  assert.deepEqual(c.action('recap').input, {
+    sessionId: 'Task A',
+    operationId: recapReady.operationId,
+  });
+  c.reply(c.action('recap'), recapReady);
+  c.raw('recap-close');
+  assert.deepEqual({ draft: c.state.draft, command: c.state.command }, draft);
+  c.raw('recap-open');
+  c.reply(c.action('recap'), recapReady);
+  assert.equal(c.action('generateRecap'), undefined);
+  c.raw('recap-close');
+  c.select('Task B')
+    .observe(2)
+    .history(page(2, [chunk(1, 'Other session')]));
+  c.raw('recap-open');
+  const stale = c.action('recap');
+  c.raw('recap-close');
+  c.select('Task C')
+    .observe(2)
+    .history(page(2, [chunk(1, 'Current session')]));
+  c.reply(stale, recapReady);
+  assert.equal(c.state.recap.receipt, null, 'a late result cannot become another session recap');
+});
+
+test('pending recap and unknown original operation allow read-only recovery without another generation', () => {
+  const c = client()
+    .observe(8)
+    .history(page(8, [chunk(1, 'Verified source')]));
+  c.child('models', 'selected', recapModel);
+  c.raw('recap-open');
+  c.reply(c.action('recap'), { kind: 'pending', operationId: recapReady.operationId, through: 8 });
+  c.raw('recap-generate');
+  c.raw('recap-confirm');
+  assert.equal(c.action('generateRecap'), undefined);
+  c.raw('recap-refresh');
+  assert.equal(c.action('recap').input.operationId, recapReady.operationId);
+  c.reply(c.action('recap'), recapReady);
+  c.raw('recap-generate');
+  c.raw('recap-confirm');
+  const original = c.action('generateRecap');
+  c.event({
+    kind: 'action',
+    key: original.key,
+    event: {
+      status: 'operation',
+      reply: {
+        reference: recapReference,
+        receipt: {
+          kind: 'recorded',
+          outcome: { kind: 'unknown', diagnostic: 'connection lost' },
+          cleanup: { kind: 'confirmed' },
+        },
+      },
+    },
+  });
+  assert.deepEqual(c.state.uncertain.reference, recapReference);
+  c.raw('recap-refresh');
+  assert.equal(c.action('recap').method, 'recap');
+  c.reply(c.action('recap'), recapReady);
+  c.raw('recap-generate');
+  c.raw('recap-confirm');
+  assert.equal(c.action('generateRecap'), undefined);
+  assert.deepEqual(
+    c.state.uncertain.reference,
+    recapReference,
+    'a cached result cannot settle another original operation',
+  );
+  c.raw('recap-check');
+  assert.equal(c.action('read').binding, 'receipts');
+  assert.deepEqual(c.action('read').input, recapReference);
+  c.reply(c.action('read'), {
+    reference: recapReference,
+    receipt: {
+      kind: 'recorded',
+      outcome: { kind: 'returned', value: recapReady },
+      cleanup: { kind: 'confirmed' },
+    },
+  });
+  assert.equal(c.state.uncertain, null);
+  assert.equal(c.action('generateRecap'), undefined);
+});

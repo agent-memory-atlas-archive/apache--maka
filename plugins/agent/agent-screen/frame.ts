@@ -49,6 +49,7 @@ import {
 } from '../../shared/view.js';
 
 import { checklistView } from './checklist-view.js';
+import { recapView } from './recap-view.js';
 import { attachmentView } from '../../shared/attachments.js';
 
 import { nextDraftStep, retainSelectedDraft } from '../../shared/drafts.js';
@@ -237,6 +238,7 @@ export function frame<N extends Node>(
     conversationRoute(state) && !!state.selected && (state.inspector !== null || inlineInteraction);
   const inspectorSlots = [
     checklistView(presentation, state, theme, locale),
+    recapView(presentation, state, theme, locale),
     outputsView(presentation, state, theme, locale),
     presentation.slot(
       'terminal-panel',
@@ -488,15 +490,17 @@ export function frame<N extends Node>(
                     : text.approvalTitle
                 : state.dialog === 'directories'
                   ? text.directoryTitle
-                  : state.dialog === 'checklist'
-                    ? text.checklistTitle
-                    : state.dialog === 'details'
-                      ? text.detailsTitle
-                      : state.dialog === 'queue'
-                        ? text.queueEdit
-                        : state.dialog === 'help'
-                          ? text.helpTitle
-                          : text.paletteTitle,
+                  : state.dialog === 'recap'
+                    ? text.recapTitle
+                    : state.dialog === 'checklist'
+                      ? text.checklistTitle
+                      : state.dialog === 'details'
+                        ? text.detailsTitle
+                        : state.dialog === 'queue'
+                          ? text.queueEdit
+                          : state.dialog === 'help'
+                            ? text.helpTitle
+                            : text.paletteTitle,
       background,
       ui.box(
         'dialog-content',
