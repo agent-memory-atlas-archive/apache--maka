@@ -950,7 +950,6 @@ export function models<N extends Node>(
         (input.key === 'model-popup' || input.key === 'thinking-popup') &&
         (input.event as { reason?: string })?.reason === 'escape'
       ) {
-        out.decision = { preventDefault: true, stopPropagation: true };
       }
       return out;
     },

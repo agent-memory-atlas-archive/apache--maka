@@ -26,6 +26,7 @@ use maka_ui_runtime::{Application, CommittedUpdate, PreparedUpdate, actions::Rem
 use std::{
     collections::BTreeSet,
     sync::Arc,
+    task::{Context, Poll, Waker},
     time::{Duration, Instant},
 };
 use tokio::{runtime::Handle, sync::Mutex, task::JoinHandle};
@@ -53,6 +54,7 @@ pub struct Updates {
     retained: BTreeSet<u64>,
     stopped: bool,
     unconfirmed: bool,
+    wake: Waker,
 }
 /// Approved exact candidate; final adoption still checks the original frontend.
 pub struct ApprovedUpdate {
@@ -79,7 +81,16 @@ impl Updates {
             retained: BTreeSet::from([source.revision]),
             stopped: false,
             unconfirmed: false,
+            wake: Waker::noop().clone(),
         })
+    }
+    pub fn set_waker(&mut self, wake: Waker) {
+        self.wake = wake;
+    }
+    /// Controller probes are actual deadlines; work and source changes wake the
+    /// original owner through their registered future, without frame polling.
+    pub fn next_deadline(&self) -> Option<Instant> {
+        (!self.stopped && !self.unconfirmed && self.work.is_none()).then_some(self.next_probe)
     }
     /// Bounded foreground turn. SQL and original controller exchanges run on
     /// the existing scheduler; at most one load/approval/retention is in flight.
@@ -94,10 +105,11 @@ impl Updates {
             self.stop();
             return Ok(None);
         }
+        let mut cx = Context::from_waker(&self.wake);
         if let Some(work) = self.work.as_mut() {
             match work {
                 Work::Probe(task) => {
-                    let Some(result) = task.now_or_never() else {
+                    let Poll::Ready(result) = task.poll_unpin(&mut cx) else {
                         return Ok(None);
                     };
                     self.work.take();
@@ -118,7 +130,7 @@ impl Updates {
                     }
                 }
                 Work::Load(task) => {
-                    let Some(result) = task.now_or_never() else {
+                    let Poll::Ready(result) = task.poll_unpin(&mut cx) else {
                         return Ok(None);
                     };
                     self.work.take();
@@ -132,7 +144,7 @@ impl Updates {
                     return Ok(None);
                 }
                 Work::Approve { task, .. } => {
-                    let Some(result) = task.now_or_never() else {
+                    let Poll::Ready(result) = task.poll_unpin(&mut cx) else {
                         return Ok(None);
                     };
                     let Some(Work::Approve { prepared, .. }) = self.work.take() else {
@@ -148,13 +160,14 @@ impl Updates {
                     };
                     // Reconcile from actual foreground facts on the next turn,
                     // after adoption or any final rejection.
+                    self.wake.wake_by_ref();
                     return Ok(Some(ApprovedUpdate {
                         prepared: *prepared,
                         registrations,
                     }));
                 }
                 Work::Retain(task) => {
-                    let Some(result) = task.now_or_never() else {
+                    let Poll::Ready(result) = task.poll_unpin(&mut cx) else {
                         return Ok(None);
                     };
                     self.work.take();
@@ -176,16 +189,15 @@ impl Updates {
         if retain != self.retained {
             // Immediate local revocation; original child-controller acknowledgement
             // follows asynchronously. This does not mint or rebind consumers.
-            let Ok(mut connections) = self.connections.try_lock() else {
-                return Ok(None);
-            };
-            connections.revoke_sources(&retain)?;
-            drop(connections);
+            if let Ok(mut connections) = self.connections.try_lock() {
+                connections.revoke_sources(&retain)?;
+            }
             let connections = self.connections.clone();
             self.retained = retain.clone();
             self.work = Some(Work::Retain(self.scheduler.spawn(async move {
                 connections.lock().await.retain_sources(retain).await
             })));
+            self.wake.wake_by_ref();
             return Ok(None);
         }
         if self.watch.is_none() {
@@ -198,12 +210,14 @@ impl Updates {
                 .boxed(),
             );
         }
-        let Some((cursor, source)) = self.watch.as_mut().expect("watch").now_or_never() else {
+        let Poll::Ready((cursor, source)) = self.watch.as_mut().expect("watch").poll_unpin(&mut cx)
+        else {
             if Instant::now() >= self.next_probe {
                 let connections = self.connections.clone();
                 self.work = Some(Work::Probe(self.scheduler.spawn(async move {
                     connections.lock().await.registrations_changed().await
                 })));
+                self.wake.wake_by_ref();
             }
             return Ok(None);
         };
@@ -213,6 +227,7 @@ impl Updates {
             .load_committed_update(source?)
             .map_err(|e| e.to_string())?;
         self.work = Some(Work::Load(self.scheduler.spawn(future)));
+        self.wake.wake_by_ref();
         Ok(None)
     }
     fn approve(&mut self, prepared: PreparedUpdate, mut retain: BTreeSet<u64>) {
@@ -232,6 +247,7 @@ impl Updates {
             prepared: Box::new(prepared),
             task,
         });
+        self.wake.wake_by_ref();
     }
     /// No new candidate work. Never abort an already started controller exchange.
     pub fn stop(&mut self) {

@@ -148,6 +148,12 @@ pub(crate) fn compile<V: Default + 'static>(
     source: &Value,
     deadline: Instant,
 ) -> maka_ui_runtime::Result<NativeView<V>> {
+    prepare(source, deadline)?.finish::<Node, V>(|_| Rc::new(V::default()))
+}
+pub(crate) fn prepare(
+    source: &Value,
+    deadline: Instant,
+) -> maka_ui_runtime::Result<maka_ui_runtime::PreparedScene> {
     if Instant::now() >= deadline {
         return Err(maka_ui_runtime::Error::Invalid(
             "fixture scene deadline".into(),
@@ -181,7 +187,7 @@ pub(crate) fn compile<V: Default + 'static>(
     let mut inputs = BTreeMap::new();
     node.metadata(&mut slots, &mut inputs, deadline)
         .map_err(maka_ui_runtime::Error::Invalid)?;
-    NativeView::new(Rc::new(V::default()), inputs, slots)?.with_declaration(source.clone())
+    maka_ui_runtime::PreparedScene::new(node, inputs, slots)?.with_declaration(source.clone())
 }
 pub(crate) fn view<V: Default + 'static>(node: Node) -> maka_ui_runtime::Result<NativeView<V>> {
     compile(
@@ -193,7 +199,9 @@ pub(crate) fn registry<V: Default + 'static>(
     target: maka_plugin_core::composition::PresentationTarget,
 ) -> maka_ui_runtime::NativeRegistry<V> {
     maka_ui_runtime::NativeRegistry::with_surface(target)
-        .with_scene_compiler(language(target), compile::<V>)
+        .with_scene_compiler(language(target), prepare, |prepared| {
+            prepared.finish::<Node, V>(|_| Rc::new(V::default()))
+        })
         .expect("valid fixture scene language")
 }
 

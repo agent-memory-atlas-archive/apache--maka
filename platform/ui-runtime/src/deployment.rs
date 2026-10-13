@@ -162,7 +162,7 @@ impl<V: ?Sized + 'static> Application<V> {
         self.closing
     }
 
-    fn deployment_converging(&self) -> bool {
+    pub(crate) fn deployment_converging(&self) -> bool {
         !self.plan_active()
             || !self.pending.is_empty()
             || !self.pending_remotes.is_empty()
@@ -444,7 +444,7 @@ impl<V: ?Sized + 'static> Application<V> {
         self.sync_subscription_demand();
         let mut failure = None;
         loop {
-            let mut progressed = false;
+            let mut progressed = self.poll_script_activations()?;
             for id in self.modules.keys().cloned().collect::<Vec<_>>() {
                 let activation = &self.activations[&id];
                 if self.runtime.status(activation).is_ok_and(|s| {
@@ -455,19 +455,13 @@ impl<V: ?Sized + 'static> Application<V> {
                     .iter()
                     .any(|m| m.provider == *activation)
                 {
-                    let loaded = &self.modules[&id];
-                    let result = loaded.module.close();
-                    self.runtime.complete_resource(
-                        &loaded.resource,
-                        result.as_ref().map(|_| ()).map_err(|e| e.to_string()),
-                    )?;
-                    if let Err(error) = result {
-                        self.deployment_error.get_or_insert(error.to_string());
-                        failure.get_or_insert(error);
-                        continue;
+                    match self.close_module(&id) {
+                        Ok(closed) => progressed |= closed,
+                        Err(error) => {
+                            self.deployment_error.get_or_insert(error.to_string());
+                            failure.get_or_insert(error);
+                        }
                     }
-                    self.modules.remove(&id);
-                    progressed = true;
                 }
             }
             for activation in self.runtime.activations().cloned().collect::<Vec<_>>() {

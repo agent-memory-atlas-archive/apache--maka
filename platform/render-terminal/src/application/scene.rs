@@ -17,7 +17,7 @@
  * under the License.
  */
 
-use maka_ui_runtime::NativeView;
+use maka_ui_runtime::{NativeView, PreparedScene};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::{rc::Rc, time::Instant};
@@ -32,6 +32,7 @@ pub fn language() -> maka_plugin_core::package::SceneLanguage {
 
 pub use maka_ui_runtime::scene::terminal::{Direction, Layout, Node, ScrollPolicy};
 
+#[cfg(test)]
 pub(super) fn compile(
     source: &Value,
     deadline: Instant,
@@ -41,8 +42,22 @@ pub(super) fn compile(
 pub(super) fn compile_with_inputs(
     source: &Value,
     deadline: Instant,
-    mut inputs: BTreeMap<String, Value>,
+    inputs: BTreeMap<String, Value>,
 ) -> maka_ui_runtime::Result<NativeView<dyn super::Widget>> {
+    finish(prepare_with_inputs(source, deadline, inputs)?)
+}
+
+pub fn prepare(source: &Value, deadline: Instant) -> maka_ui_runtime::Result<PreparedScene> {
+    prepare_with_inputs(source, deadline, BTreeMap::new())
+}
+pub fn finish(prepared: PreparedScene) -> maka_ui_runtime::Result<NativeView<dyn super::Widget>> {
+    prepared.finish::<Node, dyn super::Widget>(|node| Rc::new(node))
+}
+fn prepare_with_inputs(
+    source: &Value,
+    deadline: Instant,
+    mut inputs: BTreeMap<String, Value>,
+) -> maka_ui_runtime::Result<PreparedScene> {
     if Instant::now() >= deadline {
         return Err(maka_ui_runtime::Error::Invalid(
             "terminal scene deadline".into(),
@@ -93,7 +108,7 @@ pub(super) fn compile_with_inputs(
     node.shortcut_inputs(&mut inputs, true)
         .map_err(maka_ui_runtime::Error::Invalid)?;
     let visible = node.visible();
-    NativeView::new(Rc::new(node) as Rc<dyn super::Widget>, inputs, slots)?
+    PreparedScene::new(node, inputs, slots)?
         .with_hidden_slots(hidden_slots)
         .map(|view| view.with_root_visibility(visible))
 }

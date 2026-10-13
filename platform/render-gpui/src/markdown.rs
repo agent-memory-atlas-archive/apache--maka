@@ -40,6 +40,8 @@ struct Owner {
     appearance: MarkdownAppearance,
     selectable: bool,
     disabled: bool,
+    open_web_links: bool,
+    bubble_links: bool,
     visible: bool,
 }
 impl Owner {
@@ -64,6 +66,8 @@ impl Owner {
             appearance: props.appearance.clone(),
             selectable: props.selectable,
             disabled: props.disabled,
+            open_web_links: props.open_web_links,
+            bubble_links: props.bubble_links,
             visible: true,
         })
     }
@@ -84,6 +88,8 @@ impl Owner {
         }
         self.selectable = props.selectable;
         self.disabled = props.disabled;
+        self.open_web_links = props.open_web_links;
+        self.bubble_links = props.bubble_links;
         if self.appearance != props.appearance {
             self.appearance = props.appearance.clone();
             cx.notify();
@@ -163,24 +169,27 @@ impl Render for Owner {
                 let Some(owner) = owner.upgrade() else {
                     return denied;
                 };
-                let input = {
+                let (input, open_web_links, bubble_links) = {
                     let owner = owner.read(cx);
                     if !owner.visible || owner.disabled {
                         return denied;
                     }
-                    owner.input.0.borrow().clone()
+                    (
+                        owner.input.0.borrow().clone(),
+                        owner.open_web_links,
+                        owner.bubble_links,
+                    )
                 };
                 let Some(input) = input else {
                     return denied;
                 };
-                let Ok(decision) = (input.0)("link", json!({"url":url.as_str()}), window, cx)
-                else {
+                let Ok(()) = (input.0)("link", json!({"url":url.as_str()}), window, cx) else {
                     return denied;
                 };
-                // Original Kit rechecks occurrence admission after this synchronous batch.
+                // Kit rechecks original occurrence admission before the native default.
                 gpui_kit::base::text::LinkDecision {
-                    prevent_default: decision.prevent_default || !web_target(url),
-                    stop_propagation: decision.stop_propagation,
+                    prevent_default: !open_web_links || !web_target(url),
+                    stop_propagation: !bubble_links,
                 }
             })
     }

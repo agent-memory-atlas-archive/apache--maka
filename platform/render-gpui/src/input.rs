@@ -173,7 +173,7 @@ impl InputOwner {
             window.prevent_default();
             cx.stop_propagation();
             match (input.0)("submit", serde_json::json!({}), window, cx) {
-                Ok(decision) if !decision.prevent_default => {
+                Ok(()) => {
                     if let Some(text) = copy
                         && weak
                             // A successful callback may close its own dialog.
@@ -186,7 +186,6 @@ impl InputOwner {
                     }
                 }
                 Err(_) => eprintln!("input submit rejected"),
-                _ => {}
             }
         });
         owner.update(cx, |owner, _| owner._keyboard = Some(subscription));

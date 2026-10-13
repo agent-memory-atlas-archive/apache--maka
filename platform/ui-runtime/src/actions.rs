@@ -239,6 +239,20 @@ pub enum NativeCapture {
     Resource(Arc<dyn ReadResource>),
     Continuation(ContinuationWitness),
 }
+pub(super) struct PreparingAction<V: ?Sized> {
+    prepared: Option<Prepared<V>>,
+    requests: std::collections::VecDeque<(Option<String>, CaptureSource, CaptureOutput)>,
+    capture: Option<PendingCapture<V>>,
+    slot: Option<String>,
+}
+struct PendingCapture<V: ?Sized> {
+    child: Mount,
+    source: CaptureSource,
+    output: CaptureOutput,
+    edges: Vec<Edge>,
+    execution: maka_plugin_core::runtime::Execution<Export<V>>,
+    job: backend::Job<CapturePlan>,
+}
 struct Continuation {
     target: CaptureTarget,
     witness: ContinuationWitness,
@@ -459,13 +473,13 @@ impl<V: ?Sized + 'static> Application<V> {
         }
     }
 
-    pub(super) fn prepare_action(
+    pub(super) fn begin_prepare_action(
         &mut self,
         consumer: &Mount,
         action: Action,
-        update: &mut tree::Update<V>,
+        _update: &mut tree::Update<V>,
         subscription: bool,
-    ) -> Result<Prepared<V>> {
+    ) -> Result<PreparingAction<V>> {
         for name in [&action.key, &action.binding, &action.method] {
             if name.is_empty() || name.len() > 128 {
                 return Err(Error::Invalid("invalid action name".into()));
@@ -529,56 +543,46 @@ impl<V: ?Sized + 'static> Application<V> {
         {
             return Err(Error::Invalid("action resource slots mismatch".into()));
         }
-        let mut captures = BTreeMap::new();
+        let mut requests = std::collections::VecDeque::new();
         for (slot, source) in action.resources {
-            captures.insert(
-                slot.clone(),
-                self.prepare_capture(
-                    consumer,
-                    source,
-                    &CaptureOutput::Resource {
-                        resource: resources[&slot].resource_type.clone(),
-                    },
-                    Vec::new(),
-                    update,
-                )?,
-            );
+            let output = CaptureOutput::Resource {
+                resource: resources[&slot].resource_type.clone(),
+            };
+            requests.push_back((Some(slot), source, output));
         }
-        let mut continuations = Vec::new();
         for source in action.continuations {
-            continuations.push(self.prepare_capture(
-                consumer,
-                source,
-                &CaptureOutput::Continuation,
-                Vec::new(),
-                update,
-            )?);
+            requests.push_back((None, source, CaptureOutput::Continuation));
         }
-        Ok(Prepared {
-            source,
-            id: Uuid::new_v4(),
-            consumer: consumer.clone(),
-            key: action.key,
-            method: action.method,
-            input: action.input,
-            recovery: action.recovery,
-            capability,
-            captures,
-            continuations,
-            witnesses: Vec::new(),
-            invalidated: false,
-            subscription,
-            resources: None,
+        Ok(PreparingAction {
+            prepared: Some(Prepared {
+                source,
+                id: Uuid::new_v4(),
+                consumer: consumer.clone(),
+                key: action.key,
+                method: action.method,
+                input: action.input,
+                recovery: action.recovery,
+                capability,
+                captures: BTreeMap::new(),
+                continuations: Vec::new(),
+                witnesses: Vec::new(),
+                invalidated: false,
+                subscription,
+                resources: None,
+            }),
+            requests,
+            capture: None,
+            slot: None,
         })
     }
-    fn prepare_capture(
+    fn begin_capture(
         &mut self,
         parent: &Mount,
         source: CaptureSource,
         output: &CaptureOutput,
         mut edges: Vec<Edge>,
         update: &mut tree::Update<V>,
-    ) -> Result<CaptureTarget> {
+    ) -> Result<PendingCapture<V>> {
         if source.child.is_empty()
             || source.child.len() > 128
             || source.method.is_empty()
@@ -611,7 +615,7 @@ impl<V: ?Sized + 'static> Application<V> {
         edges.push(Edge {
             parent: parent.clone(),
             child: child.clone(),
-            slot: source.child,
+            slot: source.child.clone(),
         });
         update.step(self.mount_depth(&child)?)?;
         let execution = self.runtime.admit_mount(&child)?;
@@ -645,45 +649,106 @@ impl<V: ?Sized + 'static> Application<V> {
                     },
                     update.deadline,
                 ),
-                Component::Native(component) => component.capture(CaptureCall {
-                    values: &values,
-                    state: &state,
-                    props: &props,
-                    method: &source.method,
-                    input: &source.input,
-                }),
+                Component::Native(component) => {
+                    Ok(backend::Job::ready(component.capture(CaptureCall {
+                        values: &values,
+                        state: &state,
+                        props: &props,
+                        method: &source.method,
+                        input: &source.input,
+                    })))
+                }
             }
         })();
-        self.runtime.settle(&execution, Ok(()))?;
-        if matches!(result, Err(Error::Script(_))) {
-            self.retire_failed_realm(&child)?;
-        }
-        let plan = result?;
-        update.charge_intent(&plan)?;
-        match plan {
-            CapturePlan::Forward { source } => {
-                self.prepare_capture(&child, source, output, edges, update)
+        let job = match result {
+            Ok(job) => job,
+            Err(error) => {
+                self.runtime.settle(&execution, Ok(()))?;
+                return Err(error);
             }
-            CapturePlan::Native => {
-                if !matches!(
-                    execution.value(),
-                    Export::Component {
-                        implementation: Component::Native(_),
-                        ..
+        };
+        Ok(PendingCapture {
+            child,
+            source,
+            output: output.clone(),
+            edges,
+            execution,
+            job,
+        })
+    }
+
+    pub(super) fn poll_prepare_action(
+        &mut self,
+        preparing: &mut PreparingAction<V>,
+        update: &mut tree::Update<V>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<Prepared<V>>> {
+        loop {
+            if let Some(mut pending) = preparing.capture.take() {
+                let result = match Pin::new(&mut pending.job).poll(cx) {
+                    Poll::Pending => {
+                        preparing.capture = Some(pending);
+                        return Poll::Pending;
                     }
-                ) {
-                    return Err(Error::Invalid(
-                        "JavaScript cannot forge a native capture".into(),
-                    ));
+                    Poll::Ready(result) => result,
+                };
+                self.runtime.settle(&pending.execution, Ok(()))?;
+                if matches!(result, Err(Error::Script(_))) {
+                    self.retire_failed_realm(&pending.child)?;
                 }
-                Ok(CaptureTarget {
-                    mount: child,
-                    method: source.method,
-                    input: source.input,
-                    output: output.clone(),
-                    edges,
-                })
+                let plan = result?;
+                update.charge_intent(&plan)?;
+                match plan {
+                    CapturePlan::Forward { source } => {
+                        preparing.capture = Some(self.begin_capture(
+                            &pending.child,
+                            source,
+                            &pending.output,
+                            pending.edges,
+                            update,
+                        )?);
+                    }
+                    CapturePlan::Native => {
+                        if !matches!(
+                            pending.execution.value(),
+                            Export::Component {
+                                implementation: Component::Native(_),
+                                ..
+                            }
+                        ) {
+                            return Poll::Ready(Err(Error::Invalid(
+                                "JavaScript cannot forge a native capture".into(),
+                            )));
+                        }
+                        let target = CaptureTarget {
+                            mount: pending.child,
+                            method: pending.source.method,
+                            input: pending.source.input,
+                            output: pending.output,
+                            edges: pending.edges,
+                        };
+                        let prepared = preparing.prepared.as_mut().expect("preparing action");
+                        if let Some(slot) = preparing.slot.take() {
+                            prepared.captures.insert(slot, target);
+                        } else {
+                            prepared.continuations.push(target);
+                        }
+                    }
+                }
+                continue;
             }
+            let Some((slot, source, output)) = preparing.requests.pop_front() else {
+                return Poll::Ready(Ok(preparing.prepared.take().expect("completed action")));
+            };
+            preparing.slot = slot;
+            let consumer = preparing
+                .prepared
+                .as_ref()
+                .expect("preparing action")
+                .consumer
+                .clone();
+            preparing.capture =
+                Some(self.begin_capture(&consumer, source, &output, Vec::new(), update)?);
         }
     }
     pub(super) fn invalidate_pending_captures(&mut self) {
@@ -1094,6 +1159,9 @@ impl<V: ?Sized + 'static> Application<V> {
         root: &Mount,
         mut valid: impl FnMut(&CaptureTarget, &V, &ContinuationWitness) -> Result<bool>,
     ) -> Result<usize> {
+        if self.logical_pending() {
+            return Ok(0);
+        }
         let mut count = 0;
         let mut first_error = None;
         for _ in 0..self.actions.outcomes.len() {
@@ -1153,11 +1221,16 @@ impl<V: ?Sized + 'static> Application<V> {
                 &outcome.consumer,
                 &outcome.key,
                 serde_json::to_value(feedback).expect("typed outcome"),
+                tree::Feedback {
+                    consumer: outcome.consumer.clone(),
+                    request: outcome.request,
+                    item,
+                },
             ) {
                 Ok(()) => {
                     count += 1;
-                    if item && let Some(id) = outcome.request {
-                        self.acknowledge_update(id);
+                    if self.logical_pending() {
+                        break;
                     }
                 }
                 Err(error) => {

@@ -749,7 +749,16 @@ impl Presenter {
         scene.next_frame = cache.next_frame.get();
         Ok(scene)
     }
-    pub fn present(&mut self, mut scene: PaintedScene) {
+    pub fn present(&mut self, scene: PaintedScene) {
+        self.present_impl(scene, false);
+    }
+    /// Only the sole output owner calls this after its original whole buffer
+    /// completes. Written geometry is evidence even if business state advanced;
+    /// callbacks and resource admission remain fenced by the current owner.
+    pub(super) fn present_written(&mut self, scene: PaintedScene) {
+        self.present_impl(scene, true);
+    }
+    fn present_impl(&mut self, mut scene: PaintedScene, written: bool) {
         if !self.surface.is_live() {
             return;
         }
@@ -757,7 +766,7 @@ impl Presenter {
         // geometry. Native observations can revise business state while the
         // complete immutable recipe remains the same (e.g. selection during a
         // resize). Validate that distinction and the original owner as a batch.
-        if !self.scene_openings_current(&scene.openings)
+        if (!written && !self.scene_openings_current(&scene.openings))
             || !scene.laid_out.contains_key(&self.root.id())
         {
             return;
@@ -769,7 +778,9 @@ impl Presenter {
             };
             let frame_current = frame.revision == painted.revision;
             if self.application.is_retiring(&painted.mount)
-                || (!frame_current && !frame.view.same_presentation_metadata(&painted.view))
+                || (!written
+                    && !frame_current
+                    && !frame.view.same_presentation_metadata(&painted.view))
                 || !self
                     .resources
                     .owners
@@ -780,7 +791,8 @@ impl Presenter {
                                 .owner
                                 .ptr_eq(&std::rc::Rc::downgrade(&owner.identity))
                     })
-                || !(frame_current
+                || !(written
+                    || frame_current
                     || std::rc::Rc::ptr_eq(&frame.view.view, &painted.view.view)
                     || frame
                         .view
@@ -791,7 +803,11 @@ impl Presenter {
             }
             frames_current &= frame_current;
         }
-        self.resources.redraw = false;
+        self.resources.redraw = if written {
+            self.resources.redraw || !frames_current
+        } else {
+            false
+        };
         self.next_frame = scene.next_frame;
         let old_focus = self.focus.clone();
         self.reconcile_choices(&scene);
@@ -825,9 +841,11 @@ impl Presenter {
             self.report(&error);
             return;
         }
-        for opening in &scene.openings {
-            if let Some(opening) = opening.upgrade() {
-                opening.pending_flush.set(false);
+        if !written || frames_current {
+            for opening in &scene.openings {
+                if let Some(opening) = opening.upgrade() {
+                    opening.pending_flush.set(false);
+                }
             }
         }
         self.publish_modal_focus(&scene.foreground_path, &scene.targets);

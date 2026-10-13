@@ -30,6 +30,7 @@ pub struct NativeBudget(Arc<Mutex<Usage>>);
 struct Usage {
     encoded: usize,
     pixels: usize,
+    jobs: usize,
     limits: BudgetLimits,
 }
 #[derive(Clone, Copy, Debug)]
@@ -54,6 +55,8 @@ impl Default for NativeBudget {
 pub enum Kind {
     Encoded,
     Pixels,
+    /// Aggregate native work admission. Bytes stay charged by their own permits.
+    Job,
 }
 #[derive(Debug)]
 pub struct Permit {
@@ -66,6 +69,7 @@ impl NativeBudget {
         Self(Arc::new(Mutex::new(Usage {
             encoded: 0,
             pixels: 0,
+            jobs: 0,
             limits,
         })))
     }
@@ -74,6 +78,7 @@ impl NativeBudget {
         let (used, limit) = match kind {
             Kind::Encoded => (usage.encoded, usage.limits.encoded_bytes),
             Kind::Pixels => (usage.pixels, usage.limits.pixel_bytes),
+            Kind::Job => (usage.jobs, 16),
         };
         let next = used
             .checked_add(bytes)
@@ -82,6 +87,7 @@ impl NativeBudget {
         match kind {
             Kind::Encoded => usage.encoded = next,
             Kind::Pixels => usage.pixels = next,
+            Kind::Job => usage.jobs = next,
         }
         Ok(Permit {
             budget: self.clone(),
@@ -100,6 +106,7 @@ impl Drop for Permit {
         let value = match self.kind {
             Kind::Encoded => &mut usage.encoded,
             Kind::Pixels => &mut usage.pixels,
+            Kind::Job => &mut usage.jobs,
         };
         *value = value
             .checked_sub(self.bytes)
@@ -119,6 +126,7 @@ impl Permit {
         let used = match self.kind {
             Kind::Encoded => &mut usage.encoded,
             Kind::Pixels => &mut usage.pixels,
+            Kind::Job => &mut usage.jobs,
         };
         *used = used
             .checked_sub(released)

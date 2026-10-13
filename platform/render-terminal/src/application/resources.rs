@@ -65,6 +65,64 @@ impl Resources {
         }
         Ok(())
     }
+    pub fn prepare_candidate(
+        &mut self,
+        app: &Application<dyn Widget>,
+        candidate: maka_ui_runtime::Candidate<'_, dyn Widget>,
+    ) -> maka_ui_runtime::Result<()> {
+        // Validate every retained type before allocating any provisional owner.
+        // The existing owner is untouched if the candidate cannot commit.
+        for (mount, frame) in candidate.changed() {
+            if self
+                .owners
+                .get(&mount.id())
+                .is_some_and(|owner| owner.kind != frame.view.view.as_ref().type_id())
+            {
+                return Err(Error::Invalid(
+                    "native recipe type changed on original mount; remount the component".into(),
+                ));
+            }
+            if let Some(reason) = self.failed.get(&mount.id()) {
+                return Err(Error::Invalid(reason.clone()));
+            }
+        }
+        for (mount, frame) in candidate.changed() {
+            if let std::collections::btree_map::Entry::Vacant(entry) = self.owners.entry(mount.id())
+            {
+                let recipe = frame.view.view.clone();
+                let resources = std::sync::Arc::new(maka_capabilities::call::Resources::with_wake(
+                    app.wake_callback(),
+                ));
+                let context = NativeContext {
+                    checkpoint: app.checkpoint_scope(mount)?,
+                    resources: resources.clone(),
+                    budget: self.budget.clone(),
+                };
+                match catch_unwind(AssertUnwindSafe(|| recipe.create(context))) {
+                    Ok(state) => {
+                        entry.insert(Owner {
+                            identity: Rc::new(()),
+                            kind: recipe.as_ref().type_id(),
+                            recipe,
+                            state,
+                            resources,
+                            revision: None,
+                            live: true,
+                            presented: false,
+                            pending: BTreeMap::new(),
+                        });
+                    }
+                    Err(_) => {
+                        let error = "terminal native creation cleanup unconfirmed".to_owned();
+                        self.failed.insert(mount.id(), error.clone());
+                        return Err(Error::Invalid(error));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn prepare(
         &mut self,
         app: &Application<dyn Widget>,
@@ -84,13 +142,16 @@ impl Resources {
                 .owners
                 .get(&mount.id())
                 .is_some_and(|owner| owner.kind != kind || !owner.live)
-                && !self.close(&mount).map_err(Error::Invalid)?
             {
-                return Ok(false);
+                return Err(Error::Invalid(
+                    "native recipe type changed on original mount; remount the component".into(),
+                ));
             }
             if let std::collections::btree_map::Entry::Vacant(entry) = self.owners.entry(mount.id())
             {
-                let resources = std::sync::Arc::new(maka_capabilities::call::Resources::default());
+                let resources = std::sync::Arc::new(maka_capabilities::call::Resources::with_wake(
+                    app.wake_callback(),
+                ));
                 let context = NativeContext {
                     checkpoint: app.checkpoint_scope(&mount)?,
                     resources: resources.clone(),
@@ -564,6 +625,13 @@ impl Resources {
 impl Presenter {
     pub(super) fn sync_native(&mut self) -> maka_ui_runtime::Result<()> {
         self.resources.deactivate(&self.application);
+        let resources = &mut self.resources;
+        if self
+            .application
+            .commit_ui(|app, candidate| resources.prepare_candidate(app, candidate))?
+        {
+            self.resources.redraw = true;
+        }
         if !self.surface.is_live() || self.application.is_retiring(&self.root) {
             return Ok(());
         }

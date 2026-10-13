@@ -148,27 +148,22 @@ export const app = {
     const next = { ...state, revision: state.revision + 1, calls: state.calls + 1, last: event };
     if (event.kind === 'pointer_down' && state.mode === 'disable') next.disabled = true;
     if (event.kind === 'pointer_down' && state.mode === 'remove') next.removed = true;
-    const decision = {};
     if (event.kind === 'drop') {
       if (event.target === 'review') {
         next.x = Math.max(340, Math.min(380, Math.round((state.x + event.delta.x) / 20) * 20));
         next.y = Math.max(160, Math.min(280, Math.round((state.y + event.delta.y) / 20) * 20));
         next.placed = true;
-      } else decision.preventDefault = true;
+      }
     } else if (event.kind === 'key_down') {
       const moves = { left: [-20, 0], right: [20, 0], up: [0, -20], down: [0, 20] };
       const move = moves[event.key];
       if (move) {
         next.x = Math.max(24, Math.min(400, state.x + move[0]));
         next.y = Math.max(160, Math.min(280, state.y + move[1]));
-        decision.stopPropagation = true;
-        decision.preventDefault = true;
       }
       if (event.key === 'enter') {
         next.x = 340;
         next.placed = true;
-        decision.stopPropagation = true;
-        decision.preventDefault = true;
       }
     } else if (event.kind === 'activate') {
       next.x = 340;
@@ -177,7 +172,6 @@ export const app = {
     const output = frame(next);
     if (event.kind === 'pointer_down' && state.mode === 'invalid')
       output.frame.view.contents.commands[0].position.x = 16000.00000001;
-    output.decision = decision;
     return output;
   },
 };

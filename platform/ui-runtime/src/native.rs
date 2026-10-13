@@ -49,37 +49,136 @@ pub struct NativeView<V: ?Sized> {
 // The aggregate metadata byte limit and compilation deadline still bound work.
 pub(crate) const MAX_INPUTS: usize = 256;
 
+fn input_validators(
+    schemas: &BTreeMap<String, Value>,
+    slots: &[ComponentSlot],
+) -> Result<BTreeMap<String, jsonschema::Validator>> {
+    if slots.len() > 64 {
+        return Err(Error::Invalid("native component slot limit".into()));
+    }
+    let mut keys = std::collections::BTreeSet::new();
+    for slot in slots {
+        slot.validate().map_err(Error::Invalid)?;
+        if !keys.insert(&slot.key) {
+            return Err(Error::Invalid("duplicate native slot key".into()));
+        }
+    }
+    super::tree::check_call_bytes(&(&schemas, &slots))?;
+    if schemas.len() > MAX_INPUTS {
+        return Err(Error::Invalid("native component input limit".into()));
+    }
+    let mut inputs = BTreeMap::new();
+    for (key, schema) in schemas {
+        if key.is_empty() || key.len() > 128 {
+            return Err(Error::Invalid("invalid native input key".into()));
+        }
+        inputs.insert(
+            key.clone(),
+            jsonschema::validator_for(schema).map_err(|error| Error::Invalid(error.to_string()))?,
+        );
+    }
+    Ok(inputs)
+}
+
+/// A checked, platform-specific scene declaration. Only inert data crosses a
+/// thread; native recipes and native resource owners are constructed separately.
+pub struct PreparedScene {
+    payload: Box<dyn std::any::Any + Send>,
+    schemas: BTreeMap<String, Value>,
+    inputs: BTreeMap<String, jsonschema::Validator>,
+    slots: Vec<ComponentSlot>,
+    hidden: BTreeSet<String>,
+    visible: bool,
+    depth: u16,
+    slot_depth: BTreeMap<String, u16>,
+    declaration: Option<Value>,
+}
+impl PreparedScene {
+    pub fn new<T: Send + 'static>(
+        payload: T,
+        schemas: BTreeMap<String, Value>,
+        slots: Vec<ComponentSlot>,
+    ) -> Result<Self> {
+        let inputs = input_validators(&schemas, &slots)?;
+        Ok(Self {
+            payload: Box::new(payload),
+            schemas,
+            inputs,
+            slots,
+            hidden: BTreeSet::new(),
+            visible: true,
+            depth: 0,
+            slot_depth: BTreeMap::new(),
+            declaration: None,
+        })
+    }
+    pub fn with_hidden_slots(mut self, hidden: BTreeSet<String>) -> Result<Self> {
+        if hidden
+            .iter()
+            .any(|key| !self.slots.iter().any(|slot| &slot.key == key))
+        {
+            return Err(Error::Invalid("hidden slot is not declared".into()));
+        }
+        self.hidden = hidden;
+        Ok(self)
+    }
+    pub fn with_root_visibility(mut self, visible: bool) -> Self {
+        self.visible = visible;
+        self
+    }
+    pub fn with_render_depth(mut self, depth: u16, slots: BTreeMap<String, u16>) -> Result<Self> {
+        if slots
+            .iter()
+            .any(|(key, cost)| *cost > depth || !self.slots.iter().any(|slot| &slot.key == key))
+        {
+            return Err(Error::Invalid("invalid native render depth".into()));
+        }
+        self.depth = depth;
+        self.slot_depth = slots;
+        Ok(self)
+    }
+    pub fn with_declaration(mut self, source: Value) -> Result<Self> {
+        super::tree::check_call_bytes(&(
+            &self.schemas,
+            &self.slots,
+            &self.hidden,
+            self.visible,
+            &source,
+            self.depth,
+            &self.slot_depth,
+        ))?;
+        self.declaration = Some(source);
+        Ok(self)
+    }
+    pub fn finish<T: Send + 'static, V: ?Sized>(
+        self,
+        wrap: impl FnOnce(T) -> Rc<V>,
+    ) -> Result<NativeView<V>> {
+        let payload = self
+            .payload
+            .downcast::<T>()
+            .map_err(|_| Error::Invalid("foreign native scene preparation".into()))?;
+        Ok(NativeView {
+            view: wrap(*payload),
+            schemas: Rc::new(self.schemas),
+            inputs: Rc::new(self.inputs),
+            slots: Rc::new(self.slots),
+            hidden_slots: Rc::new(self.hidden),
+            root_visible: self.visible,
+            render_depth: self.depth,
+            slot_render_depth: Rc::new(self.slot_depth),
+            declaration: self.declaration.map(Rc::new),
+        })
+    }
+}
+
 impl<V: ?Sized> NativeView<V> {
     pub fn new(
         view: Rc<V>,
         schemas: BTreeMap<String, Value>,
         slots: Vec<ComponentSlot>,
     ) -> Result<Self> {
-        if slots.len() > 64 {
-            return Err(Error::Invalid("native component slot limit".into()));
-        }
-        let mut keys = std::collections::BTreeSet::new();
-        for slot in &slots {
-            slot.validate().map_err(Error::Invalid)?;
-            if !keys.insert(&slot.key) {
-                return Err(Error::Invalid("duplicate native slot key".into()));
-            }
-        }
-        super::tree::check_call_bytes(&(&schemas, &slots))?;
-        if schemas.len() > MAX_INPUTS {
-            return Err(Error::Invalid("native component input limit".into()));
-        }
-        let mut inputs = BTreeMap::new();
-        for (key, schema) in &schemas {
-            if key.is_empty() || key.len() > 128 {
-                return Err(Error::Invalid("invalid native input key".into()));
-            }
-            inputs.insert(
-                key.clone(),
-                jsonschema::validator_for(schema)
-                    .map_err(|error| Error::Invalid(error.to_string()))?,
-            );
-        }
+        let inputs = input_validators(&schemas, &slots)?;
         Ok(Self {
             view,
             schemas: Rc::new(schemas),
@@ -248,10 +347,12 @@ type Factory<V> =
 /// Presenter-owned, pure translation. No runtime or native owner is available
 /// at this precommit boundary. Implementations bound expansion and honor the
 /// caller's shared deadline; painting never executes a compiler.
-type CompileScene<V> = dyn Fn(&Value, std::time::Instant) -> Result<NativeView<V>>;
+pub type PrepareScene = dyn Fn(&Value, std::time::Instant) -> Result<PreparedScene> + Send + Sync;
+type FinishScene<V> = dyn Fn(PreparedScene) -> Result<NativeView<V>>;
 pub(crate) struct SceneCompiler<V: ?Sized> {
     pub language: maka_plugin_core::package::SceneLanguage,
-    pub compile: Box<CompileScene<V>>,
+    pub prepare: std::sync::Arc<PrepareScene>,
+    pub finish: Box<FinishScene<V>>,
 }
 
 /// Build-time implementation availability. The composition selects instances;
@@ -277,12 +378,14 @@ impl<V: ?Sized + 'static> NativeRegistry<V> {
     pub fn with_scene_compiler(
         mut self,
         language: maka_plugin_core::package::SceneLanguage,
-        compiler: impl Fn(&Value, std::time::Instant) -> Result<NativeView<V>> + 'static,
+        prepare: impl Fn(&Value, std::time::Instant) -> Result<PreparedScene> + Send + Sync + 'static,
+        finish: impl Fn(PreparedScene) -> Result<NativeView<V>> + 'static,
     ) -> Result<Self> {
         language.validate()?;
         self.scene_compiler = Some(Rc::new(SceneCompiler {
             language,
-            compile: Box::new(compiler),
+            prepare: std::sync::Arc::new(prepare),
+            finish: Box::new(finish),
         }));
         Ok(self)
     }

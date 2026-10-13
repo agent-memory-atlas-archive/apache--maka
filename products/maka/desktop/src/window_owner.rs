@@ -20,7 +20,7 @@
 use super::{DesktopApplication, resources::NativeResources};
 use gpui_kit::{App, AppContext, Task, Window};
 use std::{cell::RefCell, rc::Rc};
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::Receiver;
 
 /// Owns cleanup independently of the visual Surface. Termination is governed by
 /// the external platform receipt AND every real renderer-resource lease, not by
@@ -30,7 +30,7 @@ pub(super) fn start(
     cx: &mut App,
     resources: Rc<RefCell<NativeResources>>,
     application: Rc<RefCell<DesktopApplication>>,
-    mut wakes: UnboundedReceiver<()>,
+    mut wakes: Receiver<()>,
     finished: impl FnOnce(Result<(), String>, &mut App) + 'static,
 ) -> Result<Task<()>, String> {
     let owner = super::actions::own(application.clone(), None, None, cx)

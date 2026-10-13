@@ -41,6 +41,10 @@ pub(super) enum Cleanup {
     Failed,
 }
 pub(super) enum State {
+    Preparing {
+        mount: Mount,
+        props: Value,
+    },
     Opening {
         mount: Mount,
     },
@@ -127,7 +131,10 @@ impl Owner {
         });
     }
     pub(crate) fn replacing(&self) -> bool {
-        matches!(*self.0.launch.borrow(), Some(State::Replacing { .. }))
+        matches!(
+            *self.0.launch.borrow(),
+            Some(State::Replacing { .. } | State::Preparing { .. })
+        )
     }
     #[cfg(test)]
     pub(crate) fn load_committed_update(
@@ -212,6 +219,25 @@ impl Owner {
         if self.0.quitting.get() || self.0.draining.get() {
             return Ok(false);
         }
+        let prepared = match &*self.0.launch.borrow() {
+            Some(State::Preparing { mount, props }) => Some((mount.clone(), props.clone())),
+            _ => None,
+        };
+        if let Some((mount, props)) = prepared {
+            if self.0.application.borrow().frame(&mount).is_err()
+                && self.0.application.borrow().prepared_frame(&mount).is_err()
+            {
+                if self.0.application.borrow().is_retiring(&mount) {
+                    self.fail_launch(&mount, "replacement mount preparation failed".into());
+                    return Err(Error::Invalid(
+                        "replacement mount preparation failed".into(),
+                    ));
+                }
+                return Ok(false);
+            }
+            self.open_launch(mount, props, cx)?;
+            return Ok(true);
+        }
         let (props, kind) = match &*self.0.launch.borrow() {
             Some(State::Replacing {
                 cleanup: Cleanup::Confirmed,
@@ -229,6 +255,12 @@ impl Owner {
         else {
             return Ok(false);
         };
+        if self.0.application.borrow().frame(&mount).is_err()
+            && self.0.application.borrow().prepared_frame(&mount).is_err()
+        {
+            *self.0.launch.borrow_mut() = Some(State::Preparing { mount, props });
+            return Ok(false);
+        }
         self.open_launch(mount, props, cx)?;
         Ok(true)
     }
@@ -258,7 +290,10 @@ impl Owner {
                     State::Live {
                         mount: original, ..
                     }
-                    | State::Opening { mount: original },
+                    | State::Opening { mount: original }
+                    | State::Preparing {
+                        mount: original, ..
+                    },
                 ) if original == mount => {
                     *launch = None;
                     true
@@ -287,7 +322,10 @@ impl Owner {
                 width,
                 height,
                 ..
-            }) = &app.frame(&mount)?.surface
+            }) = &app
+                .frame(&mount)
+                .or_else(|_| app.prepared_frame(&mount))?
+                .surface
             else {
                 return Err(Error::Invalid(
                     "desktop launch component must request a window".into(),
@@ -298,7 +336,7 @@ impl Owner {
         *self.0.launch.borrow_mut() = Some(State::Opening {
             mount: mount.clone(),
         });
-        let (wake, receipts) = tokio::sync::mpsc::unbounded_channel();
+        let (wake, receipts) = tokio::sync::mpsc::channel(1);
         let resources = Rc::new(RefCell::new(NativeResources::new(mount.clone(), wake)));
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(

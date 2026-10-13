@@ -22,7 +22,7 @@ mod dialog;
 mod popup;
 
 use gpui_kit::AppContext;
-use maka_ui_runtime::NativeView;
+use maka_ui_runtime::{NativeView, PreparedScene};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -52,6 +52,20 @@ pub(crate) fn compile_with_inputs(
     deadline: Instant,
     additional_inputs: BTreeMap<String, Value>,
 ) -> maka_ui_runtime::Result<NativeView<dyn super::Widget>> {
+    finish(prepare_with_inputs(source, deadline, additional_inputs)?)
+}
+
+pub fn prepare(source: &Value, deadline: Instant) -> maka_ui_runtime::Result<PreparedScene> {
+    prepare_with_inputs(source, deadline, BTreeMap::new())
+}
+pub fn finish(prepared: PreparedScene) -> maka_ui_runtime::Result<NativeView<dyn super::Widget>> {
+    prepared.finish::<Node, dyn super::Widget>(|node| Rc::new(node))
+}
+fn prepare_with_inputs(
+    source: &Value,
+    deadline: Instant,
+    additional_inputs: BTreeMap<String, Value>,
+) -> maka_ui_runtime::Result<PreparedScene> {
     if Instant::now() >= deadline {
         return Err(maka_ui_runtime::Error::Invalid(
             "desktop scene deadline".into(),
@@ -137,7 +151,7 @@ pub(crate) fn compile_with_inputs(
         ));
     }
     let visible = !matches!(&node, Node::Stack { visible: false, .. });
-    NativeView::new(Rc::new(node) as Rc<dyn super::Widget>, inputs, slots)?
+    PreparedScene::new(node, inputs, slots)?
         .with_hidden_slots(hidden_slots)?
         .with_root_visibility(visible)
         .with_render_depth(depth, slot_depth)
@@ -649,6 +663,7 @@ impl NodePresentation for Node {
                 key,
                 label,
                 copy_text,
+                bubble_activation,
                 style,
                 hover,
                 active,
@@ -676,6 +691,7 @@ impl NodePresentation for Node {
                 let click_input = slots.input.clone();
                 let click_key = key.clone();
                 let copy_text = copy_text.clone();
+                let bubble_activation = *bubble_activation;
                 let enabled = button.admitted.get() && alive.0.borrow().is_some();
                 let handle = button.focus.clone();
                 let focus_action = handle.clone();
@@ -726,13 +742,8 @@ impl NodePresentation for Node {
                     .child(SharedString::from(label.clone()))
                     .on_click(move |_, window, cx| {
                         if click_admission.get() && click_alive.0.borrow().is_some() {
-                            let decision = match (click_input.0)(
-                                &click_key,
-                                json!({"kind":"click"}),
-                                window,
-                                cx,
-                            ) {
-                                Ok(decision) => decision,
+                            match (click_input.0)(&click_key, json!({"kind":"click"}), window, cx) {
+                                Ok(()) => (),
                                 Err(error) => {
                                     eprintln!("component input rejected: {error}");
                                     window.prevent_default();
@@ -740,9 +751,7 @@ impl NodePresentation for Node {
                                     return;
                                 }
                             };
-                            if decision.prevent_default {
-                                window.prevent_default();
-                            } else if let Some(text) = &copy_text
+                            if let Some(text) = &copy_text
                                 // Closing a menu settles this admitted default;
                                 // it only revokes admission for later events.
                                 && click_alive.0.borrow().is_some()
@@ -751,7 +760,7 @@ impl NodePresentation for Node {
                                     text.clone(),
                                 ));
                             }
-                            if decision.stop_propagation {
+                            if !bubble_activation {
                                 cx.stop_propagation();
                             }
                         }

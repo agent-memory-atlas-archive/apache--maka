@@ -26,7 +26,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     rc::Rc,
 };
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::Sender;
 
 /// Actual outstanding renderer resources, not a frame-count or logical-close
 /// heuristic. A lease must be held by every retained native object/callback.
@@ -34,7 +34,7 @@ struct Scope {
     mount: Mount,
     leases: Cell<usize>,
     detached: Cell<bool>,
-    wake: UnboundedSender<()>,
+    wake: Sender<()>,
     workers: std::sync::Arc<maka_capabilities::call::Resources>,
 }
 impl Scope {
@@ -54,7 +54,7 @@ impl Scope {
     fn detach(&self) {
         let _ = self.workers.seal();
         if !self.detached.replace(true) && self.leases.get() == 0 {
-            let _ = self.wake.send(());
+            let _ = self.wake.try_send(());
         }
     }
     fn ready(&self) -> bool {
@@ -74,7 +74,7 @@ impl Drop for Resource {
         if self.0.ready() {
             // The owner thread processes the receipt later, after the native
             // destructor returns. No Application/GPUI mutation from Drop.
-            let _ = self.0.wake.send(());
+            let _ = self.0.wake.try_send(());
         }
     }
 }
@@ -128,7 +128,8 @@ pub(super) struct NativeResources {
     platform_confirmed: bool,
     pub surface_closed: bool,
     scopes: BTreeMap<String, Rc<Scope>>,
-    wake: UnboundedSender<()>,
+    preparation_failed: BTreeMap<String, String>,
+    wake: Sender<()>,
 }
 impl NativeResources {
     #[cfg(test)]
@@ -207,7 +208,7 @@ impl NativeResources {
         };
         recipe.validate_continuation(owner.state.as_ref(), target, &witness.value, window, cx)
     }
-    pub fn new(surface: Mount, wake: UnboundedSender<()>) -> Self {
+    pub fn new(surface: Mount, wake: Sender<()>) -> Self {
         Self {
             budget: super::widgets::NativeBudget::default(),
             surface,
@@ -216,6 +217,7 @@ impl NativeResources {
             surface_closed: false,
             owners: BTreeMap::new(),
             scopes: BTreeMap::new(),
+            preparation_failed: BTreeMap::new(),
             wake,
         }
     }
@@ -232,12 +234,16 @@ impl NativeResources {
                         let wake = self.wake.clone();
                         std::sync::Arc::new(maka_capabilities::call::Resources::with_wake(
                             move || {
-                                let _ = wake.send(());
+                                let _ = wake.try_send(());
                             },
                         ))
                     },
                 })
             })
+    }
+    pub fn preparation_failed(&mut self, mount: &Mount, reason: String) {
+        self.preparation_failed
+            .insert(mount.id().to_string(), reason);
     }
     pub fn prepare_scope(&mut self, mount: &Mount) {
         self.scope(mount);
@@ -258,7 +264,14 @@ impl NativeResources {
         cx: &mut gpui_kit::App,
     ) -> Result<(), Error> {
         let visible: BTreeSet<_> = application
-            .mounted_subtree(&self.surface)?
+            .mounted_subtree(&self.surface)
+            .or_else(|error| {
+                if application.is_retiring(&self.surface) {
+                    Ok(vec![])
+                } else {
+                    Err(error)
+                }
+            })?
             .into_iter()
             .map(|mount| mount.id().to_string())
             .collect();
@@ -293,7 +306,7 @@ impl NativeResources {
         for scope in self.scopes.values() {
             scope.detach();
         }
-        let _ = self.wake.send(());
+        let _ = self.wake.try_send(());
         result
     }
     pub fn confirm_platform_cleanup(&mut self) {
@@ -331,6 +344,10 @@ impl NativeResources {
         // The common adapter orders leaves before parents. Parents with still
         // outstanding children remain fenced even if their own leases released.
         for mount in retired {
+            if let Some(reason) = self.preparation_failed.get(&mount.id().to_string()) {
+                application.close(&mount, Err(reason.clone()))?;
+                continue;
+            }
             if (mount == self.surface && !(self.removed && self.platform_confirmed))
                 || visible.contains(&mount.id().to_string())
                 || application.mount_root(&mount)? != self.surface

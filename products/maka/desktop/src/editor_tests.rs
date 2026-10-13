@@ -142,7 +142,7 @@ impl Scene {
             .unwrap_or(outer);
         let app = Rc::new(RefCell::new(application));
         cx.update(|cx| actions::own(app.clone(), None, caller, cx).unwrap());
-        let (wake, receipts) = tokio::sync::mpsc::unbounded_channel();
+        let (wake, receipts) = tokio::sync::mpsc::channel(1);
         let resources = Rc::new(RefCell::new(resources::NativeResources::new(
             root.clone(),
             wake,

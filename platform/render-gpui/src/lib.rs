@@ -131,12 +131,7 @@ impl LiveInput {
         Self(input, budget, resources, None)
     }
 }
-type Dispatch = dyn Fn(
-    &str,
-    Value,
-    &mut Window,
-    &mut App,
-) -> maka_ui_runtime::Result<maka_ui_runtime::InputDecision>;
+type Dispatch = dyn Fn(&str, Value, &mut Window, &mut App) -> maka_ui_runtime::Result<()>;
 #[derive(Clone)]
 pub struct Input(pub Rc<Dispatch>);
 impl Input {
@@ -147,20 +142,9 @@ impl Input {
     ) -> impl Fn(&E, &mut Window, &mut App) + 'static {
         let dispatch = self.0.clone();
         move |event, window, cx| {
-            let decision = match dispatch(&key, encode(event), window, cx) {
-                Ok(decision) => decision,
-                Err(error) => {
-                    eprintln!("component input rejected: {error}");
-                    maka_ui_runtime::InputDecision {
-                        prevent_default: true,
-                        stop_propagation: true,
-                    }
-                }
-            };
-            if decision.prevent_default {
+            if let Err(error) = dispatch(&key, encode(event), window, cx) {
+                eprintln!("component input rejected: {error}");
                 window.prevent_default();
-            }
-            if decision.stop_propagation {
                 cx.stop_propagation();
             }
         }
@@ -344,7 +328,7 @@ pub fn registry() -> NativeRegistry<dyn Widget> {
     let mut registry =
         NativeRegistry::with_surface(maka_plugin_core::composition::PresentationTarget::Desktop)
             .with_render_depth_limit(gpui_kit::MAX_DEFERRED_DEPTH)
-            .with_scene_compiler(scene::language(), scene::compile)
+            .with_scene_compiler(scene::language(), scene::prepare, scene::finish)
             .expect("valid desktop scene language");
     registry
         .register(maka_ui_runtime::LABEL_IMPLEMENTATION, |_, _values| {

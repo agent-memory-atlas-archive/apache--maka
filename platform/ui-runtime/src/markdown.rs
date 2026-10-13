@@ -59,6 +59,11 @@ pub struct MarkdownProps {
     /// Whether pointer selection also moves keyboard focus to this document.
     #[serde(default = "pointer_focus_default")]
     pub focus_on_pointer: bool,
+    /// The committed document decides native URL opening before guest work.
+    #[serde(default = "pointer_focus_default")]
+    pub open_web_links: bool,
+    #[serde(default = "pointer_focus_default")]
+    pub bubble_links: bool,
 }
 fn pointer_focus_default() -> bool {
     true

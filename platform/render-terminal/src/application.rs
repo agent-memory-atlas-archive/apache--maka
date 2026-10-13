@@ -48,7 +48,9 @@ mod terminal;
 mod text_file;
 mod textarea;
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
-use futures_util::{FutureExt, StreamExt, stream::FuturesUnordered};
+#[cfg(test)]
+use futures_util::{FutureExt, StreamExt};
+use futures_util::{Stream, stream::FuturesUnordered};
 pub use geometry::{CellRect, Placement};
 use maka_packages::Package;
 use maka_plugin_core::{
@@ -274,6 +276,7 @@ pub struct Presenter {
     physical_path: Vec<dialog::Scope>,
     focus_before_flush: Option<dialog::WeakTarget>,
     jobs: FuturesUnordered<Job>,
+    replacement: Option<Mount>,
     surface: SurfaceState,
     reported: std::collections::BTreeSet<String>,
     /// One bounded physical clipboard intent, flushed before the next OS event.
@@ -321,7 +324,7 @@ impl Presenter {
             registrations,
         )
         .await?;
-        Self::mount(application, props)
+        Self::mount_async(application, props).await
     }
     /// Load immutable desired input without borrowing this terminal owner.
     pub fn load_committed_update(
@@ -384,21 +387,38 @@ impl Presenter {
                 ));
             }
         };
-        let Some(root) = self.application.mount_replacement_root(kind, props)? else {
+        if self.replacement.is_none() {
+            self.replacement = self.application.mount_replacement_root(kind, props)?;
+        }
+        let Some(root) = self.replacement.as_ref() else {
             return Ok(false);
         };
-        self.root = root;
+        if self.application.frame(root).is_err() && self.application.prepared_frame(root).is_err() {
+            if self.application.is_retiring(root) {
+                self.replacement = None;
+                return Err(Error::Invalid(
+                    "replacement mount preparation failed".into(),
+                ));
+            }
+            return Ok(false);
+        }
+        self.root = self.replacement.take().expect("prepared replacement");
         self.resources.redraw = true;
         self.surface = SurfaceState::Live;
         self.sync_native()?;
         Ok(true)
     }
 
-    fn mount(
+    fn mount(application: Application<dyn Widget>, props: Value) -> maka_ui_runtime::Result<Self> {
+        let scheduler = application.scheduler().clone();
+        scheduler.block_on(Self::mount_async(application, props))
+    }
+    async fn mount_async(
         mut application: Application<dyn Widget>,
         props: Value,
     ) -> maka_ui_runtime::Result<Self> {
-        let root = match application.mount_bootstrap(props) {
+        application.defer_native_commit();
+        let root = match application.mount_bootstrap_prepared(props).await {
             Ok(root) => root,
             Err(error) => {
                 let error = match application.deployment_status().error {
@@ -446,6 +466,7 @@ impl Presenter {
             physical_path: Vec::new(),
             focus_before_flush: None,
             jobs: FuturesUnordered::new(),
+            replacement: None,
             surface: SurfaceState::Live,
             reported: Default::default(),
             clipboard: None,
@@ -709,14 +730,13 @@ impl Presenter {
                 }
                 WidgetInput::Emitted(emitted) => {
                     let revision = self.application.frame(&target.mount)?.revision;
-                    let decision = self.application.dispatch(
+                    self.application.dispatch(
                         &target.mount,
                         revision,
                         &emitted.key,
                         emitted.value,
                     )?;
-                    if !decision.prevent_default
-                        && !self.application.is_retiring(&target.mount)
+                    if !self.application.is_retiring(&target.mount)
                         && self.resources.admits(&target)
                         && self.target_admitted(&target)
                         && let Some(text) = submit_copy
@@ -727,14 +747,12 @@ impl Presenter {
                     {
                         self.focus = Some(target);
                     }
-                    if !decision.prevent_default {
-                        self.close_context_action(
-                            self.focus
-                                .clone()
-                                .and_then(|target| target.scope.clone())
-                                .as_ref(),
-                        );
-                    }
+                    self.close_context_action(
+                        self.focus
+                            .clone()
+                            .and_then(|target| target.scope.clone())
+                            .as_ref(),
+                    );
                     self.track_focus_return()?;
                     self.sync_native()?;
                     return Ok(());
@@ -853,25 +871,23 @@ impl Presenter {
                 paint::TargetKind::Item { .. } => "activate",
                 _ => "click",
             };
-            let decision = self.application.dispatch(
+            self.application.dispatch(
                 &target.mount,
                 target.revision,
                 &target.key,
                 json!({"kind":kind}),
             )?;
-            if !decision.prevent_default {
-                if let paint::TargetKind::Action {
-                    copy_text: Some(text),
-                } = &target.kind
-                    && !self.application.is_retiring(&target.mount)
-                    && self.resources.admits(&target)
-                    && self.target_admitted(&target)
-                {
-                    self.clipboard = Some(text.clone());
-                }
-                self.close_context_action(target.scope.as_ref());
-                self.focus = Some(target);
+            if let paint::TargetKind::Action {
+                copy_text: Some(text),
+            } = &target.kind
+                && !self.application.is_retiring(&target.mount)
+                && self.resources.admits(&target)
+                && self.target_admitted(&target)
+            {
+                self.clipboard = Some(text.clone());
             }
+            self.close_context_action(target.scope.as_ref());
+            self.focus = Some(target);
             self.sync_native()?;
         }
         if self.dismiss_escape(&event)? {
@@ -1044,9 +1060,16 @@ impl Presenter {
         if let Err(error) = advancement {
             self.report(&error);
         }
+        if self.application.advance_ui()? {
+            self.resources.redraw = true;
+        }
         self.sync_native()?;
         // Each join observer stays with the actual owner, independently of UI.
-        while let Some(Some((id, completion))) = self.jobs.next().now_or_never() {
+        let wake = self.application.waker();
+        let mut cx = std::task::Context::from_waker(&wake);
+        while let std::task::Poll::Ready(Some((id, completion))) =
+            Pin::new(&mut self.jobs).poll_next(&mut cx)
+        {
             if let Some(task) = self.application.finish_task(id, completion)? {
                 self.execute(task);
             }
@@ -1176,6 +1199,7 @@ impl Presenter {
                 .unwrap_or_else(|error| TaskCompletion::Interrupted(error.to_string()));
             (id, completion)
         }));
+        self.application.waker().wake_by_ref();
     }
     /// Actual terminal restoration acknowledgement, not logical retirement.
     /// 接收实际终端恢复回执，不以逻辑退休冒充恢复完成。

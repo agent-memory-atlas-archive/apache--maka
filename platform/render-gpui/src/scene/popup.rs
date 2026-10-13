@@ -224,6 +224,8 @@ impl State {
                     && escape_admission.allows(window)
                     && escape_live.0.borrow().is_some()
                 {
+                    window.prevent_default();
+                    cx.stop_propagation();
                     escape(event, window, cx);
                 }
             })

@@ -53,11 +53,12 @@ pub mod text_file;
 pub mod textarea;
 mod tree;
 mod values;
-pub use frame::{ComponentOutput, ComponentSlot, Emission, Frame, InputDecision, Surface};
+pub use frame::{ComponentOutput, ComponentSlot, Emission, Frame, Surface};
 pub use native::{
     ComponentCall, EventOrigin, LabelProps, NativeCapability, NativeComponent, NativeExport,
-    NativeRegistry, NativeView, label_contract,
+    NativeRegistry, NativeView, PrepareScene, PreparedScene, label_contract,
 };
+pub use tree::Candidate;
 
 use maka_packages::Package;
 use maka_plugin_core::{
@@ -68,7 +69,13 @@ use maka_plugin_core::{
     runtime::{Activation, Mount, Phase, Published, Resource, Runtime},
 };
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, rc::Rc};
+use std::{
+    collections::BTreeMap,
+    future::Future,
+    pin::Pin,
+    rc::Rc,
+    task::{Context, Poll, Waker},
+};
 use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
@@ -108,7 +115,15 @@ enum Component<V: ?Sized> {
 // Native input causality is never guest JSON or a retained frame property.
 struct Invocation<V: ?Sized> {
     output: ComponentOutput<NativeView<V>>,
-    input_admission: bool,
+}
+struct PendingInvocation<V: ?Sized> {
+    execution: maka_plugin_core::runtime::Execution<Export<V>>,
+    result: InvocationResult<V>,
+    realm: Option<ExecutionRealm>,
+}
+enum InvocationResult<V: ?Sized> {
+    Native(Option<Result<ComponentOutput<NativeView<V>>>>),
+    Script(backend::Job<ComponentOutput<PreparedScene>>),
 }
 struct CaptureDefinition {
     input: jsonschema::Validator,
@@ -139,6 +154,12 @@ struct Loaded {
     realm: ExecutionRealm,
     module: Rc<dyn backend::Module>,
     resource: Resource,
+    activation: Option<backend::Job<BTreeMap<String, abi::UiExport>>>,
+    closing: Option<ModuleClose>,
+}
+enum ModuleClose {
+    Pending(backend::Job<()>),
+    Failed(String),
 }
 
 pub struct Application<V: ?Sized = ()> {
@@ -168,6 +189,11 @@ pub struct Application<V: ?Sized = ()> {
     remote_epochs: BTreeMap<maka_plugin_core::plan::RemoteCapability, Uuid>,
     pending_remotes: Vec<actions::RemoteService>,
     closing: bool,
+    wake: std::sync::Arc<std::sync::Mutex<Waker>>,
+    ui_update: Option<tree::Update<V>>,
+    ui_inputs: std::collections::VecDeque<tree::QueuedInput>,
+    ui_input_bytes: usize,
+    native_commit: bool,
 }
 
 impl<V: ?Sized + 'static> Application<V> {
@@ -217,7 +243,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 .collect(),
             registrations,
         };
-        Self::new_owned(
+        let mut app = Self::new_owned(
             &loaded.source.input,
             loaded.packages,
             timer,
@@ -225,7 +251,9 @@ impl<V: ?Sized + 'static> Application<V> {
             native,
             remotes,
             Some((snapshot, store)),
-        )
+        )?;
+        app.wait_ready().await?;
+        Ok(app)
     }
 
     /// The committed source adopted by this executor; status reports convergence.
@@ -282,6 +310,11 @@ impl<V: ?Sized + 'static> Application<V> {
             remote_epochs: BTreeMap::new(),
             pending_remotes: Vec::new(),
             closing: false,
+            wake: std::sync::Arc::new(std::sync::Mutex::new(Waker::noop().clone())),
+            ui_update: None,
+            ui_inputs: std::collections::VecDeque::new(),
+            ui_input_bytes: 0,
+            native_commit: false,
         };
         for remote in remotes.registrations {
             app.remote_epochs
@@ -318,6 +351,13 @@ impl<V: ?Sized + 'static> Application<V> {
             }
             if app.pending.len() == before {
                 if app.runtime.desired().recovery().is_some() && app.deployment_error.is_some() {
+                    break;
+                }
+                if app
+                    .modules
+                    .values()
+                    .any(|loaded| loaded.activation.is_some())
+                {
                     break;
                 }
                 return Err(Error::Invalid("UI dependencies are not ready".into()));
@@ -429,60 +469,18 @@ impl<V: ?Sized + 'static> Application<V> {
                             realm: realm.clone(),
                             module: loaded,
                             resource,
+                            activation: None,
+                            closing: None,
                         },
                     );
                     let loaded = &self.modules[&instance.identity].module;
                     let values = self.values_snapshot(&activation, &instance.configuration)?;
-                    let actual = loaded.activate(&instance.configuration, &values)?;
-                    tree::check_call_bytes(&actual)?;
-                    for (name, actual) in actual {
-                        let (contract, component) = match actual {
-                            abi::UiExport::Value { contract, value } => {
-                                let value = values::export(value, &contract)?;
-                                batch.insert(name, Published { contract, value });
-                                continue;
-                            }
-                            abi::UiExport::Component {
-                                contract,
-                                component,
-                            } => (contract, component),
-                        };
-                        if !matches!(contract.interface, Interface::Component { .. })
-                            || component.is_empty()
-                        {
-                            return Err(Error::Invalid(
-                                "local JS export must declare a component".into(),
-                            ));
-                        }
-                        let Interface::Component {
-                            props,
-                            events,
-                            captures,
-                        } = &contract.interface
-                        else {
-                            unreachable!()
-                        };
-                        let props = jsonschema::validator_for(props)
-                            .map_err(|error| Error::Invalid(error.to_string()))?;
-                        let events = event_schemas(events)?;
-                        let compiled_captures = capture_schemas(captures)?;
-                        let callbacks = loaded.component(&component, !captures.is_empty())?;
-                        batch.insert(
-                            name,
-                            Published {
-                                contract,
-                                value: Export::Component {
-                                    props,
-                                    events,
-                                    captures: compiled_captures,
-                                    implementation: Component::JavaScript {
-                                        realm: realm.clone(),
-                                        callbacks,
-                                    },
-                                },
-                            },
-                        );
-                    }
+                    let job = loaded.activate(&instance.configuration, &values)?;
+                    self.modules
+                        .get_mut(&instance.identity)
+                        .expect("loaded module")
+                        .activation = Some(job);
+                    return Ok(());
                 }
             }
         }
@@ -493,14 +491,210 @@ impl<V: ?Sized + 'static> Application<V> {
         Ok(())
     }
 
-    fn invoke(
+    fn publish_script_exports(
+        &mut self,
+        id: InstanceId,
+        actual: BTreeMap<String, abi::UiExport>,
+    ) -> Result<()> {
+        let activation = self.activations[&id].clone();
+        if self.runtime.phase(&activation)? == Phase::Retiring {
+            return Ok(());
+        }
+        let realm = self.modules[&id].realm.clone();
+        let mut batch = BTreeMap::new();
+        tree::check_call_bytes(&actual)?;
+        for (name, actual) in actual {
+            let (contract, component) = match actual {
+                abi::UiExport::Value { contract, value } => {
+                    let value = values::export(value, &contract)?;
+                    batch.insert(name, Published { contract, value });
+                    continue;
+                }
+                abi::UiExport::Component {
+                    contract,
+                    component,
+                } => (contract, component),
+            };
+            if !matches!(contract.interface, Interface::Component { .. }) || component.is_empty() {
+                return Err(Error::Invalid(
+                    "local JS export must declare a component".into(),
+                ));
+            }
+            let Interface::Component {
+                props,
+                events,
+                captures,
+            } = &contract.interface
+            else {
+                unreachable!()
+            };
+            let props = jsonschema::validator_for(props)
+                .map_err(|error| Error::Invalid(error.to_string()))?;
+            let events = event_schemas(events)?;
+            let compiled_captures = capture_schemas(captures)?;
+            let callbacks = self.modules[&id]
+                .module
+                .component(&component, !captures.is_empty())?;
+            batch.insert(
+                name,
+                Published {
+                    contract,
+                    value: Export::Component {
+                        props,
+                        events,
+                        captures: compiled_captures,
+                        implementation: Component::JavaScript {
+                            realm: realm.clone(),
+                            callbacks,
+                        },
+                    },
+                },
+            );
+        }
+        self.charge_values(&activation, &batch)?;
+        self.runtime
+            .publish(&activation, batch)
+            .map_err(|rejected| Error::Core(rejected.error))?;
+        Ok(())
+    }
+
+    fn poll_script_activations(&mut self) -> Result<bool> {
+        let mut completed = Vec::new();
+        let wake = self.waker();
+        let mut cx = Context::from_waker(&wake);
+        for (id, loaded) in &mut self.modules {
+            if let Some(job) = loaded.activation.as_mut()
+                && let Poll::Ready(result) = Pin::new(job).poll(&mut cx)
+            {
+                loaded.activation = None;
+                completed.push((id.clone(), result));
+            }
+        }
+        let progressed = !completed.is_empty();
+        for (id, result) in completed {
+            match result.and_then(|exports| self.publish_script_exports(id.clone(), exports)) {
+                Ok(()) => {}
+                Err(error) => {
+                    self.runtime.retire(&self.activations[&id])?;
+                    self.deployment_error.get_or_insert(error.to_string());
+                    return Err(error);
+                }
+            }
+        }
+        Ok(progressed)
+    }
+
+    fn close_module(&mut self, id: &InstanceId) -> Result<bool> {
+        let wake = self.waker();
+        let loaded = self.modules.get_mut(id).expect("owned module");
+        if loaded.closing.is_none() {
+            loaded.closing = Some(ModuleClose::Pending(loaded.module.close()?));
+        }
+        let job = match loaded.closing.as_mut().expect("module close") {
+            ModuleClose::Pending(job) => job,
+            ModuleClose::Failed(reason) => return Err(Error::Script(reason.clone())),
+        };
+        let mut cx = Context::from_waker(&wake);
+        let Poll::Ready(result) = Pin::new(job).poll(&mut cx) else {
+            return Ok(false);
+        };
+        self.runtime.complete_resource(
+            &loaded.resource,
+            result.as_ref().map(|_| ()).map_err(ToString::to_string),
+        )?;
+        if let Err(error) = result {
+            loaded.closing = Some(ModuleClose::Failed(error.to_string()));
+            return Err(error);
+        }
+        self.modules.remove(id);
+        Ok(true)
+    }
+
+    /// Replace the embedding's wake destination; no guest or native work is run.
+    /// Production renderers prepare their original native resources before the
+    /// logical candidate is published. Pure runtime callers can commit directly.
+    pub fn defer_native_commit(&mut self) {
+        self.native_commit = true;
+    }
+
+    pub fn set_waker(&mut self, wake: Waker) {
+        *self.wake.lock().expect("UI wake destination") = wake;
+    }
+
+    pub fn waker(&self) -> Waker {
+        self.wake.lock().expect("UI wake destination").clone()
+    }
+    /// Native resources retain a stable notification destination while startup
+    /// and interactive executors replace the actual task waker.
+    pub fn wake_callback(&self) -> impl Fn() + Send + Sync + 'static {
+        let wake = self.wake.clone();
+        move || {
+            let wake = wake.lock().expect("UI wake destination").clone();
+            wake.wake();
+        }
+    }
+
+    /// Startup can await convergence before native input is installed. During an
+    /// active surface the embedding instead advances this same owner on wakeups.
+    pub async fn wait_ready(&mut self) -> Result<()> {
+        std::future::poll_fn(|cx| {
+            self.set_waker(cx.waker().clone());
+            if let Err(error) = self.advance_deployment() {
+                return Poll::Ready(Err(error));
+            }
+            if self.deployment_converging() {
+                Poll::Pending
+            } else {
+                Poll::Ready(Ok(()))
+            }
+        })
+        .await
+    }
+
+    /// Await admitted logical work from a noninteractive asynchronous caller.
+    /// Interactive embeddings advance this owner on wakeups instead of waiting.
+    pub async fn wait_idle(&mut self) -> Result<()> {
+        std::future::poll_fn(|cx| {
+            self.set_waker(cx.waker().clone());
+            if let Err(error) = self.advance_ui() {
+                return Poll::Ready(Err(error));
+            }
+            if self.ui_update.is_none() && self.ui_inputs.is_empty() {
+                Poll::Ready(Ok(()))
+            } else {
+                Poll::Pending
+            }
+        })
+        .await
+    }
+
+    /// Await initial mount preparation before installing an interactive surface.
+    pub async fn wait_frame(&mut self, mount: &Mount) -> Result<()> {
+        std::future::poll_fn(|cx| {
+            self.set_waker(cx.waker().clone());
+            if let Err(error) = self.advance_ui() {
+                return Poll::Ready(Err(error));
+            }
+            if self.views.contains_key(&mount.id()) {
+                Poll::Ready(Ok(()))
+            } else if self.ui_update.is_some() {
+                Poll::Pending
+            } else {
+                Poll::Ready(Err(Error::Invalid(
+                    "initial UI frame was not committed".into(),
+                )))
+            }
+        })
+        .await
+    }
+
+    fn begin_invoke(
         &mut self,
         mount: &Mount,
         method: &str,
         args: &[Value],
         deadline: std::time::Instant,
-        inherited_input: bool,
-    ) -> Result<Invocation<V>> {
+    ) -> Result<PendingInvocation<V>> {
         let input = if method == "event" {
             Some(
                 serde_json::from_value::<abi::ComponentInput>(args[1].clone())
@@ -509,16 +703,9 @@ impl<V: ?Sized + 'static> Application<V> {
         } else {
             None
         };
-        let input_admission = matches!(input, Some(abi::ComponentInput::Raw { .. }))
-            || (inherited_input && matches!(input, Some(abi::ComponentInput::Component { .. })));
         let values = self.mount_values(mount, &args)?;
         let execution = self.runtime.admit_mount(mount)?;
-        let Export::Component {
-            implementation,
-            events,
-            ..
-        } = execution.value()
-        else {
+        let Export::Component { implementation, .. } = execution.value() else {
             unreachable!()
         };
         let call = match method {
@@ -548,43 +735,80 @@ impl<V: ?Sized + 'static> Application<V> {
             }
             _ => unreachable!(),
         };
-        let mut failed_realm = None;
-        let result = match implementation {
-            Component::JavaScript { realm, callbacks } => {
-                let result = callbacks.call(call, &values, deadline);
-                if matches!(result, Err(Error::Script(_))) {
-                    failed_realm = Some(realm.clone());
-                }
+        let (result, realm) = match implementation {
+            Component::JavaScript { realm, callbacks } => (
+                InvocationResult::Script(
+                    callbacks
+                        .call(
+                            call,
+                            &values,
+                            deadline,
+                            self.scene_compiler
+                                .as_ref()
+                                .expect("preflight compiler")
+                                .prepare
+                                .clone(),
+                        )
+                        .unwrap_or_else(|error| backend::Job::ready(Err(error))),
+                ),
+                Some(realm.clone()),
+            ),
+            Component::Native(component) => (
+                InvocationResult::Native(Some(component.call(call, &values))),
+                None,
+            ),
+        };
+        Ok(PendingInvocation {
+            execution,
+            result,
+            realm,
+        })
+    }
+
+    fn poll_invocation(
+        &mut self,
+        pending: &mut PendingInvocation<V>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<Invocation<V>>> {
+        let result = match &mut pending.result {
+            InvocationResult::Native(result) => result.take().expect("native result consumed once"),
+            InvocationResult::Script(job) => {
+                let Poll::Ready(result) = Pin::new(job).poll(cx) else {
+                    return Poll::Pending;
+                };
                 result.and_then(|output| {
-                    // Charge the complete guest result before any translation.
-                    tree::check_call_bytes(&output)?;
-                    if std::time::Instant::now() >= deadline {
-                        return Err(Error::Invalid("UI scene compilation deadline".into()));
-                    }
                     let view = (self
                         .scene_compiler
                         .as_ref()
                         .expect("preflight compiler")
-                        .compile)(&output.frame.view, deadline)?;
-                    if std::time::Instant::now() >= deadline {
-                        return Err(Error::Invalid("UI scene compilation deadline".into()));
-                    }
-                    // The kernel, not the compiler, retains untrusted source
-                    // for callback, transaction and mounted-frame accounting.
-                    let view = view.with_declaration(output.frame.view.clone())?;
-                    Ok(output.map_view(|_| view))
+                        .finish)(output.frame.view)?;
+                    // The checked source is retained separately for guest accounting.
+                    Ok(ComponentOutput {
+                        frame: Frame {
+                            revision: output.frame.revision,
+                            state: output.frame.state,
+                            surface: output.frame.surface,
+                            view,
+                        },
+                        events: output.events,
+                        actions: output.actions,
+                        cancel: output.cancel,
+                        subscriptions: output.subscriptions,
+                    })
                 })
             }
-            Component::Native(component) => component.call(call, &values),
+        };
+        let failed_realm = if matches!(result, Err(Error::Script(_))) {
+            pending.realm.clone()
+        } else {
+            None
+        };
+        let Export::Component { events, .. } = pending.execution.value() else {
+            unreachable!()
         };
         let result = result.and_then(|output| {
-            if output.decision.is_some() && !input_admission {
-                return Err(Error::Invalid(
-                    "input decision requires an original synchronous input route".into(),
-                ));
-            }
-            // All declarative data is charged, including the original guest
-            // scene. Only trusted opaque Rust recipe memory is excluded.
+            // Charge all declarative data, including the original guest scene.
+            // Trusted opaque native recipe memory is the only excluded payload.
             let metadata = (
                 output.frame.revision,
                 &output.frame.state,
@@ -593,7 +817,6 @@ impl<V: ?Sized + 'static> Application<V> {
                 &output.actions,
                 &output.cancel,
                 &output.subscriptions,
-                &output.decision,
             );
             tree::check_call_bytes(&(metadata, output.frame.view.metadata()))?;
             if output.events.len() > 64 {
@@ -617,7 +840,7 @@ impl<V: ?Sized + 'static> Application<V> {
             output.frame.validate_metadata().map_err(Error::Invalid)?;
             Ok(output)
         });
-        self.runtime.settle(&execution, Ok(()))?; // Only declarative scene preparation.
+        self.runtime.settle(&pending.execution, Ok(()))?; // Only declarative scene preparation.
         if let Some(realm) = failed_realm {
             for (id, loaded) in &self.modules {
                 if Rc::ptr_eq(&loaded.realm, &realm) {
@@ -635,10 +858,7 @@ impl<V: ?Sized + 'static> Application<V> {
             }
         }
         self.sync_subscription_demand();
-        result.map(|output| Invocation {
-            output,
-            input_admission,
-        })
+        Poll::Ready(result.map(|output| Invocation { output }))
     }
 
     fn validate_surface(&mut self, mount: &Mount, frame: &Frame<NativeView<V>>) -> Result<()> {
@@ -664,7 +884,7 @@ impl<V: ?Sized + 'static> Application<V> {
     }
 
     pub fn can_shutdown(&self) -> bool {
-        self.views.is_empty() && self.actions.accepted_count() == 0
+        self.views.is_empty() && self.actions.accepted_count() == 0 && self.ui_update.is_none()
     }
 
     pub fn scheduler(&self) -> &tokio::runtime::Handle {
@@ -739,19 +959,7 @@ impl<V: ?Sized + 'static> Application<V> {
         self.actions.queue.clear();
         self.actions.outcomes.clear();
         for id in self.modules.keys().cloned().collect::<Vec<_>>() {
-            let loaded = &self.modules[&id];
-            let result = loaded.module.close();
-            match result {
-                Ok(()) => {
-                    self.runtime.complete_resource(&loaded.resource, Ok(()))?;
-                    self.modules.remove(&id);
-                }
-                Err(error) => {
-                    self.runtime
-                        .complete_resource(&loaded.resource, Err(error.to_string()))?;
-                    return Err(error);
-                }
-            }
+            self.close_module(&id)?;
         }
         // Children must finish before their parent. The checked plan has no
         // ownership cycles; a fixed point with owners left is genuine pending

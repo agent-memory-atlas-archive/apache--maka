@@ -119,6 +119,17 @@ pub struct Region {
     pub tab_index: i16,
     #[serde(default)]
     pub listen: BTreeSet<EventKind>,
+    /// These defaults are decided from the committed region before guest input.
+    #[serde(default = "native_default")]
+    pub focus_on_pointer: bool,
+    #[serde(default = "native_default")]
+    pub drag_preview: bool,
+    #[serde(default = "native_default")]
+    pub tab_navigation: bool,
+    #[serde(default = "native_default")]
+    pub native_copy: bool,
+    #[serde(default = "native_default")]
+    pub bubble_input: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -128,6 +139,9 @@ pub struct Contents {
     pub regions: Vec<Region>,
     pub focus_color: Option<u32>,
     pub drag_color: Option<u32>,
+}
+fn native_default() -> bool {
+    true
 }
 impl Contents {
     pub fn preflight(source: &Value, work: &mut usize, deadline: Instant) -> Result<(), String> {

@@ -37,16 +37,6 @@ pub struct ComponentOutput<V = Value> {
     /// Complete current subscription demand. Empty removes previous demand.
     #[serde(default)]
     pub subscriptions: Vec<super::actions::Action>,
-    /// Applies to the original native input after its synchronous event route commits.
-    /// It is never retained in a frame or replayed by a renderer.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub decision: Option<InputDecision>,
-}
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(default, deny_unknown_fields, rename_all = "camelCase")]
-pub struct InputDecision {
-    pub prevent_default: bool,
-    pub stop_propagation: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -62,7 +52,6 @@ impl<V> ComponentOutput<V> {
             actions: self.actions,
             cancel: self.cancel,
             subscriptions: self.subscriptions,
-            decision: self.decision,
         }
     }
 }
@@ -163,7 +152,6 @@ impl<V> Frame<V> {
             actions: Vec::new(),
             cancel: Vec::new(),
             subscriptions: Vec::new(),
-            decision: None,
         }
     }
     pub fn validate_metadata(&self) -> Result<(), String> {

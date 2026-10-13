@@ -17,11 +17,54 @@
  * under the License.
  */
 
-use super::{Presenter, registry, sanitize};
+use super::{PaintedScene, Presenter, registry, sanitize};
 use crate::terminal;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{self, Event, EventStream, KeyCode, KeyEventKind, KeyModifiers};
+use futures_util::{FutureExt, StreamExt};
 use serde_json::json;
 use std::time::{Duration, Instant};
+use std::{
+    collections::VecDeque,
+    future::Future,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll, Wake, Waker},
+};
+
+#[derive(Default)]
+struct TurnWake(tokio::sync::Notify);
+impl Wake for TurnWake {
+    fn wake(self: Arc<Self>) {
+        self.0.notify_one();
+    }
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.notify_one();
+    }
+}
+async fn deadline(at: Option<Instant>) {
+    match at {
+        Some(at) => tokio::time::sleep_until(at.into()).await,
+        None => std::future::pending().await,
+    }
+}
+
+struct PendingOutput {
+    sequence: u64,
+    generation: uuid::Uuid,
+    surface: maka_plugin_core::runtime::Mount,
+    receipt: tokio::sync::oneshot::Receiver<std::io::Result<()>>,
+    scene: Option<PaintedScene>,
+}
+fn retain_clipboard(queue: &mut VecDeque<Vec<u8>>, bytes: Vec<u8>) -> Result<(), String> {
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    if queue.len() >= 16 || queue.iter().map(Vec::len).sum::<usize>() + bytes.len() > 1024 * 1024 {
+        return Err("terminal clipboard output queue full".into());
+    }
+    queue.push_back(bytes);
+    Ok(())
+}
 
 /// Run on the foreground thread inside a multithreaded Tokio runtime.
 /// Accepted service workers remain owned after the terminal surface closes.
@@ -77,9 +120,64 @@ pub fn run(
             Err(error) => failure = Some(format!("{diagnostic}\n{error}")),
         }
     }
+    let wake = Arc::new(TurnWake::default());
+    let waker = Waker::from(wake.clone());
+    presenter.application.set_waker(waker.clone());
+    updates.set_waker(waker);
+    let mut events = EventStream::new();
+    let output = terminal::Output::new().map_err(|e| e.to_string())?;
+    let mut pending_output: Option<PendingOutput> = None;
+    let mut clipboard_output = VecDeque::new();
+    let mut issued_sequence = 0u64;
+    let mut written_sequence = 0u64;
     let mut exit_key = ExitKey::default();
     let mut queued_input = None;
     loop {
+        if let Some(pending) = pending_output.as_mut() {
+            let destination = presenter.application.waker();
+            let mut cx = Context::from_waker(&destination);
+            if let Poll::Ready(result) = Pin::new(&mut pending.receipt).poll(&mut cx) {
+                let pending = pending_output.take().expect("original output receipt");
+                let result = result
+                    .map_err(|e| std::io::Error::other(e.to_string()))
+                    .and_then(|result| result);
+                if let Err(error) = result {
+                    failure.get_or_insert(sanitize(&error.to_string()));
+                } else if pending.sequence != written_sequence + 1 {
+                    failure.get_or_insert("terminal output receipt sequence mismatch".into());
+                } else {
+                    written_sequence = pending.sequence;
+                    if screen
+                        .as_ref()
+                        .is_some_and(|screen| screen.generation == pending.generation)
+                        && presenter.surface() == pending.surface
+                        && let Some(scene) = pending.scene
+                    {
+                        presenter.present_written(scene);
+                    }
+                }
+            }
+        }
+        if pending_output.is_none()
+            && let Some(bytes) = clipboard_output.pop_front()
+        {
+            issued_sequence += 1;
+            match output.submit(bytes) {
+                Ok(receipt) => {
+                    pending_output = Some(PendingOutput {
+                        sequence: issued_sequence,
+                        generation: screen.as_ref().expect("original terminal").generation,
+                        surface: presenter.surface(),
+                        receipt,
+                        scene: None,
+                    });
+                    wake.0.notify_one();
+                }
+                Err(error) => {
+                    failure.get_or_insert(sanitize(&error.to_string()));
+                }
+            }
+        }
         if failure.is_some()
             || ((!presenter.surface.is_live()
                 || presenter.application.is_retiring(&presenter.root))
@@ -118,6 +216,15 @@ pub fn run(
                 let original = presenter.surface();
                 // Backend destruction and Guard restoration belong to this exact
                 // original root. A late receipt cannot close a replacement.
+                if pending_output.is_some() || !clipboard_output.is_empty() {
+                    scheduler.block_on(async {
+                        tokio::select! {
+                            _ = wake.0.notified() => {},
+                            _ = events.next() => {},
+                        }
+                    });
+                    continue;
+                }
                 screen.take();
                 exit_key = ExitKey::default();
                 queued_input = None;
@@ -137,7 +244,12 @@ pub fn run(
                         failure = Some(sanitize(&error.to_string()));
                     }
                 },
-                Ok(false) => std::thread::sleep(Duration::from_millis(10)),
+                Ok(false) => scheduler.block_on(async {
+                    tokio::select! {
+                        _ = wake.0.notified() => {},
+                        _ = deadline(updates.next_deadline()) => {},
+                    }
+                }),
                 Err(error) => {
                     presenter.report(&error);
                     failure = Some(sanitize(&error.to_string()));
@@ -150,12 +262,13 @@ pub fn run(
                 return Ok(true);
             }
             let screen = screen.as_mut().expect("active terminal");
-            if presenter.resources.redraw
-                || presenter.next_frame.is_some_and(|at| Instant::now() >= at)
+            if pending_output.is_none()
+                && (presenter.resources.redraw
+                    || presenter.next_frame.is_some_and(|at| Instant::now() >= at))
             {
                 let mut scene = None;
                 let mut paint_error = None;
-                terminal::draw(screen, |frame| {
+                let bytes = terminal::render(screen, |frame| {
                     match presenter.paint(frame.area(), frame.buffer_mut()) {
                         Ok(painted) => scene = Some(painted),
                         Err(error) => paint_error = Some(error.to_string()),
@@ -165,22 +278,53 @@ pub fn run(
                 if let Some(error) = paint_error {
                     return Err(error);
                 }
-                presenter.present(scene.expect("successful paint"));
+                issued_sequence += 1;
+                pending_output = Some(PendingOutput {
+                    sequence: issued_sequence,
+                    generation: screen.generation,
+                    surface: presenter.surface(),
+                    receipt: output.submit(bytes).map_err(|e| e.to_string())?,
+                    scene,
+                });
+                wake.0.notify_one();
+                presenter.resources.redraw = false;
+                presenter.next_frame = None;
             }
-            if queued_input.is_some()
-                || event::poll(Duration::from_millis(16)).map_err(|e| e.to_string())?
-            {
-                let input = match queued_input.take() {
-                    Some(input) => input,
-                    None => event::read().map_err(|e| e.to_string())?,
-                };
+            let input = match queued_input.take() {
+                Some(input) => Some(input),
+                None => {
+                    let at = [
+                        presenter.next_frame.filter(|_| pending_output.is_none()),
+                        exit_key.0.map(|(_, at)| at),
+                        updates.next_deadline(),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .min();
+                    scheduler
+                        .block_on(async {
+                            tokio::select! {
+                                input = events.next() => input.transpose(),
+                                _ = wake.0.notified() => Ok(None),
+                                _ = deadline(at) => Ok(None),
+                            }
+                        })
+                        .map_err(|e| e.to_string())?
+                }
+            };
+            if let Some(input) = input {
                 if exit_key.ready(Some(&input), Instant::now()) {
                     return Ok(true);
                 }
                 if is_copy(&input) {
-                    if let Err(error) = presenter.copy(&mut std::io::stdout().lock()) {
+                    let mut bytes = Vec::new();
+                    if let Err(error) = presenter.copy(&mut bytes) {
                         presenter.report(&error);
                     }
+                    if let Err(error) = retain_clipboard(&mut clipboard_output, bytes) {
+                        presenter.report(&error);
+                    }
+                    wake.0.notify_one();
                     return Ok(false);
                 }
                 if is_exit(&input) && !presenter.captures_keyboard().map_err(|e| e.to_string())? {
@@ -204,19 +348,26 @@ pub fn run(
                 // so streaming cannot repeatedly move the tail ahead of it.
                 // Keep other gestures for the next presented frame.
                 let until = Instant::now() + Duration::from_millis(8);
-                while scrolling
-                    && Instant::now() < until
-                    && event::poll(Duration::ZERO).map_err(|e| e.to_string())?
-                {
-                    let input = event::read().map_err(|e| e.to_string())?;
+                while scrolling && Instant::now() < until {
+                    let Some(Some(input)) = events.next().now_or_never() else {
+                        break;
+                    };
+                    let input = input.map_err(|e| e.to_string())?;
                     if !is_wheel(&input) {
                         queued_input = Some(input);
                         break;
                     }
                     presenter.input(input).map_err(|e| e.to_string())?;
                 }
-                if let Err(error) = presenter.flush_clipboard(&mut std::io::stdout().lock()) {
+                let mut bytes = Vec::new();
+                if let Err(error) = presenter.flush_clipboard(&mut bytes) {
                     presenter.report(&error);
+                }
+                if let Err(error) = retain_clipboard(&mut clipboard_output, bytes) {
+                    presenter.report(&error);
+                }
+                if !clipboard_output.is_empty() {
+                    wake.0.notify_one();
                 }
             }
             Ok(false)
@@ -254,7 +405,7 @@ pub fn run(
                 Err(error) => presenter.report(&error),
             }
         }
-        std::thread::sleep(Duration::from_millis(10));
+        scheduler.block_on(wake.0.notified());
     }
 }
 fn is_wheel(event: &Event) -> bool {

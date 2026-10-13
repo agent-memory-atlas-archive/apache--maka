@@ -67,7 +67,7 @@ impl Scene {
         .unwrap();
         let root = application.mount_launch(json!({"mode":mode})).unwrap();
         let app = Rc::new(RefCell::new(application));
-        let (wake, receipts) = tokio::sync::mpsc::unbounded_channel();
+        let (wake, receipts) = tokio::sync::mpsc::channel(1);
         let resources = Rc::new(RefCell::new(resources::NativeResources::new(
             root.clone(),
             wake,
