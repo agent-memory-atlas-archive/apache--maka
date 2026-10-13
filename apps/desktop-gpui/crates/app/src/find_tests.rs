@@ -34,10 +34,16 @@ use serde_json::{Value, json};
 
 /// Task `s1`'s `subscription.open`: one settled turn in its tail.
 fn open_with_a_turn() -> Value {
+    open_with_reply("The **needle** is here.")
+}
+
+/// Task `s1`'s `subscription.open`: one settled turn in its tail, whose
+/// reply (item `t1-a`) is `reply`.
+pub(crate) fn open_with_reply(reply: &str) -> Value {
     let rows = [
         json!({"type": "user", "id": "t1", "turnId": "t1", "ts": 1, "text": "Where is the needle?"}),
         json!({"type": "assistant", "id": "t1-a", "turnId": "t1", "ts": 2,
-               "text": "The **needle** is here.", "contentOrder": ["text"], "modelId": "m"}),
+               "text": reply, "contentOrder": ["text"], "modelId": "m"}),
         json!({"type": "turn_state", "id": "t1-end", "turnId": "t1", "ts": 3,
                "status": "completed"}),
     ];

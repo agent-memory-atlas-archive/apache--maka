@@ -34,9 +34,13 @@
 //!   ([`init`]).
 //! - [`Desk`] is where a copy is saved and how one reaches the default app;
 //!   [`install_temp_files`] sets up the copies' directory at launch.
+//! - [`local`] decides what a click on a path a reply names does with the
+//!   file on this machine ([`PathOpening`]); [`FilesView::open_path`]
+//!   does it, previewing a [`LocalFile`] in the face.
 
 mod desk;
 mod list;
+pub mod local;
 pub mod policy;
 mod preview;
 pub mod read;
@@ -46,7 +50,8 @@ use gpui_kit::{App, KeyBinding};
 
 pub use desk::{ChooseSavePath, Desk, OpenFile, install_temp_files};
 pub use list::{ArtifactList, ArtifactListEvent, ListLoad, POLL_INTERVAL};
-pub use preview::{ArtifactPreview, Body, ImageBody, PreviewEvent, TextBody};
+pub use local::{LocalFile, PathOpening};
+pub use preview::{ArtifactPreview, Body, ImageBody, PreviewEvent, PreviewSource, TextBody};
 pub use view::{FilesView, FilesViewEvent, Notice};
 
 /// Key context of the Files face, while anything in it has focus.

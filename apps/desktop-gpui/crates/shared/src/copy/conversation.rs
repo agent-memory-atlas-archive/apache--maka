@@ -86,12 +86,14 @@ texts! {
     TOOL_INPUT = "Input", "输入", "輸入";
     TOOL_OUTPUT = "Output", "输出", "輸出";
     TOOL_NO_OUTPUT = "No output yet", "尚无输出", "尚無輸出";
-    /// A finished call whose result has not arrived: the Host sends Tool
-    /// results with the turn's record, once the turn ends.
-    TOOL_OUTPUT_AT_TURN_END =
-        "Output appears when the turn ends",
-        "本轮结束后显示输出",
-        "本輪結束後顯示輸出";
+    /// A finished call whose arguments and result have not arrived: the
+    /// Host sends them with the turn's record, once the turn ends. Said as
+    /// the answer finishing, Maka Desktop's word for a turn in its copy
+    /// (`editMessageDisabledRunning`).
+    TOOL_DETAILS_AT_TURN_END =
+        "Details appear when this answer finishes",
+        "回答完成后显示详情",
+        "回答完成後顯示詳細資訊";
     /// A finished call that returned nothing to show (Maka Desktop's `noOutput`).
     TOOL_OUTPUT_NONE = "No output", "无输出", "無輸出";
     /// An empty value or list inside a Tool's output (Maka Desktop's `empty`).
@@ -167,7 +169,11 @@ texts! {
     /// The model picker's accessible name and tooltip.
     MODEL = "Model", "模型", "模型";
     /// The model picker's tooltip while a turn runs, when it is disabled.
-    MODEL_BUSY = "Switch models when the current turn ends", "本轮结束后再切换模型", "本輪結束後再切換模型";
+    /// Worded as Maka Desktop's `editMessageDisabledRunning`.
+    MODEL_BUSY =
+        "Wait for this answer to finish before switching models",
+        "当前回答仍在进行中，结束后再切换模型",
+        "目前回答仍在進行中，結束後再切換模型";
     MODELS_LOADING = "Loading models…", "正在加载模型…", "正在載入模型…";
     MODELS_FAILED = "Couldn’t load the models", "无法加载模型", "無法載入模型";
     MODELS_NONE = "No models enabled", "没有已启用的模型", "沒有已啟用的模型";

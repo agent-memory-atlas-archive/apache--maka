@@ -61,6 +61,8 @@ pub enum ReadFailure {
     Changed,
     /// The file is larger than this read takes.
     TooLarge,
+    /// A file on this machine could not be read: the system's words.
+    Local(Arc<str>),
 }
 
 impl From<HostRequestError> for ReadFailure {

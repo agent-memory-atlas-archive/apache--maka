@@ -21,7 +21,9 @@
 //! daily review): which ones open. gpui-kit's text view hands any address
 //! to the platform by default, so a `javascript:` or `file:` link the agent
 //! wrote would reach Launch Services as it is, and a `file:` link can start
-//! an application. Every rendered text takes [`follow_link`] instead.
+//! an application. Every rendered text takes [`follow_link`] instead; a
+//! reply's links to paths on this machine, in the conversation's own
+//! scheme, go to the conversation before it and never reach it.
 
 use gpui_kit::{App, ClickEvent, MouseButton, SharedString};
 
@@ -37,19 +39,25 @@ pub fn external_link(href: &str) -> Option<String> {
 }
 
 /// Opens a link clicked in rendered text when it is a web or mail address
-/// ([`external_link`]); any other link does nothing. Which clicks follow a
-/// link is the kit's own rule, which a handler replaces: the primary or
-/// middle button, a key, a tap.
+/// ([`external_link`]); any other link does nothing.
 pub fn follow_link(href: &SharedString, event: &ClickEvent, cx: &mut App) {
-    let follows = match event {
+    if follows(event)
+        && let Some(url) = external_link(href)
+    {
+        cx.open_url(&url);
+    }
+}
+
+/// Whether `event` follows the link it clicked: the kit's own rule, which
+/// a handler replaces: the primary or middle button, a key, a tap. A
+/// right-click does not.
+pub fn follows(event: &ClickEvent) -> bool {
+    match event {
         ClickEvent::Mouse(click) => {
             matches!(click.up.button, MouseButton::Left | MouseButton::Middle)
         }
         ClickEvent::Keyboard(_) => true,
         ClickEvent::Touch(tap) => !tap.long_press,
-    };
-    if follows && let Some(url) = external_link(href) {
-        cx.open_url(&url);
     }
 }
 

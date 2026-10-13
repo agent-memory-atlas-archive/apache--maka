@@ -21,8 +21,9 @@
 //! file's preview, its actions, and every line that says why something
 //! could not be shown or done. Desktop's `ArtifactCopy`
 //! (`apps/desktop/src/renderer/locales/artifact-copy.ts`) where it has the
-//! words; this client's own where its Files face differs (no Finder; an
-//! HTML page drawn by the kit's text view, without its scripts or styles).
+//! words; this client's own where its Files face differs (Finder only for
+//! a file on this machine that a reply names; an HTML page drawn by the
+//! kit's text view, without its scripts or styles).
 
 use super::{Locale, plural};
 
@@ -39,6 +40,12 @@ texts! {
     NO_MATCHES = "No files match", "没有匹配的文件", "沒有符合的檔案";
     /// The list with nothing in it.
     EMPTY = "Files the agent makes appear here.", "Agent 生成的文件会显示在这里。", "Agent 產生的檔案會顯示在這裡。";
+    /// The list with nothing in it, on a Host on this machine, where the
+    /// paths a reply names open on a click.
+    EMPTY_LOCAL =
+        "Files the agent makes appear here. File paths in replies open when clicked.",
+        "Agent 生成的文件会显示在这里。回复中的文件路径可以直接点击打开。",
+        "Agent 產生的檔案會顯示在這裡。回覆中的檔案路徑可以直接點擊開啟。";
     LOADING = "Loading files…", "正在读取文件…", "正在讀取檔案…";
     LIST_FAILED = "Couldn’t list this task’s files.", "无法列出此任务的文件。", "無法列出此任務的檔案。";
     RETRY = "Retry", "重试", "重試";
@@ -84,6 +91,13 @@ texts! {
     COPY = "Copy", "复制", "複製";
     SAVE_AS = "Save As…", "另存为…", "另存新檔…";
     OPEN_DEFAULT = "Open in Default App", "用默认应用打开", "以預設應用程式開啟";
+    /// A file on this machine that a reply names: shown in its folder,
+    /// and its path copied (Desktop's `openInFinder`).
+    REVEAL = "Show in Finder", "在 Finder 中打开", "在 Finder 中開啟";
+    COPY_PATH = "Copy Path", "复制路径", "複製路徑";
+    PATH_COPIED = "Copied the path of {name}", "已复制 {name} 的路径", "已複製 {name} 的路徑";
+    /// A path a reply names, clicked when nothing is there any more.
+    FILE_GONE = "This file is no longer there", "找不到这个文件", "找不到這個檔案";
     /// The menu item, which asks first.
     DELETE_ITEM = "Delete…", "删除…", "刪除…";
     /// The confirmation's button.
@@ -171,6 +185,16 @@ texts! {
         "Maka has no folder to put a copy in. Save a copy instead.",
         "Maka 没有可用来存放副本的文件夹。请改为另存一份。",
         "Maka 沒有可用來存放副本的資料夾。請改為另存一份。";
+    /// A file on this machine that a reply names, whose content the
+    /// preview cannot draw.
+    WHY_LOCAL_NOT_SHOWN =
+        "This file can’t be shown here. Show it in Finder to open it in another app.",
+        "此文件无法在这里显示。可以在 Finder 中找到它，再用其他应用打开。",
+        "此檔案無法在這裡顯示。可以在 Finder 中找到它，再用其他應用程式開啟。";
+    WHY_LOCAL_READ_FAILED =
+        "Couldn’t read this file: {message}",
+        "无法读取此文件：{message}",
+        "無法讀取此檔案：{message}";
     WHY_NOT_DRAWN =
         "This image can’t be shown here. Save a copy to open it in another app.",
         "此图片无法在这里显示。另存一份即可用其他应用打开。",
@@ -224,6 +248,11 @@ pub fn about(text: super::Text, locale: Locale, name: &str) -> String {
 /// The Host's refusal, in its own words.
 pub fn why_host(locale: Locale, message: &str) -> String {
     WHY_HOST.fill(locale, &[("message", message)])
+}
+
+/// A file on this machine that could not be read, in the system's words.
+pub fn why_local_read_failed(locale: Locale, message: &str) -> String {
+    WHY_LOCAL_READ_FAILED.fill(locale, &[("message", message)])
 }
 
 /// A write that failed, in the system's words.

@@ -18,7 +18,9 @@
  */
 
 //! Where a file leaves the window: a copy saved where the person chooses
-//! (the platform's save dialog), and a copy handed to the default app.
+//! (the platform's save dialog), a copy handed to the default app, and a
+//! file on this machine that a reply names shown in Finder or handed to
+//! the default app as it is.
 //!
 //! The protocol gives no path to an Artifact (Desktop's Show in Finder and
 //! Open come from Electron main), so a file opened in the default app is a
@@ -50,7 +52,7 @@ const TEMP_DIRECTORY: &str = "artifacts";
 /// How a saved copy's place is chosen: `suggested` is the name the dialog
 /// fills in; `None` when the person cancels.
 pub type ChooseSavePath = Rc<dyn Fn(&str, &mut App) -> Task<Option<PathBuf>>>;
-/// How a file is handed to the system's default app.
+/// How a file is handed to the system's default app, or shown in Finder.
 pub type OpenFile = Rc<dyn Fn(&Path, &mut App)>;
 
 /// The desktop the Files face saves to and opens with: the platform's
@@ -59,6 +61,7 @@ pub type OpenFile = Rc<dyn Fn(&Path, &mut App)>;
 pub struct Desk {
     choose_save_path: ChooseSavePath,
     open: OpenFile,
+    reveal: OpenFile,
     temp_dir: TempDir,
 }
 
@@ -80,17 +83,29 @@ impl std::fmt::Debug for Desk {
 impl Desk {
     /// A desk that asks with `choose_save_path`, opens with `open`, and
     /// writes the copies it opens under `temp_dir` (none: nothing opens).
+    /// It shows nothing in Finder until [`Self::with_reveal`] says how.
     pub fn new(
         choose_save_path: ChooseSavePath,
         open: OpenFile,
         temp_dir: Option<PathBuf>,
     ) -> Self {
-        Self { choose_save_path, open, temp_dir: TempDir::Fixed(temp_dir) }
+        Self {
+            choose_save_path,
+            open,
+            reveal: Rc::new(|_, _| {}),
+            temp_dir: TempDir::Fixed(temp_dir),
+        }
+    }
+
+    /// Shows a file or folder in Finder with `reveal`.
+    pub fn with_reveal(mut self, reveal: OpenFile) -> Self {
+        self.reveal = reveal;
+        self
     }
 
     /// The platform's save dialog, opening in Downloads, the system's
-    /// default app, and this launch's directory of copies when
-    /// [`install_temp_files`] set it up.
+    /// default app, Finder (the platform's file manager), and this
+    /// launch's directory of copies when [`install_temp_files`] set it up.
     pub fn system() -> Self {
         let choose: ChooseSavePath = Rc::new(|suggested, cx| {
             let directory = dirs::download_dir().or_else(dirs::home_dir).unwrap_or_default();
@@ -107,6 +122,7 @@ impl Desk {
         Self {
             choose_save_path: choose,
             open: Rc::new(|path, cx| cx.open_with_system(path)),
+            reveal: Rc::new(|path, cx| cx.reveal_path(path)),
             temp_dir: TempDir::System,
         }
     }
@@ -117,6 +133,10 @@ impl Desk {
 
     pub(crate) fn open(&self, path: &Path, cx: &mut App) {
         (self.open)(path, cx);
+    }
+
+    pub(crate) fn reveal(&self, path: &Path, cx: &mut App) {
+        (self.reveal)(path, cx);
     }
 
     pub(crate) fn temp_dir(&self, cx: &App) -> Option<PathBuf> {

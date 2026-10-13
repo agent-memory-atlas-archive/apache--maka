@@ -58,8 +58,8 @@ two reviewers (Opus and Fable) without a sign-off per step; each package is comm
   candidates). Links in rendered text open only `http:`, `https:` and `mailto:` (Desktop's
   rule); a page's images draw only from `data:` URLs, as the app has no HTTP client. Open in
   Default App for PDFs, raster images and HTML pages (the browser runs a page's scripts), as a
-  copy under the app's cache named by ids; Save As for every kind; no Show in Finder (no path
-  in the protocol).
+  copy under the app's cache named by ids; Save As for every kind; no Show in Finder for an
+  Artifact (no path in the protocol).
 - **Trace (Desktop's Inspector)** is a workbar face after Files: persisted for the task, one
   face, the `activity` glyph (added to the icon set), no shortcut, as Desktop's. It shows what
   Desktop's panel shows from the same three reads, `execution.inspect.query`
@@ -129,6 +129,18 @@ two reviewers (Opus and Fable) without a sign-off per step; each package is comm
   and operators mixed from the palette's ink and background. Every role keeps APCA Lc 45 on the
   fills code sits on (code, sunken, a diff's added and removed rows) in every palette and mode,
   comments Lc 35.
+- **Paths in replies (F46)** open on a click, on a Host on this machine only (Zed's agent panel
+  does this; Desktop does not). When a reply settles, one background pass checks each inline
+  code span that is wholly a path (absolute, `~/…`, or relative to the task's folder; a trailing
+  `:line[:col]` dropped) and each link to a `file:` URL or a plain path. Those naming something
+  that exists become links with the client's own `maka-file:` scheme in the Markdown handed to
+  the text view, so they draw as the kit's link over a code chip; find searches the reply's own
+  text and maps its ranges onto the rewritten one. A click decides again from the file there,
+  symlinks resolved: nothing there says so; a folder, a bundle or an unknown kind shows in
+  Finder; a document on a fixed list (Office, iWork, OpenDocument, PDF, CSV, RTF, EPUB) opens in
+  the default app; text, source, an HTML page or an image within the Files face's limits
+  previews there, with Show in Finder and Copy Path. Nothing else is opened or launched. No
+  right-click menu or tooltip on a path: the kit's text view has no hook for either.
 
 ## Packages
 
@@ -149,6 +161,7 @@ two reviewers (Opus and Fable) without a sign-off per step; each package is comm
 | F43 | Files: HTML pages rendered in the face, links by Desktop's rule, pages opened in the default app | 4a05bc0..9b58c10 | done |
 | F44 | Side chat fixes from an adversarial review: the ledger merged across runs and never overwritten unread, owner locks taken before they are named, `operation_conflict` settled, removals tried again, the picked mode set again | a754ada..cbbca54 | done |
 | F45 | A State Root whose disk identity changed (macOS remounted its volume): Desktop's repair prompt in the disconnected strip, Repair workspace beside Retry, the marker's `rootIdentity` replaced under Maka's marker lock with before and after checks | e6d0a25..b5ec632 | done |
+| F46 | File paths in replies open the file on a Host on this machine: previewed in Files, opened in the default app (documents only) or shown in Finder | bf7cd70..a527e4d | done |
 
 Later candidates: Browser (gpui-kit has a `webview` crate; the model's browser tools need
 client capabilities), and a webview for the Files face's HTML pages, which would run their

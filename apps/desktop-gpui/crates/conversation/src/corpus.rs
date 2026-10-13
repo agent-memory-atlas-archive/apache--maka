@@ -44,7 +44,7 @@ use crate::rows::{
     RowKey, cap_cut, hidden_tool, tool_detail_text, tool_name_text, tool_summary_cut,
 };
 
-pub(crate) use markdown::VisibleText;
+pub(crate) use markdown::{VisibleText, parse_options};
 
 /// Which text of a row a match is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

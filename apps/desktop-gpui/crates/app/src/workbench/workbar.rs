@@ -68,13 +68,20 @@
 //! stays, as Desktop's are; a settled turn and a subagent's writeback read
 //! them again. The trace is read while its face shows and refreshed from
 //! the task's own signals while it stays.
+//!
+//! On a Host on this machine the paths the task's replies name are links
+//! (the conversation's, resolved under the home folder and the task's
+//! folder), and a click on one goes to the Files face, which opens the
+//! file, shows it in Finder, or previews it and is shown
+//! ([`files::FilesView::open_path`]).
 
 use std::cell::Cell;
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use conversation::{ConversationEvent, ConversationViewEvent};
+use conversation::{ConversationEvent, ConversationViewEvent, LocalPaths};
 use files::{FilesView, FilesViewEvent};
 use gpui_kit::assets::IconName as AssetIcon;
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
@@ -458,15 +465,19 @@ impl Workbench {
             ),
             // Escape in the file list gives the conversation its place
             // back: a maximized panel restored, else the panel hidden and
-            // the composer focused.
+            // the composer focused. A file a reply names, previewed, shows.
             cx.subscribe_in(&files, window, |this, _, event: &FilesViewEvent, window, cx| {
-                if matches!(event, FilesViewEvent::Dismiss) {
-                    if this.workbar_maximized(cx) {
-                        this.set_workbar_maximized(false, window, cx);
-                    } else {
-                        this.set_workbar_open(false, window, cx);
-                        this.composer.update(cx, |composer, cx| composer.focus(window, cx));
+                match event {
+                    FilesViewEvent::Dismiss => {
+                        if this.workbar_maximized(cx) {
+                            this.set_workbar_maximized(false, window, cx);
+                        } else {
+                            this.set_workbar_open(false, window, cx);
+                            this.composer.update(cx, |composer, cx| composer.focus(window, cx));
+                        }
                     }
+                    FilesViewEvent::Show => this.show_files(window, cx),
+                    _ => {}
                 }
             }),
             // Escape in the trace does what it does in the file list.
@@ -505,6 +516,15 @@ impl Workbench {
                         if !folded.is_empty() {
                             this.stage_side_quote(folded, turn_id.clone(), window, cx);
                         }
+                    }
+                    // A path a reply names, clicked: the Files face does
+                    // what the file there now asks. Only a Host on this
+                    // machine names paths here.
+                    ConversationViewEvent::OpenPath { path } if !this.host.read(cx).is_remote() => {
+                        let path = path.clone();
+                        this.workbar
+                            .files
+                            .update(cx, |files, cx| files.open_path(path, window, cx));
                     }
                     _ => {}
                 },
@@ -1105,6 +1125,7 @@ impl Workbench {
     /// it, and reads it if it is a different task (the panel only while it
     /// shows).
     pub(super) fn sync_review_target(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_reply_paths(cx);
         let remote = self.host.read(cx).is_remote();
         let target = self.catalog.read(cx).selected_row().map(|row| {
             if remote {
@@ -1130,6 +1151,20 @@ impl Workbench {
         self.sync_turn_edits(cx);
         self.sync_history_reading(cx);
         self.refresh_review(window, cx);
+    }
+
+    /// Hands the conversation where the paths its replies name lie: the
+    /// home folder and the selected task's folder (the context strip's)
+    /// on a Host on this machine; nowhere on a Host elsewhere, whose paths
+    /// are not this machine's.
+    fn sync_reply_paths(&mut self, cx: &mut Context<Self>) {
+        let paths = (!self.host.read(cx).is_remote()).then(|| {
+            let catalog = self.catalog.read(cx);
+            let folder =
+                catalog.selected_row().map(|row| PathBuf::from(row.workspace_path.as_ref()));
+            LocalPaths::new(std::env::home_dir(), folder)
+        });
+        self.conversation.update(cx, |view, cx| view.set_local_paths(paths, cx));
     }
 
     /// Whether the changes show: the panel shows, on its Changes face.

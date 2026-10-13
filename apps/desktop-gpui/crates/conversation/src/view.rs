@@ -26,6 +26,7 @@ mod landing;
 mod text_views;
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -44,7 +45,7 @@ use gpui_kit::component::{
     h_flex, v_flex,
 };
 use gpui_kit::{
-    AnyElement, App, AppContext as _, Axis, ClipboardItem, Context, ElementId, Entity,
+    AnyElement, App, AppContext as _, Axis, ClickEvent, ClipboardItem, Context, ElementId, Entity,
     EventEmitter, FocusHandle, Focusable, FontWeight, HighlightStyle, Hsla,
     InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, Pixels, Render, Role,
     ScrollHandle, SharedString, StatefulInteractiveElement as _, StyleRefinement, Styled as _,
@@ -58,6 +59,7 @@ use transcript_model::{ToolStatus, TurnViewStatus};
 use crate::composer::{attachment_chip, attachment_kind_icon};
 use crate::corpus::Field;
 use crate::paging::{PageDirection, Paging};
+use crate::paths::{self, LocalPaths, PathLinks};
 use crate::rows::{
     FooterRow, GroupPlace, HistoryRow, ListEdit, PromptAnswers, PromptBody, PromptRow, Row,
     RowBody, RowKey, RowOptions, SentAttachment, SentQuote, ThinkingRow, ToolDiff, ToolKind,
@@ -95,6 +97,10 @@ pub enum ConversationViewEvent {
     /// chat: the transcript's context menu (Desktop's "Ask in side panel").
     /// `turn_id` names the Turn whose replies hold the whole selection.
     AskInSideChat { text: SharedString, turn_id: Option<SharedString> },
+    /// Open the file or folder at `path` on this machine: a click on a
+    /// path a reply names ([`crate::paths`]). Only on a Host on this
+    /// machine; the owner looks at what is there now.
+    OpenPath { path: PathBuf },
 }
 
 gpui_kit::actions!(
@@ -154,6 +160,29 @@ type WallClock = Rc<dyn Fn(&App) -> u64>;
 
 fn system_time_ms(_: &App) -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_millis() as u64)
+}
+
+/// A reply's paths, checked once ([`paths::check`]).
+enum PathCheck {
+    /// Being checked, in this text.
+    Checking(SharedString),
+    /// Checked in this text: its links, when it names any path there.
+    Done(SharedString, Option<Rc<PathLinks>>),
+}
+
+impl PathCheck {
+    /// Whether it is (or is being) checked in `text`.
+    fn is_of(&self, text: &SharedString) -> bool {
+        match self {
+            Self::Checking(checked) | Self::Done(checked, _) => same_text(checked, text),
+        }
+    }
+}
+
+/// Whether two texts are the same: the rows reuse an unchanged string, so
+/// the same pointer says so at once.
+fn same_text(a: &SharedString, b: &SharedString) -> bool {
+    (a.as_ptr() == b.as_ptr() && a.len() == b.len()) || a == b
 }
 
 /// What a turn footer reads off the clocks for one frame.
@@ -266,6 +295,14 @@ pub struct ConversationView {
     /// Whether right-clicking the transcript offers "Ask in side chat":
     /// the task's conversation does, a side chat's own does not.
     side_chat_menu: bool,
+    /// Where the paths replies name lie on this machine; `None` for a
+    /// Host elsewhere, and then no path is a link ([`paths`]).
+    local_paths: Option<LocalPaths>,
+    /// Each settled reply's paths, checked once, by row: dropped with the
+    /// row, the session, or a change of `local_paths`.
+    path_checks: HashMap<RowKey, PathCheck>,
+    /// Counts those drops: a check started before one lands nowhere.
+    path_generation: u64,
     _copied: Option<Task<()>>,
     _spinner: Option<Task<()>>,
     /// Redraws the live running turn's status line as its clock reaches
@@ -321,6 +358,9 @@ impl ConversationView {
             text_views: TextViews::default(),
             retry_countdown: None,
             side_chat_menu: false,
+            local_paths: None,
+            path_checks: HashMap::new(),
+            path_generation: 0,
             _copied: None,
             _spinner: None,
             _clock: None,
@@ -366,6 +406,12 @@ impl ConversationView {
     #[cfg(test)]
     pub(crate) fn pending_reveal(&self) -> Option<RowKey> {
         self.find.reveal.row()
+    }
+
+    /// Whether reply row `key`'s paths are checked, or being checked.
+    #[cfg(test)]
+    pub(crate) fn path_checked(&self, key: &RowKey) -> bool {
+        self.path_checks.contains_key(key)
     }
 
     /// The matches row `key` paints.
@@ -419,6 +465,8 @@ impl ConversationView {
             self.card_diffs.clear();
             self.text_views.clear();
             self.rows.clear();
+            self.path_checks.clear();
+            self.path_generation += 1;
         }
         self.options.locale = Locale::current(cx);
         self.utc_offset = local_utc_offset();
@@ -491,7 +539,112 @@ impl ConversationView {
         self.update_spinner(cx);
         self.note_retry(cx);
         self.update_clock(cx);
+        self.check_paths(cx);
         cx.notify();
+    }
+
+    /// Makes the paths replies name links that open on this machine,
+    /// resolved under `paths`; `None` for a Host elsewhere, where no path
+    /// is a link. Every reply is checked again.
+    pub fn set_local_paths(&mut self, paths: Option<LocalPaths>, cx: &mut Context<Self>) {
+        if self.local_paths == paths {
+            return;
+        }
+        self.local_paths = paths;
+        self.path_checks.clear();
+        self.path_generation += 1;
+        self.check_paths(cx);
+        cx.notify();
+    }
+
+    /// Checks the paths of each reply that has finished streaming and was
+    /// not checked in its current text, all in one background pass; drops
+    /// the checks of rows gone. A reply is shown as it is until its check
+    /// lands.
+    fn check_paths(&mut self, cx: &mut Context<Self>) {
+        let Some(paths) = self.local_paths.clone() else { return };
+        let mut replies = HashSet::new();
+        let mut unchecked = Vec::new();
+        for row in &self.rows {
+            let RowBody::Text { text, streaming, .. } = &row.body else { continue };
+            replies.insert(&row.key);
+            let checked = self.path_checks.get(&row.key).is_some_and(|check| check.is_of(text));
+            if !*streaming && !checked {
+                unchecked.push((row.key.clone(), text.clone()));
+            }
+        }
+        self.path_checks.retain(|key, _| replies.contains(key));
+        if unchecked.is_empty() {
+            return;
+        }
+        for (key, text) in &unchecked {
+            self.path_checks.insert(key.clone(), PathCheck::Checking(text.clone()));
+        }
+        let generation = self.path_generation;
+        let check = cx.background_spawn(async move {
+            unchecked
+                .into_iter()
+                .map(|(key, text)| {
+                    let links = paths::check(&text, &paths);
+                    (key, text, links)
+                })
+                .collect::<Vec<_>>()
+        });
+        cx.spawn(async move |this, cx| {
+            let checked = check.await;
+            this.update(cx, |this, cx| this.take_path_checks(generation, checked, cx)).ok();
+        })
+        .detach();
+    }
+
+    /// Keeps what a check found for each reply still waiting for it in the
+    /// same text.
+    fn take_path_checks(
+        &mut self,
+        generation: u64,
+        checked: Vec<(RowKey, SharedString, Option<PathLinks>)>,
+        cx: &mut Context<Self>,
+    ) {
+        if generation != self.path_generation {
+            return;
+        }
+        let mut linked = false;
+        for (key, text, links) in checked {
+            let waiting = matches!(
+                self.path_checks.get(&key),
+                Some(PathCheck::Checking(pending)) if same_text(pending, &text)
+            );
+            if waiting {
+                linked |= links.is_some();
+                self.path_checks.insert(key, PathCheck::Done(text, links.map(Rc::new)));
+            }
+        }
+        if linked {
+            cx.notify();
+        }
+    }
+
+    /// The links reply row `key` shows `text` with, once its check found
+    /// any.
+    pub(crate) fn path_links(&self, key: &RowKey, text: &SharedString) -> Option<Rc<PathLinks>> {
+        match self.path_checks.get(key)? {
+            PathCheck::Done(checked, links) if same_text(checked, text) => links.clone(),
+            _ => None,
+        }
+    }
+
+    /// A click on a link with the paths' scheme: the path it names,
+    /// resolved again, goes to the owner. A Host elsewhere opens nothing,
+    /// nor does a right-click.
+    fn open_path_link(&mut self, href: &str, event: &ClickEvent, cx: &mut Context<Self>) {
+        if !shared::links::follows(event) {
+            return;
+        }
+        let Some(paths) = &self.local_paths else { return };
+        let Some(path) = paths::link_path(href).and_then(|written| paths.resolve(&written)) else {
+            return;
+        };
+        cx.emit(ConversationViewEvent::OpenPath { path });
     }
 
     /// Parses the diff of each open card that has one and has not been
@@ -1213,7 +1366,7 @@ fn render_row(
         return div().into_any_element();
     };
     let (
-        row,
+        (row, links),
         detail_scroll,
         card_diff,
         spinner_turns,
@@ -1228,6 +1381,10 @@ fn render_row(
         let this = this.read(cx);
         let row = this.rows.get(ix).cloned();
         let marks = row.as_ref().and_then(|row| this.find.marks.of(&row.key));
+        let links = row.as_ref().and_then(|row| match &row.body {
+            RowBody::Text { text, .. } => this.path_links(&row.key, text),
+            _ => None,
+        });
         let (detail_scroll, card_diff) = match row.as_ref().map(|row| &row.body) {
             Some(RowBody::Tool(tool)) => (
                 this.detail_scrolls.get(&tool.expansion_key).cloned(),
@@ -1236,7 +1393,7 @@ fn render_row(
             _ => (None, None),
         };
         (
-            row,
+            (row, links),
             detail_scroll,
             card_diff,
             this.spinner_turns,
@@ -1273,8 +1430,10 @@ fn render_row(
         }
         RowBody::Text { text, interrupted, .. } => {
             // The reply's text view, reached here so that the find bar's
-            // matches paint in it and one can be revealed.
-            let state = text_views.state(&row.key, &text, cx);
+            // matches paint in it and one can be revealed. Once its paths
+            // are checked it draws their links ([`paths`]).
+            let shown = links.as_ref().map_or_else(|| text.clone(), |links| links.text().clone());
+            let state = text_views.state(&row.key, &shown, links, cx);
             let marks = find.marks.as_deref();
             text_views.paint_marks(&row.key, marks, marks_revision, find.fills, cx);
             if let Some(range) = find.reveal.pending(&row.key, Field::Body, find.now)
@@ -1282,7 +1441,7 @@ fn render_row(
             {
                 find.reveal.clear();
             }
-            render_text(id.clone(), text, interrupted, Some(state), window, cx)
+            render_text(id.clone(), shown, interrupted, Some(state), Some(view.clone()), window, cx)
         }
         RowBody::Tool(tool) => render_tool(
             tool,
@@ -1559,17 +1718,20 @@ pub fn assistant_text(
     window: &Window,
     cx: &App,
 ) -> AnyElement {
-    render_text(id.into(), text.into(), false, None, window, cx)
+    render_text(id.into(), text.into(), false, None, None, window, cx)
 }
 
 /// Assistant text: plain markdown on the plate, no bubble, body 14/22. In
 /// the transcript the view's state is the row's (`state`, see
-/// [`TextViews`]); elsewhere it is the element's own.
+/// [`TextViews`]); elsewhere it is the element's own. A link to a path on
+/// this machine goes to `view` ([`paths`]); any other link opens when it
+/// is a web or mail address.
 fn render_text(
     id: ElementId,
     text: SharedString,
     interrupted: bool,
     state: Option<Entity<TextViewState>>,
+    view: Option<WeakEntity<ConversationView>>,
     window: &Window,
     cx: &App,
 ) -> AnyElement {
@@ -1577,14 +1739,21 @@ fn render_text(
         .w_full()
         .gap_1()
         .when(!text.is_empty(), |this| {
-            let view = match &state {
+            let text_view = match &state {
                 Some(state) => TextView::new(state),
                 None => TextView::markdown(id, text),
             };
             this.child(
-                view.style(message_text_style(window, cx))
+                text_view
+                    .style(message_text_style(window, cx))
                     .selectable(true)
-                    .on_link_click(|href, event, _, cx| follow_link(href, event, cx))
+                    .on_link_click(move |href, event, _, cx| {
+                        if !paths::is_path_link(href) {
+                            follow_link(href, event, cx);
+                        } else if let Some(view) = &view {
+                            view.update(cx, |view, cx| view.open_path_link(href, event, cx)).ok();
+                        }
+                    })
                     .w_full()
                     .text_size(dp(BODY_SIZE))
                     .line_height(relative(BODY_LINE_HEIGHT))
@@ -1997,7 +2166,7 @@ fn tool_detail(
             .child(
                 match tool.note {
                     ToolNote::NoOutputYet => copy::TOOL_NO_OUTPUT,
-                    ToolNote::OutputAtTurnEnd => copy::TOOL_OUTPUT_AT_TURN_END,
+                    ToolNote::DetailsAtTurnEnd => copy::TOOL_DETAILS_AT_TURN_END,
                     ToolNote::NoOutput => copy::TOOL_OUTPUT_NONE,
                 }
                 .get(cx),

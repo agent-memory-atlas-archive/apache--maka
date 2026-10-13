@@ -178,6 +178,9 @@ The version lives only in the workspace `Cargo.toml`. A release moves the
   - Files (⌘P): the task's files, with a preview of each and its actions.
     HTML pages show rendered or as source (no scripts or styles) and open in
     the default app.
+  - On a Host on this machine, a file path a reply names opens when
+    clicked: previewed in Files, opened in the default app (documents
+    only), or shown in Finder.
   - Trace: the task's trace, usage and context window, as Maka Desktop's
     Inspector shows them.
   - Terminal: terminals the Host runs for the task, drawn as Zed draws

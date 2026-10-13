@@ -22,7 +22,9 @@
 //! keys; each kind's preview; each failure's line; the actions, Copy only
 //! for text, Delete after its confirmation, Save As assembling chunks
 //! (through a stubbed dialog) and Open in Default App (through a stubbed
-//! opener: nothing opens on the machine running the tests).
+//! opener: nothing opens on the machine running the tests). A path a reply
+//! names opens, shows in (a stubbed) Finder, or previews the file on this
+//! machine.
 
 #![allow(clippy::disallowed_methods)] // Tests read their scratch files.
 
@@ -36,11 +38,13 @@ use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
     App, AppContext as _, ElementId, Entity, TestAppContext, Window, WindowHandle, point, px, size,
 };
-use host_protocol::{ARTIFACT_READ_CHUNK_MAX_BYTES, HostOperationErrorCode};
+use host_protocol::{
+    ARTIFACT_READ_CHUNK_MAX_BYTES, AccessCredential, HostOperationErrorCode, RemoteTransport,
+};
 use serde_json::{Value, json};
 use shared::copy::{Locale, Text, files as copy};
 use shared::domain_element_id;
-use workspace::HostRequestError;
+use workspace::{HostRequestError, HostSession, RemoteHost, RemoteHostProfile, WindowHost};
 
 use crate::tests::{ScriptedHost, artifact, five_files, host_session};
 use crate::{Body, Desk, FilesView, FilesViewEvent};
@@ -69,6 +73,8 @@ struct Face {
     save_to: Rc<RefCell<Option<PathBuf>>>,
     /// What was handed to the default app.
     opened: Rc<RefCell<Vec<PathBuf>>>,
+    /// What was shown in Finder.
+    revealed: Rc<RefCell<Vec<PathBuf>>>,
     scratch: PathBuf,
 }
 
@@ -80,6 +86,11 @@ impl Drop for Face {
 
 impl Face {
     fn open(host: Arc<ScriptedHost>, cx: &mut TestAppContext) -> Self {
+        Self::open_on(host, WindowHost::Local, cx)
+    }
+
+    /// The face of a window talking to `window_host`.
+    fn open_on(host: Arc<ScriptedHost>, window_host: WindowHost, cx: &mut TestAppContext) -> Self {
         cx.update(|cx| {
             gpui_kit::init(cx);
             crate::init(cx);
@@ -87,13 +98,24 @@ impl Face {
         });
         let scratch =
             std::env::temp_dir().join(format!("maka-files-view-{}", uuid::Uuid::new_v4().simple()));
-        let session = host_session(&host, cx);
+        let session = match window_host {
+            WindowHost::Local => host_session(&host, cx),
+            window_host => {
+                let transport = host.clone();
+                cx.new(|_| {
+                    HostSession::with_transport(PathBuf::from("/tmp/maka-files-tests"), transport)
+                        .for_host(window_host)
+                })
+            }
+        };
         let events = Rc::new(RefCell::new(Vec::new()));
         let suggested = Rc::new(RefCell::new(Vec::new()));
         let save_to = Rc::new(RefCell::new(None));
         let opened = Rc::new(RefCell::new(Vec::new()));
+        let revealed = Rc::new(RefCell::new(Vec::new()));
         let desk = {
             let (suggested, save_to, opened) = (suggested.clone(), save_to.clone(), opened.clone());
+            let revealed = revealed.clone();
             Desk::new(
                 Rc::new(move |name: &str, cx: &mut App| {
                     suggested.borrow_mut().push(name.to_owned());
@@ -105,6 +127,9 @@ impl Face {
                 }),
                 Some(scratch.join("copies")),
             )
+            .with_reveal(Rc::new(move |path: &std::path::Path, _: &mut App| {
+                revealed.borrow_mut().push(path.to_owned());
+            }))
         };
         let mut view = None;
         let recorded = events.clone();
@@ -130,6 +155,7 @@ impl Face {
             suggested,
             save_to,
             opened,
+            revealed,
             scratch,
         };
         face.view.update(cx, |view, cx| {
@@ -197,8 +223,37 @@ impl Face {
     /// The previewed file's id.
     fn previewing(&self, cx: &mut TestAppContext) -> Option<String> {
         self.view.read_with(cx, |view, cx| {
-            view.preview().map(|preview| preview.read(cx).artifact().id.clone())
+            view.preview()
+                .and_then(|preview| preview.read(cx).artifact().map(|artifact| artifact.id.clone()))
         })
+    }
+
+    /// Where the file on this machine previewed is.
+    fn previewing_local(&self, cx: &mut TestAppContext) -> Option<PathBuf> {
+        self.view.read_with(cx, |view, cx| {
+            view.preview()
+                .and_then(|preview| preview.read(cx).source().local().map(|file| file.path.clone()))
+        })
+    }
+
+    /// A task folder under the scratch directory, symlinks resolved.
+    fn task_folder(&self) -> PathBuf {
+        let folder = self.scratch.join("task");
+        std::fs::create_dir_all(&folder).expect("task folder");
+        std::fs::canonicalize(folder).expect("canonical")
+    }
+
+    /// What a click on `path` in a reply asks of the face.
+    fn open_path(&self, path: PathBuf, cx: &mut TestAppContext) {
+        let view = self.view.clone();
+        self.with_window(cx, |window, cx| {
+            view.update(cx, |view, cx| view.open_path(path, window, cx));
+        });
+        self.frame(cx);
+    }
+
+    fn clipboard(&self, cx: &mut TestAppContext) -> Option<String> {
+        self.with_window(cx, |_, cx| cx.read_from_clipboard().and_then(|item| item.text()))
     }
 
     fn open_preview(&self, id: &str, cx: &mut TestAppContext) {
@@ -247,10 +302,17 @@ impl Face {
 
     fn menu_items(&self, cx: &mut TestAppContext) -> Vec<&'static str> {
         self.click("files-more", cx);
-        let items: Vec<&'static str> = ["files-copy", "files-save", "files-open", "files-delete"]
-            .into_iter()
-            .filter(|key| self.exists(menu_item(key), cx))
-            .collect();
+        let items: Vec<&'static str> = [
+            "files-copy",
+            "files-save",
+            "files-reveal",
+            "files-copy-path",
+            "files-open",
+            "files-delete",
+        ]
+        .into_iter()
+        .filter(|key| self.exists(menu_item(key), cx))
+        .collect();
         self.press("escape", cx);
         items
     }
@@ -357,14 +419,28 @@ fn the_filter_narrows_the_list_and_counts_its_matches(cx: &mut TestAppContext) {
     assert!(face.exists("files-no-matches", cx));
 }
 
+/// On a Host on this machine the empty list also says that the paths a
+/// reply names open; a Host elsewhere keeps the one sentence.
 #[gpui_kit::test]
 fn an_empty_task_says_where_files_will_appear(cx: &mut TestAppContext) {
     let face = Face::open(ScriptedHost::new(), cx);
-    assert_eq!(face.label("files-empty", cx), Some(en(copy::EMPTY)));
+    assert_eq!(face.label("files-empty", cx), Some(en(copy::EMPTY_LOCAL)));
     // The empty list still takes the focus and its keys.
     face.focus(cx);
     face.press("down enter escape", cx);
     assert_eq!(*face.events.borrow(), [FilesViewEvent::Dismiss]);
+    drop(face);
+
+    let face = Face::open_on(ScriptedHost::new(), remote_host(), cx);
+    assert_eq!(face.label("files-empty", cx), Some(en(copy::EMPTY)));
+}
+
+fn remote_host() -> WindowHost {
+    let transport = RemoteTransport::tls("wss://box.example.com/runtime-host").expect("tls");
+    let profile =
+        RemoteHostProfile::new("box", "Box", &"a".repeat(64), transport).expect("profile");
+    let credential = AccessCredential::new("mrha_x").expect("credential");
+    WindowHost::Remote(RemoteHost::new(profile, credential))
 }
 
 #[gpui_kit::test]
@@ -1012,4 +1088,111 @@ fn open_in_default_app_writes_a_raster_copy_named_by_ids(cx: &mut TestAppContext
     // An SVG would run its scripts in a browser: Save As only.
     face.open_preview("a2", cx);
     assert_eq!(face.menu_items(cx), ["files-save"]);
+}
+
+/// A path a reply names, on this machine: a document opens in the default
+/// app; a script, a folder, a bundle, and a symlink named like a document
+/// that points at a folder or a program show in Finder, by where they lead.
+/// Nothing previews.
+#[cfg(unix)]
+#[gpui_kit::test]
+fn a_path_opens_a_document_and_shows_anything_else_in_finder(cx: &mut TestAppContext) {
+    use std::os::unix::fs::{PermissionsExt as _, symlink};
+
+    let face = Face::open(ScriptedHost::new(), cx);
+    let task = face.task_folder();
+    std::fs::write(task.join("report.docx"), b"PK").expect("docx");
+    std::fs::write(task.join("setup.command"), b"#!/bin/sh\n").expect("command");
+    std::fs::create_dir_all(task.join("folder")).expect("folder");
+    std::fs::create_dir_all(task.join("Tool.app/Contents/MacOS")).expect("app");
+    std::fs::write(task.join("tool"), b"#!/bin/sh\n").expect("tool");
+    std::fs::set_permissions(task.join("tool"), std::fs::Permissions::from_mode(0o755))
+        .expect("executable");
+    symlink(task.join("folder"), task.join("x.docx")).expect("link");
+    symlink(task.join("tool"), task.join("y.docx")).expect("link");
+
+    face.open_path(task.join("report.docx"), cx);
+    assert_eq!(*face.opened.borrow(), [task.join("report.docx")]);
+    for name in ["setup.command", "folder", "Tool.app", "x.docx", "y.docx"] {
+        face.open_path(task.join(name), cx);
+    }
+    let revealed = ["setup.command", "folder", "Tool.app", "folder", "tool"].map(|n| task.join(n));
+    assert_eq!(*face.revealed.borrow(), revealed);
+    assert_eq!(face.opened.borrow().len(), 1, "nothing else opens");
+    assert_eq!(face.previewing_local(cx), None);
+    assert!(face.events.borrow().is_empty(), "the face is not shown");
+}
+
+/// A Markdown path previews the file on this machine in the face, which
+/// asks the window to show it. Its menu copies the text and the path and
+/// shows the file in Finder; there is no Save As or Delete. An image has
+/// no Copy; an HTML page's Open in Default App opens the page itself; a
+/// file that cannot show offers Finder.
+#[gpui_kit::test]
+fn a_markdown_path_previews_the_file_on_this_machine(cx: &mut TestAppContext) {
+    let face = Face::open(ScriptedHost::new(), cx);
+    let task = face.task_folder();
+    let notes = task.join("notes.md");
+    std::fs::write(&notes, "# Notes\n\nReady.").expect("notes");
+    face.open_path(task.join("./notes.md"), cx);
+    assert_eq!(face.previewing_local(cx), Some(notes.clone()));
+    assert_eq!(*face.events.borrow(), [FilesViewEvent::Show]);
+    assert_eq!(face.text(cx), ("# Notes\n\nReady.".to_owned(), true));
+    assert_eq!(face.label("files-preview-name", cx).as_deref(), Some("notes.md"));
+    assert_eq!(face.menu_items(cx), ["files-copy", "files-reveal", "files-copy-path"]);
+
+    face.click("files-more", cx);
+    face.click(menu_item("files-copy-path"), cx);
+    assert_eq!(face.clipboard(cx), Some(notes.display().to_string()));
+    assert_eq!(face.notice(cx), Some((true, "Copied the path of notes.md".to_owned(), None)));
+    face.click("files-more", cx);
+    face.click(menu_item("files-reveal"), cx);
+    assert_eq!(*face.revealed.borrow(), std::slice::from_ref(&notes));
+    face.click("files-more", cx);
+    face.click(menu_item("files-copy"), cx);
+    assert_eq!(face.clipboard(cx).as_deref(), Some("# Notes\n\nReady."));
+    assert!(face.opened.borrow().is_empty());
+
+    let image = task.join("chart.png");
+    std::fs::write(&image, PNG).expect("image");
+    face.open_path(image.clone(), cx);
+    assert_eq!(face.previewing_local(cx), Some(image));
+    assert!(face.body(cx, |body, _| matches!(body, Body::Image(_))));
+    assert_eq!(face.menu_items(cx), ["files-reveal", "files-copy-path"]);
+
+    let page = task.join("page.html");
+    std::fs::write(&page, "<p>Hi</p>").expect("page");
+    face.open_path(page.clone(), cx);
+    assert_eq!(
+        face.menu_items(cx),
+        ["files-copy", "files-reveal", "files-copy-path", "files-open"]
+    );
+    face.click("files-more", cx);
+    face.click(menu_item("files-open"), cx);
+    assert_eq!(*face.opened.borrow(), [page]);
+
+    // A text file that is not text: the way to it is Finder.
+    let log = task.join("dump.log");
+    std::fs::write(&log, b"\0\0\0\x01binary").expect("log");
+    face.open_path(log.clone(), cx);
+    assert_eq!(face.why(cx), Some(en(copy::WHY_LOCAL_NOT_SHOWN)));
+    assert!(!face.exists("files-body-save", cx));
+    face.click("files-body-reveal", cx);
+    assert_eq!(face.revealed.borrow().last(), Some(&log));
+}
+
+/// A file removed between the reply and the click: the face says it is no
+/// longer there, and nothing opens or shows.
+#[gpui_kit::test]
+fn a_path_gone_before_the_click_says_so(cx: &mut TestAppContext) {
+    let face = Face::open(ScriptedHost::new(), cx);
+    let task = face.task_folder();
+    std::fs::write(task.join("report.docx"), b"PK").expect("docx");
+    std::fs::remove_file(task.join("report.docx")).expect("removed");
+    face.open_path(task.join("report.docx"), cx);
+    let gone = en(copy::FILE_GONE);
+    assert_eq!(face.notice(cx), Some((false, gone, None)));
+    assert!(face.opened.borrow().is_empty());
+    assert!(face.revealed.borrow().is_empty());
+    assert!(face.events.borrow().is_empty());
 }

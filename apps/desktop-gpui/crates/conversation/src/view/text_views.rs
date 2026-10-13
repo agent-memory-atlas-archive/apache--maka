@@ -28,6 +28,10 @@
 //! before, and a row's text reaches its state only when the row's string
 //! changed (the rows reuse an unchanged string), as the keyed element
 //! does.
+//!
+//! A reply whose paths are links draws a copy of its Markdown
+//! ([`PathLinks`]); the find's ranges, of the reply's own Markdown, are
+//! mapped onto the copy before they reach the kit.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -42,6 +46,7 @@ use gpui_kit::{
 
 use super::find::Mark;
 use crate::corpus::Field;
+use crate::paths::PathLinks;
 use crate::rows::RowKey;
 
 /// The reply rows' text view states, shared with the row renderer.
@@ -59,6 +64,8 @@ struct Row {
     state: Entity<TextViewState>,
     /// The string last handed to `state`.
     text: SharedString,
+    /// The reply's path links `text` is the Markdown of, when it is.
+    links: Option<Rc<PathLinks>>,
     /// The last frame that laid the row out.
     used: u64,
     /// What the highlights were last painted from.
@@ -91,12 +98,14 @@ impl TextViews {
         .size_0()
     }
 
-    /// The state of reply row `key`, showing `text`: made on first use,
+    /// The state of reply row `key`, showing `text` (the Markdown of
+    /// `links` when the reply's paths are links): made on first use,
     /// handed the text when it changed.
     pub(crate) fn state(
         &self,
         key: &RowKey,
         text: &SharedString,
+        links: Option<Rc<PathLinks>>,
         cx: &mut App,
     ) -> Entity<TextViewState> {
         let frame = self.0.frame.get();
@@ -108,6 +117,7 @@ impl TextViews {
                     let same = row.text.as_ptr() == text.as_ptr() && row.text.len() == text.len();
                     (!same).then(|| {
                         row.text = text.clone();
+                        row.links = links;
                         row.state.clone()
                     })
                 }
@@ -116,6 +126,7 @@ impl TextViews {
                     let row = Row {
                         state: state.clone(),
                         text: text.clone(),
+                        links,
                         used: frame,
                         painted: None,
                         highlights: Vec::new(),
@@ -144,7 +155,9 @@ impl TextViews {
         fills: (Hsla, Hsla),
         cx: &mut App,
     ) {
-        let Some(state) = self.0.rows.borrow().get(key).map(|row| row.state.clone()) else {
+        let Some((state, links)) =
+            self.0.rows.borrow().get(key).map(|row| (row.state.clone(), row.links.clone()))
+        else {
             return;
         };
         let rendered = state.read(cx).rendered_text();
@@ -165,7 +178,8 @@ impl TextViews {
             .flatten()
             .filter(|mark| mark.field == Field::Body)
             .filter_map(|mark| {
-                let range = rendered.range_for_source(mark.range.clone())?;
+                let source = shown_source(links.as_deref(), mark.range.clone());
+                let range = rendered.range_for_source(source)?;
                 Some(RangeHighlight::new(range, if mark.active { fills.1 } else { fills.0 }))
             })
             .collect();
@@ -187,10 +201,13 @@ impl TextViews {
     /// source, by the kit's `reveal_range`. Whether the request was taken:
     /// not while the source waits for its parse.
     pub(crate) fn reveal(&self, key: &RowKey, source: Range<usize>, cx: &mut App) -> bool {
-        let Some(state) = self.0.rows.borrow().get(key).map(|row| row.state.clone()) else {
+        let Some((state, links)) =
+            self.0.rows.borrow().get(key).map(|row| (row.state.clone(), row.links.clone()))
+        else {
             return false;
         };
         let rendered = state.read(cx).rendered_text();
+        let source = shown_source(links.as_deref(), source);
         let Some(range) = rendered.range_for_source(source) else { return false };
         state.update(cx, |state, cx| state.reveal_range(range, cx)).is_ok()
     }
@@ -232,6 +249,15 @@ impl TextViews {
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.0.rows.borrow().len()
+    }
+}
+
+/// `source`, a range of a reply's own Markdown, as a range of the Markdown
+/// its text view draws.
+fn shown_source(links: Option<&PathLinks>, source: Range<usize>) -> Range<usize> {
+    match links {
+        Some(links) => links.map_range(source),
+        None => source,
     }
 }
 

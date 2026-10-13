@@ -87,7 +87,7 @@ impl VisibleText {
 
 /// The parse options of gpui-kit's text view with its default extensions
 /// (`MarkdownExtensions::parse_options`): GFM, inline and block math on.
-fn parse_options() -> ParseOptions {
+pub(crate) fn parse_options() -> ParseOptions {
     let mut options = ParseOptions::gfm();
     options.constructs.frontmatter = false;
     options.constructs.math_text = true;

@@ -449,7 +449,7 @@ impl Harness {
     }
 
     /// The window on `window_host`, whose requests go to `transport`.
-    fn on_host(
+    pub(crate) fn on_host(
         transport: Arc<ScriptedHost>,
         window_host: WindowHost,
         cx: &mut TestAppContext,

@@ -33,6 +33,8 @@
 //!   `Searchable`), which searches every held row, read from the model.
 //!   It also carries the task's terminal output for the `terminal` crate:
 //!   [`ConversationState::set_pty_interest`] and [`SessionPtyEvent`].
+//!   On a Host on this machine, the file paths its replies name open on a
+//!   click ([`LocalPaths`], [`ConversationViewEvent::OpenPath`]).
 //! - [`Composer`] edits the draft and sends it, or stops the running turn,
 //!   through the same state; its [`QueuePlate`] lists the queued messages.
 //!
@@ -49,6 +51,7 @@ mod composer;
 mod corpus;
 mod edits_card;
 mod paging;
+mod paths;
 mod queue;
 mod quiet_json;
 mod quotes;
@@ -65,6 +68,7 @@ pub use composer::{
     Composer, ComposerAction, ModelChoice, PERMISSION_MODES, permission_mode_hint,
     permission_mode_label, thinking_level_label,
 };
+pub use paths::LocalPaths;
 pub use queue::{CancelQueueEdit, QueuePlate, queue_entry_element_id};
 pub use rows::{edits_element_id, footer_element_id, item_element_id};
 pub use side_chat::{

@@ -340,10 +340,11 @@ pub(crate) enum ToolNote {
     /// The call runs, or waits on the user, and has produced nothing yet
     /// (Maka Desktop's `noOutputYet`).
     NoOutputYet,
-    /// The call finished, and what it returned has not arrived: a live
-    /// `tool_result` carries no content, and the Host announces the Turn's
-    /// durable rows, which carry it, only when the Turn ends.
-    OutputAtTurnEnd,
+    /// The call finished, and its arguments and what it returned have not
+    /// arrived: a live `tool_result` carries no content, and the Host
+    /// announces the Turn's durable rows, which carry them, only when the
+    /// Turn ends.
+    DetailsAtTurnEnd,
     /// The call finished without output (Maka Desktop's `noOutput`).
     NoOutput,
 }
@@ -744,7 +745,7 @@ fn tool_note(tool: &ToolItem, waiting: bool) -> ToolNote {
         _ if waiting => ToolNote::NoOutputYet,
         ToolStatus::Running => ToolNote::NoOutputYet,
         ToolStatus::Completed | ToolStatus::Errored if tool.result.is_none() => {
-            ToolNote::OutputAtTurnEnd
+            ToolNote::DetailsAtTurnEnd
         }
         _ => ToolNote::NoOutput,
     }

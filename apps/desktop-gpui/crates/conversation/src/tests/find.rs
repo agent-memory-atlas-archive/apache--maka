@@ -131,7 +131,7 @@ pub(super) fn open_tail(tail: Value, with_composer: bool, cx: &mut TestAppContex
     harness
 }
 
-fn open_find(harness: &Harness, cx: &mut TestAppContext) {
+pub(super) fn open_find(harness: &Harness, cx: &mut TestAppContext) {
     harness.with_window(cx, |window, cx| {
         harness.view.update(cx, |view, cx| view.open_find(window, cx));
     });
@@ -140,7 +140,7 @@ fn open_find(harness: &Harness, cx: &mut TestAppContext) {
 
 /// Types `query` into the bar (replacing what is selected) and lets the
 /// search finish.
-fn find(harness: &Harness, query: &str, cx: &mut TestAppContext) {
+pub(super) fn find(harness: &Harness, query: &str, cx: &mut TestAppContext) {
     harness.with_window(cx, |window, cx| window.input(query, cx));
     settle(cx);
     harness.with_window(cx, |_, _| {});
@@ -160,7 +160,7 @@ fn label_of(harness: &Harness, id: &'static str, cx: &mut TestAppContext) -> Opt
     })
 }
 
-fn count(harness: &Harness, cx: &mut TestAppContext) -> Option<String> {
+pub(super) fn count(harness: &Harness, cx: &mut TestAppContext) -> Option<String> {
     label_of(harness, "find-count", cx)
 }
 
@@ -192,7 +192,7 @@ struct TranscriptMatchView {
     range: Range<usize>,
 }
 
-fn fills(cx: &mut TestAppContext) -> (Hsla, Hsla) {
+pub(super) fn fills(cx: &mut TestAppContext) -> (Hsla, Hsla) {
     cx.update(|cx| {
         let maka = cx.maka();
         (maka.find_match, maka.find_match_active)

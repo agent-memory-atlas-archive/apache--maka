@@ -20,8 +20,9 @@
 //! What the Files face decides without the Host or a window: which
 //! Artifacts a person sees and may delete, what a row says, the filter, the
 //! list's keys, names made safe for the disk, formats told from bytes, the
-//! language of a file's source, UTF-8 read in pieces, and the tool results
-//! that announce new files. No GPUI, no I/O.
+//! language of a file's source, UTF-8 read in pieces, the tool results
+//! that announce new files, and which files on this machine that a reply
+//! names it previews or hands to the default app. No GPUI, no I/O.
 
 use host_protocol::{ArtifactKind, ArtifactProjection, ArtifactSource};
 use serde_json::Value;
@@ -253,19 +254,43 @@ fn extension(name: &str) -> Option<String> {
     (!stem.is_empty() && !extension.is_empty()).then(|| extension.to_ascii_lowercase())
 }
 
+/// What tells a file's format: its kind, its name and its media type. An
+/// Artifact's ([`ArtifactProjection`]), or a file on this machine's
+/// ([`crate::LocalFile`]), which has no media type.
+#[derive(Debug, Clone, Copy)]
+pub struct Format<'a> {
+    kind: &'a ArtifactKind,
+    name: &'a str,
+    mime_type: Option<&'a str>,
+}
+
+impl<'a> Format<'a> {
+    pub fn new(kind: &'a ArtifactKind, name: &'a str, mime_type: Option<&'a str>) -> Self {
+        Self { kind, name, mime_type }
+    }
+}
+
+impl<'a> From<&'a ArtifactProjection> for Format<'a> {
+    fn from(artifact: &'a ArtifactProjection) -> Self {
+        Self::new(&artifact.kind, &artifact.name, artifact.mime_type.as_deref())
+    }
+}
+
 /// Whether the file is Markdown: by its name, as Desktop tells
 /// (`.md`, `.markdown`), or by its media type.
-pub fn is_markdown(artifact: &ArtifactProjection) -> bool {
-    matches!(extension(&artifact.name).as_deref(), Some("md" | "markdown"))
-        || artifact.mime_type.as_deref().is_some_and(|mime| mime.starts_with("text/markdown"))
+pub fn is_markdown<'a>(file: impl Into<Format<'a>>) -> bool {
+    let file = file.into();
+    matches!(extension(file.name).as_deref(), Some("md" | "markdown"))
+        || file.mime_type.is_some_and(|mime| mime.starts_with("text/markdown"))
 }
 
 /// Whether the file is an HTML page: kind `html`, or a `file` whose source
 /// language is HTML by its name or media type ([`source_language`]).
-pub fn is_html(artifact: &ArtifactProjection) -> bool {
-    match artifact.kind {
+pub fn is_html<'a>(file: impl Into<Format<'a>>) -> bool {
+    let file = file.into();
+    match file.kind {
         ArtifactKind::Html => true,
-        ArtifactKind::File => source_language(artifact) == Some("html"),
+        ArtifactKind::File => source_language(file) == Some("html"),
         _ => false,
     }
 }
@@ -318,6 +343,60 @@ pub fn renderable_html(html: &str) -> String {
     kept
 }
 
+/// The documents a click on a path in a reply hands to the default app
+/// (on this machine, by the file's own name, case aside): office files,
+/// PDFs, CSV, iWork, OpenDocument, RTF and EPUB. No other file there is
+/// ever opened or launched: a script or an application a reply names could
+/// run.
+pub fn is_openable_document(name: &str) -> bool {
+    matches!(
+        extension(name).as_deref(),
+        Some(
+            "docx"
+                | "doc"
+                | "xlsx"
+                | "xls"
+                | "pptx"
+                | "ppt"
+                | "pdf"
+                | "csv"
+                | "pages"
+                | "numbers"
+                | "key"
+                | "odt"
+                | "ods"
+                | "odp"
+                | "rtf"
+                | "epub"
+        )
+    )
+}
+
+/// How the Files face previews the file on this machine named `name`, of
+/// `size` bytes, that a reply names: an HTML page (`html`), a raster image
+/// or an SVG (`image`, at most [`IMAGE_PREVIEW_MAX_BYTES`]), or text
+/// (`file`: Markdown, plain text and logs, and source the highlighter knows
+/// by its extension); text and pages at most [`TEXT_PREVIEW_CEILING`], read
+/// whole. `None` for anything else, a CSV among it: it is a document.
+pub fn local_kind(name: &str, size: u64) -> Option<ArtifactKind> {
+    let extension = extension(name)?;
+    let image = matches!(
+        extension.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tif" | "tiff" | "ico" | "svg"
+    );
+    if image {
+        return (size <= IMAGE_PREVIEW_MAX_BYTES).then_some(ArtifactKind::Image);
+    }
+    let file = Format::new(&ArtifactKind::File, name, None);
+    let kind = match source_language(file) {
+        Some("html") => ArtifactKind::Html,
+        Some(_) => ArtifactKind::File,
+        None if matches!(extension.as_str(), "txt" | "text" | "log") => ArtifactKind::File,
+        None => return None,
+    };
+    (size <= TEXT_PREVIEW_CEILING).then_some(kind)
+}
+
 /// Whether text read from a file is binary: a NUL in its first 8 KB.
 pub fn looks_binary(text: &str) -> bool {
     text.as_bytes()[..text.len().min(8192)].contains(&0)
@@ -326,14 +405,15 @@ pub fn looks_binary(text: &str) -> bool {
 /// The language the kit's highlighter knows the source by, from the
 /// file's extension, else its media type; `None` for plain text. HTML
 /// files are `html` whatever their name.
-pub fn source_language(artifact: &ArtifactProjection) -> Option<&'static str> {
-    if artifact.kind == ArtifactKind::Html {
+pub fn source_language<'a>(file: impl Into<Format<'a>>) -> Option<&'static str> {
+    let file = file.into();
+    if *file.kind == ArtifactKind::Html {
         return Some("html");
     }
-    if artifact.kind == ArtifactKind::Diff {
+    if *file.kind == ArtifactKind::Diff {
         return Some("diff");
     }
-    let by_extension = extension(&artifact.name).and_then(|extension| {
+    let by_extension = extension(file.name).and_then(|extension| {
         Some(match extension.as_str() {
             "rs" => "rust",
             "py" | "pyi" => "python",
@@ -368,7 +448,7 @@ pub fn source_language(artifact: &ArtifactProjection) -> Option<&'static str> {
         })
     });
     by_extension.or_else(|| {
-        let mime = artifact.mime_type.as_deref()?.split(';').next()?.trim().to_ascii_lowercase();
+        let mime = file.mime_type?.split(';').next()?.trim().to_ascii_lowercase();
         Some(match mime.as_str() {
             "text/html" => "html",
             "application/json" => "json",
@@ -606,6 +686,27 @@ mod tests {
         assert!(!is_markdown(&artifact(".md", "file", "deep_research")));
         assert!(is_office_document("plan.docx") && !is_office_document("plan.md"));
         assert!(looks_binary("PK\u{3}\u{4}\0\0") && !looks_binary("plain"));
+    }
+
+    #[test]
+    fn a_file_on_this_machine_previews_opens_or_neither_by_its_name() {
+        let small = 1024;
+        assert_eq!(local_kind("Notes.MD", small), Some(ArtifactKind::File));
+        assert_eq!(local_kind("main.rs", small), Some(ArtifactKind::File));
+        assert_eq!(local_kind("build.log", small), Some(ArtifactKind::File));
+        assert_eq!(local_kind("report.HTML", small), Some(ArtifactKind::Html));
+        assert_eq!(local_kind("chart.png", small), Some(ArtifactKind::Image));
+        assert_eq!(local_kind("chart.png", IMAGE_PREVIEW_MAX_BYTES + 1), None);
+        assert_eq!(local_kind("huge.md", TEXT_PREVIEW_CEILING + 1), None);
+        for none in ["data.csv", "setup.command", "Makefile", "tool", "a.docx", ".md"] {
+            assert_eq!(local_kind(none, small), None, "{none}");
+        }
+        for document in ["报告.DOCX", "a.pdf", "t.csv", "k.key", "b.epub", "s.ODS"] {
+            assert!(is_openable_document(document), "{document}");
+        }
+        for other in ["setup.command", "Maka.app", "run.sh", "x", "notes.md", "a.docx.exe"] {
+            assert!(!is_openable_document(other), "{other}");
+        }
     }
 
     #[test]

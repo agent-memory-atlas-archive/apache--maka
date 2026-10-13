@@ -46,7 +46,7 @@ use crate::tests::{EPOCH, Harness, ScriptedHost, artifact, frame, session, settl
 
 /// Git that fails at once: the changes' face shows its failure, and no
 /// read waits on a subprocess.
-struct NoGit;
+pub(crate) struct NoGit;
 
 impl GitRunner for NoGit {
     fn run(&self, _: &Path, _: &[String]) -> Boxed<Result<GitOutput, GitError>> {

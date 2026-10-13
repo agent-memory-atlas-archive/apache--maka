@@ -52,7 +52,14 @@
 //!   to the face; a click shows it at its actual size, scrolling, and
 //!   another fits it again.
 //! - A PDF is not read: it opens in the default app or is saved.
+//!
+//! A file on this machine that a reply names ([`PreviewSource::Local`],
+//! [`crate::local`]) previews the same way, read whole from the disk off
+//! the main thread instead of from the Host: text and pages up to
+//! [`TEXT_PREVIEW_CEILING`], images up to [`IMAGE_PREVIEW_MAX_BYTES`]. Its
+//! lines offer Show in Finder where an Artifact's offer Save As.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui_kit::assets::IconName as AssetIcon;
@@ -79,9 +86,11 @@ use shared::theme::{
 };
 use workspace::HostSession;
 
+use crate::local::LocalFile;
 use crate::policy::{
-    HTML_RENDER_MAX_BYTES, IMAGE_PREVIEW_MAX_BYTES, ImageType, TEXT_PREVIEW_CEILING, Utf8Pieces,
-    is_html, is_markdown, is_office_document, looks_binary, renderable_html, source_language,
+    Format, HTML_RENDER_MAX_BYTES, IMAGE_PREVIEW_MAX_BYTES, ImageType, TEXT_PREVIEW_CEILING,
+    Utf8Pieces, is_html, is_markdown, is_office_document, looks_binary, renderable_html,
+    source_language,
 };
 use crate::read::{self, ReadFailure};
 use crate::{IMAGE_CONTEXT, ToggleImageSize};
@@ -93,6 +102,73 @@ use crate::{IMAGE_CONTEXT, ToggleImageSize};
 pub enum PreviewEvent {
     SaveAs,
     OpenInDefaultApp,
+    /// Show the file on this machine in Finder.
+    Reveal,
+}
+
+/// Where the previewed file is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PreviewSource {
+    /// An Artifact the Host keeps for the task.
+    Artifact(ArtifactProjection),
+    /// A file on this machine that a reply names.
+    Local(LocalFile),
+}
+
+impl PreviewSource {
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Artifact(artifact) => &artifact.name,
+            Self::Local(file) => &file.name,
+        }
+    }
+
+    pub fn kind(&self) -> &ArtifactKind {
+        match self {
+            Self::Artifact(artifact) => &artifact.kind,
+            Self::Local(file) => &file.kind,
+        }
+    }
+
+    pub fn size_bytes(&self) -> u64 {
+        match self {
+            Self::Artifact(artifact) => artifact.size_bytes,
+            Self::Local(file) => file.size_bytes,
+        }
+    }
+
+    /// Unix milliseconds: when the Artifact was made, when the file on
+    /// this machine last changed.
+    pub fn time(&self) -> u64 {
+        match self {
+            Self::Artifact(artifact) => artifact.created_at,
+            Self::Local(file) => file.modified_at,
+        }
+    }
+
+    pub fn artifact(&self) -> Option<&ArtifactProjection> {
+        match self {
+            Self::Artifact(artifact) => Some(artifact),
+            Self::Local(_) => None,
+        }
+    }
+
+    pub fn local(&self) -> Option<&LocalFile> {
+        match self {
+            Self::Local(file) => Some(file),
+            Self::Artifact(_) => None,
+        }
+    }
+}
+
+impl<'a> From<&'a PreviewSource> for Format<'a> {
+    fn from(source: &'a PreviewSource) -> Self {
+        match source {
+            PreviewSource::Artifact(artifact) => artifact.into(),
+            PreviewSource::Local(file) => file.into(),
+        }
+    }
 }
 
 /// What the preview shows.
@@ -144,10 +220,10 @@ enum RichFormat {
 impl RichFormat {
     /// An HTML page renders as one (whatever its name says), a Markdown
     /// file as Markdown.
-    fn of(artifact: &ArtifactProjection) -> Option<Self> {
-        if is_html(artifact) {
+    fn of(file: Format<'_>) -> Option<Self> {
+        if is_html(file) {
             Some(Self::Html)
-        } else if is_markdown(artifact) {
+        } else if is_markdown(file) {
             Some(Self::Markdown)
         } else {
             None
@@ -274,7 +350,7 @@ impl ImageBody {
 /// and runs the actions.
 pub struct ArtifactPreview {
     host: Entity<HostSession>,
-    artifact: ArtifactProjection,
+    source: PreviewSource,
     body: Body,
     /// The body's region: a Tab stop, and where focus goes as the preview
     /// opens.
@@ -287,9 +363,7 @@ impl EventEmitter<PreviewEvent> for ArtifactPreview {}
 
 impl std::fmt::Debug for ArtifactPreview {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ArtifactPreview")
-            .field("artifact", &self.artifact.id)
-            .finish_non_exhaustive()
+        f.debug_struct("ArtifactPreview").field("source", &self.source).finish_non_exhaustive()
     }
 }
 
@@ -300,9 +374,28 @@ impl ArtifactPreview {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        Self::of(host, PreviewSource::Artifact(artifact), window, cx)
+    }
+
+    /// The preview of `file`, on this machine.
+    pub fn local(
+        host: Entity<HostSession>,
+        file: LocalFile,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::of(host, PreviewSource::Local(file), window, cx)
+    }
+
+    fn of(
+        host: Entity<HostSession>,
+        source: PreviewSource,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let mut this = Self {
             host,
-            artifact,
+            source,
             body: Body::Loading,
             focus: cx.focus_handle().tab_stop(true),
             scroll: ScrollHandle::new(),
@@ -312,8 +405,13 @@ impl ArtifactPreview {
         this
     }
 
-    pub fn artifact(&self) -> &ArtifactProjection {
-        &self.artifact
+    /// The Artifact previewed; `None` for a file on this machine.
+    pub fn artifact(&self) -> Option<&ArtifactProjection> {
+        self.source.artifact()
+    }
+
+    pub fn source(&self) -> &PreviewSource {
+        &self.source
     }
 
     pub fn body(&self) -> &Body {
@@ -346,7 +444,15 @@ impl ArtifactPreview {
     }
 
     fn read(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let artifact = &self.artifact;
+        let artifact = match &self.source {
+            PreviewSource::Artifact(artifact) => artifact,
+            PreviewSource::Local(file) => {
+                let path = file.path.clone();
+                let image = file.kind == ArtifactKind::Image;
+                self.read_local(path, image, window, cx);
+                return;
+            }
+        };
         match artifact.kind {
             ArtifactKind::Pdf => {
                 self.body = Body::Pdf;
@@ -408,6 +514,39 @@ impl ArtifactPreview {
         }));
     }
 
+    /// Reads the file at `path` on this machine whole, off the main thread:
+    /// an image's bytes, or text.
+    fn read_local(
+        &mut self,
+        path: PathBuf,
+        image: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.body = Body::Loading;
+        cx.notify();
+        let limit = if image { IMAGE_PREVIEW_MAX_BYTES } else { TEXT_PREVIEW_CEILING };
+        let read = cx.background_spawn(async move {
+            crate::local::read(&path, limit).map_err(|error| match error.kind() {
+                std::io::ErrorKind::FileTooLarge => ReadFailure::TooLarge,
+                _ => ReadFailure::Local(error.to_string().into()),
+            })
+        });
+        self._read = Some(cx.spawn_in(window, async move |this, cx| {
+            let bytes = read.await;
+            this.update_in(cx, |this, window, cx| {
+                if image {
+                    this.show_image(bytes, cx);
+                } else {
+                    let text = bytes
+                        .map(|bytes| Start::Whole(String::from_utf8_lossy(&bytes).into_owned()));
+                    this.show_text(text, window, cx);
+                }
+            })
+            .ok();
+        }));
+    }
+
     fn show_image(&mut self, bytes: Result<Vec<u8>, ReadFailure>, cx: &mut Context<Self>) {
         self._read = None;
         self.body = match bytes {
@@ -449,13 +588,13 @@ impl ArtifactPreview {
                 return;
             }
         };
-        if self.artifact.kind == ArtifactKind::File && looks_binary(pieces.text()) {
+        if *self.source.kind() == ArtifactKind::File && looks_binary(pieces.text()) {
             self.body = Body::NotText;
             cx.notify();
             return;
         }
         let text: SharedString = pieces.text().to_owned().into();
-        let language = source_language(&self.artifact);
+        let language = source_language(&self.source);
         let editor = cx.new(|cx| {
             let mut editor = EditorState::new(window, cx)
                 .language(language.unwrap_or("text"))
@@ -463,7 +602,7 @@ impl ArtifactPreview {
             editor.set_readonly(true, cx);
             editor
         });
-        let format = RichFormat::of(&self.artifact);
+        let format = RichFormat::of((&self.source).into());
         let rich = format
             .filter(|format| format.renders(next.is_none(), total))
             .map(|format| rich_state(format, &text, cx));
@@ -480,7 +619,7 @@ impl ArtifactPreview {
             rendered: rich.is_some(),
             rich,
         };
-        if self.artifact.kind == ArtifactKind::Diff {
+        if *self.source.kind() == ArtifactKind::Diff {
             body.diff = parse_diff(&body.text, body.next.is_none(), cx);
         }
         self.body = Body::Text(Box::new(body));
@@ -499,6 +638,8 @@ impl ArtifactPreview {
     }
 
     fn read_more(&mut self, to_end: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let PreviewSource::Artifact(artifact) = &self.source else { return };
+        let (session, id) = (artifact.session_id.clone(), artifact.id.clone());
         let Body::Text(body) = &mut self.body else { return };
         let Some(offset) = body.next else { return };
         if body.reading || body.at_ceiling() {
@@ -509,7 +650,6 @@ impl ArtifactPreview {
         let total = body.total;
         let mut budget = TEXT_PREVIEW_CEILING.saturating_sub(body.pieces.byte_count());
         let requester = self.host.read(cx).requester();
-        let (session, id) = (self.artifact.session_id.clone(), self.artifact.id.clone());
         self._read = Some(cx.spawn_in(window, async move |this, cx| {
             let mut bytes = Vec::new();
             let mut next = Some(offset);
@@ -571,7 +711,7 @@ impl ArtifactPreview {
                 editor.set_value(text, window, cx);
                 editor.set_scroll_offset(offset, cx);
             });
-            if self.artifact.kind == ArtifactKind::Diff {
+            if *self.source.kind() == ArtifactKind::Diff {
                 let complete = body.next.is_none();
                 let text = body.text.clone();
                 body.diff = parse_diff(&text, complete, cx);
@@ -631,7 +771,7 @@ impl ArtifactPreview {
                     .readonly(true)
                     .appearance(false)
                     .bordered(false)
-                    .aria_label(copy::preview_named(locale, &self.artifact.name))
+                    .aria_label(copy::preview_named(locale, self.source.name()))
                     .size_full()
                     .text_size(rems(CODE_TEXT_REMS))
                     .into_any_element(),
@@ -824,7 +964,12 @@ impl ArtifactPreview {
             return self.render_line(copy::WHY_UNSUPPORTED, true, self.image_openable(image), cx);
         };
         let label = if image.actual_size { copy::IMAGE_ACTUAL } else { copy::IMAGE_FIT };
-        let not_drawn: SharedString = copy::WHY_NOT_DRAWN.in_locale(locale).into();
+        let not_drawn = if self.source.local().is_some() {
+            copy::WHY_LOCAL_NOT_SHOWN
+        } else {
+            copy::WHY_NOT_DRAWN
+        };
+        let not_drawn: SharedString = not_drawn.in_locale(locale).into();
         let fallback = move || {
             div()
                 .p_4()
@@ -864,11 +1009,14 @@ impl ArtifactPreview {
         }
     }
 
+    /// Whether the image may go to the default app: an Artifact's raster
+    /// image. A file on this machine opens only when it is a document.
     fn image_openable(&self, image: &ImageBody) -> bool {
-        image.kind.is_some_and(ImageType::is_openable)
+        self.source.artifact().is_some() && image.kind.is_some_and(ImageType::is_openable)
     }
 
-    /// A line that says why nothing shows, with the actions that help.
+    /// A line that says why nothing shows, with the actions that help. A
+    /// file on this machine says it with the way to Finder.
     fn render_line(
         &self,
         text: shared::copy::Text,
@@ -876,9 +1024,13 @@ impl ArtifactPreview {
         open: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let text = if self.source.local().is_some() { copy::WHY_LOCAL_NOT_SHOWN } else { text };
         self.render_why(text.get(cx).into(), None, save, open, cx)
     }
 
+    /// The line, its retry when trying again could help, and `open` and
+    /// `save`: for a file on this machine, Show in Finder takes Save As's
+    /// place.
     fn render_why(
         &self,
         text: SharedString,
@@ -888,6 +1040,7 @@ impl ArtifactPreview {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let retry = failure.is_some_and(retryable);
+        let local = self.source.local().is_some();
         let line = if failure.is_some() {
             StatusLine::error("files-why", text)
         } else {
@@ -924,11 +1077,18 @@ impl ArtifactPreview {
                                 })),
                         )
                     })
-                    .when(save, |this| {
+                    .when(save && !local, |this| {
                         this.child(
                             quiet_button(Button::new("files-body-save"), cx)
                                 .label(copy::SAVE_AS.get(cx))
                                 .on_click(cx.listener(|_, _, _, cx| cx.emit(PreviewEvent::SaveAs))),
+                        )
+                    })
+                    .when(save && local, |this| {
+                        this.child(
+                            quiet_button(Button::new("files-body-reveal"), cx)
+                                .label(copy::REVEAL.get(cx))
+                                .on_click(cx.listener(|_, _, _, cx| cx.emit(PreviewEvent::Reveal))),
                         )
                     }),
             )
@@ -1057,6 +1217,7 @@ pub(crate) fn why(failure: &ReadFailure, locale: Locale) -> String {
         ReadFailure::Unexpected => copy::WHY_UNEXPECTED,
         ReadFailure::Changed => copy::WHY_CHANGED,
         ReadFailure::TooLarge => copy::WHY_TOO_LARGE,
+        ReadFailure::Local(message) => return copy::why_local_read_failed(locale, message),
     };
     text.in_locale(locale).to_owned()
 }
@@ -1080,7 +1241,13 @@ impl Render for ArtifactPreview {
             Body::NotText => self.render_line(copy::WHY_NOT_TEXT, true, false, cx),
             Body::UnknownKind => self.render_line(copy::WHY_UNKNOWN_KIND, true, false, cx),
             Body::Failed(failure) => {
-                let text = why(failure, locale).into();
+                // A file on this machine too large to read is found in
+                // Finder, not saved.
+                let text = if self.source.local().is_some() && saving_helps(failure) {
+                    copy::WHY_LOCAL_NOT_SHOWN.in_locale(locale).into()
+                } else {
+                    why(failure, locale).into()
+                };
                 self.render_why(text, Some(failure), saving_helps(failure), false, cx)
             }
         };
@@ -1090,7 +1257,7 @@ impl Render for ArtifactPreview {
             .id("files-preview")
             .test_support()
             .role(Role::Region)
-            .aria_label(copy::preview_named(locale, &self.artifact.name))
+            .aria_label(copy::preview_named(locale, self.source.name()))
             .size_full()
             .min_h_0()
             .when(body_icon, |this| {

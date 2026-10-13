@@ -32,9 +32,17 @@
 //! the window leaves out, which the browser then runs as Desktop's frame
 //! would, from a copy holding the page's bytes alone. Any other `file`, and
 //! an SVG (an image whose default app may be a browser that runs it), could
-//! run code it does not announce. There is no Show in Finder: the protocol
-//! gives no path.
+//! run code it does not announce. An Artifact has no Show in Finder: the
+//! protocol gives no path.
+//!
+//! A click on a path a reply names comes here too ([`FilesView::open_path`],
+//! [`crate::local`]): the file there now shows in Finder, opens in the
+//! default app, or previews in the face, which the window then shows
+//! ([`FilesViewEvent::Show`]). Such a preview's menu holds Copy (text),
+//! Show in Finder, Copy Path, and Open in Default App for an HTML page,
+//! which opens the page itself; never Save As or Delete.
 
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -70,11 +78,12 @@ use workspace::HostSession;
 
 use crate::desk::{Desk, write_saved_copy, write_temp_copy};
 use crate::list::{ArtifactList, ArtifactListEvent, ListLoad};
+use crate::local::{LocalFile, PathOpening, classify};
 use crate::policy::{
     COPY_MAX_BYTES, ImageType, ListAction, ListKey, is_html, is_pdf, is_user_deletable,
     list_action, matches_filter, row_summary, safe_file_name,
 };
-use crate::preview::{ArtifactPreview, Body, PreviewEvent, why};
+use crate::preview::{ArtifactPreview, Body, PreviewEvent, PreviewSource, why};
 use crate::read::{self, ReadFailure};
 use crate::{
     Back, FILES_CONTEXT, LIST_CONTEXT, OpenSelected, SelectFirst, SelectLast, SelectNext,
@@ -94,6 +103,9 @@ const MENU_WIDTH_REMS: f32 = 13.;
 pub enum FilesViewEvent {
     /// Escape in the list: the panel gives the conversation its place.
     Dismiss,
+    /// A file on this machine opened in the preview: the window shows the
+    /// face.
+    Show,
 }
 
 /// What an action ended with, as the toast said it.
@@ -112,6 +124,10 @@ enum FileAction {
     Save,
     Open,
     Delete,
+    /// Show a file on this machine in Finder.
+    Reveal,
+    /// Copy a file on this machine's path.
+    CopyPath,
 }
 
 /// The rows the list draws: the visible files the filter keeps, by their
@@ -140,6 +156,9 @@ pub struct FilesView {
     desk: Desk,
     /// The action under way; one at a time.
     action: Option<(FileAction, Task<()>)>,
+    /// A click on a path a reply names, while what is there is looked at;
+    /// a later click replaces it.
+    opening: Option<Task<()>>,
     notice: Option<Notice>,
     /// The wall clock, read when the list changes, never in `render`.
     clock: Rc<dyn Fn() -> u64>,
@@ -203,6 +222,7 @@ impl FilesView {
             menu: MenuSlot::new(MenuPlacement::BelowEnd),
             desk: Desk::system(),
             action: None,
+            opening: None,
             notice: None,
             clock,
             listed_at,
@@ -309,15 +329,15 @@ impl FilesView {
     }
 
     /// The list moved on: the clock is read again, the selection stays on
-    /// its file or goes to the first, and a preview whose file is gone
-    /// closes.
+    /// its file or goes to the first, and the preview of an Artifact that
+    /// is gone closes.
     fn follow_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.listed_at = ((self.clock)(), shared::time::local_utc_offset());
-        if let Some((preview, _)) = &self.preview {
-            let id = preview.read(cx).artifact().id.clone();
-            if self.find(&id, cx).is_none() {
-                self.back(window, cx);
-            }
+        let previewed = self.previewed(cx).map(|artifact| artifact.id);
+        if let Some(id) = previewed
+            && self.find(&id, cx).is_none()
+        {
+            self.back(window, cx);
         }
         self.keep_selection_in_filter(cx);
         cx.notify();
@@ -358,16 +378,64 @@ impl FilesView {
         self.selected = Some(id.to_owned().into());
         let host = self.list.read(cx).host().clone();
         let preview = cx.new(|cx| ArtifactPreview::new(host, artifact, window, cx));
+        self.show_preview(preview, window, cx);
+    }
+
+    /// Does what a click on `path`, a path a reply names on this machine,
+    /// asks, by what is there now ([`classify`], off the main thread): a
+    /// notice when nothing is; Finder for a folder or a file that neither
+    /// previews nor is a document; the default app for a document; else
+    /// the preview, and the window is asked to show the face. A later
+    /// click replaces one still being looked at.
+    pub fn open_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let opening = cx.background_spawn(async move { classify(&path) });
+        self.opening = Some(cx.spawn_in(window, async move |this, cx| {
+            let opening = opening.await;
+            this.update_in(cx, |this, window, cx| {
+                this.opening = None;
+                match opening {
+                    PathOpening::Missing => {
+                        let title = copy::FILE_GONE.get(cx).to_owned();
+                        this.say(Notice { ok: false, title, detail: None }, window, cx);
+                    }
+                    PathOpening::Reveal(path) => this.desk.reveal(&path, cx),
+                    PathOpening::OpenInDefaultApp(path) => this.desk.open(&path, cx),
+                    PathOpening::Preview(file) => {
+                        this.open_local_preview(file, window, cx);
+                        cx.emit(FilesViewEvent::Show);
+                    }
+                }
+            })
+            .ok();
+        }));
+    }
+
+    /// Opens `file`, on this machine, in the preview, which takes the
+    /// focus.
+    fn open_local_preview(&mut self, file: LocalFile, window: &mut Window, cx: &mut Context<Self>) {
+        let host = self.list.read(cx).host().clone();
+        let preview = cx.new(|cx| ArtifactPreview::local(host, file, window, cx));
+        self.show_preview(preview, window, cx);
+    }
+
+    fn show_preview(
+        &mut self,
+        preview: Entity<ArtifactPreview>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let subscription =
             cx.subscribe_in(&preview, window, |this, _, event: &PreviewEvent, window, cx| {
                 match event {
                     PreviewEvent::SaveAs => this.save_as(window, cx),
                     PreviewEvent::OpenInDefaultApp => this.open_in_default_app(window, cx),
+                    PreviewEvent::Reveal => this.reveal(cx),
                 }
             });
         preview.read(cx).focus_handle().clone().focus(window, cx);
         self.preview = Some((preview, subscription));
         self.menu = MenuSlot::new(MenuPlacement::BelowEnd);
+        self.action = None;
         cx.notify();
     }
 
@@ -391,15 +459,31 @@ impl FilesView {
 
     // The actions.
 
+    /// The Artifact previewed.
     fn previewed(&self, cx: &App) -> Option<ArtifactProjection> {
-        self.preview().map(|preview| preview.read(cx).artifact().clone())
+        self.preview().and_then(|preview| preview.read(cx).artifact().cloned())
+    }
+
+    /// The file on this machine previewed.
+    fn previewed_local(&self, cx: &App) -> Option<LocalFile> {
+        self.preview().and_then(|preview| preview.read(cx).source().local().cloned())
     }
 
     /// Whether the previewed file offers `action`.
     fn offers(&self, action: FileAction, cx: &App) -> bool {
         let Some(preview) = self.preview() else { return false };
         let preview = preview.read(cx);
-        let artifact = preview.artifact();
+        let artifact = match preview.source() {
+            PreviewSource::Artifact(artifact) => artifact,
+            PreviewSource::Local(file) => {
+                return match action {
+                    FileAction::Copy => matches!(preview.body(), Body::Text(_)),
+                    FileAction::Open => is_html(file),
+                    FileAction::Reveal | FileAction::CopyPath => true,
+                    FileAction::Save | FileAction::Delete => false,
+                };
+            }
+        };
         match action {
             FileAction::Copy => match artifact.kind {
                 ArtifactKind::Diff | ArtifactKind::Html => true,
@@ -418,6 +502,7 @@ impl FilesView {
                 _ => is_html(artifact),
             },
             FileAction::Delete => is_user_deletable(artifact),
+            FileAction::Reveal | FileAction::CopyPath => false,
         }
     }
 
@@ -459,8 +544,18 @@ impl FilesView {
     }
 
     /// Copies the file's text: what the preview holds when it is whole,
-    /// else read from the Host, up to [`COPY_MAX_BYTES`].
+    /// else read from the Host, up to [`COPY_MAX_BYTES`]. A file on this
+    /// machine is held whole.
     pub fn copy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(file) = self.previewed_local(cx) {
+            let whole = self.preview().and_then(|preview| preview.read(cx).complete_text());
+            if let Some(text) = whole.filter(|_| self.offers(FileAction::Copy, cx)) {
+                cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()));
+                let title = copy::about(copy::COPIED, Locale::current(cx), &file.name);
+                self.say(Notice { ok: true, title, detail: None }, window, cx);
+            }
+            return;
+        }
         self.start(
             FileAction::Copy,
             |this, window, cx| {
@@ -573,10 +668,32 @@ impl FilesView {
         );
     }
 
+    /// Shows the file on this machine previewed in Finder.
+    pub fn reveal(&mut self, cx: &mut Context<Self>) {
+        if let Some(file) = self.previewed_local(cx) {
+            self.desk.reveal(&file.path, cx);
+        }
+    }
+
+    /// Copies the path of the file on this machine previewed.
+    pub fn copy_path(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(file) = self.previewed_local(cx) else { return };
+        cx.write_to_clipboard(ClipboardItem::new_string(file.path.display().to_string()));
+        let title = copy::about(copy::PATH_COPIED, Locale::current(cx), &file.name);
+        self.say(Notice { ok: true, title, detail: None }, window, cx);
+    }
+
     /// Writes a copy of a PDF, a raster image or an HTML page under the
     /// app's cache and hands it to the default app. A PDF's or an image's
     /// extension comes from its bytes, a page's is `html` whatever its name.
+    /// An HTML page on this machine opens as it is, beside its files.
     pub fn open_in_default_app(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(file) = self.previewed_local(cx) {
+            if self.offers(FileAction::Open, cx) {
+                self.desk.open(&file.path, cx);
+            }
+            return;
+        }
         self.start(
             FileAction::Open,
             |this, window, cx| {
@@ -744,12 +861,30 @@ impl FilesView {
                 Self::copy,
             ));
         }
-        entries.push(item(
-            "files-save",
-            copy::SAVE_AS.get(cx),
-            Icon::new(AssetIcon::Download),
-            Self::save_as,
-        ));
+        if self.offers(FileAction::Save, cx) {
+            entries.push(item(
+                "files-save",
+                copy::SAVE_AS.get(cx),
+                Icon::new(AssetIcon::Download),
+                Self::save_as,
+            ));
+        }
+        if self.offers(FileAction::Reveal, cx) {
+            entries.push(item(
+                "files-reveal",
+                copy::REVEAL.get(cx),
+                Icon::new(MakaIcon::Folder),
+                |this, _, cx| this.reveal(cx),
+            ));
+        }
+        if self.offers(FileAction::CopyPath, cx) {
+            entries.push(item(
+                "files-copy-path",
+                copy::COPY_PATH.get(cx),
+                Icon::new(MakaIcon::Copy),
+                Self::copy_path,
+            ));
+        }
         if self.offers(FileAction::Open, cx) {
             entries.push(item(
                 "files-open",
@@ -865,7 +1000,7 @@ impl FilesView {
             match load {
                 ListLoad::Loading => line("files-loading", copy::LOADING.get(cx).into(), cx),
                 ListLoad::Failed(_) => div().into_any_element(),
-                _ => empty_state(cx),
+                _ => empty_state(!list.host().read(cx).is_remote(), cx),
             }
         } else if shown == 0 {
             line("files-no-matches", copy::NO_MATCHES.get(cx).into(), cx)
@@ -1044,8 +1179,9 @@ impl FilesView {
     ) -> AnyElement {
         let maka = cx.maka();
         let locale = Locale::current(cx);
-        let artifact = preview.read(cx).artifact().clone();
-        let kind = match artifact.kind {
+        let source = preview.read(cx).source().clone();
+        let name = source.name().to_owned();
+        let kind = match source.kind() {
             ArtifactKind::File => copy::KIND_FILE.get(cx),
             ArtifactKind::Diff => copy::KIND_DIFF.get(cx),
             ArtifactKind::Html => copy::KIND_HTML.get(cx),
@@ -1054,13 +1190,13 @@ impl FilesView {
             _ => copy::KIND_FILE.get(cx),
         };
         let (now, offset) = self.listed_at;
-        let size = file_size(locale, artifact.size_bytes);
-        let when = shared::time::compact_timestamp(locale, artifact.created_at, now, offset);
+        let size = file_size(locale, source.size_bytes());
+        let when = shared::time::compact_timestamp(locale, source.time(), now, offset);
         let meta = format!("{kind} · {size} · {when}");
         let spoken = shell_copy::parts(locale, &[kind, &size, &when]);
         let menu_open = self.menu.is_open();
         let back = copy::BACK.get(cx);
-        let more = copy::more_actions(locale, &artifact.name);
+        let more = copy::more_actions(locale, &name);
         let header = h_flex()
             .id("files-preview-header")
             .test_support()
@@ -1091,13 +1227,13 @@ impl FilesView {
                         div()
                             .id("files-preview-name")
                             .test_support()
-                            .aria_label(artifact.name.clone())
+                            .aria_label(name.clone())
                             .w_full()
                             .truncate()
                             .text_sm()
                             .font_medium()
                             .text_color(maka.ink)
-                            .child(artifact.name.clone()),
+                            .child(name),
                     )
                     .child(
                         div()
@@ -1195,10 +1331,11 @@ fn line(id: &'static str, text: SharedString, cx: &App) -> AnyElement {
 }
 
 /// The list with nothing in it: the tool's glyph and the line that says
-/// what will be here.
-fn empty_state(cx: &App) -> AnyElement {
+/// what will be here; on a Host on this machine (`local`), also that the
+/// paths a reply names open on a click.
+fn empty_state(local: bool, cx: &App) -> AnyElement {
     let maka = cx.maka();
-    let text = copy::EMPTY.get(cx);
+    let text = if local { copy::EMPTY_LOCAL.get(cx) } else { copy::EMPTY.get(cx) };
     v_flex()
         .id("files-empty")
         .test_support()

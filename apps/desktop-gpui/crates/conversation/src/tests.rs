@@ -1713,7 +1713,7 @@ fn calls_inside_a_code_cell_show_their_summary_and_then_their_output(cx: &mut Te
     }
     let exec = tool_row(&harness, EXEC, cx);
     assert_eq!((exec.input, exec.output), (None, None));
-    assert_eq!(exec.note, ToolNote::OutputAtTurnEnd, "finished, so not “no output yet”");
+    assert_eq!(exec.note, ToolNote::DetailsAtTurnEnd, "finished, so not “no output yet”");
     assert!(card_shows(&harness, EXEC, "tool-note", cx));
     let read = tool_row(&harness, NESTED_READ, cx);
     assert!(read.input.expect("input").contains(SKILL_PATH));
@@ -1987,6 +1987,7 @@ mod edits;
 mod find;
 mod history;
 mod links;
+mod paths;
 mod pty;
 mod queue;
 mod reasoning;
