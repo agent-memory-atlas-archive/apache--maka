@@ -40,6 +40,7 @@ pub(super) enum PreparedRun {
 impl Owner {
     pub fn activated(self: &Arc<Self>) {
         self.scheduler.bind(self);
+        self.todo.bind(self);
         self.start_schedules();
         let owner = self.clone();
         self.workers.spawn(async move { owner.schedule().await });

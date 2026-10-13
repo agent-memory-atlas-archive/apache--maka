@@ -28,6 +28,7 @@ use uuid::Uuid;
 
 mod code_mode;
 mod computer;
+mod todo;
 
 async fn seed_connection(
     host: &Path,

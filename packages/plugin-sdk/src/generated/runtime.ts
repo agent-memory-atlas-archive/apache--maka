@@ -205,6 +205,8 @@ export type RuntimeProtocol =
   | SkillPreparationRecord
   | AgentList
   | AgentCreate
+  | AgentChecklistRead
+  | AgentChecklist
   | AgentScheduleRead
   | AgentSchedules
   | AgentScheduleChange
@@ -2940,6 +2942,7 @@ export type AgentWorkspaceSelection =
       sessionId: string;
       kind: 'session';
     };
+export type AgentTodoStatus = 'pending' | 'in_progress' | 'completed';
 export type AgentScheduleRead =
   | {
       cursor?: string | null;
@@ -6491,6 +6494,10 @@ export interface AgentConfiguration {
    */
   scheduledTasks?: boolean;
   /**
+   * Enable the session-scoped, model-maintained checklist.
+   */
+  todo?: boolean;
+  /**
    * Explicit access to this Agent’s earlier conversations for model tools.
    */
   recall?: boolean;
@@ -8403,6 +8410,251 @@ export interface AgentCreate {
 export interface AgentProjectRef {
   id: string;
   revision: string;
+}
+export interface AgentChecklistRead {
+  sessionId: string;
+  offset?: number;
+}
+export interface AgentChecklist {
+  enabled: boolean;
+  revision?: number | null;
+  total: number;
+  completed: number;
+  current?: AgentTodoItem | null;
+  offset: number;
+  /**
+   * @maxItems 20
+   */
+  items:
+    | []
+    | [AgentTodoItem]
+    | [AgentTodoItem, AgentTodoItem]
+    | [AgentTodoItem, AgentTodoItem, AgentTodoItem]
+    | [AgentTodoItem, AgentTodoItem, AgentTodoItem, AgentTodoItem]
+    | [AgentTodoItem, AgentTodoItem, AgentTodoItem, AgentTodoItem, AgentTodoItem]
+    | [AgentTodoItem, AgentTodoItem, AgentTodoItem, AgentTodoItem, AgentTodoItem, AgentTodoItem]
+    | [
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+      ]
+    | [
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+      ]
+    | [
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+      ]
+    | [
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+      ]
+    | [
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+      ]
+    | [
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+      ]
+    | [
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+      ]
+    | [
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+      ]
+    | [
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+      ]
+    | [
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+      ]
+    | [
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+      ]
+    | [
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+      ]
+    | [
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+      ]
+    | [
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+        AgentTodoItem,
+      ];
+  nextOffset?: number | null;
+}
+export interface AgentTodoItem {
+  content: string;
+  status: AgentTodoStatus;
 }
 export interface AgentScheduledSummary {
   id: string;

@@ -40,6 +40,7 @@ import type {
   AgentSessionPage,
   AgentList,
   AgentScheduleAlerts,
+  AgentChecklist,
   FileCapture,
   RecoveryRef,
   EditorCommand,
@@ -245,13 +246,18 @@ export interface State {
   scheduledTasks: boolean;
   web: boolean;
   jev: boolean;
+  checklist: {
+    watch: { key: string; input: { sessionId: string; offset: number } } | null;
+    page: AgentChecklist | null;
+    failed: boolean;
+  };
   scheduleAlerts: AgentScheduleAlerts;
   scheduleWatch: string | null;
   scheduleRequested: { sequence: number; taskId: string } | null;
   settingsCategory: SettingsCategory;
   insightsScope: InsightsProps['scope'];
   sidebar: { open: boolean } | { command: TerminalPaneCommand | null };
-  inspector: 'details' | 'terminal' | 'outputs' | null;
+  inspector: 'details' | 'terminal' | 'outputs' | 'checklist' | null;
   terminals: boolean;
   skills: boolean;
   place: string;
@@ -261,6 +267,7 @@ export interface State {
     | 'skills'
     | 'palette'
     | 'directories'
+    | 'checklist'
     | 'details'
     | 'help'
     | 'queue'
@@ -354,6 +361,7 @@ export type RootCommand =
   | 'model-setup'
   | 'terminal-open'
   | 'skills-open'
+  | 'checklist-open'
   | 'details-open'
   | 'usage-open'
   | 'create-workspace'

@@ -38,6 +38,7 @@ import {
 import { draftReady } from '../../shared/drafts.js';
 
 import {
+  watchChecklist,
   catalog,
   catalogPending,
   checkInteraction,
@@ -251,6 +252,15 @@ export function handleRaw<N extends Node>(
     history(state, actions, { kind: 'tail' }, state.latestKnown, true);
   } else if (input.key === 'catalog-refresh') {
     if (!mutationPending(state) && !catalogPending(state)) catalog(state);
+  } else if (input.key === 'checklist-close') {
+    if (state.dialog === 'checklist') closeDialog(state);
+    if (state.inspector === 'checklist') state.inspector = null;
+  } else if (input.key === 'checklist-retry') {
+    watchChecklist(state);
+  } else if (input.key === 'checklist-next' && state.checklist.page?.nextOffset != null) {
+    watchChecklist(state, state.checklist.page.nextOffset);
+  } else if (input.key === 'checklist-previous' && state.checklist.page) {
+    watchChecklist(state, Math.max(0, state.checklist.page.offset - 20));
   } else if (input.key === 'inspector-close' && !state.dialog) {
     state.inspector = null;
   } else if (input.key === 'palette-open' && state.dialog === null) {

@@ -17,6 +17,9 @@
  * under the License.
  */
 
+#[path = "tests/todo.rs"]
+mod todo_tests;
+
 #[path = "tests/computer.rs"]
 mod computer;
 
@@ -515,6 +518,7 @@ impl Fixture {
             isolated_workspaces: false,
             assistant: None,
             scheduled_tasks: false,
+            todo: false,
             recall: false,
             import_roots: vec![maka_host_runtime::DirectoryRootSpec {
                 label: "Import sources".into(),
