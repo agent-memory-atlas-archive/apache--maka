@@ -30,6 +30,7 @@ import { type AppsProps } from '../../shared/contracts.js';
 import { canInstall, packageSourceView } from '../../shared/deployment-import.js';
 import { settingOptions } from '../../shared/instance-settings.js';
 import { copy, type Copy } from '../../shared/locale.js';
+import { pluginDescription } from '../../shared/plugin-description.js';
 import { pageHeader } from '../../shared/page-shell.js';
 import { sameValue } from '../../shared/value.js';
 import { fill, output, type Node, type Presentation } from '../../shared/view.js';
@@ -106,14 +107,35 @@ export function frame<N extends Node>(
               ui.item
                 ? ui.item(
                     'candidate-' + (state.listWindow + offset),
-                    ui.text('candidate-label-' + (state.listWindow + offset), choice.label),
+                    ui.box(
+                      'candidate-copy-' + (state.listWindow + offset),
+                      [
+                        ui.text(
+                          'candidate-label-' + (state.listWindow + offset),
+                          pluginDescription(choice.presentation, props.locale, choice.label).name,
+                        ),
+                        ...(pluginDescription(choice.presentation, props.locale, choice.label)
+                          .description
+                          ? [
+                              ui.text(
+                                'candidate-description-' + (state.listWindow + offset),
+                                pluginDescription(choice.presentation, props.locale, choice.label)
+                                  .description,
+                                13,
+                                props.theme.muted,
+                              ),
+                            ]
+                          : []),
+                      ],
+                      { gap: 0 },
+                    ),
                     state.focused === 'candidate-' + (state.listWindow + offset),
                     disabled && state.pending?.request.kind !== 'catalog',
                     { followFocus: true, submit: true },
                   )
                 : ui.button(
                     'candidate-' + (state.listWindow + offset),
-                    choice.label,
+                    pluginDescription(choice.presentation, props.locale, choice.label).name,
                     disabled,
                     false,
                     { align: 'start' },
@@ -253,7 +275,7 @@ export function frame<N extends Node>(
         },
       ),
       ui.box(
-        'apps-configuration',
+        'apps-configuration-name',
         [
           ui.text(
             'apps-setup-help',
@@ -277,84 +299,94 @@ export function frame<N extends Node>(
             } satisfies InputProps,
             { changed: 'name-changed', submitted: 'name-submit' },
           ),
-          ...(draft?.page?.fields ?? []).map((f, index) => {
-            const options = settingOptions(f),
-              group = f.kind === 'object' || f.kind === 'array';
-            const current = draft ? value(draft, f) : null;
-            return ui.box(
-              'app-setting-row-' + index,
-              [
-                options.length && ui.choice
-                  ? ui.choice(
-                      'setting-choice-' + index,
-                      f.label,
-                      options.map((v, at) => ({ key: String(at), label: display(v, text) })),
-                      options.some((v) => sameValue(v, current))
-                        ? String(options.findIndex((v) => sameValue(v, current)))
-                        : null,
-                      suspended || !f.editable,
-                    )
-                  : ui.button(
-                      'setting-' + index,
-                      f.label + '  ' + (group ? '›' : display(current, text)),
-                      suspended || !f.editable || (f.kind === 'array' && !f.present),
-                      false,
-                      { align: 'start' },
-                    ),
-                ...(f.description
-                  ? [
-                      ui.text(
-                        'app-setting-description-' + index,
-                        f.description,
-                        12,
-                        props.theme.muted,
-                      ),
-                    ]
-                  : []),
-              ],
-              { gap: 0 },
-            );
-          }),
-          ...(draft?.page && !draft.page.fields.length
-            ? [ui.text('apps-settings-empty', text.appsNoSettings, 13, props.theme.muted)]
-            : []),
-          ...(draft?.path.length
-            ? [ui.button('settings-up', text.directoryParent, suspended)]
-            : []),
-          ...(draft?.previous.length
-            ? [ui.button('settings-previous', text.skillsPrevious, suspended)]
-            : []),
-          ...(draft?.page?.next
-            ? [ui.button('settings-next', text.deploymentMore, suspended)]
-            : []),
-          ...(draft?.candidate.kind === 'package' && draft.page?.imports.length
-            ? [
-                ui.text('apps-bindings-title', text.appsBindings, 15, props.theme.text, 500),
-                ui.text('apps-bindings-help', text.appsBindingHelp, 13, props.theme.muted),
-                ...(draft.page?.imports ?? []).map((binding, index) =>
-                  ui.button(
-                    'choose-binding-' + index,
-                    binding.name +
-                      ' · ' +
-                      binding.contract +
-                      ' · ' +
-                      (draft.bindings[binding.name]?.length ?? 0),
-                    suspended,
-                    false,
-                    { align: 'start' },
-                  ),
-                ),
-              ]
-            : []),
         ],
+        { visible: state.route === 'configure', gap: 1 },
+      ),
+      presentation.reading(
+        'apps-settings-reading',
         {
-          visible: state.route === 'configure',
-          autoFocus: true,
-          scroll: 'manual',
-          gap: 1,
-          terminal: { grow: 0, shrink: true },
-          style: { width: fill, height: fill, minHeight: 0 },
+          command: null,
+          content: ui.box(
+            'apps-configuration',
+            [
+              ...(draft?.page?.fields ?? [])
+                .slice(draft?.window ?? 0, (draft?.window ?? 0) + 64)
+                .map((f, offset) => {
+                  const index = (draft?.window ?? 0) + offset;
+                  const options = settingOptions(f),
+                    group = f.kind === 'object' || f.kind === 'array';
+                  const current = draft ? value(draft, f) : null;
+                  return ui.box(
+                    'app-setting-row-' + index,
+                    [
+                      options.length && ui.choice
+                        ? ui.choice(
+                            'setting-choice-' + index,
+                            f.label,
+                            options.map((v, at) => ({ key: String(at), label: display(v, text) })),
+                            options.some((v) => sameValue(v, current))
+                              ? String(options.findIndex((v) => sameValue(v, current)))
+                              : null,
+                            suspended || !f.editable,
+                          )
+                        : ui.button(
+                            'setting-' + index,
+                            f.label + '  ' + (group ? '›' : display(current, text)),
+                            suspended || !f.editable || (f.kind === 'array' && !f.present),
+                            false,
+                            { align: 'start' },
+                          ),
+                      ...(f.description
+                        ? [
+                            ui.text(
+                              'app-setting-description-' + index,
+                              f.description,
+                              12,
+                              props.theme.muted,
+                            ),
+                          ]
+                        : []),
+                    ],
+                    { gap: 0 },
+                  );
+                }),
+              ...(draft?.page && !draft.page.fields.length
+                ? [ui.text('apps-settings-empty', text.appsNoSettings, 13, props.theme.muted)]
+                : []),
+              ...(draft?.path.length
+                ? [ui.button('settings-up', text.directoryParent, suspended)]
+                : []),
+              ...(draft?.candidate.kind === 'package' && draft.page?.imports.length
+                ? [
+                    ui.text('apps-bindings-title', text.appsBindings, 15, props.theme.text, 500),
+                    ui.text('apps-bindings-help', text.appsBindingHelp, 13, props.theme.muted),
+                    ...(draft.page?.imports ?? []).map((binding, index) =>
+                      ui.button(
+                        'choose-binding-' + index,
+                        binding.name +
+                          ' · ' +
+                          binding.contract +
+                          ' · ' +
+                          (draft.bindings[binding.name]?.length ?? 0),
+                        suspended,
+                        false,
+                        { align: 'start' },
+                      ),
+                    ),
+                  ]
+                : []),
+            ],
+            {
+              visible: state.route === 'configure',
+              autoFocus: true,
+              scroll: 'anchor',
+              gap: 1,
+              terminal: { grow: 0, shrink: true },
+              style: { width: fill, height: fill, minHeight: 0 },
+            },
+          ),
         },
+        { input: 'settings-input', observed: 'settings-observed' },
       ),
       ui.box(
         'apps-file-region',

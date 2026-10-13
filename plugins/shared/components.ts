@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { scrollBoundary } from './scroll.js';
 import { tuiText } from './tui-locale.js';
 import type {
   Component,
@@ -939,16 +940,10 @@ export function components<N extends Node>(
               ),
             ),
           ...(!props.source.atStart
-            ? [
-                ui.button('source-first', text.sourceFirst, props.source.loading),
-                ui.button('source-previous', text.sourcePrevious, props.source.loading),
-              ]
+            ? [ui.button('source-first', text.sourceFirst, props.source.loading)]
             : []),
           ...(!props.source.atEnd
-            ? [
-                ui.button('source-next', text.sourceNext, props.source.loading),
-                ui.button('source-last', text.sourceLast, props.source.loading),
-              ]
+            ? [ui.button('source-last', text.sourceLast, props.source.loading)]
             : []),
           ...(props.source.failed ? [ui.button('source-retry', text.sourceRetry)] : []),
         ]
@@ -1144,7 +1139,7 @@ export function components<N extends Node>(
                             target: { kind: source.landing },
                           },
                         },
-                        { input: 'source-input' },
+                        { input: 'source-input', observed: 'source-observed' },
                       ),
                     ],
                     {
@@ -1658,6 +1653,13 @@ export function components<N extends Node>(
               readingRevision: next.observation.readingRevision,
             },
           });
+        const sourceDirection = scrollBoundary(next, input, 'source-reading');
+        if (sourceDirection && props.source && !props.source.loading && !props.source.failed) {
+          if (sourceDirection === 'up' && !props.source.atStart)
+            out.events.push({ name: 'sourcePrevious', value: {} });
+          else if (sourceDirection === 'down' && !props.source.atEnd)
+            out.events.push({ name: 'sourceNext', value: {} });
+        }
         if (input.kind === 'raw' && props.source) {
           const source = props.source;
           const event =

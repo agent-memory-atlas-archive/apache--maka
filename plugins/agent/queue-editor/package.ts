@@ -29,6 +29,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.queue-editor',
-  displayName: 'queue-editor',
+  displayName: 'Queued messages',
+  description: 'Review and edit messages waiting to run.',
+  localizations: {
+    'zh-CN': { displayName: '待发送消息', description: '查看和编辑等待执行的消息。' },
+  },
   application: { entries },
 };

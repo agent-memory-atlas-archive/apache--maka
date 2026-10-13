@@ -28,6 +28,7 @@ import type {
   AgentPermissionChange,
   CallerIntent,
   Component,
+  ComponentInput,
   EditorCommand,
   EditorObservation,
   EditorTextRef,
@@ -39,6 +40,7 @@ import type {
   TextChunk,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { sessionDetailsContract, type SessionDetailsProps } from '../../shared/contracts.js';
+import { scrollRows, visibleRows, resetScroll } from '../../shared/scroll.js';
 import { copy, type Copy } from '../../shared/locale.js';
 import { sameValue } from '../../shared/value.js';
 import {
@@ -259,6 +261,7 @@ function settle(state: State, reply: OperationReply, events: Emission[]) {
 function history(state: State, actions: Action[], after: number) {
   if (Object.values(state.pending).some((r) => r.kind === 'history' || r.kind === 'earlier'))
     return;
+  if (!after) resetScroll(state, 'details-history-reading');
   state.historyFailed = false;
   request(state, actions, { kind: 'history', after }, 'history', 'page', { after, limit: 4 });
 }
@@ -555,78 +558,97 @@ function frame<N extends Node>(
       style: { width: fill },
     },
   );
-  const earlier = ui.box(
-    'details-earlier',
-    [
-      ui.text('details-history-heading', text.detailsHistory, 17, props.theme.text, 550),
-      ui.text('details-history-help', text.detailsHistoryHelp, 12, props.theme.muted),
-      ...(state.historyFailed
-        ? [ui.text('details-history-failed', text.historyUnavailable, 13, props.theme.muted)]
-        : []),
-      ...state.earlier.map((entry) => {
-        const receipt = entry.result?.receipt;
-        const value =
-          receipt?.kind === 'recorded' && receipt.outcome.kind === 'returned'
-            ? (receipt.outcome.value as AgentMetadataResult)
-            : null;
-        return ui.box(
-          `details-operation-${entry.cursor}`,
-          [
-            ui.text(
-              `details-result-${entry.cursor}`,
-              value?.kind === 'committed'
-                ? text.detailsSaved + ' ' + compactLabel(value.session.title, 42)
-                : value?.kind === 'revision_conflict'
-                  ? text.detailsConflict
-                  : value?.kind === 'rejected'
-                    ? text.detailsRejected
-                    : text.historyUnknown,
-              12,
-              props.theme.muted,
-            ),
-            ui.button(
-              `earlier-${entry.cursor}`,
-              text.check,
-              Object.values(state.pending).some(
-                (r) => r.kind === 'earlier' && r.cursor === entry.cursor,
+  const earlier = state.historyOpen
+    ? presentation.reading(
+        'details-history-reading',
+        {
+          content: ui.box(
+            'details-earlier',
+            [
+              ui.text('details-history-heading', text.detailsHistory, 17, props.theme.text, 550),
+              ui.text('details-history-help', text.detailsHistoryHelp, 12, props.theme.muted),
+              ...(state.historyFailed
+                ? [
+                    ui.text(
+                      'details-history-failed',
+                      text.historyUnavailable,
+                      13,
+                      props.theme.muted,
+                    ),
+                  ]
+                : []),
+              ...state.earlier.map((entry) => {
+                const receipt = entry.result?.receipt;
+                const value =
+                  receipt?.kind === 'recorded' && receipt.outcome.kind === 'returned'
+                    ? (receipt.outcome.value as AgentMetadataResult)
+                    : null;
+                return ui.box(
+                  `details-operation-${entry.cursor}`,
+                  [
+                    ui.text(
+                      `details-result-${entry.cursor}`,
+                      value?.kind === 'committed'
+                        ? text.detailsSaved + ' ' + compactLabel(value.session.title, 42)
+                        : value?.kind === 'revision_conflict'
+                          ? text.detailsConflict
+                          : value?.kind === 'rejected'
+                            ? text.detailsRejected
+                            : text.historyUnknown,
+                      12,
+                      props.theme.muted,
+                    ),
+                    ui.button(
+                      `earlier-${entry.cursor}`,
+                      text.check,
+                      Object.values(state.pending).some(
+                        (r) => r.kind === 'earlier' && r.cursor === entry.cursor,
+                      ),
+                    ),
+                  ],
+                  { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
+                );
+              }),
+              ui.box(
+                'details-history-actions',
+                [
+                  ui.button(
+                    'history-back',
+                    text.back,
+                    false,
+                    false,
+                    target === 'tui' ? { background: 0, align: 'start' } : {},
+                  ),
+                  ui.button(
+                    'history-refresh',
+                    target === 'tui'
+                      ? props.theme.ascii
+                        ? 'r'
+                        : '↻'
+                      : text.refreshDefaultOperations,
+                    false,
+                    false,
+                    target === 'tui' ? { background: 0 } : {},
+                    undefined,
+                    text.refreshDefaultOperations,
+                  ),
+                ],
+                { row: true, gap: 1, style: { wrap: true }, terminal: { wrap: true } },
               ),
-            ),
-          ],
-          { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
-        );
-      }),
-      ui.box(
-        'details-history-actions',
-        [
-          ui.button(
-            'history-back',
-            text.back,
-            false,
-            false,
-            target === 'tui' ? { background: 0, align: 'start' } : {},
+            ],
+            {
+              visible: state.historyOpen,
+              gap: target === 'desktop' ? 8 : 1,
+              scroll: 'anchor',
+              terminal: { grow: 1 },
+              style: { width: fill },
+            },
           ),
-          ui.button(
-            'history-refresh',
-            target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.refreshDefaultOperations,
-            false,
-            false,
-            target === 'tui' ? { background: 0 } : {},
-            undefined,
-            text.refreshDefaultOperations,
-          ),
-          ...(state.historyNext !== null ? [ui.button('history-more', text.moreOperations)] : []),
-        ],
-        { row: true, gap: 1, style: { wrap: true }, terminal: { wrap: true } },
-      ),
-    ],
-    {
-      visible: state.historyOpen,
-      gap: target === 'desktop' ? 8 : 1,
-      scroll: 'anchor',
-      terminal: { grow: 1 },
-      style: { width: fill },
-    },
-  );
+        },
+        { input: 'history-input', observed: 'history-observed' },
+      )
+    : ui.box('history-hidden', [], { visible: false });
+
   const out = output(
     state,
     ui.box('session-details', [form, review, earlier], {
@@ -705,6 +727,17 @@ export function sessionDetails<N extends Node>(
       return frame(presentation, state, props);
     },
     event(state, input, props) {
+      if (
+        input.kind === 'component' &&
+        input.child === 'details-history-reading' &&
+        input.name === 'input'
+      )
+        input = input.event as ComponentInput;
+      if (
+        state.historyOpen &&
+        scrollRows(state, input, 'details-history-reading', state.earlier.length)
+      )
+        input = { kind: 'raw', key: 'history-more', event: {} };
       state.revision++;
       const actions: Action[] = [],
         events: Emission[] = [];
@@ -770,14 +803,21 @@ export function sessionDetails<N extends Node>(
           if (result.status !== 'succeeded') state.historyFailed = true;
           else {
             const page = result.value as CallerIntent[];
-            state.historyNext = page.length === 4 ? page[page.length - 1].cursor : null;
-            state.earlier = page
-              .filter(
-                (entry) =>
-                  entry.reference.method === 'metadata' &&
-                  entry.reference.contract.name === 'maka.agent.Agent',
-              )
-              .map((entry) => ({ cursor: entry.cursor, reference: entry.reference, result: null }));
+            state.historyNext = page.at(-1)?.cursor ?? null;
+            state.earlier = [
+              ...(r.after ? state.earlier : []),
+              ...page
+                .filter(
+                  (entry) =>
+                    entry.reference.method === 'metadata' &&
+                    entry.reference.contract.name === 'maka.agent.Agent',
+                )
+                .map((entry) => ({
+                  cursor: entry.cursor,
+                  reference: entry.reference,
+                  result: null,
+                })),
+            ];
           }
         } else if (r.kind === 'earlier') {
           const entry = state.earlier.find(

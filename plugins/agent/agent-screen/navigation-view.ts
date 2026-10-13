@@ -68,7 +68,7 @@ export function navigationView<N extends Node>(
     target === 'tui' && !state.embedding.fixed
       ? [
           ui.box('navigation-apps-gap', [], { terminal: { basis: 1 } }),
-          navigationLink('apps-open', text.appsTitle, '', '', state.pages.at(-1) === 'apps'),
+          navigationLink('apps-open', text.appsTitle, '▦', '#', state.pages.at(-1) === 'apps'),
           ...(state.embedding.workhub ? [navigationLink('workhub-open', 'WorkHub', '◈', '*')] : []),
           ...(state.scheduledTasks
             ? [

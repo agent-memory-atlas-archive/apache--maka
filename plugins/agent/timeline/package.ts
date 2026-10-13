@@ -37,6 +37,10 @@ Object.assign(entries.tui.imports, {
 export default {
   schemaVersion: 2,
   id: 'maka.agent.timeline',
-  displayName: 'timeline',
+  displayName: 'Conversation messages',
+  description: 'Read messages and follow the assistant’s progress.',
+  localizations: {
+    'zh-CN': { displayName: '对话消息', description: '阅读消息，查看助手的执行进度。' },
+  },
   application: { entries },
 };

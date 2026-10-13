@@ -23,7 +23,11 @@ import { uiAuthoringContract } from '../../shared/contracts.js';
 export default {
   schemaVersion: 2,
   id: 'maka.application.authoring',
-  displayName: 'UI authoring',
+  displayName: 'App authoring',
+  description: 'Create and validate plugin apps for Maka.',
+  localizations: {
+    'zh-CN': { displayName: '应用开发', description: '创建和验证 Maka 插件应用。' },
+  },
   application: {
     entries: {
       host: native(sdk.nativeImplementations.uiAuthoring),

@@ -90,7 +90,7 @@ impl Updates {
         if self.stopped || self.unconfirmed {
             return Ok(None);
         }
-        if application.deployment_status().closing {
+        if application.is_closing() {
             self.stop();
             return Ok(None);
         }

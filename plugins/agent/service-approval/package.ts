@@ -33,6 +33,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.service-approval',
-  displayName: 'service-approval',
+  displayName: 'Service requests',
+  description: 'Review service calls that need your approval.',
+  localizations: {
+    'zh-CN': { displayName: '服务调用确认', description: '查看需要你确认的服务调用。' },
+  },
   application: { entries },
 };

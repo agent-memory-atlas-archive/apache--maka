@@ -163,7 +163,10 @@ for (const target of ['desktop', 'tui']) {
     assert.equal(c.state.pending.key, pending);
     assert.equal(c.state.entries[0].cursor, 1);
     c.reply([intent(5)], pending);
-    assert.equal(c.state.entries[0].cursor, 5);
+    assert.deepEqual(
+      c.state.entries.map((entry) => entry.cursor),
+      [1, 2, 3, 4, 5],
+    );
     assert.equal(c.state.next, 5, 'byte-bounded short pages may have later entries');
     c.raw('next');
     assert.deepEqual(c.out.actions[0].input, { after: 5, limit: 4 });
@@ -188,8 +191,24 @@ for (const target of ['desktop', 'tui']) {
       assert.ok(Buffer.byteLength(source) <= 65536);
       assert.equal(source.isWellFormed(), true);
       actual += source;
-      if (nodes(c.out.frame.view).find((n) => n.key === 'next-source').disabled) break;
-      c.raw('next-source');
+      assert.equal(
+        nodes(c.out.frame.view).some(
+          (node) => node.key === 'next-source' || node.key === 'previous-source',
+        ),
+        false,
+      );
+      if (actual.length === JSON.stringify(reply.receipt, null, 2).length) break;
+      c.event({
+        kind: 'component',
+        child: 'recovery-reading',
+        name: 'observed',
+        event: {
+          readingRevision: n + 1,
+          scroll: { readingRevision: n + 1, direction: 'down' },
+          viewport: { readingRevision: n + 1, atStart: false, atEnd: true, visibleChildKeys: [] },
+          pendingCommand: null,
+        },
+      });
     }
     assert.equal(actual, JSON.stringify(reply.receipt, null, 2));
     assert.deepEqual(c.out.actions, []);

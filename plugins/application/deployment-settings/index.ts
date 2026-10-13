@@ -78,7 +78,27 @@ export function deploymentSettings<N extends Node>(
                   state.selected,
                 ),
                 ...(state.bookmark.observed?.state.kind === 'failed'
-                  ? [ui.button('deployment-place-retry', text.sourceRetry)]
+                  ? [
+                      ui.box(
+                        'deployment-place-error',
+                        [
+                          ui.text(
+                            'deployment-place-message',
+                            state.bookmark.command &&
+                              state.bookmark.command.sequence > state.bookmark.observed.sequence
+                              ? text.restoringView
+                              : text.viewSaveFailed,
+                            13,
+                            props.theme.warning,
+                          ),
+                          ...(state.bookmark.command &&
+                          state.bookmark.command.sequence > state.bookmark.observed.sequence
+                            ? []
+                            : [ui.button('deployment-place-retry', text.reloadView)]),
+                        ],
+                        { row: true, gap: 1, terminal: { wrap: true } },
+                      ),
+                    ]
                   : []),
               ]
             : []),

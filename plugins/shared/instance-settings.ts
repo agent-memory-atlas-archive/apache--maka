@@ -37,10 +37,11 @@ export interface InstanceSettings {
   source: DeploymentRef;
   instance: ManagedInstance;
   open: boolean;
-  page: InstanceSettingsPage | null;
+  page: (Omit<InstanceSettingsPage, 'fields'> & { fields: SettingField[] }) | null;
   path: string[];
   after: string | null;
-  previous: (string | null)[];
+
+  window: number;
   changes: SettingChange[];
   field: { path: string[]; descriptor: SettingField; initial: string } | null;
   observation: EditorObservation | null;
@@ -61,7 +62,8 @@ export const instanceSettings = (
   page: null,
   path: [],
   after: null,
-  previous: [],
+
+  window: 0,
   changes: [],
   field: null,
   observation: null,
@@ -224,80 +226,83 @@ export function instanceSettingsView<N extends Node>(
   const ui = presentation.paint(props.theme),
     text = copy(props.locale);
   const editable = !busy && !state.conflict;
-  const rows = (state.page?.fields ?? []).map((field, index) => {
-    const value = settingValue(state, field);
-    const group = field.kind === 'object' || field.kind === 'array';
-    const disabled = !editable || !field.editable;
-    const label = fieldLabel(field);
-    const options = settingOptions(field);
-    const control =
-      options.length && ui.choice
-        ? ui.choice(
-            'instance-setting-choice-' + index,
-            label,
-            options.map((value, at) => ({
-              key: String(at),
-              label: compactLabel(display(value, props), 120),
-            })),
-            options.some((option) => sameValue(option, value))
-              ? String(options.findIndex((option) => sameValue(option, value)))
-              : null,
-            disabled,
-          )
-        : ui.button(
-            'instance-setting-' + index,
-            `${label}  ${group ? '›' : compactLabel(display(value, props), 120)}`,
-            disabled || (group && !field.present),
-            false,
-            { background: 0, align: 'start' },
-          );
-    return ui.box(
-      'instance-setting-row-' + index,
-      [
-        control,
-        ...(field.description
-          ? [
-              ui.text(
-                'instance-setting-description-' + index,
-                field.description,
-                12,
-                props.theme.muted,
-              ),
-            ]
-          : []),
-        ...(!field.editable
-          ? [
-              ui.text(
-                'instance-setting-unsupported-' + index,
-                text.settingUnsupported,
-                12,
-                props.theme.muted,
-              ),
-            ]
-          : []),
-        ...(field.nullable && !group && (!options.length || !ui.choice)
-          ? [
-              ui.button('instance-setting-null-' + index, text.settingNone, disabled, false, {
-                background: 0,
-                align: 'start',
-              }),
-            ]
-          : []),
-        ...(!field.required &&
-        field.present &&
-        !group &&
-        (state.path.length > 0 || state.instance.path.length === 1)
-          ? [
-              ui.button('instance-setting-clear-' + index, text.settingRemove, disabled, false, {
-                background: 0,
-                align: 'start',
-              }),
-            ]
-          : []),
-      ],
-      { gap: 0 },
-    );
-  });
+  const rows = (state.page?.fields ?? [])
+    .slice(state.window, state.window + 64)
+    .map((field, offset) => {
+      const index = state.window + offset;
+      const value = settingValue(state, field);
+      const group = field.kind === 'object' || field.kind === 'array';
+      const disabled = !editable || !field.editable;
+      const label = fieldLabel(field);
+      const options = settingOptions(field);
+      const control =
+        options.length && ui.choice
+          ? ui.choice(
+              'instance-setting-choice-' + index,
+              label,
+              options.map((value, at) => ({
+                key: String(at),
+                label: compactLabel(display(value, props), 120),
+              })),
+              options.some((option) => sameValue(option, value))
+                ? String(options.findIndex((option) => sameValue(option, value)))
+                : null,
+              disabled,
+            )
+          : ui.button(
+              'instance-setting-' + index,
+              `${label}  ${group ? '›' : compactLabel(display(value, props), 120)}`,
+              disabled || (group && !field.present),
+              false,
+              { background: 0, align: 'start' },
+            );
+      return ui.box(
+        'instance-setting-row-' + index,
+        [
+          control,
+          ...(field.description
+            ? [
+                ui.text(
+                  'instance-setting-description-' + index,
+                  field.description,
+                  12,
+                  props.theme.muted,
+                ),
+              ]
+            : []),
+          ...(!field.editable
+            ? [
+                ui.text(
+                  'instance-setting-unsupported-' + index,
+                  text.settingUnsupported,
+                  12,
+                  props.theme.muted,
+                ),
+              ]
+            : []),
+          ...(field.nullable && !group && (!options.length || !ui.choice)
+            ? [
+                ui.button('instance-setting-null-' + index, text.settingNone, disabled, false, {
+                  background: 0,
+                  align: 'start',
+                }),
+              ]
+            : []),
+          ...(!field.required &&
+          field.present &&
+          !group &&
+          (state.path.length > 0 || state.instance.path.length === 1)
+            ? [
+                ui.button('instance-setting-clear-' + index, text.settingRemove, disabled, false, {
+                  background: 0,
+                  align: 'start',
+                }),
+              ]
+            : []),
+        ],
+        { gap: 0 },
+      );
+    });
   const body = ui.box(
     'instance-settings-body',
     [
@@ -328,28 +333,35 @@ export function instanceSettingsView<N extends Node>(
         ],
         { gap: 0 },
       ),
-      ui.box(
-        'instance-settings-fields',
-        [
-          ...(state.path.length ? [ui.button('instance-settings-up', text.back, busy)] : []),
-          ...rows,
-          ...(!rows.length
-            ? [
-                ui.text(
-                  'instance-settings-empty',
-                  busy ? text.connecting : text.settingsEmpty,
-                  14,
-                  props.theme.muted,
-                ),
-              ]
-            : []),
-        ],
+      presentation.reading(
+        'instance-settings-reading',
         {
-          gap: 1,
-          scroll: 'manual',
-          terminal: { grow: 1 },
-          style: { width: fill, height: pixels(0), grow: 1 },
+          command: null,
+          content: ui.box(
+            'instance-settings-fields',
+            [
+              ...(state.path.length ? [ui.button('instance-settings-up', text.back, busy)] : []),
+              ...rows,
+              ...(!rows.length
+                ? [
+                    ui.text(
+                      'instance-settings-empty',
+                      busy ? text.connecting : text.settingsEmpty,
+                      14,
+                      props.theme.muted,
+                    ),
+                  ]
+                : []),
+            ],
+            {
+              gap: 1,
+              scroll: 'anchor',
+              terminal: { grow: 1 },
+              style: { width: fill, height: pixels(0), grow: 1 },
+            },
+          ),
         },
+        { input: 'settings-input', observed: 'settings-observed' },
       ),
       ...(!navigationReady
         ? [ui.text('instance-settings-preparing', text.settingsPreparing, 13, props.theme.muted)]
@@ -364,12 +376,6 @@ export function instanceSettingsView<N extends Node>(
       ui.box(
         'instance-settings-controls',
         [
-          ...(state.previous.length
-            ? [ui.button('instance-settings-previous', text.deploymentPrevious, busy)]
-            : []),
-          ...(state.page?.next
-            ? [ui.button('instance-settings-next', text.deploymentMore, busy)]
-            : []),
           ui.button(
             'instance-settings-save',
             text.settingsSave,

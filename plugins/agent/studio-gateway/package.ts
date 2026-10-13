@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.studio.gateway',
-  displayName: 'studio-gateway',
+  displayName: 'Workspace access',
+  description: 'Connect the workspace view to host capabilities.',
+  localizations: {
+    'zh-CN': { displayName: '工作台连接', description: '将工作台连接到主机功能。' },
+  },
   application: {
     entries: {
       host: {

@@ -23,7 +23,11 @@ import { agentImports } from '../../shared/agent-imports.js';
 export default {
   schemaVersion: 2,
   id: 'maka.workhub.api',
-  displayName: 'workhub',
+  displayName: 'WorkHub coordination',
+  description: 'Coordinate work across agents and workspaces.',
+  localizations: {
+    'zh-CN': { displayName: 'WorkHub 协作', description: '协调多个助手和工作区中的任务。' },
+  },
   application: {
     entries: {
       host: {

@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.checkpoint',
-  displayName: 'checkpoint',
+  displayName: 'Saved view state',
+  description: 'Restore navigation and drafts after reopening a view.',
+  localizations: {
+    'zh-CN': { displayName: '页面状态保存', description: '重新打开页面时恢复导航位置和草稿。' },
+  },
   application: {
     entries: {
       tui: native(sdk.nativeImplementations.valueCheckpoint),

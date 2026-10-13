@@ -321,3 +321,19 @@ fn adaptive_divider_drag_and_keyboard_resize_preserve_the_editor_and_clamp_width
     );
     close(&mut p);
 }
+
+#[test]
+fn pane_motion_requests_frames_until_the_transition_finishes() {
+    let (_runtime, mut p, value) = fixture();
+    value.borrow_mut()["motion"] = json!(true);
+    refresh(&mut p);
+    draw(&mut p, 100, 20);
+    command(&mut p, &value, 1, "toggle");
+    draw(&mut p, 100, 20);
+    assert!(p.next_frame.is_some());
+    std::thread::sleep(std::time::Duration::from_millis(180));
+    draw(&mut p, 100, 20);
+    assert_eq!(inline(&p), 0);
+    assert!(p.next_frame.is_none());
+    close(&mut p);
+}

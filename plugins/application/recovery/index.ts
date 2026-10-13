@@ -17,12 +17,14 @@
  * under the License.
  */
 
+import { scrollBoundary, scrollRows, visibleRows, resetScroll } from '../../shared/scroll.js';
 import type {
   Action,
   ActionOutcome,
   CallerIntent,
   Component,
   ComponentInput,
+  ReadingCommand,
   ComponentValues,
   OperationReply,
   RecoveryRef,
@@ -56,6 +58,7 @@ interface State {
   reply: OperationReply | null;
   published: SkillLibraryChangeResult | null;
   page: number;
+  command: ReadingCommand | null;
   failed: boolean;
 }
 function query(state: State, actions: Action[], request: Request) {
@@ -138,6 +141,7 @@ export function recovery<N extends Node>(
               presentation.reading(
                 'recovery-reading',
                 {
+                  command: state.command,
                   content: ui.box(
                     'recovery-records',
                     state.selected
@@ -181,27 +185,28 @@ export function recovery<N extends Node>(
                         ]
                       : [
                           ...(state.entries.length
-                            ? state.entries.map((entry, index) =>
-                                ui.box(
-                                  'recovery-entry-' + index,
-                                  [
-                                    ui.text(
-                                      'recovery-name-' + index,
-                                      compactLabel(
-                                        '#' +
-                                          entry.cursor +
-                                          ' · ' +
-                                          entry.reference.contract.name +
-                                          ' / ' +
-                                          entry.reference.method,
-                                        120,
+                            ? visibleRows(state, 'recovery-reading', state.entries).map(
+                                ({ entry, at: index }) =>
+                                  ui.box(
+                                    'recovery-entry-' + index,
+                                    [
+                                      ui.text(
+                                        'recovery-name-' + index,
+                                        compactLabel(
+                                          '#' +
+                                            entry.cursor +
+                                            ' · ' +
+                                            entry.reference.contract.name +
+                                            ' / ' +
+                                            entry.reference.method,
+                                          120,
+                                        ),
+                                        14,
                                       ),
-                                      14,
-                                    ),
-                                    ui.button('check-' + index, text.check, busy),
-                                  ],
-                                  { gap: 0 },
-                                ),
+                                      ui.button('check-' + index, text.check, busy),
+                                    ],
+                                    { gap: 0 },
+                                  ),
                               )
                             : [
                                 ui.text(
@@ -218,20 +223,17 @@ export function recovery<N extends Node>(
                         ],
                     {
                       gap: desktop ? 12 : 1,
-                      scroll: 'manual',
+                      scroll: 'anchor',
                       terminal: { grow: 1, basis: 0 },
                       style: { width: fill, height: pixels(360), minHeight: 0 },
                     },
                   ),
                 },
-                { input: 'reading-input' },
+                { input: 'reading-input', observed: 'reading-observed' },
               ),
               ui.box(
                 'recovery-history-controls',
-                [
-                  ui.button('refresh', text.refreshDefaultOperations, busy),
-                  ui.button('next', text.moreOperations, busy || state.next === null),
-                ],
+                [ui.button('refresh', text.refreshDefaultOperations, busy)],
                 {
                   visible: !state.selected,
                   row: true,
@@ -242,12 +244,7 @@ export function recovery<N extends Node>(
               ),
               ui.box(
                 'recovery-result-controls',
-                [
-                  ui.button('back', text.back, busy),
-                  ui.button('check-again', text.check, busy),
-                  ui.button('previous-source', text.sourcePrevious, busy || state.page === 0),
-                  ui.button('next-source', text.sourceNext, busy || end >= source.length),
-                ],
+                [ui.button('back', text.back, busy), ui.button('check-again', text.check, busy)],
                 {
                   visible: !!state.selected,
                   row: true,
@@ -307,6 +304,7 @@ export function recovery<N extends Node>(
         reply: null,
         published: null,
         page: 0,
+        command: null,
         failed: false,
       };
       const actions: Action[] = [];
@@ -329,6 +327,20 @@ export function recovery<N extends Node>(
         if (forwarded.kind !== 'raw') return frame(state, values);
         event = forwarded;
       }
+      const direction = state.selected ? scrollBoundary(state, event, 'recovery-reading') : null;
+      if (!state.pending) {
+        if (direction)
+          event = {
+            kind: 'raw',
+            key: direction === 'up' ? 'previous-source' : 'next-source',
+            event: {},
+          };
+        else if (
+          !state.selected &&
+          scrollRows(state, event, 'recovery-reading', state.entries.length)
+        )
+          event = { kind: 'raw', key: 'next', event: {} };
+      }
       if (event.kind === 'action' && event.key === state.pending?.key) {
         const request = state.pending.request,
           result = event.event as ActionOutcome;
@@ -337,7 +349,8 @@ export function recovery<N extends Node>(
           state.failed = result.status !== 'succeeded';
           if (result.status === 'succeeded') {
             const entries = result.value as CallerIntent[];
-            state.entries = entries;
+            state.entries = request.after ? [...state.entries, ...entries] : entries;
+            if (!request.after) resetScroll(state, 'recovery-reading');
             // The byte cap can end a page before its requested count.
             state.next = entries.length ? entries[entries.length - 1].cursor : null;
             state.selected = null;
@@ -402,10 +415,21 @@ export function recovery<N extends Node>(
             }
           } else if (key === 'check-again' && state.selected)
             query(state, actions, { kind: 'receipt', reference: state.selected, manager: false });
-          else if (key === 'previous-source') state.page = Math.max(0, state.page - 1);
-          else if (key === 'next-source' && state.reply?.receipt.kind === 'recorded') {
+          else if (key === 'previous-source') {
+            state.page = Math.max(0, state.page - 1);
+            state.command = {
+              sequence: (state.command?.sequence ?? 0) + 1,
+              target: { kind: 'end' },
+            };
+          } else if (key === 'next-source' && state.reply?.receipt.kind === 'recorded') {
             const source = receiptSource(state);
-            if (boundary(source, state.page + 1) < source.length) state.page++;
+            if (boundary(source, state.page + 1) < source.length) {
+              state.page++;
+              state.command = {
+                sequence: (state.command?.sequence ?? 0) + 1,
+                target: { kind: 'start' },
+              };
+            }
           }
         }
       }

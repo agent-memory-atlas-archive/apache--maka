@@ -43,6 +43,10 @@ for (const target of ['desktop', 'tui'] as const)
 export default {
   schemaVersion: 2,
   id: 'maka.agent.recovery',
-  displayName: 'recovery',
+  displayName: 'App recovery',
+  description: 'Check unfinished changes and repair plugin configuration.',
+  localizations: {
+    'zh-CN': { displayName: '应用修复', description: '查询未完成的更改，修复插件配置。' },
+  },
   application: { entries },
 };

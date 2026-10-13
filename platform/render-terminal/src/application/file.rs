@@ -25,7 +25,7 @@ use crate::editor::{Editor, Geometry};
 use crossterm::event::{Event, KeyCode, MouseButton, MouseEventKind};
 use maka_ui_runtime::{
     ComponentCall, ComponentOutput, NativeCapability, NativeComponent, NativeExport,
-    NativeRegistry, NativeView, budget::Kind, file::*,
+    NativeRegistry, NativeView, file::*,
 };
 use ratatui::{
     buffer::Buffer,
@@ -101,13 +101,6 @@ impl Owner {
     fn start(&mut self) {
         let path = self.path.take().expect("original file gesture path");
         let budget = self.context.budget.clone();
-        let job = match budget.reserve(Kind::Job, 1) {
-            Ok(job) => job,
-            Err(error) => {
-                self.selection.settle(Err(error.into()));
-                return;
-            }
-        };
         let mut ticket = match self.context.resources.reserve() {
             Ok(ticket) => ticket,
             Err(_) => {
@@ -130,7 +123,6 @@ impl Owner {
                         Err("native file worker panicked".into()),
                     ),
                 };
-                drop(job);
                 let _ = sender.send(result);
                 ticket.complete(cleanup);
             }) {

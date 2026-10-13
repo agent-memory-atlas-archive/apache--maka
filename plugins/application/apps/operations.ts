@@ -280,9 +280,12 @@ export function settle(
     (state.current.reference && !sameValue(reply.reference, state.current.reference))
   )
     return;
+  const firstReceipt = !state.current.reference;
   state.current.reference = reply.reference;
   if (reply.receipt.kind !== 'recorded' || reply.receipt.outcome.kind !== 'returned') {
     state.notice = 'appsUnknown';
+    if (firstReceipt)
+      request(state, actions, { kind: 'receipt' }, 'receipts', 'read', reply.reference);
     return;
   }
   const result = reply.receipt.outcome.value as
@@ -320,7 +323,8 @@ export function choose(state: State, candidate: BindingCandidate, actions: Actio
     page: null,
     path: [],
     after: null,
-    previous: [],
+
+    window: 0,
     setting: null,
     choosing: null,
     choices: null,

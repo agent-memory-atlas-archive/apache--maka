@@ -67,6 +67,16 @@ impl State {
             0
         }
     }
+    pub fn animating(&self, node: &Node, width: u16, time: Instant) -> bool {
+        matches!(node, Node::AdaptivePane { motion: true, .. })
+            && self.transition.as_ref().is_some_and(|transition| {
+                transition.to == self.target(node, width)
+                    && time
+                        .saturating_duration_since(transition.started)
+                        .as_secs_f32()
+                        < 0.16
+            })
+    }
     pub fn width(&self, node: &Node, width: u16, time: Instant) -> u16 {
         let Node::AdaptivePane { motion, .. } = node else {
             unreachable!()

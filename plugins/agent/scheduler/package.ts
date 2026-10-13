@@ -38,6 +38,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.scheduler',
-  displayName: 'scheduler',
+  displayName: 'Scheduled tasks',
+  description: 'Schedule assistant tasks and reminders.',
+  localizations: {
+    'zh-CN': { displayName: '定时任务', description: '安排助手任务和提醒。' },
+  },
   application: { entries },
 };

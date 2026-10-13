@@ -341,6 +341,29 @@ export function frame<N extends Node>(
     'product',
     [
       ...(target === 'tui' ? [header] : []),
+      ...(target === 'tui' && state.bookmark.observed?.state.kind === 'failed'
+        ? [
+            ui.box(
+              'navigation-save-error',
+              [
+                ui.text(
+                  'navigation-save-message',
+                  state.bookmark.command &&
+                    state.bookmark.command.sequence > state.bookmark.observed.sequence
+                    ? copy(locale).restoringView
+                    : copy(locale).viewSaveFailed,
+                  13,
+                  theme.warning,
+                ),
+                ...(state.bookmark.command &&
+                state.bookmark.command.sequence > state.bookmark.observed.sequence
+                  ? []
+                  : [ui.button('navigation-checkpoint-retry', copy(locale).reloadView)]),
+              ],
+              { row: true, gap: 1, terminal: { wrap: true } },
+            ),
+          ]
+        : []),
       ...(!state.embedding.fixed && state.scheduleAlerts.reminders.length
         ? [
             ui.button(
@@ -362,9 +385,6 @@ export function frame<N extends Node>(
               navigationKey(state),
               navigationBookmark(state),
             ),
-            ...(state.bookmark.observed?.state.kind === 'failed'
-              ? [ui.button('navigation-checkpoint-retry', copy(locale).sourceRetry)]
-              : []),
           ]
         : []),
     ],

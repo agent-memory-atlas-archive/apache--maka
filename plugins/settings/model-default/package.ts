@@ -25,6 +25,7 @@ const entries = uiEntries({
   contract: own.modelDefaultContract,
   export: 'ModelDefault',
   imports: {
+    reading: one(sdk.contracts.readingArea),
     settings: one(sdk.contracts.settings),
     receipts: one(sdk.contracts.receiptReader),
     history: one(sdk.contracts.callerHistory),
@@ -33,6 +34,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.model-default',
-  displayName: 'model-default',
+  displayName: 'Default model',
+  description: 'Choose the model used by new conversations.',
+  localizations: {
+    'zh-CN': { displayName: '默认模型', description: '选择新对话使用的模型。' },
+  },
   application: { entries },
 };

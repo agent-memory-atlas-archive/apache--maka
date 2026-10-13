@@ -37,6 +37,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.projects',
-  displayName: 'projects',
+  displayName: 'Projects',
+  description: 'Organize workspaces and project settings.',
+  localizations: {
+    'zh-CN': { displayName: '项目', description: '管理工作区和项目设置。' },
+  },
   application: { entries },
 };

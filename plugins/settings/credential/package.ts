@@ -25,6 +25,7 @@ const entries = uiEntries({
   contract: own.credentialContract,
   export: 'Credential',
   imports: {
+    reading: one(sdk.contracts.readingArea),
     settings: one(sdk.contracts.settings),
     authentication: one(sdk.contracts.settingsAuthentication),
     setup: one(sdk.contracts.settingsSetup),
@@ -36,6 +37,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.credential',
-  displayName: 'credential',
+  displayName: 'API keys',
+  description: 'Add and manage saved API keys.',
+  localizations: {
+    'zh-CN': { displayName: 'API 密钥', description: '添加和管理已保存的 API 密钥。' },
+  },
   application: { entries },
 };

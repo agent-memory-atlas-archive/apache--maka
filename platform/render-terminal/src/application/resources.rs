@@ -44,6 +44,7 @@ struct OwnerWitness {
 #[derive(Default)]
 pub(super) struct Resources {
     pub owners: BTreeMap<Uuid, Owner>,
+    pub redraw: bool,
     failed: BTreeMap<Uuid, String>,
     budget: maka_ui_runtime::budget::NativeBudget,
 }
@@ -117,6 +118,7 @@ impl Resources {
                 }
             }
             let owner = self.owners.get_mut(&mount.id()).unwrap();
+            self.redraw |= owner.revision != Some(frame.revision);
             owner.recipe = recipe;
             if catch_unwind(AssertUnwindSafe(|| {
                 owner
@@ -189,6 +191,7 @@ impl Resources {
                 owner.recipe.observe(owner.state.as_mut())
             })) {
                 Ok(Some(observed)) => {
+                    self.redraw = true;
                     owner.pending.insert(observed.key.clone(), observed);
                 }
                 Ok(None) => {}

@@ -29,6 +29,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.navigation',
-  displayName: 'navigation',
+  displayName: 'Conversation list',
+  description: 'Browse and select saved conversations.',
+  localizations: {
+    'zh-CN': { displayName: '对话列表', description: '浏览和选择已保存的对话。' },
+  },
   application: { entries },
 };

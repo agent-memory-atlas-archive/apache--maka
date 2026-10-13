@@ -181,7 +181,7 @@ async fn final_coalesced_snapshot_flushes_before_cleanup_and_restores_after_root
     blocker.execute_batch("COMMIT").unwrap();
     drop(blocker);
     resources.finish().await.unwrap();
-    assert_eq!(budget.usage(), (0, 0, 0));
+    assert_eq!(budget.usage(), (0, 0));
     tokio::time::timeout(Duration::from_secs(5), async {
         while retained.upgrade().is_some() {
             tokio::task::yield_now().await;
@@ -277,7 +277,7 @@ async fn an_older_ack_cannot_hide_a_newer_capture_failure_and_retry_accounts_for
     editor.close();
     drop(editor);
     resources.finish().await.unwrap();
-    assert_eq!(budget.usage(), (0, 0, 0));
+    assert_eq!(budget.usage(), (0, 0));
 }
 
 #[tokio::test]
@@ -354,4 +354,58 @@ fn restored_selections_require_exact_graphemes_and_preserve_direction() {
     saved.selection.start = 2;
     assert_eq!(selection_bytes(body, Some(&saved)), None);
     assert_eq!(selection_bytes("", None), Some((0, 0)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_preference_reads_are_not_rejected_by_a_worker_count() {
+    use super::value::{ValueCheckpoint, ValueCheckpointProps, ValueCheckpointState};
+    let (_dir, store) = store().await;
+    let source = source(&store, Uuid::new_v4(), 0).await;
+    let recipe_scope = scope(&store, &source).await;
+    let resources = Arc::new(Resources::default());
+    let budget = NativeBudget::default();
+    let mut preferences: Vec<_> = (0..16)
+        .map(|index| {
+            ValueCheckpoint::new(
+                Some(recipe_scope.clone()),
+                &ValueCheckpointProps {
+                    key: format!("panel-{index}"),
+                    format: "test/v1".into(),
+                    command: None,
+                },
+                &resources,
+                budget.clone(),
+            )
+        })
+        .collect();
+    let mut ready = std::collections::BTreeSet::new();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while ready.len() < preferences.len() {
+            for (index, preference) in preferences.iter_mut().enumerate() {
+                if let Some(observed) = preference.observe() {
+                    match observed.state {
+                        ValueCheckpointState::Ready { .. } => {
+                            ready.insert(index);
+                        }
+                        ValueCheckpointState::Failed { diagnostic } => panic!("{diagnostic}"),
+                        _ => {}
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    })
+    .await
+    .unwrap();
+    for preference in &mut preferences {
+        preference.close();
+    }
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !resources.seal().unwrap() {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(budget.usage(), (0, 0));
 }

@@ -37,6 +37,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.session-details',
-  displayName: 'session-details',
+  displayName: 'Conversation settings',
+  description: 'Edit a conversation’s name, model, and execution settings.',
+  localizations: {
+    'zh-CN': { displayName: '对话设置', description: '修改对话名称、模型和执行设置。' },
+  },
   application: { entries },
 };

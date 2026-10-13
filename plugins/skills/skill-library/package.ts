@@ -38,6 +38,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.skill-library',
-  displayName: 'skill-library',
+  displayName: 'Skills',
+  description: 'Browse and manage instructions the assistant can use.',
+  localizations: {
+    'zh-CN': { displayName: '技能库', description: '浏览和管理助手可以使用的技能说明。' },
+  },
   application: { entries },
 };

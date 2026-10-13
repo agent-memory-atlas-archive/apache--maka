@@ -136,6 +136,23 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn author_descriptions_round_trip_with_localized_copy() {
+        let manifest = json!({"schemaVersion":2,"id":"example.notes", "displayName":"Notes", "description":"Write and find your notes.", "localizations":{"zh-CN":{"displayName":"笔记","description":"记录和查找笔记。"}}, "application":{"entries":{"host":{"implementation":{"kind":"native","implementation":"example.notes"},"configuration":{"type":"object"}}}}});
+        let package = Package::new(BTreeMap::from([(
+            MANIFEST_FILE.into(),
+            serde_json::to_vec(&manifest).unwrap(),
+        )]))
+        .unwrap();
+        let restored = Package::from_bundle(&package.to_bundle()).unwrap();
+        let presentation = restored.manifest().presentation();
+        assert_eq!(presentation.display_name.as_str(), "Notes");
+        assert_eq!(
+            presentation.localizations["zh-CN"].description.as_str(),
+            "记录和查找笔记。"
+        );
+    }
+
+    #[test]
     fn manifest_uses_the_package_file_budget() {
         // Multi-presentation applications carry complete nominal contracts.
         // Their manifest has the same bounded byte budget as every other file.

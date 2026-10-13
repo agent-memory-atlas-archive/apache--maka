@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.skill-outcomes',
-  displayName: 'skill-outcomes',
+  displayName: 'Skill results',
+  description: 'Record the outcomes of skill execution.',
+  localizations: {
+    'zh-CN': { displayName: '技能结果', description: '记录技能执行结果。' },
+  },
   application: {
     entries: {
       host: native(sdk.nativeImplementations.skillOutcomes),

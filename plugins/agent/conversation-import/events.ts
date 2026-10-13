@@ -31,6 +31,7 @@ import type {
   TextChunk,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { type ImportsProps } from '../../shared/contracts.js';
+import { scrollRows, resetScroll } from '../../shared/scroll.js';
 import { sameValue } from '../../shared/value.js';
 import { type Node, type Presentation } from '../../shared/view.js';
 import {
@@ -65,6 +66,31 @@ export function handleEvent<N extends Node>(
     events: Emission[] = [];
   if (input.kind === 'component' && input.child === 'import-list' && input.name === 'input')
     input = input.event as ComponentInput;
+  if (
+    input.kind === 'component' &&
+    input.child === 'import-list' &&
+    input.name === 'observed' &&
+    !locked(state, props)
+  ) {
+    const child = 'import-' + state.route;
+    const count =
+      state.route === 'catalog'
+        ? state.entries.length
+        : state.route === 'copies'
+          ? state.copies.length
+          : (state.preview?.items.length ?? 0);
+    if (scrollRows(state, { ...input, child }, child, count))
+      input = {
+        kind: 'raw',
+        key:
+          state.route === 'catalog'
+            ? 'catalog-more'
+            : state.route === 'copies'
+              ? 'copies-more'
+              : 'preview-more',
+        event: {},
+      };
+  }
   if (input.kind === 'component') {
     const name = (['name', 'database', 'search', 'title'] as const).find(
       (name) => input.kind === 'component' && input.child === 'import-' + name,
@@ -201,10 +227,10 @@ export function handleEvent<N extends Node>(
         state.sourcesRevision = value.revision;
         focus(presentation, state, value.sources[0] ? 'source-' + value.sources[0].id : null);
       } else if (value.kind === 'catalog' && r.kind === 'catalog') {
-        state.entries = value.entries;
+        state.entries = r.after ? [...state.entries, ...value.entries] : value.entries;
         state.catalogNext = value.next;
         state.route = 'catalog';
-        focus(presentation, state, value.entries.length ? 'entry-0' : null);
+        if (!r.after) focus(presentation, state, value.entries.length ? 'entry-0' : null);
       } else if (value.kind === 'preview' && r.kind === 'preview') {
         if (!state.preview || !sameValue(state.preview.selection, value.preview.selection)) {
           reset(
@@ -218,13 +244,18 @@ export function handleEvent<N extends Node>(
           );
           state.destination = null;
         }
-        state.preview = value.preview;
+        if (!r.after) resetScroll(state, 'import-preview');
+        state.preview =
+          r.after && state.preview && sameValue(state.preview.selection, value.preview.selection)
+            ? { ...value.preview, items: [...state.preview.items, ...value.preview.items] }
+            : value.preview;
         state.route = 'preview';
       } else if (value.kind === 'copies' && r.kind === 'copies') {
-        state.copies = value.sessions;
+        state.copies = r.after ? [...state.copies, ...value.sessions] : value.sessions;
         state.copiesNext = value.next;
         state.route = 'copies';
-        focus(presentation, state, value.sessions[0] ? 'copy-' + value.sessions[0].id : null);
+        if (!r.after)
+          focus(presentation, state, value.sessions[0] ? 'copy-' + value.sessions[0].id : null);
       } else state.notice = notice(value.kind);
     }
   } else if (input.kind === 'raw' && props.open) {
@@ -352,7 +383,7 @@ export function handleEvent<N extends Node>(
             read(
               state,
               actions,
-              { kind: 'preview' },
+              { kind: 'preview', after },
               {
                 kind: 'preview',
                 ...selection,

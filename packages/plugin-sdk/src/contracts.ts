@@ -36773,6 +36773,14 @@ export const contracts = {
                       label: {
                         type: 'string',
                       },
+                      presentation: {
+                        $ref: '#/$defs/PackagePresentation',
+                        default: {
+                          displayName: '',
+                          description: '',
+                          localizations: {},
+                        },
+                      },
                       target: {
                         $ref: '#/$defs/Target',
                       },
@@ -36793,6 +36801,14 @@ export const contracts = {
                       label: {
                         type: 'string',
                       },
+                      presentation: {
+                        $ref: '#/$defs/PackagePresentation',
+                        default: {
+                          displayName: '',
+                          description: '',
+                          localizations: {},
+                        },
+                      },
                       package: {
                         $ref: '#/$defs/PackageRef',
                       },
@@ -36808,6 +36824,41 @@ export const contracts = {
                     required: ['kind', 'key', 'label', 'package', 'export'],
                   },
                 ],
+              },
+              PackagePresentation: {
+                type: 'object',
+                properties: {
+                  displayName: {
+                    type: 'string',
+                  },
+                  description: {
+                    type: 'string',
+                  },
+                  localizations: {
+                    type: 'object',
+                    additionalProperties: {
+                      $ref: '#/$defs/PackageDescription',
+                    },
+                    default: {},
+                  },
+                },
+                additionalProperties: false,
+                required: ['displayName', 'description'],
+              },
+              PackageDescription: {
+                description:
+                  'Author-provided copy for plugin discovery; never an authority declaration.',
+                type: 'object',
+                properties: {
+                  displayName: {
+                    type: 'string',
+                  },
+                  description: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['displayName', 'description'],
               },
               PackageRef: {
                 type: 'object',
@@ -37972,6 +38023,14 @@ export const contracts = {
                   package: {
                     $ref: '#/$defs/PackageRef',
                   },
+                  presentation: {
+                    $ref: '#/$defs/PackagePresentation',
+                    default: {
+                      displayName: '',
+                      description: '',
+                      localizations: {},
+                    },
+                  },
                   structural: {
                     type: 'boolean',
                   },
@@ -38013,6 +38072,41 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['id', 'revision'],
+              },
+              PackagePresentation: {
+                type: 'object',
+                properties: {
+                  displayName: {
+                    type: 'string',
+                  },
+                  description: {
+                    type: 'string',
+                  },
+                  localizations: {
+                    type: 'object',
+                    additionalProperties: {
+                      $ref: '#/$defs/PackageDescription',
+                    },
+                    default: {},
+                  },
+                },
+                additionalProperties: false,
+                required: ['displayName', 'description'],
+              },
+              PackageDescription: {
+                description:
+                  'Author-provided copy for plugin discovery; never an authority declaration.',
+                type: 'object',
+                properties: {
+                  displayName: {
+                    type: 'string',
+                  },
+                  description: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['displayName', 'description'],
               },
             },
           },

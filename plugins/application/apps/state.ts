@@ -65,7 +65,8 @@ export interface Draft {
   page: PackageSettingsPage | null;
   path: string[];
   after: string | null;
-  previous: (string | null)[];
+
+  window: number;
   setting: { descriptor: SettingField; path: string[] } | null;
   choosing: ManagedImport | null;
   choices: BindingCandidatesPage | null;

@@ -24,6 +24,7 @@ import type {
   Identity,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { type ConnectionFormProps } from '../../shared/contracts.js';
+import { scrollRows, visibleRows, resetScroll } from '../../shared/scroll.js';
 import { copy, type Copy } from '../../shared/locale.js';
 import { pageHeader } from '../../shared/page-shell.js';
 import {
@@ -534,90 +535,121 @@ export function frame<N extends Node>(
                         (!state.reviewed && state.reviewedCatalog === null) || locked,
                       ),
                     ]),
-                ...(page > 0 ? [ui.button('review-prev', text.previousModels)] : []),
-                ...(page + 1 < pages ? [ui.button('review-next', text.moreTarget)] : []),
               ]),
         ],
         { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
       ),
       ...(state.confirmation === 'rebase' || state.confirmation === 'remove'
         ? [
-            ui.text('review-page', page + 1 + ' / ' + pages, 12, props.theme.muted),
-            ...reviewLines
-              .slice(page * pageSize, (page + 1) * pageSize)
-              .map((line, at) => ui.text('review-line-' + at, line, 13)),
+            presentation.reading(
+              'connection-review-reading',
+              {
+                content: ui.box(
+                  'review-lines',
+                  reviewLines
+                    .slice(page * pageSize, (page + 1) * pageSize)
+                    .map((line, at) => ui.text('review-line-' + at, line, 13)),
+                  {
+                    scroll: 'manual',
+                    terminal: { grow: 1, basis: 0 },
+                    style: { width: fill, height: fill, minHeight: 0 },
+                  },
+                ),
+              },
+              { observed: 'review-observed' },
+            ),
           ]
         : []),
     ],
     { visible: !!state.confirmation, gap: target === 'desktop' ? 12 : 1 },
   );
-  const earlier = ui.box(
-    'form-earlier',
-    [
-      ui.button(
-        'form-history-back',
-        text.back,
-        false,
-        false,
-        target === 'tui' ? { background: 0, align: 'start' } : {},
-      ),
-      ui.text('earlier-heading', text.earlierConnectionOperations, 20, props.theme.text, 550),
-      ui.text('earlier-help', text.earlierConnectionHelp, 13, props.theme.muted),
-      ui.box(
-        'earlier-actions',
-        [
-          ui.button(
-            'form-history-refresh',
-            target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.refreshConnections,
-            false,
-            false,
-            target === 'tui' ? { background: 0 } : {},
-            undefined,
-            text.refreshConnections,
-          ),
-          ...(state.historyNext !== null
-            ? [ui.button('form-history-more', text.moreOperations)]
-            : []),
-        ],
-        { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
-      ),
-      ...(state.historyFailed ? [ui.text('earlier-failed', text.historyUnavailable)] : []),
-      ...state.earlier.map((entry, at) => {
-        const receipt = entry.result?.receipt;
-        const value =
-          receipt?.kind === 'recorded' && receipt.outcome.kind === 'returned'
-            ? (receipt.outcome.value as CatalogMutationResult)
-            : null;
-        return ui.box(
-          'earlier-entry-' + at,
-          [
-            ui.text(
-              'earlier-result-' + at,
-              value?.kind === 'committed'
-                ? (entry.reference.method === 'remove'
-                    ? text.connectionRemoved
-                    : text.connectionSaved) +
-                    ' ' +
-                    (value.connection?.connectionId ?? '')
-                : value
-                  ? text.historyRejected
-                  : text.historyUnknown,
-              13,
-            ),
-            ui.button(
-              'form-earlier-' + at,
-              text.check,
-              Object.values(state.pending).some(
-                (r) => r.kind === 'earlier' && r.cursor === entry.cursor,
+  const earlier = state.historyOpen
+    ? presentation.reading(
+        'connection-history-reading',
+        {
+          content: ui.box(
+            'form-earlier',
+            [
+              ui.button(
+                'form-history-back',
+                text.back,
+                false,
+                false,
+                target === 'tui' ? { background: 0, align: 'start' } : {},
               ),
-            ),
-          ],
-          { gap: 0 },
-        );
-      }),
-    ],
-    { visible: state.historyOpen, gap: target === 'desktop' ? 12 : 1 },
-  );
+              ui.text(
+                'earlier-heading',
+                text.earlierConnectionOperations,
+                20,
+                props.theme.text,
+                550,
+              ),
+              ui.text('earlier-help', text.earlierConnectionHelp, 13, props.theme.muted),
+              ui.box(
+                'earlier-actions',
+                [
+                  ui.button(
+                    'form-history-refresh',
+                    target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.refreshConnections,
+                    false,
+                    false,
+                    target === 'tui' ? { background: 0 } : {},
+                    undefined,
+                    text.refreshConnections,
+                  ),
+                ],
+                { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
+              ),
+              ...(state.historyFailed ? [ui.text('earlier-failed', text.historyUnavailable)] : []),
+              ...visibleRows(state, 'connection-history-reading', state.earlier).map(
+                ({ entry, at }) => {
+                  const receipt = entry.result?.receipt;
+                  const value =
+                    receipt?.kind === 'recorded' && receipt.outcome.kind === 'returned'
+                      ? (receipt.outcome.value as CatalogMutationResult)
+                      : null;
+                  return ui.box(
+                    'earlier-entry-' + at,
+                    [
+                      ui.text(
+                        'earlier-result-' + at,
+                        value?.kind === 'committed'
+                          ? (entry.reference.method === 'remove'
+                              ? text.connectionRemoved
+                              : text.connectionSaved) +
+                              ' ' +
+                              (value.connection?.connectionId ?? '')
+                          : value
+                            ? text.historyRejected
+                            : text.historyUnknown,
+                        13,
+                      ),
+                      ui.button(
+                        'form-earlier-' + at,
+                        text.check,
+                        Object.values(state.pending).some(
+                          (r) => r.kind === 'earlier' && r.cursor === entry.cursor,
+                        ),
+                      ),
+                    ],
+                    { gap: 0 },
+                  );
+                },
+              ),
+            ],
+            {
+              visible: state.historyOpen,
+              scroll: 'anchor',
+              terminal: { grow: 1 },
+              style: { width: fill, height: fill },
+              gap: target === 'desktop' ? 12 : 1,
+            },
+          ),
+        },
+        { input: 'history-input', observed: 'history-observed' },
+      )
+    : ui.box('history-hidden', [], { visible: false });
+
   const out = output(
     state,
     ui.box(

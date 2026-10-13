@@ -277,6 +277,7 @@ impl Target {
 /// A pending scene is not input geometry until the embedding confirms a flush.
 /// 绘制成功并完成实际 flush 后，才发布对应的命中区域。
 pub struct PaintedScene {
+    next_frame: Option<std::time::Instant>,
     tooltip: Option<(Option<super::dialog::Scope>, Placement, String, Style)>,
     pub(super) viewport: Rect,
     pub(super) targets: Vec<Target>,
@@ -313,6 +314,7 @@ type MeasurementCache =
 /// or participates in input/continuation/geometry admission.
 pub(super) struct Measurements {
     time: std::time::Instant,
+    next_frame: std::cell::Cell<Option<std::time::Instant>>,
     cache: std::cell::RefCell<MeasurementCache>,
     #[cfg(test)]
     requests: std::cell::Cell<usize>,
@@ -323,6 +325,7 @@ impl Default for Measurements {
     fn default() -> Self {
         Self {
             time: std::time::Instant::now(),
+            next_frame: Default::default(),
             cache: Default::default(),
             #[cfg(test)]
             requests: Default::default(),
@@ -356,6 +359,15 @@ pub(super) struct MeasureContext<'a> {
     viewport: Size,
 }
 impl MeasureContext<'_> {
+    pub(super) fn repaint_after(self, delay: std::time::Duration) {
+        let next = self.cache.time + delay;
+        self.cache.next_frame.set(Some(
+            self.cache
+                .next_frame
+                .get()
+                .map_or(next, |old| old.min(next)),
+        ));
+    }
     pub(super) fn time(self) -> std::time::Instant {
         self.cache.time
     }
@@ -561,6 +573,8 @@ impl Slots<'_> {
 
     pub(super) fn animation_phase(&self, period: u32) -> Option<f32> {
         self.presenter.window_focused.then(|| {
+            self.measurements
+                .repaint_after(std::time::Duration::from_millis(33));
             (self
                 .measurements
                 .cache
@@ -670,6 +684,7 @@ impl Presenter {
                 .fg(Color::Rgb(235, 235, 240)),
         );
         let mut scene = PaintedScene {
+            next_frame: None,
             tooltip: None,
             viewport: area,
             targets: Vec::new(),
@@ -731,6 +746,7 @@ impl Presenter {
                 None,
             );
         }
+        scene.next_frame = cache.next_frame.get();
         Ok(scene)
     }
     pub fn present(&mut self, mut scene: PaintedScene) {
@@ -775,6 +791,9 @@ impl Presenter {
             }
             frames_current &= frame_current;
         }
+        self.resources.redraw = false;
+        self.next_frame = scene.next_frame;
+        let old_focus = self.focus.clone();
         self.reconcile_choices(&scene);
         let scope = scene.foreground_path.last().cloned();
         scene
@@ -928,6 +947,11 @@ impl Presenter {
                 return;
             }
         }
+        self.resources.redraw |= match (&old_focus, &self.focus) {
+            (Some(old), Some(new)) => !old.same(new),
+            (None, None) => false,
+            _ => true,
+        };
         if let Err(error) = self.track_focus_return() {
             self.report(&error);
         }
@@ -1304,6 +1328,11 @@ impl Presenter {
                 } else {
                     state.panes[key].width(node, area.width, measurements.cache.time)
                 };
+                if opening.is_none()
+                    && state.panes[key].animating(node, area.width, measurements.cache.time)
+                {
+                    measurements.repaint_after(std::time::Duration::from_millis(16));
+                }
                 pass.panes.push(super::adaptive::Geometry {
                     key: key.clone(),
                     width: area.width,
@@ -1452,6 +1481,7 @@ impl Presenter {
             } => {
                 let total: u128 = animation.iter().map(|frame| u128::from(frame.millis)).sum();
                 let mut offset = if self.window_focused && total > 0 {
+                    measurements.repaint_after(std::time::Duration::from_millis(33));
                     measurements
                         .cache
                         .time
@@ -1874,6 +1904,7 @@ impl Presenter {
                                 border.color
                             });
                             if border.breathing && self.window_focused {
+                                measurements.repaint_after(std::time::Duration::from_millis(33));
                                 let millis = measurements
                                     .time()
                                     .saturating_duration_since(self.animation_origin)

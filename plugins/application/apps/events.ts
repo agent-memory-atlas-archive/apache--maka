@@ -36,6 +36,7 @@ import type {
 import { type AppsProps } from '../../shared/contracts.js';
 import { canInstall } from '../../shared/deployment-import.js';
 import { settingOptions } from '../../shared/instance-settings.js';
+import { scrollBoundary } from '../../shared/scroll.js';
 import { sameValue } from '../../shared/value.js';
 import { type Node, type Presentation } from '../../shared/view.js';
 import {
@@ -69,8 +70,22 @@ export function handleEvent<N extends Node>(
   state.revision++;
   const actions: Action[] = [],
     events: Emission[] = [];
-  if (input.kind === 'component' && input.child === 'apps-list' && input.name === 'input')
+  if (
+    input.kind === 'component' &&
+    ['apps-list', 'apps-settings-reading'].includes(input.child) &&
+    input.name === 'input'
+  )
     input = input.event as ComponentInput;
+  const settingsDirection = scrollBoundary(state, input, 'apps-settings-reading');
+  if (settingsDirection && state.route === 'configure' && state.draft && !locked(state, props)) {
+    const draft = state.draft;
+    if (settingsDirection === 'up') draft.window = Math.max(0, draft.window - 32);
+    else if (draft.window + 64 < (draft.page?.fields.length ?? 0)) draft.window += 32;
+    else if (draft.page?.next) {
+      draft.after = draft.page.next;
+      settings(state, actions);
+    }
+  }
   const extendList = (direction: 'up' | 'down') => {
     const page =
       state.route === 'choose'
@@ -227,7 +242,13 @@ export function handleEvent<N extends Node>(
           !sameValue(page.package, state.draft.candidate.package)
         )
           state.notice = 'appsChanged';
-        else state.draft.page = page;
+        else {
+          if (!r.after) state.draft.window = 0;
+          state.draft.page =
+            r.after && state.draft.page
+              ? { ...page, fields: [...state.draft.page.fields, ...page.fields] }
+              : page;
+        }
       }
     } else if (r.kind === 'field') {
       const chunk = result.status === 'succeeded' ? (result.value as TextChunk) : null;
@@ -415,7 +436,7 @@ export function handleEvent<N extends Node>(
             if (f.kind === 'object' || f.kind === 'array') {
               d.path = [...d.path, f.key];
               d.after = null;
-              d.previous = [];
+
               settings(state, actions);
             } else if (settingOptions(f).length) {
               const options = settingOptions(f),
@@ -431,14 +452,7 @@ export function handleEvent<N extends Node>(
         } else if (key === 'settings-up' && d?.path.length) {
           d.path = d.path.slice(0, -1);
           d.after = null;
-          d.previous = [];
-          settings(state, actions);
-        } else if (key === 'settings-next' && d?.page?.next) {
-          d.previous.push(d.after);
-          d.after = d.page.next;
-          settings(state, actions);
-        } else if (key === 'settings-previous' && d?.previous.length) {
-          d.after = d.previous.pop()!;
+
           settings(state, actions);
         } else if (key.startsWith('choose-binding-') && d?.page) {
           const i = d.page.imports[Number(key.slice(15))];

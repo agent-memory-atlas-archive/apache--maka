@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.surface',
-  displayName: 'surface',
+  displayName: 'Interface display',
+  description: 'Present application views on this device.',
+  localizations: {
+    'zh-CN': { displayName: '界面显示', description: '在本机呈现应用界面。' },
+  },
   application: {
     entries: Object.fromEntries(
       ['desktop', 'tui'].map((target) => [

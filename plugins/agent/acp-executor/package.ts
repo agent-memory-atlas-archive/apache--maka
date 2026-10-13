@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.acp-executor',
-  displayName: 'acp-executor',
+  displayName: 'ACP agents',
+  description: 'Run agents through the Agent Client Protocol.',
+  localizations: {
+    'zh-CN': { displayName: 'ACP 助手', description: '通过 Agent Client Protocol 运行助手。' },
+  },
   application: {
     entries: {
       host: {

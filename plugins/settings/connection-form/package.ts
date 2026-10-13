@@ -37,6 +37,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.connection-form',
-  displayName: 'connection-form',
+  displayName: 'Connection editor',
+  description: 'Enter a model provider’s address and connection options.',
+  localizations: {
+    'zh-CN': { displayName: '连接编辑器', description: '填写模型服务商地址和连接选项。' },
+  },
   application: { entries },
 };

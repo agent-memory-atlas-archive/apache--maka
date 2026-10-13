@@ -29,6 +29,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.composer',
-  displayName: 'composer',
+  displayName: 'Message editor',
+  description: 'Write messages and add attachments before sending.',
+  localizations: {
+    'zh-CN': { displayName: '消息编辑器', description: '编写消息，添加附件并发送。' },
+  },
   application: { entries },
 };

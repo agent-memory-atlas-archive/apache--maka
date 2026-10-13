@@ -34,6 +34,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.recall',
-  displayName: 'recall',
+  displayName: 'Search conversations',
+  description: 'Find messages in saved conversations.',
+  localizations: {
+    'zh-CN': { displayName: '搜索对话', description: '在已保存的对话中查找消息。' },
+  },
   application: { entries },
 };

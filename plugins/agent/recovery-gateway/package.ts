@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.recovery-gateway',
-  displayName: 'recovery-gateway',
+  displayName: 'Recovery access',
+  description: 'Connect the recovery view to the host.',
+  localizations: {
+    'zh-CN': { displayName: '修复功能连接', description: '将应用修复页面连接到主机。' },
+  },
   application: {
     entries: {
       host: {

@@ -152,9 +152,24 @@ impl<V: ?Sized + 'static> Application<V> {
             .all(|instance| {
                 self.activations.get(&instance.identity).is_some_and(|a| {
                     self.runtime
-                        .status(a)
-                        .is_ok_and(|s| s.phase == Phase::Active)
+                        .phase(a)
+                        .is_ok_and(|phase| phase == Phase::Active)
                 })
+            })
+    }
+
+    pub fn is_closing(&self) -> bool {
+        self.closing
+    }
+
+    fn deployment_converging(&self) -> bool {
+        !self.plan_active()
+            || !self.pending.is_empty()
+            || !self.pending_remotes.is_empty()
+            || self.runtime.activations().any(|a| {
+                self.runtime
+                    .phase(a)
+                    .is_ok_and(|phase| phase != Phase::Active)
             })
     }
 
@@ -162,14 +177,7 @@ impl<V: ?Sized + 'static> Application<V> {
         DeploymentStatus {
             desired: self.source().cloned(),
             effective: self.effective.clone(),
-            converging: !self.plan_active()
-                || !self.pending.is_empty()
-                || !self.pending_remotes.is_empty()
-                || self.runtime.activations().any(|a| {
-                    self.runtime
-                        .status(a)
-                        .is_ok_and(|s| s.phase != Phase::Active)
-                }),
+            converging: self.deployment_converging(),
             error: self.deployment_error.clone(),
             closing: self.closing,
             instances: self
@@ -380,8 +388,8 @@ impl<V: ?Sized + 'static> Application<V> {
             .filter(|i| {
                 !self.activations.get(&i.identity).is_some_and(|a| {
                     self.runtime
-                        .status(a)
-                        .is_ok_and(|s| s.phase == Phase::Active)
+                        .phase(a)
+                        .is_ok_and(|phase| phase == Phase::Active)
                 })
             })
             .collect();
@@ -426,7 +434,7 @@ impl<V: ?Sized + 'static> Application<V> {
         for (id, loaded) in &self.modules {
             if let Some(error) = loaded.realm.failure() {
                 let activation = &self.activations[id];
-                if self.runtime.status(activation)?.phase != Phase::Retiring {
+                if self.runtime.phase(activation)? != Phase::Retiring {
                     self.deployment_error.get_or_insert(error.to_string());
                 }
                 self.runtime.retire(activation)?;
@@ -463,7 +471,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 }
             }
             for activation in self.runtime.activations().cloned().collect::<Vec<_>>() {
-                if self.runtime.status(&activation)?.phase != Phase::Retiring {
+                if self.runtime.phase(&activation)? != Phase::Retiring {
                     continue;
                 }
                 match self.runtime.finish_cleanup(&activation) {
@@ -530,7 +538,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 break;
             }
         }
-        if self.deployment_error.is_none() && !self.deployment_status().converging {
+        if self.deployment_error.is_none() && !self.deployment_converging() {
             self.effective = self.source().cloned();
         }
         failure.map_or(Ok(()), Err)

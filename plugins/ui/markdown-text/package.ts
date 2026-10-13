@@ -23,7 +23,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.markdown-text',
-  displayName: 'markdown-text',
+  displayName: 'Markdown text',
+  description: 'Render Markdown text in a view.',
+  localizations: {
+    'zh-CN': { displayName: 'Markdown 文本', description: '在页面中呈现 Markdown 文本。' },
+  },
   application: {
     entries: {
       tui: native(sdk.nativeImplementations.markdownText),

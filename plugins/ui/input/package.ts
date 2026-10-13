@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.input',
-  displayName: 'input',
+  displayName: 'Text input',
+  description: 'Provide single-line text entry.',
+  localizations: {
+    'zh-CN': { displayName: '文本输入', description: '提供单行文本输入。' },
+  },
   application: {
     entries: Object.fromEntries(
       ['desktop', 'tui'].map((target) => [target, native(sdk.nativeImplementations.input)]),

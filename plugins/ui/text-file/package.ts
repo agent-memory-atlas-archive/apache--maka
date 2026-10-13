@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.text-file',
-  displayName: 'text-file',
+  displayName: 'File preview',
+  description: 'Read text files from the workspace.',
+  localizations: {
+    'zh-CN': { displayName: '文件预览', description: '读取工作区中的文本文件。' },
+  },
   application: {
     entries: {
       tui: native(sdk.nativeImplementations.textFile),

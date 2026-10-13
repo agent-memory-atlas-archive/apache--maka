@@ -24,6 +24,7 @@ import type {
   InputProps,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { type ImportsProps } from '../../shared/contracts.js';
+import { visibleRows } from '../../shared/scroll.js';
 import { copy } from '../../shared/locale.js';
 import { pageHeader } from '../../shared/page-shell.js';
 import { compactLabel, fill, output, type Node, type Presentation } from '../../shared/view.js';
@@ -103,49 +104,50 @@ export function frame<N extends Node>(
           ),
         )
       : state.route === 'catalog'
-        ? state.entries.map((entry, index) =>
+        ? visibleRows(state, 'import-catalog', state.entries).map(({ entry, at: index }) =>
             row('entry-' + index, entry.title, entry.cwd ?? entry.path),
           )
         : state.route === 'copies'
-          ? state.copies.map((session) =>
+          ? visibleRows(state, 'import-copies', state.copies).map(({ entry: session }) =>
               row('copy-' + session.id, session.title, session.workspace.path),
             )
           : state.route === 'preview'
-            ? (state.preview?.items ?? []).map((item) =>
-                ui.box(
-                  'preview-' + item.index,
-                  [
-                    ui.text(
-                      'role-' + item.index,
-                      text[
-                        (
-                          {
-                            user: 'importsUser',
-                            assistant: 'importsAssistant',
-                            tool_call: 'importsToolCall',
-                            tool_result: 'importsToolResult',
-                            note: 'importsNote',
-                          } as const
-                        )[item.kind]
-                      ],
-                      13,
-                      props.theme.muted,
-                      500,
-                    ),
-                    ui.text('text-' + item.index, item.text, 14, props.theme.text),
-                    ...(item.truncated
-                      ? [
-                          ui.text(
-                            'truncated-' + item.index,
-                            text.importsTruncated,
-                            12,
-                            props.theme.muted,
-                          ),
-                        ]
-                      : []),
-                  ],
-                  { gap: 1 },
-                ),
+            ? visibleRows(state, 'import-preview', state.preview?.items ?? []).map(
+                ({ entry: item }) =>
+                  ui.box(
+                    'preview-' + item.index,
+                    [
+                      ui.text(
+                        'role-' + item.index,
+                        text[
+                          (
+                            {
+                              user: 'importsUser',
+                              assistant: 'importsAssistant',
+                              tool_call: 'importsToolCall',
+                              tool_result: 'importsToolResult',
+                              note: 'importsNote',
+                            } as const
+                          )[item.kind]
+                        ],
+                        13,
+                        props.theme.muted,
+                        500,
+                      ),
+                      ui.text('text-' + item.index, item.text, 14, props.theme.text),
+                      ...(item.truncated
+                        ? [
+                            ui.text(
+                              'truncated-' + item.index,
+                              text.importsTruncated,
+                              12,
+                              props.theme.muted,
+                            ),
+                          ]
+                        : []),
+                    ],
+                    { gap: 1 },
+                  ),
               )
             : [];
   const chosenSource = state.sources.find((source) => state.selected === 'source-' + source.id);
@@ -184,7 +186,7 @@ export function frame<N extends Node>(
     {
       visible: state.route === 'form',
       gap: 1,
-      scroll: 'manual',
+      scroll: 'anchor',
       terminal: { grow: 1, basis: 0 },
       style: { width: fill, height: fill, minHeight: 0 },
     },
@@ -204,7 +206,7 @@ export function frame<N extends Node>(
       ...rows,
     ],
     {
-      scroll: 'manual',
+      scroll: 'anchor',
       focusGroup:
         state.route === 'sources' || state.route === 'catalog' || state.route === 'copies',
       gap: 1,
@@ -291,7 +293,7 @@ export function frame<N extends Node>(
           presentation.reading(
             'import-list',
             { command: state.focus, content: contents },
-            { input: 'list-input' },
+            { input: 'list-input', observed: 'list-observed' },
           ),
         ],
         {
@@ -331,12 +333,7 @@ export function frame<N extends Node>(
                 ),
               ]
             : state.route === 'catalog'
-              ? [
-                  ui.button('refresh-catalog', text.directoryRefresh, disabled),
-                  ...(state.catalogNext
-                    ? [ui.button('catalog-more', text.projectsMore, disabled)]
-                    : []),
-                ]
+              ? [ui.button('refresh-catalog', text.directoryRefresh, disabled)]
               : state.route === 'preview'
                 ? [
                     ui.button('destination-directory', text.importsChooseDestination, editing),
@@ -349,17 +346,9 @@ export function frame<N extends Node>(
                         !state.fields.title.ready ||
                         !!state.fields.title.command,
                     ),
-                    ...(state.preview?.next !== null && state.preview?.next !== undefined
-                      ? [ui.button('preview-more', text.projectsMore, disabled)]
-                      : []),
                     ui.button('preview-first', text.directoryRefresh, disabled),
                   ]
-                : [
-                    ui.button('refresh-copies', text.directoryRefresh, disabled),
-                    ...(state.copiesNext
-                      ? [ui.button('copies-more', text.projectsMore, disabled)]
-                      : []),
-                  ],
+                : [ui.button('refresh-copies', text.directoryRefresh, disabled)],
         { row: true, terminal: { wrap: true }, style: { wrap: true }, gap: 1 },
       ),
     ],

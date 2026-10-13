@@ -23,7 +23,11 @@ import { agentImports } from '../../shared/agent-imports.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.agent',
-  displayName: 'agent',
+  displayName: 'Agent runtime',
+  description: 'Run conversations, execute tasks, and manage agent state.',
+  localizations: {
+    'zh-CN': { displayName: '助手运行', description: '运行对话、执行任务和管理助手状态。' },
+  },
   application: {
     entries: {
       host: {

@@ -222,11 +222,10 @@ fn canonical_scrollback_and_redaction_never_replay_raw_text_and_budget_follows_o
     assert!(state.text(3).is_empty());
     assert_eq!(budget.usage().0, 384 * 1024);
     drop(state);
-    assert_eq!(budget.usage(), (0, 0, 0));
+    assert_eq!(budget.usage(), (0, 0));
     let exhausted = NativeBudget::new(crate::budget::BudgetLimits {
         encoded_bytes: 1,
         pixel_bytes: 1,
-        worker_jobs: 1,
     });
     let mut state = State::new(&exhausted);
     state.apply(&props);

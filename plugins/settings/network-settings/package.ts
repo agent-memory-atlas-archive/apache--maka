@@ -36,6 +36,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.network-settings',
-  displayName: 'network-settings',
+  displayName: 'Network settings',
+  description: 'Configure network access and proxy options.',
+  localizations: {
+    'zh-CN': { displayName: '网络设置', description: '配置网络访问和代理选项。' },
+  },
   application: { entries },
 };

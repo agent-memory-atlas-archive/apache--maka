@@ -31,6 +31,7 @@ import type {
   TextChunk,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { type ConnectionFormProps } from '../../shared/contracts.js';
+import { scrollBoundary, scrollRows } from '../../shared/scroll.js';
 import { sameValue } from '../../shared/value.js';
 import { type Node, type Presentation } from '../../shared/view.js';
 import {
@@ -70,6 +71,20 @@ export function handleEvent<N extends Node>(
     input = { kind: 'raw', key: 'provider-' + at, event: { kind: 'submit' } };
   }
   state.revision++;
+  const reviewScroll = scrollBoundary(state, input, 'connection-review-reading');
+  if (reviewScroll)
+    input = { kind: 'raw', key: reviewScroll === 'up' ? 'review-prev' : 'review-next', event: {} };
+  if (
+    input.kind === 'component' &&
+    input.child === 'connection-history-reading' &&
+    input.name === 'input'
+  )
+    input = input.event as ComponentInput;
+  if (
+    state.historyOpen &&
+    scrollRows(state, input, 'connection-history-reading', state.earlier.length)
+  )
+    input = { kind: 'raw', key: 'form-history-more', event: {} };
   const actions: Action[] = [],
     events: Emission[] = [];
   if (
@@ -189,18 +204,21 @@ export function handleEvent<N extends Node>(
       if (outcome.status !== 'succeeded') state.historyFailed = true;
       else {
         const page = outcome.value as CallerIntent[];
-        state.historyNext = page.length === 4 ? page[page.length - 1].cursor : null;
-        state.earlier = page
-          .filter(
-            (entry) =>
-              entry.reference.contract.name === 'maka.settings.Settings' &&
-              ['create', 'update', 'remove'].includes(entry.reference.method),
-          )
-          .map((entry) => ({
-            cursor: entry.cursor,
-            reference: entry.reference,
-            result: null,
-          }));
+        state.historyNext = page.at(-1)?.cursor ?? null;
+        state.earlier = [
+          ...(r.after ? state.earlier : []),
+          ...page
+            .filter(
+              (entry) =>
+                entry.reference.contract.name === 'maka.settings.Settings' &&
+                ['create', 'update', 'remove'].includes(entry.reference.method),
+            )
+            .map((entry) => ({
+              cursor: entry.cursor,
+              reference: entry.reference,
+              result: null,
+            })),
+        ];
       }
     } else if (
       r.kind === 'earlier' &&

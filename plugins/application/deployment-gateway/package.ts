@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.deployment-gateway',
-  displayName: 'deployment-gateway',
+  displayName: 'Plugin management access',
+  description: 'Connect plugin settings to the host’s plugin manager.',
+  localizations: {
+    'zh-CN': { displayName: '插件管理连接', description: '将插件设置连接到主机的插件管理器。' },
+  },
   application: {
     entries: {
       host: {

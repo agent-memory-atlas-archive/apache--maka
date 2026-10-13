@@ -29,6 +29,23 @@ use crate::{
     contract::{Availability, Contract, Export, Import, Interface},
 };
 
+/// Author-provided copy for plugin discovery; never an authority declaration.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PackageDescription {
+    pub display_name: String,
+    pub description: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PackagePresentation {
+    pub display_name: String,
+    pub description: String,
+    #[serde(default)]
+    pub localizations: BTreeMap<String, PackageDescription>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PackageRef {

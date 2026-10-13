@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { scrollBoundary } from './scroll.js';
 import type {
   Action,
   ActionOutcome,
@@ -575,6 +576,23 @@ function historyEvent(
     }
     return true;
   }
+  const direction = preview && scrollBoundary(state, input, preview.key);
+  if (direction && preview && !preview.pending) {
+    const section = (direction === 'up' ? preview.sections : [...preview.sections].reverse()).find(
+      (section) =>
+        section.source &&
+        !section.failed &&
+        (direction === 'up'
+          ? section.source.offset > 0
+          : section.source.offset + utf8Bytes(section.source.text) < section.source.totalBytes),
+    );
+    if (section)
+      input = {
+        kind: 'raw',
+        key: `find-source-${section.field}-${direction === 'up' ? 'previous' : 'next'}`,
+        event: {},
+      };
+  }
   if (input.kind !== 'raw') return false;
   if (input.key === 'find-restart') {
     if (searchReady(search)) restartHistory(state, props, actions);
@@ -700,16 +718,10 @@ export function historyView<N extends Node>(
             'find-controls-' + section.field,
             [
               ...(source && source.offset > 0
-                ? [
-                    ui.button(key + 'first', text.sourceFirst, pending),
-                    ui.button(key + 'previous', text.sourcePrevious, pending),
-                  ]
+                ? [ui.button(key + 'first', text.sourceFirst, pending)]
                 : []),
               ...(source && source.offset + utf8Bytes(source.text) < source.totalBytes
-                ? [
-                    ui.button(key + 'next', text.sourceNext, pending),
-                    ui.button(key + 'last', text.sourceLast, pending),
-                  ]
+                ? [ui.button(key + 'last', text.sourceLast, pending)]
                 : []),
               ...(section.failed ? [ui.button(key + 'retry', text.sourceRetry, pending)] : []),
             ],

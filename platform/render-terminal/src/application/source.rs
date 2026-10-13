@@ -503,7 +503,11 @@ impl Recipe {
         {
             let mut revealed = visual.clone();
             if let Some(palette) = &self.0.terminal {
-                fade.paint(visual, &mut revealed.line, time, terminal_palette(palette));
+                if let Some(delay) =
+                    fade.paint(visual, &mut revealed.line, time, terminal_palette(palette))
+                {
+                    slots.measurements.repaint_after(delay);
+                }
             }
             let visual = &revealed;
             let text = visual.line.to_string();

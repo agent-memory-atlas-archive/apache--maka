@@ -23,7 +23,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.reading-area',
-  displayName: 'reading-area',
+  displayName: 'Scrollable content',
+  description: 'Scroll content and keep the focused item visible.',
+  localizations: {
+    'zh-CN': { displayName: '滚动阅读区', description: '滚动内容，并保持当前选中项可见。' },
+  },
   application: {
     entries: {
       desktop: {

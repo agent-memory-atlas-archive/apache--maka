@@ -61,6 +61,43 @@ fn key(code: KeyCode) -> Event {
     Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
 }
 #[test]
+fn idle_presentation_waits_for_input_and_committed_changes() {
+    let (runtime, input, packages) =
+        fixture("return frame({count:state.count+1,revision:state.revision+1});");
+    let mut tui = Presenter::new(
+        &input,
+        packages,
+        runtime.handle().clone(),
+        registry(),
+        json!({}),
+        maka_ui_js::execution(Default::default()),
+    )
+    .unwrap();
+    draw(&mut tui, 30, 12);
+    draw(&mut tui, 30, 12);
+    assert!(!tui.resources.redraw);
+    assert!(tui.next_frame.is_none());
+    for _ in 0..10 {
+        tui.pump().unwrap();
+    }
+    assert!(
+        !tui.resources.redraw,
+        "unchanged native polling must not request another layout"
+    );
+    tui.input(key(KeyCode::Enter)).unwrap();
+    assert!(tui.resources.redraw);
+    let painted = draw(&mut tui, 30, 12);
+    assert!(painted.content.iter().any(|cell| cell.symbol() == "1"));
+    draw(&mut tui, 30, 12);
+    assert!(!tui.resources.redraw);
+    tui.input(Event::Resize(50, 20)).unwrap();
+    assert!(
+        tui.resources.redraw,
+        "resize must redraw even without guest changes"
+    );
+}
+
+#[test]
 fn same_package_has_native_surfaces_and_distinct_layouts_and_paint_never_calls_guest() {
     let (runtime, input, packages) =
         fixture("return frame({count:state.count+1,revision:state.revision+1});");

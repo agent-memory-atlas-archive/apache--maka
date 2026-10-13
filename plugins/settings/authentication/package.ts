@@ -22,7 +22,11 @@ import { native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.settings-authentication',
-  displayName: 'settings-authentication',
+  displayName: 'Provider sign-in',
+  description: 'Sign in to supported model providers.',
+  localizations: {
+    'zh-CN': { displayName: '服务商登录', description: '登录受支持的模型服务商。' },
+  },
   application: {
     entries: { host: native(sdk.nativeImplementations.settingsAuthentication) },
   },

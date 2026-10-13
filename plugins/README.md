@@ -52,3 +52,19 @@ To include a plugin in Maka, add its path to [the product selection](../products
 The [plugin-authoring skill](../skills/maka-plugin-authoring/SKILL.md) includes a runnable standalone starter and guides for services, UI, state and native extensions. The [SDK](../packages/plugin-sdk/README.md) supplies the exact contracts.
 
 Large UI components (`application/apps`, `application/deployment`, `agent/scheduler`, `agent/conversation-import`, `settings/insights`, `settings/connection-form`) use `state.ts` for shared state and local value types, `operations.ts` for service intents and settlement, `view.ts` for scenes, and `events.ts` for inputs. `index.ts` constructs the component and wires its lifecycle. These are plain modules of one component, with one state and one publication boundary; they do not introduce another event bus or store. Small components can stay in one file.
+
+Plugin lists use the package author's `displayName` and `description`. Describe what the user can do in one sentence; internal package IDs remain stable technical identities. Optional `localizations` maps language tags to translated names and descriptions:
+
+```ts
+{
+  id: 'example.notes',
+  displayName: 'Notes',
+  description: 'Write and find your notes.',
+  localizations: {
+    'zh-CN': { displayName: '笔记', description: '记录和查找笔记。' },
+  },
+  // application: ...
+}
+```
+
+The plugin manager displays and searches this copy; the app chooser uses it too. Missing translations fall back to the default copy, then the instance name or package ID. Labels should predict the action or destination, following [Apple's guidance on clear names](https://developer.apple.com/videos/play/wwdc2026/290/). Use familiar icons with accessible labels and tooltips for common actions; keep explicit text for consequential or unfamiliar actions. Large collections use reading-area scroll observations to load adjacent data and preserve the visible row; data cursors remain an implementation detail.

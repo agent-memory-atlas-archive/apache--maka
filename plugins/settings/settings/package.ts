@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.settings',
-  displayName: 'settings',
+  displayName: 'Settings storage',
+  description: 'Save model connections, credentials, and preferences.',
+  localizations: {
+    'zh-CN': { displayName: '设置存储', description: '保存模型连接、凭据和偏好设置。' },
+  },
   application: {
     entries: { host: native(sdk.nativeImplementations.settings) },
   },

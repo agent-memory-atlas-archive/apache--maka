@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { scrollBoundary } from '../../shared/scroll.js';
 import type {
   Action,
   ActionOutcome,
@@ -25,6 +26,7 @@ import type {
   DiffProps,
   HistorySource,
   SourcePosition,
+  ReadingCommand,
 } from '../../../packages/plugin-sdk/src/index.js';
 import {
   toolDetailsContract,
@@ -33,7 +35,14 @@ import {
 } from '../../shared/contracts.js';
 import { copy } from '../../shared/locale.js';
 import { sameValue } from '../../shared/value.js';
-import { compactLabel, fill, output, type Node, type Presentation } from '../../shared/view.js';
+import {
+  compactLabel,
+  fill,
+  pixels,
+  output,
+  type Node,
+  type Presentation,
+} from '../../shared/view.js';
 
 /** These keys explicitly name display contracts. Names and JSON shapes do not. */
 export function filePresentation(key: string | null | undefined) {
@@ -92,6 +101,7 @@ type Part = {
   preparing: boolean;
   pending: { key: string; position: SourcePosition } | null;
   position: SourcePosition;
+  reveal?: ReadingCommand;
 };
 type State = {
   revision: number;
@@ -463,7 +473,24 @@ export function toolDetails<N extends Node>(
               props.theme.muted,
               550,
             ),
-            ...(page ? [body] : []),
+            ...(page
+              ? [
+                  page.offset > 0 || end < page.totalBytes
+                    ? presentation.reading(
+                        id + '-reading',
+                        {
+                          command: part.reveal ?? null,
+                          content: ui.box(id + '-viewport', [body], {
+                            scroll: 'manual',
+                            terminal: { basis: 12 },
+                            style: { width: fill, height: pixels(240) },
+                          }),
+                        },
+                        { input: 'part-input', observed: 'part-observed' },
+                      )
+                    : body,
+                ]
+              : []),
             ...(part.pending
               ? [ui.text(id + '-loading', text.loading, 13, props.theme.muted)]
               : []),
@@ -508,16 +535,10 @@ export function toolDetails<N extends Node>(
                   ? [ui.button(id + '-retry', text.sourceRetry, !!part.pending)]
                   : []),
                 ...(page && page.offset > 0
-                  ? [
-                      ui.button(id + '-first', text.sourceFirst, !!part.pending),
-                      ui.button(id + '-previous', text.sourcePrevious, !!part.pending),
-                    ]
+                  ? [ui.button(id + '-first', text.sourceFirst, !!part.pending)]
                   : []),
                 ...(page && end < page.totalBytes
-                  ? [
-                      ui.button(id + '-next', text.sourceNext, !!part.pending),
-                      ui.button(id + '-last', text.sourceLast, !!part.pending),
-                    ]
+                  ? [ui.button(id + '-last', text.sourceLast, !!part.pending)]
                   : []),
               ],
               { row: true, gap: 1, terminal: { wrap: true }, style: { wrap: true } },
@@ -729,6 +750,21 @@ export function toolDetails<N extends Node>(
       state.revision++;
       if (!sameIdentity(state, props)) return frame(state, props);
       const actions: Action[] = [];
+      if (input.kind === 'component') {
+        const id = Object.keys(state.parts).find(
+          (id) => input.kind === 'component' && input.child === id + '-reading',
+        );
+        if (id) {
+          const direction = scrollBoundary(state, input, id + '-reading');
+          if (direction)
+            input = {
+              kind: 'raw',
+              key: id + (direction === 'up' ? '-previous' : '-next'),
+              event: {},
+            };
+          else if (input.name === 'input') input = input.event as typeof input;
+        }
+      }
       if (input.kind === 'action') {
         const entry = Object.entries(state.parts).find(
           ([, part]) => part.pending?.key === input.key,
@@ -742,6 +778,13 @@ export function toolDetails<N extends Node>(
           else {
             const value = result.value as AgentHistorySourcePage;
             accept(state, part, value, position);
+            if (part.page && !part.failed && value.kind !== 'preparing')
+              part.reveal = {
+                sequence: (part.reveal?.sequence ?? 0) + 1,
+                target: {
+                  kind: position.kind === 'before' || position.kind === 'tail' ? 'end' : 'start',
+                },
+              };
             if (
               value.kind === 'preparing' &&
               !part.failed &&

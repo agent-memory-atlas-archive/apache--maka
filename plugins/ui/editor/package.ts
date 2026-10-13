@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.editor',
-  displayName: 'editor',
+  displayName: 'Text editor',
+  description: 'Edit multiline text and drafts.',
+  localizations: {
+    'zh-CN': { displayName: '文本编辑器', description: '编辑多行文本和草稿。' },
+  },
   application: {
     entries: Object.fromEntries(
       ['desktop', 'tui'].map((target) => [target, native(sdk.nativeImplementations.textarea)]),

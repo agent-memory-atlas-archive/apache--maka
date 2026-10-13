@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.workspace-processes',
-  displayName: 'workspace-processes',
+  displayName: 'Workspace processes',
+  description: 'Start and manage commands in the workspace.',
+  localizations: {
+    'zh-CN': { displayName: '工作区进程', description: '启动和管理工作区中的命令。' },
+  },
   application: {
     entries: {
       host: native(sdk.nativeImplementations.workspaceProcesses),

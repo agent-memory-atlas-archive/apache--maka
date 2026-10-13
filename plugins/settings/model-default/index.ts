@@ -21,6 +21,7 @@ import type {
   Action,
   ActionOutcome,
   Component,
+  ComponentInput,
   Emission,
   ConnectionTarget,
   RecoveryRef,
@@ -29,6 +30,7 @@ import type {
   CatalogMutationResult,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { modelDefaultContract, type ModelDefaultProps } from '../../shared/contracts.js';
+import { scrollRows, visibleRows, resetScroll } from '../../shared/scroll.js';
 import { copy, type Copy } from '../../shared/locale.js';
 import { sameValue } from '../../shared/value.js';
 import {
@@ -121,6 +123,7 @@ function settle(state: State, reply: OperationReply, events: Emission[]) {
 function history(state: State, actions: Action[], after: number) {
   if (Object.values(state.pending).some((r) => r.kind === 'history' || r.kind === 'earlier'))
     return;
+  if (!after) resetScroll(state, 'default-history-reading');
   state.historyFailed = false;
   request(state, actions, { kind: 'history', after }, 'history', 'page', { after, limit: 2 });
 }
@@ -239,83 +242,102 @@ function frame<N extends Node>(
       terminal: { grow: 1 },
     },
   );
-  const earlier = ui.box(
-    'default-earlier',
-    [
-      ui.box(
-        'default-history-actions',
-        [
-          ui.button(
-            'default-history-back',
-            text.back,
-            false,
-            false,
-            target === 'tui' ? { background: 0, align: 'start' } : {},
-          ),
-          ui.button(
-            'default-history-refresh',
-            target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.refreshDefaultOperations,
-            false,
-            false,
-            target === 'tui' ? { background: 0 } : {},
-            undefined,
-            text.refreshDefaultOperations,
-          ),
-          ...(state.historyNext !== null
-            ? [ui.button('default-history-more', text.moreOperations)]
-            : []),
-        ],
+  const earlier = state.historyOpen
+    ? presentation.reading(
+        'default-history-reading',
         {
-          row: true,
-          gap: target === 'desktop' ? 8 : 1,
-          terminal: { wrap: true },
-          style: { wrap: true },
-        },
-      ),
-      ...(target === 'desktop'
-        ? [ui.text('default-history-help', text.earlierDefaultHelp, 13, props.theme.muted)]
-        : []),
-      ...(state.historyFailed
-        ? [ui.text('default-history-failed', text.historyUnavailable, 13, props.theme.muted)]
-        : []),
-      ...state.earlier.map((entry, at) => {
-        const receipt = entry.result?.receipt;
-        const value =
-          receipt?.kind === 'recorded' && receipt.outcome.kind === 'returned'
-            ? (receipt.outcome.value as CatalogMutationResult)
-            : null;
-        return ui.box(
-          'default-entry-' + at,
-          [
-            ui.button(
-              'default-earlier-' + at,
-              text.check,
-              Object.values(state.pending).some(
-                (r) => r.kind === 'earlier' && r.cursor === entry.cursor,
+          content: ui.box(
+            'default-earlier',
+            [
+              ui.box(
+                'default-history-actions',
+                [
+                  ui.button(
+                    'default-history-back',
+                    text.back,
+                    false,
+                    false,
+                    target === 'tui' ? { background: 0, align: 'start' } : {},
+                  ),
+                  ui.button(
+                    'default-history-refresh',
+                    target === 'tui'
+                      ? props.theme.ascii
+                        ? 'r'
+                        : '↻'
+                      : text.refreshDefaultOperations,
+                    false,
+                    false,
+                    target === 'tui' ? { background: 0 } : {},
+                    undefined,
+                    text.refreshDefaultOperations,
+                  ),
+                ],
+                {
+                  row: true,
+                  gap: target === 'desktop' ? 8 : 1,
+                  terminal: { wrap: true },
+                  style: { wrap: true },
+                },
               ),
-            ),
-            ui.text(
-              'default-result-' + at,
-              value?.kind === 'committed'
-                ? text.defaultHistorySaved
-                : value
-                  ? text.historyRejected
-                  : text.historyUnknown,
-              13,
-            ),
-          ],
-          { gap: 0 },
-        );
-      }),
-    ],
-    {
-      visible: state.historyOpen,
-      gap: target === 'desktop' ? 8 : 1,
-      scroll: 'manual',
-      terminal: { grow: 1 },
-      style: { width: fill, maxHeight: 280 },
-    },
-  );
+              ...(target === 'desktop'
+                ? [ui.text('default-history-help', text.earlierDefaultHelp, 13, props.theme.muted)]
+                : []),
+              ...(state.historyFailed
+                ? [
+                    ui.text(
+                      'default-history-failed',
+                      text.historyUnavailable,
+                      13,
+                      props.theme.muted,
+                    ),
+                  ]
+                : []),
+              ...visibleRows(state, 'default-history-reading', state.earlier).map(
+                ({ entry, at }) => {
+                  const receipt = entry.result?.receipt;
+                  const value =
+                    receipt?.kind === 'recorded' && receipt.outcome.kind === 'returned'
+                      ? (receipt.outcome.value as CatalogMutationResult)
+                      : null;
+                  return ui.box(
+                    'default-entry-' + at,
+                    [
+                      ui.button(
+                        'default-earlier-' + at,
+                        text.check,
+                        Object.values(state.pending).some(
+                          (r) => r.kind === 'earlier' && r.cursor === entry.cursor,
+                        ),
+                      ),
+                      ui.text(
+                        'default-result-' + at,
+                        value?.kind === 'committed'
+                          ? text.defaultHistorySaved
+                          : value
+                            ? text.historyRejected
+                            : text.historyUnknown,
+                        13,
+                      ),
+                    ],
+                    { gap: 0 },
+                  );
+                },
+              ),
+            ],
+            {
+              visible: state.historyOpen,
+              gap: target === 'desktop' ? 8 : 1,
+              scroll: 'anchor',
+              terminal: { grow: 1 },
+              style: { width: fill, maxHeight: 280 },
+            },
+          ),
+        },
+        { input: 'history-input', observed: 'history-observed' },
+      )
+    : ui.box('history-hidden', [], { visible: false });
+
   const out = output(
     state,
     ui.box(
@@ -369,6 +391,17 @@ export function modelDefault<N extends Node>(
       return frame(presentation, state, props);
     },
     event(state, input, props) {
+      if (
+        input.kind === 'component' &&
+        input.child === 'default-history-reading' &&
+        input.name === 'input'
+      )
+        input = input.event as ComponentInput;
+      if (
+        state.historyOpen &&
+        scrollRows(state, input, 'default-history-reading', state.earlier.length)
+      )
+        input = { kind: 'raw', key: 'default-history-more', event: {} };
       if (input.kind === 'raw' && input.key === 'default-dialog')
         input = { ...input, key: state.historyOpen ? 'default-history-back' : 'default-cancel' };
       state.revision++;
@@ -396,14 +429,21 @@ export function modelDefault<N extends Node>(
           if (outcome.status !== 'succeeded') state.historyFailed = true;
           else {
             const page = outcome.value as CallerIntent[];
-            state.historyNext = page.length === 2 ? page[page.length - 1].cursor : null;
-            state.earlier = page
-              .filter(
-                (entry) =>
-                  entry.reference.contract.name === 'maka.settings.Settings' &&
-                  entry.reference.method === 'setDefault',
-              )
-              .map((entry) => ({ cursor: entry.cursor, reference: entry.reference, result: null }));
+            state.historyNext = page.at(-1)?.cursor ?? null;
+            state.earlier = [
+              ...(r.after ? state.earlier : []),
+              ...page
+                .filter(
+                  (entry) =>
+                    entry.reference.contract.name === 'maka.settings.Settings' &&
+                    entry.reference.method === 'setDefault',
+                )
+                .map((entry) => ({
+                  cursor: entry.cursor,
+                  reference: entry.reference,
+                  result: null,
+                })),
+            ];
           }
         } else if (
           outcome.status === 'succeeded' &&

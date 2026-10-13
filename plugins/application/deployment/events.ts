@@ -30,6 +30,7 @@ import type {
   InstanceSettingsPage,
   ManagedInstancesPage,
   OperationReply,
+  ReadingObservation,
   TextChunk,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { bookmarkReady, observeBookmark, retryBookmark } from '../../shared/bookmark.js';
@@ -50,9 +51,18 @@ import {
   settingOptions,
   settingValue,
 } from '../../shared/instance-settings.js';
+import { scrollBoundary, scrollRows, resetScroll } from '../../shared/scroll.js';
 import { sameValue } from '../../shared/value.js';
 import { type Node, type Presentation } from '../../shared/view.js';
-import { openSettings, page, readDocument, readSettings, request, settle } from './operations.js';
+import {
+  filteredInstances,
+  openSettings,
+  page,
+  readDocument,
+  readSettings,
+  request,
+  settle,
+} from './operations.js';
 import {
   settingsBookmark,
   validSettingsBookmark,
@@ -68,10 +78,66 @@ export function handleEvent<N extends Node>(
   props: DeploymentProps,
 ) {
   state.revision++;
-  if (input.kind === 'component' && input.child === 'deployment-list' && input.name === 'input')
+  if (
+    input.kind === 'component' &&
+    ['deployment-list', 'instance-settings-reading', 'deployment-history-reading'].includes(
+      input.child,
+    ) &&
+    input.name === 'input'
+  )
     input = input.event as ComponentInput;
   const actions: Action[] = [],
     events: Emission[] = [];
+  if (
+    state.historyOpen &&
+    scrollRows(
+      state,
+      input,
+      presentation.target === 'tui' ? 'deployment-history-reading' : 'deployment-list',
+      state.earlier.length,
+    )
+  )
+    input = { kind: 'raw', key: 'deployment-history-more', event: {} };
+  if (
+    input.kind === 'component' &&
+    input.child === 'deployment-list' &&
+    input.name === 'observed'
+  ) {
+    const observed = input.event as ReadingObservation;
+    if (
+      observed.scroll &&
+      observed.scroll.readingRevision > state.scrollRevision &&
+      observed.viewport?.readingRevision === observed.readingRevision &&
+      observed.pendingCommand == null
+    ) {
+      state.scrollRevision = observed.scroll.readingRevision;
+      if (!state.pending && !state.current && state.page) {
+        if (observed.scroll.direction === 'up' && observed.viewport.atStart)
+          state.listWindow = Math.max(0, state.listWindow - 32);
+        else if (observed.scroll.direction === 'down' && observed.viewport.atEnd) {
+          if (state.listWindow + 64 < filteredInstances(state, props.locale).length)
+            state.listWindow += 32;
+          else if (state.page.next)
+            page(
+              state,
+              actions,
+              { kind: 'continue', source: state.page.source, after: state.page.next },
+              'next',
+            );
+        }
+      }
+    }
+  }
+  const settingsDirection = scrollBoundary(state, input, 'instance-settings-reading');
+  if (settingsDirection && state.settings?.open && !state.pending && !state.current) {
+    const settings = state.settings;
+    if (settingsDirection === 'up') settings.window = Math.max(0, settings.window - 32);
+    else if (settings.window + 64 < (settings.page?.fields.length ?? 0)) settings.window += 32;
+    else if (settings.page?.next) {
+      settings.after = settings.page.next;
+      readSettings(state, actions);
+    }
+  }
   if (presentation.target === 'tui') {
     const restored = observeBookmark(
       state.bookmark,
@@ -98,7 +164,18 @@ export function handleEvent<N extends Node>(
       }
     }
   }
-  if (input.kind === 'component' && input.child === 'instance-setting-editor' && state.settings) {
+  if (
+    input.kind === 'component' &&
+    input.child === 'deployment-query' &&
+    input.name === 'changed'
+  ) {
+    state.queryObservation = input.event as EditorObservation;
+    state.notice = state.queryObservation.snapshot.text.bytes > 1024 ? 'searchTooLong' : null;
+  } else if (
+    input.kind === 'component' &&
+    input.child === 'instance-setting-editor' &&
+    state.settings
+  ) {
     observeSetting(state.settings, input.event as EditorObservation);
   } else if (
     input.kind === 'component' &&
@@ -139,7 +216,17 @@ export function handleEvent<N extends Node>(
     state.pending = null;
     const outcome = input.event as ActionOutcome,
       r = pending.request;
-    if (r.kind === 'restoreSettings') {
+    if (r.kind === 'filter') {
+      state.queryBasis = r.basis;
+      if (
+        outcome.status === 'succeeded' &&
+        sameValue(r.basis, state.queryObservation?.snapshot.text)
+      ) {
+        state.query = (outcome.value as TextChunk).text.trim();
+        state.listWindow = 0;
+        state.focus = { sequence: (state.focus?.sequence ?? 0) + 1, target: { kind: 'start' } };
+      } else if (outcome.status !== 'succeeded') state.notice = 'deploymentUnavailable';
+    } else if (r.kind === 'restoreSettings') {
       if (outcome.status !== 'succeeded') {
         state.restoreFailed = true;
         state.notice = 'historyUnavailable';
@@ -208,7 +295,10 @@ export function handleEvent<N extends Node>(
           sameValue(page.instance, r.input.instance) &&
           sameValue(page.path, r.input.path)
         )
-          settings.page = page;
+          settings.page =
+            r.input.after && settings.page
+              ? { ...page, fields: [...settings.page.fields, ...page.fields] }
+              : page;
         else settings.notice = 'deploymentUnavailable';
       }
     } else if (r.kind === 'urlText') {
@@ -260,8 +350,7 @@ export function handleEvent<N extends Node>(
         state.document.observation = old.observation;
         state.document.sequence = old.sequence;
         state.page = value;
-        state.previous = [];
-        state.after = null;
+        state.listWindow = 0;
         state.conflict = false;
         state.notice = null;
         state.diagnostic = null;
@@ -274,28 +363,30 @@ export function handleEvent<N extends Node>(
           state.notice = 'deploymentUnavailable';
         else {
           if (r.movement === 'reset') {
-            state.previous = [];
-            state.after = null;
+            state.listWindow = 0;
             state.conflict = false;
-          } else if (r.movement === 'next') {
-            state.previous.push(state.after);
-            state.after = r.input.kind === 'continue' ? r.input.after : null;
+            state.page = value;
+            state.selected =
+              value.instances.find((entry) => sameValue(entry.instance, state.selected))
+                ?.instance ??
+              value.instances[0]?.instance ??
+              null;
+            if (presentation.target === 'tui' && state.selected)
+              state.focus = {
+                sequence: (state.focus?.sequence ?? 0) + 1,
+                target: {
+                  kind: 'focus_item',
+                  key:
+                    'deployment-select-' +
+                    value.instances.findIndex((entry) => sameValue(entry.instance, state.selected)),
+                },
+              };
           } else {
-            state.after = state.previous.pop()!;
-          }
-          state.page = value;
-          if (!value.instances.some((entry) => sameValue(entry.instance, state.selected)))
-            state.selected = value.instances[0]?.instance ?? null;
-          if (presentation.target === 'tui' && state.selected)
-            state.focus = {
-              sequence: (state.focus?.sequence ?? 0) + 1,
-              target: {
-                kind: 'focus_item',
-                key:
-                  'deployment-select-' +
-                  value.instances.findIndex((entry) => sameValue(entry.instance, state.selected)),
-              },
+            state.page = {
+              ...value,
+              instances: [...(state.page?.instances ?? []), ...value.instances],
             };
+          }
           if (
             state.importer.confirmation &&
             !sameValue(state.importer.confirmation.source, value.source)
@@ -322,18 +413,21 @@ export function handleEvent<N extends Node>(
       } else state.notice = 'deploymentUnknown';
     } else if (outcome.status === 'succeeded') {
       const items = outcome.value as CallerIntent[];
-      state.historyNext = items.length === 2 ? items[items.length - 1].cursor : null;
-      state.earlier = items
-        .filter(
-          (entry) =>
-            entry.reference.contract.name === 'maka.application.DeploymentManager' &&
-            (entry.reference.method === 'setEnabled' ||
-              entry.reference.method === 'replace' ||
-              entry.reference.method === 'configure' ||
-              entry.reference.method === 'install' ||
-              entry.reference.method === 'installUrl'),
-        )
-        .map((entry) => ({ cursor: entry.cursor, reference: entry.reference, reply: null }));
+      state.historyNext = items.at(-1)?.cursor ?? null;
+      state.earlier = [
+        ...(r.after ? state.earlier : []),
+        ...items
+          .filter(
+            (entry) =>
+              entry.reference.contract.name === 'maka.application.DeploymentManager' &&
+              (entry.reference.method === 'setEnabled' ||
+                entry.reference.method === 'replace' ||
+                entry.reference.method === 'configure' ||
+                entry.reference.method === 'install' ||
+                entry.reference.method === 'installUrl'),
+          )
+          .map((entry) => ({ cursor: entry.cursor, reference: entry.reference, reply: null })),
+      ];
     } else state.notice = 'historyUnavailable';
   } else if (input.kind === 'raw') {
     // Until the original draft/intent has been reconciled, editing it would
@@ -384,16 +478,7 @@ export function handleEvent<N extends Node>(
       } else if (key === 'instance-settings-up' && settings.path.length) {
         settings.path.pop();
         settings.after = null;
-        settings.previous = [];
-        settings.page = null;
-        readSettings(state, actions);
-      } else if (key === 'instance-settings-next' && settings.page?.next) {
-        settings.previous.push(settings.after);
-        settings.after = settings.page.next;
-        settings.page = null;
-        readSettings(state, actions);
-      } else if (key === 'instance-settings-previous' && settings.previous.length) {
-        settings.after = settings.previous.pop()!;
+
         settings.page = null;
         readSettings(state, actions);
       } else if (
@@ -483,7 +568,7 @@ export function handleEvent<N extends Node>(
             if (field.present && path.length < 16) {
               settings.path = path;
               settings.after = null;
-              settings.previous = [];
+
               settings.page = null;
               readSettings(state, actions);
             }
@@ -692,16 +777,20 @@ export function handleEvent<N extends Node>(
     else if (key === 'deployment-history-back') state.historyOpen = false;
     else if (key === 'deployment-history' && !state.pending) {
       state.historyOpen = true;
+      resetScroll(state, 'deployment-history-reading');
+      resetScroll(state, 'deployment-list');
       request(state, actions, { kind: 'history', after: 0 }, 'history', 'page', {
         after: 0,
         limit: 2,
       });
-    } else if (key === 'deployment-history-refresh' && !state.pending)
+    } else if (key === 'deployment-history-refresh' && !state.pending) {
+      resetScroll(state, 'deployment-history-reading');
+      resetScroll(state, 'deployment-list');
       request(state, actions, { kind: 'history', after: 0 }, 'history', 'page', {
         after: 0,
         limit: 2,
       });
-    else if (key === 'deployment-history-more' && !state.pending && state.historyNext !== null)
+    } else if (key === 'deployment-history-more' && !state.pending && state.historyNext !== null)
       request(state, actions, { kind: 'history', after: state.historyNext }, 'history', 'page', {
         after: state.historyNext,
         limit: 2,
@@ -743,24 +832,6 @@ export function handleEvent<N extends Node>(
           instance: intent.instance.instance,
           enabled: intent.enabled,
         });
-      } else if (key === 'deployment-next' && state.page?.next) {
-        page(
-          state,
-          actions,
-          { kind: 'continue', source: state.page.source, after: state.page.next },
-          'next',
-        );
-      } else if (key === 'deployment-previous' && state.page && state.previous.length) {
-        page(
-          state,
-          actions,
-          {
-            kind: 'continue',
-            source: state.page.source,
-            after: state.previous[state.previous.length - 1],
-          },
-          'previous',
-        );
       } else if (/^deployment-toggle-(0|[1-9][0-9]*)$/.test(key) && state.page && !state.conflict) {
         const instance = state.page.instances[Number(key.slice('deployment-toggle-'.length))];
         if (instance && !(instance.disabled && instance.parentDisabled))

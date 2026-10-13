@@ -258,6 +258,7 @@ impl SurfaceState {
 
 pub struct Presenter {
     animation_origin: std::time::Instant,
+    next_frame: Option<std::time::Instant>,
     window_focused: bool,
     application: Application<dyn Widget>,
     root: Mount,
@@ -387,6 +388,7 @@ impl Presenter {
             return Ok(false);
         };
         self.root = root;
+        self.resources.redraw = true;
         self.surface = SurfaceState::Live;
         self.sync_native()?;
         Ok(true)
@@ -428,6 +430,7 @@ impl Presenter {
         };
         let mut presenter = Self {
             animation_origin: std::time::Instant::now(),
+            next_frame: Some(std::time::Instant::now()),
             window_focused: true,
             application,
             root,
@@ -499,6 +502,7 @@ impl Presenter {
     /// scene. Crossterm supplies no screen epoch; never re-resolve a captured key.
     /// 输入立即绑定到最后成功输出的场景和真实 mount/revision。
     pub fn input(&mut self, event: Event) -> maka_ui_runtime::Result<()> {
+        self.resources.redraw = true;
         let result = self.input_inner(event);
         self.recover_result(result)
     }

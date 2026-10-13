@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.workspace-jev',
-  displayName: 'workspace-jev',
+  displayName: 'Jev reasoning',
+  description: 'Send structured reasoning requests to Jev.',
+  localizations: {
+    'zh-CN': { displayName: 'Jev 推理', description: '向 Jev 发送结构化推理请求。' },
+  },
   application: {
     entries: {
       host: native(sdk.nativeImplementations.workspaceJev),

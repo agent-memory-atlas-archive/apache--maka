@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.markdown',
-  displayName: 'markdown',
+  displayName: 'Markdown display',
+  description: 'Display formatted Markdown documents.',
+  localizations: {
+    'zh-CN': { displayName: 'Markdown 显示', description: '显示排版后的 Markdown 文档。' },
+  },
   application: {
     entries: {
       desktop: native(sdk.nativeImplementations.markdown),

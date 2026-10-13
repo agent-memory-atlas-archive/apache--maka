@@ -22,6 +22,7 @@ import type {
   Action,
   ActionOutcome,
   Component,
+  ComponentInput,
   Emission,
   CallerIntent,
   RecoveryRef,
@@ -42,6 +43,7 @@ import type {
 } from '../../../packages/plugin-sdk/src/index.js';
 import { credentialContract, type CredentialProps } from '../../shared/contracts.js';
 import { pageHeader, withPageShell, type PageState } from '../../shared/page-shell.js';
+import { scrollBoundary, scrollRows, visibleRows, resetScroll } from '../../shared/scroll.js';
 import { copy, type Copy } from '../../shared/locale.js';
 import { sameValue } from '../../shared/value.js';
 import {
@@ -344,6 +346,7 @@ function receipt(state: State, reply: OperationReply, events: Emission[]) {
 function history(state: State, actions: Action[], after: number) {
   if (Object.values(state.pending).some((r) => r.kind === 'history' || r.kind === 'earlier'))
     return;
+  if (!after) resetScroll(state, 'credential-history-reading');
   state.historyFailed = false;
   request(state, actions, { kind: 'history', after }, 'history', 'page', { after, limit: 4 });
 }
@@ -617,65 +620,72 @@ function frame<N extends Node>(
   );
   // History has its own bounded pane. The hidden native input stays mounted;
   // reading another operation cannot adopt its basis or clear this draft.
-  const earlier = ui.box(
-    'earlier-operations',
-    [
-      ui.button(
-        'history-back',
-        text.back,
-        false,
-        false,
-        target === 'tui' ? { background: 0, align: 'start' } : {},
-      ),
-      ui.text('history-heading', text.earlierOperations, 18, props.theme.text, 550),
-      ui.text('history-help', text.earlierHelp, 13, props.theme.muted),
-      ui.box(
-        'history-actions',
-        [
-          ui.button(
-            'history-refresh',
-            target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.keyRefresh,
-            Object.values(state.pending).some((r) => r.kind === 'history' || r.kind === 'earlier'),
-            false,
-            target === 'tui' ? { background: 0 } : {},
-            undefined,
-            text.keyRefresh,
-          ),
-          ...(state.historyNext !== null
-            ? [
-                ui.button(
-                  'history-more',
-                  text.moreOperations,
-                  Object.values(state.pending).some(
-                    (r) => r.kind === 'history' || r.kind === 'earlier',
+  const earlier = state.historyOpen
+    ? presentation.reading(
+        'credential-history-reading',
+        {
+          content: ui.box(
+            'earlier-operations',
+            [
+              ui.button(
+                'history-back',
+                text.back,
+                false,
+                false,
+                target === 'tui' ? { background: 0, align: 'start' } : {},
+              ),
+              ui.text('history-heading', text.earlierOperations, 18, props.theme.text, 550),
+              ui.text('history-help', text.earlierHelp, 13, props.theme.muted),
+              ui.box(
+                'history-actions',
+                [
+                  ui.button(
+                    'history-refresh',
+                    target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.keyRefresh,
+                    Object.values(state.pending).some(
+                      (r) => r.kind === 'history' || r.kind === 'earlier',
+                    ),
+                    false,
+                    target === 'tui' ? { background: 0 } : {},
+                    undefined,
+                    text.keyRefresh,
                   ),
-                ),
-              ]
-            : []),
-        ],
-        { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
-      ),
-      ...(state.historyFailed
-        ? [ui.text('history-error', text.historyUnavailable, 13, props.theme.muted)]
-        : []),
-      ...state.earlier.flatMap((entry, at) => [
-        ui.text(
-          'earlier-label-' + at,
-          compactLabel(earlierLabel(entry, text), target === 'tui' ? 60 : 120),
-          13,
-          props.theme.muted,
-        ),
-        ui.button(
-          'earlier-' + at,
-          text.check,
-          Object.values(state.pending).some(
-            (r) => r.kind === 'earlier' && r.cursor === entry.cursor,
+                ],
+                { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
+              ),
+              ...(state.historyFailed
+                ? [ui.text('history-error', text.historyUnavailable, 13, props.theme.muted)]
+                : []),
+              ...visibleRows(state, 'credential-history-reading', state.earlier).flatMap(
+                ({ entry, at }) => [
+                  ui.text(
+                    'earlier-label-' + at,
+                    compactLabel(earlierLabel(entry, text), target === 'tui' ? 60 : 120),
+                    13,
+                    props.theme.muted,
+                  ),
+                  ui.button(
+                    'earlier-' + at,
+                    text.check,
+                    Object.values(state.pending).some(
+                      (r) => r.kind === 'earlier' && r.cursor === entry.cursor,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            {
+              visible: state.historyOpen,
+              scroll: 'anchor',
+              terminal: { grow: 1 },
+              style: { width: fill, height: fill },
+              gap: target === 'desktop' ? 12 : 1,
+            },
           ),
-        ),
-      ]),
-    ],
-    { visible: state.historyOpen, gap: target === 'desktop' ? 12 : 1 },
-  );
+        },
+        { input: 'history-input', observed: 'history-observed' },
+      )
+    : ui.box('history-hidden', [], { visible: false });
 
   const reviewed = state.reviewed?.target;
   const details = reviewed
@@ -707,15 +717,26 @@ function frame<N extends Node>(
         [
           ui.button('review-confirm', text.useConnection, !state.reviewed || busy(state)),
           ui.button('review-cancel', text.cancel),
-          ...(page > 0 ? [ui.button('review-previous', text.previousModels)] : []),
-          ...(page + 1 < pages ? [ui.button('review-next', text.moreTarget)] : []),
         ],
         { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
       ),
-      ui.text('review-page', page + 1 + ' / ' + pages, 13, props.theme.muted),
-      ...details
-        .slice(page * pageSize, (page + 1) * pageSize)
-        .map((line, at) => ui.text('target-line-' + at, line, 14, props.theme.text)),
+      presentation.reading(
+        'credential-review-reading',
+        {
+          content: ui.box(
+            'review-lines',
+            details
+              .slice(page * pageSize, (page + 1) * pageSize)
+              .map((line, at) => ui.text('target-line-' + at, line, 14, props.theme.text)),
+            {
+              scroll: 'manual',
+              terminal: { grow: 1, basis: 0 },
+              style: { width: fill, height: fill, minHeight: 0 },
+            },
+          ),
+        },
+        { observed: 'review-observed' },
+      ),
     ],
     { visible: state.confirmation === 'rebase', gap: target === 'desktop' ? 12 : 1 },
   );
@@ -812,6 +833,24 @@ export function credential<N extends Node>(
         return frame(presentation, state, props);
       },
       event(state, input, props) {
+        const reviewScroll = scrollBoundary(state, input, 'credential-review-reading');
+        if (reviewScroll)
+          input = {
+            kind: 'raw',
+            key: reviewScroll === 'up' ? 'review-previous' : 'review-next',
+            event: {},
+          };
+        if (
+          input.kind === 'component' &&
+          input.child === 'credential-history-reading' &&
+          input.name === 'input'
+        )
+          input = input.event as ComponentInput;
+        if (
+          state.historyOpen &&
+          scrollRows(state, input, 'credential-history-reading', state.earlier.length)
+        )
+          input = { kind: 'raw', key: 'history-more', event: {} };
         if (input.kind === 'raw' && input.key === 'credential-auxiliary')
           input = { ...input, key: state.historyOpen ? 'history-back' : 'review-cancel' };
         state.revision++;
@@ -934,22 +973,25 @@ export function credential<N extends Node>(
             else {
               const page = result.value as CallerIntent[];
               state.historyAfter = r.after;
-              state.historyNext = page.length === 4 ? page[page.length - 1].cursor : null;
-              state.earlier = page
-                .filter(
-                  (entry) =>
-                    ['maka.settings.Settings', 'maka.settings.Authentication'].includes(
-                      entry.reference.contract.name,
-                    ) &&
-                    ['saveCredential', 'deleteCredential', 'loginCredential'].includes(
-                      entry.reference.method,
-                    ),
-                )
-                .map((entry) => ({
-                  cursor: entry.cursor,
-                  reference: entry.reference,
-                  result: null,
-                }));
+              state.historyNext = page.at(-1)?.cursor ?? null;
+              state.earlier = [
+                ...(r.after ? state.earlier : []),
+                ...page
+                  .filter(
+                    (entry) =>
+                      ['maka.settings.Settings', 'maka.settings.Authentication'].includes(
+                        entry.reference.contract.name,
+                      ) &&
+                      ['saveCredential', 'deleteCredential', 'loginCredential'].includes(
+                        entry.reference.method,
+                      ),
+                  )
+                  .map((entry) => ({
+                    cursor: entry.cursor,
+                    reference: entry.reference,
+                    result: null,
+                  })),
+              ];
             }
           } else if (r.kind === 'earlier') {
             const entry = state.earlier.find(

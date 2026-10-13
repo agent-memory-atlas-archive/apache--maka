@@ -148,19 +148,23 @@ pub fn run(
                 return Ok(true);
             }
             let screen = screen.as_mut().expect("active terminal");
-            let mut scene = None;
-            let mut paint_error = None;
-            terminal::draw(screen, |frame| {
-                match presenter.paint(frame.area(), frame.buffer_mut()) {
-                    Ok(painted) => scene = Some(painted),
-                    Err(error) => paint_error = Some(error.to_string()),
+            if presenter.resources.redraw
+                || presenter.next_frame.is_some_and(|at| Instant::now() >= at)
+            {
+                let mut scene = None;
+                let mut paint_error = None;
+                terminal::draw(screen, |frame| {
+                    match presenter.paint(frame.area(), frame.buffer_mut()) {
+                        Ok(painted) => scene = Some(painted),
+                        Err(error) => paint_error = Some(error.to_string()),
+                    }
+                })
+                .map_err(|e| e.to_string())?;
+                if let Some(error) = paint_error {
+                    return Err(error);
                 }
-            })
-            .map_err(|e| e.to_string())?;
-            if let Some(error) = paint_error {
-                return Err(error);
+                presenter.present(scene.expect("successful paint"));
             }
-            presenter.present(scene.expect("successful paint"));
             if event::poll(Duration::from_millis(16)).map_err(|e| e.to_string())? {
                 let input = event::read().map_err(|e| e.to_string())?;
                 if exit_key.ready(Some(&input), Instant::now()) {

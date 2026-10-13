@@ -325,6 +325,7 @@ function settingsComposition(
           ...(configuration.presentation === 'tui'
             ? { checkpoint: [local('checkpoint', 'Checkpoint')] }
             : {}),
+          input: [local('input', 'TextInput')],
           reading: [local('recovery-reading', 'ReadingArea')],
           editor: [local('editor', 'Textarea')],
           reader: [local('reader', 'Reader')],
@@ -342,6 +343,7 @@ function settingsComposition(
           ...(configuration.presentation === 'tui'
             ? { checkpoint: [local('checkpoint', 'Checkpoint')] }
             : {}),
+          input: [local('input', 'TextInput')],
           reading: [local('recovery-reading', 'ReadingArea')],
           editor: [local('editor', 'Textarea')],
           reader: [local('reader', 'Reader')],
@@ -421,6 +423,7 @@ function settingsComposition(
         {},
         {
           settings: [remote('settings', 'Settings')],
+          reading: [local('recovery-reading', 'ReadingArea')],
           authentication: [remote('settings-authentication', 'Authentication')],
           setup: [remote('settings-setup', 'Setup')],
           secret: [local('input', 'SecretInput')],
@@ -457,6 +460,7 @@ function settingsComposition(
         'model-default',
         {},
         {
+          reading: [local('recovery-reading', 'ReadingArea')],
           settings: [remote('settings', 'Settings')],
           receipts: [remote('receipts', 'Receipts')],
           history: [local('history', 'History')],
@@ -1174,6 +1178,7 @@ function agentComposition(configuration: CompositionConfiguration): ApplicationS
       {},
       {
         agent: [remote('agent', 'agent')],
+        reading: [local('recovery-reading', 'ReadingArea')],
         source: [local('source-text', 'SourceText')],
         ...(configuration.presentation === 'tui' ? { diff: [local('diff', 'Diff')] } : {}),
       },

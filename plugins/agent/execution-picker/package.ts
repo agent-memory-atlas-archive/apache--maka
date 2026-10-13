@@ -35,6 +35,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.execution-picker',
-  displayName: 'execution-picker',
+  displayName: 'Execution options',
+  description: 'Choose how and where the assistant runs.',
+  localizations: {
+    'zh-CN': { displayName: '执行选项', description: '选择助手的执行方式和位置。' },
+  },
   application: { entries },
 };

@@ -32,6 +32,7 @@ import type {
   TextChunk,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { paletteContract, type PaletteCommand, type PaletteProps } from '../../shared/contracts.js';
+import { scrollBoundary } from '../../shared/scroll.js';
 import { copy } from '../../shared/locale.js';
 import {
   compactLabel,
@@ -62,7 +63,7 @@ interface State {
   matches: AgentSession[];
   failed: boolean;
   batch: number;
-  moreWindow: boolean;
+  matchLimit: number;
   active: number;
   offset: number;
   reveal: ReadingCommand | null;
@@ -85,13 +86,11 @@ function matches(query: string, value: string) {
 }
 function rows(state: State, props: PaletteProps) {
   return [
-    ...(state.moreWindow
-      ? []
-      : props.commands.flatMap((command) =>
-          matches(state.query, command.label + ' ' + command.id + ' ' + command.hint)
-            ? [{ key: `command-${command.id}`, choice: { kind: 'command', command } as Choice }]
-            : [],
-        )),
+    ...props.commands.flatMap((command) =>
+      matches(state.query, command.label + ' ' + command.id + ' ' + command.hint)
+        ? [{ key: `command-${command.id}`, choice: { kind: 'command', command } as Choice }]
+        : [],
+    ),
     ...state.matches.map((session, at) => ({
       key: `session-${state.batch}-${at}`,
       choice: { kind: 'session', session } as Choice,
@@ -124,7 +123,7 @@ function reset(state: State, props: PaletteProps) {
   state.matches = [];
   state.failed = false;
   state.batch++;
-  state.moreWindow = false;
+  state.matchLimit = 32;
   state.active = state.offset = 0;
   reveal(state, props);
 }
@@ -174,10 +173,13 @@ function page(state: State, position: AgentList['position']): Action[] {
 function resume(state: State, props: PaletteProps): Action[] {
   if (!interactive(state, props) || state.pending || state.queryError) return [];
   if (dirty(state)) return capture(state);
-  if (!state.query || state.failed || state.matches.length === 32) return [];
+  if (!state.query || state.failed || state.matches.length >= state.matchLimit) return [];
   if (!state.source) return page(state, { kind: 'start' });
   const active = rows(state, props)[state.active]?.key;
-  while (state.scanOffset < state.source.sessions.length && state.matches.length < 32) {
+  while (
+    state.scanOffset < state.source.sessions.length &&
+    state.matches.length < state.matchLimit
+  ) {
     const session = state.source.sessions[state.scanOffset++];
     if (
       matches(
@@ -188,7 +190,7 @@ function resume(state: State, props: PaletteProps): Action[] {
       state.matches.push(session);
   }
   if (rows(state, props)[state.active]?.key !== active) reveal(state, props);
-  if (state.matches.length < 32 && state.source.after)
+  if (state.matches.length < state.matchLimit && state.source.after)
     return page(state, {
       kind: 'after',
       revision: state.source.revision,
@@ -297,7 +299,7 @@ function frame<N extends Node>(
         'palette-rows',
         {
           content: ui.box('palette-viewport', buttons, {
-            scroll: 'manual',
+            scroll: 'anchor',
             gap: target === 'desktop' ? 2 : 0,
             style: { width: fill, height: pixels(280), minWidth: 0, minHeight: 0 },
             terminal: { grow: 1, basis: 0 },
@@ -309,13 +311,6 @@ function frame<N extends Node>(
       ui.box(
         'palette-controls',
         [
-          ...(state.offset ? [ui.button('previous', text.palettePrevious, !available)] : []),
-          ...(state.offset + 32 < all.length
-            ? [ui.button('next', text.paletteNext, !available)]
-            : []),
-          ...(hasMore(state)
-            ? [ui.button('more', text.paletteMore, !!state.pending || !available)]
-            : []),
           ...((state.query || state.queryError === 'unavailable') && state.queryError !== 'long'
             ? [
                 ui.button(
@@ -389,7 +384,7 @@ export function palette<N extends Node>(
         matches: [],
         failed: false,
         batch: 0,
-        moreWindow: false,
+        matchLimit: 32,
         active: 0,
         offset: 0,
         reveal: null,
@@ -432,6 +427,18 @@ export function palette<N extends Node>(
       };
       if (input.kind === 'component' && input.child === 'palette-rows' && input.name === 'input')
         input = input.event as ComponentInput;
+      const direction = scrollBoundary(state, input, 'palette-rows');
+      if (direction && !state.pending)
+        input = {
+          kind: 'raw',
+          key:
+            direction === 'up'
+              ? 'previous'
+              : state.offset + 32 < rows(state, props).length
+                ? 'next'
+                : 'more',
+          event: {},
+        };
       if (input.kind === 'action' && input.key === state.pending?.key) {
         const request = state.pending;
         state.pending = null;
@@ -517,10 +524,7 @@ export function palette<N extends Node>(
               state.offset = Math.floor(state.active / 32) * 32;
               reveal(state, props);
             } else if (input.key === 'more' && !state.pending && hasMore(state)) {
-              state.matches = [];
-              state.batch++;
-              state.moreWindow = true;
-              state.active = state.offset = 0;
+              state.matchLimit += 32;
               actions.push(...resume(state, props));
             }
           }

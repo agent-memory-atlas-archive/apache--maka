@@ -42,11 +42,15 @@ pub enum BindingCandidate {
     Bound {
         key: String,
         label: String,
+        #[serde(default)]
+        presentation: crate::package::PackagePresentation,
         target: Target,
     },
     Package {
         key: String,
         label: String,
+        #[serde(default)]
+        presentation: crate::package::PackagePresentation,
         package: PackageRef,
         export: String,
     },

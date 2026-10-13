@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.receipts',
-  displayName: 'receipts',
+  displayName: 'Operation results',
+  description: 'Look up the result of an operation without repeating it.',
+  localizations: {
+    'zh-CN': { displayName: '操作结果', description: '查询操作的执行结果，避免重复执行。' },
+  },
   application: {
     entries: {
       host: native(sdk.nativeImplementations.receiptReader),

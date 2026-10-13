@@ -22,7 +22,11 @@ import { native, one } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.application.authoring-gateway',
-  displayName: 'UI authoring gateway',
+  displayName: 'App authoring access',
+  description: 'Connect app authoring tools to the host.',
+  localizations: {
+    'zh-CN': { displayName: '应用开发连接', description: '将应用开发工具连接到主机。' },
+  },
   application: {
     entries: {
       host: {

@@ -37,6 +37,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.terminal-panel',
-  displayName: 'terminal-panel',
+  displayName: 'Terminal',
+  description: 'View and control terminal processes in your workspace.',
+  localizations: {
+    'zh-CN': { displayName: '终端', description: '查看和操作工作区中的终端进程。' },
+  },
   application: { entries },
 };

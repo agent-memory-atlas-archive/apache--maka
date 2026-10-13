@@ -207,13 +207,23 @@ for (const presentation of ['tui', 'desktop']) {
       const ref = reference();
       c.done({ reference: ref, receipt: { kind: 'unknown' } }, 'operation');
       assert.equal(c.state.notice, 'appsUnknown');
+      const lookup = c.out.actions[0];
+      assert.equal(lookup.binding, 'receipts');
+      assert.deepEqual(lookup.input, ref);
       c.raw('confirm');
       assert.equal(c.out.actions.length, 0);
       c.raw('confirm-cancel');
       assert.deepEqual(c.state.confirm, frozen);
       c.raw('confirm-receipt');
-      assert.deepEqual(c.out.actions[0].input, ref);
-      c.done(reply(ref, { status: 'committed', value: { ...source, revision: 3 } }));
+      assert.equal(c.state.pending.key, lookup.key, 'the original automatic query stays in flight');
+      c.event({
+        kind: 'action',
+        key: lookup.key,
+        event: {
+          status: 'succeeded',
+          value: reply(ref, { status: 'committed', value: { ...source, revision: 3 } }),
+        },
+      });
       assert.equal(c.out.actions[0].method, 'bindingCandidates');
       assert.equal(c.state.current, null);
       // A short history page still has a continuation. The mutation is never repeated.
@@ -333,11 +343,22 @@ for (const presentation of ['tui', 'desktop']) {
       assert.deepEqual(c.out.actions[0].input, { expectedRevision: 2, url, sha256: null });
       assert.deepEqual(c.out.actions[0].resources, {});
       const ref = reference('installUrl');
-      c.done({ reference: ref, receipt: { kind: 'unknown' } }, 'operation').raw('confirm');
+      c.done({ reference: ref, receipt: { kind: 'unknown' } }, 'operation');
+      const lookup = c.out.actions[0];
+      assert.equal(lookup.binding, 'receipts');
+      assert.deepEqual(lookup.input, ref);
+      c.raw('confirm');
       assert.deepEqual(c.out.actions, [], 'uncertain installs are not repeated');
       c.raw('receipt');
-      assert.deepEqual(c.out.actions[0].input, ref);
-      c.done(reply(ref, { status: 'committed', value: { source, package: packageRef } }));
+      assert.equal(c.state.pending.key, lookup.key);
+      c.event({
+        kind: 'action',
+        key: lookup.key,
+        event: {
+          status: 'succeeded',
+          value: reply(ref, { status: 'committed', value: { source, package: packageRef } }),
+        },
+      });
       assert.equal(c.state.route, 'choose');
       assert.equal(c.state.notice, 'appsPackageAdded');
     },

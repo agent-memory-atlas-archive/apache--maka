@@ -25,6 +25,7 @@ import type {
   OperationReply,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { type ConnectionFormProps } from '../../shared/contracts.js';
+import { resetScroll } from '../../shared/scroll.js';
 import { sameValue } from '../../shared/value.js';
 import {
   names,
@@ -343,6 +344,7 @@ export function settle(state: State, reply: OperationReply, events: Emission[]) 
 
 export function history(state: State, actions: Action[], after: number) {
   if (Object.values(state.pending).some((r) => ['history', 'earlier'].includes(r.kind))) return;
+  if (!after) resetScroll(state, 'connection-history-reading');
   state.historyFailed = false;
   request(state, actions, { kind: 'history', after }, 'history', 'page', { after, limit: 4 });
 }

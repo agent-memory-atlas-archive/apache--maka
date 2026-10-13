@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.protocol-processes',
-  displayName: 'protocol-processes',
+  displayName: 'Protocol processes',
+  description: 'Run processes used by connected agent protocols.',
+  localizations: {
+    'zh-CN': { displayName: '协议进程', description: '运行连接助手协议所需的进程。' },
+  },
   application: {
     entries: {
       host: native(sdk.nativeImplementations.protocolProcesses),

@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.reader',
-  displayName: 'reader',
+  displayName: 'Text reader',
+  description: 'Read text from editors and other application resources.',
+  localizations: {
+    'zh-CN': { displayName: '文本读取', description: '读取编辑器和其他应用资源中的文本。' },
+  },
   application: {
     entries: Object.fromEntries(
       ['desktop', 'tui'].map((target) => [target, native(sdk.nativeImplementations.textReader)]),

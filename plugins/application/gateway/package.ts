@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.gateway',
-  displayName: 'gateway',
+  displayName: 'Host connection',
+  description: 'Connect the app to the assistant running on the host.',
+  localizations: {
+    'zh-CN': { displayName: '主机连接', description: '将应用连接到主机上运行的助手。' },
+  },
   application: {
     entries: {
       host: {

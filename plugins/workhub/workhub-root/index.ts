@@ -25,6 +25,7 @@ import type {
   CallerIntent,
   Component,
   ComponentInput,
+  ReadingCommand,
   ComponentValues,
   OperationReply,
   RecoveryRef,
@@ -34,6 +35,7 @@ import type {
   WorkHubTasks,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { workhubRootContract, type Theme, type AgentScreenProps } from '../../shared/contracts.js';
+import { scrollBoundary } from '../../shared/scroll.js';
 import { copy, resolveLocale, type Copy } from '../../shared/locale.js';
 import { sameValue } from '../../shared/value.js';
 import {
@@ -57,6 +59,7 @@ interface Selection {
   entry: WorkHubTaskEntry;
   task: WorkHubTask | null;
   cursor: AgentAnswerCursor | null;
+  previous: (AgentAnswerCursor | null)[];
   failed: boolean;
 }
 interface State {
@@ -74,6 +77,9 @@ interface State {
   directories: boolean;
   entries: WorkHubTasks | null;
   pageAfter: string | null;
+  previousPages: (string | null)[];
+  readingCommand: ReadingCommand | null;
+  landing: 'start' | 'end' | null;
   pageKey: number;
   cache: Record<string, WorkHubTask | null>;
   refreshTasks: boolean;
@@ -443,6 +449,7 @@ export function workhubRoot<N extends Node>(
             presentation.reading(
               'workhub-reading',
               {
+                command: state.readingCommand,
                 content: ui.box('workhub-tasks-content', content, {
                   gap,
                   scroll: 'manual',
@@ -450,7 +457,7 @@ export function workhubRoot<N extends Node>(
                   style: { width: fill, height: fill, minHeight: 0 },
                 }),
               },
-              { input: 'reading-input' },
+              { input: 'reading-input', observed: 'reading-observed' },
             ),
             ui.box(
               'workhub-task-controls',
@@ -464,12 +471,10 @@ export function workhubRoot<N extends Node>(
                       busy || !target(selected.task, worker),
                     ),
                     ui.button('answer-first', text.workhubAnswerFirst, busy || !selected.cursor),
-                    ui.button('answer-next', text.workhubAnswerNext, busy || !answer?.next),
                   ]
                 : [
                     ui.button('tasks-refresh', text.check, busy),
                     ui.button('tasks-first', text.workhubFirst, busy || state.pageAfter === null),
-                    ui.button('tasks-next', text.workhubMore, busy || !state.entries?.after),
                   ],
               {
                 row: true,
@@ -525,6 +530,9 @@ export function workhubRoot<N extends Node>(
           directories: false,
           entries: null,
           pageAfter: null,
+          previousPages: [],
+          readingCommand: null,
+          landing: null,
           pageKey: 0,
           cache: {},
           refreshTasks: false,
@@ -546,6 +554,19 @@ export function workhubRoot<N extends Node>(
       const actions: Action[] = [];
       if (event.kind === 'component' && event.child === 'workhub-reading' && event.name === 'input')
         event = event.event as ComponentInput;
+      const direction = scrollBoundary(state, event, 'workhub-reading');
+      if (direction && !state.pending && state.route === 'tasks')
+        event = {
+          kind: 'raw',
+          key: state.selected
+            ? direction === 'up'
+              ? 'answer-previous'
+              : 'answer-next'
+            : direction === 'up'
+              ? 'tasks-previous'
+              : 'tasks-next',
+          event: {},
+        };
       const watch =
         event.kind === 'action'
           ? watches(state).find((watch) => watch.key === event.key)
@@ -709,6 +730,7 @@ export function workhubRoot<N extends Node>(
             entry: state.entries.entries[at],
             task: null,
             cursor: null,
+            previous: [],
             failed: false,
           };
           state.watchRevision++;
@@ -732,17 +754,27 @@ export function workhubRoot<N extends Node>(
               state.selected = null;
               state.watchRevision++;
               state.watchFailures = [];
-            } else if (key === 'tasks-refresh' || key === 'tasks-first' || key === 'tasks-next') {
-              if (key !== 'tasks-next' || state.entries?.after)
+            } else if (
+              ['tasks-refresh', 'tasks-first', 'tasks-next', 'tasks-previous'].includes(key)
+            ) {
+              if (key === 'tasks-previous' && !state.previousPages.length)
+                return frame(state, values, actions);
+              if (key !== 'tasks-next' || state.entries?.after) {
+                if (key === 'tasks-next') state.previousPages.push(state.pageAfter);
+                if (key === 'tasks-first') state.previousPages = [];
+                state.landing = key === 'tasks-previous' ? 'end' : 'start';
                 ask(state, actions, {
                   kind: 'tasks',
                   after:
-                    key === 'tasks-first'
-                      ? null
-                      : key === 'tasks-next'
-                        ? state.entries!.after!
-                        : state.pageAfter,
+                    key === 'tasks-previous'
+                      ? state.previousPages.pop()!
+                      : key === 'tasks-first'
+                        ? null
+                        : key === 'tasks-next'
+                          ? state.entries!.after!
+                          : state.pageAfter,
                 });
+              }
             } else if (state.selected) {
               const selection = state.selected;
               if (key === 'task-check') {
@@ -759,11 +791,23 @@ export function workhubRoot<N extends Node>(
                   state.workerSelection = { request: ++state.serial, id };
                   state.route = 'sessions';
                 }
-              } else if (key === 'answer-first' || key === 'answer-next') {
+              } else if (['answer-first', 'answer-next', 'answer-previous'].includes(key)) {
                 const work = progress(selection.task),
                   next = work?.kind === 'delivered' ? work.answer?.next : null;
-                if (key === 'answer-first' || next) {
-                  selection.cursor = key === 'answer-first' ? null : next!;
+                if (
+                  key === 'answer-first' ||
+                  (key === 'answer-next' && next) ||
+                  (key === 'answer-previous' && selection.previous.length)
+                ) {
+                  if (key === 'answer-next') selection.previous.push(selection.cursor);
+                  if (key === 'answer-first') selection.previous = [];
+                  state.landing = key === 'answer-previous' ? 'end' : 'start';
+                  selection.cursor =
+                    key === 'answer-previous'
+                      ? selection.previous.pop()!
+                      : key === 'answer-first'
+                        ? null
+                        : next!;
                   selection.task = null;
                   selection.failed = false;
                   state.watchRevision++;
@@ -773,6 +817,13 @@ export function workhubRoot<N extends Node>(
             }
           }
         }
+      }
+      if (state.landing && !state.pending && (!state.selected || state.selected.task)) {
+        state.readingCommand = {
+          sequence: (state.readingCommand?.sequence ?? 0) + 1,
+          target: { kind: state.landing },
+        };
+        state.landing = null;
       }
       return frame(state, values, actions);
     },

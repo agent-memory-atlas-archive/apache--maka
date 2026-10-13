@@ -35,6 +35,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.models',
-  displayName: 'models',
+  displayName: 'Models',
+  description: 'Browse available models and choose one for the assistant.',
+  localizations: {
+    'zh-CN': { displayName: '模型', description: '浏览可用模型，为助手选择模型。' },
+  },
   application: { entries },
 };

@@ -29,6 +29,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.question-editor',
-  displayName: 'question-editor',
+  displayName: 'Answer questions',
+  description: 'Choose or write answers to the assistant’s questions.',
+  localizations: {
+    'zh-CN': { displayName: '回答问题', description: '选择或填写助手所提问题的答案。' },
+  },
   application: { entries },
 };

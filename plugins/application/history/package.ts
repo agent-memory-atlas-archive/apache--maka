@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.history',
-  displayName: 'history',
+  displayName: 'Change history',
+  description: 'Read recorded configuration changes and their results.',
+  localizations: {
+    'zh-CN': { displayName: '变更记录', description: '读取已记录的配置更改及其结果。' },
+  },
   application: {
     entries: Object.fromEntries(
       ['desktop', 'tui'].map((target) => [target, native(sdk.nativeImplementations.callerHistory)]),

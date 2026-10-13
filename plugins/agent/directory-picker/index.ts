@@ -32,6 +32,7 @@ import type {
   ReadingCommand,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { directoryPickerContract, type DirectoryPickerProps } from '../../shared/contracts.js';
+import { scrollRows, visibleRows, resetScroll, showRow } from '../../shared/scroll.js';
 import { copy } from '../../shared/locale.js';
 import {
   compactLabel,
@@ -48,7 +49,14 @@ interface State {
   revision: number;
   serial: number;
   open: boolean;
-  page: AgentDirectoryPage | null;
+  page:
+    | (
+        | Extract<AgentDirectoryPage, { kind: 'roots' }>
+        | (Omit<Extract<AgentDirectoryPage, { kind: 'children' }>, 'children'> & {
+            children: Extract<AgentDirectoryPage, { kind: 'children' }>['children'][number][];
+          })
+      )
+    | null;
   pageKey: string;
   observation: EditorObservation | null;
   basis: EditorTextRef | null;
@@ -56,7 +64,7 @@ interface State {
   queryError: 'long' | 'unavailable' | null;
   reading: { key: string; basis: EditorTextRef; choice: string | null } | null;
   ancestors: AgentDirectorySelection[];
-  pending: { key: string; navigation: Navigation } | null;
+  pending: { key: string; navigation: Navigation; append: boolean } | null;
   failed: boolean;
   active: number;
   reveal: ReadingCommand | null;
@@ -113,7 +121,10 @@ function capture(
   ];
 }
 function resume(state: State, props: DirectoryPickerProps): Action[] {
-  return dirty(state) && !state.queryError ? capture(state, props) : [];
+  if (dirty(state) && !state.queryError) return capture(state, props);
+  if (available(state, props) && state.query && state.page?.kind === 'children' && state.page.after)
+    return children(state, state.page.directory.selection, 'page', state.page.after);
+  return [];
 }
 function choose(
   state: State,
@@ -131,6 +142,7 @@ function choose(
   return [];
 }
 function reveal(state: State) {
+  showRow(state, 'directory-rows', state.active);
   if (rows(state)[state.active])
     state.reveal = {
       sequence: (state.reveal?.sequence ?? 0) + 1,
@@ -139,7 +151,7 @@ function reveal(state: State) {
 }
 function query(state: State, input: AgentDirectories, navigation: Navigation): Action[] {
   const key = `directory-${++state.serial}`;
-  state.pending = { key, navigation };
+  state.pending = { key, navigation, append: input.kind === 'children' && input.after != null };
   state.failed = false;
   return [
     {
@@ -176,25 +188,27 @@ function frame<N extends Node>(
   const enabled = available(state, props);
   const page = state.page;
   const current = page?.kind === 'children' ? page.directory : null;
-  const buttons = rows(state).map(({ key, directory }, at) => {
-    const active = at === state.active;
-    const label =
-      (target === 'tui' ? (active ? (props.theme.ascii ? '> ' : '› ') : '  ') : '') +
-      compactLabel(directory.name, target === 'tui' ? 64 : 120);
-    const button = ui.button(key, label, !enabled, false, {
-      width: fill,
-      minWidth: 0,
-      truncate: true,
-      justify: 'start',
-      ...(target === 'tui'
-        ? { background: active ? props.theme.selected : 0 }
-        : active
-          ? { background: props.theme.selected }
-          : {}),
-    });
+  const buttons = visibleRows(state, 'directory-rows', rows(state)).map(
+    ({ entry: { key, directory }, at }) => {
+      const active = at === state.active;
+      const label =
+        (target === 'tui' ? (active ? (props.theme.ascii ? '> ' : '› ') : '  ') : '') +
+        compactLabel(directory.name, target === 'tui' ? 64 : 120);
+      const button = ui.button(key, label, !enabled, false, {
+        width: fill,
+        minWidth: 0,
+        truncate: true,
+        justify: 'start',
+        ...(target === 'tui'
+          ? { background: active ? props.theme.selected : 0 }
+          : active
+            ? { background: props.theme.selected }
+            : {}),
+      });
 
-    return button;
-  });
+      return button;
+    },
+  );
   const view = ui.box(
     'directory-picker',
     [
@@ -271,7 +285,7 @@ function frame<N extends Node>(
         'directory-rows',
         {
           content: ui.box('directory-viewport', buttons, {
-            scroll: 'manual',
+            scroll: 'anchor',
             gap: target === 'desktop' ? 2 : 0,
             style: { width: fill, height: pixels(260), minWidth: 0, minHeight: 0 },
             terminal: { grow: 1, basis: 0 },
@@ -285,9 +299,6 @@ function frame<N extends Node>(
         [
           ...(current
             ? [ui.button(`${state.pageKey}-parent`, text.directoryParent, !enabled)]
-            : []),
-          ...(page?.kind === 'children' && page.after
-            ? [ui.button(`${state.pageKey}-more`, text.directoryMore, !enabled)]
             : []),
           ui.button(
             'refresh',
@@ -389,6 +400,8 @@ export function directoryPicker<N extends Node>(
       const events: Emission[] = [];
       if (input.kind === 'component' && input.child === 'directory-rows' && input.name === 'input')
         input = input.event as ComponentInput;
+      if (scrollRows(state, input, 'directory-rows', rows(state).length))
+        input = { kind: 'raw', key: `${state.pageKey}-more`, event: {} };
       if (input.kind === 'component' && input.child === 'directory-query') {
         if (input.name === 'changed') {
           state.observation = input.event as EditorObservation;
@@ -425,6 +438,7 @@ export function directoryPicker<N extends Node>(
             }
             if (request.choice && !changed)
               actions.push(...choose(state, props, request.choice, events));
+            actions.push(...resume(state, props));
           }
         }
       } else if (input.kind === 'action' && input.key === state.pending?.key) {
@@ -438,10 +452,16 @@ export function directoryPicker<N extends Node>(
             else if (request.navigation === 'parent') state.ancestors.pop();
             else if (request.navigation === 'child' && state.page?.kind === 'children')
               state.ancestors.push(state.page.directory.selection);
-            state.page = result.value as AgentDirectoryPage;
-            state.pageKey = request.key;
-            state.active = 0;
-            reveal(state);
+            const page = result.value as AgentDirectoryPage;
+            if (request.append && state.page?.kind === 'children' && page.kind === 'children') {
+              state.page = { ...page, children: [...state.page.children, ...page.children] };
+            } else {
+              state.page = page;
+              state.pageKey = request.key;
+              state.active = 0;
+              resetScroll(state, 'directory-rows');
+              reveal(state);
+            }
             actions.push(...resume(state, props));
           }
         }

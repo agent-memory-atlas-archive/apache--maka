@@ -52,3 +52,19 @@ node scripts/plugins/build.mjs   --plugin plugins/workspace/workspace-web --outp
 [插件开发 skill](../skills/maka-plugin-authoring/SKILL.md)提供可运行的独立示例，以及服务、UI、状态和原生扩展指南。[SDK](../packages/plugin-sdk/README.zh-CN.md)提供精确契约。
 
 较大的 UI 组件（`application/apps`、`application/deployment`、`agent/scheduler`、`agent/conversation-import`、`settings/insights`、`settings/connection-form`）用 `state.ts` 定义共享状态和局部值类型，`operations.ts` 处理服务意图与结果结算，`view.ts` 构造场景，`events.ts` 处理输入，`index.ts` 负责组件创建和生命周期连接。这些仍是同一组件的普通模块，共用一个状态和发布边界，不增加事件总线或独立 store。小组件可以保留单文件。
+
+插件列表使用作者在 `package.ts` 中提供的 `displayName` 和 `description`；用一句话说明用户能做什么。包 ID 继续作为稳定技术标识。可选的 `localizations` 按语言标签提供翻译，例如：
+
+```ts
+{
+  id: 'example.notes',
+  displayName: 'Notes',
+  description: 'Write and find your notes.',
+  localizations: {
+    'zh-CN': { displayName: '笔记', description: '记录和查找笔记。' },
+  },
+  // application: ...
+}
+```
+
+插件管理会展示并搜索这些说明，添加应用时也会展示。缺少翻译时使用默认文案，最后回退到实例名或包 ID。名称应让人预知操作结果或目的地，参照 [Apple 的清晰命名指南](https://developer.apple.com/videos/play/wwdc2026/290/)。常见操作使用带无障碍名称和提示的图标；重要或不熟悉的操作保留明确文字。长列表通过阅读区域的滚动观察加载相邻数据并保留可见行，数据游标不暴露为手动翻页。

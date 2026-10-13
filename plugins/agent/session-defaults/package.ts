@@ -36,6 +36,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.session-defaults',
-  displayName: 'session-defaults',
+  displayName: 'Conversation defaults',
+  description: 'Set defaults for new conversations.',
+  localizations: {
+    'zh-CN': { displayName: '对话默认设置', description: '设置新对话的默认选项。' },
+  },
   application: { entries },
 };

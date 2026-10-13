@@ -40,6 +40,10 @@ for (const target of ['desktop', 'tui'] as const)
 export default {
   schemaVersion: 2,
   id: 'maka.studio.workbench',
-  displayName: 'studio',
+  displayName: 'Workspace',
+  description: 'Open the assistant and installed apps.',
+  localizations: {
+    'zh-CN': { displayName: '工作台', description: '打开助手和已安装的应用。' },
+  },
   application: { entries },
 };

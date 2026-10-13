@@ -34,6 +34,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.command-palette',
-  displayName: 'command-palette',
+  displayName: 'Commands',
+  description: 'Search for actions and open them from one place.',
+  localizations: {
+    'zh-CN': { displayName: '命令搜索', description: '搜索并执行应用中的操作。' },
+  },
   application: { entries },
 };

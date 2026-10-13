@@ -86,21 +86,30 @@ for (const target of ['tui', 'desktop']) {
       key,
       event: { status: 'operation', reply: { reference, receipt: { kind: 'unknown' } } },
     });
+    const lookup = out.actions[0];
+    assert.equal(lookup.binding, 'receipts');
+    assert.deepEqual(lookup.input, reference);
     raw('deployment-import-confirm');
     assert.deepEqual(out.actions, []);
     raw('deployment-import-check');
-    assert.equal(out.actions[0].method, 'read');
-    assert.deepEqual(out.actions[0].input, reference);
+    assert.equal(out.frame.state.pending.key, lookup.key);
     const installed = {
       source: { ...source, revision: 3 },
       package: { id: 'example.footer', revision: 'b'.repeat(64) },
     };
-    done({
-      reference,
-      receipt: {
-        kind: 'recorded',
-        outcome: { kind: 'returned', value: { status: 'committed', value: installed } },
-        cleanup: { kind: 'confirmed' },
+    event({
+      kind: 'action',
+      key: lookup.key,
+      event: {
+        status: 'succeeded',
+        value: {
+          reference,
+          receipt: {
+            kind: 'recorded',
+            outcome: { kind: 'returned', value: { status: 'committed', value: installed } },
+            cleanup: { kind: 'confirmed' },
+          },
+        },
       },
     });
     assert.deepEqual(out.frame.state.importer.installed, installed);

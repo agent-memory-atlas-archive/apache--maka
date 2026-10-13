@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.workspace-web',
-  displayName: 'workspace-web',
+  displayName: 'Web tools',
+  description: 'Search the web and read web pages for the assistant.',
+  localizations: {
+    'zh-CN': { displayName: '网页工具', description: '为助手搜索网络并读取网页。' },
+  },
   application: {
     entries: {
       host: native(sdk.nativeImplementations.workspaceWeb),

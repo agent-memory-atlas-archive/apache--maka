@@ -98,6 +98,10 @@ for (const target of ['desktop', 'tui'] as const)
 export default {
   schemaVersion: 2,
   id: 'maka.agent.agent-screen',
-  displayName: 'Agent screen',
+  displayName: 'Assistant',
+  description: 'Chat with an agent and manage conversations, tasks, and settings.',
+  localizations: {
+    'zh-CN': { displayName: '助手', description: '与助手对话，管理对话、任务和设置。' },
+  },
   application: { entries },
 };

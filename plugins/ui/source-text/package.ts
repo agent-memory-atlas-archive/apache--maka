@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.source-text',
-  displayName: 'source-text',
+  displayName: 'Source preview',
+  description: 'Display source text with syntax highlighting.',
+  localizations: {
+    'zh-CN': { displayName: '源码预览', description: '显示带语法高亮的源码。' },
+  },
   application: {
     entries: {
       desktop: native(sdk.nativeImplementations.sourceText),

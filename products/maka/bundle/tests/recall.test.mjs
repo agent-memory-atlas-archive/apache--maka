@@ -152,7 +152,7 @@ test('embedded Recall back closes its picker before leaving and consumes each re
   const props = { theme, locale: 'en', open: true, busy: false, shell: { back: 0 } };
   let out = component.mount(props, {});
   assert.deepEqual(out.events.find((event) => event.name === 'chrome').value, {
-    title: 'Recall',
+    title: 'Search conversations',
     backEnabled: true,
   });
   out = component.event(out.frame.state, { kind: 'raw', key: 'scope', event: {} }, props, {});

@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.label',
-  displayName: 'label',
+  displayName: 'Text labels',
+  description: 'Display text labels in the interface.',
+  localizations: {
+    'zh-CN': { displayName: '文本标签', description: '在界面中显示文本标签。' },
+  },
   application: {
     entries: Object.fromEntries(
       ['desktop', 'tui'].map((target) => [target, native(sdk.nativeImplementations.label)]),

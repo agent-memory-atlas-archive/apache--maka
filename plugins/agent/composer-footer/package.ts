@@ -22,7 +22,11 @@ import { uiEntries } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.composer-footer',
-  displayName: 'Composer footer',
+  displayName: 'Message status',
+  description: 'Show context and status below the message editor.',
+  localizations: {
+    'zh-CN': { displayName: '消息状态栏', description: '在消息编辑器下方显示上下文和状态。' },
+  },
   application: {
     entries: uiEntries({ contract: composerFooterContract, export: 'Footer', imports: {} }),
   },

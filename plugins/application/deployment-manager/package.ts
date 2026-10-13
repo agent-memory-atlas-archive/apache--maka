@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.deployment-manager',
-  displayName: 'deployment-manager',
+  displayName: 'Local plugin management',
+  description: 'Manage plugin configuration on this device.',
+  localizations: {
+    'zh-CN': { displayName: '本机插件管理', description: '管理本机上的插件配置。' },
+  },
   application: {
     entries: {
       host: native(sdk.nativeImplementations.uiDeploymentManager),

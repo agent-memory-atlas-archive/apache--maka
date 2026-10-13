@@ -36,6 +36,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.jev-settings',
-  displayName: 'jev-settings',
+  displayName: 'Jev settings',
+  description: 'Configure the Jev reasoning service.',
+  localizations: {
+    'zh-CN': { displayName: 'Jev 设置', description: '配置 Jev 推理服务。' },
+  },
   application: { entries },
 };

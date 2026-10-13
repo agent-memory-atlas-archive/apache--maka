@@ -279,10 +279,6 @@ impl TextFile {
             {
                 return Err(TextFileError::TooLarge);
             }
-            let job = self
-                .budget
-                .reserve(Kind::Job, 1)
-                .map_err(|_| TextFileError::WorkerFailed)?;
             let bytes = self
                 .budget
                 .reserve(Kind::Encoded, MAX_BYTES * 6)
@@ -309,7 +305,6 @@ impl TextFile {
                             Err("text file worker panicked".into()),
                         ),
                     };
-                    drop(job);
                     let _ = sender.send(Reply {
                         state,
                         _bytes: bytes,
@@ -491,7 +486,7 @@ mod tests {
         drop(owner);
         resources.finish().await.unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "accepted");
-        assert_eq!(budget.usage(), (0, 0, 0));
+        assert_eq!(budget.usage(), (0, 0));
         let budget = NativeBudget::new(crate::budget::BudgetLimits {
             encoded_bytes: 1,
             ..Default::default()
@@ -512,7 +507,7 @@ mod tests {
             }
         );
         resources.finish().await.unwrap();
-        assert_eq!(budget.usage(), (0, 0, 0));
+        assert_eq!(budget.usage(), (0, 0));
         assert_eq!(std::fs::read_to_string(path).unwrap(), "accepted");
     }
 }

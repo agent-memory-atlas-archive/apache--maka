@@ -29,6 +29,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.form-editor',
-  displayName: 'form-editor',
+  displayName: 'Form editor',
+  description: 'Fill out structured information requested by the assistant.',
+  localizations: {
+    'zh-CN': { displayName: '表单填写', description: '填写助手请求的结构化信息。' },
+  },
   application: { entries },
 };

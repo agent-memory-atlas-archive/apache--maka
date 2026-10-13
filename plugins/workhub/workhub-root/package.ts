@@ -53,6 +53,10 @@ for (const target of ['desktop', 'tui'] as const)
 export default {
   schemaVersion: 2,
   id: 'maka.workhub.root',
-  displayName: 'workhub-root',
+  displayName: 'WorkHub',
+  description: 'Organize work across agents and projects.',
+  localizations: {
+    'zh-CN': { displayName: 'WorkHub', description: '组织多个助手和项目中的工作。' },
+  },
   application: { entries },
 };

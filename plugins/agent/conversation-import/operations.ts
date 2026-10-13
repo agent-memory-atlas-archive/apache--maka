@@ -28,6 +28,7 @@ import type {
 } from '../../../packages/plugin-sdk/src/index.js';
 import { type ImportsProps } from '../../shared/contracts.js';
 import { type Copy } from '../../shared/locale.js';
+import { resetScroll } from '../../shared/scroll.js';
 import { sameValue } from '../../shared/value.js';
 import { type Node, type Presentation } from '../../shared/view.js';
 import { formatName, type Field, type FieldName, type Request, type State } from './state.js';
@@ -81,11 +82,12 @@ export function sources(state: State, actions: Action[]) {
 }
 
 export function catalog(state: State, actions: Action[], cursor: string | null = null) {
+  if (!cursor) resetScroll(state, 'import-catalog');
   if (state.source)
     read(
       state,
       actions,
-      { kind: 'catalog' },
+      { kind: 'catalog', after: cursor },
       {
         kind: 'catalog',
         source: state.source,
@@ -95,7 +97,8 @@ export function catalog(state: State, actions: Action[], cursor: string | null =
 }
 
 export function copies(state: State, actions: Action[], after: string | null = null) {
-  read(state, actions, { kind: 'copies' }, { kind: 'copies', after });
+  if (!after) resetScroll(state, 'import-copies');
+  read(state, actions, { kind: 'copies', after }, { kind: 'copies', after });
 }
 
 export function history(state: State, actions: Action[], after = 0) {

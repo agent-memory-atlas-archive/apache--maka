@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.morph-mark',
-  displayName: 'morph-mark',
+  displayName: 'Streaming Markdown',
+  description: 'Format Markdown while the assistant is responding.',
+  localizations: {
+    'zh-CN': { displayName: '流式 Markdown', description: '在助手回复过程中呈现 Markdown 排版。' },
+  },
   application: {
     entries: {
       tui: native(sdk.nativeImplementations.morphMark),

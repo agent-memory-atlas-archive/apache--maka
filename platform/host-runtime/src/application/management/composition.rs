@@ -151,6 +151,12 @@ impl Manager {
                     candidates.push(BindingCandidate::Bound {
                         key: format!("instance:{label}"),
                         label,
+                        presentation: loaded
+                            .packages
+                            .iter()
+                            .find(|package| package.application_ref() == instance.package)
+                            .map(|package| package.manifest().presentation())
+                            .unwrap_or_default(),
                         target: Target::Instance {
                             path: instance.path.clone(),
                             export: name.clone(),
@@ -177,6 +183,7 @@ impl Manager {
                 candidates.push(BindingCandidate::Bound {
                     key,
                     label: format!("{} / {}", remote.deployment, remote.export),
+                    presentation: Default::default(),
                     target: Target::Remote {
                         deployment: remote.deployment.clone(),
                         instance: remote.instance.clone(),
@@ -202,6 +209,7 @@ impl Manager {
                                 package.manifest().display_name.clone()
                             };
                             candidates.push(BindingCandidate::Package {
+                                presentation: package.manifest().presentation(),
                                 key: format!(
                                     "package:{}:{}:{name}",
                                     reference.id, reference.revision

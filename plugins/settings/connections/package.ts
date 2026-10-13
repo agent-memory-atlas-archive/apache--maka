@@ -36,6 +36,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.connections',
-  displayName: 'connections',
+  displayName: 'Model connections',
+  description: 'Manage connections to model providers.',
+  localizations: {
+    'zh-CN': { displayName: '模型连接', description: '管理模型服务商连接。' },
+  },
   application: { entries },
 };

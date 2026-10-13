@@ -34,6 +34,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.web-settings',
-  displayName: 'web-settings',
+  displayName: 'Web access settings',
+  description: 'Configure the assistant’s web search and browsing.',
+  localizations: {
+    'zh-CN': { displayName: '网页访问设置', description: '配置助手的网页搜索与浏览。' },
+  },
   application: { entries },
 };

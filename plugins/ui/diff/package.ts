@@ -22,6 +22,10 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.diff',
-  displayName: 'diff',
+  displayName: 'Change preview',
+  description: 'Display differences between two versions of text.',
+  localizations: {
+    'zh-CN': { displayName: '更改预览', description: '显示两个文本版本之间的差异。' },
+  },
   application: { entries: { tui: native(sdk.nativeImplementations.diff) } },
 };

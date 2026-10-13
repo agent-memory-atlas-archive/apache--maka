@@ -30,6 +30,10 @@ entries.desktop.imports.image = one(sdk.contracts.image);
 export default {
   schemaVersion: 2,
   id: 'maka.agent.image-viewer',
-  displayName: 'image-viewer',
+  displayName: 'Image viewer',
+  description: 'Open images attached to a conversation.',
+  localizations: {
+    'zh-CN': { displayName: '图片查看器', description: '打开对话中的图片附件。' },
+  },
   application: { entries },
 };

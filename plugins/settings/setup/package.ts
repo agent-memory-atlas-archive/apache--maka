@@ -22,7 +22,11 @@ import { native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.settings-setup',
-  displayName: 'settings-setup',
+  displayName: 'Connection setup',
+  description: 'Discover and configure model provider connections.',
+  localizations: {
+    'zh-CN': { displayName: '连接设置', description: '发现并配置模型服务商连接。' },
+  },
   application: {
     entries: { host: native(sdk.nativeImplementations.settingsSetup) },
   },

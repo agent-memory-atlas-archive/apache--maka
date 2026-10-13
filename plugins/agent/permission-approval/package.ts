@@ -29,6 +29,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.permission-approval',
-  displayName: 'permission-approval',
+  displayName: 'Permission requests',
+  description: 'Review requests for additional access.',
+  localizations: {
+    'zh-CN': { displayName: '权限请求', description: '查看并处理额外访问权限请求。' },
+  },
   application: { entries },
 };

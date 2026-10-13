@@ -25,6 +25,7 @@ const entries = uiEntries({
   contract: own.deploymentContract,
   export: 'Deployment',
   imports: {
+    input: one(sdk.contracts.textInput),
     reading: one(sdk.contracts.readingArea),
     management: one(sdk.contracts.deploymentManager),
     reader: one(sdk.contracts.textReader),
@@ -38,6 +39,10 @@ entries.tui.imports.checkpoint = one(sdk.contracts.valueCheckpoint);
 export default {
   schemaVersion: 2,
   id: 'maka.agent.deployment',
-  displayName: 'deployment',
+  displayName: 'Plugin manager',
+  description: 'Install plugins, change settings, and turn plugins on or off.',
+  localizations: {
+    'zh-CN': { displayName: '插件管理', description: '安装插件、修改设置和启停插件。' },
+  },
   application: { entries },
 };

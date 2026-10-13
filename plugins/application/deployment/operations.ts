@@ -27,6 +27,7 @@ import type {
   OperationReply,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { instanceSettings } from '../../shared/instance-settings.js';
+import { pluginDescription } from '../../shared/plugin-description.js';
 import { sameValue } from '../../shared/value.js';
 import { type DocumentRequest, type Request, type State } from './state.js';
 
@@ -61,7 +62,7 @@ export function page(
   state: State,
   actions: Action[],
   input: DeploymentInstances,
-  movement: 'reset' | 'next' | 'previous' = 'reset',
+  movement: 'reset' | 'next' = 'reset',
 ) {
   request(state, actions, { kind: 'page', input, movement }, 'management', 'instances', input);
 }
@@ -76,7 +77,10 @@ export function readDocument(state: State, actions: Action[], offset: number) {
 
 export function readSettings(state: State, actions: Action[]) {
   const settings = state.settings!;
-  settings.page = null;
+  if (!settings.after) {
+    settings.page = null;
+    settings.window = 0;
+  }
   const input: InstanceSettingsRead = {
     source: settings.source,
     instance: settings.instance.instance,
@@ -109,9 +113,19 @@ export function openSettings(state: State, actions: Action[], instance: ManagedI
 export function settle(state: State, reply: OperationReply, actions: Action[]) {
   const current = state.current;
   if (!current || (current.reference && !sameValue(current.reference, reply.reference))) return;
+  const firstReceipt = !current.reference;
   current.reference = reply.reference;
   if (reply.receipt.kind !== 'recorded' || reply.receipt.outcome.kind !== 'returned') {
     state.notice = 'deploymentUnknown';
+    if (firstReceipt)
+      request(
+        state,
+        actions,
+        { kind: 'receipt', reference: reply.reference },
+        'receipts',
+        'read',
+        reply.reference,
+      );
     if ('configuration' in current.intent && state.settings && !state.settings.page)
       readSettings(state, actions);
     return;
@@ -173,4 +187,17 @@ export function settle(state: State, reply: OperationReply, actions: Action[]) {
               ? 'deploymentParentDisabled'
               : 'deploymentRejected';
   }
+}
+
+export function filteredInstances(state: State, locale: string) {
+  const terms = state.query.toLocaleLowerCase().split(/\s+/u).filter(Boolean);
+  return (state.page?.instances ?? [])
+    .map((entry, at) => ({ entry, at }))
+    .filter(({ entry }) => {
+      const info = pluginDescription(entry.presentation, locale, entry.package.id);
+      const text = [info.name, info.description, entry.package.id, ...entry.path]
+        .join(' ')
+        .toLocaleLowerCase();
+      return terms.every((term) => text.includes(term));
+    });
 }

@@ -21,6 +21,7 @@ import type {
   DeploymentInstances,
   DeploymentRef,
   EditorObservation,
+  EditorTextRef,
   InstanceConfigure,
   InstanceSettingsRead,
   ManagedInstance,
@@ -37,13 +38,14 @@ import { type Copy } from '../../shared/locale.js';
 import { type PageState } from '../../shared/page-shell.js';
 
 export type Request =
-  | { kind: 'page'; input: DeploymentInstances; movement: 'reset' | 'next' | 'previous' }
+  | { kind: 'page'; input: DeploymentInstances; movement: 'reset' | 'next' }
   | { kind: 'restoreSettings'; after: number }
   | { kind: 'mutate' }
   | { kind: 'receipt'; reference: RecoveryRef }
   | { kind: 'history'; after: number };
 
 export type DocumentRequest =
+  | { kind: 'filter'; basis: EditorTextRef }
   | { kind: 'document'; source: DeploymentRef; offset: number }
   | { kind: 'documentReload' }
   | { kind: 'urlText'; captured: EditorObservation; source: DeploymentRef }
@@ -68,7 +70,14 @@ export function settingsBookmark(state: State): SettingsBookmark {
   return settings
     ? {
         source: settings.source,
-        instance: settings.instance,
+        instance: {
+          instance: settings.instance.instance,
+          path: settings.instance.path,
+          package: settings.instance.package,
+          structural: settings.instance.structural,
+          disabled: settings.instance.disabled,
+          parentDisabled: settings.instance.parentDisabled,
+        },
         path: settings.path,
         changes: settings.changes,
         open: settings.open,
@@ -119,11 +128,14 @@ export interface State extends PageState {
   revision: number;
   serial: number;
   pending: { key: string; request: Request | DocumentRequest } | null;
-  page: ManagedInstancesPage | null;
+  page: (Omit<ManagedInstancesPage, 'instances'> & { instances: ManagedInstance[] }) | null;
   selected: ManagedInstance['instance'] | null;
   focus: ReadingCommand | null;
-  after: ManagedInstancesPage['next'];
-  previous: ManagedInstancesPage['next'][];
+  listWindow: number;
+  query: string;
+  queryObservation: EditorObservation | null;
+  queryBasis: EditorTextRef | null;
+  scrollRevision: number;
   confirmation: Intent | null;
   current: {
     intent:

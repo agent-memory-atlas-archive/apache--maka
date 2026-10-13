@@ -34,6 +34,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.directory-picker',
-  displayName: 'directory-picker',
+  displayName: 'Folder picker',
+  description: 'Browse and select workspace folders.',
+  localizations: {
+    'zh-CN': { displayName: '文件夹选择器', description: '浏览和选择工作区文件夹。' },
+  },
   application: { entries },
 };

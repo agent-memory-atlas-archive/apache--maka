@@ -31,6 +31,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.appearance',
-  displayName: 'appearance',
+  displayName: 'Appearance',
+  description: 'Choose the theme and display preferences.',
+  localizations: {
+    'zh-CN': { displayName: '外观', description: '选择主题和显示偏好。' },
+  },
   application: { entries },
 };

@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.workspace-files',
-  displayName: 'workspace-files',
+  displayName: 'Workspace files',
+  description: 'Read and modify files within granted workspace access.',
+  localizations: {
+    'zh-CN': { displayName: '工作区文件', description: '在获准的工作区范围内读取和修改文件。' },
+  },
   application: {
     entries: {
       host: native(sdk.nativeImplementations.workspaceFiles),

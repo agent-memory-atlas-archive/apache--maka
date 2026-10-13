@@ -116,6 +116,12 @@ impl Manager {
                 instance: instance.identity.clone(),
                 path: instance.path.clone(),
                 package: instance.package.clone(),
+                presentation: loaded
+                    .packages
+                    .iter()
+                    .find(|package| package.application_ref() == instance.package)
+                    .map(|package| package.manifest().presentation())
+                    .unwrap_or_default(),
                 structural: instance.entry.is_none(),
                 disabled: instance.disabled,
                 parent_disabled: instance

@@ -33,6 +33,10 @@ entries.tui.imports.checkpoint = one(sdk.contracts.valueCheckpoint);
 export default {
   schemaVersion: 2,
   id: 'maka.agent.deployment-settings',
-  displayName: 'deployment-settings',
+  displayName: 'Plugin settings',
+  description: 'Manage plugins on this device and the connected host.',
+  localizations: {
+    'zh-CN': { displayName: '插件设置', description: '管理本机和所连接主机上的插件。' },
+  },
   application: { entries },
 };

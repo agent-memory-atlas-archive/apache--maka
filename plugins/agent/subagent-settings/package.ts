@@ -37,6 +37,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.subagent-settings',
-  displayName: 'subagent-settings',
+  displayName: 'Subagent settings',
+  description: 'Configure how the assistant delegates work.',
+  localizations: {
+    'zh-CN': { displayName: '子助手设置', description: '配置助手分配工作的方式。' },
+  },
   application: { entries },
 };

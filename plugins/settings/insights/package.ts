@@ -36,6 +36,10 @@ entries.tui.imports.checkpoint = one(sdk.contracts.valueCheckpoint);
 export default {
   schemaVersion: 2,
   id: 'maka.agent.insights',
-  displayName: 'insights',
+  displayName: 'Usage',
+  description: 'Review model usage and costs.',
+  localizations: {
+    'zh-CN': { displayName: '使用情况', description: '查看模型用量和费用。' },
+  },
   application: { entries },
 };

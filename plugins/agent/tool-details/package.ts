@@ -24,12 +24,20 @@ import { one, uiEntries } from '../../shared/package.js';
 const entries = uiEntries({
   contract: own.toolDetailsContract,
   export: 'ToolDetails',
-  imports: { agent: one(sdk.contracts.agent), source: one(sdk.contracts.sourceText) },
+  imports: {
+    reading: one(sdk.contracts.readingArea),
+    agent: one(sdk.contracts.agent),
+    source: one(sdk.contracts.sourceText),
+  },
 });
 entries.tui.imports.diff = one(sdk.contracts.diff);
 export default {
   schemaVersion: 2,
   id: 'maka.agent.tool-details',
-  displayName: 'tool-details',
+  displayName: 'Tool activity',
+  description: 'Inspect tool inputs, results, and running processes.',
+  localizations: {
+    'zh-CN': { displayName: '工具执行详情', description: '查看工具输入、执行结果和运行中的进程。' },
+  },
   application: { entries },
 };

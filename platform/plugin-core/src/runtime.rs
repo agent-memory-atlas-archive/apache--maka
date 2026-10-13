@@ -679,6 +679,11 @@ impl<T> Runtime<T> {
         Ok(())
     }
 
+    /// Read lifecycle state without building diagnostic snapshots.
+    pub fn phase(&self, activation: &Activation) -> Result<Phase, Error> {
+        Ok(self.owner(activation)?.phase)
+    }
+
     pub fn status(&self, activation: &Activation) -> Result<Status, Error> {
         let live = self.owner(activation)?;
         Ok(Status {

@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.file',
-  displayName: 'file',
+  displayName: 'File picker',
+  description: 'Browse local files and select files to open or install.',
+  localizations: {
+    'zh-CN': { displayName: '文件选择器', description: '浏览本地文件，选择要打开或安装的文件。' },
+  },
   application: {
     entries: Object.fromEntries(
       ['desktop', 'tui'].map((target) => [target, native(sdk.nativeImplementations.filePicker)]),

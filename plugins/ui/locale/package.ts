@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.locale',
-  displayName: 'locale',
+  displayName: 'Language detection',
+  description: 'Use the device language when no language is selected.',
+  localizations: {
+    'zh-CN': { displayName: '语言检测', description: '未指定语言时使用设备的语言。' },
+  },
   application: {
     entries: Object.fromEntries(
       ['desktop', 'tui'].map((target) => [target, native(sdk.nativeImplementations.locale)]),

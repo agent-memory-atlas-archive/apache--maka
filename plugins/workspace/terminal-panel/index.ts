@@ -22,6 +22,8 @@ import type {
   ActionOutcome,
   CallerIntent,
   Component,
+  ComponentInput,
+  ReadingCommand,
   Emission,
   OperationReply,
   RecoveryRef,
@@ -40,6 +42,7 @@ import type {
   TextChunk,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { terminalPanelContract, type TerminalPanelProps } from '../../shared/contracts.js';
+import { scrollBoundary, scrollRows, visibleRows, resetScroll } from '../../shared/scroll.js';
 import { copy, type Copy } from '../../shared/locale.js';
 import { sameValue } from '../../shared/value.js';
 import {
@@ -75,6 +78,9 @@ interface State {
   session: string | null;
   open: boolean;
   page: TerminalPage | null;
+  pageOffset: number | null;
+  catalogCommand: ReadingCommand | null;
+  catalogLanding: 'start' | 'end' | null;
   rowKeys: Record<string, string>;
   offset: number;
   previous: number[];
@@ -252,6 +258,7 @@ function settle(state: State, props: TerminalPanelProps, reply: OperationReply) 
   state.current = null;
 }
 function history(state: State, actions: Action[], after: number) {
+  if (!after) resetScroll(state, 'terminal-history-reading');
   if (Object.values(state.pending).some((r) => r.kind === 'history' || r.kind === 'earlier'))
     return;
   request(state, actions, { kind: 'history', after }, 'history', 'page', { after, limit: 4 });
@@ -313,6 +320,14 @@ function subscription(state: State, props: TerminalPanelProps, key: string, resu
         ]),
       );
       state.page = page;
+      state.pageOffset = state.offset;
+      if (state.catalogLanding) {
+        state.catalogCommand = {
+          sequence: (state.catalogCommand?.sequence ?? 0) + 1,
+          target: { kind: state.catalogLanding },
+        };
+        state.catalogLanding = null;
+      }
       if (!state.selected && page.resources.length) select(state, page.resources[0].result.ref);
     } else {
       state.catalog = null;
@@ -492,6 +507,7 @@ function frame<N extends Node>(
             p.reading(
               'terminal-catalog-reading',
               {
+                command: state.catalogCommand,
                 content: ui.box(
                   'terminal-catalog',
                   [
@@ -518,19 +534,7 @@ function frame<N extends Node>(
                   },
                 ),
               },
-              {},
-            ),
-            ui.box(
-              'terminal-pages',
-              [
-                ui.button('previous', text.back, !state.previous.length),
-                ui.button('next', text.moreOperations, state.page?.nextOffset == null),
-              ],
-              {
-                row: true,
-                gap: 1,
-                visible: !desktop || !!state.previous.length || state.page?.nextOffset != null,
-              },
+              { observed: 'catalog-observed', input: 'catalog-input' },
             ),
             ...(resource
               ? [
@@ -642,54 +646,70 @@ function frame<N extends Node>(
             style: { width: fill },
           },
         ),
-        ui.box(
-          'terminal-history',
-          [
-            ...state.earlier.map((entry) =>
-              ui.box(`terminal-operation-${entry.cursor}`, [
-                ui.text(
-                  `terminal-operation-state-${entry.cursor}`,
-                  `${entry.reference.method} · ${
-                    entry.reply?.receipt.kind === 'recorded' &&
-                    entry.reply.receipt.outcome.kind === 'returned'
-                      ? (entry.reply.receipt.outcome.value as Result<unknown>).kind === 'failed'
-                        ? text.terminalFailed
-                        : entry.reply.receipt.cleanup.kind !== 'confirmed'
-                          ? text.terminalCleanupUnknown
-                          : text.terminalRecorded
-                      : text.terminalUnknown
-                  }`,
-                  12,
-                ),
-                ui.button(
-                  `earlier:${entry.cursor}`,
-                  text.check,
-                  Object.values(state.pending).some(
-                    (r) => r.kind === 'earlier' && r.cursor === entry.cursor,
+        ...(state.historyOpen
+          ? [
+              p.reading(
+                'terminal-history-reading',
+                {
+                  content: ui.box(
+                    'terminal-history',
+                    [
+                      ...visibleRows(state, 'terminal-history-reading', state.earlier).map(
+                        ({ entry }) =>
+                          ui.box(`terminal-operation-${entry.cursor}`, [
+                            ui.text(
+                              `terminal-operation-state-${entry.cursor}`,
+                              `${entry.reference.method} · ${
+                                entry.reply?.receipt.kind === 'recorded' &&
+                                entry.reply.receipt.outcome.kind === 'returned'
+                                  ? (entry.reply.receipt.outcome.value as Result<unknown>).kind ===
+                                    'failed'
+                                    ? text.terminalFailed
+                                    : entry.reply.receipt.cleanup.kind !== 'confirmed'
+                                      ? text.terminalCleanupUnknown
+                                      : text.terminalRecorded
+                                  : text.terminalUnknown
+                              }`,
+                              12,
+                            ),
+                            ui.button(
+                              `earlier:${entry.cursor}`,
+                              text.check,
+                              Object.values(state.pending).some(
+                                (r) => r.kind === 'earlier' && r.cursor === entry.cursor,
+                              ),
+                            ),
+                          ]),
+                      ),
+                      ui.button(
+                        'history-back',
+                        text.back,
+                        false,
+                        false,
+                        !desktop ? { background: 0, align: 'start' } : {},
+                      ),
+                      ui.button(
+                        'history-refresh',
+                        !desktop ? (props.theme.ascii ? 'r' : '↻') : text.refreshDefaultOperations,
+                        false,
+                        false,
+                        !desktop ? { background: 0 } : {},
+                        undefined,
+                        text.refreshDefaultOperations,
+                      ),
+                    ],
+                    {
+                      gap: 1,
+                      scroll: 'anchor',
+                      terminal: { grow: 1 },
+                      style: { width: fill, height: fill },
+                    },
                   ),
-                ),
-              ]),
-            ),
-            ui.button(
-              'history-back',
-              text.back,
-              false,
-              false,
-              !desktop ? { background: 0, align: 'start' } : {},
-            ),
-            ui.button(
-              'history-refresh',
-              !desktop ? (props.theme.ascii ? 'r' : '↻') : text.refreshDefaultOperations,
-              false,
-              false,
-              !desktop ? { background: 0 } : {},
-              undefined,
-              text.refreshDefaultOperations,
-            ),
-            ui.button('history-next', text.moreOperations, state.historyNext === null),
-          ],
-          { visible: state.historyOpen, gap: 1 },
-        ),
+                },
+                { input: 'history-input', observed: 'history-observed' },
+              ),
+            ]
+          : []),
       ],
       { visible: props.open, gap: 0, terminal: { grow: 1 }, style: { width: fill, minWidth: 0 } },
     ),
@@ -728,6 +748,9 @@ export function terminalPanel<N extends Node>(
         session: null,
         open: false,
         page: null,
+        pageOffset: null,
+        catalogCommand: null,
+        catalogLanding: null,
         rowKeys: {},
         offset: 0,
         previous: [],
@@ -760,6 +783,20 @@ export function terminalPanel<N extends Node>(
     event(state, input, props) {
       state.revision++;
       reconcile(state, props);
+      if (
+        input.kind === 'component' &&
+        ['terminal-catalog-reading', 'terminal-history-reading'].includes(input.child) &&
+        input.name === 'input'
+      )
+        input = input.event as ComponentInput;
+      const direction = scrollBoundary(state, input, 'terminal-catalog-reading');
+      if (direction && state.pageOffset === state.offset)
+        input = { kind: 'raw', key: direction === 'up' ? 'previous' : 'next', event: {} };
+      if (
+        state.historyOpen &&
+        scrollRows(state, input, 'terminal-history-reading', state.earlier.length)
+      )
+        input = { kind: 'raw', key: 'history-next', event: {} };
       const actions: Action[] = [],
         events: Emission[] = [];
       if (input.kind === 'action') {
@@ -805,10 +842,13 @@ export function terminalPanel<N extends Node>(
             if (result.status === 'succeeded') {
               const entries = result.value as CallerIntent[];
               state.historyNext = entries.length === 4 ? entries[entries.length - 1].cursor : null;
-              state.earlier = entries
-                .filter((e) => e.reference.contract.name === 'maka.workspace.Terminal')
-                .map((e) => ({ cursor: e.cursor, reference: e.reference, reply: null }));
-              for (const e of state.earlier)
+              state.earlier = [
+                ...(r.after ? state.earlier : []),
+                ...entries
+                  .filter((e) => e.reference.contract.name === 'maka.workspace.Terminal')
+                  .map((e) => ({ cursor: e.cursor, reference: e.reference, reply: null })),
+              ];
+              for (const e of state.earlier.filter((e) => e.cursor > r.after && !e.reply))
                 request(
                   state,
                   actions,
@@ -942,9 +982,11 @@ export function terminalPanel<N extends Node>(
               state.page.resources.find((r) => state.rowKeys[r.result.ref] === key)!.result.ref,
             );
           else if (key === 'previous' && state.previous.length) {
+            state.catalogLanding = 'end';
             state.offset = state.previous.pop()!;
             catalog(state);
           } else if (key === 'next' && state.page?.nextOffset != null) {
+            state.catalogLanding = 'start';
             state.previous.push(state.offset);
             state.offset = state.page.nextOffset;
             catalog(state);

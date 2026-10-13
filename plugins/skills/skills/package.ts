@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.skills',
-  displayName: 'skills',
+  displayName: 'Skill storage',
+  description: 'Discover, install, and load assistant skills.',
+  localizations: {
+    'zh-CN': { displayName: '技能存储', description: '发现、安装和加载助手技能。' },
+  },
   application: {
     entries: {
       host: native(sdk.nativeImplementations.skillLibrary),

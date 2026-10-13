@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.forms',
-  displayName: 'forms',
+  displayName: 'Structured forms',
+  description: 'Collect structured answers during an assistant task.',
+  localizations: {
+    'zh-CN': { displayName: '结构化表单', description: '在助手任务中收集结构化回答。' },
+  },
   application: {
     entries: { host: native(sdk.nativeImplementations.forms) },
   },

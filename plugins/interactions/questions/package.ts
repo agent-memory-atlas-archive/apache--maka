@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.questions',
-  displayName: 'questions',
+  displayName: 'Assistant questions',
+  description: 'Ask the user questions while a task is running.',
+  localizations: {
+    'zh-CN': { displayName: '助手提问', description: '在任务运行过程中向用户提问。' },
+  },
   application: {
     entries: {
       host: native(sdk.nativeImplementations.questions),

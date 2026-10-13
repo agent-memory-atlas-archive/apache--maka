@@ -37,10 +37,21 @@ impl Widget for Label {
     }
     fn paint(
         &self,
-        _: &mut Slots<'_>,
+        slots: &mut Slots<'_>,
         area: super::Placement,
         buffer: &mut Buffer,
     ) -> maka_ui_runtime::Result<()> {
+        if self
+            .props
+            .elapsed
+            .as_ref()
+            .is_some_and(|elapsed| elapsed.to.is_none())
+            && !area.is_empty()
+        {
+            slots
+                .measurements
+                .repaint_after(std::time::Duration::from_secs(1));
+        }
         let rgba = self.props.appearance.foreground.0;
         let foreground = self
             .props

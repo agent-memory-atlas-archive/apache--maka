@@ -49,6 +49,7 @@ import {
   importView,
   type SourceImport,
 } from '../../shared/skill-import.js';
+import { scrollBoundary } from '../../shared/scroll.js';
 import { sameValue } from '../../shared/value.js';
 import { copy, type Copy } from '../../shared/locale.js';
 import {
@@ -69,8 +70,9 @@ type Request =
       key: string;
       cursor: SkillLibraryCursor | null;
       history: number[];
+      landing?: 'start' | 'end';
     }
-  | { kind: 'read'; key: string }
+  | { kind: 'read'; key: string; landing?: 'start' | 'end' }
   | { kind: 'preview' | 'mutate' | 'receipt' | 'outcome'; key: string };
 interface State {
   importer: SourceImport;
@@ -504,7 +506,7 @@ function frame<N extends Node>(
           }),
           command: state.reveal,
         },
-        { input: 'reading-input' },
+        { input: 'reading-input', observed: 'reading-observed' },
       ),
       ...(document?.preferencesWritable && !document.entry.imported && !state.preview
         ? [
@@ -565,20 +567,7 @@ function frame<N extends Node>(
               ui.button('cancel-change', text.cancel, busy),
             ]
           : [
-              ...(document
-                ? [
-                    ui.button('back', text.back, busy || !!state.preview),
-                    ui.button(
-                      'body-previous',
-                      text.sourcePrevious,
-                      !available || document.before == null,
-                    ),
-                    ui.button('body-next', text.sourceNext, !available || document.after == null),
-                  ]
-                : [
-                    ui.button('previous', text.skillsPrevious, !available || !state.history.length),
-                    ui.button('next', text.skillsNext, !available || !state.page?.after),
-                  ]),
+              ...(document ? [ui.button('back', text.back, busy || !!state.preview)] : []),
               ...((document?.writable ?? state.page?.writable)
                 ? [ui.button('open-import', text.skillsImport, busy || !!state.current)]
                 : []),
@@ -698,6 +687,19 @@ export function skillLibrary<N extends Node>(
         )
       )
         return frame(presentation, state, props);
+      const direction = scrollBoundary(state, input, 'skills-reading');
+      if (direction && !state.pending && !state.preview && !state.current)
+        input = {
+          kind: 'raw',
+          key: state.document
+            ? direction === 'up'
+              ? 'body-previous'
+              : 'body-next'
+            : direction === 'up'
+              ? 'previous'
+              : 'next',
+          event: {},
+        };
       if (
         input.kind === 'component' &&
         input.child === 'skills-import-file' &&
@@ -783,6 +785,7 @@ export function skillLibrary<N extends Node>(
             state.document = null;
             state.active = 0;
             reveal(state, rowKey(state, 0));
+            if (request.landing) state.reveal!.target = { kind: request.landing };
           }
         } else {
           const document = result.value as SkillLibraryDocument;
@@ -791,6 +794,8 @@ export function skillLibrary<N extends Node>(
           else {
             state.document = document;
             reveal(state, 'skill-name');
+            if (request.kind === 'read' && request.landing)
+              state.reveal!.target = { kind: request.landing };
           }
         }
       } else if (input.kind === 'raw') {
@@ -964,6 +969,13 @@ export function skillLibrary<N extends Node>(
           }
         }
       }
+      if (
+        direction &&
+        actions.length &&
+        state.pending &&
+        (state.pending.kind === 'list' || state.pending.kind === 'read')
+      )
+        state.pending.landing = direction === 'up' ? 'end' : 'start';
       return frame(presentation, state, props, actions, events);
     },
   };

@@ -41,7 +41,9 @@ export type Format = AgentImportLocation['kind'];
 export type Route = 'sources' | 'form' | 'catalog' | 'preview' | 'copies';
 
 export type Request =
-  | { kind: 'sources' | 'catalog' | 'preview' | 'copies' | 'mutate' | 'receipt' }
+  | { kind: 'sources' | 'mutate' | 'receipt' }
+  | { kind: 'catalog' | 'copies'; after?: string | null }
+  | { kind: 'preview'; after?: number }
   | { kind: 'directory'; purpose: 'source' | 'destination' }
   | { kind: 'field'; field: FieldName; observation: EditorObservation }
   | { kind: 'history'; after: number };
@@ -67,7 +69,9 @@ export interface State extends PageState {
   catalogNext: string | null;
   query: string;
   archived: boolean;
-  preview: AgentImportPreview | null;
+  preview:
+    | (Omit<AgentImportPreview, 'items'> & { items: AgentImportPreview['items'][number][] })
+    | null;
   destination: AgentDirectory | null;
   copies: AgentSession[];
   copiesNext: string | null;

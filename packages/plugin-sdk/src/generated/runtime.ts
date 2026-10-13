@@ -510,12 +510,14 @@ export type BindingCandidate =
   | {
       key: string;
       label: string;
+      presentation?: PackagePresentation;
       target: Target;
       kind: 'bound';
     }
   | {
       key: string;
       label: string;
+      presentation?: PackagePresentation;
       package: PackageRef;
       export: string;
       kind: 'package';
@@ -5017,9 +5019,24 @@ export interface ManagedInstance {
   instance: InstanceId;
   path: string[];
   package: PackageRef;
+  presentation?: PackagePresentation;
   structural: boolean;
   disabled: boolean;
   parentDisabled: boolean;
+}
+export interface PackagePresentation {
+  displayName: string;
+  description: string;
+  localizations?: {
+    [k: string]: PackageDescription | undefined;
+  };
+}
+/**
+ * Author-provided copy for plugin discovery; never an authority declaration.
+ */
+export interface PackageDescription {
+  displayName: string;
+  description: string;
 }
 export interface InstanceSetEnabled {
   expectedRevision: number;

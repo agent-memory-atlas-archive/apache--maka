@@ -109,6 +109,7 @@ fn failure(sequence: u64, error: impl std::fmt::Display) -> ValueCheckpointObser
         },
     }
 }
+
 impl ValueCheckpoint {
     pub fn new(
         scope: Option<Scope>,
@@ -140,7 +141,6 @@ impl ValueCheckpoint {
                 loop {
                     let sequence = command.sequence();
                     let result: Result<ValueCheckpointState, String> = async {
-                        let _job = budget.reserve(Kind::Job, 1).map_err(|e| e.to_string())?;
                         let _bytes = budget
                             .reserve(Kind::Encoded, super::MAX_CONTENT + 32 * 1024)
                             .map_err(|e| e.to_string())?;

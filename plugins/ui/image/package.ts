@@ -22,7 +22,11 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.image',
-  displayName: 'image',
+  displayName: 'Image display',
+  description: 'Decode and display images.',
+  localizations: {
+    'zh-CN': { displayName: '图片显示', description: '解码并显示图片。' },
+  },
   application: {
     entries: { desktop: native(sdk.nativeImplementations.image) },
   },

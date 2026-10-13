@@ -22,6 +22,10 @@ import { one, required, native } from '../../shared/package.js';
 export default {
   schemaVersion: 2,
   id: 'maka.agent.rows',
-  displayName: 'rows',
+  displayName: 'Conversation rows',
+  description: 'Read conversation content for display.',
+  localizations: {
+    'zh-CN': { displayName: '对话行数据', description: '读取用于显示的对话内容。' },
+  },
   application: { entries: { tui: native(sdk.nativeImplementations.rows) } },
 };

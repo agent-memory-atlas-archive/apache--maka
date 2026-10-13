@@ -29,6 +29,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.help',
-  displayName: 'help',
+  displayName: 'Help',
+  description: 'Find instructions and keyboard shortcuts.',
+  localizations: {
+    'zh-CN': { displayName: '帮助', description: '查看使用说明和键盘快捷键。' },
+  },
   application: { entries },
 };

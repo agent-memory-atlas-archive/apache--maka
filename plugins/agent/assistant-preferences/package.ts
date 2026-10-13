@@ -36,6 +36,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.assistant-preferences',
-  displayName: 'assistant-preferences',
+  displayName: 'Assistant preferences',
+  description: 'Adjust the assistant’s behavior and appearance.',
+  localizations: {
+    'zh-CN': { displayName: '助手偏好', description: '调整助手的行为和显示偏好。' },
+  },
   application: { entries },
 };

@@ -30,9 +30,19 @@ pub struct Manifest {
     pub display_name: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub localizations:
+        std::collections::BTreeMap<String, maka_plugin_core::package::PackageDescription>,
     pub application: Option<maka_plugin_core::package::Declaration>,
 }
 impl Manifest {
+    pub fn presentation(&self) -> maka_plugin_core::package::PackagePresentation {
+        maka_plugin_core::package::PackagePresentation {
+            display_name: self.display_name.clone(),
+            description: self.description.clone(),
+            localizations: self.localizations.clone(),
+        }
+    }
     pub fn validate(&self) -> Result<(), Error> {
         maka_plugin_core::identifier(&self.id).map_err(|e| Error::Invalid(e.to_string()))?;
         if self.schema_version != 2 {
@@ -52,7 +62,29 @@ impl Manifest {
                 validate_path(module)?;
             }
         }
-        if self.display_name.len() > 512 || self.description.len() > 4096 {
+        if self.display_name.len() > 512
+            || self.description.len() > 4096
+            || self.localizations.len() > 32
+            || self.display_name.len()
+                + self.description.len()
+                + self
+                    .localizations
+                    .iter()
+                    .map(|(locale, copy)| {
+                        locale.len() + copy.display_name.len() + copy.description.len()
+                    })
+                    .sum::<usize>()
+                > 8192
+            || self.localizations.iter().any(|(locale, copy)| {
+                locale.is_empty()
+                    || locale.len() > 64
+                    || !locale
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || c == b'-')
+                    || copy.display_name.len() > 512
+                    || copy.description.len() > 4096
+            })
+        {
             return Err(Error::Invalid(
                 "package description exceeds its limit".into(),
             ));

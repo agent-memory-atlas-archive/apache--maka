@@ -145,6 +145,8 @@ pub struct ManagedInstance {
     pub instance: InstanceId,
     pub path: Vec<String>,
     pub package: PackageRef,
+    #[serde(default)]
+    pub presentation: crate::package::PackagePresentation,
     pub structural: bool,
     pub disabled: bool,
     pub parent_disabled: bool,

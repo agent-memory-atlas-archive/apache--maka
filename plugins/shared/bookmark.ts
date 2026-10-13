@@ -33,6 +33,7 @@ export interface Bookmark<T> {
   command: ValueCheckpointCommand | null;
   sequence: number;
   restored: boolean;
+  readRetries: number;
   touched: boolean;
 }
 export function bookmark<T>(initial: T): Bookmark<T> {
@@ -43,6 +44,7 @@ export function bookmark<T>(initial: T): Bookmark<T> {
     command: null,
     sequence: 0,
     restored: false,
+    readRetries: 0,
     touched: false,
   };
 }
@@ -56,12 +58,25 @@ export function observeBookmark<T>(
   if (input.kind !== 'component' || input.child !== id) return;
   const observed = input.event as ValueCheckpointObservation;
   if (state.observed && observed.sequence < state.observed.sequence) return;
+  if (
+    state.observed &&
+    observed.sequence === state.observed.sequence &&
+    sameValue(observed.state, state.observed.state)
+  )
+    return;
   state.observed = observed;
+  if (observed.state.kind === 'failed' && state.readRetries < 2) {
+    state.readRetries++;
+    retryBookmark(state);
+  }
   if (observed.state.kind !== 'ready') return;
   state.saved = validate(
     observed.state.value === undefined ? null : JSON.parse(JSON.stringify(observed.state.value)),
   );
-  if (state.command && observed.sequence === state.command.sequence) state.command = null;
+  if (state.command && observed.sequence === state.command.sequence) {
+    if (state.command.kind === 'write') state.readRetries = 0;
+    state.command = null;
+  }
   if (!state.restored) {
     state.restored = true;
     // A late read must never undo navigation already made by the user.

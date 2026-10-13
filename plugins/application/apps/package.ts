@@ -46,6 +46,10 @@ const entries = uiEntries({
 export default {
   schemaVersion: 2,
   id: 'maka.agent.apps',
-  displayName: 'apps',
+  displayName: 'Apps',
+  description: 'Add, open, and manage apps in the sidebar.',
+  localizations: {
+    'zh-CN': { displayName: '应用', description: '添加、打开和管理侧栏中的应用。' },
+  },
   application: { entries },
 };

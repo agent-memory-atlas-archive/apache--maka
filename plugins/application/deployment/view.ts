@@ -17,17 +17,19 @@
  * under the License.
  */
 
-import type { Action, Emission } from '../../../packages/plugin-sdk/src/index.js';
+import type { Action, Emission, InputProps } from '../../../packages/plugin-sdk/src/index.js';
 import { bookmarkReady, bookmarkView } from '../../shared/bookmark.js';
 import { type DeploymentProps } from '../../shared/contracts.js';
 import { documentView } from '../../shared/deployment-document.js';
 import { importView } from '../../shared/deployment-import.js';
 import { instanceSettingsView } from '../../shared/instance-settings.js';
 import { copy } from '../../shared/locale.js';
+import { pluginDescription } from '../../shared/plugin-description.js';
 import { pageHeader } from '../../shared/page-shell.js';
+import { visibleRows } from '../../shared/scroll.js';
 import { sameValue } from '../../shared/value.js';
 import { fill, output, type Node, type Presentation } from '../../shared/view.js';
-import { request } from './operations.js';
+import { filteredInstances, page, request } from './operations.js';
 import { settingsBookmark, type State } from './state.js';
 
 export function frame<N extends Node>(
@@ -60,7 +62,37 @@ export function frame<N extends Node>(
     loading ||
     state.restoreFailed ||
     (target === 'tui' && !state.bookmark.restored);
-  const entries = state.page?.instances ?? [];
+  const basis = state.queryObservation?.snapshot.text;
+  if (!state.pending && basis && !sameValue(basis, state.queryBasis) && basis.bytes <= 1024) {
+    if (!basis.bytes) {
+      state.query = '';
+      state.queryBasis = basis;
+      state.listWindow = 0;
+    } else
+      request(
+        state,
+        actions,
+        { kind: 'filter', basis },
+        'reader',
+        'read',
+        { start: 0, end: basis.bytes },
+        {
+          text: {
+            child: 'deployment-query',
+            method: 'snapshot',
+            input: { kind: 'at_revision', owner: basis.owner, revision: basis.revision },
+          },
+        },
+      );
+  }
+  if (state.query && !state.pending && !state.notice && state.page?.next)
+    page(
+      state,
+      actions,
+      { kind: 'continue', source: state.page.source, after: state.page.next },
+      'next',
+    );
+  const entries = filteredInstances(state, props.locale);
   const current = state.confirmation;
   const history = state.historyOpen;
   const confirmationBody = current
@@ -85,7 +117,11 @@ export function frame<N extends Node>(
       ? [ui.text('deployment-history-loading', text.connecting, 13, props.theme.muted)]
       : []),
     ui.text('deployment-history-help', text.deploymentHistoryHelp, 13, props.theme.muted),
-    ...state.earlier.map((entry, at) =>
+    ...visibleRows(
+      state,
+      target === 'tui' ? 'deployment-history-reading' : 'deployment-list',
+      state.earlier,
+    ).map(({ entry, at }) =>
       ui.box(
         'deployment-earlier-' + at,
         [
@@ -103,7 +139,12 @@ export function frame<N extends Node>(
       ),
     ),
   ];
-  const rows = entries.map((entry, at) => {
+  const rows = entries.slice(state.listWindow, state.listWindow + 64).map(({ entry, at }) => {
+    const info = pluginDescription(
+      entry.presentation,
+      props.locale,
+      entry.path.at(-1) ?? entry.package.id,
+    );
     const status = entry.parentDisabled
       ? text.deploymentParentDisabled
       : entry.disabled
@@ -131,15 +172,25 @@ export function frame<N extends Node>(
             [
               ui.text(
                 'deployment-path-' + at,
-                `${selected ? (props.theme.ascii ? '>' : '›') : ' '} ${entry.path.join(' / ')}`,
+                `${selected ? (props.theme.ascii ? '>' : '›') : ' '} ${info.name}`,
                 14,
                 props.theme.text,
                 400,
                 { truncate: true },
               ),
+              ...(info.description
+                ? [
+                    ui.text(
+                      'deployment-description-' + at,
+                      '  ' + info.description,
+                      13,
+                      props.theme.muted,
+                    ),
+                  ]
+                : []),
               ui.text(
                 'deployment-detail-' + at,
-                `  ${status} · ${entry.package.id}`,
+                `  ${status} · ${entry.path.join(' / ')}`,
                 13,
                 props.theme.muted,
                 400,
@@ -161,7 +212,10 @@ export function frame<N extends Node>(
         ui.box(
           'deployment-identity-' + at,
           [
-            ui.text('deployment-path-' + at, entry.path.join(' / '), 15, props.theme.text, 550),
+            ui.text('deployment-path-' + at, info.name, 15, props.theme.text, 550),
+            ...(info.description
+              ? [ui.text('deployment-description-' + at, info.description, 13, props.theme.muted)]
+              : []),
             ui.text('deployment-package-' + at, entry.package.id, 13, props.theme.muted),
           ],
           {
@@ -220,14 +274,34 @@ export function frame<N extends Node>(
                 ui.button('deployment-import', text.deploymentInstall, busy || !state.page, true),
                 ui.button('deployment-advanced', text.deploymentEdit, busy || !state.page),
                 ui.button('deployment-history', text.deploymentHistory, !!state.pending || loading),
-                ui.button('deployment-refresh', text.deploymentRefresh, busy, false, {
-                  background: 0,
-                }),
+                ui.button(
+                  'deployment-refresh',
+                  props.theme.ascii ? 'r' : '↻',
+                  busy,
+                  false,
+                  { background: 0 },
+                  undefined,
+                  text.deploymentRefresh,
+                ),
               ],
               { row: true, gap: 1, terminal: { wrap: true } },
             ),
           ]
         : []),
+      presentation.slot(
+        'deployment-query',
+        'input',
+        {
+          appearance: props.theme.input,
+          accessibilityLabel: text.pluginSearch,
+          placeholder: text.pluginSearch,
+          tabIndex: 0,
+          autoFocus: false,
+          disabled: !!state.current,
+          readOnly: false,
+        } satisfies InputProps,
+        { changed: 'deployment-query-changed' },
+      ),
       ...(state.notice
         ? [ui.text('deployment-notice', text[state.notice], 13, props.theme.muted)]
         : []),
@@ -256,18 +330,9 @@ export function frame<N extends Node>(
               undefined,
               text.refreshDefaultOperations,
             ),
-            ...(state.historyNext !== null
-              ? [ui.button('deployment-history-more', text.moreOperations, !!state.pending)]
-              : []),
           ]
         : target === 'tui'
           ? [
-              ...(state.previous.length
-                ? [ui.button('deployment-previous', text.deploymentPrevious, busy)]
-                : []),
-              ...(state.page?.next
-                ? [ui.button('deployment-next', text.deploymentMore, busy)]
-                : []),
               ...(state.current?.reference
                 ? [ui.button('deployment-check', text.check, !!state.pending)]
                 : []),
@@ -282,12 +347,6 @@ export function frame<N extends Node>(
                 undefined,
                 text.deploymentRefresh,
               ),
-              ...(state.previous.length
-                ? [ui.button('deployment-previous', text.deploymentPrevious, busy)]
-                : []),
-              ...(state.page?.next
-                ? [ui.button('deployment-next', text.deploymentMore, busy)]
-                : []),
               ...(state.current?.reference
                 ? [ui.button('deployment-check', text.check, !!state.pending)]
                 : []),
@@ -316,9 +375,11 @@ export function frame<N extends Node>(
               'deployment-body',
               body.length
                 ? body
-                : [ui.text('deployment-empty', text.deploymentEmpty, 14, props.theme.muted)],
+                : state.pending
+                  ? []
+                  : [ui.text('deployment-empty', text.deploymentEmpty, 14, props.theme.muted)],
               {
-                scroll: 'manual',
+                scroll: 'anchor',
                 focusGroup: target === 'tui',
                 terminal: { grow: 1, basis: 0 },
                 style: { width: fill, height: fill, minHeight: 0 },
@@ -326,7 +387,7 @@ export function frame<N extends Node>(
               },
             ),
           },
-          { input: 'deployment-input' },
+          { input: 'deployment-input', observed: 'deployment-observed' },
         ),
         footer,
       ],
@@ -355,11 +416,17 @@ export function frame<N extends Node>(
         [
           ...(current || history
             ? [
-                ui.box('deployment-dialog-body', modalBody, {
-                  scroll: 'manual',
-                  terminal: { grow: 1 },
-                  gap: 1,
-                }),
+                presentation.reading(
+                  'deployment-history-reading',
+                  {
+                    content: ui.box('deployment-dialog-body', modalBody, {
+                      scroll: 'anchor',
+                      terminal: { grow: 1 },
+                      gap: 1,
+                    }),
+                  },
+                  { input: 'history-input', observed: 'history-observed' },
+                ),
               ]
             : []),
           ui.box(
@@ -380,9 +447,6 @@ export function frame<N extends Node>(
                     undefined,
                     text.refreshDefaultOperations,
                   ),
-                  ...(state.historyNext !== null
-                    ? [ui.button('deployment-history-more', text.moreOperations, !!state.pending)]
-                    : []),
                 ],
             { row: true, gap: 1, terminal: { wrap: true } },
           ),
@@ -464,10 +528,30 @@ export function frame<N extends Node>(
       'deployment-checkpoint-surface',
       [
         checkpoint,
-        out.frame.view,
         ...(state.bookmark.observed?.state.kind === 'failed' || state.restoreFailed
-          ? [ui.button('settings-checkpoint-retry', text.sourceRetry)]
+          ? [
+              ui.box(
+                'settings-save-error',
+                [
+                  ui.text(
+                    'settings-save-message',
+                    state.bookmark.command &&
+                      state.bookmark.command.sequence > (state.bookmark.observed?.sequence ?? 0)
+                      ? text.restoringView
+                      : text.viewSaveFailed,
+                    13,
+                    props.theme.warning,
+                  ),
+                  ...(state.bookmark.command &&
+                  state.bookmark.command.sequence > (state.bookmark.observed?.sequence ?? 0)
+                    ? []
+                    : [ui.button('settings-checkpoint-retry', text.reloadView)]),
+                ],
+                { row: true, gap: 1, terminal: { wrap: true } },
+              ),
+            ]
           : []),
+        out.frame.view,
       ],
       { gap: 0, terminal: { grow: 1 }, style: { width: fill, height: fill } },
     );
