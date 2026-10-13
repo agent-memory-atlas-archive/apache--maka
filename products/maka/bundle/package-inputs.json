@@ -69,6 +69,7 @@
   "reader": "plugins/ui/reader",
   "agent": "plugins/agent/agent",
   "workhub": "plugins/workhub/workhub",
+  "workspace-computer": "plugins/workspace/workspace-computer",
   "workspace-web": "plugins/workspace/workspace-web",
   "workspace-jev": "plugins/workspace/workspace-jev",
   "workspace-processes": "plugins/workspace/workspace-processes",

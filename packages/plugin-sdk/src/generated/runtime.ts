@@ -119,6 +119,10 @@ export type RuntimeProtocol =
   | ExecutorSetupAction
   | ExecutorSetupResult
   | ExecutorSetupProgress
+  | ComputerConfiguration
+  | ComputerEvaluate
+  | ComputerReplState
+  | ComputerResult
   | ProtocolProcessLaunch
   | AcpExecutorConfiguration
   | ExecutorOutcome
@@ -1418,7 +1422,7 @@ export type EditorCapture =
  */
 export type AgentWorkspaceAccess = 'read_only' | 'workspace_write';
 export type AgentToolInput = 'json' | 'skill' | 'web';
-export type AgentToolResult = 'json' | 'image';
+export type AgentToolResult = ('json' | 'image') | 'computer';
 export type AgentToolConfirmation = 'required' | 'preapproved';
 export type Network =
   | ('denied' | 'allowed')
@@ -1570,6 +1574,23 @@ export type ExecutorSetupProgress = {
   url: string;
   kind: 'authorization_url';
 };
+/**
+ * Selects the Host's local desktop or its Windows host when running in WSL.
+ * Executables and transport addresses are exclusively Host configuration.
+ */
+export type Desktop = 'auto' | 'local' | 'windows';
+export type ComputerReplState = 'fresh' | 'ready' | 'reset_required';
+export type ComputerResult =
+  | {
+      artifact: string;
+      state: ComputerReplState;
+      kind: 'completed';
+    }
+  | {
+      message: string;
+      state: ComputerReplState;
+      kind: 'failed';
+    };
 export type Scope = 'subtree' | 'exact';
 /**
  * Equal-path conflict priority is different from authority breadth: deny wins.
@@ -3903,6 +3924,11 @@ export type InteractionRequest =
   | {
       toolUseId: string;
       target: GrantTarget;
+      /**
+       * Agent-owned approvals expire with this original permission boundary.
+       * Older capability records without a boundary remain readable.
+       */
+      baseRevision?: number | null;
       kind: 'client_capability';
     };
 export type FormField = {
@@ -6870,6 +6896,29 @@ export interface ExecutorAuthenticationMethod {
   name: string;
   description?: string | null;
   supported: boolean;
+}
+export interface ComputerConfiguration {
+  desktop?: Desktop & string;
+  browsers?: BrowserConnection[];
+}
+/**
+ * An explicitly configured browser provider. The REPL cannot supply endpoints,
+ * restart a browser, switch profiles or enable remote debugging by itself.
+ */
+export interface BrowserConnection {
+  id: string;
+  endpoint: string;
+}
+export interface ComputerEvaluate {
+  code: string;
+  /**
+   * Wall-clock limit including asynchronous waits. Interrupted REPLs require reset.
+   */
+  timeout_ms?: number;
+  /**
+   * Short, user-facing description of this call, in the user’s language.
+   */
+  title?: string | null;
 }
 export interface ProtocolProcessLaunch {
   executable: string;

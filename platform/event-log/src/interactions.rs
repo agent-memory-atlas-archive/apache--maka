@@ -157,6 +157,7 @@ impl EventLog {
                             decision: maka_sandbox::grant::Decision::Allow { .. },
                             ..
                         }
+                        | InteractionOutcome::ClientCapabilityDecision { decision: Decision::Allow, .. }
                     ) {
                         permissions::require_revision(&mut tx, &record).await?;
                     }
@@ -170,7 +171,7 @@ impl EventLog {
                         committed_at,
                     } = &outcome
                     {
-                        let InteractionRequest::ClientCapability { target, .. } = &record.request
+                        let InteractionRequest::ClientCapability { target, base_revision, .. } = &record.request
                         else {
                             return Err(invalid("grant outcome requires capability request"));
                         };
@@ -178,9 +179,13 @@ impl EventLog {
                             session_id: record.session_id.clone(),
                             target: target.clone(),
                             granted_at: *committed_at,
+                            base_revision: *base_revision,
                         };
                         sqlx::query(
-                            "INSERT OR IGNORE INTO client_capability_session_grants VALUES (?, ?)",
+                            "INSERT INTO client_capability_session_grants VALUES (?, ?)
+                             ON CONFLICT(authority_key) DO UPDATE SET record_json=excluded.record_json
+                             WHERE json_extract(excluded.record_json,'$.baseRevision') >
+                               COALESCE(json_extract(client_capability_session_grants.record_json,'$.baseRevision'),-1)",
                         )
                         .bind(records::authority_key(&grant.session_id, &grant.target)?)
                         .bind(records::encode(&grant, 12 * 1024)?)
@@ -237,26 +242,48 @@ impl EventLog {
         target: &GrantTarget,
     ) -> Result<Option<SessionGrant>, StoreError> {
         self.validate_root()?;
-        let key = records::authority_key(session_id, target)?;
+        let session_id = session_id.to_owned();
+        let target = target.clone();
         self.connection
             .run(move |connection| {
                 Box::pin(async move {
-                    let raw: Option<String> = sqlx::query_scalar(
-                "SELECT record_json FROM client_capability_session_grants WHERE authority_key = ?"
-            ).bind(&key).fetch_optional(connection).await?;
-                    raw.map(|raw| {
-                        let grant: SessionGrant = records::decode(&raw, 12 * 1024)?;
-                        grant.validate().map_err(invalid)?;
-                        if records::authority_key(&grant.session_id, &grant.target)? != key {
-                            return Err(invalid("stored Session grant authority changed"));
-                        }
-                        Ok(grant)
-                    })
-                    .transpose()
+                    let mut tx = connection.begin().await?;
+                    let result = capability_grant(&mut tx, &session_id, &target).await?;
+                    tx.commit().await?;
+                    Ok(result)
                 })
             })
             .await
     }
+}
+
+/// Original grant and current permission boundary observed in one transaction.
+pub(crate) async fn capability_grant(
+    connection: &mut sqlx::SqliteConnection,
+    session: &str,
+    target: &GrantTarget,
+) -> Result<Option<SessionGrant>, StoreError> {
+    let key = records::authority_key(session, target)?;
+    let raw: Option<String> = sqlx::query_scalar(
+        "SELECT record_json FROM client_capability_session_grants WHERE authority_key = ?",
+    )
+    .bind(&key)
+    .fetch_optional(&mut *connection)
+    .await?;
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let grant: SessionGrant = records::decode(&raw, 12 * 1024)?;
+    grant.validate().map_err(invalid)?;
+    if records::authority_key(&grant.session_id, &grant.target)? != key {
+        return Err(invalid("stored Session grant authority changed"));
+    }
+    if let Some(revision) = grant.base_revision
+        && permissions::boundary_revision(connection, session).await? != Some(revision)
+    {
+        return Ok(None);
+    }
+    Ok(Some(grant))
 }
 
 /// Read inside the caller's observation transaction for a coherent projection.

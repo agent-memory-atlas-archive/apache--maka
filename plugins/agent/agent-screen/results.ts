@@ -299,7 +299,9 @@ export function querySucceeded(state: State, actions: Action[], request: Request
       if (
         record.sessionId !== request.sessionId ||
         record.requestId !== request.requestId ||
-        !['question', 'form', 'service_approval', 'permissions'].includes(record.request.kind) ||
+        !['question', 'form', 'service_approval', 'permissions', 'client_capability'].includes(
+          record.request.kind,
+        ) ||
         (question.record && !sameValue(question.record.request, record.request))
       ) {
         question.notice = 'interactionUnavailable';

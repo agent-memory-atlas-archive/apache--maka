@@ -257,6 +257,175 @@ async fn permission_receipts_preserve_partial_scope_and_revoke_by_boundary_revis
     log.close().await.unwrap();
 }
 
+#[tokio::test]
+async fn capability_approval_and_dispatch_share_the_original_permission_boundary() {
+    use maka_agent_facts::event::{
+        CommitError, EventWrite, Fact, Invocation, InvocationInput, RuntimeEvent,
+    };
+    use maka_agent_facts::tool_call::ToolCallIdentity;
+    use serde_json::{Value, json};
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("capability.sqlite");
+    let log = EventLog::open(&path).await.unwrap();
+    log.create_session("session", "create", &json!({"boundary_revision": 0}), 1)
+        .await
+        .unwrap();
+    let invocation = Invocation {
+        session_id: "session".into(),
+        turn_id: "turn".into(),
+        run_id: "run".into(),
+        invocation_id: "invocation".into(),
+    };
+    let event = |fact| EventWrite::plain(RuntimeEvent::new(invocation.clone(), fact)).unwrap();
+    log.append(&event(Fact::InvocationOpened {
+        input: InvocationInput::Message {
+            content: "Computer Use".into(),
+            source_messages: vec![],
+            request_fingerprint: None,
+        },
+        configuration: None,
+    }))
+    .await
+    .unwrap();
+    let make_request = |id: &str, revision| {
+        let mut record = request(id);
+        if let InteractionRequest::ClientCapability { base_revision, .. } = &mut record.request {
+            *base_revision = Some(revision);
+        }
+        record
+    };
+    let original = make_request("original", 0);
+    let target = target(&original).clone();
+    log.establish_run_interaction(&invocation, &original)
+        .await
+        .unwrap();
+    assert!(
+        log.commit_interaction_outcome("original", decision(Decision::Allow, 20))
+            .await
+            .unwrap()
+            .matches
+    );
+    let dispatch = |operation: &str| {
+        event(Fact::ToolDispatched {
+            presentation: None,
+            title: None,
+            operation_id: operation.into(),
+            call: ToolCallIdentity::standalone(format!("{operation}-call")),
+            name: "cua_operation".into(),
+            input: json!({}),
+        })
+    };
+    log.append_capability_dispatch(&dispatch("before"), &target, 0)
+        .await
+        .unwrap();
+    log.establish_run_interaction(&invocation, &make_request("pending", 0))
+        .await
+        .unwrap();
+    let session = log.get_session::<Value>("session").await.unwrap().unwrap();
+    assert!(matches!(
+        log.update_session_permissions("session", session.revision, 30, |value: &mut Value| {
+            value["boundary_revision"] = json!(1);
+            Ok(())
+        })
+        .await
+        .unwrap(),
+        maka_event_log::sessions::SessionMutation::Committed(_)
+    ));
+    assert!(
+        log.client_capability_grant("session", &target)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(matches!(
+        log.append_capability_dispatch(&dispatch("revoked"), &target, 0)
+            .await,
+        Err(CommitError::PermissionRevoked)
+    ));
+    let late = log
+        .commit_interaction_outcome("pending", decision(Decision::Allow, 31))
+        .await
+        .unwrap();
+    assert!(!late.matches);
+    assert!(matches!(
+        late.record.outcome,
+        Some(InteractionOutcome::Closure { .. })
+    ));
+    assert!(
+        log.establish_run_interaction(&invocation, &make_request("stale", 0))
+            .await
+            .is_err()
+    );
+    assert!(
+        matches!(
+            log.interaction("original").await.unwrap().unwrap().outcome,
+            Some(InteractionOutcome::ClientCapabilityDecision {
+                decision: Decision::Allow,
+                ..
+            })
+        ),
+        "revocation does not rewrite the original answer"
+    );
+    log.establish_run_interaction(&invocation, &make_request("renewed", 1))
+        .await
+        .unwrap();
+    assert!(
+        log.commit_interaction_outcome("renewed", decision(Decision::Allow, 40))
+            .await
+            .unwrap()
+            .matches
+    );
+    assert_eq!(
+        log.client_capability_grant("session", &target)
+            .await
+            .unwrap()
+            .unwrap()
+            .base_revision,
+        Some(1)
+    );
+    assert!(
+        matches!(
+            log.append_capability_dispatch(&dispatch("stale_worker"), &target, 0)
+                .await,
+            Err(CommitError::PermissionRevoked)
+        ),
+        "renewal cannot revive a worker captured under the old boundary"
+    );
+    log.append_capability_dispatch(&dispatch("after"), &target, 1)
+        .await
+        .unwrap();
+    log.close().await.unwrap();
+    let log = EventLog::open(&path).await.unwrap();
+    assert_eq!(
+        log.client_capability_grant("session", &target)
+            .await
+            .unwrap()
+            .unwrap()
+            .base_revision,
+        Some(1)
+    );
+    let events = log
+        .scoped_prefix(
+            maka_agent_facts::event::LogScope::Session {
+                id: "session".into(),
+            },
+            64,
+            1024 * 1024,
+        )
+        .await
+        .unwrap()
+        .events;
+    let admitted: Vec<_> = events
+        .iter()
+        .filter_map(|event| match &event.event.fact {
+            Fact::ToolDispatched { operation_id, .. } => Some(operation_id.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(admitted, ["before", "after"]);
+    log.close().await.unwrap();
+}
+
 fn request(id: &str) -> InteractionRecord {
     InteractionRecord {
         session_id: "session".into(),
@@ -266,6 +435,7 @@ fn request(id: &str) -> InteractionRecord {
         created_at: 10,
         request: InteractionRequest::ClientCapability {
             tool_use_id: "tool-use".into(),
+            base_revision: None,
             target: GrantTarget {
                 provider_id: "provider".into(),
                 contract_id: "contract".into(),

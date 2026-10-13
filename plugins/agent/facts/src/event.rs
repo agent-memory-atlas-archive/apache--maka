@@ -403,6 +403,9 @@ pub enum CommitError {
     /// This Session has stopped accepting work. No effect was admitted.
     #[error("session retired")]
     Retired,
+    /// A captured permission boundary changed before T1; no effect was admitted.
+    #[error("permission grant is no longer current")]
+    PermissionRevoked,
     #[error("event rejected: {0}")]
     Rejected(String),
     #[error("event commit outcome unknown: {0}")]

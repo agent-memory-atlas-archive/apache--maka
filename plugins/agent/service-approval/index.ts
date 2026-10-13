@@ -132,8 +132,15 @@ export function serviceApproval<N extends Node>(
     const ui = presentation.paint(props.theme),
       text = copy(props.locale),
       request = props.record.request;
+    const computer =
+      request.kind === 'client_capability' &&
+      request.target.capability === 'computer_use' &&
+      request.baseRevision != null;
     const available =
-      props.open && !props.busy && !props.record.outcome && request.kind === 'service_approval';
+      props.open &&
+      !props.busy &&
+      !props.record.outcome &&
+      (request.kind === 'service_approval' || computer);
     const page = state.page,
       end = page ? page.offset + bytes(page.text) : 0;
     const source: TimelineProps = {
@@ -172,7 +179,8 @@ export function serviceApproval<N extends Node>(
     };
     const choose = (decision: 'deny' | 'allow', label: string) => {
       const disabled =
-        !available || (decision === 'allow' && (!page || state.failed || !!state.pending));
+        !available ||
+        (decision === 'allow' && !computer && (!page || state.failed || !!state.pending));
       return ui.item
         ? ui.item(
             decision,
@@ -194,6 +202,12 @@ export function serviceApproval<N extends Node>(
           ),
           ...(props.status
             ? [ui.text('approval-status', props.status, 13, props.theme.muted)]
+            : []),
+          ...(computer
+            ? [
+                ui.text('computer-access-title', text.computerApprovalTitle, 16, props.theme.text),
+                ui.text('computer-access', text.computerApprovalDescription, 14, props.theme.text),
+              ]
             : []),
           ...(request.kind === 'service_approval'
             ? [
@@ -236,7 +250,8 @@ export function serviceApproval<N extends Node>(
             ? [
                 ui.text(
                   'approval-outcome',
-                  props.record.outcome.kind === 'service_approval_decision'
+                  props.record.outcome.kind === 'service_approval_decision' ||
+                    props.record.outcome.kind === 'client_capability_decision'
                     ? props.record.outcome.decision === 'allow'
                       ? text.approvalAllowed
                       : text.approvalDenied
@@ -249,13 +264,15 @@ export function serviceApproval<N extends Node>(
           ui.box(
             'approval-choice',
             [
-              choose('deny', text.approvalDeny),
-              choose('allow', text.approvalAllow),
+              choose('deny', computer ? text.computerApprovalDeny : text.approvalDeny),
+              choose('allow', computer ? text.computerApprovalAllow : text.approvalAllow),
               ui.button(
                 'submit',
                 text.approvalSubmit,
                 !available ||
-                  (state.decision === 'allow' && (!page || state.failed || !!state.pending)),
+                  (state.decision === 'allow' &&
+                    !computer &&
+                    (!page || state.failed || !!state.pending)),
               ),
             ],
             {
@@ -266,14 +283,18 @@ export function serviceApproval<N extends Node>(
               style: { wrap: true },
             },
           ),
-          presentation.slot('arguments', 'timeline', source, {
-            sourceBack: 'closed',
-            sourceFirst: 'first',
-            sourcePrevious: 'previous',
-            sourceNext: 'next',
-            sourceLast: 'last',
-            sourceRetry: 'retry',
-          }),
+          ...(!computer
+            ? [
+                presentation.slot('arguments', 'timeline', source, {
+                  sourceBack: 'closed',
+                  sourceFirst: 'first',
+                  sourcePrevious: 'previous',
+                  sourceNext: 'next',
+                  sourceLast: 'last',
+                  sourceRetry: 'retry',
+                }),
+              ]
+            : []),
         ],
         {
           visible: props.open,
@@ -331,9 +352,14 @@ export function serviceApproval<N extends Node>(
         else if (
           !props.busy &&
           !props.record.outcome &&
-          props.record.request.kind === 'service_approval'
+          (props.record.request.kind === 'service_approval' ||
+            (props.record.request.kind === 'client_capability' &&
+              props.record.request.target.capability === 'computer_use' &&
+              props.record.request.baseRevision != null))
         ) {
-          const reviewable = !!state.page && !state.failed && !state.pending;
+          const reviewable =
+            props.record.request.kind === 'client_capability' ||
+            (!!state.page && !state.failed && !state.pending);
           if (input.key === 'deny' || (input.key === 'allow' && reviewable))
             state.decision = input.key;
           else if (input.key === 'submit' && (state.decision === 'deny' || reviewable))

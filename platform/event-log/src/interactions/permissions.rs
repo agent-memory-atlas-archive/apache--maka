@@ -39,8 +39,16 @@ pub(super) async fn require_revision(
     connection: &mut sqlx::SqliteConnection,
     record: &InteractionRecord,
 ) -> Result<(), StoreError> {
-    if let InteractionRequest::Permissions { base_revision, .. } = &record.request
-        && boundary_revision(connection, &record.session_id).await? != Some(*base_revision)
+    let revision = match &record.request {
+        InteractionRequest::Permissions { base_revision, .. }
+        | InteractionRequest::ClientCapability {
+            base_revision: Some(base_revision),
+            ..
+        } => Some(*base_revision),
+        _ => None,
+    };
+    if let Some(revision) = revision
+        && boundary_revision(connection, &record.session_id).await? != Some(revision)
     {
         return Err(invalid("permission request has a stale Session boundary"));
     }
@@ -153,7 +161,10 @@ pub(crate) async fn close_previous_boundary(
     };
     let mut closed = 0;
     for record in super::pending(connection, session).await? {
-        if matches!(record.request, InteractionRequest::Permissions { base_revision, .. } if base_revision == previous)
+        if matches!(record.request,
+            InteractionRequest::Permissions { base_revision, .. }
+            | InteractionRequest::ClientCapability { base_revision: Some(base_revision), .. }
+            if base_revision == previous)
         {
             closure
                 .validate_for_request(&record.request)

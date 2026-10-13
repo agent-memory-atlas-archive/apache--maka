@@ -10772,6 +10772,13 @@ export const contracts = {
                       target: {
                         $ref: '#/$defs/GrantTarget',
                       },
+                      baseRevision: {
+                        description:
+                          'Agent-owned approvals expire with this original permission boundary.\nOlder capability records without a boundary remain readable.',
+                        type: ['integer', 'null'],
+                        format: 'uint64',
+                        minimum: 0,
+                      },
                       kind: {
                         type: 'string',
                         const: 'client_capability',
@@ -14364,6 +14371,13 @@ export const contracts = {
                       },
                       target: {
                         $ref: '#/$defs/GrantTarget',
+                      },
+                      baseRevision: {
+                        description:
+                          'Agent-owned approvals expire with this original permission boundary.\nOlder capability records without a boundary remain readable.',
+                        type: ['integer', 'null'],
+                        format: 'uint64',
+                        minimum: 0,
                       },
                       kind: {
                         type: 'string',
@@ -45295,6 +45309,167 @@ export const contracts = {
                 required: ['enabled', 'url', 'model', 'timeoutMs'],
               },
             },
+          },
+          resources: {},
+        },
+      },
+    },
+  },
+  workspaceComputer: {
+    name: 'maka.workspace.Computer',
+    version: 1,
+    transport: 'remote',
+    interface: {
+      kind: 'service',
+      methods: {
+        evaluate: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              code: {
+                type: 'string',
+                maxLength: 65536,
+              },
+              timeout_ms: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 1,
+                description:
+                  'Wall-clock limit including asynchronous waits. Interrupted REPLs require reset.',
+                maximum: 120000,
+                default: 30000,
+              },
+              title: {
+                type: ['string', 'null'],
+                description: 'Short, user-facing description of this call, in the user’s language.',
+                maxLength: 256,
+              },
+            },
+            required: ['code'],
+            title: 'ComputerEvaluate',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  artifact: {
+                    type: 'string',
+                  },
+                  state: {
+                    $ref: '#/$defs/ComputerReplState',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'artifact', 'state'],
+                description:
+                  "Immutable output in this original invocation's Session/Turn. The explicit\nAgent output projection consumes it; the identifier is not a read grant.",
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  state: {
+                    $ref: '#/$defs/ComputerReplState',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message', 'state'],
+              },
+            ],
+            title: 'ComputerResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              ComputerReplState: {
+                type: 'string',
+                enum: ['fresh', 'ready', 'reset_required'],
+              },
+            },
+          },
+          resources: {},
+        },
+        reset: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            properties: {},
+            additionalProperties: false,
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  artifact: {
+                    type: 'string',
+                  },
+                  state: {
+                    $ref: '#/$defs/ComputerReplState',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'artifact', 'state'],
+                description:
+                  "Immutable output in this original invocation's Session/Turn. The explicit\nAgent output projection consumes it; the identifier is not a read grant.",
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  state: {
+                    $ref: '#/$defs/ComputerReplState',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message', 'state'],
+              },
+            ],
+            title: 'ComputerResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              ComputerReplState: {
+                type: 'string',
+                enum: ['fresh', 'ready', 'reset_required'],
+              },
+            },
+          },
+          resources: {},
+        },
+        state: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            properties: {},
+            additionalProperties: false,
+          },
+          output: {
+            type: 'string',
+            enum: ['fresh', 'ready', 'reset_required'],
+            title: 'ComputerReplState',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
           },
           resources: {},
         },

@@ -70,10 +70,15 @@ fn request(v: &Value) -> Result<InteractionRequest> {
             }
         }
         Some("client_capability") => {
-            shape(v, &["kind", "toolUseId", "target"])?;
+            if v.get("baseRevision").is_some() {
+                shape(v, &["kind", "toolUseId", "target", "baseRevision"])?;
+            } else {
+                shape(v, &["kind", "toolUseId", "target"])?;
+            }
             InteractionRequest::ClientCapability {
                 tool_use_id: field(v, "toolUseId")?,
                 target: field(v, "target")?,
+                base_revision: field(v, "baseRevision")?,
             }
         }
         Some("form") => {

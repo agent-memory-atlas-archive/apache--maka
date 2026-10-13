@@ -188,7 +188,9 @@ export function headerView<N extends Node>(
           ]),
       ...((target === 'desktop' ? state.interactions?.entries : [])
         ?.filter((entry) =>
-          ['question', 'form', 'service_approval', 'permissions'].includes(entry.kind),
+          ['question', 'form', 'service_approval', 'permissions', 'client_capability'].includes(
+            entry.kind,
+          ),
         )
         .map((entry, index) =>
           ui.button(

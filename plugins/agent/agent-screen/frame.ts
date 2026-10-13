@@ -151,7 +151,8 @@ export function frame<N extends Node>(
     target === 'tui' && (state.dialog === 'approval' || state.dialog === 'question');
   const interactionSlots = [
     ...(state.interaction?.record?.request.kind === 'service_approval' ||
-    state.interaction?.record?.request.kind === 'permissions'
+    state.interaction?.record?.request.kind === 'permissions' ||
+    state.interaction?.record?.request.kind === 'client_capability'
       ? [
           presentation.slot(
             `${state.interaction.record.request.kind === 'permissions' ? 'permission' : 'service'}-approval-${state.interaction.attempt}`,
@@ -466,7 +467,9 @@ export function frame<N extends Node>(
               : state.dialog === 'approval'
                 ? state.interaction?.record?.request.kind === 'permissions'
                   ? text.permissionApprovalTitle
-                  : text.approvalTitle
+                  : state.interaction?.record?.request.kind === 'client_capability'
+                    ? text.computerApprovalTitle
+                    : text.approvalTitle
                 : state.dialog === 'directories'
                   ? text.directoryTitle
                   : state.dialog === 'details'

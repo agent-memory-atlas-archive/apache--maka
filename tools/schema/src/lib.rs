@@ -140,6 +140,10 @@ pub fn catalog() -> Value {
         root::<maka_agent_api::executor::setup::Action>(&mut g),
         root::<maka_agent_api::executor::setup::Outcome>(&mut g),
         root::<maka_agent_api::executor::setup::Progress>(&mut g),
+        root::<maka_workspace_api::computer::Configuration>(&mut g),
+        root::<maka_workspace_api::computer::Evaluate>(&mut g),
+        root::<maka_workspace_api::computer::ReplState>(&mut g),
+        root::<maka_workspace_api::computer::ResultValue>(&mut g),
         root::<maka_workspace_api::protocol::Launch>(&mut g),
         root::<maka_agent_api::acp::Configuration>(&mut g),
         root::<maka_agent_ports::executor::Outcome>(&mut g),
@@ -369,6 +373,8 @@ pub fn catalog() -> Value {
         "workspaceWeb": maka_web_api::contract(),
         "workspaceJev": maka_workspace_api::jev::contract(),
     });
+    contracts["workspaceComputer"] =
+        serde_json::to_value(maka_workspace_api::computer::contract()).expect("Computer contract");
     contracts["settingsSetup"] =
         serde_json::to_value(maka_settings_native::contract::setup_contract())
             .expect("setup contract");
@@ -402,6 +408,7 @@ pub fn catalog() -> Value {
         "agent": maka_agent_api::native(),
         "acpExecutor": maka_agent_api::acp::native(),
         "workhub": maka_agent_api::workhub::native(),
+        "workspaceComputer": maka_workspace_api::computer::native(),
         "workspaceFiles": maka_workspace_api::files::native(),
         "workspaceProcesses": maka_workspace_api::processes::native(),
         "protocolProcesses": maka_workspace_api::protocol::native(),
@@ -431,6 +438,7 @@ pub fn catalog() -> Value {
             "skillLibrary": maka_skills_api::configuration_schema(),
             "workspaceProcesses": maka_workspace_api::processes::configuration_schema(),
             "protocolProcesses": maka_workspace_api::processes::configuration_schema(),
+            "workspaceComputer": maka_workspace_api::computer::configuration_schema(),
             "workspaceWeb": maka_web_api::configuration_schema(),
             "workspaceJev": maka_workspace_api::jev::configuration_schema(),
         },

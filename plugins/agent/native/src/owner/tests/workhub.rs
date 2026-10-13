@@ -1298,6 +1298,21 @@ async fn workhub_stop_retracts_only_its_pending_message_and_preserves_unrelated_
         assert_eq!(query_import(&fixture,hub::EXPORT,"task",json!({"taskId":queued["taskId"]})).await["status"]["progress"]["kind"],"cancelled");
         assert_eq!(query_import(&fixture,"worker","observe",json!({"sessionId":worker})).await["run"]["invocationId"],busy["invocationId"]);
         response(&mut running).await;idle(&fixture,"worker",&worker).await;
+        // Retraction reports its terminal outcome to the coordinator. Observe
+        // that original cancellation notice before checking for duplicate work.
+        let (mut notice, _) = listener.accept().await.unwrap();
+        let input = request(&mut notice).await;
+        assert!(is_coordinator(&input), "retracted worker was dispatched: {input}");
+        let text = input["messages"].as_array().unwrap().iter().rev()
+            .find(|message| message["role"] == "user").unwrap()["content"]
+            .as_str().unwrap();
+        let observation: Value = serde_json::from_str(
+            text.split_once("Original worker observation:\n").unwrap().1
+        ).unwrap();
+        assert_eq!(observation["taskId"], queued["taskId"]);
+        assert_eq!(observation["status"]["progress"]["kind"], "cancelled");
+        response(&mut notice).await;
+        idle(&fixture, EXPORT, &coordinator).await;
         assert!(tokio::time::timeout(Duration::from_millis(30),listener.accept()).await.is_err());
         fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
     }).await.unwrap();

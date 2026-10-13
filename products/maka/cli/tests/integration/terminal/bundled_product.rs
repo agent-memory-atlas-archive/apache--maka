@@ -409,12 +409,24 @@ fn bundled_ui_authoring_installs_and_reloads_original_source_without_replaying()
     });
     let mut resumed = Pty::spawn(&["application", "launch", "--root", ui.to_str().unwrap()]);
     resumed.wait_until_with_timeout(|screen| screen.contains("设置"), Duration::from_secs(45));
-    // Let the reload's recovery callback publish its original receipt before exit.
-    let deadline = Instant::now() + Duration::from_secs(1);
-    while Instant::now() < deadline {
-        resumed.read();
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    // A visible reload precedes its original receipt publication. Keep reading
+    // the terminal until both accepted requests settle, without replaying either.
+    use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
+    let mut sql = runtime
+        .block_on(SqliteConnection::connect_with(
+            &SqliteConnectOptions::new()
+                .filename(host.join(maka_event_log::root::ROOT_DATABASE))
+                .read_only(true),
+        ))
+        .unwrap();
+    resumed.wait_until_with_timeout(|_| {
+        runtime.block_on(sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM plugin_data WHERE package_id=? AND scope_id=? AND key IN (?, ?) AND json_extract(value_json,'$.state.status')='completed'"
+        ).bind(namespace.package()).bind(String::from(namespace.scope().clone()))
+        .bind(format!("{prefix}request/{}", ids[0])).bind(format!("{prefix}request/{}", ids[1]))
+        .fetch_one(&mut sql)).unwrap() == 2
+    }, Duration::from_secs(30));
+    runtime.block_on(sql.close()).unwrap();
     resumed.send(b"\x11");
     resumed.finish();
     runtime.block_on(async {

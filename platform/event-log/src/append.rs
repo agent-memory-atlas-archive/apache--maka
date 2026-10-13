@@ -34,17 +34,39 @@ impl EventLog {
     /// until Session removal completes, after which all writes are rejected.
     /// This must not enclose effects: live dispatch and outcome remain separate.
     pub async fn append_batch(&self, events: &[EventWrite]) -> Result<Vec<u64>, CommitError> {
-        self.append_batch_checked(events)
+        self.append_batch_checked(events, None)
             .await
-            .map_err(|error| match error {
-                StoreError::CommitUnknown(error) => CommitError::OutcomeUnknown(error.to_string()),
-                StoreError::OperationUnknown => CommitError::OutcomeUnknown(error.to_string()),
-                StoreError::SessionRetired => CommitError::Retired,
-                other => CommitError::Rejected(other.to_string()),
-            })
+            .map_err(commit_error)
     }
 
-    async fn append_batch_checked(&self, events: &[EventWrite]) -> Result<Vec<u64>, StoreError> {
+    /// A selected native executor checks its original capability grant in the
+    /// same transaction as T1. Revocation cannot race a separate grant read.
+    /// This compares existing authority; it neither creates a grant nor runs effects.
+    pub async fn append_capability_dispatch(
+        &self,
+        event: &EventWrite,
+        target: &maka_agent_facts::interaction::GrantTarget,
+        base_revision: u64,
+    ) -> Result<u64, CommitError> {
+        if !matches!(event.event().fact, Fact::ToolDispatched { .. }) {
+            return Err(CommitError::Rejected(
+                "capability admission requires a tool dispatch".into(),
+            ));
+        }
+        self.append_batch_checked(
+            std::slice::from_ref(event),
+            Some((target.clone(), base_revision)),
+        )
+        .await
+        .map(|sequences| sequences[0])
+        .map_err(commit_error)
+    }
+
+    async fn append_batch_checked(
+        &self,
+        events: &[EventWrite],
+        capability: Option<(maka_agent_facts::interaction::GrantTarget, u64)>,
+    ) -> Result<Vec<u64>, StoreError> {
         self.validate_root()?;
         let events = events.to_vec();
         let commits = self.commits.clone();
@@ -55,6 +77,17 @@ impl EventLog {
                     let mut sequences = Vec::with_capacity(events.len());
                     let mut last_inserted = None;
                     for event in &events {
+                        if let Some((target, revision)) = &capability
+                            && crate::interactions::capability_grant(
+                                &mut transaction,
+                                &event.event().invocation.session_id,
+                                target,
+                            )
+                            .await?
+                            .is_none_or(|grant| grant.base_revision != Some(*revision))
+                        {
+                            return Err(StoreError::PermissionRevoked);
+                        }
                         let result = Self::append_in_transaction(&mut transaction, event).await?;
                         let sequence = match result {
                             AppendResult::Existing(sequence) => sequence,
@@ -196,6 +229,16 @@ impl EventLog {
             crate::sessions::advance_revision(transaction, &event.invocation.session_id).await?;
         }
         Ok(AppendResult::Inserted(sequence))
+    }
+}
+
+fn commit_error(error: StoreError) -> CommitError {
+    match error {
+        StoreError::CommitUnknown(error) => CommitError::OutcomeUnknown(error.to_string()),
+        StoreError::OperationUnknown => CommitError::OutcomeUnknown(error.to_string()),
+        StoreError::SessionRetired => CommitError::Retired,
+        StoreError::PermissionRevoked => CommitError::PermissionRevoked,
+        other => CommitError::Rejected(other.to_string()),
     }
 }
 

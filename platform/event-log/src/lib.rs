@@ -102,6 +102,8 @@ pub enum StoreError {
     SessionNotFound,
     #[error("session retired")]
     SessionRetired,
+    #[error("permission grant is no longer current")]
+    PermissionRevoked,
     #[error("session has an unsealed invocation")]
     SessionBusy,
     #[error("catalog revision changed from {expected} to {actual}")]

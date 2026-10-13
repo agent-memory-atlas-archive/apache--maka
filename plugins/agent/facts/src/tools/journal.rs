@@ -165,6 +165,9 @@ impl ToolJournal {
                     crate::event::CommitError::Retired => {
                         ToolError::Failed("session retired before effect".into())
                     }
+                    crate::event::CommitError::PermissionRevoked => {
+                        ToolError::Failed("permission grant is no longer current".into())
+                    }
                     other => ToolError::Persistence(other.to_string()),
                 })?;
 

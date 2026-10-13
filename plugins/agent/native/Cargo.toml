@@ -66,6 +66,7 @@ tokio-util.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+maka-computer-native.workspace = true
 maka-external-agent.workspace = true
 maka-interactions-api.workspace = true
 maka-packages.workspace = true

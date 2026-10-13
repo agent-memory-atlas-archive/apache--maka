@@ -26,6 +26,7 @@ export const agentImports = {
     cardinality: { kind: 'many', min: 0, max: 8 },
   },
   executors: { contract: sdk.contracts.executor, cardinality: { kind: 'many', min: 0, max: 8 } },
+  computer: { contract: sdk.contracts.workspaceComputer, cardinality: { kind: 'optional' } },
   web: { contract: sdk.contracts.workspaceWeb, cardinality: { kind: 'optional' } },
   skills: { contract: sdk.contracts.skillLibrary, cardinality: { kind: 'optional' } },
   forms: { contract: sdk.contracts.forms, cardinality: { kind: 'optional' } },

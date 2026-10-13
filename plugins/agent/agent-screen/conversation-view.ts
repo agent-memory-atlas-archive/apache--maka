@@ -289,11 +289,7 @@ export function conversationView<N extends Node>(
         : state.modelSetup === 'connect'
           ? text.configureModels
           : text.chooseModel,
-      enabled:
-        !!state.selected &&
-        !state.selected.archived &&
-        !state.loading &&
-        state.notice !== 'unavailable',
+      enabled: !!state.selected && !state.selected.archived && state.notice !== 'unavailable',
       command: state.command,
       autoFocus: !state.searchOpen && state.browse === null,
       hasAttachments: attached.length > 0,

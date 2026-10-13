@@ -103,13 +103,17 @@ impl Owner {
         };
         // Each supported producer owns its policy; the store commits only the
         // original bounded answer and current permission boundary.
-        if !matches!(
-            record.request,
-            InteractionRequest::Question { .. }
-                | InteractionRequest::ServiceApproval { .. }
-                | InteractionRequest::Permissions { .. }
-                | InteractionRequest::Form { .. }
-        ) {
+        let computer = matches!(&record.request, InteractionRequest::ClientCapability { target, base_revision: Some(_), .. }
+            if target == &maka_workspace_api::computer::target());
+        if !computer
+            && !matches!(
+                record.request,
+                InteractionRequest::Question { .. }
+                    | InteractionRequest::ServiceApproval { .. }
+                    | InteractionRequest::Permissions { .. }
+                    | InteractionRequest::Form { .. }
+            )
+        {
             return reject(InteractionRejection::Unsupported);
         }
         if !matches!(
@@ -118,6 +122,7 @@ impl Owner {
                 | InteractionAnswer::ServiceApproval { .. }
                 | InteractionAnswer::Permissions { .. }
                 | InteractionAnswer::Form { .. }
+                | InteractionAnswer::ClientCapability { .. }
         ) || input.answer.validate_for_request(&record.request).is_err()
         {
             return reject(InteractionRejection::InvalidAnswer);

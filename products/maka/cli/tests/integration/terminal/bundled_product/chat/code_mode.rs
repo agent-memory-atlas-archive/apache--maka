@@ -26,7 +26,7 @@ use maka_agent_facts::{
 use maka_event_log::{EventLog, message_admissions::PendingMessageAdmission};
 use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
 
-fn tool_response(socket: &mut TcpStream, name: &str, input: serde_json::Value) {
+pub(super) fn tool_response(socket: &mut TcpStream, name: &str, input: serde_json::Value) {
     packet(
         socket,
         json!({"id":"code-model","choices":[{"index":0,"delta":{"tool_calls":[{
@@ -69,24 +69,12 @@ fn default_product_restores_accepted_code_mode_and_original_native_effect() {
     // The standard Host is nested inside an already owned UI Root.
     drop(RootOwner::create(&ui, &namespaces).unwrap());
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    runtime.block_on(async {
-        let owner = Arc::new(RootOwner::create(&host, &namespaces).unwrap());
-        let config = Arc::new(maka_config::ConfigurationStore::for_root(owner).await.unwrap());
-        let provider = json!({"packageId":"maka.providers","entryId":"maka.providers","scope":"profile","name":"openai-compatible"});
-        let CatalogMutationResult::Committed { connection: Some(basis), .. } = config.create_connection(serde_json::from_value(json!({
-            "expectedCatalogRevision":0,"connection":{"slug":"chat-fixture","name":"Chat fixture","provider":provider,"configuration":{"baseUrl":base},"enabled":true,"enabledModelIds":["fixture-model"],
-            "modelOverrides":{"fixture-model":{"codeMode":true,"applyPatch":false}}}
-        })).unwrap()).await.unwrap() else { panic!("connection commit") };
-        let maka_config::oauth::enrollment::LoginPreparation::Ready(ticket) = config.prepare_oauth_login(serde_json::from_value(json!({
-            "expectedCredential":null,"attemptId":Uuid::new_v4().to_string(),
-            "target":{"kind":"existing","expected":{"connectionId":basis.connection_id,"revision":basis.revision,"provider":provider,"slug":"chat-fixture","configuration":{"baseUrl":base}},"configuration":{"baseUrl":base}},
-            "authentication":{"method":"api-key","input":{"apiKey":"chat-fixture-key"}}
-        })).unwrap()).await.unwrap() else { panic!("credential preparation") };
-        assert!(ticket.claim().await.unwrap());
-        assert!(matches!(ticket.complete(maka_agent_facts::provider::Credential {secret:"chat-fixture-key".into(),refresh_at:None},1).await.unwrap(), maka_config::oauth::enrollment::LoginCompletion::Committed(_)));
-        assert!(matches!(config.set_default_target(serde_json::from_value(json!({"expectedCatalogRevision":config.catalog().await.unwrap().revision,"target":{"connectionId":basis.connection_id,"modelId":"fixture-model"}})).unwrap()).await.unwrap(),CatalogMutationResult::Committed{..}));
-        config.shutdown().await.unwrap();
-    });
+    runtime.block_on(seed_connection(
+        &host,
+        &namespaces,
+        &base,
+        json!({"fixture-model":{"codeMode":true,"applyPatch":false}}),
+    ));
     // Use the standard installer, including every default native tool provider.
     let mut tui = Pty::spawn(&[
         "application",

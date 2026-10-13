@@ -459,7 +459,9 @@ export function reviewTarget(state: State) {
     };
   const entry = state.interactions?.entries.find(
     (entry) =>
-      ['question', 'form', 'service_approval', 'permissions'].includes(entry.kind) &&
+      ['question', 'form', 'service_approval', 'permissions', 'client_capability'].includes(
+        entry.kind,
+      ) &&
       !(
         retained?.sessionId === state.selected?.id &&
         retained?.requestId === entry.requestId &&
@@ -609,7 +611,6 @@ export function rootCommands(
         !route ||
         !state.selected ||
         state.selected.archived ||
-        state.loading ||
         !review ||
         (mutationPending(state) && !review.retained),
     },

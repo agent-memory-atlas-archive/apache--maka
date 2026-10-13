@@ -212,6 +212,7 @@ async fn reopened_committed_call_without_dispatch_is_durably_known_not_executed(
             request_id: "approval".into(),
             created_at: 1,
             request: InteractionRequest::ClientCapability {
+                base_revision: None,
                 tool_use_id: "step:call".into(),
                 target: target.clone(),
             },

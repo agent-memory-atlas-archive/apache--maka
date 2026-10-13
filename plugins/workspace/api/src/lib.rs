@@ -18,6 +18,7 @@
  */
 
 //! Workspace plugin contracts, shared by native providers and authoring tools.
+pub mod computer;
 pub mod files;
 pub mod jev;
 pub mod processes;

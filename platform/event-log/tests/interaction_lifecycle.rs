@@ -36,6 +36,7 @@ fn request(id: &str) -> InteractionRecord {
         created_at: 10,
         request: InteractionRequest::ClientCapability {
             tool_use_id: "tool-use".into(),
+            base_revision: None,
             target: GrantTarget {
                 provider_id: "provider".into(),
                 contract_id: "contract".into(),

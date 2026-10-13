@@ -139,8 +139,12 @@ impl InteractionRequest {
             Self::ClientCapability {
                 tool_use_id,
                 target,
+                base_revision,
             } => {
-                if tool_use_id.is_empty() || tool_use_id.len() > 256 {
+                if tool_use_id.is_empty()
+                    || tool_use_id.len() > 256
+                    || base_revision.is_some_and(|revision| revision > MAX_SAFE_INTEGER)
+                {
                     return Err("Invalid interaction tool use identity");
                 }
                 target.validate()?;
@@ -304,7 +308,11 @@ impl SessionGrant {
     pub fn validate(&self) -> Result<(), &'static str> {
         entity_id(&self.session_id)?;
         self.target.validate()?;
-        if self.granted_at > MAX_SAFE_INTEGER {
+        if self.granted_at > MAX_SAFE_INTEGER
+            || self
+                .base_revision
+                .is_some_and(|revision| revision > MAX_SAFE_INTEGER)
+        {
             return Err("Invalid grant timestamp");
         }
         Ok(())
