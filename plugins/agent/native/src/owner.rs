@@ -36,6 +36,7 @@ mod queue;
 mod recall;
 mod scheduler;
 mod skills;
+mod todo;
 mod work;
 mod worktrees;
 use maka_agent_facts::composition::SourceKind;
@@ -113,6 +114,7 @@ pub(crate) struct Owner {
     pub store: Arc<EventLog>,
     pub recall: Arc<recall::Recall>,
     scheduler: Arc<scheduler::Scheduler>,
+    todo: Arc<todo::Todo>,
     pub settings: Configuration,
     pub prefix: String,
     pub data_source: DataSource,
@@ -250,6 +252,10 @@ impl Owner {
         if settings.scheduled_tasks {
             additional.extend(scheduler.tools());
         }
+        let todo = Arc::new(todo::Todo::new(persistence.store().clone(), prefix.clone()));
+        if settings.todo {
+            additional.extend(todo.tools());
+        }
         let internal_tools = additional
             .iter()
             .map(|tool| tool.definition.clone())
@@ -302,7 +308,8 @@ impl Owner {
             cells,
             Arc::new(crate::model::Prices(configuration.clone())),
         );
-        let owner = Arc::new(Self {
+        Ok(Arc::new(Self {
+            todo,
             scheduler,
             recall,
             store: persistence.store().clone(),
@@ -333,8 +340,7 @@ impl Owner {
             producers: TaskTracker::new(),
             producer_gate: Arc::default(),
             stop,
-        });
-        Ok(owner)
+        }))
     }
     pub fn operation_id(&self, operation: &maka_plugin_core::operation::RecoveryRef) -> String {
         // Use the actual complete original reference. UUIDs alone do not name
@@ -960,12 +966,14 @@ impl Owner {
             owner.workers.wait().await;
             owner.engine.drain().await;
             let scheduler = owner.scheduler.finish().await;
+            let todo = owner.todo.finish().await;
             let configuration = owner.configuration.shutdown().await;
             let runs = owner.runs.lock().await;
             if !runs.quarantined.is_empty() {
                 return Err("agent_cleanup_unconfirmed".into());
             }
             scheduler?;
+            todo?;
             configuration.map_err(|_| "agent_configuration_cleanup_unconfirmed".into())
         })
     }

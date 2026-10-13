@@ -299,6 +299,8 @@ export function select(state: State, actions: Action[], session: AgentSession | 
   state.recallAnchor = null;
   state.selected = session;
   state.epoch++;
+  state.checklist = { watch: null, page: null, failed: false };
+  if (session) watchChecklist(state);
   state.window = visit?.window ?? null;
   if (visit?.window) visit.following = false;
   state.source = visit?.source ?? null;
@@ -324,6 +326,18 @@ export function select(state: State, actions: Action[], session: AgentSession | 
   state.loading = session !== null;
   state.notice = null;
   if (session) observe(state, actions);
+}
+
+export function watchChecklist(state: State, offset = 0) {
+  if (!state.selected) return;
+  state.checklist = {
+    watch: {
+      key: `checklist-${++state.serial}`,
+      input: { sessionId: state.selected.id, offset },
+    },
+    page: null,
+    failed: false,
+  };
 }
 
 export function readHistorySource(state: State, actions: Action[], position: SourcePosition) {
@@ -669,6 +683,13 @@ export function rootCommands(
         ]
       : []),
     {
+      kind: 'checklist-open',
+      id: 'checklist-open',
+      label: text.checklistTitle,
+      hint: '',
+      disabled: !route || !state.selected || state.checklist.page?.enabled === false,
+    },
+    {
       kind: 'details-open',
       id: 'details-open',
       label: text.detailsTitle,
@@ -863,7 +884,11 @@ export function rootCommand(
     if (target === 'tui') state.inspector = state.inspector === 'terminal' ? null : 'terminal';
     else state.dialog = 'terminal';
   } else if (kind === 'skills-open') state.dialog = 'skills';
-  else if (kind === 'details-open') {
+  else if (kind === 'checklist-open') {
+    if (!state.checklist.watch) watchChecklist(state);
+    if (target === 'tui') state.inspector = state.inspector === 'checklist' ? null : 'checklist';
+    else state.dialog = 'checklist';
+  } else if (kind === 'details-open') {
     if (target === 'tui') state.inspector = state.inspector === 'details' ? null : 'details';
     else state.dialog = 'details';
   } else if (kind === 'usage-open' && state.selected) openUsage(state, state.selected);

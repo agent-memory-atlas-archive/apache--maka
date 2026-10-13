@@ -29,6 +29,9 @@ use std::collections::BTreeMap;
 
 #[path = "contract_imports.rs"]
 mod imports;
+#[path = "contract_todo.rs"]
+mod todo;
+pub use todo::*;
 #[path = "contract_scheduler.rs"]
 mod scheduler;
 pub use scheduler::*;
@@ -67,6 +70,9 @@ pub struct Configuration {
     /// Enable model proposals and approved scheduled work for this Agent.
     #[serde(default)]
     pub scheduled_tasks: bool,
+    /// Enable the session-scoped, model-maintained checklist.
+    #[serde(default)]
+    pub todo: bool,
     /// Explicit access to this Agent’s earlier conversations for model tools.
     #[serde(default)]
     pub recall: bool,
@@ -1060,6 +1066,14 @@ pub fn contract() -> Contract {
                         output: schemars::schema_for!(ToolNames).into(),
                         resources: BTreeMap::new(),
                     },
+                ),
+                (
+                    "checklist".into(),
+                    method::<ChecklistRead, Checklist>(MethodMode::Query),
+                ),
+                (
+                    "watchChecklist".into(),
+                    method::<ChecklistRead, Checklist>(MethodMode::Subscription),
                 ),
                 (
                     "schedules".into(),

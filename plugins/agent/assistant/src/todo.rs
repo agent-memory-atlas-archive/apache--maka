@@ -27,11 +27,12 @@ use std::sync::Arc;
 use tokio::sync::watch;
 
 pub const ID: &str = "maka.todo";
-const MAX_ITEMS: usize = 200;
+pub const MAX_ITEMS: usize = 200;
 const MAX_CONTENT_CHARS: usize = 200;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(rename = "AgentTodoItem")]
 pub struct Item {
     #[schemars(length(min = 1, max = MAX_CONTENT_CHARS))]
     pub content: String,
@@ -39,6 +40,7 @@ pub struct Item {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[schemars(rename = "AgentTodoStatus")]
 pub enum Status {
     Pending,
     InProgress,

@@ -75,6 +75,7 @@ export function agentScreen<N extends Node>(
         scheduledTasks,
         web,
         jev,
+        checklist: { watch: null, page: null, failed: false },
         scheduleAlerts: { pending: 0, reminders: [] },
         scheduleWatch: scheduledTasks ? 'schedule-alerts-initial' : null,
         scheduleRequested: null,

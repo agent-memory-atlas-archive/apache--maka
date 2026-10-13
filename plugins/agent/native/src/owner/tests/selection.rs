@@ -719,12 +719,15 @@ async fn accepted_code_mode_survives_settings_changes_and_legacy_messages_remain
             ModelOverride {
                 code_mode: Some(true),
                 apply_patch: Some(false),
+                context_window: Some(1_000_000),
+                input_limit: Some(900_000),
+                compaction_threshold: Some(700_000),
                 ..Default::default()
             },
         )]));
     })
     .await;
-    let (source, _) = crate::model::Source::select(
+    let (source, prepared) = crate::model::Source::select(
         fixture.config.clone(),
         fixture.owner.credentials.clone(),
         fixture.selection().await,
@@ -739,6 +742,10 @@ async fn accepted_code_mode_survives_settings_changes_and_legacy_messages_remain
         source.accepted.editing_tools,
         Some(maka_agent_facts::execution::EditingTools::Structured)
     );
+    let context = prepared.context.unwrap();
+    assert_eq!(context.model_context_window, Some(1_000_000));
+    assert_eq!(context.context_window, Some(900_000));
+    assert_eq!(context.declared_window, Some(700_000));
     let stored = serde_json::to_value(&source.accepted).unwrap();
     edit(&fixture, |changes| {
         changes.model_overrides = Patch::Set(BTreeMap::from([(
@@ -746,6 +753,8 @@ async fn accepted_code_mode_survives_settings_changes_and_legacy_messages_remain
             ModelOverride {
                 code_mode: Some(false),
                 apply_patch: Some(true),
+                context_window: Some(128_000),
+                input_limit: Some(96_000),
                 ..Default::default()
             },
         )]));
@@ -759,13 +768,13 @@ async fn accepted_code_mode_survives_settings_changes_and_legacy_messages_remain
         fixture.owner.revision.clone(),
     )
     .unwrap();
-    restored.capture().await.unwrap();
+    assert_eq!(restored.capture().await.unwrap().context, Some(context));
     assert_eq!(restored.accepted.tool_mode, ToolMode::CodeMode);
     assert_eq!(
         restored.accepted.editing_tools,
         Some(maka_agent_facts::execution::EditingTools::Structured)
     );
-    let (next, _) = crate::model::Source::select(
+    let (next, prepared) = crate::model::Source::select(
         fixture.config.clone(),
         fixture.owner.credentials.clone(),
         fixture.selection().await,
@@ -775,6 +784,10 @@ async fn accepted_code_mode_survives_settings_changes_and_legacy_messages_remain
     )
     .await
     .unwrap();
+    let context = prepared.context.unwrap();
+    assert_eq!(context.model_context_window, Some(128_000));
+    assert_eq!(context.context_window, Some(96_000));
+    assert_eq!(context.declared_window, Some(81_600));
     assert_eq!(next.accepted.tool_mode, ToolMode::Direct);
     assert_eq!(
         next.accepted.editing_tools,

@@ -116,6 +116,7 @@ export function installation(
     maxSteps: 16,
     recall: true,
     scheduledTasks: true,
+    todo: true,
     tools,
     skillLibrary: 'skills',
   };

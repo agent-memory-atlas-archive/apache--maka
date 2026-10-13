@@ -226,6 +226,8 @@ pub fn catalog() -> Value {
         root::<maka_skills_api::contract::PreparationRecord>(&mut g),
         root::<maka_agent_api::contract::List>(&mut g),
         root::<maka_agent_api::contract::Create>(&mut g),
+        root::<maka_agent_api::contract::ChecklistRead>(&mut g),
+        root::<maka_agent_api::contract::Checklist>(&mut g),
         root::<maka_agent_api::contract::ScheduleRead>(&mut g),
         root::<maka_agent_api::contract::Schedules>(&mut g),
         root::<maka_agent_api::contract::ScheduleChange>(&mut g),

@@ -25,6 +25,7 @@ use maka_agent_facts::composition::SourceRevision;
 use maka_agent_facts::configuration::ModelCapabilities;
 use maka_agent_facts::configuration::ModelInfo;
 use maka_agent_facts::configuration::ModelSelection;
+use maka_agent_facts::context::ModelRequestContext;
 use maka_agent_facts::execution::EditingTools;
 use maka_agent_facts::execution::ModelBinding;
 use maka_agent_facts::execution::ThinkingLevel;
@@ -78,6 +79,7 @@ pub(crate) struct AcceptedModel {
     /// None preserves the unfiltered tool selection of older accepted messages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub editing_tools: Option<EditingTools>,
+    context: ModelRequestContext,
     provider: maka_agent_facts::provider::Identity,
     provider_configuration: Value,
     basis: ExecutionBasis,
@@ -118,6 +120,7 @@ impl Source {
             configuration,
             credentials,
             accepted: AcceptedModel {
+                context: request_context(row, &model.info)?,
                 editing_tools: Some(EditingTools::for_model(
                     &selection.model_id,
                     &model.base_url,
@@ -240,12 +243,38 @@ impl Source {
                     .map(|value| value.as_object().expect("validated overlay").clone()),
             },
             options: model.provider_options,
-            context: None,
+            context: Some(self.accepted.context.clone()),
             main_output_limit: model.main_output_limit,
             supports_vision: capabilities.vision.unwrap_or(false),
             revision: self.revision.clone(),
         })
     }
+}
+fn request_context(
+    row: &maka_agent_facts::configuration::ConnectionCatalogEntry,
+    model: &ModelInfo,
+) -> Result<ModelRequestContext, RunError> {
+    if matches!((model.context_window, model.input_limit), (Some(capacity), Some(input)) if input > capacity)
+    {
+        return Err(unavailable());
+    }
+    let input = match (model.context_window, model.input_limit) {
+        (Some(capacity), Some(input)) => Some(capacity.min(input)),
+        (capacity, input) => capacity.or(input),
+    };
+    let context = ModelRequestContext {
+        provider_id: row.provider.name.clone(),
+        context_window: input,
+        model_context_window: model.context_window,
+        declared_window: row
+            .model_overrides
+            .as_ref()
+            .and_then(|models| models.get(&model.id))
+            .and_then(|profile| profile.compaction_threshold)
+            .or_else(|| input.map(|limit| ((u128::from(limit) * 85 / 100) as u64).max(1))),
+    };
+    context.validate().map_err(|_| unavailable())?;
+    Ok(context)
 }
 impl ModelSource for Source {
     fn capture(&self) -> BoxFuture<'_, Result<PreparedModel, RunError>> {

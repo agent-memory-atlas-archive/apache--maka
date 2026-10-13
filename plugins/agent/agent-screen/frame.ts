@@ -48,6 +48,7 @@ import {
   type Presentation,
 } from '../../shared/view.js';
 
+import { checklistView } from './checklist-view.js';
 import { attachmentView } from '../../shared/attachments.js';
 
 import { nextDraftStep, retainSelectedDraft } from '../../shared/drafts.js';
@@ -235,6 +236,7 @@ export function frame<N extends Node>(
   const inspectorOpen =
     conversationRoute(state) && !!state.selected && (state.inspector !== null || inlineInteraction);
   const inspectorSlots = [
+    checklistView(presentation, state, theme, locale),
     outputsView(presentation, state, theme, locale),
     presentation.slot(
       'terminal-panel',
@@ -376,6 +378,20 @@ export function frame<N extends Node>(
             ),
           ]
         : []),
+      ...(conversationRoute(state) &&
+      state.selected &&
+      state.checklist.page?.enabled &&
+      state.checklist.page.total > 0
+        ? [
+            ui.button(
+              'checklist-open',
+              `${text.checklistTitle} ${state.checklist.page.completed}/${state.checklist.page.total}${state.checklist.page.current ? ': ' + compactLabel(state.checklist.page.current.content, 80) : ''}`,
+              !!state.dialog,
+              false,
+              { align: 'start', width: fill },
+            ),
+          ]
+        : []),
       conversation,
       ...(target === 'tui' && (!state.embedding.fixed || state.embedding.session)
         ? [
@@ -472,13 +488,15 @@ export function frame<N extends Node>(
                     : text.approvalTitle
                 : state.dialog === 'directories'
                   ? text.directoryTitle
-                  : state.dialog === 'details'
-                    ? text.detailsTitle
-                    : state.dialog === 'queue'
-                      ? text.queueEdit
-                      : state.dialog === 'help'
-                        ? text.helpTitle
-                        : text.paletteTitle,
+                  : state.dialog === 'checklist'
+                    ? text.checklistTitle
+                    : state.dialog === 'details'
+                      ? text.detailsTitle
+                      : state.dialog === 'queue'
+                        ? text.queueEdit
+                        : state.dialog === 'help'
+                          ? text.helpTitle
+                          : text.paletteTitle,
       background,
       ui.box(
         'dialog-content',
@@ -630,6 +648,17 @@ export function frame<N extends Node>(
   out.actions = actions;
   out.events = events;
   out.subscriptions = [
+    ...(state.checklist.watch
+      ? [
+          {
+            ...state.checklist.watch,
+            binding: 'agent',
+            member: 0,
+            method: 'watchChecklist',
+            resources: {},
+          },
+        ]
+      : []),
     ...(state.scheduleWatch && !state.embedding.fixed
       ? [
           {

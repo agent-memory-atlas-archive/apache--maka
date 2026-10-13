@@ -24,6 +24,13 @@ export function resolveLocale(configured: string, native: unknown): string {
 }
 
 export const en = {
+  checklistTitle: 'Checklist',
+  checklistLoading: 'Loading checklist…',
+  checklistRetry: 'Retry',
+  checklistEmpty: 'No checklist yet. The agent keeps one here as it works.',
+  checklistReported: 'Progress reported by the agent.',
+  checklistFailed: 'Unable to load the checklist.',
+
   scheduleTitle: 'Scheduled tasks',
   scheduleNew: 'New task',
   scheduleEmpty: 'No scheduled tasks.',
@@ -959,6 +966,13 @@ export const en = {
 } as const;
 export type Copy = { [K in keyof typeof en]: string };
 const zhCN: Copy = {
+  checklistTitle: '清单',
+  checklistLoading: '正在加载清单…',
+  checklistRetry: '重试',
+  checklistEmpty: '还没有清单。智能体工作时会在这里维护。',
+  checklistReported: '进度由智能体报告。',
+  checklistFailed: '无法加载清单。',
+
   scheduleTitle: '定时任务',
   scheduleNew: '新建任务',
   scheduleEmpty: '暂无定时任务。',
@@ -1844,6 +1858,13 @@ const zhCN: Copy = {
   connecting: '正在连接…',
 };
 const zhTW: Copy = {
+  checklistTitle: '清單',
+  checklistLoading: '正在載入清單…',
+  checklistRetry: '重試',
+  checklistEmpty: '還沒有清單。智慧體工作時會在這裡維護。',
+  checklistReported: '進度由智慧體回報。',
+  checklistFailed: '無法載入清單。',
+
   scheduleTitle: '定時任務',
   scheduleNew: '新增任務',
   scheduleEmpty: '尚無定時任務。',

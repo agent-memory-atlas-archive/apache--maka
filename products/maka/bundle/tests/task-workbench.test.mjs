@@ -604,3 +604,80 @@ test('a settled stop observation clears the stopping notice and shows the canoni
   assert.equal(c.state.notice, null);
   assert.equal(c.find('task-state').text, 'Stopped');
 });
+
+test('the checklist follows its session, pages live progress, and rejects stale observations', () => {
+  const c = client()
+    .observe(1)
+    .history(page(1, [chunk(1, 'Working')]));
+  const firstWatch = c.out.subscriptions.find((watch) => watch.method === 'watchChecklist');
+  assert.equal(firstWatch.input.sessionId, 'Task A');
+  const items = Array.from({ length: 20 }, (_, index) => ({
+    content: `Step ${index + 1} 中文🙂`,
+    status: index === 0 ? 'completed' : index === 1 ? 'in_progress' : 'pending',
+  }));
+  const update = (watch, value) =>
+    c.event({
+      kind: 'action',
+      key: watch.key,
+      event: { status: 'updated', value },
+    });
+  const first = {
+    enabled: true,
+    revision: 1,
+    total: 25,
+    completed: 1,
+    current: items[1],
+    offset: 0,
+    items,
+    nextOffset: 20,
+  };
+  update(firstWatch, first);
+  assert.match(JSON.stringify(c.find('checklist-open')), /1\/25.*Step 2 中文🙂/u);
+  c.raw('checklist-open');
+  assert.equal(c.state.inspector, 'checklist');
+  assert.match(JSON.stringify(c.find('checklist-items')), /\[x\] Step 1 中文🙂/u);
+  assert.match(JSON.stringify(c.find('checklist-items')), /\[>\] Step 2 中文🙂/u);
+  c.raw('checklist-next');
+  const nextWatch = c.out.subscriptions.find((watch) => watch.method === 'watchChecklist');
+  assert.equal(nextWatch.input.offset, 20);
+  assert.notEqual(nextWatch.key, firstWatch.key);
+  update(firstWatch, first);
+  assert.equal(c.state.checklist.page, null);
+  update(nextWatch, {
+    ...first,
+    offset: 20,
+    items: [{ content: 'Final step 中文🙂', status: 'pending' }],
+    nextOffset: null,
+  });
+  assert.match(JSON.stringify(c.find('checklist-items')), /Final step 中文🙂/u);
+  c.select('Task B').observe(0).history(page(0, []));
+  const otherWatch = c.out.subscriptions.find((watch) => watch.method === 'watchChecklist');
+  assert.equal(otherWatch.input.sessionId, 'Task B');
+  update(nextWatch, first);
+  assert.equal(c.state.checklist.page, null);
+  update(otherWatch, {
+    enabled: true,
+    revision: null,
+    total: 0,
+    completed: 0,
+    current: null,
+    offset: 0,
+    items: [],
+    nextOffset: null,
+  });
+  assert.equal(c.find('checklist-open'), undefined);
+  c.raw('checklist-open');
+  assert.match(JSON.stringify(c.find('checklist-empty')), /No checklist yet/u);
+  c.event({
+    kind: 'action',
+    key: otherWatch.key,
+    event: { status: 'failed', message: 'disconnected' },
+  });
+  assert.match(JSON.stringify(c.find('checklist-error')), /Unable to load/u);
+  c.raw('checklist-retry');
+  assert.equal(
+    c.out.subscriptions.find((watch) => watch.method === 'watchChecklist').input.sessionId,
+    'Task B',
+  );
+  assert.equal(c.state.checklist.failed, false);
+});

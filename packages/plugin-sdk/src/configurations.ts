@@ -175,6 +175,11 @@ export const configurations = {
         type: 'boolean',
         default: false,
       },
+      todo: {
+        description: 'Enable the session-scoped, model-maintained checklist.',
+        type: 'boolean',
+        default: false,
+      },
       recall: {
         description: 'Explicit access to this Agent’s earlier conversations for model tools.',
         type: 'boolean',
@@ -652,6 +657,11 @@ export const configurations = {
           scheduledTasks: {
             type: 'boolean',
             description: 'Enable model proposals and approved scheduled work for this Agent.',
+            default: false,
+          },
+          todo: {
+            type: 'boolean',
+            description: 'Enable the session-scoped, model-maintained checklist.',
             default: false,
           },
           recall: {

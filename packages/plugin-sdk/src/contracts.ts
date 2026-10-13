@@ -7222,6 +7222,104 @@ export const contracts = {
           },
           resources: {},
         },
+        checklist: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentChecklistRead',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+              },
+              offset: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+                maximum: 200,
+                default: 0,
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentChecklist',
+            type: 'object',
+            properties: {
+              enabled: {
+                type: 'boolean',
+              },
+              revision: {
+                type: ['integer', 'null'],
+                format: 'uint64',
+                minimum: 0,
+              },
+              total: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+              },
+              completed: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+              },
+              current: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/AgentTodoItem',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+              offset: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+              },
+              items: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/AgentTodoItem',
+                },
+                maxItems: 20,
+              },
+              nextOffset: {
+                type: ['integer', 'null'],
+                format: 'uint',
+                minimum: 0,
+              },
+            },
+            additionalProperties: false,
+            required: ['enabled', 'total', 'completed', 'offset', 'items'],
+            $defs: {
+              AgentTodoItem: {
+                type: 'object',
+                properties: {
+                  content: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 200,
+                  },
+                  status: {
+                    $ref: '#/$defs/AgentTodoStatus',
+                  },
+                },
+                additionalProperties: false,
+                required: ['content', 'status'],
+              },
+              AgentTodoStatus: {
+                type: 'string',
+                enum: ['pending', 'in_progress', 'completed'],
+              },
+            },
+          },
+          resources: {},
+        },
         create: {
           mode: 'mutation',
           input: {
@@ -18605,6 +18703,104 @@ export const contracts = {
               AgentInteractionKind: {
                 type: 'string',
                 enum: ['service_approval', 'question', 'permissions', 'form', 'client_capability'],
+              },
+            },
+          },
+          resources: {},
+        },
+        watchChecklist: {
+          mode: 'subscription',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentChecklistRead',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+              },
+              offset: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+                maximum: 200,
+                default: 0,
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentChecklist',
+            type: 'object',
+            properties: {
+              enabled: {
+                type: 'boolean',
+              },
+              revision: {
+                type: ['integer', 'null'],
+                format: 'uint64',
+                minimum: 0,
+              },
+              total: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+              },
+              completed: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+              },
+              current: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/AgentTodoItem',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+              offset: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+              },
+              items: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/AgentTodoItem',
+                },
+                maxItems: 20,
+              },
+              nextOffset: {
+                type: ['integer', 'null'],
+                format: 'uint',
+                minimum: 0,
+              },
+            },
+            additionalProperties: false,
+            required: ['enabled', 'total', 'completed', 'offset', 'items'],
+            $defs: {
+              AgentTodoItem: {
+                type: 'object',
+                properties: {
+                  content: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 200,
+                  },
+                  status: {
+                    $ref: '#/$defs/AgentTodoStatus',
+                  },
+                },
+                additionalProperties: false,
+                required: ['content', 'status'],
+              },
+              AgentTodoStatus: {
+                type: 'string',
+                enum: ['pending', 'in_progress', 'completed'],
               },
             },
           },

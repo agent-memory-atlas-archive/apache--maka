@@ -82,6 +82,25 @@ impl Handler for Agent {
                     }
                 }
                 "tools" => encode(owner.tool_names()),
+                "checklist" => encode(owner.checklist(&decode(input)?).await?),
+                "watchChecklist" => {
+                    let input: ChecklistRead = decode(input)?;
+                    let mut changes = owner.checklist_changes();
+                    let mut revision = None;
+                    loop {
+                        changes.borrow_and_update();
+                        let page = owner.checklist(&input).await?;
+                        if revision != Some(page.revision) {
+                            revision = Some(page.revision);
+                            context.emit(encode(page)?).await?;
+                        }
+                        tokio::select! {
+                            biased;
+                            _ = context.scope().cancellation.cancelled() => return Err("checklist_observation_cancelled".into()),
+                            result = changes.changed() => result.map_err(|_| "checklist_observation_closed")?,
+                        }
+                    }
+                }
                 "schedules" => encode(owner.schedules(decode(input)?).await?),
                 "watchSchedules" | "scheduleAlerts" => {
                     let mut changes = owner.schedule_changes();

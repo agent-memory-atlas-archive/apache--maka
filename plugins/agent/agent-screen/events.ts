@@ -23,6 +23,7 @@ import type {
   AgentDeliveryPage,
   AgentScheduleAlerts,
   AgentSessionPage,
+  AgentChecklist,
   ComponentInput,
   ComponentValues,
   Emission,
@@ -178,7 +179,12 @@ export function handleEvent<N extends Node>(
     return frame(presentation, configuredLocale, state, values, actions);
   if (input.kind === 'action') {
     const outcome = input.event as ActionOutcome;
-    if (state.scheduleWatch === input.key) {
+    if (state.checklist.watch?.key === input.key) {
+      if (outcome.status === 'updated') state.checklist.page = outcome.value as AgentChecklist;
+      else if (outcome.status === 'failed' || outcome.status === 'not_accepted') {
+        state.checklist = { watch: null, page: null, failed: true };
+      }
+    } else if (state.scheduleWatch === input.key) {
       if (outcome.status === 'updated') state.scheduleAlerts = outcome.value as AgentScheduleAlerts;
       else if (outcome.status === 'failed' || outcome.status === 'not_accepted')
         state.scheduleWatch = null;
