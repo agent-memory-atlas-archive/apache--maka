@@ -351,6 +351,7 @@ export function handleComponent<N extends Node>(
     ) {
       intent(state, actions, { kind: 'create' }, 'agent', 'create', {
         title: copy(locale).new,
+        automaticTitle: true,
         labels: [],
         workspace: {
           kind: 'project',
@@ -375,6 +376,7 @@ export function handleComponent<N extends Node>(
       ) {
         intent(state, actions, { kind: 'create' }, 'agent', 'create', {
           title: copy(locale).new,
+          automaticTitle: true,
           labels: [],
           workspace: { kind: 'directory', selection: input.event as AgentDirectorySelection },
         });

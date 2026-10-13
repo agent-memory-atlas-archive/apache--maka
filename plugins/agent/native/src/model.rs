@@ -276,35 +276,62 @@ fn request_context(
     context.validate().map_err(|_| unavailable())?;
     Ok(context)
 }
+impl Source {
+    async fn observe(&self) -> Result<(ConnectionObservation, Model), RunError> {
+        let material = self
+            .configuration
+            .observe_model(self.accepted.binding.clone())
+            .await
+            .map_err(|_| unavailable())?
+            .ok_or_else(unavailable)?;
+        let row = &material.connection;
+        if row.provider != self.accepted.provider
+            || row.configuration != self.accepted.provider_configuration
+        {
+            return Err(unavailable());
+        }
+        let model = resolve(
+            &self.definition,
+            row,
+            &self.accepted.binding.model,
+            self.accepted.thinking_level,
+        )
+        .await?;
+        if ExecutionBasis::new(&model, row) != self.accepted.basis {
+            return Err(unavailable());
+        }
+        Ok((material, model))
+    }
+    /// The original accepted route, with the least declared reasoning for a short auxiliary task.
+    pub(crate) async fn capture_auxiliary(&self) -> Result<PreparedModel, RunError> {
+        let (material, model) = self.observe().await?;
+        let least = ThinkingLevel::ALL
+            .into_iter()
+            .find(|level| model.thinking_levels.contains(level));
+        let model = match least {
+            Some(level) => {
+                resolve(
+                    &self.definition,
+                    &material.connection,
+                    &self.accepted.binding.model,
+                    Some(level),
+                )
+                .await?
+            }
+            None => model,
+        };
+        self.prepare(material, model).await
+    }
+}
 impl ModelSource for Source {
     fn capture(&self) -> BoxFuture<'_, Result<PreparedModel, RunError>> {
         Box::pin(async move {
-            let material = self
-                .configuration
-                .observe_model(self.accepted.binding.clone())
-                .await
-                .map_err(|_| unavailable())?
-                .ok_or_else(unavailable)?;
-            let row = &material.connection;
-            if row.provider != self.accepted.provider
-                || row.configuration != self.accepted.provider_configuration
-            {
-                return Err(unavailable());
-            }
-            let model = resolve(
-                &self.definition,
-                row,
-                &self.accepted.binding.model,
-                self.accepted.thinking_level,
-            )
-            .await?;
-            if ExecutionBasis::new(&model, row) != self.accepted.basis {
-                return Err(unavailable());
-            }
+            let (material, model) = self.observe().await?;
             self.prepare(material, model).await
         })
     }
 }
+
 async fn resolve(
     definition: &Definition,
     row: &maka_agent_facts::configuration::ConnectionCatalogEntry,

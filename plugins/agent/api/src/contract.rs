@@ -73,6 +73,9 @@ pub struct Configuration {
     /// Enable the session-scoped, model-maintained checklist.
     #[serde(default)]
     pub todo: bool,
+    /// Generate a bounded auxiliary title for automatically named conversations.
+    #[serde(default)]
+    pub automatic_titles: bool,
     /// Explicit access to this Agent’s earlier conversations for model tools.
     #[serde(default)]
     pub recall: bool,
@@ -235,6 +238,9 @@ pub enum SessionPosition {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentCreate")]
 pub struct Create {
+    /// Treat title as a placeholder for one title derived from the first user message.
+    #[serde(default)]
+    pub automatic_title: bool,
     /// Immutable narrowing of this Agent's installed tools. None uses the installation;
     /// an empty list permits no model tools. External executors cannot enforce this.
     #[serde(default)]

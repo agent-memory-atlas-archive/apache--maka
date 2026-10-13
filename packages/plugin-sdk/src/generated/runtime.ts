@@ -6498,6 +6498,10 @@ export interface AgentConfiguration {
    */
   todo?: boolean;
   /**
+   * Generate a bounded auxiliary title for automatically named conversations.
+   */
+  automaticTitles?: boolean;
+  /**
    * Explicit access to this Agent’s earlier conversations for model tools.
    */
   recall?: boolean;
@@ -8393,6 +8397,10 @@ export interface AgentList {
   position: AgentSessionPosition;
 }
 export interface AgentCreate {
+  /**
+   * Treat title as a placeholder for one title derived from the first user message.
+   */
+  automaticTitle?: boolean;
   /**
    * Immutable narrowing of this Agent's installed tools. None uses the installation;
    * an empty list permits no model tools. External executors cannot enforce this.

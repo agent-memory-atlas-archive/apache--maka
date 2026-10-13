@@ -104,6 +104,7 @@ function createSession(state: State, actions: Action[], locale: string) {
   else if (state.selected)
     intent(state, actions, { kind: 'create' }, 'agent', 'create', {
       title,
+      automaticTitle: true,
       labels: [],
       workspace: { kind: 'session', sessionId: state.selected.id },
     });

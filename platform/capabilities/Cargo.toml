@@ -33,7 +33,7 @@ maka-plugin-core.workspace = true
 maka-sandbox.workspace = true
 rusqlite = { workspace = true, features = ["hooks", "limits"] }
 schemars.workspace = true
-serde.workspace = true
+serde = { workspace = true, features = ["rc"] }
 serde_json.workspace = true
 sha2.workspace = true
 tempfile.workspace = true

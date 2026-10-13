@@ -344,6 +344,7 @@ export function querySucceeded(state: State, actions: Action[], request: Request
       }
       intent(state, actions, { kind: 'create' }, 'agent', 'create', {
         title: request.title,
+        automaticTitle: true,
         labels: [],
         workspace: { kind: 'directory', selection: page.roots[0].selection },
       });

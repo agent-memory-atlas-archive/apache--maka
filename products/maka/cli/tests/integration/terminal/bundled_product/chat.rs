@@ -28,6 +28,7 @@ use uuid::Uuid;
 
 mod code_mode;
 mod computer;
+mod title;
 mod todo;
 
 async fn seed_connection(
@@ -105,6 +106,54 @@ fn request(socket: &mut TcpStream) -> serde_json::Value {
         bytes.extend_from_slice(&buffer[..count]);
     }
     serde_json::from_slice(&bytes[boundary..boundary + length]).unwrap()
+}
+fn is_title(value: &serde_json::Value) -> bool {
+    value["messages"].as_array().unwrap().iter().any(|message| {
+        message["role"] == "system"
+            && message["content"]
+                .as_str()
+                .is_some_and(|text| text.starts_with("Generate a short session title"))
+    })
+}
+fn model_server(
+    listener: TcpListener,
+    requests: mpsc::Sender<(serde_json::Value, TcpStream)>,
+    main_requests: usize,
+    title_requests: usize,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        listener.set_nonblocking(true).unwrap();
+        let mut titles = 0;
+        for _ in 0..main_requests + title_requests {
+            let deadline = std::time::Instant::now() + Duration::from_secs(60);
+            let (mut socket, _) = loop {
+                match listener.accept() {
+                    Ok(connection) => break connection,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "Expected remaining model requests"
+                        );
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("Model connection: {error}"),
+                }
+            };
+            socket.set_nonblocking(false).unwrap();
+            let value = request(&mut socket);
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n").unwrap();
+            socket.flush().unwrap();
+            if is_title(&value) {
+                titles += 1;
+                assert!(value["tools"].is_null() || value["tools"] == json!([]));
+                delta(&mut socket, "Workspace conversation");
+                complete(&mut socket);
+            } else {
+                requests.send((value, socket)).unwrap();
+            }
+        }
+        assert_eq!(titles, title_requests);
+    })
 }
 fn packet(socket: &mut TcpStream, value: serde_json::Value) {
     let data = format!("data: {value}\n\n");

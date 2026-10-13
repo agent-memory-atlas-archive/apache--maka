@@ -1,0 +1,158 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+//! Bounded auxiliary requests retain their physical worker and original usage journal.
+use super::*;
+use maka_agent_facts::{
+    model::{ModelEvent, ModelFinishReason, ModelGeneration, ModelPart, TextKind},
+    tools::ToolError,
+};
+use maka_capabilities::call::Resources;
+use maka_event_log::usage::{AuxiliarySource, Outcome};
+use maka_model::{ModelRequest, ModelStream, StepBuilder};
+
+pub(super) struct Auxiliary {
+    models: ModelExecutor,
+    pub resources: Arc<Resources>,
+}
+impl Auxiliary {
+    pub fn new(revision: SourceRevision) -> Result<Self, String> {
+        Ok(Self {
+            // Auxiliary work has one separate slot, so it cannot queue ahead of a main model step.
+            models: ModelExecutor::for_source(1, Duration::from_secs(30), revision)
+                .map_err(|_| "agent_auxiliary_unavailable")?,
+            resources: Arc::default(),
+        })
+    }
+    pub async fn generate(
+        &self,
+        request: ModelRequest,
+        cancellation: CancellationToken,
+        log: &EventLog,
+        source: AuxiliarySource,
+        quote: maka_agent_facts::pricing::Quote,
+    ) -> Result<ModelGeneration, ToolError> {
+        if cancellation.is_cancelled() {
+            return Err(failed("Auxiliary generation cancelled before dispatch"));
+        }
+        let id = log
+            .begin_auxiliary_model(source, Some(quote))
+            .await
+            .map_err(|error| match error {
+                maka_event_log::StoreError::InvalidTransition(_)
+                | maka_event_log::StoreError::SessionNotFound
+                | maka_event_log::StoreError::SessionRetired
+                | maka_event_log::StoreError::SessionBusy
+                | maka_event_log::StoreError::PrefixTooLarge => failed(error),
+                _ => persistence(error),
+            })?;
+        let model_id = request.provider.model.clone();
+        let result = async {
+            let stream = self
+                .models
+                .stream(request, cancellation.clone())
+                .await
+                .map_err(failed)?;
+            let step = receive(stream, log, id).await?;
+            if step.finish_reason == ModelFinishReason::ToolCalls {
+                return Err(failed("Auxiliary generation cannot finish with tool calls"));
+            }
+            Ok(ModelGeneration {
+                text: step
+                    .parts
+                    .into_iter()
+                    .filter_map(|part| match part {
+                        ModelPart::Text {
+                            text_kind: TextKind::Text,
+                            text,
+                            ..
+                        } => Some(text),
+                        _ => None,
+                    })
+                    .collect(),
+                model_id,
+                finish_reason: step.finish_reason,
+                usage: step.usage,
+            })
+        }
+        .await;
+        // Neither an uncertain commit nor lost physical custody permits a success/failure replacement.
+        if matches!(
+            result,
+            Err(ToolError::Persistence(_) | ToolError::CleanupUnconfirmed(_))
+        ) {
+            return result;
+        }
+        let outcome = match &result {
+            Ok(_) => Outcome::Success,
+            Err(_) if cancellation.is_cancelled() => Outcome::Aborted,
+            Err(_) => Outcome::Error,
+        };
+        log.settle_auxiliary_model(id, outcome)
+            .await
+            .map_err(persistence)?;
+        result
+    }
+}
+async fn receive(
+    mut stream: ModelStream,
+    log: &EventLog,
+    id: Uuid,
+) -> Result<maka_agent_facts::model::ModelStep, ToolError> {
+    let result = async {
+        let mut builder = StepBuilder::default();
+        let mut bytes = 0usize;
+        let mut observed_usage = false;
+        while let Some(event) = stream.next().await {
+            let event = event.map_err(failed)?;
+            if let ModelEvent::Finished { usage, .. } = &event
+                && !observed_usage
+            {
+                log.observe_auxiliary_model(id, usage.clone())
+                    .await
+                    .map_err(persistence)?;
+                observed_usage = true;
+            }
+            bytes = bytes.saturating_add(serde_json::to_vec(&event).map_err(failed)?.len());
+            if bytes > 2 * 1024 * 1024 {
+                return Err(failed("Auxiliary generation exceeds 2 MiB stream limit"));
+            }
+            if matches!(
+                event,
+                ModelEvent::ToolCall(_) | ModelEvent::ProviderToolResult { .. }
+            ) {
+                return Err(failed("Auxiliary generation cannot call tools"));
+            }
+            builder.push(event).map_err(failed)?;
+        }
+        builder.finish().map_err(failed)
+    }
+    .await;
+    stream
+        .cancel_and_wait()
+        .await
+        .map_err(|error| ToolError::CleanupUnconfirmed(error.to_string()))?;
+    result
+}
+pub(super) fn persistence(error: impl std::fmt::Display) -> ToolError {
+    ToolError::Persistence(error.to_string())
+}
+pub(super) fn failed(error: impl std::fmt::Display) -> ToolError {
+    ToolError::Failed(error.to_string())
+}

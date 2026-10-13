@@ -25,6 +25,7 @@ use maka_agent_engine::{Engine, RunError, RunInput, RunWork};
 
 mod assistant;
 mod attachments;
+mod auxiliary;
 mod execution;
 mod imports;
 mod interactions;
@@ -36,6 +37,7 @@ mod queue;
 mod recall;
 mod scheduler;
 mod skills;
+mod title;
 mod todo;
 mod work;
 mod worktrees;
@@ -115,6 +117,7 @@ pub(crate) struct Owner {
     pub recall: Arc<recall::Recall>,
     scheduler: Arc<scheduler::Scheduler>,
     todo: Arc<todo::Todo>,
+    auxiliary: auxiliary::Auxiliary,
     pub settings: Configuration,
     pub prefix: String,
     pub data_source: DataSource,
@@ -214,6 +217,7 @@ impl Owner {
         };
         let models = ModelExecutor::for_source(1, Duration::from_secs(60), revision.clone())
             .map_err(|_| "agent_executor_unavailable")?;
+        let auxiliary = auxiliary::Auxiliary::new(revision.clone())?;
         let behavior = prompt.map(|text| {
             let mut source = revision.clone();
             source.kind = SourceKind::PromptSection;
@@ -309,6 +313,7 @@ impl Owner {
             Arc::new(crate::model::Prices(configuration.clone())),
         );
         Ok(Arc::new(Self {
+            auxiliary,
             todo,
             scheduler,
             recall,
@@ -486,6 +491,7 @@ impl Owner {
                 &SessionConfiguration {
                     tools,
                     title: input.title,
+                    title_is_manual: !input.automatic_title,
                     labels: input.labels,
                     workspace: selected,
                     permissions: self.settings.permissions.clone(),
@@ -566,6 +572,7 @@ impl Owner {
         let permissions = input.permissions.is_some();
         let update = move |configuration: &mut SessionConfiguration| {
             configuration.title = input.title;
+            configuration.title_is_manual = true;
             configuration.labels = input.labels;
             if let Some(change) = input.permissions
                 && (change.settings != configuration.permissions || change.revoke_grants)
@@ -902,15 +909,7 @@ impl Owner {
                 return Err(public_error(error));
             }
         };
-        runs.controls.insert(
-            id.clone(),
-            Control {
-                invocation: invocation.clone(),
-                basis,
-                cancellation,
-                failure: None,
-            },
-        );
+        self.publish(&mut runs, &running, basis);
         let owner = self.clone();
         self.workers
             .spawn(async move { owner.drive(running, permit).await });
@@ -943,7 +942,11 @@ impl Owner {
     ) -> Option<Box<dyn maka_host_runtime::application::NativeRetirement>> {
         let producer = self.producer_gate.clone().try_lock_owned().ok()?;
         let runs = self.runs.clone().try_lock_owned().ok()?;
-        if !runs.controls.is_empty() || !runs.quarantined.is_empty() || !self.workers.is_empty() {
+        if !runs.controls.is_empty()
+            || !runs.quarantined.is_empty()
+            || !self.workers.is_empty()
+            || !self.auxiliary.resources.is_idle()
+        {
             return None;
         }
         Some(Box::new(Idle {
@@ -967,6 +970,7 @@ impl Owner {
             owner.engine.drain().await;
             let scheduler = owner.scheduler.finish().await;
             let todo = owner.todo.finish().await;
+            let auxiliary = owner.auxiliary.resources.finish().await;
             let configuration = owner.configuration.shutdown().await;
             let runs = owner.runs.lock().await;
             if !runs.quarantined.is_empty() {
@@ -974,6 +978,7 @@ impl Owner {
             }
             scheduler?;
             todo?;
+            auxiliary.map_err(|error| error.to_string())?;
             configuration.map_err(|_| "agent_configuration_cleanup_unconfirmed".into())
         })
     }

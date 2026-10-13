@@ -180,6 +180,11 @@ export const configurations = {
         type: 'boolean',
         default: false,
       },
+      automaticTitles: {
+        description: 'Generate a bounded auxiliary title for automatically named conversations.',
+        type: 'boolean',
+        default: false,
+      },
       recall: {
         description: 'Explicit access to this Agent’s earlier conversations for model tools.',
         type: 'boolean',
@@ -662,6 +667,12 @@ export const configurations = {
           todo: {
             type: 'boolean',
             description: 'Enable the session-scoped, model-maintained checklist.',
+            default: false,
+          },
+          automaticTitles: {
+            type: 'boolean',
+            description:
+              'Generate a bounded auxiliary title for automatically named conversations.',
             default: false,
           },
           recall: {

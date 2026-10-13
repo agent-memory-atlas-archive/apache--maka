@@ -49,17 +49,7 @@ fn default_product_restores_accepted_code_mode_and_original_native_effect() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}/v1", listener.local_addr().unwrap());
     let (requests, received) = mpsc::channel();
-    let server = std::thread::spawn(move || {
-        for _ in 0..2 {
-            let (mut socket, _) = listener.accept().unwrap();
-            let value = request(&mut socket);
-            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n").unwrap();
-            socket.flush().unwrap();
-            if requests.send((value, socket)).is_err() {
-                break;
-            }
-        }
-    });
+    let server = model_server(listener, requests, 2, 1);
     let directory = tempfile::tempdir().unwrap();
     let workspace = directory.path().join("workspace");
     std::fs::create_dir(&workspace).unwrap();

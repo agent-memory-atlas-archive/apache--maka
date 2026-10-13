@@ -7327,6 +7327,12 @@ export const contracts = {
             title: 'AgentCreate',
             type: 'object',
             properties: {
+              automaticTitle: {
+                description:
+                  'Treat title as a placeholder for one title derived from the first user message.',
+                type: 'boolean',
+                default: false,
+              },
               tools: {
                 description:
                   "Immutable narrowing of this Agent's installed tools. None uses the installation;\nan empty list permits no model tools. External executors cannot enforce this.",

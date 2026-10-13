@@ -33,6 +33,8 @@ The independent `applyPatch` model override selects either patch editing or stru
 
 The default Maka composition enables `todo`: `todo_read` and `todo_write` maintain a persistent checklist for the current session, including in Code Mode and read-only workspaces. Writes replace the whole list with revision checks. The UI shows reported progress and a read-only Checklist panel, with bounded pages covering up to 200 items. Checklist completion is model-reported progress, not proof that an operation succeeded.
 
+The default Maka composition enables `automaticTitles`. Conversations created with `automaticTitle: true` receive one title attempt after their first admitted message, using the accepted model with a bounded, separately accounted request. Explicit titles, manual renames (including the unchanged placeholder), archived and managed sessions retain their names. Retries and Host restarts do not repeat an admitted title attempt; Host shutdown waits for its physical cleanup.
+
 Model context capacity, any independent input ceiling and the compaction threshold are captured with the accepted model selection and retained across queueing and restart. Without an explicit threshold, known input capacity sets the proactive threshold at 85%; output reserve remains a separate engine calculation.
 
 [Source](src/lib.rs) · [Cargo manifest](Cargo.toml)
