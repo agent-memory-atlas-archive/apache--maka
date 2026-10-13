@@ -22,12 +22,12 @@ import type { AppsConfiguration } from '../../shared/contracts.js';
 import type {
   Action,
   Emission,
-  FilePickerProps,
   InputProps,
   SettingValue,
   TextareaProps,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { type AppsProps } from '../../shared/contracts.js';
+import { canInstall, packageSourceView } from '../../shared/deployment-import.js';
 import { settingOptions } from '../../shared/instance-settings.js';
 import { copy, type Copy } from '../../shared/locale.js';
 import { pageHeader } from '../../shared/page-shell.js';
@@ -64,21 +64,40 @@ export function frame<N extends Node>(
   const rows: N[] =
     state.route === 'list'
       ? configuration.entries.map((app, index) =>
-          ui.box(
-            'app-row-' + app.id,
-            [
-              ui.button('open-' + app.id, app.label, disabled, false, { align: 'start' }),
-              ...(state.opened.includes(app.id)
-                ? [ui.button('close-' + app.id, text.appsClose, disabled)]
-                : []),
-              ui.button(
-                'remove-' + index,
-                text.appsRemove,
-                disabled || !state.catalog || !sameValue(entries(state), configuration.entries),
+          presentation.target === 'tui' && ui.contextMenu
+            ? ui.contextMenu(
+                'app-row-' + app.id,
+                app.label,
+                ui.button('open-' + app.id, app.label, disabled, false, {
+                  align: 'start',
+                  background: 0,
+                }),
+                [
+                  ...(state.opened.includes(app.id)
+                    ? [ui.button('close-' + app.id, text.appsClose, disabled)]
+                    : []),
+                  ui.button(
+                    'remove-' + index,
+                    text.appsRemove,
+                    disabled || !state.catalog || !sameValue(entries(state), configuration.entries),
+                  ),
+                ],
+              )
+            : ui.box(
+                'app-row-' + app.id,
+                [
+                  ui.button('open-' + app.id, app.label, disabled, false, { align: 'start' }),
+                  ...(state.opened.includes(app.id)
+                    ? [ui.button('close-' + app.id, text.appsClose, disabled)]
+                    : []),
+                  ui.button(
+                    'remove-' + index,
+                    text.appsRemove,
+                    disabled || !state.catalog || !sameValue(entries(state), configuration.entries),
+                  ),
+                ],
+                { row: true, terminal: { wrap: true }, style: { wrap: true } },
               ),
-            ],
-            { row: true, terminal: { wrap: true }, style: { wrap: true } },
-          ),
         )
       : state.route === 'choose'
         ? (state.catalog?.candidates ?? [])
@@ -156,11 +175,13 @@ export function frame<N extends Node>(
         'back',
         !!state.pending && !state.current,
       ),
-      ...(state.pending || state.restoring
+      ...((state.pending || state.restoring) && state.route !== 'file'
         ? [ui.text('apps-loading', text.connecting, 13, props.theme.muted)]
         : []),
-      ...(state.notice ? [ui.text('apps-notice', text[state.notice], 13, props.theme.muted)] : []),
-      ...(state.diagnostic
+      ...(state.notice && state.route !== 'file'
+        ? [ui.text('apps-notice', text[state.notice], 13, props.theme.muted)]
+        : []),
+      ...(state.diagnostic && state.route !== 'file'
         ? [ui.text('apps-diagnostic', state.diagnostic, 13, props.theme.warning)]
         : []),
       ...(state.current
@@ -169,6 +190,26 @@ export function frame<N extends Node>(
       ...(state.historyFailed
         ? [ui.button('history-retry', text.sourceRetry, !!state.pending)]
         : []),
+      ui.box(
+        'apps-toolbar',
+        [
+          ...(state.route === 'list' ? [ui.button('add', text.appsAdd, disabled, true)] : []),
+          ui.button('file', text.appsInstall, disabled),
+          ...(state.route === 'list'
+            ? [
+                ui.button('manage', text.appsManage, disabled),
+                ui.button('refresh', text.appsReload, disabled, false, { background: 0 }),
+              ]
+            : []),
+        ],
+        {
+          visible: state.route === 'list' || state.route === 'choose',
+          row: true,
+          gap: 1,
+          terminal: { wrap: true },
+          style: { wrap: true },
+        },
+      ),
       ui.box(
         'apps-directory',
         [
@@ -286,7 +327,7 @@ export function frame<N extends Node>(
           ...(draft?.page?.next
             ? [ui.button('settings-next', text.deploymentMore, suspended)]
             : []),
-          ...(draft?.candidate.kind === 'package'
+          ...(draft?.candidate.kind === 'package' && draft.page?.imports.length
             ? [
                 ui.text('apps-bindings-title', text.appsBindings, 15, props.theme.text, 500),
                 ui.text('apps-bindings-help', text.appsBindingHelp, 13, props.theme.muted),
@@ -308,9 +349,10 @@ export function frame<N extends Node>(
         ],
         {
           visible: state.route === 'configure',
+          autoFocus: true,
           scroll: 'manual',
           gap: 1,
-          terminal: { grow: 1, basis: 0 },
+          terminal: { grow: 0, shrink: true },
           style: { width: fill, height: fill, minHeight: 0 },
         },
       ),
@@ -318,33 +360,30 @@ export function frame<N extends Node>(
         'apps-file-region',
         [
           ui.text('apps-file-help', text.deploymentInstallHelp, 13, props.theme.muted),
-          presentation.slot(
-            'apps-file',
-            'file',
-            {
-              appearance: props.theme.input,
-              label: text.deploymentChooseFile,
-              pathLabel: text.deploymentFilePath,
-              browseLabel: text.fileBrowse,
-              parentLabel: text.directoryParent,
-              emptyLabel: text.fileListEmpty,
-              truncatedLabel: text.fileListTruncated,
-              placeholder: text.deploymentFilePlaceholder,
-              disabled: suspended,
-              tabIndex: 0,
-            } satisfies FilePickerProps,
-            { changed: 'file-changed' },
-          ),
-          ...(state.file?.file ? [ui.text('apps-file-name', state.file.file.name, 14)] : []),
-          ...(state.file?.phase === 'failed'
+          packageSourceView(presentation, props, 'apps', state.installSource, suspended),
+          ...(state.notice
+            ? [ui.text('apps-install-notice', text[state.notice], 13, props.theme.warning)]
+            : []),
+          ...(state.diagnostic
+            ? [ui.text('apps-install-diagnostic', state.diagnostic, 13, props.theme.warning)]
+            : []),
+          ...(state.installSource.mode === 'file' && state.installSource.observation?.file
+            ? [ui.text('apps-file-name', state.installSource.observation.file.name, 14)]
+            : []),
+          ...(state.installSource.mode === 'file' &&
+          state.installSource.observation?.phase === 'failed'
             ? [ui.text('apps-file-error', text.deploymentFileFailed, 13, props.theme.warning)]
             : []),
         ],
         {
           visible: state.route === 'file',
+          autoFocus: true,
           gap: 1,
-          terminal: { grow: 1 },
-          style: { width: fill, height: fill },
+          terminal: {
+            grow:
+              state.installSource.mode === 'file' && !state.installSource.observation?.file ? 1 : 0,
+          },
+          style: { width: fill, height: fill, minHeight: 0 },
         },
       ),
       ...configuration.entries.flatMap((app, member) =>
@@ -376,45 +415,39 @@ export function frame<N extends Node>(
       ),
       ui.box(
         'apps-actions',
-        state.route === 'list'
+        state.route === 'configure'
           ? [
-              ui.button('add', text.appsAdd, disabled),
-              ui.button('file', text.appsInstall, disabled),
-              ui.button('refresh', text.appsReload, disabled),
-              ui.button('manage', text.appsManage, disabled),
+              ui.button(
+                'review',
+                text.appsReview,
+                suspended ||
+                  !draft ||
+                  !complete(draft) ||
+                  !state.fields.name.ready ||
+                  !!state.fields.name.command,
+              ),
             ]
-          : state.route === 'choose'
-            ? [ui.button('file', text.appsInstall, disabled)]
-            : state.route === 'configure'
+          : state.route === 'file'
+            ? [
+                ui.button(
+                  'install',
+                  text.appsInstall,
+                  !state.catalog || !canInstall(state.installSource, disabled, false),
+                ),
+              ]
+            : state.route === 'bindings'
               ? [
-                  ui.button(
-                    'review',
-                    text.appsReview,
-                    suspended ||
-                      !draft ||
-                      !complete(draft) ||
-                      !state.fields.name.ready ||
-                      !!state.fields.name.command,
-                  ),
+                  ui.button('bindings-done', text.appsContinue, disabled),
+                  ui.button('bindings-clear', text.appsBindingClear, disabled),
                 ]
-              : state.route === 'file'
-                ? [
-                    ui.button(
-                      'install',
-                      text.appsInstall,
-                      disabled ||
-                        !state.catalog ||
-                        state.file?.phase !== 'ready' ||
-                        !state.file.file,
-                    ),
-                  ]
-                : state.route === 'bindings'
-                  ? [
-                      ui.button('bindings-done', text.appsContinue, disabled),
-                      ui.button('bindings-clear', text.appsBindingClear, disabled),
-                    ]
-                  : [ui.button('close-current', text.appsClose, disabled)],
-        { row: true, terminal: { wrap: true }, style: { wrap: true }, gap: 1 },
+              : [ui.button('close-current', text.appsClose, disabled)],
+        {
+          visible: !['list', 'choose'].includes(state.route),
+          row: true,
+          terminal: { wrap: true },
+          style: { wrap: true },
+          gap: 1,
+        },
       ),
     ],
     {
@@ -483,8 +516,11 @@ export function frame<N extends Node>(
             : text.appsConfirmHelp,
         14,
       ),
-      ...(state.confirm?.kind === 'install' && state.confirm.file.file
+      ...(state.confirm?.kind === 'install' && 'file' in state.confirm && state.confirm.file.file
         ? [ui.text('apps-confirm-file', state.confirm.file.file.name, 15)]
+        : []),
+      ...(state.confirm?.kind === 'install' && 'url' in state.confirm
+        ? [ui.text('apps-confirm-url', state.confirm.url, 14)]
         : []),
       ...(draft
         ? [

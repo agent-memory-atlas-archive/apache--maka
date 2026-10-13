@@ -103,10 +103,12 @@ export function handleEvent<N extends Node>(
   } else if (
     input.kind === 'component' &&
     input.child === 'deployment-import-url' &&
-    input.name === 'changed'
+    ['changed', 'submitted'].includes(input.name)
   ) {
     state.importer.urlObservation = input.event as EditorObservation;
     if (!matchesImport(state.importer)) state.importer.confirmation = null;
+    if (input.name === 'submitted')
+      input = { kind: 'raw', key: 'deployment-import-install', event: {} };
   } else if (
     input.kind === 'component' &&
     input.child === 'deployment-import-file' &&

@@ -34,6 +34,7 @@ import type {
   ReadingObservation,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { type AppsProps } from '../../shared/contracts.js';
+import { canInstall } from '../../shared/deployment-import.js';
 import { settingOptions } from '../../shared/instance-settings.js';
 import { sameValue } from '../../shared/value.js';
 import { type Node, type Presentation } from '../../shared/view.js';
@@ -121,8 +122,11 @@ export function handleEvent<N extends Node>(
     } else if (name === 'name' && input.name === 'submitted')
       input = { kind: 'raw', key: 'review', event: {} } as ComponentInput;
     else if (input.child === 'apps-file' && input.name === 'changed')
-      state.file = input.event as FileObservation;
-    else if (input.name === 'closed' && input.child.startsWith('app-')) {
+      state.installSource.observation = input.event as FileObservation;
+    else if (input.child === 'apps-url' && ['changed', 'submitted'].includes(input.name)) {
+      state.installSource.urlObservation = input.event as EditorObservation;
+      if (input.name === 'submitted') input = { kind: 'raw', key: 'install', event: {} };
+    } else if (input.name === 'closed' && input.child.startsWith('app-')) {
       const id = input.child.slice(4);
       state.opened = state.opened.filter((o) => o !== id);
       if (state.selected === id) {
@@ -146,7 +150,7 @@ export function handleEvent<N extends Node>(
           const recovery = item.recovery as { kind?: string; input?: Mutation } | null;
           if (
             item.reference.contract.name === 'maka.application.DeploymentManager' &&
-            ['install', 'editComposition'].includes(item.reference.method) &&
+            ['install', 'installUrl', 'editComposition'].includes(item.reference.method) &&
             recovery?.kind === 'application-apps/v1' &&
             recovery.input
           ) {
@@ -193,6 +197,22 @@ export function handleEvent<N extends Node>(
               ? { ...page, candidates: [...state.draft.choices.candidates, ...page.candidates] }
               : page;
       }
+    } else if (r.kind === 'urlText') {
+      const chunk = result.status === 'succeeded' ? (result.value as TextChunk) : null;
+      if (
+        chunk &&
+        sameValue(chunk.metadata, r.captured.snapshot.text) &&
+        new TextEncoder().encode(chunk.text).length === r.captured.snapshot.text.bytes &&
+        sameValue(r.captured, state.installSource.urlObservation) &&
+        sameValue(r.source, state.catalog?.source) &&
+        state.installSource.mode === 'url' &&
+        state.route === 'file'
+      ) {
+        const url = chunk.text.trim();
+        if (/^https?:\/\/[^\s]+$/.test(url))
+          state.confirm = { kind: 'install', source: r.source, captured: r.captured, url };
+        else state.notice = 'deploymentUrlInvalid';
+      } else state.notice = 'deploymentFileFailed';
     } else if (r.kind === 'settings') {
       if (result.status !== 'succeeded') state.notice = 'appsUnavailable';
       else if (
@@ -253,6 +273,8 @@ export function handleEvent<N extends Node>(
       if (state.current || state.restoring || state.route === 'list')
         events.push({ name: 'closed', value: {} });
       else if (!state.pending) {
+        state.notice = null;
+        state.diagnostic = null;
         if (state.route === 'bindings') state.route = 'configure';
         else {
           state.route = 'list';
@@ -282,19 +304,48 @@ export function handleEvent<N extends Node>(
         else if (key === 'add') {
           state.route = 'choose';
           state.notice = null;
+          state.diagnostic = null;
           catalog(state, actions, configuration);
         } else if (key === 'file') {
           state.route = 'file';
           state.notice = null;
+          state.diagnostic = null;
           if (!state.catalog) catalog(state, actions, configuration);
+        } else if (key === 'apps-local' || key === 'apps-remote') {
+          state.installSource.mode = key === 'apps-local' ? 'file' : 'url';
+          state.notice = null;
+          state.diagnostic = null;
         } else if (
           key === 'install' &&
           state.catalog &&
-          state.file?.phase === 'ready' &&
-          state.file.file
-        )
-          state.confirm = { kind: 'install', source: state.catalog.source, file: state.file };
-        else if (key.startsWith('open-')) {
+          canInstall(state.installSource, false, false)
+        ) {
+          if (state.installSource.mode === 'file')
+            state.confirm = {
+              kind: 'install',
+              source: state.catalog.source,
+              file: state.installSource.observation!,
+            };
+          else {
+            const captured = state.installSource.urlObservation!,
+              basis = captured.snapshot.text;
+            request(
+              state,
+              actions,
+              { kind: 'urlText', captured, source: state.catalog.source },
+              'reader',
+              'read',
+              { start: 0, end: basis.bytes },
+              {
+                text: {
+                  child: 'apps-url',
+                  method: 'snapshot',
+                  input: { kind: 'at_revision', owner: basis.owner, revision: basis.revision },
+                },
+              },
+            );
+          }
+        } else if (key.startsWith('open-')) {
           const id = key.slice(5);
           if (configuration.entries.some((e) => e.id === id)) {
             state.selected = id;

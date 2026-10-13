@@ -51,6 +51,7 @@ struct Owner {
     receiver: Option<mpsc::Receiver<Result<browser::Selected, FileError>>>,
     visible: bool,
     announced: bool,
+    focus_browser: bool,
 }
 impl Owner {
     fn observation(&self) -> NativeInput {
@@ -89,6 +90,7 @@ impl Owner {
                 self.editor
                     .insert(browser.path().to_str().expect("validated local path"));
                 self.browser = Some(browser);
+                self.focus_browser = self.visible;
             }
             Err(error) => {
                 self.browser = None;
@@ -150,6 +152,7 @@ impl Widget for Recipe {
             receiver: None,
             visible: true,
             announced: false,
+            focus_browser: false,
         })
     }
     fn commit(&self, state: &mut dyn Any) -> maka_ui_runtime::Result<Option<NativeInput>> {
@@ -165,6 +168,9 @@ impl Widget for Recipe {
         let announce = !owner.announced || accepted;
         owner.announced = true;
         Ok(announce.then(|| owner.observation()))
+    }
+    fn present_focus(&self, state: &mut dyn Any) -> bool {
+        std::mem::take(&mut state.downcast_mut::<Owner>().unwrap().focus_browser)
     }
     fn observe(&self, state: &mut dyn Any) -> Option<NativeInput> {
         let owner = state.downcast_mut::<Owner>().unwrap();
@@ -265,6 +271,13 @@ impl Widget for Recipe {
             .selection
             .capture(&capture)
     }
+    fn layout(&self, slots: &Slots<'_>) -> maka_ui_runtime::Result<super::TerminalLayout> {
+        Ok(super::TerminalLayout {
+            grow: u16::from(slots.native_state::<Owner>()?.browser.is_some()),
+            shrink: true,
+            ..Default::default()
+        })
+    }
     fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui_runtime::Result<(u16, u32)> {
         let owner = slots.native_state::<Owner>()?;
         let (_, controls) = controls(
@@ -277,11 +290,12 @@ impl Widget for Recipe {
         );
         Ok((
             width,
-            2 + controls
+            2 + u32::from(self.0.props.appearance.border_width > 0.0) * 2
+                + controls
                 + owner
                     .browser
                     .as_ref()
-                    .map_or(0, |browser| browser.height(browser_rows(slots))),
+                    .map_or(0, |browser| browser.height(2)),
         ))
     }
     fn paint(
@@ -295,32 +309,71 @@ impl Widget for Recipe {
         let color = |c: maka_ui_runtime::appearance::Color| {
             Color::Rgb((c.0 >> 24) as u8, (c.0 >> 16) as u8, (c.0 >> 8) as u8)
         };
-        let style = Style::default()
-            .fg(color(a.text.foreground))
-            .bg(color(a.background));
+        let terminal = a.terminal.as_ref();
+        let foreground = terminal.map_or_else(
+            || color(a.text.foreground),
+            |p| super::paint::color(p.foreground),
+        );
+        let background = terminal.map_or_else(
+            || color(a.background),
+            |p| super::paint::color(p.background),
+        );
+        let muted = terminal.map_or_else(
+            || color(a.muted_foreground),
+            |p| super::paint::color(p.subtle),
+        );
+        let selected =
+            terminal.map_or_else(|| color(a.selection), |p| super::paint::color(p.selection));
+        let style = Style::default().fg(foreground).bg(background);
+        let path_focused = slots.focused_key() == Some("path");
+        let inset = u32::from(a.border_width > 0.0) * 2;
+        let chrome = 2 + inset;
         let row = |y| {
             Placement::new(
                 super::CellRect::new(area.x, area.y + y, area.width, 1),
                 area.visible(),
             )
         };
-        super::paint::text(&self.0.props.path_label, row(0), buffer, style);
-        let path = row(1);
+        super::paint::text(&self.0.props.path_label, row(0), buffer, style.fg(muted));
+        let field = Placement::new(
+            super::CellRect::new(area.x, area.y + 1, area.width, 1 + inset),
+            area.visible(),
+        );
+        let path = if inset > 0 {
+            let border = terminal.map_or_else(
+                || {
+                    color(if path_focused {
+                        a.focused_border
+                    } else {
+                        a.border
+                    })
+                },
+                |p| super::paint::color(if path_focused { p.accent } else { p.border }),
+            );
+            super::border::paint(
+                buffer,
+                field,
+                border,
+                if a.ascii {
+                    maka_ui_runtime::scene::terminal::BorderStyle::Ascii
+                } else {
+                    maka_ui_runtime::scene::terminal::BorderStyle::Rounded
+                },
+            );
+            super::border::inner(field)
+        } else {
+            field
+        };
         let geometry = owner.editor.paint_prepared(
             path,
             buffer,
-            slots.focused_key() == Some("path"),
+            path_focused,
             style,
-            style.bg(color(a.selection)),
+            style.bg(selected),
             style.add_modifier(Modifier::REVERSED),
         );
         if owner.editor.text().is_empty() {
-            super::paint::text(
-                &self.0.props.placeholder,
-                path,
-                buffer,
-                style.fg(color(a.muted_foreground)),
-            );
+            super::paint::text(&self.0.props.placeholder, path, buffer, style.fg(muted));
         }
         let enabled = !self.0.props.disabled && !owner.selection.busy();
         let (controls, control_rows) = controls(
@@ -336,14 +389,14 @@ impl Widget for Recipe {
             let bounds = Placement::new(
                 super::CellRect::new(
                     area.x + i64::from(control.x),
-                    area.y + 2 + i64::from(control.y),
+                    area.y + i64::from(chrome + control.y),
                     control.width,
                     1,
                 ),
                 area.clip,
             );
             let tone = if !enabled {
-                style.fg(color(a.muted_foreground))
+                style.fg(muted)
             } else if slots.focused_key() == Some(control.key) {
                 style.add_modifier(Modifier::BOLD | Modifier::REVERSED)
             } else {
@@ -358,28 +411,29 @@ impl Widget for Recipe {
                 Placement::new(
                     super::CellRect::new(
                         area.x,
-                        area.y + 2 + i64::from(control_rows),
+                        area.y + i64::from(chrome + control_rows),
                         area.width,
-                        browser.height(browser_rows(slots)),
+                        area.height.saturating_sub(chrome + control_rows),
                     ),
                     area.clip,
                 ),
-                browser_rows(slots),
+                area.height.saturating_sub(chrome + 1 + control_rows) as usize,
                 buffer,
                 style,
                 enabled && slots.focused_key() == Some("entries"),
             )
         });
         let entries = browser_geometry.as_ref().map(|geometry| geometry.area);
+        let focus_browser = owner.focus_browser;
         slots.native_geometry(Box::new((geometry, browser_geometry)))?;
         // A pending local read keeps keyboard focus; input remains gated above.
         if !self.0.props.disabled {
-            slots.native_target("path", path, self.0.props.tab_index, false)?;
+            slots.native_target("path", field, self.0.props.tab_index, false)?;
             for (key, bounds) in targets {
                 slots.native_target(key, bounds, self.0.props.tab_index, false)?;
             }
             if let Some(entries) = entries {
-                slots.native_target("entries", entries, self.0.props.tab_index, false)?;
+                slots.native_target("entries", entries, self.0.props.tab_index, focus_browser)?;
             }
         }
         Ok(())
@@ -400,6 +454,7 @@ impl Widget for Recipe {
         let owner = state.downcast_mut::<Owner>().unwrap();
         owner.visible = visible;
         if !visible {
+            owner.focus_browser = false;
             owner.editor.invalidate_geometry();
             owner.geometry = None;
             if let Some(browser) = &mut owner.browser {
@@ -431,7 +486,7 @@ fn controls(props: &FilePickerProps, width: u16, parent: bool) -> (Vec<Control>,
         .into_iter()
         .chain(parent.then_some(("parent", &props.parent_label)))
     {
-        let label = format!("[ {} ]", super::paint::sanitize(label));
+        let label = format!(" {} ", super::paint::sanitize(label));
         let size = label.width().min(usize::from(width)) as u16;
         if x > 0 && x.saturating_add(size) > width {
             x = 0;
@@ -447,9 +502,6 @@ fn controls(props: &FilePickerProps, width: u16, parent: bool) -> (Vec<Control>,
         x = x.saturating_add(size).saturating_add(1);
     }
     (controls, y + 1)
-}
-fn browser_rows(slots: &Slots<'_>) -> usize {
-    usize::from((slots.viewport().height / 3).clamp(2, 8))
 }
 
 struct Component;
@@ -628,7 +680,7 @@ mod tests {
         )
         .unwrap();
         let draw = |tui: &mut Presenter| {
-            let area = Rect::new(0, 0, 30, 4);
+            let area = Rect::new(0, 0, 30, 6);
             let scene = tui.paint(area, &mut Buffer::empty(area)).unwrap();
             tui.present(scene);
         };
@@ -639,16 +691,16 @@ mod tests {
             Event::Mouse(MouseEvent {
                 kind,
                 column: x,
-                row: 1,
+                row: 2,
                 modifiers: KeyModifiers::NONE,
             })
         };
-        tui.input(mouse(MouseEventKind::Down(MouseButton::Left), 1))
+        tui.input(mouse(MouseEventKind::Down(MouseButton::Left), 2))
             .unwrap();
         assert!(tui.drag.is_some());
-        tui.input(mouse(MouseEventKind::Drag(MouseButton::Left), 4))
+        tui.input(mouse(MouseEventKind::Drag(MouseButton::Left), 5))
             .unwrap();
-        tui.input(mouse(MouseEventKind::Up(MouseButton::Left), 4))
+        tui.input(mouse(MouseEventKind::Up(MouseButton::Left), 5))
             .unwrap();
         assert!(tui.drag.is_none());
         let owner = tui.resources.owners[&tui.root.id()]
@@ -666,6 +718,48 @@ mod tests {
         )))
         .unwrap();
         assert_eq!(tui.application.frame(&tui.root).unwrap().state["count"], 1);
+        // A full-page browser uses its allocated height, including after a resize.
+        // The native file remains the same owner and does not recreate its selection.
+        let directory = tempfile::tempdir().unwrap();
+        for i in 0..40 {
+            std::fs::write(
+                directory.path().join(format!("file-{i:02}.maka-plugin")),
+                b"package",
+            )
+            .unwrap();
+        }
+        let owner = tui
+            .resources
+            .owners
+            .get_mut(&tui.root.id())
+            .unwrap()
+            .state
+            .downcast_mut::<Owner>()
+            .unwrap();
+        let selected = browser::select(
+            browser::Request {
+                path: directory.path().to_path_buf(),
+                directory: true,
+            },
+            &owner.context.budget,
+        )
+        .unwrap();
+        owner.settle(Ok(selected));
+        for (height, last_visible) in [(40, "file-33"), (12, "file-05"), (30, "file-23")] {
+            let area = Rect::new(0, 0, 65, height);
+            let mut buffer = Buffer::empty(area);
+            let scene = tui.paint(area, &mut buffer).unwrap();
+            tui.present(scene);
+            let rendered = buffer
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+            assert!(
+                rendered.contains(last_visible),
+                "browser did not fill {height} rows: {rendered}"
+            );
+        }
         let root = tui.root.clone();
         tui.surface_closed(&root, Ok(())).unwrap();
         tui.shutdown().unwrap();

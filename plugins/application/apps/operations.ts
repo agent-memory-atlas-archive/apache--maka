@@ -230,6 +230,17 @@ export function edit(state: State, configuration: AppsConfiguration, label: stri
 export function mutate(state: State, actions: Action[]) {
   const input = state.confirm;
   if (!input) return;
+  if (
+    input.kind === 'install' &&
+    'url' in input &&
+    (state.installSource.mode !== 'url' ||
+      !sameValue(input.captured, state.installSource.urlObservation) ||
+      !sameValue(input.source, state.catalog?.source))
+  ) {
+    state.confirm = null;
+    state.notice = 'deploymentFileFailed';
+    return;
+  }
   state.current = { input, reference: null };
   state.notice = null;
   state.diagnostic = null;
@@ -238,9 +249,14 @@ export function mutate(state: State, actions: Action[]) {
     actions,
     { kind: 'mutation' },
     'management',
-    input.kind === 'install' ? 'install' : 'editComposition',
-    input.kind === 'install' ? { expectedRevision: input.source.revision } : input.input,
+    input.kind === 'install' ? ('url' in input ? 'installUrl' : 'install') : 'editComposition',
     input.kind === 'install'
+      ? {
+          expectedRevision: input.source.revision,
+          ...('url' in input ? { url: input.url, sha256: null } : {}),
+        }
+      : input.input,
+    input.kind === 'install' && 'file' in input
       ? {
           package: {
             child: 'apps-file',

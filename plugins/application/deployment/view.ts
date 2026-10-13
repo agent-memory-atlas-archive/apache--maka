@@ -209,8 +209,24 @@ export function frame<N extends Node>(
         'deployment-back',
         !!state.settings?.open && busy,
       ),
-      ...(target === 'tui' || (!current && !history)
+      ...(target !== 'tui' && !current && !history
         ? [ui.text('deployment-help', text.deploymentHelp, 13, props.theme.muted)]
+        : []),
+      ...(target === 'tui'
+        ? [
+            ui.box(
+              'deployment-toolbar',
+              [
+                ui.button('deployment-import', text.deploymentInstall, busy || !state.page, true),
+                ui.button('deployment-advanced', text.deploymentEdit, busy || !state.page),
+                ui.button('deployment-history', text.deploymentHistory, !!state.pending || loading),
+                ui.button('deployment-refresh', text.deploymentRefresh, busy, false, {
+                  background: 0,
+                }),
+              ],
+              { row: true, gap: 1, terminal: { wrap: true } },
+            ),
+          ]
         : []),
       ...(state.notice
         ? [ui.text('deployment-notice', text[state.notice], 13, props.theme.muted)]
@@ -244,27 +260,41 @@ export function frame<N extends Node>(
               ? [ui.button('deployment-history-more', text.moreOperations, !!state.pending)]
               : []),
           ]
-        : [
-            ui.button(
-              'deployment-refresh',
-              target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.deploymentRefresh,
-              busy,
-              false,
-              target === 'tui' ? { background: 0 } : {},
-              undefined,
-              text.deploymentRefresh,
-            ),
-            ...(state.previous.length
-              ? [ui.button('deployment-previous', text.deploymentPrevious, busy)]
-              : []),
-            ...(state.page?.next ? [ui.button('deployment-next', text.deploymentMore, busy)] : []),
-            ...(state.current?.reference
-              ? [ui.button('deployment-check', text.check, !!state.pending)]
-              : []),
-            ui.button('deployment-history', text.deploymentHistory, !!state.pending || loading),
-            ui.button('deployment-advanced', text.deploymentEdit, busy || !state.page),
-            ui.button('deployment-import', text.deploymentInstall, busy || !state.page),
-          ],
+        : target === 'tui'
+          ? [
+              ...(state.previous.length
+                ? [ui.button('deployment-previous', text.deploymentPrevious, busy)]
+                : []),
+              ...(state.page?.next
+                ? [ui.button('deployment-next', text.deploymentMore, busy)]
+                : []),
+              ...(state.current?.reference
+                ? [ui.button('deployment-check', text.check, !!state.pending)]
+                : []),
+            ]
+          : [
+              ui.button(
+                'deployment-refresh',
+                text.deploymentRefresh,
+                busy,
+                false,
+                {},
+                undefined,
+                text.deploymentRefresh,
+              ),
+              ...(state.previous.length
+                ? [ui.button('deployment-previous', text.deploymentPrevious, busy)]
+                : []),
+              ...(state.page?.next
+                ? [ui.button('deployment-next', text.deploymentMore, busy)]
+                : []),
+              ...(state.current?.reference
+                ? [ui.button('deployment-check', text.check, !!state.pending)]
+                : []),
+              ui.button('deployment-history', text.deploymentHistory, !!state.pending || loading),
+              ui.button('deployment-advanced', text.deploymentEdit, busy || !state.page),
+              ui.button('deployment-import', text.deploymentInstall, busy || !state.page),
+            ],
     {
       row: true,
       gap: target === 'desktop' ? 8 : 1,

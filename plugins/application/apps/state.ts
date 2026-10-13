@@ -25,7 +25,6 @@ import type {
   DeploymentRef,
   EditorCommand,
   EditorObservation,
-  FileObservation,
   ManagedImport,
   PackageSettingsPage,
   RecoveryRef,
@@ -33,17 +32,19 @@ import type {
   SettingField,
   Target,
 } from '../../../packages/plugin-sdk/src/index.js';
+import type { InstallIntent, PackageSource } from '../../shared/deployment-import.js';
 import { type Copy } from '../../shared/locale.js';
 import { type PageState } from '../../shared/page-shell.js';
 
 export type Mutation =
-  | { kind: 'install'; source: DeploymentRef; file: FileObservation }
+  | ({ kind: 'install' } & InstallIntent)
   | { kind: 'edit'; input: CompositionEdit; outcome: 'add' | 'remove' };
 
 export type Request =
   | { kind: 'catalog' | 'bindings'; input: BindingCandidatesRead }
   | { kind: 'settings'; path: string[]; after: string | null }
   | { kind: 'field'; name: 'name' | 'setting'; observation: EditorObservation }
+  | { kind: 'urlText'; captured: EditorObservation; source: DeploymentRef }
   | { kind: 'mutation' | 'receipt' }
   | { kind: 'history'; after: number };
 
@@ -83,7 +84,7 @@ export interface State extends PageState {
   opened: string[];
   draft: Draft | null;
   fields: { name: Field; setting: Field };
-  file: FileObservation | null;
+  installSource: PackageSource;
   pending: { key: string; request: Request } | null;
   original: RecoveryRef | null;
   restoring: boolean;

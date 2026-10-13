@@ -258,7 +258,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Control<R, W> {
                 retain: retain.clone(),
                 captured: captured.clone(),
             },
-            BOOTSTRAP_LIMIT,
+            wire::FRAME_LIMIT,
         )?;
         Ok(())
     }
@@ -279,10 +279,10 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Control<R, W> {
             retain,
             captured,
         };
-        wire::encode_bounded(&command, BOOTSTRAP_LIMIT)?;
+        wire::encode_bounded(&command, wire::FRAME_LIMIT)?;
         // An abandoned/partial exchange cannot append another control frame.
         self.phase = Phase::Lost;
-        wire::write_bounded(self.writer.as_mut().unwrap(), &command, BOOTSTRAP_LIMIT).await?;
+        wire::write(self.writer.as_mut().unwrap(), &command).await?;
         match self.reader.read().await? {
             Event::Approved {
                 nonce,
@@ -446,7 +446,7 @@ pub async fn serve(
                     loop {
                         tokio::select! {
                             biased;
-                            command = input.read_bounded::<Command>(BOOTSTRAP_LIMIT) => {
+                            command = input.read::<Command>() => {
                                 match command {
                                     Ok(Command::Epochs { nonce }) if nonce == bootstrap.nonce => {
                                         let result = Endpoints::capture(&client, &bootstrap.endpoints).await.map(|endpoints| endpoints.epochs());
@@ -720,5 +720,66 @@ mod tests {
             matches!(&reply, Event::Captured { nonce: actual, result: Err(_) } if *actual == nonce)
         );
         wire::encode_bounded(&reply, wire::FRAME_LIMIT).unwrap();
+    }
+
+    #[tokio::test]
+    async fn captured_catalogue_above_bootstrap_limit_can_be_approved() {
+        let catalogue: Catalogue = serde_json::from_value(serde_json::json!({"endpoints":{"large":{
+            "provider":[Uuid::from_u128(1)],"export":"Large","contract":{
+                "name":"large.Service","version":1,"transport":"remote",
+                "interface":{"kind":"service","methods":{"read":{"mode":"query",
+                    "input":{"description":"x".repeat(BOOTSTRAP_LIMIT)},"output":{},"resources":{}}}}
+            },"registration_epoch":Uuid::from_u128(2)
+        }}})).unwrap();
+        let nonce = Uuid::new_v4();
+        let source = DeploymentRef {
+            state_domain: "a".repeat(64),
+            deployment: Uuid::new_v4(),
+            revision: 2,
+        };
+        let consumers = BTreeSet::from([InstanceId(vec![Uuid::new_v4()])]);
+        let retain = BTreeSet::from([1, 2]);
+        let (writer, child_reader) = tokio::io::duplex(4096);
+        let (mut child_writer, reader) = tokio::io::duplex(4096);
+        let mut control = Control::new(reader, writer, nonce).unwrap();
+        control.phase = Phase::Started;
+        let expected = catalogue.clone();
+        let expected_source = source.clone();
+        let peer = tokio::spawn(async move {
+            let command: Command = wire::Reader::new(child_reader).read().await.unwrap();
+            let Command::Approve {
+                nonce: actual,
+                source,
+                captured,
+                ..
+            } = command
+            else {
+                panic!("expected approval")
+            };
+            assert_eq!(actual, nonce);
+            assert_eq!(source, expected_source);
+            assert_eq!(captured, Some(expected));
+            wire::write(
+                &mut child_writer,
+                &Event::Approved {
+                    nonce,
+                    source,
+                    result: Ok(()),
+                },
+            )
+            .await
+            .unwrap();
+        });
+        // Capture uses the normal frame bound, and the matching approval must too.
+        assert!(matches!(
+            capture_reply(nonce, Ok(catalogue.clone())),
+            Event::Captured { result: Ok(_), .. }
+        ));
+        control
+            .approve(source, consumers, retain, Some(catalogue))
+            .await
+            .unwrap();
+        assert!(control.phase == Phase::Started);
+        peer.await.unwrap();
     }
 }

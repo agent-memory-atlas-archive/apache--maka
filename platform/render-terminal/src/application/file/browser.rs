@@ -337,17 +337,43 @@ impl Browser {
             };
             buffer.set_style(row.visible(), style);
             let name = entry.path.file_name().unwrap().to_str().unwrap();
+            let size = (!entry.directory && row.width >= 24).then(|| {
+                if entry.bytes >= 1024 * 1024 {
+                    format!("{:.1} MiB", entry.bytes as f64 / (1024.0 * 1024.0))
+                } else if entry.bytes >= 1024 {
+                    format!("{:.1} KiB", entry.bytes as f64 / 1024.0)
+                } else {
+                    format!("{} B", entry.bytes)
+                }
+            });
+            let reserved = size.as_ref().map_or(0, |size| size.len() as u16 + 2);
             let label = if entry.directory {
                 format!("/ {name}")
             } else {
-                format!("  {name} · {} B", entry.bytes)
+                format!("  {name}")
             };
             paint::text(
-                &paint::truncated_line(&label, row.width),
+                &paint::truncated_line(&label, row.width.saturating_sub(reserved)),
                 row,
                 buffer,
                 style,
             );
+            if let Some(size) = size {
+                paint::text(
+                    &size,
+                    Placement::new(
+                        CellRect::new(
+                            row.right() - size.len() as i64 - 1,
+                            row.y,
+                            size.len() as u16,
+                            1,
+                        ),
+                        row.clip,
+                    ),
+                    buffer,
+                    style,
+                );
+            }
             if !row.is_empty() {
                 hits.push((index, row));
             }

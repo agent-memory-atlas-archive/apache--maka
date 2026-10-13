@@ -158,34 +158,30 @@ export function headerView<N extends Node>(
             ui.box(
               'toolbar',
               [
-                ...(['outputs-open', 'details-open', 'terminal-open', 'palette-open'] as const).map(
-                  (key, at) =>
+                ...[
+                  ['outputs-open', tuiText(locale, 'task-outputs')],
+                  ['details-open', text.detailsOpen],
+                  ['terminal-open', text.terminalTitle],
+                  ['palette-open', text.paletteTitle],
+                ]
+                  .filter(([key]) => key === 'palette-open' || conversationRoute(state))
+                  .map(([key, label]) =>
                     ui.box(
                       `${key}-cell`,
                       [
                         ui.button(
-                          key,
-                          [
-                            tuiText(locale, 'task-outputs'),
-                            text.detailsOpen,
-                            text.terminalTitle,
-                            text.paletteTitle,
-                          ][at]!,
-                          key !== 'palette-open' && (!conversationRoute(state) || !state.selected),
+                          key!,
+                          label!,
+                          key !== 'palette-open' && !state.selected,
                           false,
                           { background: 0 },
                           undefined,
-                          [
-                            tuiText(locale, 'task-outputs'),
-                            text.detailsOpen,
-                            text.terminalTitle,
-                            text.paletteTitle + ' · Ctrl+K',
-                          ][at],
+                          label + (key === 'palette-open' ? ' · Ctrl+K' : ''),
                         ),
                       ],
                       { terminal: { shrink: false } },
                     ),
-                ),
+                  ),
               ],
               { row: true, gap: 1, terminal: { shrink: true, wrap: true } },
             ),

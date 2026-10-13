@@ -60,6 +60,8 @@ The three most recently visited tasks retain their reading owners, search and au
 
 At narrow widths the task sidebar collapses automatically, retaining its chosen width for later. Model selection opens near the input area. Anonymous providers expose their endpoint without requiring advanced settings or sign-in.
 
+Apps exposes both local-file and URL installation directly. Enter in the URL field reviews the captured link before installation; uncertain results keep the original operation available for checking. The local browser fills the available page height and preserves its selection when resized. After installation, choose an application component to add it to Apps. Closing or removing an app remains available from its context menu.
+
 ## Author an installation
 
 The CLI can produce checked sources and packages without Node at runtime:

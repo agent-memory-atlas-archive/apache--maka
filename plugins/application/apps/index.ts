@@ -46,7 +46,7 @@ export function apps<N extends Node>(
           opened: [],
           draft: null,
           fields: { name: field(), setting: field() },
-          file: null,
+          installSource: { mode: 'file', observation: null, urlObservation: null },
           pending: null,
           original: null,
           restoring: false,

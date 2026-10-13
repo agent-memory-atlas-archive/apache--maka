@@ -300,4 +300,46 @@ for (const presentation of ['tui', 'desktop']) {
     });
     assert.deepEqual(action.recovery.input.file, file);
   });
+  test(
+    presentation + ' Apps exposes URL installation and fences edited or stale links',
+    async () => {
+      const c = (await client(presentation)).loaded();
+      const url = 'https://example.com/notes.maka-plugin';
+      const observed = (revision) => ({
+        revision,
+        snapshot: { text: { owner: uuid(61), revision, bytes: url.length }, marked: null },
+      });
+      c.raw('file').raw('apps-remote').child('apps-url', 'changed', observed(1)).raw('install');
+      assert.deepEqual(c.out.actions[0].resources.text, {
+        child: 'apps-url',
+        method: 'snapshot',
+        input: { kind: 'at_revision', owner: uuid(61), revision: 1 },
+      });
+      c.done({ text: url, metadata: observed(1).snapshot.text });
+      assert.equal(c.state.confirm.url, url);
+      c.child('apps-url', 'changed', observed(2)).raw('confirm');
+      assert.equal(c.state.confirm, null);
+      assert.deepEqual(
+        c.out.actions,
+        [],
+        'an edited URL cannot install the previously reviewed link',
+      );
+      c.raw('install').done({ text: url, metadata: observed(1).snapshot.text });
+      assert.equal(c.state.confirm, null, 'stale native text is rejected');
+      c.raw('install')
+        .done({ text: url, metadata: observed(2).snapshot.text })
+        .raw('confirm');
+      assert.equal(c.out.actions[0].method, 'installUrl');
+      assert.deepEqual(c.out.actions[0].input, { expectedRevision: 2, url, sha256: null });
+      assert.deepEqual(c.out.actions[0].resources, {});
+      const ref = reference('installUrl');
+      c.done({ reference: ref, receipt: { kind: 'unknown' } }, 'operation').raw('confirm');
+      assert.deepEqual(c.out.actions, [], 'uncertain installs are not repeated');
+      c.raw('receipt');
+      assert.deepEqual(c.out.actions[0].input, ref);
+      c.done(reply(ref, { status: 'committed', value: { source, package: packageRef } }));
+      assert.equal(c.state.route, 'choose');
+      assert.equal(c.state.notice, 'appsPackageAdded');
+    },
+  );
 }

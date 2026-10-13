@@ -32,11 +32,13 @@ import { fill, pixels, type Presentation, type Node } from './view.js';
 export type InstallIntent =
   | { source: DeploymentRef; file: FileObservation }
   | { source: DeploymentRef; url: string; captured: EditorObservation };
-export interface PackageImport {
-  open: boolean;
+export interface PackageSource {
   mode: 'file' | 'url';
   urlObservation: EditorObservation | null;
   observation: FileObservation | null;
+}
+export interface PackageImport extends PackageSource {
+  open: boolean;
   confirmation: InstallIntent | null;
   installed: PackageInstalled | null;
 }
@@ -50,7 +52,7 @@ export function packageImport(): PackageImport {
     installed: null,
   };
 }
-export function canInstall(importer: PackageImport, busy: boolean, conflict: boolean) {
+export function canInstall(importer: PackageSource, busy: boolean, conflict: boolean) {
   if (busy || conflict) return false;
   if (importer.mode === 'file')
     return importer.observation?.phase === 'ready' && !!importer.observation.file;
@@ -66,6 +68,104 @@ export function matchesImport(importer: PackageImport) {
       : importer.mode === 'url' && sameValue(intent.captured, importer.urlObservation))
   );
 }
+export function packageSourceView<N extends Node>(
+  presentation: Presentation<N>,
+  props: ConnectionsProps,
+  prefix: string,
+  importer: PackageSource,
+  busy: boolean,
+) {
+  const ui = presentation.paint(props.theme),
+    text = copy(props.locale);
+  return ui.box(
+    prefix + '-source-body',
+    [
+      ui.box(
+        prefix + '-source',
+        [
+          ui.button(prefix + '-local', text.deploymentLocal, busy, importer.mode === 'file'),
+          ui.button(prefix + '-remote', text.deploymentUrl, busy, importer.mode === 'url'),
+        ],
+        { row: true, gap: 1, terminal: { wrap: true }, style: { wrap: true } },
+      ),
+      ui.box(
+        prefix + '-url-owner',
+        [
+          presentation.slot(
+            prefix + '-url',
+            'editor',
+            {
+              appearance: props.theme.textarea,
+              accessibilityLabel: text.deploymentUrl,
+              placeholder: 'https://example.com/plugin.maka-plugin',
+              tabIndex: 0,
+              readOnly: busy,
+              disabled: false,
+              autoFocus: true,
+              softWrap: presentation.target === 'tui',
+              terminalRows: { min: 1, max: 2 },
+              submit: 'enter',
+              command: null,
+              menu: {
+                appearance: props.theme.menu,
+                labels: {
+                  title: text.edit,
+                  undo: text.undo,
+                  redo: text.redo,
+                  cut: text.cut,
+                  copy: text.copy,
+                  paste: text.paste,
+                  selectAll: text.selectAll,
+                },
+              },
+            } satisfies TextareaProps,
+            { changed: prefix + '-url-changed', submitted: prefix + '-install' },
+          ),
+        ],
+        { visible: importer.mode === 'url' },
+      ),
+      // The retained native child owns selection. Confirmation suspends it rather
+      // than recreating it; snapshot still captures the exact observed revision.
+      ui.box(
+        prefix + '-file-owner',
+        [
+          presentation.slot(
+            prefix + '-file',
+            'file',
+            {
+              appearance: props.theme.input,
+              label: text.deploymentChooseFile,
+              pathLabel: text.deploymentFilePath,
+              browseLabel: text.fileBrowse,
+              parentLabel: text.directoryParent,
+              emptyLabel: text.fileListEmpty,
+              truncatedLabel: text.fileListTruncated,
+              placeholder: text.deploymentFilePlaceholder,
+              disabled: busy,
+              tabIndex: 0,
+            },
+            { changed: prefix + '-changed' },
+          ),
+        ],
+        {
+          visible: importer.mode === 'file',
+          terminal: { grow: 1 },
+          style: { width: fill, height: fill, minHeight: 0 },
+        },
+      ),
+    ],
+    {
+      gap: 1,
+      terminal: { grow: importer.mode === 'file' && !importer.observation?.file ? 1 : 0 },
+      style: {
+        width: fill,
+        height: importer.mode === 'file' && !importer.observation?.file ? fill : undefined,
+        minHeight: 0,
+      },
+    },
+  );
+}
+
 export function importView<N extends Node>(
   presentation: Presentation<N>,
   props: ConnectionsProps,
@@ -120,95 +220,20 @@ export function importView<N extends Node>(
             },
           ),
           ui.text('deployment-import-help', text.deploymentInstallHelp, 13, props.theme.muted),
-          ...(notice ? [ui.text('deployment-import-notice', notice, 13, props.theme.muted)] : []),
         ],
         { gap: target === 'desktop' ? 8 : 1, style: { shrink: 0 } },
       ),
       ui.box(
         'deployment-import-body',
         [
-          ui.box(
-            'deployment-import-source',
-            [
-              ui.button(
-                'deployment-import-local',
-                text.deploymentChooseFile,
-                busy || !!confirmation,
-                importer.mode === 'file',
-              ),
-              ui.button(
-                'deployment-import-remote',
-                text.deploymentUrl,
-                busy || !!confirmation,
-                importer.mode === 'url',
-              ),
-            ],
-            { row: true, gap: 1, style: { wrap: true } },
+          packageSourceView(
+            presentation,
+            props,
+            'deployment-import',
+            importer,
+            busy || !!confirmation,
           ),
-          ui.box(
-            'deployment-import-url-owner',
-            [
-              presentation.slot(
-                'deployment-import-url',
-                'editor',
-                {
-                  appearance: props.theme.textarea,
-                  accessibilityLabel: text.deploymentUrl,
-                  placeholder: 'https://example.com/plugin.maka-plugin',
-                  tabIndex: 0,
-                  readOnly: busy || !!confirmation,
-                  disabled: false,
-                  autoFocus: false,
-                  softWrap: presentation.target === 'tui',
-                  terminalRows: { min: 1, max: 2 },
-                  submit: 'primary_enter',
-                  command: null,
-                  menu: {
-                    appearance: props.theme.menu,
-                    labels: {
-                      title: text.edit,
-                      undo: text.undo,
-                      redo: text.redo,
-                      cut: text.cut,
-                      copy: text.copy,
-                      paste: text.paste,
-                      selectAll: text.selectAll,
-                    },
-                  },
-                } satisfies TextareaProps,
-                { changed: 'deployment-import-url-changed' },
-              ),
-            ],
-            { visible: importer.mode === 'url' },
-          ),
-          ...(confirmation && 'url' in confirmation
-            ? [ui.text('deployment-import-url-confirmed', confirmation.url, 13, props.theme.text)]
-            : []),
-          // The retained native child owns selection. Confirmation suspends it rather
-          // than recreating it; snapshot still captures the exact observed revision.
-          ui.box(
-            'deployment-import-file-owner',
-            [
-              presentation.slot(
-                'deployment-import-file',
-                'file',
-                {
-                  appearance: props.theme.input,
-                  label: text.deploymentChooseFile,
-                  pathLabel: text.deploymentFilePath,
-                  browseLabel: text.fileBrowse,
-                  parentLabel: text.directoryParent,
-                  emptyLabel: text.fileListEmpty,
-                  truncatedLabel: text.fileListTruncated,
-                  placeholder: text.deploymentFilePlaceholder,
-                  disabled: busy || !!confirmation,
-                  tabIndex: 0,
-                },
-                { changed: 'deployment-import-changed' },
-              ),
-            ],
-            { visible: importer.mode === 'file' && (target === 'tui' || !confirmation) },
-          ),
+          ...(notice ? [ui.text('deployment-import-notice', notice, 13, props.theme.muted)] : []),
           ...(confirmation && target === 'desktop'
             ? [
                 ui.text(
@@ -270,8 +295,8 @@ export function importView<N extends Node>(
             : []),
         ],
         {
-          scroll: 'manual',
-          terminal: { grow: 1 },
+          scroll: target === 'desktop' ? 'manual' : undefined,
+          terminal: { grow: importer.mode === 'file' && !importer.observation?.file ? 1 : 0 },
           style: { width: fill, height: pixels(0), grow: 1, shrink: 1, minHeight: 0 },
         },
       ),
