@@ -17,6 +17,9 @@
  * under the License.
  */
 
+#[path = "tests/title.rs"]
+mod title_tests;
+
 #[path = "tests/todo.rs"]
 mod todo_tests;
 
@@ -519,6 +522,7 @@ impl Fixture {
             assistant: None,
             scheduled_tasks: false,
             todo: false,
+            automatic_titles: false,
             recall: false,
             import_roots: vec![maka_host_runtime::DirectoryRootSpec {
                 label: "Import sources".into(),

@@ -117,6 +117,7 @@ export function installation(
     recall: true,
     scheduledTasks: true,
     todo: true,
+    automaticTitles: true,
     tools,
     skillLibrary: 'skills',
   };

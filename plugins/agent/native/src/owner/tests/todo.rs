@@ -61,7 +61,7 @@ async fn page(f: &Fixture, session: &str, offset: usize) -> Value {
         .await
         .unwrap()
 }
-async fn reopen(f: &mut Fixture) {
+pub(super) async fn reopen(f: &mut Fixture) {
     let deployment = f.app.source().unwrap().deployment;
     f.app.shutdown().await.unwrap();
     let mut native = NativeRegistry::default();

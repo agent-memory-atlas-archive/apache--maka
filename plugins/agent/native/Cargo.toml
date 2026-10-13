@@ -52,6 +52,7 @@ maka-sandbox.workspace = true
 maka-skills.workspace = true
 maka-scheduler.workspace = true
 maka-session-import.workspace = true
+maka-session-title.workspace = true
 maka-tools.workspace = true
 maka-web.workspace = true
 futures-util.workspace = true

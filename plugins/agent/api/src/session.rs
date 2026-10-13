@@ -26,6 +26,7 @@ pub struct SessionConfiguration {
     #[serde(default)]
     pub tools: Option<Vec<String>>,
     pub title: String,
+    pub title_is_manual: bool,
     pub labels: Vec<String>,
     pub workspace: Workspace,
     pub permissions: WorkspacePermissions,

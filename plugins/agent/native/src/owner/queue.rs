@@ -83,7 +83,7 @@ impl Owner {
                 };
                 match self.next(session).await {
                     Ok(Some((running, basis))) => {
-                        Self::publish(runs, &running, basis);
+                        self.publish(runs, &running, basis);
                         self.workers.spawn(self.clone().drive(running, permit));
                     }
                     Ok(None) => drop(permit),
@@ -98,7 +98,15 @@ impl Owner {
             after = sessions.last().cloned();
         }
     }
-    fn publish(runs: &mut Runs, running: &RunningInvocation, basis: MessageBasis) {
+    pub(super) fn publish(
+        self: &Arc<Self>,
+        runs: &mut Runs,
+        running: &RunningInvocation,
+        basis: MessageBasis,
+    ) {
+        if let Some(model) = &basis.model {
+            self.title_after_message(running.invocation().clone(), model.clone());
+        }
         runs.controls.insert(
             running.invocation().session_id.clone(),
             Control {
@@ -138,7 +146,7 @@ impl Owner {
                 };
                 match next {
                     Ok(Some((next, basis))) => {
-                        Self::publish(&mut runs, &next, basis);
+                        self.publish(&mut runs, &next, basis);
                         running = next;
                     }
                     Ok(None) => {

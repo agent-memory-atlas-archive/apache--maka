@@ -239,6 +239,7 @@ impl Hub {
             .0
             .create(
                 crate::contract::Create {
+                    automatic_title: false,
                     tools: None,
                     title: "WorkHub".into(),
                     labels: vec![],

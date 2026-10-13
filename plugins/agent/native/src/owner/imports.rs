@@ -357,6 +357,7 @@ impl Owner {
                         &SessionConfiguration {
                             tools: None,
                             title,
+                            title_is_manual: true,
                             labels: vec![],
                             workspace,
                             permissions: self.settings.permissions.clone(),

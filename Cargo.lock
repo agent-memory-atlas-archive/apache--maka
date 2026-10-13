@@ -8311,6 +8311,7 @@ dependencies = [
  "maka-sandbox",
  "maka-scheduler",
  "maka-session-import",
+ "maka-session-title",
  "maka-settings-native",
  "maka-skills",
  "maka-skills-api",
@@ -9250,6 +9251,7 @@ name = "maka-session-title"
 version = "0.2.0"
 dependencies = [
  "maka-agent-ports",
+ "unicode-normalization",
 ]
 
 [[package]]

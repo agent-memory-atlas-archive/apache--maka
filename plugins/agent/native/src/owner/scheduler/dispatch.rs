@@ -327,6 +327,7 @@ impl Owner {
                             &SessionConfiguration {
                                 tools: basis.allowed_tools.clone(),
                                 title: fire.title.clone(),
+                                title_is_manual: true,
                                 labels: vec![],
                                 workspace: boundary.workspace.clone(),
                                 permissions: boundary.permissions.clone(),
