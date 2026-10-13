@@ -27,6 +27,46 @@ use std::{
 use uuid::Uuid;
 
 mod code_mode;
+mod computer;
+
+async fn seed_connection(
+    host: &Path,
+    namespaces: &RootNamespaces,
+    base: &str,
+    model_overrides: serde_json::Value,
+) {
+    let owner = Arc::new(RootOwner::create(host, namespaces).unwrap());
+    let config = Arc::new(
+        maka_config::ConfigurationStore::for_root(owner)
+            .await
+            .unwrap(),
+    );
+    let provider = json!({"packageId":"maka.providers","entryId":"maka.providers","scope":"profile","name":"openai-compatible"});
+    let CatalogMutationResult::Committed { connection: Some(basis), .. } = config.create_connection(serde_json::from_value(json!({
+            "expectedCatalogRevision":0,"connection":{"slug":"chat-fixture","name":"Chat fixture","provider":provider,"configuration":{"baseUrl":base},"enabled":true,"enabledModelIds":["fixture-model"],"modelOverrides":model_overrides}
+        })).unwrap()).await.unwrap() else { panic!("connection commit") };
+    let maka_config::oauth::enrollment::LoginPreparation::Ready(ticket) = config.prepare_oauth_login(serde_json::from_value(json!({
+            "expectedCredential":null,"attemptId":Uuid::new_v4().to_string(),
+            "target":{"kind":"existing","expected":{"connectionId":basis.connection_id,"revision":basis.revision,"provider":provider,"slug":"chat-fixture","configuration":{"baseUrl":base}},"configuration":{"baseUrl":base}},
+            "authentication":{"method":"api-key","input":{"apiKey":"chat-fixture-key"}}
+        })).unwrap()).await.unwrap() else { panic!("credential preparation") };
+    assert!(ticket.claim().await.unwrap());
+    assert!(matches!(
+        ticket
+            .complete(
+                maka_agent_facts::provider::Credential {
+                    secret: "chat-fixture-key".into(),
+                    refresh_at: None
+                },
+                1
+            )
+            .await
+            .unwrap(),
+        maka_config::oauth::enrollment::LoginCompletion::Committed(_)
+    ));
+    assert!(matches!(config.set_default_target(serde_json::from_value(json!({"expectedCatalogRevision":config.catalog().await.unwrap().revision,"target":{"connectionId":basis.connection_id,"modelId":"fixture-model"}})).unwrap()).await.unwrap(),CatalogMutationResult::Committed{..}));
+    config.shutdown().await.unwrap();
+}
 
 fn request(socket: &mut TcpStream) -> serde_json::Value {
     socket
@@ -150,23 +190,7 @@ fn bundled_chat_sends_follows_renders_markdown_and_scrolls_original_history() {
     let configuration = directory.path().join("installation.json");
     let namespaces = RootNamespaces::for_current_account().unwrap();
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    runtime.block_on(async {
-        let owner = Arc::new(RootOwner::create(&host, &namespaces).unwrap());
-        let config = Arc::new(maka_config::ConfigurationStore::for_root(owner).await.unwrap());
-        let provider = json!({"packageId":"maka.providers","entryId":"maka.providers","scope":"profile","name":"openai-compatible"});
-        let CatalogMutationResult::Committed { connection: Some(basis), .. } = config.create_connection(serde_json::from_value(json!({
-            "expectedCatalogRevision":0,"connection":{"slug":"chat-fixture","name":"Chat fixture","provider":provider,"configuration":{"baseUrl":base},"enabled":true,"enabledModelIds":["fixture-model"]}
-        })).unwrap()).await.unwrap() else { panic!("connection commit") };
-        let maka_config::oauth::enrollment::LoginPreparation::Ready(ticket) = config.prepare_oauth_login(serde_json::from_value(json!({
-            "expectedCredential":null,"attemptId":Uuid::new_v4().to_string(),
-            "target":{"kind":"existing","expected":{"connectionId":basis.connection_id,"revision":basis.revision,"provider":provider,"slug":"chat-fixture","configuration":{"baseUrl":base}},"configuration":{"baseUrl":base}},
-            "authentication":{"method":"api-key","input":{"apiKey":"chat-fixture-key"}}
-        })).unwrap()).await.unwrap() else { panic!("credential preparation") };
-        assert!(ticket.claim().await.unwrap());
-        assert!(matches!(ticket.complete(maka_agent_facts::provider::Credential {secret:"chat-fixture-key".into(),refresh_at:None},1).await.unwrap(), maka_config::oauth::enrollment::LoginCompletion::Committed(_)));
-        assert!(matches!(config.set_default_target(serde_json::from_value(json!({"expectedCatalogRevision":config.catalog().await.unwrap().revision,"target":{"connectionId":basis.connection_id,"modelId":"fixture-model"}})).unwrap()).await.unwrap(),CatalogMutationResult::Committed{..}));
-        config.shutdown().await.unwrap();
-    });
+    runtime.block_on(seed_connection(&host, &namespaces, &base, json!({})));
     std::fs::write(&configuration, serde_json::to_vec(&json!({
         "presentation":"tui", "locale":"en", "scheme":"dark", "hostRoot":host,
         "agent":{"workspaceRoots":[{"label":"Workspace","path":workspace}],"maxActiveRuns":1,"maxSteps":4,"tools":[],"permissions":{"access":"read_only","requestPermissions":true}}

@@ -155,6 +155,7 @@ async fn cancellation_waits_for_native_settlement_and_requires_reset() {
     assert!(!task.is_finished());
     released.cancel();
     assert!(matches!(task.await.unwrap(), Err(CellAbort::Cancelled)));
+    assert!(repl.is_closed());
     assert_eq!(settled.load(Ordering::SeqCst), 1);
     assert!(
         repl.evaluate(

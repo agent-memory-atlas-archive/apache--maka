@@ -17,6 +17,9 @@
  * under the License.
  */
 
+#[path = "tests/computer.rs"]
+mod computer;
+
 #[path = "tests/service_tools.rs"]
 mod service_tools;
 #[path = "tests/skill_preparation.rs"]
@@ -1699,6 +1702,7 @@ fn catalog_interaction(
         created_at: 10,
         outcome: None,
         request: InteractionRequest::ClientCapability {
+            base_revision: None,
             tool_use_id: "tool".into(),
             target: GrantTarget {
                 provider_id: "provider".into(),

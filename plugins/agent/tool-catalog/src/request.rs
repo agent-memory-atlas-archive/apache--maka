@@ -35,6 +35,11 @@ use std::{future::Future, pin::Pin};
 pub enum BoundTool {
     Unavailable,
     Prepared(Arc<dyn ToolPreparer>),
+    /// Update descriptive process state without changing schema or authority.
+    Described {
+        handler: Arc<dyn ToolPreparer>,
+        description: String,
+    },
     Provider(ProviderTool),
 }
 pub type BindingFuture =
@@ -96,7 +101,21 @@ impl ToolCatalog {
                 let entries = Arc::make_mut(&mut self.entries);
                 let entry = entries.get(&name).expect("selected entry");
                 let mut registration = entry.registration.clone();
+                let projection = if let BoundTool::Described {
+                    handler,
+                    description,
+                } = projection
+                {
+                    if description.trim().is_empty() || description.len() > 16 * 1024 {
+                        return Err(ToolError::Failed("request tool description invalid".into()));
+                    }
+                    registration.definition.description = description;
+                    BoundTool::Prepared(handler)
+                } else {
+                    projection
+                };
                 match projection {
+                    BoundTool::Described { .. } => unreachable!("description already applied"),
                     BoundTool::Unavailable => {
                         entries.remove(&name);
                         continue;

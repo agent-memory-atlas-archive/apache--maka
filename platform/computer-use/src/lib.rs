@@ -24,7 +24,6 @@
 
 mod activity;
 mod browser;
-mod catalog;
 pub mod cursor;
 pub mod desktop;
 mod driver;
@@ -35,7 +34,6 @@ mod observation;
 pub mod protocol;
 mod session;
 
-pub use catalog::{Evaluate, definitions, validate};
 pub use desktop::Session;
 pub use driver::Driver;
 pub fn facade() -> String {

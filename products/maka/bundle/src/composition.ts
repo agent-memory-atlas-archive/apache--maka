@@ -24,6 +24,7 @@ import {
   type SkillLibraryConfiguration,
   type WorkspaceProcessConfiguration,
   type WorkspaceWebConfiguration,
+  type ComputerConfiguration,
   type WorkspaceJevConfiguration,
   type CompositionInput,
   type CompositionNode,
@@ -65,6 +66,7 @@ export const packageNames = [
   'permission-approval',
   'questions',
   'workspace-web',
+  'workspace-computer',
   'workspace-jev',
   'workspace-files',
   'workspace-processes',
@@ -152,6 +154,7 @@ export interface CompositionConfiguration {
   agent: AgentConfiguration;
   processes?: WorkspaceProcessConfiguration;
   web?: WorkspaceWebConfiguration;
+  computer?: ComputerConfiguration;
   jev?: WorkspaceJevConfiguration;
   coordinator?: AgentConfiguration;
   coordinatorProcesses?: WorkspaceProcessConfiguration;
@@ -648,6 +651,21 @@ function agentComposition(configuration: CompositionConfiguration): ApplicationS
   if (executors.length && !configuration.executorProcesses)
     throw new Error('ACP backends require an explicit executorProcesses installation ceiling');
   const executorPath = (name: string): ExecutorInstanceName => `acp-${name}`;
+  const computerMethods = [
+    ...new Set(
+      configuration.agent.tools
+        .filter((tool) => tool.import === 'computer')
+        .map((tool) => tool.method),
+    ),
+  ];
+  if (computerMethods.length && !configuration.computer)
+    throw new Error('Computer tools require an explicit native installation');
+  if (computerMethods.some((method) => !['evaluate', 'reset'].includes(method)))
+    throw new Error('Model Computer tools select only evaluate and reset');
+  if (computerMethods.length)
+    host.instances['workspace-computer'] = node('workspace-computer', {
+      ...configuration.computer,
+    });
   const webMethods = [
     ...new Set(
       configuration.agent.tools.filter((tool) => tool.import === 'web').map((tool) => tool.method),
@@ -739,6 +757,7 @@ function agentComposition(configuration: CompositionConfiguration): ApplicationS
             })),
           }
         : {}),
+      ...(computerMethods.length ? { computer: [local('workspace-computer', 'computer')] } : {}),
       ...(webMethods.length ? { web: [local('workspace-web', 'web')] } : {}),
       ...(skillCalls.length ? { skills: [local('skills', 'skills')] } : {}),
       ui: [local('ui-authoring', 'Authoring')],
@@ -1275,6 +1294,18 @@ function agentComposition(configuration: CompositionConfiguration): ApplicationS
             recovery: true,
           })),
         ]),
+        ...(computerMethods.length
+          ? [
+              {
+                origin: [keys.agent],
+                consumer: [keys.agent],
+                provider: [keys['workspace-computer']],
+                export: 'computer',
+                methods: [...computerMethods, 'state'],
+                recovery: true,
+              },
+            ]
+          : []),
         ...(webMethods.length
           ? [
               {

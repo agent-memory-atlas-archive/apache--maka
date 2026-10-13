@@ -336,6 +336,11 @@ export const nativeImplementations = /* @__PURE__ */ (() => ({
     configuration: configurations.workhub,
     exports: { agent: contracts.agent, workhub: contracts.workhubCoordinator },
   },
+  workspaceComputer: {
+    implementation: 'maka.workspace.computer',
+    configuration: configurations.workspaceComputer,
+    exports: { computer: contracts.workspaceComputer },
+  },
   workspaceFiles: {
     implementation: 'maka.workspace.files',
     configuration: { type: 'object', properties: {}, required: [], additionalProperties: false },

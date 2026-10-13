@@ -119,6 +119,10 @@ pub enum InteractionRequest {
     ClientCapability {
         tool_use_id: String,
         target: GrantTarget,
+        /// Agent-owned approvals expire with this original permission boundary.
+        /// Older capability records without a boundary remain readable.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        base_revision: Option<u64>,
     },
 }
 
@@ -268,6 +272,8 @@ pub struct SessionGrant {
     pub session_id: String,
     pub target: GrantTarget,
     pub granted_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_revision: Option<u64>,
 }
 
 /// The Host supplies the real operation description; it is display information,

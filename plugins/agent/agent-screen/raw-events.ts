@@ -223,7 +223,8 @@ export function handleRaw<N extends Node>(
     const kind = state.interactions?.entries.find((entry) => entry.requestId === requestId)?.kind;
     if (
       (input.key.startsWith('question-') && (kind === 'question' || kind === 'form')) ||
-      (input.key.startsWith('approval-') && (kind === 'service_approval' || kind === 'permissions'))
+      (input.key.startsWith('approval-') &&
+        (kind === 'service_approval' || kind === 'permissions' || kind === 'client_capability'))
     ) {
       openInteraction(state, actions, requestId, kind);
     }

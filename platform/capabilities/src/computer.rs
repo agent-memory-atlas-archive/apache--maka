@@ -17,32 +17,16 @@
  * under the License.
  */
 
-//! Agent-only access to the Host's selected interactive desktop.
-//!
-//! The Host binds interaction state to the Session, owns approval and journals each
-//! operation. A call cannot supply a client desktop, native session, executable or endpoint.
+//! Installation-selected desktop and browser connections for Computer Use.
+//! Runtime calls and Session ownership belong to the ordinary workspace service.
 
-use crate::call::Scope;
-use futures_util::future::BoxFuture;
-use maka_agent_facts::capability::CallResult;
-use maka_agent_facts::tools::ToolError;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Call {
-    pub name: String,
-    pub input: Value,
-    #[serde(default)]
-    pub browsers: Vec<BrowserConnection>,
-    #[serde(default)]
-    pub desktop: Desktop,
-}
 
 /// Selects the Host's local desktop or its Windows host when running in WSL.
 /// Executables and transport addresses are exclusively Host configuration.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Desktop {
     #[default]
@@ -53,26 +37,9 @@ pub enum Desktop {
 
 /// An explicitly configured browser provider. The REPL cannot supply endpoints,
 /// restart a browser, switch profiles or enable remote debugging by itself.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BrowserConnection {
     pub id: String,
     pub endpoint: String,
-}
-
-pub trait Computer: Send + Sync {
-    /// Read only current process state; does not allocate a VM, inspect the
-    /// desktop or grant authority. Prompt providers use it before model calls.
-    fn state(&self, session_id: String) -> BoxFuture<'_, Result<ReplState, crate::Error>>;
-
-    /// Returns the native MCP-shaped result, including image content and
-    /// structured refusals. Returning must include native operation settlement.
-    fn call(&self, scope: Scope, input: Call) -> BoxFuture<'_, Result<CallResult, ToolError>>;
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ReplState {
-    Fresh,
-    Ready,
-    ResetRequired,
 }

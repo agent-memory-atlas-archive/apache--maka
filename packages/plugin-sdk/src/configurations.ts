@@ -432,8 +432,17 @@ export const configurations = {
         required: ['fallback'],
       },
       AgentToolResult: {
-        type: 'string',
-        enum: ['json', 'image'],
+        oneOf: [
+          {
+            type: 'string',
+            enum: ['json', 'image'],
+          },
+          {
+            description: 'Session-owned Computer REPL output, retained with its original receipt.',
+            type: 'string',
+            const: 'computer',
+          },
+        ],
       },
       AgentToolConfirmation: {
         type: 'string',
@@ -901,8 +910,17 @@ export const configurations = {
         description: 'Presentation text is distinct from the stable identity used for navigation.',
       },
       AgentToolResult: {
-        type: 'string',
-        enum: ['json', 'image'],
+        oneOf: [
+          {
+            type: 'string',
+            enum: ['json', 'image'],
+          },
+          {
+            type: 'string',
+            const: 'computer',
+            description: 'Session-owned Computer REPL output, retained with its original receipt.',
+          },
+        ],
       },
       AgentToolConfirmation: {
         type: 'string',
@@ -1330,6 +1348,48 @@ export const configurations = {
       WorkspaceProcessSessionKind: {
         type: 'string',
         enum: ['agent', 'workhub'],
+      },
+    },
+  },
+  workspaceComputer: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      desktop: {
+        $ref: '#/$defs/Desktop',
+        default: 'auto',
+      },
+      browsers: {
+        type: 'array',
+        items: {
+          $ref: '#/$defs/BrowserConnection',
+        },
+        default: [],
+      },
+    },
+    title: 'ComputerConfiguration',
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    $defs: {
+      Desktop: {
+        type: 'string',
+        enum: ['auto', 'local', 'windows'],
+        description:
+          "Selects the Host's local desktop or its Windows host when running in WSL.\nExecutables and transport addresses are exclusively Host configuration.",
+      },
+      BrowserConnection: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          id: {
+            type: 'string',
+          },
+          endpoint: {
+            type: 'string',
+          },
+        },
+        required: ['id', 'endpoint'],
+        description:
+          'An explicitly configured browser provider. The REPL cannot supply endpoints,\nrestart a browser, switch profiles or enable remote debugging by itself.',
       },
     },
   },

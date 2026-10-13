@@ -142,6 +142,7 @@ pub(super) struct Setup {
     processes: bool,
     isolated_workspaces: bool,
     web: bool,
+    computer: bool,
     jev: bool,
     protocol: bool,
     skills: Option<std::path::PathBuf>,
@@ -171,6 +172,7 @@ impl Setup {
             processes: false,
             isolated_workspaces: false,
             web: false,
+            computer: false,
             jev: false,
             protocol: false,
             skills: None,
@@ -197,6 +199,7 @@ impl Setup {
             processes: false,
             isolated_workspaces: false,
             web: false,
+            computer: false,
             jev: false,
             protocol: false,
             skills: None,
@@ -229,6 +232,7 @@ impl Setup {
             processes: false,
             isolated_workspaces: false,
             web: false,
+            computer: false,
             jev: false,
             protocol: false,
             skills: None,
@@ -313,6 +317,12 @@ impl Setup {
         self.granted = false;
         self
     }
+    pub(super) fn computer() -> Self {
+        Self {
+            computer: true,
+            ..Self::javascript()
+        }
+    }
     pub(super) fn selections(&self) -> Vec<contract::ServiceTool> {
         if self.protocol || (self.skills.is_some() && !self.skill_tools) {
             return vec![];
@@ -332,6 +342,17 @@ impl Setup {
                 ..self.selection()
             })
             .collect();
+        }
+        if self.computer {
+            return [("evaluate", "cua_repl"), ("reset", "cua_reset")]
+                .into_iter()
+                .map(|(method, name)| contract::ServiceTool {
+                    method: method.into(),
+                    name: name.into(),
+                    result: contract::ToolResult::Computer,
+                    ..self.selection()
+                })
+                .collect();
         }
         if self.web {
             return [("fetch", "WebFetch"), ("search", "WebSearch")]
@@ -379,6 +400,9 @@ impl Setup {
         }
     }
     fn contract(&self) -> Contract {
+        if self.computer {
+            return maka_workspace_api::computer::contract();
+        }
         if self.jev {
             return maka_workspace_api::jev::contract();
         }
@@ -404,6 +428,9 @@ impl Setup {
         }
     }
     fn export(&self) -> &str {
+        if self.computer {
+            return maka_workspace_api::computer::EXPORT;
+        }
         if self.jev {
             return maka_workspace_api::jev::EXPORT;
         }
@@ -429,6 +456,9 @@ impl Setup {
         }
     }
     pub(super) fn method(&self) -> &str {
+        if self.computer {
+            return "evaluate";
+        }
         if self.jev {
             return "evaluate";
         }
@@ -539,7 +569,9 @@ impl Setup {
                 }],
             );
         packages[0] = provider;
-        let implementation = if self.jev {
+        let implementation = if self.computer {
+            json!({"kind":"native","implementation":maka_workspace_api::computer::IMPLEMENTATION})
+        } else if self.jev {
             json!({"kind":"native","implementation":maka_workspace_api::jev::IMPLEMENTATION})
         } else if self.web {
             json!({"kind":"native","implementation":maka_web_api::IMPLEMENTATION})
@@ -563,7 +595,7 @@ impl Setup {
             json!({"kind":"javascript","module":"counter.mjs","realm":"shared"})
         };
         let mut files = BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({"schemaVersion":2,"id":"fixture.counter","application":{"entries":{"host":{
-            "implementation":implementation,"configuration":if self.jev { maka_workspace_api::jev::configuration_schema() } else if self.web { maka_web_api::configuration_schema() } else if self.skills.is_some() { maka_skills_api::configuration_schema() } else if self.processes || self.protocol { maka_workspace_api::processes::configuration_schema() } else { json!({"type":"object","additionalProperties":false}) },"imports":{},
+            "implementation":implementation,"configuration":if self.computer { maka_workspace_api::computer::configuration_schema() } else if self.jev { maka_workspace_api::jev::configuration_schema() } else if self.web { maka_web_api::configuration_schema() } else if self.skills.is_some() { maka_skills_api::configuration_schema() } else if self.processes || self.protocol { maka_workspace_api::processes::configuration_schema() } else { json!({"type":"object","additionalProperties":false}) },"imports":{},
             "exports":if self.processes {
                 json!({(self.export()):{"contract":self.contract(),"availability":"required"},
                     "terminal":{"contract":maka_workspace_api::terminal::contract(),"availability":"required"}})
@@ -573,7 +605,8 @@ impl Setup {
             if let Some(code) = source.javascript() {
                 files.insert("images.mjs".into(), code.into_bytes());
             }
-        } else if !self.web
+        } else if !self.computer
+            && !self.web
             && !self.jev
             && self.counter.is_none()
             && !self.forms
@@ -666,6 +699,9 @@ impl Setup {
         }
     }
     pub(super) fn provide(&self, registry: &mut NativeRegistry) {
+        if self.computer {
+            maka_computer_native::provide(registry).unwrap();
+        }
         if self.jev {
             maka_jev_native::provide(registry).unwrap();
         }
@@ -751,6 +787,7 @@ impl Setup {
                         .map(|tool| tool.method)
                         .chain(self.prepare_skills.then(|| "prepare".into()))
                         .chain(self.web.then(|| "capture".into()))
+                        .chain(self.computer.then(|| "state".into()))
                         .chain(
                             self.protocol
                                 .then_some(["run".to_owned(), "input".to_owned()])
@@ -773,7 +810,7 @@ async fn tool_response(socket: &mut TcpStream) {
 async fn tool_response_input(socket: &mut TcpStream, input: Value) {
     named_tool_response(socket, "Counter", input).await;
 }
-async fn named_tool_response(socket: &mut TcpStream, name: &str, input: Value) {
+pub(super) async fn named_tool_response(socket: &mut TcpStream, name: &str, input: Value) {
     let delta = json!({"id":"tool-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"counter-call","type":"function","function":{"name":name,"arguments":input.to_string()}}]},"finish_reason":null}]});
     let body = format!(
         "data: {delta}\n\ndata: {{\"id\":\"tool-model\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"tool_calls\"}}]}}\n\ndata: [DONE]\n\n"

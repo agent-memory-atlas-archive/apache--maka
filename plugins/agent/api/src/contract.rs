@@ -153,6 +153,8 @@ pub enum ToolInput {
 pub enum ToolResult {
     Json,
     Image,
+    /// Session-owned Computer REPL output, retained with its original receipt.
+    Computer,
 }
 
 /// Bounded image bytes from a selected subscription. Complete is a producer

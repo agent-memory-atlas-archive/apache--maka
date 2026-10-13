@@ -271,6 +271,11 @@ async fn serve(
                 limits.max_value_bytes,
             ))
         };
+        // Publish terminal state before waking the observer. The Session still
+        // owns and joins this worker on reset/close, but it cannot be reused.
+        if poisoned {
+            stopped.cancel();
+        }
         let _ = request.reply.send(result);
         if poisoned {
             break;

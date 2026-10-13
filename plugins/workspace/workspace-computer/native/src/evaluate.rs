@@ -1,0 +1,348 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use super::*;
+use maka_agent_facts::{
+    artifact::{Artifact, ArtifactKind, ArtifactSource},
+    capability::{CallResult, ContentBlock},
+    event::Invocation,
+    tool_call::ToolCallIdentity,
+    tool_output::ToolOutput,
+    tools::{PreparedEffect, ToolExecutor, ToolFuture, ToolJournal},
+};
+use maka_capabilities::call::Scope;
+use maka_js_runtime::{CellContext, CellLimits, CellOutput, CellResult, repl::Repl};
+use std::time::Duration;
+use uuid::Uuid;
+
+impl Computer {
+    pub(super) async fn evaluate(
+        self: &Arc<Self>,
+        name: &str,
+        input: Value,
+        call: Scope,
+        revision: u64,
+        interaction: Arc<sessions::Interaction>,
+        cancellation: CancellationToken,
+    ) -> Result<ResultValue, ToolError> {
+        let invocation = call.identity.agent().expect("checked invocation").clone();
+        let mut repl = tokio::select! {
+            biased;
+            () = cancellation.cancelled() => return Err(failed("Computer Use cancelled while queued")),
+            repl = interaction.repl.lock() => repl,
+        };
+        if interaction.retiring.is_cancelled() {
+            return Err(failed("Computer Session is retiring"));
+        }
+        let current = access::current(
+            self,
+            &call,
+            if name == "reset" {
+                "cua_reset"
+            } else {
+                "cua_repl"
+            },
+        )
+        .await?;
+        if current.boundary_revision != revision {
+            return Err(failed("Computer Use permissions changed while queued"));
+        }
+        if name == "reset" {
+            if let Some(runtime) = repl.take() {
+                runtime
+                    .close()
+                    .await
+                    .map_err(|e| ToolError::CleanupUnconfirmed(message(e)))?;
+            }
+            let mut native = interaction.native.lock().await;
+            native.close().await?;
+            *native = maka_computer_use::Session::new(self.sessions.driver.clone());
+            return self
+                .output(
+                    &invocation,
+                    vec![CellOutput::Text {
+                        text: "Computer Use REPL reset. Bind targets again.".into(),
+                    }],
+                    ReplState::Fresh,
+                )
+                .await;
+        }
+        access::granted(self, &call, revision).await?;
+        let platform = {
+            let mut native = interaction.native.lock().await;
+            native.configure(
+                self.configuration.desktop,
+                self.configuration.browsers.clone(),
+            )?;
+            native.prepare(&cancellation).await?;
+            native.platform()
+        };
+        let input: api::Evaluate = serde_json::from_value(input).map_err(failed)?;
+        let limits = CellLimits {
+            max_tool_calls: 256,
+            max_value_bytes: 16 * 1024 * 1024,
+            heap_bytes: 128 * 1024 * 1024,
+            ..Default::default()
+        };
+        let context = CellContext::new(Default::default(), limits.max_value_bytes, vec![])
+            .with_image_deduplication();
+        let runtime =
+            repl.get_or_insert_with(|| Repl::new(maka_computer_use::facade_for(platform), limits));
+        let bridge = Arc::new(Bridge {
+            owner: self.clone(),
+            call: call.clone(),
+            native: interaction.native.clone(),
+            revision,
+        });
+        let mut changes = self.store.subscribe_catalog_changes();
+        let monitor = async {
+            loop {
+                changes.borrow_and_update();
+                access::granted(self, &call, revision).await?;
+                changes.changed().await.map_err(failed)?;
+            }
+            #[allow(unreachable_code)]
+            Ok::<(), ToolError>(())
+        };
+        let result = runtime.evaluate(
+            input.code,
+            bridge,
+            cancellation.clone(),
+            context.clone(),
+            Duration::from_millis(input.timeout_ms),
+        );
+        tokio::pin!(result);
+        let result = tokio::select! {
+            result = &mut result => result,
+            stopped = monitor => {
+                cancellation.cancel();
+                let settled = result.await;
+                match settled {
+                    Err(maka_js_runtime::CellAbort::Tool(error)) if !matches!(error, ToolError::Failed(_)) => return Err(partial(error, &context, runtime.is_closed())),
+                    _ => return Err(partial(stopped.err().unwrap_or_else(|| failed("Computer permission monitor closed")), &context, runtime.is_closed())),
+                }
+            },
+        };
+        match result {
+            Ok(CellResult::Failure { error, .. }) => {
+                return Err(partial(
+                    failed(format!("Cua JavaScript error: {}", error.message)),
+                    &context,
+                    runtime.is_closed(),
+                ));
+            }
+            Err(maka_js_runtime::CellAbort::Tool(error)) => {
+                return Err(partial(error, &context, runtime.is_closed()));
+            }
+            Err(error) => return Err(partial(failed(error), &context, runtime.is_closed())),
+            Ok(_) => {}
+        }
+        self.output(
+            &invocation,
+            context.take_output(),
+            if runtime.is_closed() {
+                ReplState::ResetRequired
+            } else {
+                ReplState::Ready
+            },
+        )
+        .await
+    }
+    async fn output(
+        &self,
+        invocation: &Invocation,
+        output: Vec<CellOutput>,
+        state: ReplState,
+    ) -> Result<ResultValue, ToolError> {
+        let bytes = serde_json::to_vec(&output).map_err(failed)?;
+        let id = format!("computer-{}", Uuid::new_v4());
+        let artifact = Artifact {
+            id: id.clone(),
+            session_id: invocation.session_id.clone(),
+            turn_id: invocation.turn_id.clone(),
+            created_at: maka_agent_authority::now(),
+            name: "Computer Use output.json".into(),
+            kind: ArtifactKind::File,
+            size_bytes: bytes.len() as u64,
+            mime_type: Some("application/json".into()),
+            source: ArtifactSource::SessionEffect,
+            summary: None,
+        };
+        self.store
+            .commit_artifact(artifact, bytes)
+            .await
+            .map_err(|e| ToolError::Persistence(message(e)))?;
+        Ok(ResultValue::Completed {
+            artifact: id,
+            state,
+        })
+    }
+    async fn operation(
+        self: &Arc<Self>,
+        call: Scope,
+        input: Value,
+        native: Arc<tokio::sync::Mutex<maka_computer_use::Session>>,
+        revision: u64,
+        cancellation: CancellationToken,
+    ) -> Result<Value, ToolError> {
+        let command: maka_computer_use::protocol::Command =
+            serde_json::from_value(input.clone()).map_err(failed)?;
+        let invocation = call.identity.agent().expect("checked invocation").clone();
+        let device = tokio::select! { biased;
+            () = cancellation.cancelled() => return Err(failed("Computer Use cancelled while queued")),
+            device = self.sessions.input.clone().lock_owned() => device,
+        };
+        let mut native = tokio::select! { biased;
+            () = cancellation.cancelled() => return Err(failed("Computer Use cancelled while queued")),
+            native = native.lock_owned() => native,
+        };
+        access::granted(self, &call, revision).await?;
+        if cancellation.is_cancelled() {
+            return Err(failed("Computer Use cancelled before admission"));
+        }
+        let title = native.activity(&command);
+        let session = invocation.session_id.clone();
+        let effect = PreparedEffect::new(move |cancellation| {
+            Box::pin(async move {
+                let _device = device;
+                let mut output = native.invoke(command, &session, &cancellation).await?;
+                let content = output
+                    .as_object_mut()
+                    .and_then(|object| object.remove("image"))
+                    .map(serde_json::from_value)
+                    .transpose()
+                    .map_err(failed)?
+                    .into_iter()
+                    .collect();
+                Ok(ToolOutput::Mcp(CallResult {
+                    content,
+                    structured_content: Some(output),
+                })
+                .into())
+            })
+        })
+        .titled(title);
+        let mut origin = self.origin.clone();
+        if let ToolOrigin::HostSdk {
+            parent_operation_id,
+            ..
+        } = &mut origin
+        {
+            *parent_operation_id = call.identity.operation_id().map(str::to_owned);
+        }
+        let result = ToolJournal::new(
+            Arc::new(access::Journal {
+                store: self.store.clone(),
+                revision,
+            }),
+            invocation,
+        )
+        .invoke_prepared_output(
+            Uuid::new_v4().to_string(),
+            ToolCallIdentity {
+                tool_call_id: Uuid::new_v4().to_string(),
+                origin,
+            },
+            "cua_operation".into(),
+            input,
+            cancellation,
+            effect,
+        )
+        .await;
+        if matches!(
+            result,
+            Err(ToolError::Persistence(_) | ToolError::CleanupUnconfirmed(_))
+        ) {
+            self.stopping.cancel();
+        }
+        match result? {
+            ToolOutput::Mcp(result) => {
+                let mut value = result.structured_content.unwrap_or(Value::Null);
+                if let Some(image) = result
+                    .content
+                    .into_iter()
+                    .find(|block| matches!(block, ContentBlock::Image { .. }))
+                {
+                    value["image"] = serde_json::to_value(image).map_err(failed)?;
+                }
+                Ok(value)
+            }
+            _ => Err(ToolError::CleanupUnconfirmed(
+                "Computer output format changed".into(),
+            )),
+        }
+    }
+}
+struct Bridge {
+    owner: Arc<Computer>,
+    call: Scope,
+    native: Arc<tokio::sync::Mutex<maka_computer_use::Session>>,
+    revision: u64,
+}
+impl ToolExecutor for Bridge {
+    fn names(&self) -> Vec<String> {
+        vec!["cua".into()]
+    }
+    fn invoke(&self, name: String, input: Value, cancellation: CancellationToken) -> ToolFuture {
+        let owner = self.owner.clone();
+        let call = self.call.clone();
+        let native = self.native.clone();
+        let revision = self.revision;
+        Box::pin(async move {
+            if name != "cua" {
+                return Err(failed("Computer operation unavailable"));
+            }
+            owner
+                .operation(call, input, native, revision, cancellation)
+                .await
+        })
+    }
+}
+fn partial(error: ToolError, context: &CellContext, reset: bool) -> ToolError {
+    let mut observations = String::new();
+    for output in context.take_output() {
+        if let CellOutput::Text { text } = output {
+            for c in text.chars().chain(std::iter::once('\n')) {
+                if observations.len() + c.len_utf8() > 16 * 1024 {
+                    break;
+                }
+                observations.push(c);
+            }
+        }
+    }
+    let mut suffix = String::new();
+    if !observations.is_empty() {
+        suffix += "\nObservations emitted before failure (actions may already have completed):\n";
+        suffix += &observations;
+    }
+    if reset {
+        suffix += "\nThis REPL is closed. Use cua_reset, rebind and observe before further actions; do not replay uncertain input.";
+    }
+    match error {
+        ToolError::Failed(value) => ToolError::Failed(value + &suffix),
+        ToolError::Persistence(value) => ToolError::Persistence(value + &suffix),
+        ToolError::CleanupUnconfirmed(value) => ToolError::CleanupUnconfirmed(value + &suffix),
+        ToolError::OutcomeUnknown(value) => ToolError::OutcomeUnknown(value + &suffix),
+        ToolError::Io { kind, message } => ToolError::Io {
+            kind,
+            message: message + &suffix,
+        },
+        error => error,
+    }
+}

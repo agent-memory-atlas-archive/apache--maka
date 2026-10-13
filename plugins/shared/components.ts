@@ -679,7 +679,7 @@ export function components<N extends Node>(
         !!message.tool &&
         !!toolPresentation(message.tool.call?.presentation);
       const sourceAction = ui.button(
-        'source-' + message.source + (message.role === 'thinking' ? '-thinking' : ''),
+        'source-' + message.id + (message.role === 'thinking' ? '-thinking' : ''),
         text.readSource,
         props.loading,
         false,
@@ -792,28 +792,22 @@ export function components<N extends Node>(
           ...(message.source !== null && message.tool?.call
             ? [
                 ui.button(
-                  'tool-source-' + message.source + '-arguments',
+                  'tool-source-' + message.id + '-arguments',
                   text.toolArguments,
                   props.loading,
                 ),
               ]
             : []),
           ...(message.source !== null && message.tool?.result
-            ? [
-                ui.button(
-                  'tool-source-' + message.source + '-result',
-                  text.toolResult,
-                  props.loading,
-                ),
-              ]
+            ? [ui.button('tool-source-' + message.id + '-result', text.toolResult, props.loading)]
             : []),
           ...(message.image && message.source !== null
-            ? [ui.button('image-' + message.source, text.viewImage, props.loading)]
+            ? [ui.button('image-' + message.id, text.viewImage, props.loading)]
             : []),
           ...(message.source !== null && message.text
             ? [
                 ui.button(
-                  'source-' + message.source + (message.role === 'thinking' ? '-thinking' : ''),
+                  'source-' + message.id + (message.role === 'thinking' ? '-thinking' : ''),
                   text.readSource,
                   props.loading,
                 ),
@@ -836,7 +830,7 @@ export function components<N extends Node>(
                       ? [
                           ui.button(
                             'mark-read-' +
-                              message.source +
+                              message.id +
                               (message.role === 'thinking' ? '-thinking' : ''),
                             text.markRead,
                             props.loading,
@@ -1728,7 +1722,7 @@ export function components<N extends Node>(
                   message.role === 'assistant' ||
                   message.role === 'thinking') &&
                 input.key ===
-                  'mark-read-' + message.source + (message.role === 'thinking' ? '-thinking' : ''),
+                  'mark-read-' + message.id + (message.role === 'thinking' ? '-thinking' : ''),
             );
             if (message)
               out.events.push({
@@ -1748,10 +1742,8 @@ export function components<N extends Node>(
                 message.source !== null &&
                 (message.role === 'tool_call' || message.role === 'tool_result') &&
                 next.expanded.includes(message.id) &&
-                ((message.tool?.call &&
-                  input.key === 'tool-source-' + message.source + '-arguments') ||
-                  (message.tool?.result &&
-                    input.key === 'tool-source-' + message.source + '-result')),
+                ((message.tool?.call && input.key === 'tool-source-' + message.id + '-arguments') ||
+                  (message.tool?.result && input.key === 'tool-source-' + message.id + '-result')),
             );
           const image = toolCards(props.messages)
             .map(({ message }) => message)
@@ -1760,7 +1752,7 @@ export function components<N extends Node>(
                 message.image &&
                 message.source !== null &&
                 next.expanded.includes(message.id) &&
-                input.key === 'image-' + message.source,
+                input.key === 'image-' + message.id,
             );
           if (image) out.events.push({ name: 'viewImage', value: { sequence: image.source } });
           if (tool)
@@ -1779,7 +1771,7 @@ export function components<N extends Node>(
                 ((message.role !== 'tool_call' && message.role !== 'tool_result') ||
                   (message.text.length > 0 && next.expanded.includes(message.id))) &&
                 input.key ===
-                  'source-' + message.source + (message.role === 'thinking' ? '-thinking' : ''),
+                  'source-' + message.id + (message.role === 'thinking' ? '-thinking' : ''),
             );
           if (message)
             out.events.push({

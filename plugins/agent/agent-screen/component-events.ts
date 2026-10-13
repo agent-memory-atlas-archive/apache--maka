@@ -155,7 +155,10 @@ export function handleComponent<N extends Node>(
         const event = input.event as { requestId: string; decision: 'allow' | 'deny' };
         if (event.requestId === state.interaction?.requestId)
           respondInteraction(state, actions, {
-            kind: 'service_approval',
+            kind:
+              state.interaction?.record?.request.kind === 'client_capability'
+                ? 'client_capability'
+                : 'service_approval',
             decision: event.decision,
           });
       }
@@ -531,7 +534,6 @@ export function handleComponent<N extends Node>(
     !mutationPending(state) &&
     state.selected &&
     !state.selected.archived &&
-    !state.loading &&
     (!state.run || (target === 'tui' && state.queue !== null)) &&
     !state.command
   ) {

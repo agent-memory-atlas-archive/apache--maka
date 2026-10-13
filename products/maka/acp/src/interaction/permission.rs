@@ -108,6 +108,7 @@ pub(super) fn request(snapshot: &InteractionRecord) -> Result<Callback, crate::E
         InteractionRequest::ClientCapability {
             tool_use_id,
             target,
+            ..
         } => {
             let tool_call = acp::ToolCallUpdate::new(acp::ToolCallId::new(tool_use_id.as_str()))
                 .raw_input(serde_json::to_value(target)?);

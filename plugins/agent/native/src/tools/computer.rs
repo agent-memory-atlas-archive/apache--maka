@@ -1,0 +1,223 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use super::*;
+use maka_agent_facts::{
+    artifact::{ArtifactKind, ArtifactSource},
+    event::Invocation,
+    tool_output::ToolContent,
+};
+use maka_js_runtime::CellOutput;
+use maka_tools::request::{BindingRequest, BoundTool, RequestBinding};
+use maka_workspace_api::computer::{ReplState, ResultValue};
+use std::collections::BTreeMap;
+
+pub(super) fn title(method: &str, input: &Value) -> maka_agent_facts::display::Text {
+    use maka_agent_facts::display::Text;
+    if method == "reset" {
+        return Text::localized(
+            "Reset computer session",
+            "重置电脑操作环境",
+            "重設電腦操作環境",
+        );
+    }
+    if let Some(value) = input["title"].as_str() {
+        let mut value = value.split_whitespace().collect::<Vec<_>>().join(" ");
+        value.retain(|c| {
+            !c.is_control() && !matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+        });
+        value.truncate(value.floor_char_boundary(value.len().min(256)));
+        let title = Text::plain(value);
+        if title.validate().is_ok() {
+            return title;
+        }
+    }
+    Text::localized("Use computer", "操作电脑", "操作電腦")
+}
+
+pub(super) struct Binding {
+    pub service: Service,
+    pub workers: tokio_util::task::TaskTracker,
+}
+impl RequestBinding for Binding {
+    fn bind(
+        &self,
+        input: BindingRequest,
+    ) -> futures_util::future::BoxFuture<'static, Result<BTreeMap<String, BoundTool>, ToolError>>
+    {
+        let service = self.service.clone();
+        let workers = self.workers.clone();
+        Box::pin(async move {
+            let request = service
+                .services
+                .request(
+                    Identity::Agent {
+                        invocation: input.invocation,
+                        operation_id: None,
+                    },
+                    input.cancellation.clone(),
+                )
+                .map_err(ToolError::Failed)?;
+            let import = service.selection.import.clone();
+            let state = workers
+                .spawn(async move {
+                    let result = AssertUnwindSafe(async {
+                        request
+                            .call(
+                                &import,
+                                0,
+                                "state".into(),
+                                serde_json::json!({}),
+                                Attachments::default(),
+                            )?
+                            .await
+                    })
+                    .catch_unwind()
+                    .await;
+                    request
+                        .finish()
+                        .await
+                        .map_err(ToolError::CleanupUnconfirmed)?;
+                    result
+                        .map_err(|_| ToolError::Failed("Computer state capture panicked".into()))?
+                        .map_err(ToolError::Failed)
+                })
+                .await
+                .map_err(|_| {
+                    ToolError::CleanupUnconfirmed("Computer state worker disappeared".into())
+                })??;
+            let state: ReplState = serde_json::from_value(state)
+                .map_err(|_| ToolError::Failed("Computer state invalid".into()))?;
+            let hint = match state {
+                ReplState::Fresh => {
+                    "Current REPL state: fresh. No variables or target bindings exist in this Host process; bind targets before using them. Earlier transcript bindings may belong to a previous process."
+                }
+                ReplState::Ready => {
+                    "Current REPL state: ready. Existing variables and target bindings are retained in this Host process."
+                }
+                ReplState::ResetRequired => {
+                    "Current REPL state: reset_required. Call cua_reset, then bind targets and observe. Do not replay uncertain actions."
+                }
+            };
+            let name = service.selection.name.clone();
+            let description = format!("{}\n{}", service.selection.description, hint);
+            Ok(BTreeMap::from([(
+                name,
+                BoundTool::Described {
+                    handler: Arc::new(service),
+                    description,
+                },
+            )]))
+        })
+    }
+}
+
+pub(super) async fn project(
+    store: &EventLog,
+    invocation: &Invocation,
+    reply: OperationReply,
+) -> Result<ToolSuccess, ToolError> {
+    // Validate original physical completion before interpreting business output.
+    mutation_result(reply.clone())?;
+    let Receipt::Recorded {
+        outcome: OperationOutcome::Returned { value },
+        ..
+    } = &reply.receipt
+    else {
+        unreachable!("validated receipt")
+    };
+    let result = serde_json::from_value(value.clone());
+    let raw = ToolOutput::Operation(Box::new(reply));
+    match parts(store, invocation, result).await {
+        Ok(parts) => Ok(ToolSuccess::content(raw, parts)),
+        // A display failure cannot erase a completed native effect or its original receipt.
+        Err(_) => Ok(ToolSuccess::projected(
+            raw,
+            maka_agent_facts::tool_output::DurableToolProjection::Failure,
+        )),
+    }
+}
+async fn parts(
+    store: &EventLog,
+    invocation: &Invocation,
+    result: Result<ResultValue, serde_json::Error>,
+) -> Result<Vec<ToolContent>, ToolError> {
+    let result = result.map_err(|_| ToolError::Failed("Computer result invalid".into()))?;
+    let parts = match result {
+        ResultValue::Failed { message, state } => vec![ToolContent::Text(format!(
+            "{message}\nREPL state: {}",
+            serde_json::to_string(&state).expect("state")
+        ))],
+        ResultValue::Completed { artifact, state } => {
+            let record = store
+                .get_artifact(&invocation.session_id, &artifact)
+                .await
+                .map_err(|error| ToolError::Persistence(error.to_string()))?
+                .record
+                .filter(|record| {
+                    record.turn_id == invocation.turn_id
+                        && record.source == ArtifactSource::SessionEffect
+                        && record.kind == ArtifactKind::File
+                        && record.mime_type.as_deref() == Some("application/json")
+                        && record.size_bytes <= 50 * 1024 * 1024
+                })
+                .ok_or_else(|| {
+                    ToolError::Failed(
+                        "Computer output does not belong to the original invocation".into(),
+                    )
+                })?;
+            let mut bytes = Vec::with_capacity(record.size_bytes as usize);
+            while (bytes.len() as u64) < record.size_bytes {
+                let chunk = store
+                    .execution_artifact(invocation, &artifact, bytes.len() as u64, 64 * 1024)
+                    .await
+                    .map_err(|error| ToolError::Persistence(error.to_string()))?
+                    .filter(|chunk| {
+                        chunk.total_bytes == record.size_bytes && !chunk.bytes.is_empty()
+                    })
+                    .ok_or_else(|| ToolError::Failed("Computer output unavailable".into()))?;
+                bytes.extend(chunk.bytes);
+            }
+            let outputs: Vec<CellOutput> = serde_json::from_slice(&bytes)
+                .map_err(|_| ToolError::Failed("Computer output invalid".into()))?;
+            if outputs
+                .iter()
+                .any(|output| matches!(output, CellOutput::Image { .. }))
+            {
+                return Err(ToolError::Failed(
+                    "Computer output contains an unowned image reference".into(),
+                ));
+            }
+            let mut parts: Vec<_> = outputs
+                .into_iter()
+                .map(|output| match output {
+                    CellOutput::Text { text } => ToolContent::Text(text),
+                    CellOutput::Media { content, detail } => ToolContent::Media { content, detail },
+                    CellOutput::Image { .. } => unreachable!("stored images rejected below"),
+                })
+                .collect();
+            parts.push(ToolContent::Text(format!(
+                "REPL state: {}",
+                serde_json::to_string(&state).expect("state")
+            )));
+            parts
+        }
+    };
+    Ok(parts)
+}

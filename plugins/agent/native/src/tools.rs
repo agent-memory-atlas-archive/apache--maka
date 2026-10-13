@@ -19,6 +19,7 @@
 
 //! Explicit service-to-tool projection. Imports describe bindings, not grants.
 mod approval;
+mod computer;
 pub(crate) mod image;
 mod web;
 use crate::contract::{ServiceTool, ToolConfirmation, ToolInput, ToolResult};
@@ -97,6 +98,7 @@ pub(crate) fn catalog(
         })
         .collect();
     let mut web_bindings = Vec::new();
+    let mut computer_bindings = Vec::new();
     let skill_contract = maka_skills_api::contract();
     let tool_names: Arc<Vec<(String, Option<EditingTools>)>> = Arc::new(
         selected
@@ -133,6 +135,11 @@ pub(crate) fn catalog(
                 || match selection.result {
                     ToolResult::Json => method.mode == MethodMode::Subscription,
                     ToolResult::Image => method.mode != MethodMode::Subscription,
+                    ToolResult::Computer => {
+                        method.mode != MethodMode::Mutation
+                            || binding.contract() != &maka_workspace_api::computer::contract()
+                            || selection.nestable
+                    }
                 }
             {
                 return Err("agent_tool_method_unsupported".to_owned());
@@ -207,6 +214,15 @@ pub(crate) fn catalog(
                 mode: method.mode,
                 web_basis: None,
             };
+            if selection.result == ToolResult::Computer {
+                computer_bindings.push((
+                    selection.name.clone(),
+                    Arc::new(computer::Binding {
+                        service: service.clone(),
+                        workers: workers.clone(),
+                    }),
+                ));
+            }
             if selection.input == ToolInput::Web {
                 web_bindings.push((
                     selection.name.clone(),
@@ -224,7 +240,7 @@ pub(crate) fn catalog(
                     input_schema,
                     output_schema: match selection.result {
                         ToolResult::Json => Some(method.output.clone()),
-                        ToolResult::Image => None,
+                        ToolResult::Image | ToolResult::Computer => None,
                     },
                     freeform: None,
                 },
@@ -248,6 +264,11 @@ pub(crate) fn catalog(
         catalog = catalog
             .with_request_binding([name].into(), binding)
             .map_err(|_| "agent_web_binding_invalid")?;
+    }
+    for (name, binding) in computer_bindings {
+        catalog = catalog
+            .with_request_binding([name].into(), binding)
+            .map_err(|_| "agent_computer_binding_invalid")?;
     }
     Ok(Catalog {
         tools: catalog,
@@ -293,7 +314,10 @@ impl ToolPreparer for Service {
                 return Err(ToolRejection::Cancelled);
             }
             // No request or effect is admitted until the existing ToolJournal T1.
-            let title = selection.title.clone();
+            let title = selection.title.clone().or_else(|| {
+                (selection.result == ToolResult::Computer)
+                    .then(|| computer::title(&selection.method, &input))
+            });
             let presentation = selection.presentation.clone();
             let prepared = PreparedEffect::new(move |cancellation| {
                 Box::pin(async move {
@@ -352,6 +376,7 @@ impl ToolPreparer for Service {
                             serde_json::json!({"input": input, "tools": names, "workspace":configuration.workspace})
                         }
                     };
+                    let invocation = context.invocation.clone();
                     let operation = operation_id(&context);
                     let request = services
                         .request(
@@ -398,7 +423,11 @@ impl ToolPreparer for Service {
                                         // every accepted mutation returns its original typed receipt.
                                         let reply = observer.await.map_err(ToolError::Failed)?;
                                         observation = Some(Box::new(reply.clone()));
-                                        mutation_result(reply)
+                                        if selection.result == ToolResult::Computer {
+                                            computer::project(&store, &invocation, reply).await
+                                        } else {
+                                            mutation_result(reply)
+                                        }
                                     }
                                     MethodMode::Subscription => {
                                         image::read(

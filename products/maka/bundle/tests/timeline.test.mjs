@@ -23,6 +23,87 @@ const { activate } = await import('../dist/packages/appearance/tui.js');
 const theme = activate({ scheme: 'dark' }).Appearance.value;
 const { component } = await import('../dist/packages/timeline/tui.js');
 
+test('history fragments keep distinct controls and navigate the original tool evidence', () => {
+  const tool = {
+    toolUseId: 'computer-call',
+    call: {
+      sequence: 7,
+      name: 'cua_repl',
+      title: null,
+      presentation: null,
+      pending: false,
+      dispatched: true,
+    },
+    result: null,
+  };
+  const props = {
+    theme,
+    locale: 'en',
+    copyRequest: null,
+    browse: null,
+    timings: [],
+    markReadEnabled: true,
+    toolContext: { sessionId: 'session', through: 8 },
+    waitingTools: [],
+    liveTools: [],
+    source: null,
+    search: null,
+    loading: false,
+    older: false,
+    newer: false,
+    latest: false,
+    landing: { sequence: 0, edge: 'end' },
+    live: false,
+    messages: ['call', 'call-offset-64', 'answer', 'answer-offset-64'].map((id, index) => ({
+      id,
+      contentKey: id,
+      role: index < 2 ? 'tool_call' : 'assistant',
+      text: 'Original fragment ' + index,
+      timestamp: null,
+      source: index < 2 ? 7 : 8,
+      image: false,
+      continued: true,
+      tool: index < 2 ? tool : null,
+    })),
+  };
+  let out = component.mount(props, {});
+  const raw = (key) => {
+    out = component.event(
+      out.frame.state,
+      { kind: 'raw', key, event: { kind: 'activate' } },
+      props,
+      {},
+    );
+  };
+  raw('toggle-call');
+  raw('toggle-call-offset-64');
+  const keys = [];
+  const visit = (value) => {
+    if (!value || typeof value !== 'object') return;
+    if (typeof value.key === 'string') keys.push(value.key);
+    for (const child of Object.values(value)) {
+      if (Array.isArray(child)) child.forEach(visit);
+      else visit(child);
+    }
+  };
+  visit(out.frame.view);
+  assert.equal(
+    new Set(keys).size,
+    keys.length,
+    'all rendered fragments must have unique control identities',
+  );
+  raw('tool-source-call-offset-64-arguments');
+  assert.deepEqual(out.events, [
+    { name: 'toolSource', value: { sequence: 7, field: 'arguments' } },
+  ]);
+  raw('source-answer-offset-64');
+  assert.deepEqual(out.events, [{ name: 'source', value: { sequence: 8, field: 'body' } }]);
+  raw('mark-read-answer-offset-64');
+  assert.deepEqual(out.events, [
+    { name: 'markRead', value: { sessionId: 'session', sequence: 8, field: 'body' } },
+  ]);
+});
+
 test('history prefetches before an edge without treating stale or commanded viewports as scrolling', () => {
   const props = {
     theme,
