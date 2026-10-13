@@ -540,20 +540,23 @@ impl Fixture {
             tools: vec![],
         };
         configure(&mut settings);
+        let selected_max_steps = settings.max_steps;
         if settings.recall || settings.scheduled_tasks {
             settings.max_steps = 6;
         }
         if let Some(tooling) = &tooling {
             settings.tools = tooling.selections();
-            settings.max_steps = if settings
-                .tools
-                .iter()
-                .any(|tool| tool.input == contract::ToolInput::Skill)
-            {
-                8
-            } else {
-                2
-            };
+            settings.max_steps = selected_max_steps.max(
+                if settings
+                    .tools
+                    .iter()
+                    .any(|tool| tool.input == contract::ToolInput::Skill)
+                {
+                    8
+                } else {
+                    2
+                },
+            );
         }
         let (mut input, mut packages) = input(&settings);
         if let Some(tooling) = &tooling {

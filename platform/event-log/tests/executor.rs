@@ -62,6 +62,7 @@ async fn external_output_is_durable_observation_not_native_dispatch_and_rebuilds
             cwd: temp.path().to_string_lossy().into_owned(),
             workspace_identity: None,
             model: None,
+            editing_tools: None,
             tool_discovery: false,
             tool_composition: None,
             system_prompt: None,

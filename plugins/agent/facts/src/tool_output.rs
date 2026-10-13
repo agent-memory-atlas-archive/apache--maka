@@ -93,7 +93,22 @@ impl From<Value> for ToolOutput {
 }
 
 impl ToolOutput {
-    /// JavaScript and presentation see the original result, not model clipping.
+    /// Code Mode receives the full business result declared by the tool schema.
+    /// The journal retains the original operation receipt before this conversion.
+    pub fn into_code_value(self) -> Result<Value, &'static str> {
+        if let Self::Operation(reply) = self {
+            return match reply.receipt {
+                maka_plugin_core::operation::Receipt::Recorded {
+                    outcome: maka_plugin_core::operation::OperationOutcome::Returned { value },
+                    cleanup: maka_plugin_core::operation::OperationCleanup::Confirmed,
+                } => Ok(value),
+                _ => Err("Code Mode requires a confirmed returned operation receipt"),
+            };
+        }
+        Ok(self.into_json())
+    }
+
+    /// Original result evidence, without business projection or model clipping.
     pub fn into_json(self) -> Value {
         match self {
             Self::Model(result) => serde_json::to_value(result).expect("typed model result"),

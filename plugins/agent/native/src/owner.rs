@@ -130,6 +130,7 @@ pub(crate) struct Owner {
     engine: Engine,
     tools: maka_tools::ToolCatalog,
     tool_basis: Vec<crate::tools::SelectedTool>,
+    editing_tools: Vec<(String, maka_agent_facts::execution::EditingTools)>,
     skills: Option<skills::Library>,
     executors: crate::executor::Executors,
     runs: Arc<Mutex<Runs>>,
@@ -260,22 +261,25 @@ impl Owner {
             additional,
             workers.clone(),
         )
-        .and_then(|(tools, basis)| {
-            let tools = if settings.recall {
-                tools
+        .and_then(|mut catalog| {
+            if settings.recall {
+                catalog.tools = catalog
+                    .tools
                     .with_request_binding(
                         maka_agent_facts::tools::ToolPreparer::names(recall.as_ref())
                             .into_iter()
                             .collect(),
                         recall.clone(),
                     )
-                    .map_err(|error| error.to_string())?
-            } else {
-                tools
-            };
-            Ok((tools, basis))
+                    .map_err(|error| error.to_string())?;
+            }
+            Ok(catalog)
         });
-        let (tools, tool_basis) = match prepared_tools {
+        let crate::tools::Catalog {
+            tools,
+            basis: tool_basis,
+            editing: editing_tools,
+        } = match prepared_tools {
             Ok(tools) => tools,
             Err(error) => {
                 configuration
@@ -321,6 +325,7 @@ impl Owner {
             engine,
             tools,
             tool_basis,
+            editing_tools,
             skills,
             executors,
             runs: Arc::default(),
@@ -605,6 +610,7 @@ impl Owner {
         &self,
         allowed: Option<&[String]>,
         discovery: bool,
+        editing: Option<maka_agent_facts::execution::EditingTools>,
     ) -> maka_tools::ToolCatalog {
         let selected = match allowed {
             None => self.tools.clone(),
@@ -616,6 +622,18 @@ impl Owner {
                     .map(String::as_str)
                     .collect();
                 self.tools.excluding(&excluded)
+            }
+        };
+        let selected = match editing {
+            None => selected,
+            Some(editing) => {
+                let excluded: Vec<_> = self
+                    .editing_tools
+                    .iter()
+                    .filter(|(_, style)| *style != editing)
+                    .map(|(name, _)| name.as_str())
+                    .collect();
+                selected.excluding(&excluded)
             }
         };
         if discovery {
@@ -784,8 +802,12 @@ impl Owner {
                 if basis.executor.is_some() {
                     vec![]
                 } else {
-                    self.selected_tools(session.configuration.tools.as_deref(), false)
-                        .names()
+                    self.selected_tools(
+                        session.configuration.tools.as_deref(),
+                        false,
+                        basis.model.as_ref().and_then(|model| model.editing_tools),
+                    )
+                    .names()
                 },
             )
             .await?

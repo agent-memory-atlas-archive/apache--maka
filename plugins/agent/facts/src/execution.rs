@@ -108,6 +108,9 @@ impl SystemPrompt {
 /// Later Session mutations must not reinterpret relative paths or grants.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InvocationConfiguration {
+    /// Frozen file-editing policy. Older invocations retain their original unfiltered tools.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editing_tools: Option<EditingTools>,
     /// Frozen discovery policy for this invocation, including continuations.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub tool_discovery: bool,

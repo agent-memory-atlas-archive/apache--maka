@@ -111,7 +111,7 @@
     "plugins/agent/insights/Cargo.toml": "e11b391c1304bb27d552322e9f31b9e1858340f81f49ebbb3d484b02c9238def",
     "plugins/agent/model/Cargo.toml": "0fbd5b92911a7d3af54f10069d16b1b1b4b2d453b79aeb6ea63e66fd78d6ad85",
     "plugins/agent/model/tests/fixtures/provider-errors.mjs": "2efc38763493dbd5ad2d1f2869acde6ec450197a7ab62a01b5d4c6e3bb1d0518",
-    "plugins/agent/native/Cargo.toml": "4aaacf486f7e37d07fb320fb1c30bb574f180de3e5674d2a799b0b7f4f262226",
+    "plugins/agent/native/Cargo.toml": "1af18ae51a08acbe52ad0784488891f218b2d81eb5271e8ca85831f67d08242f",
     "plugins/agent/navigation/desktop.ts": "1debdbc123da7d06a11f4a77c22e5d7bfaaba392f34698d2447e9689ce6d87f0",
     "plugins/agent/navigation/package.ts": "7b1e3ed3be6f8f75238d3975001cadc943a1c6fabdcdde0300a382604e347544",
     "plugins/agent/navigation/tui.ts": "734105ea23900dbcbf1f2e75f92339f00b515e90937e49c28daca1afb3c67c1f",

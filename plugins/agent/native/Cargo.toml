@@ -27,6 +27,7 @@ maka-agent-facts.workspace = true
 maka-agent-ports.workspace = true
 maka-capabilities.workspace = true
 maka-files-native.workspace = true
+maka-workspace-api.workspace = true
 maka-workspace-support.workspace = true
 maka-skills-api.workspace = true
 maka-agent-authority.workspace = true
@@ -66,7 +67,6 @@ uuid.workspace = true
 
 [dev-dependencies]
 maka-external-agent.workspace = true
-maka-workspace-api.workspace = true
 maka-interactions-api.workspace = true
 maka-packages.workspace = true
 sqlx.workspace = true

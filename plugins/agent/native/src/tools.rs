@@ -23,6 +23,7 @@ pub(crate) mod image;
 mod web;
 use crate::contract::{ServiceTool, ToolConfirmation, ToolInput, ToolResult};
 use futures_util::FutureExt;
+use maka_agent_facts::execution::EditingTools;
 use maka_agent_facts::tool_call::ToolRejection;
 use maka_agent_facts::tool_output::ToolOutput;
 use maka_agent_facts::tool_output::ToolSuccess;
@@ -59,21 +60,56 @@ pub(crate) struct SelectedTool {
     binding: String,
 }
 
+pub(crate) struct Catalog {
+    pub tools: ToolCatalog,
+    pub basis: Vec<SelectedTool>,
+    /// Derived from actual bound contracts and methods, never display names.
+    pub editing: Vec<(String, EditingTools)>,
+}
+
 pub(crate) fn catalog(
     services: NativeServices,
     store: Arc<EventLog>,
     selected: &[ServiceTool],
     additional: Vec<ToolRegistration>,
     workers: tokio_util::task::TaskTracker,
-) -> Result<(ToolCatalog, Vec<SelectedTool>), String> {
+) -> Result<Catalog, String> {
     let mut basis = Vec::new();
+    let file_contract = maka_workspace_api::files::contract();
+    let editing: Vec<_> = selected
+        .iter()
+        .filter_map(|selection| {
+            let (_, bindings) = services
+                .imports()
+                .find(|(name, _)| *name == selection.import)?;
+            let [binding] = bindings else {
+                return None;
+            };
+            if binding.contract() != &file_contract {
+                return None;
+            }
+            let style = match selection.method.as_str() {
+                "write" | "edit" => EditingTools::Structured,
+                "applyPatch" => EditingTools::ApplyPatch,
+                _ => return None,
+            };
+            Some((selection.name.clone(), style))
+        })
+        .collect();
     let mut web_bindings = Vec::new();
     let skill_contract = maka_skills_api::contract();
-    let tool_names: Arc<Vec<String>> = Arc::new(
+    let tool_names: Arc<Vec<(String, Option<EditingTools>)>> = Arc::new(
         selected
             .iter()
             .map(|tool| tool.name.clone())
             .chain(additional.iter().map(|tool| tool.definition.name.clone()))
+            .map(|name| {
+                let style = editing
+                    .iter()
+                    .find(|(editor, _)| *editor == name)
+                    .map(|(_, style)| *style);
+                (name, style)
+            })
             .collect(),
     );
     let registrations = selected
@@ -213,12 +249,16 @@ pub(crate) fn catalog(
             .with_request_binding([name].into(), binding)
             .map_err(|_| "agent_web_binding_invalid")?;
     }
-    Ok((catalog, basis))
+    Ok(Catalog {
+        tools: catalog,
+        basis,
+        editing,
+    })
 }
 #[derive(Clone)]
 struct Service {
     web_basis: Option<maka_web_api::contract::Basis>,
-    tool_names: Arc<Vec<String>>,
+    tool_names: Arc<Vec<(String, Option<EditingTools>)>>,
     services: NativeServices,
     store: Arc<EventLog>,
     binding: String,
@@ -288,14 +328,26 @@ impl ToolPreparer for Service {
                                 &context.invocation,
                             )
                             .await?;
+                            let editing = store
+                                .invocation_configuration(&context.invocation)
+                                .await
+                                .map_err(|error| ToolError::Failed(error.to_string()))?
+                                .ok_or_else(|| {
+                                    ToolError::Failed(
+                                        "Skill call has no invocation configuration".into(),
+                                    )
+                                })?
+                                .editing_tools;
                             let names: Vec<_> = tool_names
                                 .iter()
-                                .filter(|name| {
-                                    configuration
-                                        .tools
-                                        .as_ref()
-                                        .is_none_or(|allowed| allowed.contains(name))
+                                .filter(|(name, style)| {
+                                    (editing.is_none() || style.is_none() || editing == *style)
+                                        && configuration
+                                            .tools
+                                            .as_ref()
+                                            .is_none_or(|allowed| allowed.contains(name))
                                 })
+                                .map(|(name, _)| name)
                                 .collect();
                             serde_json::json!({"input": input, "tools": names, "workspace":configuration.workspace})
                         }

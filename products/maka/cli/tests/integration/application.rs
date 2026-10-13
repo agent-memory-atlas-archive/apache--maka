@@ -174,7 +174,19 @@ fn url_install_commits_validated_bytes_without_changing_the_composition() {
                         .set_read_timeout(Some(std::time::Duration::from_secs(5)))
                         .unwrap();
                     let mut request = [0; 8192];
-                    stream.read(&mut request).unwrap();
+                    let mut received = 0;
+                    while !request[..received]
+                        .windows(4)
+                        .any(|bytes| bytes == b"\r\n\r\n")
+                    {
+                        assert!(
+                            received < request.len(),
+                            "package request headers exceed the fixture limit"
+                        );
+                        let read = stream.read(&mut request[received..]).unwrap();
+                        assert!(read > 0, "package request ended before its headers");
+                        received += read;
+                    }
                     write!(
                         stream,
                         "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",

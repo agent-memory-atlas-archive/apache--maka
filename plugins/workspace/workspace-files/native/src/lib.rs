@@ -181,6 +181,16 @@ impl Handler for Files {
     }
 }
 impl NativeOwner for Files {
+    fn execution_basis(&self) -> Option<Value> {
+        // Package/configuration identify the implementation; these are its
+        // captured targets. Comparison never restores a handle or grants access.
+        // Calls still read the live Session boundary from this exact Root.
+        let root = self.store.owned_root().ok()?;
+        Some(serde_json::json!({
+            "root": root.root_id(),
+            "privateRoot": self.state_root,
+        }))
+    }
     fn prepare_retirement(
         &self,
     ) -> Option<Box<dyn maka_host_runtime::application::NativeRetirement>> {

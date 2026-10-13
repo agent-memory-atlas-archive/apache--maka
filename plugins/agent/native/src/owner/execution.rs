@@ -287,6 +287,7 @@ impl Owner {
         // A continuation retains the original tool protocol even when the
         // user selects a model whose default differs from the original Run.
         source.accepted.tool_mode = configuration.tool_mode;
+        source.accepted.editing_tools = configuration.editing_tools;
         let basis = MessageBasis {
             tool_discovery: configuration.tool_discovery,
             allowed_tools: session.configuration.tools.clone(),
@@ -313,6 +314,7 @@ impl Owner {
         let tools = self.selected_tools(
             session.configuration.tools.as_deref(),
             configuration.tool_discovery,
+            configuration.editing_tools,
         );
         let run = RunInput {
             invocation: invocation.clone(),

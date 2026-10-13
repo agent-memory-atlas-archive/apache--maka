@@ -278,27 +278,6 @@ fn read_json<T: serde::de::DeserializeOwned>(source: &Path) -> Result<T, HostErr
     Ok(serde_json::from_slice(&bytes)?)
 }
 
-#[cfg(test)]
-mod source_input_tests {
-    use super::*;
-
-    #[test]
-    fn authoring_reads_large_contract_documents_with_the_deployment_bound() {
-        let directory = tempfile::tempdir().unwrap();
-        let file = directory.path().join("remote-exports.json");
-        let value = serde_json::json!({"contract": "x".repeat(768 * 1024)});
-        std::fs::write(&file, serde_json::to_vec(&value).unwrap()).unwrap();
-        assert_eq!(read_json::<serde_json::Value>(&file).unwrap(), value);
-        std::fs::write(&file, vec![b' '; 1024 * 1024 + 1]).unwrap();
-        assert!(
-            read_json::<serde_json::Value>(&file)
-                .unwrap_err()
-                .to_string()
-                .contains("1 MiB")
-        );
-    }
-}
-
 async fn open_store(root: PathBuf) -> Result<maka_event_log::EventLog, HostError> {
     let owner = tokio::task::spawn_blocking(move || {
         maka_event_log::root::RootOwner::open(
@@ -410,5 +389,26 @@ async fn run_tui(
             Err(error)
         }
         Err(error) => Err(format!("{}\nUI activation: {error}", startup_errors.join("\n")).into()),
+    }
+}
+
+#[cfg(test)]
+mod source_input_tests {
+    use super::*;
+
+    #[test]
+    fn authoring_reads_large_contract_documents_with_the_deployment_bound() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("remote-exports.json");
+        let value = serde_json::json!({"contract": "x".repeat(768 * 1024)});
+        std::fs::write(&file, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(read_json::<serde_json::Value>(&file).unwrap(), value);
+        std::fs::write(&file, vec![b' '; 1024 * 1024 + 1]).unwrap();
+        assert!(
+            read_json::<serde_json::Value>(&file)
+                .unwrap_err()
+                .to_string()
+                .contains("1 MiB")
+        );
     }
 }

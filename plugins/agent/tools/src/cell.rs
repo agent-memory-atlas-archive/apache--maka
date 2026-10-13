@@ -258,7 +258,7 @@ impl ToolExecutor for NestedTools {
                 }
             };
             let result = journal
-                .invoke_prepared_call(
+                .invoke_prepared_output(
                     operation_id,
                     call,
                     name.clone(),
@@ -267,7 +267,9 @@ impl ToolExecutor for NestedTools {
                     effect,
                 )
                 .await?;
-            Ok(result)
+            result
+                .into_code_value()
+                .map_err(|message| maka_agent_facts::tools::ToolError::Failed(message.into()))
         })
     }
 }

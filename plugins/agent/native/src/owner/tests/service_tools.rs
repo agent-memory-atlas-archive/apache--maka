@@ -138,6 +138,7 @@ pub(super) struct Setup {
     questions: bool,
     forms: bool,
     files: Option<&'static str>,
+    all_file_editors: bool,
     processes: bool,
     isolated_workspaces: bool,
     web: bool,
@@ -166,6 +167,7 @@ impl Setup {
             questions: false,
             forms: false,
             files: None,
+            all_file_editors: false,
             processes: false,
             isolated_workspaces: false,
             web: false,
@@ -191,6 +193,7 @@ impl Setup {
             questions: false,
             forms: false,
             files: None,
+            all_file_editors: false,
             processes: false,
             isolated_workspaces: false,
             web: false,
@@ -222,6 +225,7 @@ impl Setup {
             questions: true,
             forms: false,
             files: None,
+            all_file_editors: false,
             processes: false,
             isolated_workspaces: false,
             web: false,
@@ -312,6 +316,22 @@ impl Setup {
     pub(super) fn selections(&self) -> Vec<contract::ServiceTool> {
         if self.protocol || (self.skills.is_some() && !self.skill_tools) {
             return vec![];
+        }
+        if self.all_file_editors {
+            return [
+                ("readText", "InspectDocument"),
+                ("write", "ReplaceDocument"),
+                ("edit", "AdjustDocument"),
+                ("applyPatch", "PatchDocument"),
+            ]
+            .into_iter()
+            .map(|(method, name)| contract::ServiceTool {
+                method: method.into(),
+                name: name.into(),
+                presentation: None,
+                ..self.selection()
+            })
+            .collect();
         }
         if self.web {
             return [("fetch", "WebFetch"), ("search", "WebSearch")]
@@ -1283,56 +1303,76 @@ async fn unlisted_native_tool_edge_never_executes_the_selected_provider() {
 }
 #[tokio::test]
 async fn stopping_real_agent_run_cancels_tool_but_retains_capacity_until_physical_cleanup() {
-    tokio::time::timeout(Duration::from_secs(30), async {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let base = format!("http://{}/v1", listener.local_addr().unwrap());
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            request(&mut socket).await;
-            tool_response(&mut socket).await;
-        });
-        let counter = Counter::new(Behavior::Blocked);
-        let fixture = Fixture::with_services(
-            &base,
-            1,
-            None,
-            None,
-            Some(Setup::native(counter.clone(), true)),
-        )
-        .await;
-        let session = fixture.create("Stop original tool").await;
-        let started = fixture.send(&session).await.unwrap();
-        counter.entered.acquire().await.unwrap().forget();
-        fixture
-            .mutation(
-                2,
-                "stop",
-                json!({"sessionId":session,"invocationId":started["invocationId"]}),
-                Uuid::new_v4(),
+    for code in [false, true] {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}/v1", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                request(&mut socket).await;
+                if code {
+                    code_response(&mut socket, "text(await tools.Counter({amount:1}));").await;
+                } else {
+                    tool_response(&mut socket).await;
+                }
+            });
+            let counter = Counter::new(Behavior::Blocked);
+            let fixture = Fixture::with_services(
+                &base,
+                1,
+                None,
+                None,
+                Some({
+                    let mut setup = Setup::native(counter.clone(), true);
+                    setup.nestable = code;
+                    setup
+                }),
             )
-            .await
-            .unwrap();
-        counter.cancelled.acquire().await.unwrap().forget();
-        assert_eq!(fixture.owner.permits.available_permits(), 0);
-        assert_eq!(fixture.owner.workers.len(), 1);
-        let other = fixture.create("Not available yet").await;
-        assert!(
+            .await;
+            selection::edit(&fixture, |changes| {
+                changes.model_overrides = Patch::Set(BTreeMap::from([(
+                    "fixture-model".into(),
+                    ModelOverride {
+                        code_mode: Some(code),
+                        ..Default::default()
+                    },
+                )]));
+            })
+            .await;
+            let session = fixture.create("Stop original tool").await;
+            let started = fixture.send(&session).await.unwrap();
+            counter.entered.acquire().await.unwrap().forget();
             fixture
-                .send(&other)
+                .mutation(
+                    2,
+                    "stop",
+                    json!({"sessionId":session,"invocationId":started["invocationId"]}),
+                    Uuid::new_v4(),
+                )
                 .await
-                .unwrap_err()
-                .contains("agent_capacity_exhausted")
-        );
-        counter.release.add_permits(1);
-        fixture.drained().await;
-        server.await.unwrap();
-        assert_eq!(counter.effects.load(Ordering::SeqCst), 1);
-        assert_eq!(fixture.owner.permits.available_permits(), 1);
-        fixture.app.shutdown().await.unwrap();
-        fixture.config.shutdown().await.unwrap();
-    })
-    .await
-    .unwrap();
+                .unwrap();
+            counter.cancelled.acquire().await.unwrap().forget();
+            assert_eq!(fixture.owner.permits.available_permits(), 0);
+            assert_eq!(fixture.owner.workers.len(), 1);
+            let other = fixture.create("Not available yet").await;
+            assert!(
+                fixture
+                    .send(&other)
+                    .await
+                    .unwrap_err()
+                    .contains("agent_capacity_exhausted")
+            );
+            counter.release.add_permits(1);
+            fixture.drained().await;
+            server.await.unwrap();
+            assert_eq!(counter.effects.load(Ordering::SeqCst), 1);
+            assert_eq!(fixture.owner.permits.available_permits(), 1);
+            fixture.app.shutdown().await.unwrap();
+            fixture.config.shutdown().await.unwrap();
+        })
+        .await
+        .unwrap();
+    }
 }
 #[tokio::test]
 async fn returned_effect_with_failed_cleanup_preserves_receipt_without_settling_or_reusing_capacity()
@@ -1734,7 +1774,7 @@ async fn resume_replays_original_settlements_without_redispatching_effects() {
             ).await;
             selection::edit(&fixture, |changes| {
                 changes.model_overrides = Patch::Set(BTreeMap::from([("fixture-model".into(), ModelOverride {
-                    code_mode: Some(true), ..Default::default()
+                    code_mode: Some(true), apply_patch: Some(true), ..Default::default()
                 })]));
             }).await;
             let session = fixture.create("Resume settled tool").await;
@@ -1751,7 +1791,7 @@ async fn resume_replays_original_settlements_without_redispatching_effects() {
             assert_eq!(source["execution"]["state"], "cancelled");
             selection::edit(&fixture, |changes| {
                 changes.model_overrides = Patch::Set(BTreeMap::from([("fixture-model".into(), ModelOverride {
-                    code_mode: Some(false), ..Default::default()
+                    code_mode: Some(false), apply_patch: Some(false), ..Default::default()
                 })]));
             }).await;
             let resumed = fixture.mutation(2, "resume", json!({
@@ -1771,6 +1811,10 @@ async fn resume_replays_original_settlements_without_redispatching_effects() {
             response(&mut replay).await;
             fixture.drained().await;
             let observed = facts(&fixture, &session).await;
+            assert!(observed.iter().filter_map(|fact| match fact {
+                Fact::InvocationOpened { configuration: Some(configuration), .. } => Some(configuration),
+                _ => None,
+            }).all(|configuration| configuration.editing_tools == Some(maka_agent_facts::execution::EditingTools::ApplyPatch)), "resume retains original editing policy after overrides change");
             assert_eq!(observed.iter().filter(|fact| matches!(fact, Fact::ToolDispatched { .. })).count(), 1);
             if matches!(behavior, Behavior::Unknown) {
                 let reference = observed.iter().find_map(|fact| match fact {
@@ -1843,7 +1887,7 @@ async fn code_mode_calls_selected_native_services_with_original_grants_and_recei
                 let names: Vec<_> = first["tools"].as_array().unwrap().iter().filter_map(|tool| tool["function"]["name"].as_str()).collect();
                 assert!(names.contains(&"exec") && names.contains(&"wait"));
                 assert_eq!(names.contains(&"Counter"), !nestable);
-                let code = "text(await tools.Counter({amount:1})); text(await tools.Counter({amount:1}));";
+                let code = "const first = await tools.Counter({amount:1}); if (first.effects !== 1 || first.receipt !== undefined) throw Error('native result differs from declared schema'); text(first); const second = await tools.Counter({amount:1}); if (second.effects !== 2) throw Error('second effect missing'); text(second);";
                 code_response(&mut socket, code).await;
                 let (mut socket, _) = listener.accept().await.unwrap();
                 let next = request(&mut socket).await;
@@ -1873,6 +1917,16 @@ async fn code_mode_calls_selected_native_services_with_original_grants_and_recei
                         Fact::ToolSettled { operation_id, outcome: ToolOutcome::Succeeded { .. } }
                         if operation_id == expected
                     )).count(), 1, "each nested service has its own successful durable settlement");
+                    let prefix = fixture.store.scoped_prefix(
+                        maka_agent_facts::event::LogScope::Session { id: session.clone() },
+                        256, 4 * 1024 * 1024,
+                    ).await.unwrap();
+                    let event = prefix.events.iter().find(|event| matches!(&event.event.fact,
+                        Fact::ToolSettled { operation_id, .. } if operation_id == expected
+                    )).unwrap();
+                    assert!(matches!(fixture.store.resolve_tool_result(&session, &event.event.id).await.unwrap(),
+                        maka_agent_facts::tool_output::ToolOutput::Operation(_)
+                    ), "Code Mode business projection must retain the original native receipt");
                 }
             }
             fixture.app.shutdown().await.unwrap();
@@ -2043,6 +2097,305 @@ async fn code_mode_discovery_preserves_session_store_and_nested_callability_betw
             fixture.drained().await;
         }
         fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+
+fn file_editors(nestable: bool) -> Setup {
+    let mut setup = Setup::files("readText");
+    setup.all_file_editors = true;
+    setup.nestable = nestable;
+    setup
+}
+
+fn create_document(patch: bool, path: &str) -> (&'static str, Value) {
+    if patch {
+        (
+            "PatchDocument",
+            json!({"callId":"policy-fixture","operation":{"type":"create_file","path":path,"diff":"+editing policy\n"}}),
+        )
+    } else {
+        (
+            "ReplaceDocument",
+            json!({"path":path,"content":"editing policy"}),
+        )
+    }
+}
+
+#[tokio::test]
+async fn model_editing_policy_selects_bound_file_methods_independently_of_code_mode() {
+    tokio::time::timeout(Duration::from_secs(90), async {
+        for (model, code, patch, writable) in [
+            ("fixture-model", None, None, true),
+            ("gpt-fixture", None, None, true),
+            ("fixture-model", Some(false), Some(false), true),
+            ("fixture-model", Some(false), Some(true), true),
+            ("fixture-model", Some(true), Some(false), true),
+            ("fixture-model", Some(true), Some(true), true),
+            ("fixture-model", Some(true), Some(true), false),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let expected_code = code.unwrap_or(model == "gpt-fixture");
+            let expected_patch = patch.unwrap_or(model == "gpt-fixture");
+            let fixture = Fixture::configured(
+                &format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None,
+                Some(file_editors(true)), |settings| settings.tool_discovery = expected_code,
+            ).await;
+            selection::edit(&fixture, |changes| {
+                changes.enabled_model_ids = Some(vec![model.into()]);
+                changes.model_overrides = Patch::Set(BTreeMap::from([(model.into(), ModelOverride {
+                    code_mode: code, apply_patch: patch, ..Default::default()
+                })]));
+            }).await;
+            let session = fixture.create("Independent file editing policy").await;
+            if !writable {
+                files::change(&fixture, &session, "read_only", false, true).await;
+            }
+            let mut selection = fixture.selection().await;
+            selection.model_id = model.into();
+            fixture.mutation(2, "send", json!({"sessionId":session,"message":"Use the selected editor","model":selection}), Uuid::new_v4()).await.unwrap();
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let prompt = request(&mut socket).await;
+            assert_eq!(has_tool(&prompt, "exec"), expected_code);
+            let (name, input) = create_document(expected_patch, "policy.txt");
+            if expected_code {
+                let excluded = if expected_patch { "ReplaceDocument" } else { "PatchDocument" };
+                let code = format!("if (ALL_TOOLS.some(t => t.name === '{excluded}')) throw Error('excluded editor leaked'); if (!ALL_TOOLS.some(t => t.name === 'InspectDocument')) throw Error('reader lost'); text(await tools.{name}({input}));");
+                code_response(&mut socket, &code).await;
+            } else {
+                assert!(has_tool(&prompt, "InspectDocument"));
+                assert_eq!(has_tool(&prompt, "ReplaceDocument"), !expected_patch);
+                assert_eq!(has_tool(&prompt, "AdjustDocument"), !expected_patch);
+                assert_eq!(has_tool(&prompt, "PatchDocument"), expected_patch);
+                named_tool_response(&mut socket, name, input).await;
+            }
+            let (mut socket, _) = listener.accept().await.unwrap();
+            request(&mut socket).await;
+            let target = fixture.workspace.join("policy.txt");
+            assert_eq!(target.exists(), writable);
+            if writable { assert_eq!(std::fs::read_to_string(target).unwrap(), "editing policy"); }
+            response(&mut socket).await;
+            fixture.drained().await;
+            let expected = if expected_patch { maka_agent_facts::execution::EditingTools::ApplyPatch } else { maka_agent_facts::execution::EditingTools::Structured };
+            assert!(facts(&fixture, &session).await.iter().any(|fact| matches!(fact,
+                Fact::InvocationOpened { configuration: Some(configuration), .. } if configuration.editing_tools == Some(expected)
+            )));
+            fixture.app.shutdown().await.unwrap();
+            fixture.config.shutdown().await.unwrap();
+        }
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn queued_file_editing_policy_is_frozen_and_new_messages_adopt_changed_overrides() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let fixture = Fixture::with_services(
+            &format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None,
+            Some(file_editors(true)),
+        ).await;
+        let session = fixture.create("Queued editing policy").await;
+        fixture.send(&session).await.unwrap();
+        let (mut first, _) = listener.accept().await.unwrap();
+        let original = request(&mut first).await;
+        assert!(has_tool(&original, "ReplaceDocument"));
+        fixture.send(&session).await.unwrap();
+        selection::edit(&fixture, |changes| {
+            changes.model_overrides = Patch::Set(BTreeMap::from([("fixture-model".into(), ModelOverride {
+                code_mode: Some(true), apply_patch: Some(true), ..Default::default()
+            })]));
+        }).await;
+        response(&mut first).await;
+        let (mut queued, _) = listener.accept().await.unwrap();
+        let prompt = request(&mut queued).await;
+        assert_eq!(prompt["tools"], original["tools"], "queued work keeps the admitted editor and tool protocol");
+        let (name, input) = create_document(false, "queued-policy.txt");
+        named_tool_response(&mut queued, name, input).await;
+        let (mut socket, _) = listener.accept().await.unwrap();
+        request(&mut socket).await;
+        response(&mut socket).await;
+        fixture.drained().await;
+        assert_eq!(std::fs::read_to_string(fixture.workspace.join("queued-policy.txt")).unwrap(), "editing policy");
+
+        fixture.send(&session).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let prompt = request(&mut socket).await;
+        assert!(has_tool(&prompt, "exec"));
+        let (name, input) = create_document(true, "new-policy.txt");
+        code_response(&mut socket, &format!("if (ALL_TOOLS.some(t => t.name === 'ReplaceDocument')) throw Error('old editor leaked'); text(await tools.{name}({input}));")).await;
+        let (mut socket, _) = listener.accept().await.unwrap();
+        request(&mut socket).await;
+        response(&mut socket).await;
+        fixture.drained().await;
+        assert_eq!(std::fs::read_to_string(fixture.workspace.join("new-policy.txt")).unwrap(), "editing policy");
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn code_mode_wait_observes_original_native_process_and_its_workspace_effect() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut setup = Setup::processes();
+        setup.nestable = true;
+        let fixture = Fixture::configured(
+            &format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None,
+            Some(setup), |settings| { settings.tool_discovery = true; settings.max_steps = 3; },
+        ).await;
+        selection::edit(&fixture, |changes| {
+            changes.model_overrides = Patch::Set(BTreeMap::from([("fixture-model".into(), ModelOverride {
+                code_mode: Some(true), ..Default::default()
+            })]));
+        }).await;
+        let session = fixture.create("Wait for original native process").await;
+        fixture.send(&session).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        request(&mut socket).await;
+        code_response(&mut socket, "// @exec: {\"yield_time_ms\":0}\nconst result = await tools.Execute({command:'printf started > process-started; while [ ! -f process-release ]; do sleep 0.02; done; printf native-code-mode > process-result; cat process-result',login:false,timeout_ms:30000}); if (result.kind !== 'completed' || result.value.status !== 'completed') throw Error(JSON.stringify(result)); text(result.value.output.stdout);").await;
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let prompt = request(&mut socket).await;
+        let message = prompt["messages"].as_array().unwrap().iter().rev().find(|message| message["role"] == "tool").unwrap();
+        let running: Value = serde_json::from_str(message["content"].as_str().unwrap()).unwrap();
+        assert_eq!(running["state"], "running", "{running}");
+        let cell = running["cell_id"].as_str().unwrap();
+        tokio::time::timeout(Duration::from_secs(20), async {
+            while !fixture.workspace.join("process-started").exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.unwrap();
+        std::fs::write(fixture.workspace.join("process-release"), "release").unwrap();
+        named_tool_response(&mut socket, "wait", json!({"cell_id":cell,"yield_time_ms":30000})).await;
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let completed = request(&mut socket).await;
+        let message = completed["messages"].as_array().unwrap().iter().rev().find(|message| message["role"] == "tool").unwrap();
+        let text = message["content"].as_str().unwrap();
+        let result: Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+        assert_eq!(result["state"], "completed", "{result}");
+        assert_eq!(result["result"]["ok"], true, "{result}");
+        assert!(text.lines().skip(1).any(|line| line == "native-code-mode"), "{text}");
+        assert_eq!(std::fs::read_to_string(fixture.workspace.join("process-result")).unwrap(), "native-code-mode");
+        response(&mut socket).await;
+        fixture.drained().await;
+        let observed = facts(&fixture, &session).await;
+        assert_eq!(observed.iter().filter(|fact| matches!(fact, Fact::ToolDispatched {name, ..} if name == "Execute")).count(), 1);
+        assert_eq!(fixture.owner.permits.available_permits(), 1);
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn code_mode_native_image_bytes_reach_the_vision_model() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut setup = Setup::files("readImage");
+        setup.nestable = true;
+        let fixture = Fixture::configured(
+            &format!("http://{}/v1", listener.local_addr().unwrap()),
+            1,
+            None,
+            None,
+            Some(setup),
+            |settings| settings.tool_discovery = true,
+        )
+        .await;
+        selection::edit(&fixture, |changes| {
+            changes.model_overrides = Patch::Set(BTreeMap::from([(
+                "fixture-model".into(),
+                ModelOverride {
+                    code_mode: Some(true),
+                    vision: Some(true),
+                    ..Default::default()
+                },
+            )]));
+        })
+        .await;
+        let session = fixture.create("Nested native image").await;
+        let bytes = images::gif(0);
+        std::fs::write(fixture.workspace.join("nested.gif"), &bytes).unwrap();
+        files::change(&fixture, &session, "read_only", false, false).await;
+        fixture.send(&session).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        request(&mut socket).await;
+        code_response(
+            &mut socket,
+            "image(await tools.WorkspaceFile({path:'nested.gif'}), 'original');",
+        )
+        .await;
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let prompt = request(&mut socket).await;
+        assert_eq!(images::model_images(&prompt), vec![bytes]);
+        response(&mut socket).await;
+        fixture.drained().await;
+        assert_eq!(fixture.owner.permits.available_permits(), 1);
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn editing_policy_and_code_mode_survive_actual_host_restart_with_original_native_effect() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let setup = file_editors(true);
+        let policy = setup.policy();
+        let fixture = Fixture::with_services(
+            &format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None, Some(setup),
+        ).await;
+        selection::edit(&fixture, |changes| {
+            changes.model_overrides = Patch::Set(BTreeMap::from([("fixture-model".into(), ModelOverride {
+                code_mode: Some(true), apply_patch: Some(false), ..Default::default()
+            })]));
+        }).await;
+        let session = fixture.create("Restore admitted tool policies").await;
+        let deployment = fixture.app.client().snapshot().effective.unwrap().deployment;
+        let raw = rusqlite::Connection::open(fixture.root.join(maka_event_log::root::ROOT_DATABASE)).unwrap();
+        raw.execute_batch("CREATE TRIGGER hold_opening BEFORE INSERT ON event_log WHEN NEW.kind='invocation_opened' BEGIN SELECT RAISE(ABORT, 'fixture opening failure'); END;").unwrap();
+        assert!(fixture.send(&session).await.is_err());
+        assert_eq!(fixture.store.pending_messages(&session).await.unwrap().len(), 1);
+        selection::edit(&fixture, |changes| {
+            changes.model_overrides = Patch::Set(BTreeMap::from([("fixture-model".into(), ModelOverride {
+                code_mode: Some(false), apply_patch: Some(true), ..Default::default()
+            })]));
+        }).await;
+        fixture.app.shutdown().await.unwrap();
+        raw.execute_batch("DROP TRIGGER hold_opening").unwrap();
+        drop(raw);
+        let mut native = NativeRegistry::default();
+        provide_all(&mut native).unwrap();
+        maka_settings_native::provide(&mut native).unwrap();
+        let restored = Application::start_from_store(
+            fixture.store.clone(), deployment, native, fixture.issuer.clone(),
+            Arc::new(Grant(fixture.issuer.clone(), Some(policy))), Some(maka_host_js::factory(Default::default())),
+        ).await.unwrap();
+        restored.ready().await.unwrap();
+        let next = tokio::time::timeout(Duration::from_secs(10), listener.accept()).await;
+        assert!(next.is_ok(), "restored admission did not reach model: {:?}", facts(&fixture, &session).await);
+        let (mut socket, _) = next.unwrap().unwrap();
+        let prompt = request(&mut socket).await;
+        assert!(has_tool(&prompt, "exec"), "Host restart retains the admitted Code Mode");
+        let (name, input) = create_document(false, "restored-policy.txt");
+        code_response(&mut socket, &format!("if (ALL_TOOLS.some(t => t.name === 'PatchDocument')) throw Error('changed policy leaked'); text(await tools.{name}({input}));")).await;
+        let (mut socket, _) = listener.accept().await.unwrap();
+        request(&mut socket).await;
+        assert_eq!(std::fs::read_to_string(fixture.workspace.join("restored-policy.txt")).unwrap(), "editing policy");
+        let mut commits = fixture.store.subscribe_commits();
+        response(&mut socket).await;
+        loop {
+            let recorded = facts(&fixture, &session).await;
+            if recorded.iter().any(|fact| matches!(fact, Fact::InvocationEnded { .. })) {
+                assert!(recorded.iter().any(|fact| matches!(fact, Fact::InvocationEnded { outcome: maka_agent_facts::event::InvocationOutcome::Completed })));
+                assert_eq!(recorded.iter().filter(|fact| matches!(fact, Fact::ToolDispatched { name, .. } if name == "ReplaceDocument")).count(), 1);
+                assert!(recorded.iter().any(|fact| matches!(fact, Fact::InvocationOpened { configuration: Some(configuration), .. } if configuration.editing_tools == Some(maka_agent_facts::execution::EditingTools::Structured))));
+                break;
+            }
+            commits.changed().await.unwrap();
+        }
+        restored.shutdown().await.unwrap();
         fixture.config.shutdown().await.unwrap();
     }).await.unwrap();
 }

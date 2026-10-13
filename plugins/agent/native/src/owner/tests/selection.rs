@@ -718,6 +718,7 @@ async fn accepted_code_mode_survives_settings_changes_and_legacy_messages_remain
             "fixture-model".into(),
             ModelOverride {
                 code_mode: Some(true),
+                apply_patch: Some(false),
                 ..Default::default()
             },
         )]));
@@ -734,12 +735,17 @@ async fn accepted_code_mode_survives_settings_changes_and_legacy_messages_remain
     .await
     .unwrap();
     assert_eq!(source.accepted.tool_mode, ToolMode::CodeMode);
+    assert_eq!(
+        source.accepted.editing_tools,
+        Some(maka_agent_facts::execution::EditingTools::Structured)
+    );
     let stored = serde_json::to_value(&source.accepted).unwrap();
     edit(&fixture, |changes| {
         changes.model_overrides = Patch::Set(BTreeMap::from([(
             "fixture-model".into(),
             ModelOverride {
                 code_mode: Some(false),
+                apply_patch: Some(true),
                 ..Default::default()
             },
         )]));
@@ -755,6 +761,10 @@ async fn accepted_code_mode_survives_settings_changes_and_legacy_messages_remain
     .unwrap();
     restored.capture().await.unwrap();
     assert_eq!(restored.accepted.tool_mode, ToolMode::CodeMode);
+    assert_eq!(
+        restored.accepted.editing_tools,
+        Some(maka_agent_facts::execution::EditingTools::Structured)
+    );
     let (next, _) = crate::model::Source::select(
         fixture.config.clone(),
         fixture.owner.credentials.clone(),
@@ -766,10 +776,16 @@ async fn accepted_code_mode_survives_settings_changes_and_legacy_messages_remain
     .await
     .unwrap();
     assert_eq!(next.accepted.tool_mode, ToolMode::Direct);
+    assert_eq!(
+        next.accepted.editing_tools,
+        Some(maka_agent_facts::execution::EditingTools::ApplyPatch)
+    );
     let mut legacy = stored;
     legacy.as_object_mut().unwrap().remove("tool_mode");
+    legacy.as_object_mut().unwrap().remove("editing_tools");
     let accepted: crate::model::AcceptedModel = serde_json::from_value(legacy).unwrap();
     assert_eq!(accepted.tool_mode, ToolMode::Direct);
+    assert_eq!(accepted.editing_tools, None);
     fixture.app.shutdown().await.unwrap();
     fixture.config.shutdown().await.unwrap();
 }

@@ -304,6 +304,7 @@ impl Owner {
             prompt.validate().map_err(|_| "agent_prompt_invalid")?;
         }
         let mut configuration = InvocationConfiguration {
+            editing_tools: None,
             tool_discovery: basis.tool_discovery,
             cwd: basis.workspace.path,
             workspace_identity: Some(basis.workspace.identity),
@@ -325,6 +326,12 @@ impl Owner {
                 configuration.model = Some(source.accepted.binding.clone());
                 configuration.thinking_level = source.accepted.thinking_level;
                 configuration.tool_mode = source.accepted.tool_mode;
+                configuration.editing_tools = source.accepted.editing_tools;
+                let tools = self.selected_tools(
+                    basis.allowed_tools.as_deref(),
+                    basis.tool_discovery,
+                    configuration.editing_tools,
+                );
                 PreparedRun::Model(Box::new(RunInput {
                     model_source: Some(Arc::new(source)),
                     model_revision: Some(prepared.revision),
@@ -340,8 +347,7 @@ impl Owner {
                     work: RunWork::Message {
                         message: delivered.message.content.clone(),
                         source_messages: vec![delivered],
-                        tools: self
-                            .selected_tools(basis.allowed_tools.as_deref(), basis.tool_discovery),
+                        tools,
                         max_steps: basis.max_steps,
                         allow_prior_unknown: false,
                     },

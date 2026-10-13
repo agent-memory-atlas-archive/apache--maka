@@ -32,6 +32,18 @@ async fn fixture(method: &'static str) -> (TcpListener, Fixture, String) {
         Some(service_tools::Setup::files(method)),
     )
     .await;
+    if method == "applyPatch" {
+        selection::edit(&fixture, |changes| {
+            changes.model_overrides = Patch::Set(BTreeMap::from([(
+                "fixture-model".into(),
+                ModelOverride {
+                    apply_patch: Some(true),
+                    ..Default::default()
+                },
+            )]));
+        })
+        .await;
+    }
     let session = fixture.create("Native workspace files").await;
     (listener, fixture, session)
 }
