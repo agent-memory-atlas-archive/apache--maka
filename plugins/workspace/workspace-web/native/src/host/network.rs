@@ -32,15 +32,25 @@ use maka_sandbox::{Destination, Network, Sandbox};
 use std::panic::AssertUnwindSafe;
 
 #[derive(Clone)]
+enum Purpose {
+    Retrieval { basis: Basis, search: bool },
+    Health,
+}
+#[derive(Clone)]
 pub(super) struct Access {
     owner: Arc<Web>,
     tool: ToolCallContext,
     caller: Scope,
-    basis: Basis,
-    search: bool,
+    purpose: Purpose,
 }
 impl Access {
     pub fn new(owner: Arc<Web>, scope: &Scope, basis: Basis, search: bool) -> Result<Self, String> {
+        Self::for_purpose(owner, scope, Purpose::Retrieval { basis, search })
+    }
+    pub fn health(owner: Arc<Web>, scope: &Scope) -> Result<Self, String> {
+        Self::for_purpose(owner, scope, Purpose::Health)
+    }
+    fn for_purpose(owner: Arc<Web>, scope: &Scope, purpose: Purpose) -> Result<Self, String> {
         let invocation = scope.identity.agent().ok_or("web_requires_agent")?.clone();
         let operation_id = scope
             .identity
@@ -54,8 +64,7 @@ impl Access {
                 operation_id,
             },
             caller: scope.clone(),
-            basis,
-            search,
+            purpose,
         })
     }
     async fn current(
@@ -64,12 +73,18 @@ impl Access {
         destination: &Destination,
     ) -> Result<(maka_agent_api::session::SessionConfiguration, bool), Error> {
         let _lease = self.admit(call)?;
-        if !self
-            .owner
-            .current(&self.basis, self.search)
-            .await
-            .map_err(Error::Failed)?
-        {
+        let available = match &self.purpose {
+            Purpose::Retrieval { basis, search } => self.owner.current(basis, *search).await,
+            Purpose::Health => self
+                .owner
+                .configuration
+                .runtime_policy()
+                .await
+                .map(|policy| !policy.policy.privacy.incognito_active)
+                .map_err(message),
+        }
+        .map_err(Error::Failed)?;
+        if !available {
             return Err(Error::Denied);
         }
         let configuration =
@@ -133,7 +148,10 @@ impl Access {
                 &self.owner.log,
                 &configuration,
                 PermissionRequest {
-                    reason: format!("Allow Web access to {origin}"),
+                    reason: match self.purpose {
+                        Purpose::Health => format!("Allow health check access to {origin}"),
+                        Purpose::Retrieval { .. } => format!("Allow Web access to {origin}"),
+                    },
                     command: None,
                     permissions: maka_sandbox::grant::Permissions {
                         filesystem: Vec::new(),

@@ -29,7 +29,12 @@ export default {
   },
   application: {
     entries: {
-      host: native(sdk.nativeImplementations.workspaceProcesses),
+      host: {
+        ...native(sdk.nativeImplementations.workspaceProcesses),
+        imports: {
+          web: { contract: sdk.contracts.workspaceWeb, cardinality: { kind: 'optional' } },
+        },
+      },
     },
   },
 };

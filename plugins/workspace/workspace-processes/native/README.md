@@ -23,4 +23,6 @@
 
 Provides workspace command, terminal and protocol-process services. `protocol` handles structured subprocess communication; `terminal` manages interactive terminal resources. Configuration supplies the installation ceiling, and each call still needs its own authority. Closing an observer does not terminate ownership of a running process.
 
+`health` (the default `BackgroundTaskHealth` model tool) reads the original session-owned process record. Logs require `include_logs: true`. An optional HTTP(S) URL is probed by the bound Web service under separate network permission; the process result and endpoint observation are independent. A responding endpoint proves neither listener ownership nor browser readiness. Health calls and their nested probes retain original operation receipts.
+
 [Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

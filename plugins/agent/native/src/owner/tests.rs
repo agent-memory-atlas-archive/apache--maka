@@ -42,6 +42,8 @@ mod attachments;
 #[path = "tests/files.rs"]
 mod files;
 
+#[path = "tests/health.rs"]
+mod health;
 #[path = "tests/processes.rs"]
 mod processes;
 

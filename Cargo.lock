@@ -9026,6 +9026,7 @@ dependencies = [
  "maka-presentation",
  "maka-process",
  "maka-sandbox",
+ "maka-web-api",
  "maka-workspace-api",
  "maka-workspace-support",
  "serde",
@@ -9506,6 +9507,7 @@ dependencies = [
  "schemars 1.2.2",
  "serde",
  "serde_json",
+ "url",
 ]
 
 [[package]]

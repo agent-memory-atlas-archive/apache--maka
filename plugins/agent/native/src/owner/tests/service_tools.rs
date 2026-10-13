@@ -140,6 +140,7 @@ pub(super) struct Setup {
     files: Option<&'static str>,
     all_file_editors: bool,
     processes: bool,
+    health: bool,
     isolated_workspaces: bool,
     web: bool,
     computer: bool,
@@ -170,6 +171,7 @@ impl Setup {
             files: None,
             all_file_editors: false,
             processes: false,
+            health: false,
             isolated_workspaces: false,
             web: false,
             computer: false,
@@ -197,6 +199,7 @@ impl Setup {
             files: None,
             all_file_editors: false,
             processes: false,
+            health: false,
             isolated_workspaces: false,
             web: false,
             computer: false,
@@ -230,6 +233,7 @@ impl Setup {
             files: None,
             all_file_editors: false,
             processes: false,
+            health: false,
             isolated_workspaces: false,
             web: false,
             computer: false,
@@ -307,6 +311,14 @@ impl Setup {
             ..Self::javascript()
         }
     }
+    #[cfg(target_os = "macos")]
+    pub(super) fn health() -> Self {
+        Self {
+            health: true,
+            nestable: true,
+            ..Self::processes()
+        }
+    }
     pub(super) fn images(source: images::Source) -> Self {
         Self {
             images: Some(source),
@@ -379,22 +391,27 @@ impl Setup {
             })
             .collect()
         } else if self.processes {
-            [
+            let mut methods = vec![
                 ("execute", "Execute"),
                 ("read", "ReadProcess"),
                 ("writeStdin", "WriteStdin"),
                 ("stop", "StopProcess"),
-            ]
-            .into_iter()
-            .map(|(method, name)| contract::ServiceTool {
-                input: contract::ToolInput::Json,
-                title: None,
-                name: name.into(),
-                method: method.into(),
-                presentation: Some(format!("maka.workspace.Processes@1/{method}")),
-                ..self.selection()
-            })
-            .collect()
+            ];
+            if self.health {
+                methods.push(("health", "BackgroundTaskHealth"));
+            }
+            methods
+                .into_iter()
+                .map(|(method, name)| contract::ServiceTool {
+                    input: contract::ToolInput::Json,
+                    title: None,
+                    name: name.into(),
+                    method: method.into(),
+                    presentation: (method != "health")
+                        .then(|| format!("maka.workspace.Processes@1/{method}")),
+                    ..self.selection()
+                })
+                .collect()
         } else {
             vec![self.selection()]
         }
@@ -644,6 +661,9 @@ impl Setup {
             },
         );
         packages.push(package);
+        if self.health {
+            super::health::install(input, packages);
+        }
         if self.processes || self.protocol {
             let consumer = &packages[1];
             let mut files = consumer.files().clone();
@@ -705,7 +725,7 @@ impl Setup {
         if self.jev {
             maka_jev_native::provide(registry).unwrap();
         }
-        if self.web {
+        if self.web || self.health {
             maka_web::provide(registry).unwrap();
         }
         if let Some(probe) = &self.preparation {
@@ -776,7 +796,7 @@ impl Setup {
         use maka_transport::transport::{NativeGrant, PeerPolicy};
         Arc::new(
             PeerPolicy::with_native_grants(if self.granted {
-                vec![NativeGrant {
+                let mut grants = vec![NativeGrant {
                     origin: id(1),
                     consumer: id(1),
                     provider: id(21),
@@ -796,7 +816,18 @@ impl Setup {
                         )
                         .collect(),
                     recovery: true,
-                }]
+                }];
+                if self.health {
+                    grants.push(NativeGrant {
+                        origin: id(1),
+                        consumer: id(21),
+                        provider: id(22),
+                        export: maka_web_api::EXPORT.into(),
+                        methods: ["probe".into()].into_iter().collect(),
+                        recovery: true,
+                    });
+                }
+                grants
             } else {
                 vec![]
             })

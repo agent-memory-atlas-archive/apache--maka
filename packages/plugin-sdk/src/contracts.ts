@@ -27760,6 +27760,61 @@ export const contracts = {
           },
           resources: {},
         },
+        health: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              ref: {
+                type: 'string',
+              },
+              include_logs: {
+                type: 'boolean',
+                default: false,
+              },
+              url: {
+                type: ['string', 'null'],
+              },
+            },
+            required: ['ref'],
+            title: 'WorkspaceProcessHealth',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: true,
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+              },
+            ],
+            title: 'WorkspaceProcessResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          resources: {},
+        },
         read: {
           mode: 'query',
           input: {
@@ -44659,6 +44714,56 @@ export const contracts = {
                 required: ['url'],
               },
             },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: true,
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+              },
+            ],
+            title: 'WebResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          resources: {},
+        },
+        probe: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              url: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 8192,
+              },
+            },
+            required: ['url'],
+            title: 'WebProbe',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
           },
           output: {
             oneOf: [

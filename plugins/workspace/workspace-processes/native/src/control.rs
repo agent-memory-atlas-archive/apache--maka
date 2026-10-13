@@ -26,7 +26,7 @@ use maka_host_runtime::shell::{ControlErrorKind, request::parse_ref, stdin};
 use serde_json::json;
 
 impl Processes {
-    async fn read_model(&self, session: &str, id: &str) -> Result<ShellRun, ToolError> {
+    pub(super) async fn read_model(&self, session: &str, id: &str) -> Result<ShellRun, ToolError> {
         self.store
             .read_shell_run(session, id)
             .await

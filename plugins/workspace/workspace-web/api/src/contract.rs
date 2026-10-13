@@ -86,7 +86,7 @@ pub enum Update {
     InvalidKey,
     CheckUnavailable,
 }
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "WebResult")]
 pub enum ResultValue {
@@ -149,6 +149,10 @@ pub fn contract() -> Contract {
                 (
                     "fetch".into(),
                     method::<Call<Fetch>, ResultValue>(MethodMode::Mutation),
+                ),
+                (
+                    "probe".into(),
+                    method::<crate::probe::Input, ResultValue>(MethodMode::Mutation),
                 ),
                 (
                     "search".into(),

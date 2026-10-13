@@ -28,6 +28,7 @@ use uuid::Uuid;
 
 mod code_mode;
 mod computer;
+mod health;
 mod recap;
 mod title;
 mod todo;

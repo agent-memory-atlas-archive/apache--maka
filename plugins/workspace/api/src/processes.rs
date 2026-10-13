@@ -78,6 +78,16 @@ pub struct Reference {
     #[serde(rename = "ref")]
     pub reference: String,
 }
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "WorkspaceProcessHealth")]
+pub struct Health {
+    #[serde(rename = "ref")]
+    pub reference: String,
+    #[serde(default)]
+    pub include_logs: bool,
+    pub url: Option<String>,
+}
 pub fn contract() -> Contract {
     let methods = [
         (
@@ -89,6 +99,11 @@ pub fn contract() -> Contract {
             "read",
             MethodMode::Query,
             schemars::schema_for!(Reference).into(),
+        ),
+        (
+            "health",
+            MethodMode::Mutation,
+            schemars::schema_for!(Health).into(),
         ),
         (
             "writeStdin",

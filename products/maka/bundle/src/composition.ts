@@ -806,11 +806,17 @@ function agentComposition(configuration: CompositionConfiguration): ApplicationS
     }
   }
   if (configuration.processes)
-    host.instances['workspace-processes'] = node('workspace-processes', {
-      ...configuration.processes,
-      sessionOwner: [keys.agent],
-      sessionKind: 'agent',
-    });
+    host.instances['workspace-processes'] = node(
+      'workspace-processes',
+      {
+        ...configuration.processes,
+        sessionOwner: [keys.agent],
+        sessionKind: 'agent',
+      },
+      configuration.web && processMethods.includes('health')
+        ? { web: [local('workspace-web', 'web')] }
+        : {},
+    );
   host.instances.gateway!.bindings!.agent = [local('agent', 'agent')];
   if (configuration.processes)
     host.instances.gateway!.bindings!.terminal = [local('workspace-processes', 'terminal')];
@@ -1374,6 +1380,18 @@ function agentComposition(configuration: CompositionConfiguration): ApplicationS
                 provider: [keys['workspace-processes']],
                 export: 'processes',
                 methods: processMethods,
+                recovery: true,
+              },
+            ]
+          : []),
+        ...(processMethods.includes('health') && configuration.web
+          ? [
+              {
+                origin: [keys.agent],
+                consumer: [keys['workspace-processes']],
+                provider: [keys['workspace-web']],
+                export: 'web',
+                methods: ['probe'],
                 recovery: true,
               },
             ]

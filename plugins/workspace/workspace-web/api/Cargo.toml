@@ -28,3 +28,4 @@ maka-sandbox.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
+url = "2.5.8"

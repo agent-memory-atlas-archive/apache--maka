@@ -111,6 +111,8 @@ export type RuntimeProtocol =
   | WebKey
   | WebUpdate
   | WebResult
+  | WebProbe
+  | WebEndpoint
   | AgentExecute
   | AgentExecutorsRead
   | AgentExecutors
@@ -1542,6 +1544,23 @@ export type WebResult =
       message: string;
       kind: 'failed';
     };
+export type WebEndpoint =
+  | {
+      state: 'not_checked';
+    }
+  | {
+      target: string;
+      error: string;
+      state: 'unknown';
+    }
+  | {
+      target: string;
+      httpStatus: number;
+      elapsedMs: number;
+      health: WebReadiness;
+      state: 'checked';
+    };
+export type WebReadiness = 'healthy' | 'unknown' | 'unhealthy';
 export type ThinkingLevel =
   | 'off'
   | 'minimal'
@@ -6871,6 +6890,9 @@ export interface WebCredential {
 export interface WebCheck {
   credential_revision: number;
   outcome: WebCheckOutcome;
+}
+export interface WebProbe {
+  url: string;
 }
 export interface AgentExecute {
   /**
