@@ -502,12 +502,11 @@ impl Recipe {
             .take(usize::from(visible.height))
         {
             let mut revealed = visual.clone();
-            if let Some(palette) = &self.0.terminal {
-                if let Some(delay) =
+            if let Some(palette) = &self.0.terminal
+                && let Some(delay) =
                     fade.paint(visual, &mut revealed.line, time, terminal_palette(palette))
-                {
-                    slots.measurements.repaint_after(delay);
-                }
+            {
+                slots.measurements.repaint_after(delay);
             }
             let visual = &revealed;
             let text = visual.line.to_string();
@@ -666,9 +665,9 @@ fn markdown_palette(a: &maka_ui_runtime::markdown::MarkdownAppearance) -> crate:
     });
     colors
 }
-pub(super) fn compile_markdown(
+fn prepare_markdown(
     props: &serde_json::Value,
-) -> maka_ui_runtime::Result<NativeView<dyn Widget>> {
+) -> maka_ui_runtime::Result<maka_ui_runtime::PreparedScene> {
     let declaration = props.clone();
     let props: maka_ui_runtime::markdown::MarkdownProps = serde_json::from_value(props.clone())
         .map_err(|e| maka_ui_runtime::Error::Invalid(e.to_string()))?;
@@ -699,17 +698,17 @@ pub(super) fn compile_markdown(
         disabled: props.disabled,
         focus_on_pointer: props.focus_on_pointer,
     };
-    NativeView::<dyn Widget>::new(
-        Rc::new(Recipe(source, Some(document), props.selectable)),
+    maka_ui_runtime::PreparedScene::new(
+        Recipe(source, Some(document), props.selectable),
         BTreeMap::new(),
         vec![],
     )?
     .with_declaration(declaration)
 }
 
-pub(super) fn compile_diff(
+fn prepare_diff(
     props: &serde_json::Value,
-) -> maka_ui_runtime::Result<NativeView<dyn Widget>> {
+) -> maka_ui_runtime::Result<maka_ui_runtime::PreparedScene> {
     use maka_ui_runtime::diff::DiffProps;
     let declaration = props.clone();
     let props: DiffProps = serde_json::from_value(props.clone())
@@ -749,53 +748,117 @@ pub(super) fn compile_diff(
         disabled: props.disabled,
         focus_on_pointer: props.focus_on_pointer,
     };
-    NativeView::<dyn Widget>::new(
-        Rc::new(Recipe(source, Some(document), true)),
+    maka_ui_runtime::PreparedScene::new(
+        Recipe(source, Some(document), true),
         BTreeMap::new(),
         vec![],
     )?
     .with_declaration(declaration)
 }
 
-type Compile = fn(&serde_json::Value) -> maka_ui_runtime::Result<NativeView<dyn Widget>>;
-struct Component(Compile);
+fn finish(
+    prepared: maka_ui_runtime::PreparedScene,
+) -> maka_ui_runtime::Result<NativeView<dyn Widget>> {
+    prepared.finish::<Recipe, dyn Widget>(|recipe| Rc::new(recipe))
+}
+#[cfg(test)]
+pub(super) fn compile_markdown(
+    props: &serde_json::Value,
+) -> maka_ui_runtime::Result<NativeView<dyn Widget>> {
+    finish(prepare_markdown(props)?)
+}
+#[cfg(test)]
+pub(super) fn compile_diff(
+    props: &serde_json::Value,
+) -> maka_ui_runtime::Result<NativeView<dyn Widget>> {
+    finish(prepare_diff(props)?)
+}
+
+type Prepare = fn(&serde_json::Value) -> maka_ui_runtime::Result<maka_ui_runtime::PreparedScene>;
+struct Component(Prepare);
+fn call_data(call: ComponentCall<'_>) -> maka_ui_runtime::Result<(&serde_json::Value, u64)> {
+    match call {
+        ComponentCall::Mount { props } => Ok((props, 0)),
+        ComponentCall::Update { props, state } => {
+            Ok((props, state["revision"].as_u64().unwrap() + 1))
+        }
+        ComponentCall::Event { .. } => Err(maka_ui_runtime::Error::Invalid(
+            "SourceText has no component events".into(),
+        )),
+    }
+}
 impl NativeComponent<dyn Widget> for Component {
     fn call(
         &self,
         call: ComponentCall<'_>,
         _: &maka_ui_runtime::abi::ValueBindings,
     ) -> maka_ui_runtime::Result<ComponentOutput<NativeView<dyn Widget>>> {
-        let (props, revision) = match call {
-            ComponentCall::Mount { props } => (props, 0),
-            ComponentCall::Update { props, state } => {
-                (props, state["revision"].as_u64().unwrap() + 1)
-            }
-            ComponentCall::Event { .. } => {
-                return Err(maka_ui_runtime::Error::Invalid(
-                    "SourceText has no component events".into(),
-                ));
-            }
-        };
+        let (props, revision) = call_data(call)?;
         Ok(Frame {
             revision,
-            state: json!({"revision":revision}),
+            state: json!({"revision": revision}),
             surface: None,
-            view: (self.0)(props)?,
+            view: finish((self.0)(props)?)?,
         }
         .output(vec![]))
     }
+    fn start(
+        &self,
+        call: ComponentCall<'_>,
+        _: &maka_ui_runtime::abi::ValueBindings,
+        scheduler: &tokio::runtime::Handle,
+        deadline: std::time::Instant,
+    ) -> maka_ui_runtime::backend::Job<ComponentOutput<NativeView<dyn Widget>>> {
+        let (props, revision) = match call_data(call) {
+            Ok((props, revision)) => (props.clone(), revision),
+            Err(error) => return maka_ui_runtime::backend::Job::ready(Err(error)),
+        };
+        let prepare = self.0;
+        let work = scheduler.spawn_blocking(move || {
+            if std::time::Instant::now() >= deadline {
+                return Err(maka_ui_runtime::Error::Invalid(
+                    "native source preparation deadline".into(),
+                ));
+            }
+            let prepared = prepare(&props)?;
+            if std::time::Instant::now() >= deadline {
+                return Err(maka_ui_runtime::Error::Invalid(
+                    "native source preparation deadline".into(),
+                ));
+            }
+            Ok(prepared)
+        });
+        maka_ui_runtime::backend::Job::new(async move {
+            let prepared = work
+                .await
+                .map_err(|error| maka_ui_runtime::Error::Invalid(error.to_string()))??;
+            Ok(Frame {
+                revision,
+                state: json!({"revision": revision}),
+                surface: None,
+                view: finish(prepared)?,
+            }
+            .output(vec![]))
+        })
+    }
 }
-pub(super) fn compile(
+fn prepare_source(
     props: &serde_json::Value,
-) -> maka_ui_runtime::Result<NativeView<dyn Widget>> {
+) -> maka_ui_runtime::Result<maka_ui_runtime::PreparedScene> {
     let declaration = props.clone();
     let props: SourceTextProps = serde_json::from_value(props.clone())
         .map_err(|error| maka_ui_runtime::Error::Invalid(error.to_string()))?;
     if props.source.len() > 65536 {
         return Err(maka_ui_runtime::Error::Invalid("source byte budget".into()));
     }
-    NativeView::<dyn Widget>::new(Rc::new(Recipe(props, None, true)), BTreeMap::new(), vec![])?
+    maka_ui_runtime::PreparedScene::new(Recipe(props, None, true), BTreeMap::new(), vec![])?
         .with_declaration(declaration)
+}
+#[cfg(test)]
+pub(super) fn compile(
+    props: &serde_json::Value,
+) -> maka_ui_runtime::Result<NativeView<dyn Widget>> {
+    finish(prepare_source(props)?)
 }
 pub(super) fn register(registry: &mut NativeRegistry<dyn Widget>) {
     registry
@@ -804,7 +867,7 @@ pub(super) fn register(registry: &mut NativeRegistry<dyn Widget>) {
                 "Diff".into(),
                 NativeExport {
                     contract: maka_ui_runtime::diff::diff_contract(),
-                    value: NativeCapability::Component(Rc::new(Component(compile_diff))),
+                    value: NativeCapability::Component(Rc::new(Component(prepare_diff))),
                 },
             )]))
         })
@@ -815,7 +878,7 @@ pub(super) fn register(registry: &mut NativeRegistry<dyn Widget>) {
                 "Markdown".into(),
                 NativeExport {
                     contract: maka_ui_runtime::markdown::markdown_contract(),
-                    value: NativeCapability::Component(Rc::new(Component(compile_markdown))),
+                    value: NativeCapability::Component(Rc::new(Component(prepare_markdown))),
                 },
             )]))
         })
@@ -826,7 +889,7 @@ pub(super) fn register(registry: &mut NativeRegistry<dyn Widget>) {
                 "SourceText".into(),
                 NativeExport {
                     contract: source_contract(),
-                    value: NativeCapability::Component(Rc::new(Component(compile))),
+                    value: NativeCapability::Component(Rc::new(Component(prepare_source))),
                 },
             )]))
         })

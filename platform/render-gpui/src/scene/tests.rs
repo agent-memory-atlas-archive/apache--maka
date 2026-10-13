@@ -220,9 +220,9 @@ fn source(disabled: bool, moved: bool, removed: bool) -> Value {
 fn harness(cx: &mut TestAppContext) -> (Entity<Harness>, AnyWindowHandle, Rc<Cell<usize>>) {
     let clicks = Rc::new(Cell::new(0));
     let seen = clicks.clone();
-    let input = Input(Rc::new(move |_, _, _, _| {
+    let input = Input::testing(Rc::new(move |_, _, _, _| {
         seen.set(seen.get() + 1);
-        Ok(Default::default())
+        Ok(())
     }));
     let (entity, _) = cx.add_window_view(move |window, cx| {
         let recipe = compile(
@@ -235,6 +235,7 @@ fn harness(cx: &mut TestAppContext) -> (Entity<Harness>, AnyWindowHandle, Rc<Cel
             Rc::new(RefCell::new(Some(input.clone()))),
             crate::NativeBudget::default(),
             std::sync::Arc::new(maka_capabilities::call::Resources::default()),
+            || {},
         );
         let mut state = recipe.create(live, window, cx);
         recipe.presentation(state.as_mut(), true, window, cx);
@@ -277,8 +278,8 @@ fn copy_button_default_action_requires_success_and_original_live_owner(cx: &mut 
     let route = entity.downgrade();
     cx.update_window(window, |_, _, cx| {
         entity.update(cx, |h, _| {
-            let live = h.state().input.0.clone();
-            h.slots.input = Input(Rc::new(move |_, _, window, cx| {
+            let live = h.state().input.current.clone();
+            h.slots.input = Input::testing(Rc::new(move |_, _, window, cx| {
                 if current.get() == 2 {
                     return Err(maka_ui_runtime::Error::Invalid("rejected click".into()));
                 }
@@ -292,10 +293,7 @@ fn copy_button_default_action_requires_success_and_original_live_owner(cx: &mut 
                         })
                         .unwrap();
                 }
-                Ok(maka_ui_runtime::InputDecision {
-                    prevent_default: current.get() == 1,
-                    stop_propagation: false,
-                })
+                Ok(())
             }));
         });
     })
@@ -308,6 +306,14 @@ fn copy_button_default_action_requires_success_and_original_live_owner(cx: &mut 
     );
     draw(cx, window);
     for next in [0, 1, 2, 4, 3] {
+        replace(
+            cx,
+            window,
+            &entity,
+            json!({"kind":"button","key":"copy","label":"Copy",
+            "copy_text":if next == 1 { Value::Null } else { json!("原文\nexact") },
+            "style":{"width":{"unit":"pixels","value":100},"height":{"unit":"pixels","value":40}}}),
+        );
         cx.update_window(window, |_, window, cx| {
             entity.update(cx, |h, cx| {
                 h.recipe.presentation(h.state.as_mut(), true, window, cx)
@@ -672,12 +678,13 @@ fn scene_slot_render_errors_are_returned_before_publication(cx: &mut TestAppCont
     let (_, window, _) = harness(cx);
     let recipe=compile(&json!({"kind":"component","key":"missing","binding":"child","member":0,"props":{},"on":{}}),Instant::now()+std::time::Duration::from_secs(1)).unwrap().view;
     cx.update_window(window, |_, w, cx| {
-        let input = Input(Rc::new(|_, _, _, _| Ok(Default::default())));
+        let input = Input::testing(Rc::new(|_, _, _, _| Ok(())));
         let mut state = recipe.create(
             LiveInput::new(
                 Rc::new(RefCell::new(Some(input.clone()))),
                 crate::NativeBudget::default(),
                 std::sync::Arc::new(maka_capabilities::call::Resources::default()),
+                || {},
             ),
             w,
             cx,
@@ -750,7 +757,7 @@ fn native_scene_deactivation_blurs_only_its_focus_with_old_listeners_retained(
             entity.update(cx, |h, cx| {
                 let state = h.state.downcast_mut::<SceneState>().unwrap();
                 assert!(state.buttons["action"].focus.is_focused(w));
-                state.input.0.borrow_mut().take();
+                state.input.current.borrow_mut().take();
                 h.recipe.deactivate(h.state.as_mut(), w, cx);
                 assert!(w.focused(cx).is_none());
             })
@@ -766,7 +773,7 @@ fn native_scene_deactivation_blurs_only_its_focus_with_old_listeners_retained(
 }
 #[test]
 fn desktop_styles_reject_source_overflow_and_native_nonfinite_values() {
-    let hidden = json!({"kind":"stack","key":"root","direction":"column","padding":0,"gap":0,"background":0,"visible":false,"children":(0..65).map(|n| json!({"kind":"button","key":format!("button-{n}"),"label":"Hidden"})).collect::<Vec<_>>()});
+    let hidden = json!({"kind":"stack","key":"root","direction":"column","padding":0,"gap":0,"background":0,"visible":false,"children":(0..257).map(|n| json!({"kind":"button","key":format!("button-{n}"),"label":"Hidden"})).collect::<Vec<_>>()});
     assert!(
         compile(&hidden, Instant::now() + std::time::Duration::from_secs(1)).is_err(),
         "hidden controls still count against the original input quota"
@@ -830,7 +837,7 @@ fn retained_presentation_hides_scene_controls_before_paint_and_restores_original
             assert_eq!(state.buttons["action"].focus, focus);
             assert!(!state.buttons["action"].admitted.get());
             assert!(
-                state.input.0.borrow().is_some(),
+                state.input.current.borrow().is_some(),
                 "hiding does not retire the capability"
             );
             assert!(window.focused(cx).is_none());
@@ -905,7 +912,7 @@ fn popup_harness(
     let source = scene.clone();
     let owner: Rc<RefCell<Option<gpui_kit::WeakEntity<Harness>>>> = Rc::new(RefCell::new(None));
     let route = owner.clone();
-    let input = Input(Rc::new(move |key, value, window, cx| {
+    let input = Input::testing(Rc::new(move |key, value, window, cx| {
         observed.borrow_mut().push((key.to_owned(), value.clone()));
         if !accepted.get() {
             return Err(maka_ui_runtime::Error::Invalid(
@@ -928,10 +935,7 @@ fn popup_harness(
                 .update(cx, |h, cx| h.replace(next, window, cx))
                 .unwrap();
         }
-        Ok(maka_ui_runtime::InputDecision {
-            prevent_default: value["kind"] == "dismiss" && value["reason"] == "escape",
-            stop_propagation: value["kind"] == "dismiss" && value["reason"] == "escape",
-        })
+        Ok(())
     }));
     let (entity, _) = cx.add_window_view(move |window, cx| {
         let recipe = compile(
@@ -945,6 +949,7 @@ fn popup_harness(
                 Rc::new(RefCell::new(Some(input.clone()))),
                 crate::NativeBudget::default(),
                 std::sync::Arc::new(maka_capabilities::call::Resources::default()),
+                || {},
             ),
             window,
             cx,

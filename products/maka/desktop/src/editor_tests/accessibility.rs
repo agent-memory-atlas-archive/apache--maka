@@ -149,9 +149,7 @@ fn textarea_accessible_set_value_respects_live_composition_menu_and_editability(
                 .borrow_mut()
                 .dispatch(&scene.root, revision, "toggle", json!(null))
                 .unwrap();
-            scene
-                .surface
-                .update(cx, |surface, cx| surface.sync_native(window, cx).unwrap());
+            scene.settle_in(window, cx).unwrap();
             assert!(
                 scene
                     .app
@@ -602,9 +600,7 @@ fn textarea_accessible_selection_respects_composition_menu_foreign_and_retired_o
                 .borrow_mut()
                 .dispatch(&scene.root, revision, "toggle", json!(null))
                 .unwrap();
-            scene
-                .surface
-                .update(cx, |surface, cx| surface.sync_native(window, cx).unwrap());
+            scene.settle_in(window, cx).unwrap();
         })
         .unwrap();
         assert_eq!(

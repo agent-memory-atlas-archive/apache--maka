@@ -54,18 +54,19 @@ fn real_native_click_commits_one_prompt_and_retirement_keeps_original_dialog_cus
         let gestures = Rc::new(RefCell::new(Vec::<FileChoose>::new()));
         let seen = gestures.clone();
         let live = LiveInput::new(
-            Rc::new(RefCell::new(Some(Input(Rc::new(
+            Rc::new(RefCell::new(Some(Input::testing(Rc::new(
                 move |key, value, _, _| {
                     let _ = &keep;
                     if key == "choose" {
                         seen.borrow_mut()
                             .push(serde_json::from_value(value).unwrap());
                     }
-                    Ok(Default::default())
+                    Ok(())
                 },
             ))))),
             budget.clone(),
             group.clone(),
+            || {},
         );
         let (root, cx) = cx.add_window_view(|_, cx| Root {
             owner: Some(Owner::new(&props, live.clone(), cx)),
@@ -107,7 +108,7 @@ fn real_native_click_commits_one_prompt_and_retirement_keeps_original_dialog_cus
         let path = dir.path().join("sample.maka-extension");
         std::fs::write(&path, b"immutable selection").unwrap();
         if mode == 0 {
-            live.0.borrow_mut().take();
+            live.current.borrow_mut().take();
             cx.update(|window, cx| {
                 Recipe(view.clone()).deactivate(&mut owner.clone(), window, cx);
                 root.update(cx, |r, cx| {
@@ -151,7 +152,7 @@ fn real_native_click_commits_one_prompt_and_retirement_keeps_original_dialog_cus
                 assert_eq!(capture.read(0..19).unwrap(), b"immutable selection");
                 assert!(group.seal().unwrap());
             }
-            live.0.borrow_mut().take();
+            live.current.borrow_mut().take();
             cx.update(|window, cx| {
                 Recipe(view).deactivate(&mut owner.clone(), window, cx);
                 root.update(cx, |r, cx| {
@@ -178,14 +179,17 @@ fn disabled_or_hidden_owner_rejects_old_native_focus_before_repaint(cx: &mut Tes
     let seen = Rc::new(RefCell::new(0));
     let clicks = seen.clone();
     let live = LiveInput::new(
-        Rc::new(RefCell::new(Some(Input(Rc::new(move |key, _, _, _| {
-            if key == "choose" {
-                *clicks.borrow_mut() += 1;
-            }
-            Ok(Default::default())
-        }))))),
+        Rc::new(RefCell::new(Some(Input::testing(Rc::new(
+            move |key, _, _, _| {
+                if key == "choose" {
+                    *clicks.borrow_mut() += 1;
+                }
+                Ok(())
+            },
+        ))))),
         NativeBudget::default(),
         Arc::new(maka_capabilities::call::Resources::default()),
+        || {},
     );
     let (root, cx) = cx.add_window_view(|_, cx| Root {
         owner: Some(Owner::new(&props, live.clone(), cx)),
@@ -252,7 +256,7 @@ fn disabled_or_hidden_owner_rejects_old_native_focus_before_repaint(cx: &mut Tes
             .unwrap();
         });
     }
-    live.0.borrow_mut().take();
+    live.current.borrow_mut().take();
     cx.update(|w, cx| {
         owner.update(cx, |owner, cx| {
             owner.active = false;
@@ -272,14 +276,17 @@ fn original_press_cannot_reactivate_across_hidden_or_disabled_aba(cx: &mut TestA
     let seen = Rc::new(RefCell::new(0));
     let clicks = seen.clone();
     let live = LiveInput::new(
-        Rc::new(RefCell::new(Some(Input(Rc::new(move |key, _, _, _| {
-            if key == "choose" {
-                *clicks.borrow_mut() += 1;
-            }
-            Ok(Default::default())
-        }))))),
+        Rc::new(RefCell::new(Some(Input::testing(Rc::new(
+            move |key, _, _, _| {
+                if key == "choose" {
+                    *clicks.borrow_mut() += 1;
+                }
+                Ok(())
+            },
+        ))))),
         NativeBudget::default(),
         Arc::new(maka_capabilities::call::Resources::default()),
+        || {},
     );
     let (root, cx) = cx.add_window_view(|_, cx| Root {
         owner: Some(Owner::new(&props, live.clone(), cx)),

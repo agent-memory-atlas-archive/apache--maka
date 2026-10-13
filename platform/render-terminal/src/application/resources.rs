@@ -35,7 +35,16 @@ pub(super) struct Owner {
     pub live: bool,
     presented: bool,
     // Independent native observation channels must not overwrite each other.
-    pending: BTreeMap<String, NativeInput>,
+    pub(super) pending: maka_ui_runtime::publication::Observations,
+}
+type PublicationReservation = (Uuid, maka_ui_runtime::publication::Capacity);
+impl Owner {
+    fn observe(&mut self, input: NativeInput) -> maka_ui_runtime::Result<bool> {
+        Ok(self
+            .pending
+            .capture(&input.key, input.value, input.replaceable)?
+            .is_some())
+    }
 }
 struct OwnerWitness {
     identity: std::rc::Weak<()>,
@@ -46,7 +55,7 @@ pub(super) struct Resources {
     pub owners: BTreeMap<Uuid, Owner>,
     pub redraw: bool,
     failed: BTreeMap<Uuid, String>,
-    budget: maka_ui_runtime::budget::NativeBudget,
+    pub(super) budget: maka_ui_runtime::budget::NativeBudget,
 }
 impl Resources {
     pub fn cancel_pointer(&mut self) -> maka_ui_runtime::Result<()> {
@@ -69,7 +78,7 @@ impl Resources {
         &mut self,
         app: &Application<dyn Widget>,
         candidate: maka_ui_runtime::Candidate<'_, dyn Widget>,
-    ) -> maka_ui_runtime::Result<()> {
+    ) -> maka_ui_runtime::Result<Vec<PublicationReservation>> {
         // Validate every retained type before allocating any provisional owner.
         // The existing owner is untouched if the candidate cannot commit.
         for (mount, frame) in candidate.changed() {
@@ -109,7 +118,10 @@ impl Resources {
                             revision: None,
                             live: true,
                             presented: false,
-                            pending: BTreeMap::new(),
+                            pending: maka_ui_runtime::publication::Observations::new(
+                                self.budget.clone(),
+                                app.wake_callback(),
+                            ),
                         });
                     }
                     Err(_) => {
@@ -120,7 +132,18 @@ impl Resources {
                 }
             }
         }
-        Ok(())
+        let mut reservations = Vec::new();
+        for (mount, frame) in candidate.changed() {
+            let owner = self
+                .owners
+                .get(&mount.id())
+                .expect("prepared original owner");
+            let capacity = owner
+                .pending
+                .prepare(frame.view.view.publication_capacity(owner.state.as_ref()))?;
+            reservations.push((mount.id(), capacity));
+        }
+        Ok(reservations)
     }
 
     pub fn prepare(
@@ -168,7 +191,10 @@ impl Resources {
                             revision: None,
                             live: true,
                             presented: false,
-                            pending: BTreeMap::new(),
+                            pending: maka_ui_runtime::publication::Observations::new(
+                                self.budget.clone(),
+                                app.wake_callback(),
+                            ),
                         });
                     }
                     Err(_) => {
@@ -217,12 +243,44 @@ impl Resources {
         }
         Ok(true)
     }
+    fn poll_observation(&mut self, id: Uuid) -> maka_ui_runtime::Result<()> {
+        let Some(owner) = self.owners.get_mut(&id).filter(|owner| owner.live) else {
+            return Ok(());
+        };
+        match catch_unwind(AssertUnwindSafe(|| {
+            owner.recipe.observe(owner.state.as_mut())
+        })) {
+            Ok(Some(observed)) => self.redraw |= owner.observe(observed)?,
+            Ok(None) => {}
+            Err(_) => {
+                owner.live = false;
+                let error = "terminal native observation cleanup unconfirmed".to_owned();
+                self.failed.insert(id, error.clone());
+                return Err(Error::Invalid(error));
+            }
+        }
+        Ok(())
+    }
+    fn collect_observations(
+        &mut self,
+        app: &Application<dyn Widget>,
+        root: &Mount,
+    ) -> maka_ui_runtime::Result<()> {
+        if app.frame(root).is_err() {
+            return Ok(());
+        }
+        for mount in app.mounted_subtree(root)? {
+            if !app.is_retiring(&mount) {
+                self.poll_observation(mount.id())?;
+            }
+        }
+        Ok(())
+    }
     pub fn commit(
         &mut self,
         app: &Application<dyn Widget>,
         root: &Mount,
-    ) -> maka_ui_runtime::Result<Vec<(Mount, NativeInput)>> {
-        let mut observations = vec![];
+    ) -> maka_ui_runtime::Result<()> {
         for mount in app.mounted_subtree(root)? {
             if app.is_retiring(&mount) {
                 continue;
@@ -245,29 +303,12 @@ impl Resources {
                 };
                 owner.revision = Some(frame.revision);
                 if let Some(observed) = observed {
-                    owner.pending.insert(observed.key.clone(), observed);
+                    owner.observe(observed)?;
                 }
             }
-            match catch_unwind(AssertUnwindSafe(|| {
-                owner.recipe.observe(owner.state.as_mut())
-            })) {
-                Ok(Some(observed)) => {
-                    self.redraw = true;
-                    owner.pending.insert(observed.key.clone(), observed);
-                }
-                Ok(None) => {}
-                Err(_) => {
-                    owner.live = false;
-                    let error = "terminal native observation cleanup unconfirmed".to_owned();
-                    self.failed.insert(mount.id(), error.clone());
-                    return Err(Error::Invalid(error));
-                }
-            }
-            for observed in owner.pending.values() {
-                observations.push((mount.clone(), observed.clone()));
-            }
+            self.poll_observation(mount.id())?;
         }
-        Ok(observations)
+        Ok(())
     }
     pub fn deactivate(&mut self, app: &Application<dyn Widget>) {
         for mount in app.retiring_mounts() {
@@ -275,6 +316,7 @@ impl Resources {
                 && owner.live
             {
                 owner.live = false;
+                owner.pending.close();
                 if catch_unwind(AssertUnwindSafe(|| {
                     owner.recipe.deactivate(owner.state.as_mut())
                 }))
@@ -296,6 +338,7 @@ impl Resources {
         if let Some(owner) = self.owners.get_mut(&mount.id()) {
             if owner.live {
                 owner.live = false;
+                owner.pending.close();
                 if catch_unwind(AssertUnwindSafe(|| {
                     owner.recipe.deactivate(owner.state.as_mut());
                 }))
@@ -325,17 +368,11 @@ impl Resources {
         }
         Ok(true)
     }
-    pub fn observe(&mut self, mount: &Mount, observed: NativeInput) {
+    pub fn observe(&mut self, mount: &Mount, observed: NativeInput) -> maka_ui_runtime::Result<()> {
         if let Some(owner) = self.owners.get_mut(&mount.id()) {
-            owner.pending.insert(observed.key.clone(), observed);
+            owner.observe(observed)?;
         }
-    }
-    fn published(&mut self, mount: &Mount, observed: &NativeInput) {
-        if let Some(owner) = self.owners.get_mut(&mount.id())
-            && owner.pending.get(&observed.key) == Some(observed)
-        {
-            owner.pending.remove(&observed.key);
-        }
+        Ok(())
     }
     /// Identity for an original published logical keyboard target. Pixel/native
     /// resource admission remains `admits`; offscreen keyboard navigation only
@@ -518,7 +555,9 @@ impl Resources {
             owner.recipe.present(owner.state.as_mut(), geometry)
         })) {
             Ok(Some(observed)) => {
-                owner.pending.insert(observed.key.clone(), observed);
+                if let Err(error) = owner.observe(observed) {
+                    self.failed.insert(mount.id(), error.to_string());
+                }
             }
             Ok(None) => {}
             Err(_) => {
@@ -625,11 +664,21 @@ impl Resources {
 impl Presenter {
     pub(super) fn sync_native(&mut self) -> maka_ui_runtime::Result<()> {
         self.resources.deactivate(&self.application);
+        // Transfer completed original work before preflight reserves the next
+        // command's capacity. A newer command cannot replace an uncaptured result.
+        self.resources
+            .collect_observations(&self.application, &self.root)?;
         let resources = &mut self.resources;
-        if self
-            .application
-            .commit_ui(|app, candidate| resources.prepare_candidate(app, candidate))?
-        {
+        let mut reservations = Vec::new();
+        if self.application.commit_ui(&self.root, |app, candidate| {
+            reservations = resources.prepare_candidate(app, candidate)?;
+            Ok(())
+        })? {
+            for (mount, capacity) in reservations {
+                if let Some(owner) = self.resources.owners.get_mut(&mount) {
+                    owner.pending.adopt(capacity);
+                }
+            }
             self.resources.redraw = true;
         }
         if !self.surface.is_live() || self.application.is_retiring(&self.root) {
@@ -645,44 +694,47 @@ impl Presenter {
         let resources = &mut self.resources;
         self.application
             .capture_actions(&self.root, |target| resources.capture(target))?;
-        let observed = self.resources.commit(&self.application, &self.root)?;
-        let has_observations = !observed.is_empty();
-        for (mount, input) in observed {
-            if !self.application.is_retiring(&mount) {
-                let frame = self.application.frame(&mount)?;
-                // A queued follow-focus notification may outlive its list item.
-                // Retire it when the new recipe no longer declares that target.
-                if !frame.view.declares_input(&input.key) {
-                    self.resources.published(&mount, &input);
-                    continue;
-                }
-                let revision = frame.revision;
-                match self
-                    .application
-                    .dispatch(&mount, revision, &input.key, input.value.clone())
-                {
-                    Ok(_) => self.resources.published(&mount, &input),
-                    Err(error) => self.report(&error),
-                }
-            }
-        }
-        // Only delivered observations can change the committed scene here.
-        if has_observations {
-            if !self.resources.prepare(&self.application, &self.root)? {
-                self.clear_hover()?;
-                self.scene.clear();
-                self.focus = None;
-                self.drag = None;
-                return Ok(());
-            }
-            // An observation may create a new scene or add scrolling regions.
-            // Capture its actions before applying commands, then initialize the new
-            // native state before paint. New observations remain queued for the next
-            // synchronization, keeping each pass bounded.
+        self.resources.commit(&self.application, &self.root)?;
+        let queues: Vec<_> = self
+            .application
+            .mounted_subtree(&self.root)?
+            .into_iter()
+            .filter(|mount| !self.application.is_retiring(mount))
+            .filter_map(|mount| {
+                self.resources
+                    .owners
+                    .get(&mount.id())
+                    .map(|owner| (mount, owner.pending.clone()))
+            })
+            .collect();
+        for (mount, queue) in queues {
+            let revision = self.application.frame(&mount)?.revision;
+            let root = self.application.mount_root(&mount)?;
+            let basis = (self.application.frame(&root)?.revision, revision);
+            queue.retain(|key| {
+                self.application
+                    .frame(&mount)
+                    .is_ok_and(|frame| frame.view.declares_input(key))
+            });
+            let application = &mut self.application;
             let resources = &mut self.resources;
-            self.application
-                .capture_actions(&self.root, |target| resources.capture(target))?;
-            self.resources.commit(&self.application, &self.root)?;
+            let errors = queue.advance(
+                basis,
+                &mut (),
+                |key, event, _| application.dispatch_observation(&mount, revision, key, event),
+                |key, value, _| {
+                    if let Some(owner) = resources
+                        .owners
+                        .get_mut(&mount.id())
+                        .filter(|owner| owner.live)
+                    {
+                        owner.recipe.published(owner.state.as_mut(), key, value);
+                    }
+                },
+            );
+            for error in errors {
+                self.report(&error);
+            }
         }
         self.sync_modal_focus()?;
         self.apply_focus_exits()?;

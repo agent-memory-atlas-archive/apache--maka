@@ -17,9 +17,10 @@
  * under the License.
  */
 
+use super::Application;
 use super::{support, timer};
 use maka_plugin_core::composition::PresentationTarget;
-use maka_ui_runtime::{Application, NativeRegistry, NativeView};
+use maka_ui_runtime::{NativeRegistry, PreparedScene};
 use serde_json::{Value, json};
 use std::{cell::Cell, collections::BTreeMap, rc::Rc};
 fn fixture(
@@ -55,17 +56,17 @@ fn opaque_guest_scenes_cannot_be_laundered_out_of_retained_budget() {
     let timer = timer();
     let (input, packages) = fixture(950_000);
     let native = NativeRegistry::with_surface(PresentationTarget::Desktop)
-        .with_scene_compiler(language(), |source, _| {
-            assert_eq!(source["language"], "private.fixture");
-            // Deliberately tries to give the kernel a smaller declaration. The
-            // original source must still be retained and charged by the kernel.
-            NativeView::new(
-                Rc::new(()),
-                BTreeMap::from([("inc".into(), json!(true))]),
-                vec![],
-            )?
-            .with_declaration(json!({"tiny":true}))
-        })
+        .with_scene_compiler(
+            language(),
+            |source, _| {
+                assert_eq!(source["language"], "private.fixture");
+                // Deliberately tries to give the kernel a smaller declaration. The
+                // original source must still be retained and charged by the kernel.
+                PreparedScene::new((), BTreeMap::from([("inc".into(), json!(true))]), vec![])?
+                    .with_declaration(json!({"tiny":true}))
+            },
+            |prepared| prepared.finish::<(), ()>(Rc::new),
+        )
         .unwrap();
     let mut app = Application::new(
         &input,
@@ -97,13 +98,17 @@ fn opaque_guest_scenes_cannot_be_laundered_out_of_retained_budget() {
 fn guest_output_admission_precedes_scene_compilation() {
     let timer = timer();
     let (input, packages) = fixture(1_100_000);
-    let calls = Rc::new(Cell::new(0));
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = calls.clone();
     let native = NativeRegistry::with_surface(PresentationTarget::Desktop)
-        .with_scene_compiler(language(), move |_, _| {
-            observed.set(observed.get() + 1);
-            NativeView::new(Rc::new(()), BTreeMap::new(), vec![])
-        })
+        .with_scene_compiler(
+            language(),
+            move |_, _| {
+                observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                PreparedScene::new((), BTreeMap::new(), vec![])
+            },
+            |prepared| prepared.finish::<(), ()>(Rc::new),
+        )
         .unwrap();
     let mut app = Application::new(
         &input,
@@ -115,7 +120,7 @@ fn guest_output_admission_precedes_scene_compilation() {
     )
     .unwrap();
     assert!(app.mount_launch(json!({})).is_err());
-    assert_eq!(calls.get(), 0);
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
     app.shutdown().unwrap();
 }
 #[test]
@@ -140,21 +145,21 @@ fn missing_scene_compiler_is_rejected_before_native_activation() {
 fn scene_compile_failure_preserves_last_committed_frame_and_input_custody() {
     let timer = timer();
     let (input, packages) = fixture(0);
-    let fail = Rc::new(Cell::new(false));
+    let fail = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let observed = fail.clone();
     let native = NativeRegistry::with_surface(PresentationTarget::Desktop)
-        .with_scene_compiler(language(), move |_, _| {
-            if observed.get() {
-                return Err(maka_ui_runtime::Error::Invalid(
-                    "scene compile failure".into(),
-                ));
-            }
-            NativeView::new(
-                Rc::new(()),
-                BTreeMap::from([("inc".into(), json!(true))]),
-                vec![],
-            )
-        })
+        .with_scene_compiler(
+            language(),
+            move |_, _| {
+                if observed.load(std::sync::atomic::Ordering::SeqCst) {
+                    return Err(maka_ui_runtime::Error::Invalid(
+                        "scene compile failure".into(),
+                    ));
+                }
+                PreparedScene::new((), BTreeMap::from([("inc".into(), json!(true))]), vec![])
+            },
+            |prepared| prepared.finish::<(), ()>(Rc::new),
+        )
         .unwrap();
     let mut app = Application::new(
         &input,
@@ -166,12 +171,12 @@ fn scene_compile_failure_preserves_last_committed_frame_and_input_custody() {
     )
     .unwrap();
     let mount = app.mount_launch(json!({"count":4})).unwrap();
-    fail.set(true);
+    fail.store(true, std::sync::atomic::Ordering::SeqCst);
     assert!(app.dispatch(&mount, 0, "inc", Value::Null).is_err());
     assert_eq!(app.frame(&mount).unwrap().revision, 0);
     assert_eq!(app.frame(&mount).unwrap().state["count"], 4);
     assert!(!app.is_retiring(&mount));
-    fail.set(false);
+    fail.store(false, std::sync::atomic::Ordering::SeqCst);
     app.dispatch(&mount, 0, "inc", Value::Null).unwrap();
     assert_eq!(app.frame(&mount).unwrap().state["count"], 5);
     app.close(&mount, Ok(())).unwrap();
@@ -236,13 +241,13 @@ fn selected_languages_are_checked_before_any_factory_or_guest_evaluates() {
         let factory_calls = Rc::new(Cell::new(0));
         let observed = factory_calls.clone();
         let mut native = NativeRegistry::default()
-            .with_scene_compiler(language(), |_, _| {
-                NativeView::new(
-                    Rc::new(()),
-                    BTreeMap::from([("inc".into(), json!(true))]),
-                    vec![],
-                )
-            })
+            .with_scene_compiler(
+                language(),
+                |_, _| {
+                    PreparedScene::new((), BTreeMap::from([("inc".into(), json!(true))]), vec![])
+                },
+                |prepared| prepared.finish::<(), ()>(Rc::new),
+            )
             .unwrap();
         native
             .register("maka.ui.surface.desktop", move |_, _| {
@@ -288,7 +293,8 @@ fn selected_languages_are_checked_before_any_factory_or_guest_evaluates() {
                     name: "invalid/name".into(),
                     version: 1
                 },
-                |_, _| NativeView::new(Rc::new(()), BTreeMap::new(), vec![]),
+                |_, _| PreparedScene::new((), BTreeMap::new(), vec![]),
+                |prepared| prepared.finish::<(), ()>(Rc::new)
             )
             .is_err()
     );
@@ -376,7 +382,7 @@ fn composed_render_budget_rejects_child_only_updates_against_retained_ancestors(
         .with_scene_compiler(
             support::scene::language(PresentationTarget::Desktop),
             |source, deadline| {
-                let view = support::scene::compile::<()>(source, deadline)?;
+                let view = support::scene::prepare(source, deadline)?;
                 let root = source["key"] == "root";
                 let depth = if root {
                     if view.slots()[0].props["label"] == "Left 0" {
@@ -396,6 +402,7 @@ fn composed_render_budget_rejects_child_only_updates_against_retained_ancestors(
                     .collect();
                 view.with_render_depth(depth, slots)
             },
+            support::scene::finish::<()>,
         )
         .unwrap();
     let mut app = Application::new(
@@ -447,7 +454,7 @@ fn hidden_native_slot_retains_custody_without_consuming_render_depth() {
         .with_scene_compiler(
             support::scene::language(PresentationTarget::Desktop),
             |source, deadline| {
-                let view = support::scene::compile::<()>(source, deadline)?;
+                let view = support::scene::prepare(source, deadline)?;
                 if source["key"] == "root" {
                     let hide = view.slots()[0].props["label"] == "Left 0";
                     let slots = view
@@ -470,6 +477,7 @@ fn hidden_native_slot_retains_custody_without_consuming_render_depth() {
                     view.with_render_depth(depth, BTreeMap::new())
                 }
             },
+            support::scene::finish::<()>,
         )
         .unwrap();
     let mut app = Application::new(

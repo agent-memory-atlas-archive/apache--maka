@@ -270,6 +270,9 @@ impl FileSelection {
     pub fn cancel_intent(&mut self) {
         self.intent = None;
     }
+    pub fn will_accept(&self, request: Option<&str>) -> bool {
+        request.is_some() && self.intent.as_deref() == request
+    }
     pub fn accept(&mut self, request: Option<&str>) -> bool {
         if request.is_none() || self.intent.as_deref() != request {
             return false;
@@ -331,7 +334,7 @@ mod tests {
         std::fs::write(&path, &bytes).unwrap();
         let budget = NativeBudget::default();
         let original = read_selected(&path, &budget).unwrap();
-        assert_eq!(budget.usage(), (CHUNK * 2, 0));
+        assert_eq!(budget.usage(), (CHUNK * 2, 0, 0));
         assert_eq!(
             original.read(CHUNK - 9..CHUNK + 17).unwrap(),
             bytes[CHUNK - 9..]
@@ -365,9 +368,9 @@ mod tests {
         );
         drop(selection);
         drop(original);
-        assert_eq!(budget.usage(), (CHUNK * 2, 0));
+        assert_eq!(budget.usage(), (CHUNK * 2, 0, 0));
         drop(resource);
-        assert_eq!(budget.usage(), (0, 0));
+        assert_eq!(budget.usage(), (0, 0, 0));
     }
     #[test]
     fn regular_file_limits_and_failed_reads_release_original_allocations() {
@@ -382,7 +385,7 @@ mod tests {
             read_selected(&path, &budget),
             Err(FileError::BudgetExhausted)
         ));
-        assert_eq!(budget.usage(), (0, 0));
+        assert_eq!(budget.usage(), (0, 0, 0));
         assert!(matches!(
             read_selected(dir.path(), &budget),
             Err(FileError::InvalidFile)
@@ -401,13 +404,13 @@ mod tests {
         let full_budget = NativeBudget::default();
         let full = read_selected(&path, &full_budget).unwrap();
         assert_eq!(full.bytes(), 50 * 1024 * 1024);
-        assert_eq!(full_budget.usage(), (MAX_FILE_BYTES, 0));
+        assert_eq!(full_budget.usage(), (MAX_FILE_BYTES, 0, 0));
         drop(full);
-        assert_eq!(full_budget.usage(), (0, 0));
+        assert_eq!(full_budget.usage(), (0, 0, 0));
         file.set_len(0).unwrap();
         let empty = read_selected(&path, &budget).unwrap();
         assert_eq!(empty.bytes(), 0);
-        assert_eq!(budget.usage(), (0, 0));
+        assert_eq!(budget.usage(), (0, 0, 0));
         #[cfg(unix)]
         {
             let link = dir.path().join("link");

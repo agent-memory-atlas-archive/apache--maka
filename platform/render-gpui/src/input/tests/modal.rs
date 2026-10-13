@@ -211,11 +211,12 @@ struct Fixture {
 }
 fn fixture(cx: &mut TestAppContext) -> Fixture {
     let live = LiveInput::new(
-        Rc::new(RefCell::new(Some(Input(Rc::new(|_, _, _, _| {
-            Ok(Default::default())
+        Rc::new(RefCell::new(Some(Input::testing(Rc::new(|_, _, _, _| {
+            Ok(())
         }))))),
         crate::NativeBudget::default(),
         std::sync::Arc::new(maka_capabilities::call::Resources::default()),
+        || {},
     );
     let (clicks, foreground_clicks, keys, renders, paints, pointer, ax_callbacks) = (
         Rc::new(Cell::new(0)),
@@ -231,11 +232,22 @@ fn fixture(cx: &mut TestAppContext) -> Fixture {
         let window = cx
             .open_window(Default::default(), |window, cx| {
                 gpui_kit::init(cx);
-                let background = InputOwner::new(&props(), live.clone(), false, window, cx);
+                // Each native mount has its own publication custody. The fixture
+                // shares only the physical admission switch, as before.
+                let mounted_input = || {
+                    LiveInput::new(
+                        live.current.clone(),
+                        live.budget.clone(),
+                        live.resources.clone(),
+                        || {},
+                    )
+                };
+                let background = InputOwner::new(&props(), mounted_input(), false, window, cx);
                 let mut query_props = props();
                 query_props.auto_focus = true;
-                let query = InputOwner::new(&query_props, live.clone(), false, window, cx);
-                let nested_query = InputOwner::new(&query_props, live.clone(), false, window, cx);
+                let query = InputOwner::new(&query_props, mounted_input(), false, window, cx);
+                let nested_query =
+                    InputOwner::new(&query_props, mounted_input(), false, window, cx);
                 let panel = cx.new(|cx| Foreground {
                     scope: None,
                     nested: None,

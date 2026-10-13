@@ -197,7 +197,7 @@ pub(super) fn attach(
                     return;
                 };
                 let _ = owner.update(cx, |owner, cx| {
-                    if owner.input.0.borrow().is_none()
+                    if owner.input.current.borrow().is_none()
                         || owner.open_menu.is_some()
                         || owner.state.read(cx).document_revision() != projection.snapshot.revision
                     {

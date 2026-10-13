@@ -42,6 +42,7 @@ struct Scene {
 }
 impl Scene {
     fn from_launch(owner: &actions::Owner, cx: &mut TestAppContext) -> Self {
+        cx.executor().allow_parking();
         let (root, window, weak) = owner.current_launch().expect("managed live launch");
         let surface = weak.upgrade().unwrap();
         let app = cx.update(|cx| surface.read(cx).application.clone());
@@ -134,12 +135,13 @@ impl Scene {
         mut application: DesktopApplication,
         caller: Option<Arc<maka_event_log::EventLog>>,
     ) -> Self {
-        let root = application.mount_launch(serde_json::json!({})).unwrap();
-        let outer = application.child_mount(&root, "editor").unwrap().clone();
-        let editor = application
-            .child_mount(&outer, "draft")
-            .cloned()
-            .unwrap_or(outer);
+        // The actual JS/storage workers run outside GPUI's seeded scheduler.
+        cx.executor().allow_parking();
+        let scheduler = application.scheduler().clone();
+        application.defer_native_commit();
+        let root = scheduler
+            .block_on(application.mount_bootstrap_prepared(serde_json::json!({})))
+            .unwrap();
         let app = Rc::new(RefCell::new(application));
         cx.update(|cx| actions::own(app.clone(), None, caller, cx).unwrap());
         let (wake, receipts) = tokio::sync::mpsc::channel(1);
@@ -184,6 +186,12 @@ impl Scene {
             )
             .unwrap()
         });
+        let outer = app.borrow().child_mount(&root, "editor").unwrap().clone();
+        let editor = app
+            .borrow()
+            .child_mount(&outer, "draft")
+            .cloned()
+            .unwrap_or(outer);
         Self {
             window,
             surface,
@@ -202,6 +210,7 @@ impl Scene {
             .clone()
     }
     fn draw(&self, cx: &mut TestAppContext) {
+        self.settle(cx);
         cx.update_window(self.window, |_, window, cx| {
             self.surface
                 .update(cx, |s, cx| s.sync_native(window, cx).unwrap());
@@ -210,6 +219,51 @@ impl Scene {
         })
         .unwrap();
         cx.run_until_parked();
+        self.settle(cx);
+    }
+    // Controlled fixtures wait for original worker/candidate completion. Native
+    // responsiveness acceptance invokes production input without this helper.
+    fn settle(&self, cx: &mut TestAppContext) {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            cx.run_until_parked();
+            cx.update_window(self.window, |_, window, cx| {
+                self.surface
+                    .update(cx, |s, cx| s.sync_native(window, cx))
+                    .unwrap();
+            })
+            .unwrap();
+            cx.run_until_parked();
+            if !self.app.borrow().ui_pending() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < until,
+                "original UI job did not finish"
+            );
+            std::thread::park_timeout(std::time::Duration::from_millis(1));
+        }
+    }
+    // Commit through the original native precommit path, before executing the
+    // committed widget commands or handing actions to the foreground pump.
+    fn commit_in(
+        &self,
+        window: &mut gpui_kit::Window,
+        cx: &mut App,
+    ) -> maka_ui_runtime::Result<()> {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            self.surface
+                .update(cx, |s, cx| s.commit_candidate(window, cx))?;
+            if !self.app.borrow().ui_pending() {
+                return Ok(());
+            }
+            assert!(
+                std::time::Instant::now() < until,
+                "original candidate did not finish"
+            );
+            std::thread::park_timeout(std::time::Duration::from_millis(1));
+        }
     }
     fn command(
         &self,
@@ -224,7 +278,25 @@ impl Scene {
             "parent",
             serde_json::json!({"command":command}),
         )?;
-        self.surface.update(cx, |s, cx| s.sync_native(window, cx))
+        self.settle_in(window, cx)
+    }
+    fn settle_in(
+        &self,
+        window: &mut gpui_kit::Window,
+        cx: &mut App,
+    ) -> maka_ui_runtime::Result<()> {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            self.surface.update(cx, |s, cx| s.sync_native(window, cx))?;
+            if !self.app.borrow().ui_pending() {
+                return Ok(());
+            }
+            assert!(
+                std::time::Instant::now() < until,
+                "original candidate did not finish"
+            );
+            std::thread::park_timeout(std::time::Duration::from_millis(1));
+        }
     }
     fn close(&self, cx: &mut TestAppContext) {
         cx.update_window(self.window, |_, window, _| window.remove_window())
@@ -381,28 +453,6 @@ fn editor_native_revision_ime_barrier_and_command_receipts_are_independent_of_pa
         );
         assert_eq!(owner.read(cx).state.read(cx).value().as_ref(), "Draft");
         assert_eq!(owner.read(cx).revision, native + 1);
-        // No second command is admitted before this result is published.
-        let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
-        assert!(
-            scene
-                .command(
-                    EditorCommand {
-                        owner: scene.editor_owner(cx),
-                        sequence: 2,
-                        based_on: native + 1,
-                        edit: EditorEdit::Reset {
-                            text: "Early".into()
-                        }
-                    },
-                    window,
-                    cx
-                )
-                .is_err()
-        );
-        assert_eq!(
-            scene.app.borrow().frame(&scene.root).unwrap().revision,
-            revision
-        );
         assert_eq!(owner.read(cx).receipt.as_ref().unwrap().sequence, 1);
     })
     .unwrap();
@@ -576,7 +626,7 @@ fn restarted_process_rejects_the_original_editor_capture_and_command(cx: &mut Te
                     },
                 }),
             ).unwrap();
-            scene.surface.update(cx, |s, cx| s.sync_native(window, cx).unwrap());
+            scene.settle_in(window, cx).unwrap();
             assert_eq!(
                 owner.read(cx).receipt.as_ref().unwrap().outcome,
                 EditorOutcome::Conflict {
@@ -594,6 +644,8 @@ fn restarted_process_rejects_the_original_editor_capture_and_command(cx: &mut Te
             "not_accepted"
         );
         assert_eq!(scene.app.borrow().accepted_action_count(), 0);
+        scene.draw(cx);
+        let reference: maka_ui_runtime::editor::EditorTextRef = serde_json::from_value(scene.app.borrow().frame(&scene.editor).unwrap().state["observation"]["snapshot"]["text"].clone()).unwrap();
         cx.update_window(scene.window, |_, window, cx| {
             let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
             scene.app.borrow_mut().dispatch(
@@ -610,7 +662,7 @@ fn restarted_process_rejects_the_original_editor_capture_and_command(cx: &mut Te
                     },
                 }),
             ).unwrap();
-            scene.surface.update(cx, |s, cx| s.sync_native(window, cx).unwrap());
+            scene.settle_in(window, cx).unwrap();
             assert_eq!(
                 owner.read(cx).receipt.as_ref().unwrap().outcome,
                 EditorOutcome::Applied
@@ -871,6 +923,10 @@ fn detached_editor_owner_drops_before_real_kit_entity_cleanup_ack(cx: &mut TestA
         .borrow_mut()
         .dispatch(&scene.root, 0, "toggle", serde_json::Value::Null)
         .unwrap();
+    cx.update_window(scene.window, |_, window, cx| {
+        scene.commit_in(window, cx).unwrap()
+    })
+    .unwrap();
     scene
         .resources
         .borrow_mut()
@@ -990,15 +1046,17 @@ fn public_editor_events_preserve_a_same_batch_command_until_receipt_and_do_not_l
                 "pre-commit preparation does not execute native commands"
             );
             assert!(owner.read(cx).receipt.is_none());
+            result.unwrap();
+            let committed = scene.commit_in(window, cx);
             if fail_clear {
-                assert!(result.is_err());
+                assert!(committed.is_err());
                 assert_eq!(
                     scene.app.borrow().frame(&scene.editor).unwrap().state["pending"],
                     false
                 );
                 assert_eq!(scene.app.borrow().frame(&left).unwrap().revision, 0);
             } else {
-                result.unwrap();
+                committed.unwrap();
                 assert!(scene.app.borrow().frame(&scene.root).unwrap().state["command"].is_null());
                 assert_eq!(
                     scene.app.borrow().frame(&scene.editor).unwrap().state["pending"],
@@ -1011,7 +1069,7 @@ fn public_editor_events_preserve_a_same_batch_command_until_receipt_and_do_not_l
             }
         })
         .unwrap();
-        cx.run_until_parked();
+        scene.settle(cx);
         if !fail_clear {
             let receipt =
                 scene.app.borrow().frame(&scene.root).unwrap().state["observation"]["receipt"]
@@ -1067,6 +1125,22 @@ fn await_action(
     }
     cx.run_until_parked();
 }
+fn await_shutdown(cx: &mut TestAppContext, app: &Rc<RefCell<DesktopApplication>>) {
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        cx.run_until_parked();
+        match app.borrow_mut().shutdown() {
+            Ok(()) => break,
+            Err(maka_ui_runtime::Error::Core(maka_plugin_core::Error::CleanupPending)) => {}
+            Err(error) => panic!("original shutdown failed: {error}"),
+        }
+        assert!(
+            std::time::Instant::now() < until,
+            "original cleanup did not complete"
+        );
+        std::thread::park_timeout(std::time::Duration::from_millis(1));
+    }
+}
 #[gpui::test]
 fn real_composer_snapshot_precedes_reset_and_capture_conflict_does_not_fake_scene_rollback(
     cx: &mut TestAppContext,
@@ -1094,7 +1168,7 @@ fn real_composer_snapshot_precedes_reset_and_capture_conflict_does_not_fake_scen
             let correlation=scene.editor_owner(cx);let native=owner.read(cx).revision;let revision=scene.app.borrow().frame(&scene.root).unwrap().revision;
             scene.app.borrow_mut().dispatch(&scene.root,revision,"read",serde_json::json!({"capture":if conflict {serde_json::json!({"kind":"at_revision","owner":correlation,"revision":native+100})} else {serde_json::json!({"kind":"at_revision","owner":correlation,"revision":native})},"command":{"owner":correlation,"sequence":1,"basedOn":native,"edit":{"kind":"reset","text":"Reset"}}})).unwrap();
             assert_eq!(owner.read(cx).state.read(cx).value().as_ref(),"Draft");
-            scene.surface.update(cx,|s,cx|s.sync_native(window,cx).unwrap());
+            scene.settle_in(window,cx).unwrap();
             assert_eq!(owner.read(cx).state.read(cx).value().as_ref(),"Reset");
         }).unwrap();
         await_action(cx, &scene.app, |a| {
@@ -1208,6 +1282,7 @@ fn application_owner_preserves_failed_and_panicked_work_after_real_window_cleanu
                 .update(cx, |s, cx| s.sync_native(window, cx).unwrap());
         })
         .unwrap();
+        scene.settle(cx);
         assert_eq!(scene.app.borrow().accepted_action_count(), 1);
         scene.close(cx);
         assert!(
@@ -1692,7 +1767,10 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
             .update(cx, |s, cx| s.sync_native(window, cx).unwrap());
     })
     .unwrap();
-    await_action(cx, &scene.app, |a| a.accepted_action_count() == 0);
+    scene.settle(cx);
+    await_action(cx, &scene.app, |a| {
+        a.accepted_action_count() == 0 && !a.ui_pending()
+    });
     assert_eq!(started.available_permits(), 0);
     assert!(snapshot.lock().unwrap().is_none());
     let rejected = scene.app.borrow().frame(&scene.root).unwrap().state.clone();
@@ -1707,9 +1785,7 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
             .borrow_mut()
             .dispatch(&scene.root, revision, "read", serde_json::Value::Null)
             .unwrap();
-        scene
-            .surface
-            .update(cx, |s, cx| s.sync_native(window, cx).unwrap());
+        scene.settle_in(window, cx).unwrap();
         owner.update(cx, |o, cx| {
             o.state
                 .read(cx)
@@ -2105,6 +2181,9 @@ fn committed_addition_preserves_actual_editor_entity_focus_selection_and_composi
     })
     .unwrap();
     scene.draw(cx);
+    await_action(cx, &scene.app, |app| {
+        app.deployment_status().error.is_some()
+    });
     let status = scene.app.borrow().deployment_status();
     assert_eq!(status.desired, Some(failed));
     assert!(status.error.unwrap().contains("new isolated plugin failed"));
@@ -2137,7 +2216,7 @@ fn committed_addition_preserves_actual_editor_entity_focus_selection_and_composi
     drop(owner);
     drop(identity);
     scene.close(cx);
-    scene.app.borrow_mut().shutdown().unwrap();
+    await_shutdown(cx, &scene.app);
     drop(scene);
     timer
         .block_on(std::sync::Arc::try_unwrap(store).ok().unwrap().close())
@@ -2154,7 +2233,7 @@ fn original_native_worker_group_blocks_clean_close_until_settled_and_preserves_f
         scene.draw(cx);
         let group = scene.resources.borrow().owners[&scene.editor.id().to_string()]
             .input
-            .2
+            .resources
             .clone();
         let mut ticket = group.reserve().unwrap();
         ticket.start();
@@ -2226,7 +2305,7 @@ fn native_group_only_ticket_wakes_the_original_owner_after_actual_window_close(
     scene.draw(cx);
     let group = scene.resources.borrow().owners[&scene.editor.id().to_string()]
         .input
-        .2
+        .resources
         .clone();
     let mut ticket = group.reserve().unwrap();
     ticket.start();

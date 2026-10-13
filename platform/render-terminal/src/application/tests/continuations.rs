@@ -175,7 +175,7 @@ fn terminal_pump_uses_original_native_continuation_before_feedback_publication()
     ] {
         let (input, packages, contract) = terminal_fixture();
         let mut registry = NativeRegistry::with_surface(PresentationTarget::Tui)
-            .with_scene_compiler(scene::language(), scene::compile)
+            .with_scene_compiler(scene::language(), scene::prepare, scene::finish)
             .unwrap();
         let visible = Rc::new(Cell::new(true));
         let component_visible = visible.clone();
@@ -215,6 +215,9 @@ fn terminal_pump_uses_original_native_continuation_before_feedback_publication()
         presenter
             .application
             .dispatch(&presenter.root, 0, "read", json!({"key":"A"}))
+            .unwrap();
+        timer
+            .block_on(presenter.application.wait_prepared(&presenter.root.clone()))
             .unwrap();
         presenter.sync_native().unwrap();
         let task = presenter
@@ -264,9 +267,15 @@ fn terminal_pump_uses_original_native_continuation_before_feedback_publication()
                             json!({"label":if show { "restored" } else { "hidden" }}),
                         )
                         .unwrap();
+                    timer
+                        .block_on(presenter.application.wait_prepared(&presenter.root.clone()))
+                        .unwrap();
+                    presenter.sync_native().unwrap();
                     assert!(presenter.application.frame(&leaf).unwrap().revision > revision);
                 }
-                draw(&mut presenter, 80, 60);
+                let area = Rect::new(0, 0, 80, 60);
+                let scene = presenter.paint(area, &mut Buffer::empty(area)).unwrap();
+                presenter.present(scene);
                 assert!(Rc::ptr_eq(
                     &identity,
                     &presenter.resources.owners[&leaf.id()].identity
@@ -314,7 +323,7 @@ fn terminal_pump_uses_original_native_continuation_before_feedback_publication()
                 .get("outcome")
                 .is_none()
         );
-        presenter.pump().unwrap();
+        presenter.pump_settled().unwrap();
         assert_eq!(
             presenter.application.frame(&presenter.root).unwrap().state["outcome"]["status"],
             if change == "none" {
@@ -329,7 +338,7 @@ fn terminal_pump_uses_original_native_continuation_before_feedback_publication()
         presenter
             .surface_closed(&presenter.surface(), Ok(()))
             .unwrap();
-        presenter.pump().unwrap();
-        presenter.shutdown().unwrap();
+        presenter.pump_settled().unwrap();
+        presenter.shutdown_settled().unwrap();
     }
 }

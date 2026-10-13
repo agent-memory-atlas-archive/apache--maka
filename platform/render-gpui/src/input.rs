@@ -38,7 +38,7 @@ pub struct InputOwner {
     last_request: Option<EditorCommand>,
     sequence: u64,
     pub receipt: Option<EditorReceipt>,
-    pending: bool,
+    queued_receipt: Option<EditorReceipt>,
     needs_publication: bool,
     _observation: Subscription,
     projection: super::appearance::InputProjection,
@@ -64,8 +64,9 @@ impl InputOwner {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
+        let publisher = input.clone();
         let keep = input
-            .0
+            .current
             .borrow()
             .as_ref()
             .expect("live editor mount")
@@ -116,7 +117,7 @@ impl InputOwner {
                 last_request: None,
                 sequence: 0,
                 receipt: None,
-                pending: false,
+                queued_receipt: None,
                 needs_publication: true,
                 _observation: observation,
                 projection,
@@ -132,6 +133,26 @@ impl InputOwner {
                 },
                 _keyboard: None,
             }
+        });
+        let original = owner.downgrade();
+        publisher.bind_publisher(move |key, value, _, cx| {
+            if key != "observe" {
+                return;
+            }
+            let _ = original.update(cx, |owner, _| {
+                if owner.input.current.borrow().is_none() {
+                    return;
+                }
+                if key == "observe" {
+                    let observation: EditorObservation =
+                        serde_json::from_value(value.clone()).expect("original editor publication");
+                    if owner.revision == observation.revision
+                        && owner.receipt == observation.receipt
+                    {
+                        owner.needs_publication = false;
+                    }
+                }
+            });
         });
         let weak = owner.downgrade();
         let window_id = window.window_handle().window_id();
@@ -161,7 +182,7 @@ impl InputOwner {
                 }) {
                     return None;
                 }
-                owner.input.0.borrow().clone().map(|input| {
+                owner.input.current.borrow().clone().map(|input| {
                     (
                         input,
                         owner.submit_copy.as_ref().map(|copy| copy.text.clone()),
@@ -172,14 +193,14 @@ impl InputOwner {
             };
             window.prevent_default();
             cx.stop_propagation();
-            match (input.0)("submit", serde_json::json!({}), window, cx) {
+            match (input.dispatch)("submit", serde_json::json!({}), window, cx) {
                 Ok(()) => {
                     if let Some(text) = copy
                         && weak
                             // A successful callback may close its own dialog.
                             // Complete this admitted event while its original
                             // owner lives; admission still gates the next event.
-                            .update(cx, |owner, _| owner.input.0.borrow().is_some())
+                            .update(cx, |owner, _| owner.input.current.borrow().is_some())
                             .unwrap_or(false)
                     {
                         cx.write_to_clipboard(ClipboardItem::new_string(text));
@@ -236,7 +257,7 @@ impl InputOwner {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<String, EditorReadError> {
-        if self.input.0.borrow().is_none() || reference.owner != self.id {
+        if self.input.current.borrow().is_none() || reference.owner != self.id {
             return Err(EditorReadError::Owner);
         }
         self.refresh(false, window, cx);
@@ -266,48 +287,27 @@ impl InputOwner {
         }
     }
     fn schedule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.pending || !self.needs_publication || self.input.0.borrow().is_none() {
-            return;
-        }
-        self.pending = true;
-        let owner = cx.weak_entity();
-        // Leave the owner/entity borrow before component dispatch can sync it.
-        window.defer(cx, move |window, cx| {
-            let Ok(Some((input, observation))) = owner.update(cx, |owner, cx| {
-                owner.refresh(false, window, cx);
-                owner.pending = false;
-                if !owner.needs_publication {
-                    return None;
-                }
-                let input = owner.input.0.borrow().clone()?;
-                let value = EditorObservation {
-                    revision: owner.revision,
-                    snapshot: owner.observation_snapshot(),
-                    receipt: owner.receipt.clone(),
-                };
-                Some((input, value))
-            }) else {
-                return;
+        if self.needs_publication && self.input.current.borrow().is_some() {
+            let observation = EditorObservation {
+                revision: self.revision,
+                snapshot: self.observation_snapshot(),
+                receipt: self.receipt.clone(),
             };
-            if let Err(error) = (input.0)(
+            let replaceable = self.queued_receipt == observation.receipt;
+            match self.input.capture(
                 "observe",
                 serde_json::to_value(&observation).expect("editor observation"),
+                replaceable,
                 window,
                 cx,
             ) {
-                // This observation follows native input. It cannot cancel an
-                // already completed event or affect a later event's defaults.
-                eprintln!("editor observation rejected: {error}");
-            } else {
-                let _ = owner.update(cx, |owner, _| {
-                    if owner.revision == observation.revision
-                        && owner.receipt == observation.receipt
-                    {
-                        owner.needs_publication = false;
-                    }
-                });
+                Ok(Some(_)) => {
+                    self.queued_receipt.clone_from(&observation.receipt);
+                }
+                Ok(None) => {}
+                Err(error) => eprintln!("editor observation admission rejected: {error}"),
             }
-        });
+        }
     }
     fn apply(&mut self, props: &InputProps, window: &mut Window, cx: &mut Context<Self>) {
         self.submit_copy = props.submit_copy.clone();
@@ -426,7 +426,7 @@ impl Render for InputOwner {
             .capture_any_mouse_down(move |event, window, cx| {
                 // A commit can disable/remove this owner before the next paint.
                 // Admit against live native facts, never a prior frame's flags.
-                if mouse_input.0.borrow().is_none()
+                if mouse_input.current.borrow().is_none()
                     || mouse_state.read(cx).presentation().is_disabled()
                     || (event.button == MouseButton::Right
                         && mouse_state
@@ -437,7 +437,7 @@ impl Render for InputOwner {
                 }
             })
             .capture_any_mouse_up(move |_, _, cx| {
-                if mouse_up_input.0.borrow().is_none()
+                if mouse_up_input.current.borrow().is_none()
                     || mouse_up_state.read(cx).presentation().is_disabled()
                 {
                     cx.stop_propagation();
@@ -454,7 +454,7 @@ impl Render for InputOwner {
             .aria_readonly(readonly)
             .when_some(value, |this, value| this.aria_value(value))
             .on_a11y_action(AccessibleAction::Focus, move |_, window, cx| {
-                if focus_input.0.borrow().is_some() {
+                if focus_input.current.borrow().is_some() {
                     focus_state.update(cx, |state, cx| {
                         if !state.presentation().is_disabled() {
                             state.focus(window, cx);
@@ -466,7 +466,7 @@ impl Render for InputOwner {
                 this.on_a11y_action(AccessibleAction::SetValue, move |data, window, cx| {
                     if let Some(accesskit::ActionData::Value(value)) = data {
                         let _ = edit_owner.update(cx, |owner, cx| {
-                            if owner.input.0.borrow().is_none()
+                            if owner.input.current.borrow().is_none()
                                 || !owner.state.read(cx).is_editable()
                                 || owner
                                     .state
@@ -554,7 +554,7 @@ impl Element for Proxy {
         let owner = self.owner.read(cx);
         owner.focus.pending()
             && owner.visible
-            && owner.input.0.borrow().is_some()
+            && owner.input.current.borrow().is_some()
             && !owner.state.read(cx).presentation().is_disabled()
             && !bounds.intersect(&window.content_mask().bounds).is_empty()
     }
@@ -573,7 +573,7 @@ impl Element for Proxy {
             let owner = self.owner.read(cx);
             owner.focus.pending()
                 && owner.visible
-                && owner.input.0.borrow().is_some()
+                && owner.input.current.borrow().is_some()
                 && !owner.state.read(cx).presentation().is_disabled()
         };
         let presented = admitted && window.focus_on_reveal(&focus, cx);
@@ -694,7 +694,7 @@ impl EntityInputHandler for InputOwner {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.input.0.borrow().is_none()
+        if self.input.current.borrow().is_none()
             || !self
                 .state
                 .read(cx)
@@ -714,7 +714,7 @@ impl EntityInputHandler for InputOwner {
             .update(cx, |s, cx| s.text_length_utf16(window, cx))
     }
     fn accepts_text_input(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        self.input.0.borrow().is_some()
+        self.input.current.borrow().is_some()
             && self.state.read(cx).is_editable()
             && self
                 .state
@@ -746,6 +746,20 @@ struct InputRecipe {
     secret: bool,
 }
 impl Widget for InputRecipe {
+    fn publication_capacity(&self, state: &dyn Any, cx: &App) -> Vec<(&'static str, usize)> {
+        let owner = state.downcast_ref::<Entity<InputOwner>>().unwrap().read(cx);
+        if self
+            .props
+            .command
+            .as_ref()
+            .is_some_and(|command| owner.last_request.as_ref() != Some(command))
+        {
+            vec![("observe", 4096)]
+        } else {
+            Vec::new()
+        }
+    }
+
     fn capture(
         &self,
         state: &mut dyn Any,
@@ -764,7 +778,7 @@ impl Widget for InputRecipe {
             .downcast_ref::<Entity<InputOwner>>()
             .expect("editor owner")
             .update(cx, |owner, cx| {
-                if owner.input.0.borrow().is_none() {
+                if owner.input.current.borrow().is_none() {
                     return Err(maka_ui_runtime::Error::Invalid("editor closed".into()));
                 }
                 owner.refresh(false, window, cx);

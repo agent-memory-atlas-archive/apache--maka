@@ -82,7 +82,7 @@ fn markdown_reuses_rendered_text_for_copy_find_and_exact_reveal() {
         b"literal **bytes**\nTitle\n\nbold & \xe4\xb8\xad\n\nlet x = 1;"
     );
     presenter
-        .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+        .input_settled(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
         .unwrap();
     command(
         &mut presenter,
@@ -137,7 +137,7 @@ fn wrapped_table_pointer_selection_and_keyboard_follow_the_original_semantic_map
     );
     assert_eq!(copied(&mut presenter).unwrap(), b"seven");
     presenter
-        .input(Event::Key(KeyEvent::new(
+        .input_settled(Event::Key(KeyEvent::new(
             KeyCode::Right,
             KeyModifiers::SHIFT,
         )))
@@ -234,7 +234,7 @@ fn markdown_keyboard_skips_fence_decoration_and_unflushed_formatting_has_no_poin
     );
     mouse(&mut presenter, MouseEventKind::Up(MouseButton::Left), x, y);
     presenter
-        .input(Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::SHIFT)))
+        .input_settled(Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::SHIFT)))
         .unwrap();
     assert_eq!(copied(&mut presenter).unwrap(), b"code\n\n");
     let selected = copied(&mut presenter);
@@ -297,7 +297,7 @@ fn native_diff_reuses_original_gutters_copy_find_resize_and_owner() {
         format!("Original\n{}", text.trim_end()).as_bytes()
     );
     presenter
-        .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+        .input_settled(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
         .unwrap();
     command(
         &mut presenter,
@@ -378,7 +378,7 @@ fn native_comparison_and_patch_share_reading_copy_find_and_resize() {
         all(&mut presenter);
         assert_eq!(copied(&mut presenter).unwrap(), expected.as_bytes());
         presenter
-            .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+            .input_settled(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
             .unwrap();
         command(
             &mut presenter,
@@ -413,7 +413,7 @@ fn keyboard_range_crosses_markdown_decorations_into_clipped_literal_and_back() {
     );
     mouse(&mut presenter, MouseEventKind::Up(MouseButton::Left), x, y);
     presenter
-        .input(Event::Key(KeyEvent::new(
+        .input_settled(Event::Key(KeyEvent::new(
             KeyCode::Down,
             KeyModifiers::SHIFT,
         )))
@@ -424,14 +424,14 @@ fn keyboard_range_crosses_markdown_decorations_into_clipped_literal_and_back() {
     // that visual column when entering the literal document.
     assert_eq!(copied(&mut presenter).unwrap(), b"code\nt");
     presenter
-        .input(Event::Key(KeyEvent::new(
+        .input_settled(Event::Key(KeyEvent::new(
             KeyCode::Right,
             KeyModifiers::SHIFT,
         )))
         .unwrap();
     assert_eq!(copied(&mut presenter).unwrap(), b"code\nta");
     presenter
-        .input(Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::SHIFT)))
+        .input_settled(Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::SHIFT)))
         .unwrap();
     settle(&mut presenter, 30, 3);
     settle(&mut presenter, 30, 3);

@@ -94,6 +94,9 @@ pub struct PreparedScene {
     declaration: Option<Value>,
 }
 impl PreparedScene {
+    pub fn slots(&self) -> &[ComponentSlot] {
+        &self.slots
+    }
     pub fn new<T: Send + 'static>(
         payload: T,
         schemas: BTreeMap<String, Value>,
@@ -322,6 +325,21 @@ pub enum EventOrigin<'a> {
     Component { child: &'a str, name: &'a str },
 }
 pub trait NativeComponent<V: ?Sized>: 'static {
+    /// Pure expensive preparation may return a pending job. The job retains
+    /// the original invocation and yields only inert candidate recipe data;
+    /// native resources and external operations remain with their existing owners.
+    fn start(
+        &self,
+        call: ComponentCall<'_>,
+        values: &super::abi::ValueBindings,
+        _: &tokio::runtime::Handle,
+        _: std::time::Instant,
+    ) -> super::backend::Job<ComponentOutput<NativeView<V>>>
+    where
+        V: 'static,
+    {
+        super::backend::Job::ready(self.call(call, values))
+    }
     fn capture(&self, _: super::actions::CaptureCall<'_>) -> Result<super::actions::CapturePlan> {
         Err(Error::Invalid("native capture method unavailable".into()))
     }

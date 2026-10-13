@@ -42,7 +42,10 @@ use maka_plugin_core::{
     contract::{Cardinality, Import},
     package::Declaration,
 };
-use maka_ui_runtime::{Application, surface_contract};
+#[path = "runtime/driver.rs"]
+mod driver;
+use driver::Application;
+use maka_ui_runtime::surface_contract;
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, time::Duration};
 use support::{fixture, node, package};

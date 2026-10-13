@@ -21,6 +21,8 @@
 
 [English](README.md)
 
-为 `maka-ui-runtime` 执行 JavaScript 组件回调。`execution` 为产品嵌入方配置执行适配器。适配器在 guest 限制内执行激活与回调代码，UI 所有者校验并提交结果批次。原生输入资源、操作回执和挂载清理仍归该所有者管理。
+为 `maka-ui-runtime` 执行 JavaScript 组件回调。`execution` 配置一个有界接收任务、空闲时休眠的后台 worker。激活、挂载、更新、输入、捕获与关闭都通过异步 job 执行。Reducer 保持有界同步计算，从原已提交状态提出候选，不等待 I/O。
+
+Rust UI 所有者校验并提交结果批次。迟到结果不能恢复已退役挂载。原生输入资源、精确操作回执及已接受执行的真实清理仍归原所有者管理；迁移执行线程不代表这些工作已经完成。
 
 [源码](src/lib.rs) · [Cargo 配置](Cargo.toml)

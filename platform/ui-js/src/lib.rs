@@ -67,7 +67,7 @@ impl backend::Factory for Factory {
         let worker = worker.as_ref().expect("created UI worker");
         let id = worker.identity();
         let health = Arc::new(Mutex::new(None));
-        let retained = health.clone();
+        let retained = Arc::downgrade(&health);
         let limits = self.limits.clone();
         worker.submit(0, move |state| {
             match Foreground::new(limits, scheduler) {
@@ -82,7 +82,9 @@ impl backend::Factory for Factory {
                     );
                 }
                 Err(error) => {
-                    *retained.lock().unwrap() = Some(error.to_string());
+                    if let Some(health) = retained.upgrade() {
+                        *health.lock().unwrap() = Some(error.to_string());
+                    }
                 }
             }
             Ok(())
@@ -127,6 +129,10 @@ impl Worker {
                 };
                 while let Ok(command) = receive.recv() {
                     (command.run)(&mut state);
+                    // Realm disposal may encounter a full bounded queue. The
+                    // original frontend health owner is then gone; an already
+                    // queued turn performs its destruction on this VM thread.
+                    state.realms.retain(|_, vm| vm.health.strong_count() != 0);
                 }
                 // All VM and captured callback destruction happens on this thread.
             })
@@ -183,7 +189,7 @@ struct State {
 struct Vm {
     vm: Foreground,
     modules: BTreeMap<u64, OwnedModule>,
-    health: Arc<Mutex<Option<String>>>,
+    health: std::sync::Weak<Mutex<Option<String>>>,
 }
 struct OwnedModule {
     module: ForegroundModule,
@@ -196,8 +202,10 @@ impl State {
             .get_mut(&id)
             .ok_or_else(|| script("UI realm is unavailable"))?;
         let result = action(vm);
-        if let Some(error) = vm.vm.failure() {
-            *vm.health.lock().unwrap() = Some(error.to_string());
+        if let Some(error) = vm.vm.failure()
+            && let Some(health) = vm.health.upgrade()
+        {
+            *health.lock().unwrap() = Some(error.to_string());
         }
         result
     }
@@ -404,6 +412,9 @@ impl backend::Component for Component {
         };
         args.push(serde_json::to_value(values).map_err(invalid)?);
         self.execute(method, args, deadline, move |value| {
+            // Reject the complete guest result before compiler code observes it.
+            maka_plugin_core::json::exact_numbers(&value).map_err(Error::Invalid)?;
+            maka_plugin_core::json::encoded_size(&value, 1024 * 1024).map_err(invalid)?;
             let output: ComponentOutput = serde_json::from_value(value).map_err(script)?;
             let view = prepare(&output.frame.view, deadline)?
                 .with_declaration(output.frame.view.clone())?;

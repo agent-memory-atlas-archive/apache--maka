@@ -276,9 +276,7 @@ fn retired_inputs_are_removed_from_both_directions_of_the_old_native_tab_order(
             .borrow_mut()
             .dispatch(&scene.root, revision, "toggle", json!(null))
             .unwrap();
-        scene
-            .surface
-            .update(cx, |s, cx| s.sync_native(window, cx).unwrap());
+        scene.settle_in(window, cx).unwrap();
         // Exercise precisely the old rendered-frame order, before a new draw.
         window.blur(cx);
         for backwards in [false, true] {

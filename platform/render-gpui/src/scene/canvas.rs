@@ -165,10 +165,10 @@ impl Shared {
         self.alive.get()
             && self.visible.get()
             && self.window == window.window_handle().window_id()
-            && self.live.0.borrow().is_some()
+            && self.live.current.borrow().is_some()
     }
     fn current_input(&self) -> Option<Input> {
-        self.live.0.borrow().clone()
+        self.live.current.borrow().clone()
     }
     fn dispatch(
         &self,
@@ -177,7 +177,7 @@ impl Shared {
         window: &mut Window,
         cx: &mut App,
     ) -> bool {
-        match (input.0)(
+        match (input.dispatch)(
             &self.key,
             serde_json::to_value(event).expect("finite canvas input"),
             window,
@@ -441,8 +441,20 @@ impl State {
                 } else {
                     physical.control && !physical.platform
                 };
-            if (tab && !config.tab_navigation) || (copy && !config.native_copy) {
+            if tab {
                 window.prevent_default();
+                if config.tab_navigation {
+                    if physical.shift {
+                        window.focus_prev(cx);
+                    } else {
+                        window.focus_next(cx);
+                    }
+                }
+            } else if copy {
+                window.prevent_default();
+                if config.native_copy {
+                    window.dispatch_action(Box::new(gpui_kit::base::input::Copy), cx);
+                }
             }
             if !config.bubble_input {
                 cx.stop_propagation();
@@ -733,8 +745,9 @@ impl State {
         );
         for region in regions {
             let owner = region.owner.clone();
-            let enabled =
-                owner.admitted.get() && shared.alive.get() && shared.live.0.borrow().is_some();
+            let enabled = owner.admitted.get()
+                && shared.alive.get()
+                && shared.live.current.borrow().is_some();
             let current = owner.config.borrow().clone();
             let focus = owner
                 .focus
@@ -783,7 +796,7 @@ impl State {
                         {
                             // AX is not the foreground mouse/key event. Never set
                             // cancellation flags on an unrelated native dispatch.
-                            if let Err(error) = (activate_input.0)(
+                            if let Err(error) = (activate_input.dispatch)(
                                 &activate_alive.key,
                                 serde_json::to_value(CanvasInput::Activate {
                                     region: activate_owner.key.clone(),

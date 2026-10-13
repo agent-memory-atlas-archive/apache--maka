@@ -389,9 +389,7 @@ fn committed_disabled_textarea_rejects_mouse_input_before_next_paint(cx: &mut Te
             .borrow_mut()
             .dispatch(&scene.root, revision, "parent", json!({"disabled":true}))
             .unwrap();
-        scene
-            .surface
-            .update(cx, |surface, cx| surface.sync_native(window, cx).unwrap());
+        scene.settle_in(window, cx).unwrap();
         assert!(state.read(cx).presentation().is_disabled());
         assert!(
             !state
@@ -494,9 +492,7 @@ fn committed_disabled_textarea_is_not_a_tab_stop_before_next_paint(cx: &mut Test
             .borrow_mut()
             .dispatch(&scene.root, revision, "parent", json!({"disabled":true}))
             .unwrap();
-        scene
-            .surface
-            .update(cx, |surface, cx| surface.sync_native(window, cx).unwrap());
+        scene.settle_in(window, cx).unwrap();
         assert!(first.read(cx).state.read(cx).presentation().is_disabled());
         assert!(
             second

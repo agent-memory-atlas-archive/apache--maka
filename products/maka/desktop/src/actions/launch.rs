@@ -65,6 +65,38 @@ pub(super) enum State {
     },
 }
 impl Owner {
+    pub(super) fn advance_ui(&self) -> Result<()> {
+        // Preparing follows the old window's confirmed cleanup. This candidate
+        // has not acquired a physical surface or native resource owner yet.
+        let replacement = match &*self.0.launch.borrow() {
+            Some(State::Preparing { mount, props })
+                if self.0.application.borrow().can_recover(mount)
+                    && !self.0.native.borrow().contains_key(&mount.id()) =>
+            {
+                Some((mount.clone(), props.clone()))
+            }
+            _ => None,
+        };
+        let result = self.0.application.borrow_mut().advance_ui();
+        if let (Some((mount, props)), Err(error @ (Error::Script(_) | Error::Invalid(_)))) =
+            (replacement, &result)
+            && !self.0.application.borrow().logical_pending()
+            && self.0.application.borrow().frame(&mount).is_err()
+            && self.0.application.borrow().prepared_frame(&mount).is_err()
+            && !self.0.native.borrow().contains_key(&mount.id())
+        {
+            eprintln!("replacement UI candidate rejected: {error}");
+            *self.0.launch.borrow_mut() = Some(State::Replacing {
+                mount,
+                props,
+                kind: RootKind::Recovery,
+                cleanup: Cleanup::Confirmed,
+            });
+            return Ok(());
+        }
+        result.map(|_| ())
+    }
+
     /// Called against the actual current window, before its removal. Original
     /// window/resource receipts still gate mounting the independent root.
     pub(crate) fn recover_launch(

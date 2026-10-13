@@ -117,7 +117,7 @@ impl Output {
     pub fn new() -> io::Result<Self> {
         Self::with_writer(io::stdout())
     }
-    fn with_writer(mut writer: impl Write + Send + 'static) -> io::Result<Self> {
+    pub(crate) fn with_writer(mut writer: impl Write + Send + 'static) -> io::Result<Self> {
         let (send, receive) = mpsc::sync_channel::<WriteRequest>(1);
         std::thread::Builder::new()
             .name("maka-terminal-output".into())
@@ -265,8 +265,81 @@ fn restore_checked(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use std::sync::{Arc, Condvar, Mutex};
+
+    #[derive(Default)]
+    struct WriteState {
+        bytes: Vec<u8>,
+        blocked: bool,
+        prefix: bool,
+    }
+    #[derive(Clone, Default)]
+    pub(crate) struct SlowWriter(Arc<(Mutex<WriteState>, Condvar)>);
+    impl SlowWriter {
+        pub fn block(&self) {
+            let mut state = self.0.0.lock().unwrap();
+            state.blocked = true;
+            state.prefix = false;
+        }
+        pub fn wait_for_prefix(&self) {
+            let state = self.0.0.lock().unwrap();
+            let (state, timeout) = self
+                .0
+                .1
+                .wait_timeout_while(state, std::time::Duration::from_secs(5), |state| {
+                    !state.prefix
+                })
+                .unwrap();
+            assert!(
+                state.prefix && !timeout.timed_out(),
+                "original write did not begin"
+            );
+        }
+        pub fn release(&self) {
+            self.0.0.lock().unwrap().blocked = false;
+            self.0.1.notify_all();
+        }
+        pub fn bytes(&self) -> Vec<u8> {
+            self.0.0.lock().unwrap().bytes.clone()
+        }
+    }
+    impl Write for SlowWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            let mut state = self.0.0.lock().unwrap();
+            if state.blocked && !state.prefix {
+                let count = bytes.len().min(2);
+                state.bytes.extend_from_slice(&bytes[..count]);
+                state.prefix = true;
+                self.0.1.notify_all();
+                return Ok(count);
+            }
+            while state.blocked {
+                state = self.0.1.wait(state).unwrap();
+            }
+            state.bytes.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    pub(crate) fn screen(area: ratatui::layout::Rect) -> Screen {
+        let output = FrameWriter::default();
+        let terminal = Terminal::with_options(
+            CrosstermBackend::new(output.clone()),
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Fixed(area),
+            },
+        )
+        .unwrap();
+        Screen {
+            terminal,
+            output,
+            generation: uuid::Uuid::new_v4(),
+        }
+    }
     #[test]
     fn restoration_attempts_raw_cleanup_after_writer_failure_and_checks_both_receipts() {
         let mut raw_attempted = false;

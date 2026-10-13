@@ -17,6 +17,7 @@
  * under the License.
  */
 
+use super::Application;
 use super::{support, timer};
 use crate::support::scene::Node;
 use maka_plugin_core::{
@@ -25,8 +26,8 @@ use maka_plugin_core::{
     package::{EntryTarget, Implementation},
 };
 use maka_ui_runtime::{
-    Application, ComponentCall, ComponentOutput, Frame, NativeCapability, NativeComponent,
-    NativeExport, NativeRegistry, NativeView, Surface,
+    ComponentCall, ComponentOutput, Frame, NativeCapability, NativeComponent, NativeExport,
+    NativeRegistry, NativeView, Surface,
 };
 use serde_json::{Value, json};
 use std::{cell::Cell, collections::BTreeMap, rc::Rc};

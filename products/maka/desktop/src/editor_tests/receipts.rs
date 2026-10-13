@@ -291,9 +291,7 @@ fn dispatch_history(scene: &Scene, cx: &mut TestAppContext) {
             .borrow_mut()
             .dispatch(&scene.root, revision, "read", Value::Null)
             .unwrap();
-        scene
-            .surface
-            .update(cx, |s, cx| s.sync_native(window, cx).unwrap());
+        scene.settle_in(window, cx).unwrap();
     })
     .unwrap();
     await_action(cx, &scene.app, |a| {
@@ -302,6 +300,8 @@ fn dispatch_history(scene: &Scene, cx: &mut TestAppContext) {
             .state
             .get("outcome")
             .is_some_and(|outcome| !outcome.is_null())
+            && !a.ui_pending()
+            && a.accepted_action_count() == 0
     });
 }
 fn outcome(scene: &Scene) -> Value {

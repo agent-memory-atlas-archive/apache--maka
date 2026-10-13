@@ -256,17 +256,18 @@ pub(super) fn own(
                     return None;
                 }
                 let watched = Owner(state);
-                if let Err(error) = watched.0.application.borrow_mut().advance_ui() {
+                if let Err(error) = watched.advance_ui() {
                     eprintln!("UI candidate rejected: {error}");
                 }
                 watched.poll_updates(cx);
-                let live = match &*watched.0.launch.borrow() {
-                    Some(launch::State::Live {
-                        window, surface, ..
-                    }) => Some((*window, surface.clone())),
-                    _ => None,
-                };
-                if let Some((window, surface)) = live {
+                let live: Vec<_> = watched
+                    .0
+                    .native
+                    .borrow()
+                    .values()
+                    .filter_map(|resources| resources.borrow().surface_binding())
+                    .collect();
+                for (window, surface) in live {
                     let _ = window.update(cx, |_, window, cx| {
                         let _ = surface.update(cx, |surface, cx| {
                             if let Err(error) = surface.sync_native(window, cx) {
@@ -297,6 +298,10 @@ pub(super) fn own(
                 wake = wakes.recv() => { if wake.is_none() { break; } },
                 _ = timer => {},
             }
+            // One foreground turn per poll. Native publication may wake this
+            // owner immediately; its producer ACK and physical input must run
+            // before another turn instead of being starved by a ready channel.
+            tokio::task::yield_now().await;
         }
     })
     .detach();

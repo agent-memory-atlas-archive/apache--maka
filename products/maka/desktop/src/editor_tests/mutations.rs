@@ -77,6 +77,10 @@ fn each_queued_receipt_checks_the_latest_state_at_actual_delivery(cx: &mut TestA
             .borrow_mut()
             .dispatch(&h.scene.root, revision, "read", Value::Null)
             .unwrap();
+        cx.update_window(h.scene.window, |_, window, cx| {
+            h.scene.commit_in(window, cx).unwrap()
+        })
+        .unwrap();
     }
     h.scene
         .app
@@ -128,16 +132,23 @@ fn each_queued_receipt_checks_the_latest_state_at_actual_delivery(cx: &mut TestA
                 .is_none()
         );
     }
-    // Both completions passed against small state. The first callback stores
-    // 800 KiB in state; the second must downgrade using that new actual state.
-    assert_eq!(
-        h.scene
-            .app
-            .borrow_mut()
-            .deliver_action_results(&h.scene.root, |_, _, _| Ok(false))
-            .unwrap(),
-        2
-    );
+    // Only one logical receipt transaction may run. Commit its 800 KiB state
+    // before admitting the next raw receipt, which must now be downgraded using
+    // this exact latest state while preserving the original host journal.
+    for _ in 0..2 {
+        assert_eq!(
+            h.scene
+                .app
+                .borrow_mut()
+                .deliver_action_results(&h.scene.root, |_, _, _| Ok(false))
+                .unwrap(),
+            1
+        );
+        cx.update_window(h.scene.window, |_, window, cx| {
+            h.scene.commit_in(window, cx).unwrap()
+        })
+        .unwrap();
+    }
     let reply: OperationReply = serde_json::from_value(h.outcome()["reply"].clone()).unwrap();
     assert_eq!(reply.reference, originals[1]);
     assert!(matches!(reply.receipt, Receipt::Unavailable { .. }));
@@ -645,7 +656,7 @@ impl Harness {
             self.scene.close(cx);
         }
         await_action(cx, &self.scene.app, |a| a.can_shutdown());
-        self.scene.app.borrow_mut().shutdown().unwrap();
+        await_shutdown(cx, &self.scene.app);
         timer.block_on(self.host.shutdown()).unwrap();
         assert!(
             self.state
@@ -1036,6 +1047,12 @@ fn independent_foreground_owner_consumes_actual_sql_receipt_and_close_without_a_
     let revision = app.frame(&h.scene.root).unwrap().revision;
     app.dispatch(&h.scene.root, revision, "read", Value::Null)
         .unwrap();
+    drop(app);
+    cx.update_window(h.scene.window, |_, window, cx| {
+        h.scene.commit_in(window, cx).unwrap()
+    })
+    .unwrap();
+    let mut app = h.scene.app.borrow_mut();
     app.capture_actions(&h.scene.root, |_| unreachable!("resource-free mutation"))
         .unwrap();
     let task = app.start_task(&h.scene.root).unwrap().unwrap();

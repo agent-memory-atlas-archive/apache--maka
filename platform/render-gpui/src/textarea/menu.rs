@@ -120,7 +120,7 @@ impl TextareaOwner {
     }
 
     fn menu_allowed(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        self.input.0.borrow().is_some()
+        self.input.current.borrow().is_some()
             && window.input_focus_is_admitted(self.state.read(cx).presentation().focus_handle())
             && self.menu.is_some()
             && !self.state.read(cx).presentation().is_disabled()
@@ -183,7 +183,8 @@ impl TextareaOwner {
             return;
         };
         if restore && open.focus.is_focused(window) {
-            if self.input.0.borrow().is_some() && !self.state.read(cx).presentation().is_disabled()
+            if self.input.current.borrow().is_some()
+                && !self.state.read(cx).presentation().is_disabled()
             {
                 self.state
                     .read(cx)
@@ -203,7 +204,7 @@ impl TextareaOwner {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<(FocusHandle, Edit)> {
-        if self.input.0.borrow().is_none()
+        if self.input.current.borrow().is_none()
             || self.menu.is_none()
             || self.state.read(cx).presentation().is_disabled()
         {

@@ -74,7 +74,9 @@ fn replacement_waits_for_original_native_editor_release_and_opens_fresh_window(
                 vec![],
             ))
             .unwrap();
-        let root = app.mount_launch(serde_json::json!({})).unwrap();
+        let root = timer
+            .block_on(app.mount_bootstrap_ready(serde_json::json!({})))
+            .unwrap();
         let app = Rc::new(RefCell::new(app));
         let owner = cx.update(|cx| {
             gpui_kit::init(cx);
@@ -138,6 +140,7 @@ fn replacement_waits_for_original_native_editor_release_and_opens_fresh_window(
                 .unwrap();
             continue;
         }
+        await_action(cx, &app, |_| owner.current_launch().is_some());
         assert!(
             owner.current_launch().is_some(),
             "confirmed cleanup did not resume; deployment_error={:?}, failure={:?}, replacing={}",
@@ -145,6 +148,7 @@ fn replacement_waits_for_original_native_editor_release_and_opens_fresh_window(
             owner.failure(),
             owner.replacing()
         );
+        await_action(cx, &app, |_| owner.current_launch().is_some());
         let fresh = Scene::from_launch(&owner, cx);
         fresh.draw(cx);
         assert!(old.resources.borrow().surface_closed);
@@ -160,6 +164,7 @@ fn replacement_waits_for_original_native_editor_release_and_opens_fresh_window(
         assert_eq!(new_text, "Start");
         assert!(owner.failure().is_none());
         fresh.close(cx);
+        await_action(cx, &app, |app| app.can_shutdown());
         app.borrow_mut().shutdown().unwrap();
         drop(fresh);
         drop(old);
@@ -237,7 +242,9 @@ fn replacement_preserves_original_snapshot_work_and_only_waits_for_its_provider(
                 vec![],
             ))
             .unwrap();
-        let root = application.mount_launch(serde_json::json!({})).unwrap();
+        let root = timer
+            .block_on(application.mount_bootstrap_ready(serde_json::json!({})))
+            .unwrap();
         let app = Rc::new(RefCell::new(application));
         let owner = cx.update(|cx| {
             gpui_kit::init(cx);
@@ -288,6 +295,9 @@ fn replacement_preserves_original_snapshot_work_and_only_waits_for_its_provider(
                 .upgrade()
                 .is_some()
         );
+        if !replace_provider {
+            await_action(cx, &app, |_| owner.current_launch().is_some());
+        }
         assert_eq!(owner.current_launch().is_some(), !replace_provider);
         if replace_provider {
             assert!(!cx.update(|cx| owner.resume_launch(cx).unwrap()));
@@ -346,6 +356,7 @@ fn replacement_preserves_original_snapshot_work_and_only_waits_for_its_provider(
                 .unwrap();
             continue;
         }
+        await_action(cx, &app, |_| owner.current_launch().is_some());
         let fresh = Scene::from_launch(&owner, cx);
         fresh.draw(cx);
         assert_ne!(fresh.root, old.root);
@@ -363,7 +374,7 @@ fn replacement_preserves_original_snapshot_work_and_only_waits_for_its_provider(
         assert_eq!(app.borrow().deployment_status().effective, Some(next));
         assert!(owner.failure().is_none());
         fresh.close(cx);
-        app.borrow_mut().shutdown().unwrap();
+        await_shutdown(cx, &app);
         drop(fresh);
         drop(old);
         drop(owner);
@@ -405,7 +416,9 @@ fn recovery_root_waits_for_original_editor_release_and_keeps_independent_input(
         Default::default(),
     )
     .unwrap();
-    let root = app.mount_bootstrap(serde_json::json!({})).unwrap();
+    let root = timer
+        .block_on(app.mount_bootstrap_ready(serde_json::json!({})))
+        .unwrap();
     let app = Rc::new(RefCell::new(app));
     let owner = cx.update(|cx| {
         gpui_kit::init(cx);
@@ -419,11 +432,10 @@ fn recovery_root_waits_for_original_editor_release_and_keeps_independent_input(
     let engine = cx.update(|cx| native.read(cx).state.clone());
     cx.update_window(old.window, |_, window, cx| {
         let revision = app.borrow().frame(&old.root).unwrap().revision;
-        assert!(
-            app.borrow_mut()
-                .dispatch(&old.root, revision, "parent", serde_json::json!({}))
-                .is_err()
-        );
+        app.borrow_mut()
+            .dispatch(&old.root, revision, "parent", serde_json::json!({}))
+            .unwrap();
+        assert!(old.commit_in(window, cx).is_err());
         old.surface
             .update(cx, |s, cx| s.sync_native(window, cx))
             .unwrap();
@@ -441,6 +453,7 @@ fn recovery_root_waits_for_original_editor_release_and_keeps_independent_input(
     cx.run_until_parked();
     assert!(old.resources.borrow().surface_closed);
     assert!(app.borrow().frame(&old.root).is_err());
+    await_action(cx, &app, |_| owner.current_launch().is_some());
     let (fresh, window, surface) = owner.current_launch().expect("ordinary recovery root");
     assert_ne!(fresh, old.root);
     assert_ne!(window.window_id(), old.window.window_id());
@@ -460,10 +473,14 @@ fn recovery_root_waits_for_original_editor_release_and_keeps_independent_input(
         window.draw(cx).clear(cx);
     })
     .unwrap();
+    await_action(cx, &app, |app| {
+        !app.ui_pending() && app.frame(&fresh).unwrap().state["count"] == 1
+    });
     assert_eq!(app.borrow().frame(&fresh).unwrap().state["count"], 1);
     cx.update_window(window, |_, window, _| window.remove_window())
         .unwrap();
     cx.run_until_parked();
+    await_action(cx, &app, |app| app.can_shutdown());
     assert!(app.borrow().can_shutdown());
     app.borrow_mut().shutdown().unwrap();
 }

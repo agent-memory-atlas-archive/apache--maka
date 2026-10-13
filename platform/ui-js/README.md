@@ -21,6 +21,8 @@
 
 [简体中文](README.zh-CN.md)
 
-Executes JavaScript component callbacks for `maka-ui-runtime`. `execution` configures the execution adapter for a product embedding. The adapter runs activation and callback code within guest limits; the UI owner validates and commits the resulting batch. Native input resources, mutation receipts and mount cleanup stay with that owner.
+Executes JavaScript component callbacks for `maka-ui-runtime`. `execution` configures one sleeping background worker with bounded admission. Activation, mount, update, input, capture and close all use asynchronous jobs. Reducers remain bounded synchronous computations; they propose candidates from the original committed state and do not await I/O.
+
+The Rust UI owner validates and commits each resulting batch. A late result cannot revive a retired mount. Native input resources, exact mutation receipts and accepted execution cleanup stay with their original owners; moving execution to the worker does not acknowledge their completion.
 
 [Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

@@ -36,7 +36,7 @@ fn native(source: &str) -> (tokio::runtime::Runtime, Presenter, Rc<RefCell<Value
 }
 fn select_all(presenter: &mut Presenter) {
     presenter
-        .input(Event::Key(KeyEvent::new(
+        .input_settled(Event::Key(KeyEvent::new(
             KeyCode::Char('a'),
             KeyModifiers::CONTROL,
         )))
@@ -61,17 +61,17 @@ fn refresh(presenter: &mut Presenter) {
         .application
         .dispatch(&presenter.root, revision, "back", json!({"kind":"click"}))
         .unwrap();
-    presenter.sync_native().unwrap();
+    presenter.settle().unwrap();
 }
 fn close(presenter: &mut Presenter) {
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
-    presenter.shutdown().unwrap();
+    presenter.shutdown_settled().unwrap();
 }
 fn mouse(presenter: &mut Presenter, kind: MouseEventKind, x: u16, y: u16) {
     presenter
-        .input(Event::Mouse(MouseEvent {
+        .input_settled(Event::Mouse(MouseEvent {
             kind,
             column: x,
             row: y,
@@ -250,7 +250,7 @@ fn first_shift_click_extends_the_original_caret_without_editing_literal_source()
     let (_runtime, mut presenter, _) = native("中文😀 raw");
     draw(&mut presenter, 20, 4);
     presenter
-        .input(Event::Mouse(MouseEvent {
+        .input_settled(Event::Mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 4,
             row: 0,

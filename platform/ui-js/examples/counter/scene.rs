@@ -150,6 +150,11 @@ pub(crate) fn compile<V: Default + 'static>(
 ) -> maka_ui_runtime::Result<NativeView<V>> {
     prepare(source, deadline)?.finish::<Node, V>(|_| Rc::new(V::default()))
 }
+pub(crate) fn finish<V: Default + 'static>(
+    prepared: maka_ui_runtime::PreparedScene,
+) -> maka_ui_runtime::Result<NativeView<V>> {
+    prepared.finish::<Node, V>(|_| Rc::new(V::default()))
+}
 pub(crate) fn prepare(
     source: &Value,
     deadline: Instant,

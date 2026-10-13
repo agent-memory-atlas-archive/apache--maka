@@ -80,17 +80,18 @@ impl Render for Root {
 }
 fn input(budget: NativeBudget, observations: Rc<RefCell<Vec<ImageObservation>>>) -> LiveInput {
     LiveInput::new(
-        Rc::new(RefCell::new(Some(Input(Rc::new(
+        Rc::new(RefCell::new(Some(Input::testing(Rc::new(
             move |key, value, _, _| {
                 assert_eq!(key, "observe");
                 observations
                     .borrow_mut()
                     .push(serde_json::from_value(value).unwrap());
-                Ok(Default::default())
+                Ok(())
             },
         ))))),
         budget,
         std::sync::Arc::new(maka_capabilities::call::Resources::default()),
+        || {},
     )
 }
 #[test]
@@ -431,12 +432,15 @@ fn admitted_decoder_survives_retirement_with_original_lease_and_budget(cx: &mut 
     let keep = original.clone();
     drop(original);
     let live = LiveInput::new(
-        Rc::new(RefCell::new(Some(Input(Rc::new(move |_, _, _, _| {
-            let _ = &keep;
-            Ok(Default::default())
-        }))))),
+        Rc::new(RefCell::new(Some(Input::testing(Rc::new(
+            move |_, _, _, _| {
+                let _ = &keep;
+                Ok(())
+            },
+        ))))),
         budget.clone(),
         std::sync::Arc::new(maka_capabilities::call::Resources::default()),
+        || {},
     );
     let (root, cx) = cx.add_window_view(|_, cx| Root {
         owner: Some(Owner::new(&p, live.clone(), cx)),
@@ -453,7 +457,7 @@ fn admitted_decoder_survives_retirement_with_original_lease_and_budget(cx: &mut 
     });
     cx.run_until_parked();
     assert_eq!(budget.usage(), (bytes.len(), 0, 1));
-    live.0.borrow_mut().take();
+    live.current.borrow_mut().take();
     cx.update(|window, cx| {
         Recipe(p.clone()).deactivate(&mut owner.clone(), window, cx);
         root.update(cx, |r, cx| {
@@ -518,18 +522,21 @@ fn rejected_publication_then_source_aba_settles_original_packet(cx: &mut TestApp
     let sink = observations.clone();
     let admitted = accepting.clone();
     let live = LiveInput::new(
-        Rc::new(RefCell::new(Some(Input(Rc::new(move |_, value, _, _| {
-            if !*admitted.borrow() {
-                return Err(maka_ui_runtime::Error::Invalid(
-                    "parent transaction rejected".into(),
-                ));
-            }
-            sink.borrow_mut()
-                .push(serde_json::from_value(value).unwrap());
-            Ok(Default::default())
-        }))))),
+        Rc::new(RefCell::new(Some(Input::testing(Rc::new(
+            move |_, value, _, _| {
+                if !*admitted.borrow() {
+                    return Err(maka_ui_runtime::Error::Invalid(
+                        "parent transaction rejected".into(),
+                    ));
+                }
+                sink.borrow_mut()
+                    .push(serde_json::from_value(value).unwrap());
+                Ok(())
+            },
+        ))))),
         NativeBudget::default(),
         std::sync::Arc::new(maka_capabilities::call::Resources::default()),
+        || {},
     );
     let (root, cx) = cx.add_window_view(|_, cx| Root {
         owner: Some(Owner::new(&initial, live, cx)),
@@ -558,7 +565,22 @@ fn rejected_publication_then_source_aba_settles_original_packet(cx: &mut TestApp
     });
     cx.run_until_parked();
     *accepting.borrow_mut() = true;
-    cx.update(|window, cx| Recipe(deliver.clone()).commit(&mut owner.clone(), window, cx));
+    cx.update(|window, cx| {
+        // Model a new committed business frame, as the real DesktopView owner
+        // does. Native source ABA alone cannot authorize a rejected publication.
+        let live = owner.read(cx).input.clone();
+        let mut input = live.current.borrow().clone().unwrap();
+        input.revision = (1, 1);
+        *live.current.borrow_mut() = Some(input.clone());
+        Recipe(deliver.clone()).commit(&mut owner.clone(), window, cx);
+        for _ in 0..128 {
+            if !live.observations.pending() {
+                break;
+            }
+            assert!(live.advance(&input, window, cx).is_empty());
+        }
+        assert!(!live.observations.pending());
+    });
     cx.run_until_parked();
     assert_eq!(owner.read_with(cx, |o, _| o.observation.received), 0);
     let observation = observations.borrow().last().unwrap().clone();

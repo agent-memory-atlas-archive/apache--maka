@@ -65,6 +65,7 @@ impl Owner {
             .as_mut()?
             .observe(&owner)
             .map(|value| NativeInput {
+                replaceable: false,
                 key: "checkpoint".into(),
                 value: serde_json::to_value(value).expect("native checkpoint observation"),
             })
@@ -74,6 +75,10 @@ impl Owner {
             .as_ref()
             .is_none_or(|checkpoint| checkpoint.accepts_input())
     }
+}
+#[cfg(test)]
+pub(super) fn editor_owner_mut(state: &mut dyn std::any::Any) -> &mut EditorOwner {
+    &mut state.downcast_mut::<Owner>().unwrap().edit
 }
 #[cfg(test)]
 pub(super) fn editor_owner(state: &dyn std::any::Any) -> &EditorOwner {
@@ -115,6 +120,24 @@ struct Recipe {
     file_request: Option<String>,
 }
 impl Widget for Recipe {
+    fn publication_capacity(&self, state: &dyn Any) -> Vec<(&'static str, usize)> {
+        let owner = state.downcast_ref::<Owner>().unwrap();
+        let mut capacity = Vec::new();
+        if !owner.edit.announced
+            || self
+                .props
+                .command
+                .as_ref()
+                .is_some_and(|command| owner.edit.last_request.as_ref() != Some(command))
+        {
+            capacity.push(("observe", 4096));
+        }
+        if owner.files.will_accept(self.file_request.as_deref()) {
+            capacity.extend([("file_observe", 65536); 2]);
+        }
+        capacity
+    }
+
     fn cancel_pointer(&self, state: &mut dyn Any) {
         state
             .downcast_mut::<Owner>()

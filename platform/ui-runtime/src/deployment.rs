@@ -444,7 +444,15 @@ impl<V: ?Sized + 'static> Application<V> {
         self.sync_subscription_demand();
         let mut failure = None;
         loop {
-            let mut progressed = self.poll_script_activations()?;
+            let mut progressed = match self.poll_script_activations() {
+                Ok(progressed) => progressed,
+                Err(error) => {
+                    // Process every completed result and continue healthy
+                    // dependency activation before reporting the original failure.
+                    failure.get_or_insert(error);
+                    true
+                }
+            };
             for id in self.modules.keys().cloned().collect::<Vec<_>>() {
                 let activation = &self.activations[&id];
                 if self.runtime.status(activation).is_ok_and(|s| {

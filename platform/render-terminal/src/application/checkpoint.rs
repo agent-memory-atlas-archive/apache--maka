@@ -30,11 +30,20 @@ use std::{any::Any, collections::BTreeMap, rc::Rc};
 struct Recipe(ValueCheckpointProps);
 fn observation(owner: &mut ValueCheckpoint) -> Option<NativeInput> {
     owner.observe().map(|value| NativeInput {
+        replaceable: false,
         key: "changed".into(),
         value: serde_json::to_value(value).unwrap(),
     })
 }
 impl Widget for Recipe {
+    fn publication_capacity(&self, state: &dyn Any) -> Vec<(&'static str, usize)> {
+        let slots = state
+            .downcast_ref::<ValueCheckpoint>()
+            .unwrap()
+            .publication_capacity(&self.0);
+        vec![("changed", 128 * 1024); slots]
+    }
+
     fn create(&self, context: NativeContext) -> Box<dyn Any> {
         Box::new(ValueCheckpoint::new(
             context.checkpoint,

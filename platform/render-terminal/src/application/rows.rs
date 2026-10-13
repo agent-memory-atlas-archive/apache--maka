@@ -85,6 +85,7 @@ impl Rows {
             return WidgetInput::Consumed(None);
         };
         WidgetInput::Emitted(NativeInput {
+            replaceable: false,
             key: "activate".into(),
             value: json!({"revision":self.props.revision,"row":row,"action":action.key}),
         })

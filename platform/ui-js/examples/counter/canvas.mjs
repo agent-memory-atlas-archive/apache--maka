@@ -117,6 +117,7 @@ function frame(state) {
                     draggable: true,
                     disabled: state.disabled,
                     listen: ['pointer_down', 'drop', 'key_down', 'activate'],
+                    bubbleInput: false,
                   },
                 ]),
           ],

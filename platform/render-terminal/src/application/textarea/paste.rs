@@ -68,6 +68,9 @@ pub(super) struct Paste {
     clipboard: Option<String>,
 }
 impl Paste {
+    pub fn will_accept(&self, request: Option<&str>) -> bool {
+        self.selection.will_accept(request)
+    }
     pub fn pending(&self) -> bool {
         self.batch.is_some() || self.read.is_some()
     }
@@ -139,6 +142,7 @@ impl Paste {
             _memory: memory,
         });
         Some(NativeInput {
+            replaceable: false,
             key: "file_choose".into(),
             value: serde_json::to_value(choose).unwrap(),
         })
@@ -336,6 +340,7 @@ impl Paste {
             self.batch = None;
         }
         Some(NativeInput {
+            replaceable: false,
             key: "file_observe".into(),
             value: serde_json::to_value(observation).unwrap(),
         })
@@ -470,7 +475,7 @@ mod tests {
         assert_eq!(settled(&mut paste).remaining, 0);
         assert_eq!(budget.usage().0, 2 * 65536);
         drop(held);
-        assert_eq!(budget.usage(), (0, 0));
+        assert_eq!(budget.usage(), (0, 0, 0));
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -498,7 +503,7 @@ mod tests {
         paste.suspend();
         paste.commit(staged.value["request"].as_str(), None, true);
         assert!(paste.read.is_none());
-        assert_eq!(budget.usage(), (0, 0));
+        assert_eq!(budget.usage(), (0, 0, 0));
         let staged = paste.stage(path.to_str().unwrap(), &policy).unwrap();
         paste.commit(staged.value["request"].as_str(), None, true);
         let choosing = FilePasteObservation {
@@ -524,7 +529,7 @@ mod tests {
             paste.observe().is_none(),
             "late worker cannot restore a cancelled batch"
         );
-        assert_eq!(budget.usage(), (0, 0));
+        assert_eq!(budget.usage(), (0, 0, 0));
     }
     fn clipboard_text(value: &str, budget: &maka_ui_runtime::budget::NativeBudget) -> Content {
         let value = value.to_owned();
@@ -597,7 +602,7 @@ mod tests {
                     }
                 );
                 assert_eq!(observed.remaining, 0);
-                assert_eq!(budget.usage(), (0, 0));
+                assert_eq!(budget.usage(), (0, 0, 0));
             } else {
                 assert_eq!(
                     editor.text(),
@@ -633,7 +638,7 @@ mod tests {
                     "a new physical paste may replace the failed clipboard read"
                 );
                 paste.suspend();
-                assert_eq!(budget.usage(), (0, 0));
+                assert_eq!(budget.usage(), (0, 0, 0));
             }
         }
     }
@@ -680,7 +685,7 @@ mod tests {
             true,
         );
         assert_eq!(settled(&mut paste).remaining, 0);
-        assert_eq!(budget.usage(), (4, 0));
+        assert_eq!(budget.usage(), (4, 0, 0));
         assert!(
             paste.pending(),
             "physical clipboard work still owns the input admission"
@@ -696,6 +701,6 @@ mod tests {
         assert!(editor.text().is_empty());
         assert!(paste.observe().is_none());
         assert!(!paste.pending());
-        assert_eq!(budget.usage(), (0, 0));
+        assert_eq!(budget.usage(), (0, 0, 0));
     }
 }

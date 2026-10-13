@@ -65,8 +65,8 @@ fn dialog_disabled_return_keeps_the_original_editing_scope_and_escape() {
         json!({"kind":"button","key":"confirm","label":"Confirm"}),
     )]);
     draw(&mut presenter, 40, 12);
-    presenter.input(key(KeyCode::Tab)).unwrap();
-    presenter.input(key(KeyCode::Tab)).unwrap();
+    presenter.input_settled(key(KeyCode::Tab)).unwrap();
+    presenter.input_settled(key(KeyCode::Tab)).unwrap();
     assert_eq!(presenter.focus.as_ref().unwrap().key, "save");
     open(&props, &mut presenter, true);
     draw(&mut presenter, 40, 12);
@@ -79,7 +79,7 @@ fn dialog_disabled_return_keeps_the_original_editing_scope_and_escape() {
     draw(&mut presenter, 40, 12);
     assert_eq!(presenter.focus.as_ref().unwrap().key, "back");
     let count = root_count(&presenter);
-    presenter.input(key(KeyCode::Esc)).unwrap();
+    presenter.input_settled(key(KeyCode::Esc)).unwrap();
     assert_eq!(root_count(&presenter), count + 1);
     close(&mut presenter);
 }
@@ -130,10 +130,12 @@ fn dialog_tab_reveals_controls_beyond_its_scroll_viewport() {
         };
         assert_eq!(presenter.focus.as_ref().unwrap().key, expected);
         assert!(!presenter.focus.as_ref().unwrap().area.is_empty());
-        presenter.input(key(KeyCode::Tab)).unwrap();
+        presenter.input_settled(key(KeyCode::Tab)).unwrap();
         if presenter.focus.as_ref().unwrap().area.is_empty() {
-            presenter.input(key(KeyCode::Enter)).unwrap();
-            presenter.input(Event::Paste("unpresented".into())).unwrap();
+            presenter.input_settled(key(KeyCode::Enter)).unwrap();
+            presenter
+                .input_settled(Event::Paste("unpresented".into()))
+                .unwrap();
             assert_eq!(
                 super::super::super::textarea::editor_owner(
                     presenter.resources.owners[&editor.id()].state.as_ref()
@@ -148,7 +150,7 @@ fn dialog_tab_reveals_controls_beyond_its_scroll_viewport() {
     }
     assert_eq!(presenter.focus.as_ref().unwrap().key, "done");
     assert_eq!(root_count(&presenter), 0);
-    presenter.input(key(KeyCode::BackTab)).unwrap();
+    presenter.input_settled(key(KeyCode::BackTab)).unwrap();
     draw(&mut presenter, 30, 10);
     assert_eq!(presenter.focus.as_ref().unwrap().key, "field-11");
     // Removing the scroll ancestor makes clipped controls unreachable again.
@@ -236,7 +238,7 @@ fn dialog_original_foreground_selection_and_flush_gate_preserve_background_bytes
     assert!(presenter.focus.is_none());
     assert!(!presenter.physical_admitted());
     assert!(copied(&mut presenter).is_none());
-    presenter.input(key(KeyCode::Tab)).unwrap();
+    presenter.input_settled(key(KeyCode::Tab)).unwrap();
     assert!(presenter.focus.is_none());
     assert_eq!(bg_scope.copy().unwrap().unwrap(), bg);
     drop(pending(&presenter, 40, 12));
@@ -317,14 +319,14 @@ fn dialog_requests_dismissal_without_implicit_enter_or_background_shortcuts() {
     draw(&mut presenter, 40, 12);
     let count = root_count(&presenter);
     presenter
-        .input(Event::Key(KeyEvent::new(
+        .input_settled(Event::Key(KeyEvent::new(
             KeyCode::Char('k'),
             KeyModifiers::CONTROL,
         )))
         .unwrap();
-    presenter.input(key(KeyCode::Enter)).unwrap();
+    presenter.input_settled(key(KeyCode::Enter)).unwrap();
     assert_eq!(root_count(&presenter), count);
-    presenter.input(key(KeyCode::Esc)).unwrap();
+    presenter.input_settled(key(KeyCode::Esc)).unwrap();
     assert_eq!(root_count(&presenter), count + 1);
     assert_eq!(props.borrow()["content"]["children"][0]["open"], true);
     draw(&mut presenter, 40, 12);
@@ -467,7 +469,7 @@ fn dialog_foreground_scroll_keeps_background_reading_command_and_tail_revision()
             .is_some()
     );
     let command_revision = scope.revision();
-    presenter.input(key(KeyCode::PageDown)).unwrap();
+    presenter.input_settled(key(KeyCode::PageDown)).unwrap();
     assert!(
         state(&presenter)
             .reading
@@ -485,7 +487,7 @@ fn dialog_foreground_scroll_keeps_background_reading_command_and_tail_revision()
     );
     let settled_revision = scope.revision();
     let settled_intent = scope.intent();
-    presenter.input(key(KeyCode::PageUp)).unwrap();
+    presenter.input_settled(key(KeyCode::PageUp)).unwrap();
     assert_eq!(scope.revision(), settled_revision);
     assert_eq!(scope.intent(), settled_intent);
     assert!(state(&presenter).reading.as_ref().unwrap().eligible());
@@ -527,7 +529,7 @@ fn dialog_choice_button_escape_uses_original_native_first_dismiss_chain() {
     presenter.sync_native().unwrap();
     draw(&mut presenter, 40, 12);
     let count = root_count(&presenter);
-    presenter.input(key(KeyCode::Esc)).unwrap();
+    presenter.input_settled(key(KeyCode::Esc)).unwrap();
     assert_eq!(root_count(&presenter), count + 1);
     close(&mut presenter);
 }
@@ -544,7 +546,7 @@ fn dialog_retained_foreground_wrapped_by_new_outer_keeps_original_second_target(
     let original = dialog("retained", true, source("bg", "background"), choices);
     let (_runtime, mut presenter, props) = native(vec![original.clone()]);
     draw(&mut presenter, 40, 12);
-    presenter.input(key(KeyCode::Tab)).unwrap();
+    presenter.input_settled(key(KeyCode::Tab)).unwrap();
     let second = presenter.focus.clone().unwrap();
     assert_eq!(second.key, "two");
     props.borrow_mut()["content"]["children"][0] = dialog(
@@ -581,7 +583,7 @@ fn dialog_large_legal_padding_keeps_native_content_target_reachable() {
         assert!(!presenter.focus.as_ref().unwrap().area.is_empty());
     }
     let count = root_count(&presenter);
-    presenter.input(key(KeyCode::Esc)).unwrap();
+    presenter.input_settled(key(KeyCode::Esc)).unwrap();
     assert_eq!(root_count(&presenter), count + 1);
     close(&mut presenter);
 }
@@ -629,11 +631,11 @@ fn dialog_foreground_native_escape_clears_selection_then_requests_dismissal() {
     presenter.sync_native().unwrap();
     draw(&mut presenter, 40, 12);
     let count = root_count(&presenter);
-    presenter.input(key(KeyCode::Esc)).unwrap();
+    presenter.input_settled(key(KeyCode::Esc)).unwrap();
     assert_eq!(root_count(&presenter), count);
     assert!(copied(&mut presenter).is_none());
     draw(&mut presenter, 40, 12);
-    presenter.input(key(KeyCode::Esc)).unwrap();
+    presenter.input_settled(key(KeyCode::Esc)).unwrap();
     assert_eq!(root_count(&presenter), count + 1);
     close(&mut presenter);
 }
@@ -659,7 +661,7 @@ fn dialog_live_covered_sibling_keeps_second_focus_and_original_background_return
     let background = presenter.focus.clone().unwrap();
     open(&props, &mut presenter, true);
     draw(&mut presenter, 40, 12);
-    presenter.input(key(KeyCode::Tab)).unwrap();
+    presenter.input_settled(key(KeyCode::Tab)).unwrap();
     let original_second = presenter.focus.clone().unwrap();
     assert_eq!(original_second.key, "two");
     props.borrow_mut()["content"]["children"][1]["open"] = json!(true);

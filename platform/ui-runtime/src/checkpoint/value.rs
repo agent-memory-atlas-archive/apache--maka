@@ -27,7 +27,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeMap, sync::Arc};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::mpsc;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -96,8 +96,9 @@ pub struct ValueCheckpoint {
     key: String,
     format: String,
     command: Option<ValueCheckpointCommand>,
+    pending: Option<u64>,
     sender: Option<mpsc::Sender<ValueCheckpointCommand>>,
-    receiver: watch::Receiver<ValueCheckpointObservation>,
+    receiver: mpsc::Receiver<ValueCheckpointObservation>,
     current: ValueCheckpointObservation,
     announced: Option<ValueCheckpointObservation>,
 }
@@ -121,7 +122,7 @@ impl ValueCheckpoint {
             sequence: 0,
             state: ValueCheckpointState::Loading,
         };
-        let (reply, receiver) = watch::channel(initial.clone());
+        let (reply, receiver) = mpsc::channel(2);
         let (sender, requests) = mpsc::channel(1);
         let started = (|| {
             let scope = scope.ok_or("UI preferences require an owned UI Root")?;
@@ -204,10 +205,12 @@ impl ValueCheckpoint {
                         }
                     }
                     .await;
-                    reply.send_replace(match result {
-                        Ok(state) => ValueCheckpointObservation { sequence, state },
-                        Err(error) => failure(sequence, error),
-                    });
+                    let _ = reply
+                        .send(match result {
+                            Ok(state) => ValueCheckpointObservation { sequence, state },
+                            Err(error) => failure(sequence, error),
+                        })
+                        .await;
                     wake.notify();
                     match requests.recv().await {
                         Some(next) => command = next,
@@ -222,14 +225,24 @@ impl ValueCheckpoint {
             key: props.key.clone(),
             format: props.format.clone(),
             command: None,
+            pending: None,
             sender: started.is_ok().then_some(sender),
             receiver,
             current: started.err().map_or(initial, |error| failure(0, error)),
             announced: None,
         }
     }
+    pub fn publication_capacity(&self, props: &ValueCheckpointProps) -> usize {
+        let command = props.key == self.key
+            && props.format == self.format
+            && props.command.as_ref().is_some_and(|command| {
+                self.command
+                    .as_ref()
+                    .is_none_or(|prior| command.sequence() > prior.sequence())
+            });
+        2 * (usize::from(self.announced.is_none()) + usize::from(command))
+    }
     pub fn update(&mut self, props: &ValueCheckpointProps) {
-        self.poll();
         if props.key != self.key || props.format != self.format {
             self.current = failure(
                 self.current.sequence,
@@ -259,6 +272,10 @@ impl ValueCheckpoint {
             return;
         }
         self.command = Some(command.clone());
+        if self.pending.is_some() {
+            self.current = failure(command.sequence(), "UI preferences are busy");
+            return;
+        }
         self.current = match self
             .sender
             .as_ref()
@@ -268,26 +285,35 @@ impl ValueCheckpoint {
                     .try_send(command.clone())
                     .map_err(|_| "UI preferences are busy")
             }) {
-            Ok(()) => ValueCheckpointObservation {
-                sequence: command.sequence(),
-                state: if matches!(command, ValueCheckpointCommand::Write { .. }) {
-                    ValueCheckpointState::Saving
-                } else {
-                    ValueCheckpointState::Loading
-                },
-            },
+            Ok(()) => {
+                self.pending = Some(command.sequence());
+                ValueCheckpointObservation {
+                    sequence: command.sequence(),
+                    state: if matches!(command, ValueCheckpointCommand::Write { .. }) {
+                        ValueCheckpointState::Saving
+                    } else {
+                        ValueCheckpointState::Loading
+                    },
+                }
+            }
             Err(error) => failure(command.sequence(), error),
         };
     }
     fn poll(&mut self) {
-        if self.receiver.has_changed().unwrap_or(false) {
-            let reply = self.receiver.borrow_and_update().clone();
-            if reply.sequence >= self.current.sequence {
-                self.current = reply;
+        if let Ok(reply) = self.receiver.try_recv() {
+            if self.pending == Some(reply.sequence) {
+                self.pending = None;
             }
+            self.current = reply;
         }
     }
     pub fn observe(&mut self) -> Option<ValueCheckpointObservation> {
+        // Transfer a command's immediate outcome before polling the original
+        // worker. A ready reply must not overwrite an unannounced busy/error.
+        if self.announced.as_ref() != Some(&self.current) {
+            self.announced = Some(self.current.clone());
+            return Some(self.current.clone());
+        }
         self.poll();
         if self.announced.as_ref() == Some(&self.current) {
             return None;
@@ -297,6 +323,9 @@ impl ValueCheckpoint {
     }
     pub fn close(&mut self) {
         self.sender.take();
+        // Accepted store operations still drain. Retired observation custody
+        // must not leave that original worker blocked on a full result queue.
+        self.receiver.close();
     }
 }
 

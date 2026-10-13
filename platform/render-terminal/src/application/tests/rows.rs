@@ -51,7 +51,7 @@ fn refresh_key(tui: &mut Presenter, key: &str) {
 }
 fn close(mut tui: Presenter) {
     tui.surface_closed(&tui.surface(), Ok(())).unwrap();
-    tui.shutdown().unwrap();
+    tui.shutdown_settled().unwrap();
 }
 #[test]
 fn native_rows_hover_is_local_and_only_flushed_controls_can_activate() {
@@ -64,7 +64,8 @@ fn native_rows_hover_is_local_and_only_flushed_controls_can_activate() {
     let focus = tui.focus.clone().unwrap();
     assert_eq!(focus.key, "back");
     assert!(!text(&draw(&mut tui, 40, 10)).contains("Delete"));
-    tui.input(mouse(MouseEventKind::Moved, 2, 2)).unwrap();
+    tui.input_settled(mouse(MouseEventKind::Moved, 2, 2))
+        .unwrap();
     assert!(tui.focus.as_ref().unwrap().same(&focus));
     assert_eq!(tui.application.frame(&tui.root).unwrap().state["count"], 0);
     let area = Rect::new(0, 0, 40, 10);
@@ -72,19 +73,19 @@ fn native_rows_hover_is_local_and_only_flushed_controls_can_activate() {
     let pending = tui.paint(area, &mut buffer).unwrap();
     assert!(text(&buffer).contains("Delete"));
     // Visible in an unflushed candidate only: the last actual geometry is preview.
-    tui.input(mouse(MouseEventKind::Down(MouseButton::Left), 36, 2))
+    tui.input_settled(mouse(MouseEventKind::Down(MouseButton::Left), 36, 2))
         .unwrap();
     assert_eq!(tui.application.frame(&tui.root).unwrap().state["count"], 0);
     drop(pending);
     draw(&mut tui, 40, 10);
-    tui.input(mouse(MouseEventKind::Down(MouseButton::Left), 36, 2))
+    tui.input_settled(mouse(MouseEventKind::Down(MouseButton::Left), 36, 2))
         .unwrap();
     assert_eq!(
         tui.application.frame(&tui.root).unwrap().state["observation"],
         json!({"revision":1,"row":"row-1","action":"delete"})
     );
     draw(&mut tui, 40, 10);
-    tui.input(key(KeyCode::Esc)).unwrap();
+    tui.input_settled(key(KeyCode::Esc)).unwrap();
     assert!(tui.focus.as_ref().unwrap().same(&focus));
     close(tui);
 }
@@ -96,7 +97,7 @@ fn native_rows_selected_removal_exits_exact_focus_and_does_not_retarget_repeat()
         Rc::new(Cell::new(true)),
     );
     draw(&mut tui, 40, 10);
-    tui.input(mouse(MouseEventKind::Down(MouseButton::Left), 2, 2))
+    tui.input_settled(mouse(MouseEventKind::Down(MouseButton::Left), 2, 2))
         .unwrap();
     assert_eq!(tui.focus.as_ref().unwrap().key, "rows");
     props.borrow_mut()["rows"].as_array_mut().unwrap().remove(1);
@@ -106,22 +107,22 @@ fn native_rows_selected_removal_exits_exact_focus_and_does_not_retarget_repeat()
     let count = tui.application.frame(&tui.root).unwrap().state["count"].clone();
     let mut held = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
     held.kind = KeyEventKind::Repeat;
-    tui.input(Event::Key(held)).unwrap();
+    tui.input_settled(Event::Key(held)).unwrap();
     assert_eq!(
         tui.application.frame(&tui.root).unwrap().state["count"],
         count
     );
     draw(&mut tui, 40, 10);
-    tui.input(mouse(MouseEventKind::Down(MouseButton::Left), 2, 2))
+    tui.input_settled(mouse(MouseEventKind::Down(MouseButton::Left), 2, 2))
         .unwrap();
     draw(&mut tui, 40, 10);
-    tui.input(key(KeyCode::Delete)).unwrap();
+    tui.input_settled(key(KeyCode::Delete)).unwrap();
     assert_eq!(
         tui.application.frame(&tui.root).unwrap().state["observation"]["row"],
         "row-2"
     );
     draw(&mut tui, 40, 10);
-    tui.input(key(KeyCode::BackTab)).unwrap();
+    tui.input_settled(key(KeyCode::BackTab)).unwrap();
     assert_eq!(tui.focus.as_ref().unwrap().key, "back");
     close(tui);
 }
@@ -134,31 +135,34 @@ fn native_rows_scroll_navigation_and_modal_clear_keep_original_pointer_scope() {
         Rc::new(Cell::new(true)),
     );
     draw(&mut tui, 40, 10);
-    tui.input(mouse(MouseEventKind::Moved, 2, 2)).unwrap();
+    tui.input_settled(mouse(MouseEventKind::Moved, 2, 2))
+        .unwrap();
     assert!(tui.hover.is_some());
     modal.set(true);
     refresh(&mut tui);
     // Opening is pending; input cannot reach the original background rows.
-    tui.input(mouse(MouseEventKind::Moved, 2, 2)).unwrap();
+    tui.input_settled(mouse(MouseEventKind::Moved, 2, 2))
+        .unwrap();
     assert!(tui.hover.is_none());
     draw(&mut tui, 40, 10);
     assert!(tui.scene.iter().all(|target| target.key != "rows"));
     modal.set(false);
     refresh(&mut tui);
     draw(&mut tui, 40, 10);
-    tui.input(mouse(MouseEventKind::ScrollDown, 2, 2)).unwrap();
+    tui.input_settled(mouse(MouseEventKind::ScrollDown, 2, 2))
+        .unwrap();
     let buffer = draw(&mut tui, 40, 10);
     assert!(text(&buffer).contains("pending 5"));
     assert!(!text(&buffer).contains("pending 0"));
     assert_eq!(tui.focus.as_ref().unwrap().key, "back");
-    tui.input(mouse(MouseEventKind::Down(MouseButton::Left), 2, 1))
+    tui.input_settled(mouse(MouseEventKind::Down(MouseButton::Left), 2, 1))
         .unwrap();
-    tui.input(key(KeyCode::Home)).unwrap();
+    tui.input_settled(key(KeyCode::Home)).unwrap();
     let buffer = draw(&mut tui, 40, 10);
     assert!(text(&buffer).contains("pending 0"));
-    tui.input(key(KeyCode::End)).unwrap();
+    tui.input_settled(key(KeyCode::End)).unwrap();
     assert!(text(&draw(&mut tui, 40, 10)).contains("pending 5"));
-    tui.input(key(KeyCode::Tab)).unwrap();
+    tui.input_settled(key(KeyCode::Tab)).unwrap();
     assert_eq!(tui.focus.as_ref().unwrap().key, "back");
     close(tui);
 }
@@ -172,16 +176,17 @@ fn native_rows_late_flush_does_not_undo_accepted_wheel_or_keyboard_navigation() 
             Rc::new(Cell::new(true)),
         );
         draw(&mut tui, 40, 10);
-        tui.input(mouse(MouseEventKind::Down(MouseButton::Left), 2, 1))
+        tui.input_settled(mouse(MouseEventKind::Down(MouseButton::Left), 2, 1))
             .unwrap();
         draw(&mut tui, 40, 10);
         let area = Rect::new(0, 0, 40, 10);
         let mut buffer = Buffer::empty(area);
         let held = tui.paint(area, &mut buffer).unwrap();
         if wheel {
-            tui.input(mouse(MouseEventKind::ScrollDown, 2, 2)).unwrap();
+            tui.input_settled(mouse(MouseEventKind::ScrollDown, 2, 2))
+                .unwrap();
         } else {
-            tui.input(key(KeyCode::End)).unwrap();
+            tui.input_settled(key(KeyCode::End)).unwrap();
         }
         tui.present(held);
         let buffer = draw(&mut tui, 40, 10);
@@ -199,16 +204,16 @@ fn native_rows_held_navigation_moves_but_held_actions_do_not_repeat() {
         Rc::new(Cell::new(true)),
     );
     draw(&mut tui, 40, 10);
-    tui.input(mouse(MouseEventKind::Down(MouseButton::Left), 2, 1))
+    tui.input_settled(mouse(MouseEventKind::Down(MouseButton::Left), 2, 1))
         .unwrap();
     let mut repeat = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
     repeat.kind = KeyEventKind::Repeat;
-    tui.input(Event::Key(repeat)).unwrap();
+    tui.input_settled(Event::Key(repeat)).unwrap();
     draw(&mut tui, 40, 10);
     repeat.code = KeyCode::Delete;
-    tui.input(Event::Key(repeat)).unwrap();
+    tui.input_settled(Event::Key(repeat)).unwrap();
     assert_eq!(tui.application.frame(&tui.root).unwrap().state["count"], 0);
-    tui.input(key(KeyCode::Delete)).unwrap();
+    tui.input_settled(key(KeyCode::Delete)).unwrap();
     assert_eq!(
         tui.application.frame(&tui.root).unwrap().state["observation"]["row"],
         "row-1"
@@ -227,7 +232,7 @@ fn native_rows_consumed_under_modal_returns_to_original_composer() {
         );
         draw(&mut tui, 40, 10);
         let composer = tui.focus.clone().unwrap();
-        tui.input(mouse(MouseEventKind::Down(MouseButton::Left), 2, 2))
+        tui.input_settled(mouse(MouseEventKind::Down(MouseButton::Left), 2, 2))
             .unwrap();
         assert_eq!(tui.focus.as_ref().unwrap().key, "rows");
         modal.set(true);
@@ -255,17 +260,17 @@ fn native_rows_consumed_under_modal_returns_to_original_composer() {
         for code in [KeyCode::Delete, KeyCode::Enter] {
             let mut held = KeyEvent::new(code, KeyModifiers::NONE);
             held.kind = KeyEventKind::Repeat;
-            tui.input(Event::Key(held)).unwrap();
+            tui.input_settled(Event::Key(held)).unwrap();
         }
         assert_eq!(
             tui.application.frame(&tui.root).unwrap().state["count"],
             count
         );
         // A fresh explicit selection can enter a remaining row; no stale exit follows it.
-        tui.input(mouse(MouseEventKind::Down(MouseButton::Left), 2, 2))
+        tui.input_settled(mouse(MouseEventKind::Down(MouseButton::Left), 2, 2))
             .unwrap();
         draw(&mut tui, 40, 10);
-        tui.input(key(KeyCode::Delete)).unwrap();
+        tui.input_settled(key(KeyCode::Delete)).unwrap();
         assert_eq!(
             tui.application.frame(&tui.root).unwrap().state["observation"]["row"],
             "row-2"
@@ -289,7 +294,7 @@ fn native_rows_consumed_under_nested_modals_keep_the_surviving_ancestor_return()
     refresh_key(&mut tui, "root-composer");
     draw(&mut tui, 40, 12);
     assert_eq!(tui.focus.as_ref().unwrap().key, "back");
-    tui.input(key(KeyCode::Tab)).unwrap();
+    tui.input_settled(key(KeyCode::Tab)).unwrap();
     assert_eq!(tui.focus.as_ref().unwrap().key, "rows");
     phase.set(2);
     refresh_key(&mut tui, "root-composer");
@@ -321,7 +326,7 @@ fn native_rows_scrollbar_drag_uses_presented_track_without_selecting_or_taking_f
     let original = tui.focus.clone().unwrap();
     assert_eq!(buffer[(39, 1)].symbol(), "┃");
     assert_eq!(buffer[(39, 3)].symbol(), "│");
-    tui.input(mouse(MouseEventKind::Down(MouseButton::Left), 39, 3))
+    tui.input_settled(mouse(MouseEventKind::Down(MouseButton::Left), 39, 3))
         .unwrap();
     assert!(tui.drag.is_some());
     assert!(tui.focus.as_ref().unwrap().same(&original));
@@ -329,21 +334,21 @@ fn native_rows_scrollbar_drag_uses_presented_track_without_selecting_or_taking_f
     assert!(text(&buffer).contains("pending 5"));
     assert!(!text(&buffer).contains("pending 0"));
     assert_eq!(buffer[(39, 3)].symbol(), "┃");
-    tui.input(mouse(MouseEventKind::Drag(MouseButton::Left), 0, 0))
+    tui.input_settled(mouse(MouseEventKind::Drag(MouseButton::Left), 0, 0))
         .unwrap();
     assert!(text(&draw(&mut tui, 40, 10)).contains("pending 0"));
-    tui.input(mouse(MouseEventKind::Drag(MouseButton::Left), 0, 9))
+    tui.input_settled(mouse(MouseEventKind::Drag(MouseButton::Left), 0, 9))
         .unwrap();
     assert!(text(&draw(&mut tui, 40, 10)).contains("pending 5"));
-    tui.input(mouse(MouseEventKind::Up(MouseButton::Left), 0, 9))
+    tui.input_settled(mouse(MouseEventKind::Up(MouseButton::Left), 0, 9))
         .unwrap();
     assert!(tui.drag.is_none());
     assert!(tui.focus.as_ref().unwrap().same(&original));
     assert_eq!(tui.application.frame(&tui.root).unwrap().state["count"], 0);
     // Keyboard entry reveals its original selection without another arrow key.
-    tui.input(key(KeyCode::Tab)).unwrap();
+    tui.input_settled(key(KeyCode::Tab)).unwrap();
     assert!(text(&draw(&mut tui, 40, 10)).contains("pending 0"));
-    tui.input(key(KeyCode::Delete)).unwrap();
+    tui.input_settled(key(KeyCode::Delete)).unwrap();
     assert_eq!(
         tui.application.frame(&tui.root).unwrap().state["observation"]["row"],
         "row-0"
@@ -365,21 +370,21 @@ fn native_rows_scrollbar_style_and_interruption_keep_original_capture() {
         let buffer = draw(&mut tui, 40, 10);
         assert_eq!(buffer[(39, 1)].symbol(), "#");
         assert_eq!(buffer[(39, 3)].symbol(), "|");
-        tui.input(mouse(MouseEventKind::Down(MouseButton::Left), 39, 1))
+        tui.input_settled(mouse(MouseEventKind::Down(MouseButton::Left), 39, 1))
             .unwrap();
         let area = Rect::new(0, 0, 40, 10);
         let mut buffer = Buffer::empty(area);
         let held = tui.paint(area, &mut buffer).unwrap();
-        tui.input(mouse(MouseEventKind::Drag(MouseButton::Left), 0, 9))
+        tui.input_settled(mouse(MouseEventKind::Drag(MouseButton::Left), 0, 9))
             .unwrap();
         tui.present(held);
         assert!(text(&draw(&mut tui, 40, 10)).contains("pending 5"));
-        tui.input(interruption).unwrap();
+        tui.input_settled(interruption).unwrap();
         assert!(tui.drag.is_none());
-        tui.input(mouse(MouseEventKind::Drag(MouseButton::Left), 0, 0))
+        tui.input_settled(mouse(MouseEventKind::Drag(MouseButton::Left), 0, 0))
             .unwrap();
         assert!(text(&draw(&mut tui, 40, 10)).contains("pending 5"));
-        tui.input(mouse(MouseEventKind::Down(MouseButton::Left), 39, 3))
+        tui.input_settled(mouse(MouseEventKind::Down(MouseButton::Left), 39, 3))
             .unwrap();
         modal.set(true);
         refresh(&mut tui);
@@ -388,7 +393,7 @@ fn native_rows_scrollbar_style_and_interruption_keep_original_capture() {
         modal.set(false);
         refresh(&mut tui);
         draw(&mut tui, 40, 10);
-        tui.input(mouse(MouseEventKind::Drag(MouseButton::Left), 39, 1))
+        tui.input_settled(mouse(MouseEventKind::Drag(MouseButton::Left), 39, 1))
             .unwrap();
         assert!(text(&draw(&mut tui, 40, 10)).contains("pending 5"));
         close(tui);
@@ -413,16 +418,16 @@ fn native_rows_keyboard_entry_selects_arriving_rows_and_survives_late_paint_and_
     let area = Rect::new(0, 0, 40, 10);
     let mut buffer = Buffer::empty(area);
     let old = tui.paint(area, &mut buffer).unwrap();
-    tui.input(key(KeyCode::Tab)).unwrap();
+    tui.input_settled(key(KeyCode::Tab)).unwrap();
     tui.present(old);
     assert_eq!(tui.focus.as_ref().unwrap().key, "rows");
     assert!(text(&draw(&mut tui, 40, 10)).contains("pending 5"));
-    tui.input(key(KeyCode::Delete)).unwrap();
+    tui.input_settled(key(KeyCode::Delete)).unwrap();
     assert_eq!(
         tui.application.frame(&tui.root).unwrap().state["observation"]["row"],
         "row-5"
     );
-    tui.input(key(KeyCode::Up)).unwrap();
+    tui.input_settled(key(KeyCode::Up)).unwrap();
     draw(&mut tui, 40, 10);
     modal.set(true);
     refresh(&mut tui);
@@ -430,16 +435,16 @@ fn native_rows_keyboard_entry_selects_arriving_rows_and_survives_late_paint_and_
     modal.set(false);
     refresh(&mut tui);
     draw(&mut tui, 40, 10);
-    tui.input(key(KeyCode::Delete)).unwrap();
+    tui.input_settled(key(KeyCode::Delete)).unwrap();
     assert_eq!(
         tui.application.frame(&tui.root).unwrap().state["observation"]["row"],
         "row-4"
     );
-    tui.input(key(KeyCode::Esc)).unwrap();
+    tui.input_settled(key(KeyCode::Esc)).unwrap();
     assert!(tui.focus.as_ref().unwrap().same(&composer));
-    tui.input(key(KeyCode::BackTab)).unwrap();
+    tui.input_settled(key(KeyCode::BackTab)).unwrap();
     draw(&mut tui, 40, 10);
-    tui.input(key(KeyCode::Delete)).unwrap();
+    tui.input_settled(key(KeyCode::Delete)).unwrap();
     assert_eq!(
         tui.application.frame(&tui.root).unwrap().state["observation"]["row"],
         "row-5"
@@ -458,12 +463,12 @@ fn native_rows_keyboard_entry_waits_for_current_props_to_be_presented() {
     let composer = tui.focus.clone().unwrap();
     rows.borrow_mut()["entry"] = json!("row-5");
     refresh(&mut tui);
-    tui.input(key(KeyCode::Tab)).unwrap();
+    tui.input_settled(key(KeyCode::Tab)).unwrap();
     assert!(tui.focus.as_ref().unwrap().same(&composer));
     draw(&mut tui, 40, 10);
-    tui.input(key(KeyCode::Tab)).unwrap();
+    tui.input_settled(key(KeyCode::Tab)).unwrap();
     assert!(text(&draw(&mut tui, 40, 10)).contains("pending 5"));
-    tui.input(key(KeyCode::Delete)).unwrap();
+    tui.input_settled(key(KeyCode::Delete)).unwrap();
     assert_eq!(
         tui.application.frame(&tui.root).unwrap().state["observation"]["row"],
         "row-5"
@@ -513,13 +518,14 @@ fn queue_count_enters_last_row_and_resize_keeps_visible_action_and_original_draf
             .unwrap()
             .clone();
         let area = editor.area.visible();
-        tui.input(mouse(
+        tui.input_settled(mouse(
             MouseEventKind::Down(MouseButton::Left),
             area.x + 1,
             area.y + 1,
         ))
         .unwrap();
-        tui.input(Event::Paste("original draft".into())).unwrap();
+        tui.input_settled(Event::Paste("original draft".into()))
+            .unwrap();
         draw(&mut tui, 40, 12);
         let row = tui
             .scene
@@ -528,7 +534,7 @@ fn queue_count_enters_last_row_and_resize_keeps_visible_action_and_original_draf
             .unwrap()
             .area
             .visible();
-        tui.input(mouse(MouseEventKind::ScrollDown, row.x, row.y))
+        tui.input_settled(mouse(MouseEventKind::ScrollDown, row.x, row.y))
             .unwrap();
         draw(&mut tui, 40, 12);
         // While typing, shrinking must retain the wheel offset, not reveal the old selection.
@@ -538,13 +544,13 @@ fn queue_count_enters_last_row_and_resize_keeps_visible_action_and_original_draf
         draw(&mut tui, 40, 12);
         let count = tui.application.frame(&tui.root).unwrap().state["count"].clone();
         if let Some(code) = activation {
-            tui.input(key(KeyCode::BackTab)).unwrap();
+            tui.input_settled(key(KeyCode::BackTab)).unwrap();
             assert_eq!(tui.focus.as_ref().unwrap().key, "badge");
             let mut held = KeyEvent::new(code, KeyModifiers::NONE);
             held.kind = KeyEventKind::Repeat;
-            tui.input(Event::Key(held)).unwrap();
+            tui.input_settled(Event::Key(held)).unwrap();
             assert_eq!(tui.focus.as_ref().unwrap().key, "badge");
-            tui.input(key(code)).unwrap();
+            tui.input_settled(key(code)).unwrap();
         } else {
             let badge = tui
                 .scene
@@ -553,7 +559,7 @@ fn queue_count_enters_last_row_and_resize_keeps_visible_action_and_original_draf
                 .unwrap()
                 .area
                 .visible();
-            tui.input(mouse(
+            tui.input_settled(mouse(
                 MouseEventKind::Down(MouseButton::Left),
                 badge.x,
                 badge.y,
@@ -579,13 +585,13 @@ fn queue_count_enters_last_row_and_resize_keeps_visible_action_and_original_draf
                 .height,
             1
         );
-        tui.input(key(KeyCode::Delete)).unwrap();
+        tui.input_settled(key(KeyCode::Delete)).unwrap();
         assert_eq!(
             tui.application.frame(&tui.root).unwrap().state["observation"]["row"],
             "row-5"
         );
         draw(&mut tui, 40, 11);
-        tui.input(key(KeyCode::Esc)).unwrap();
+        tui.input_settled(key(KeyCode::Esc)).unwrap();
         assert!(tui.focus.as_ref().unwrap().same(&editor));
         assert!(text(&draw(&mut tui, 40, 12)).contains("original draft"));
         close(tui);
@@ -628,7 +634,7 @@ fn queue_count_cannot_enter_unflushed_replacement_hidden_disabled_or_modal_targe
             }
         }
         refresh(&mut tui);
-        tui.input(mouse(
+        tui.input_settled(mouse(
             MouseEventKind::Down(MouseButton::Left),
             badge.x,
             badge.y,
@@ -637,7 +643,7 @@ fn queue_count_cannot_enter_unflushed_replacement_hidden_disabled_or_modal_targe
         assert!(tui.focus.as_ref().is_none_or(|focus| focus.key != "rows"));
         draw(&mut tui, 40, 12);
         if change == "replace" {
-            tui.input(mouse(
+            tui.input_settled(mouse(
                 MouseEventKind::Down(MouseButton::Left),
                 badge.x,
                 badge.y,
@@ -658,33 +664,33 @@ fn native_focus_shortcut_is_local_and_selects_original_child_entry() {
     draw(&mut tui, 40, 10);
     let outside = tui.focus.clone().unwrap();
     assert_eq!(outside.key, "back");
-    tui.input(key(KeyCode::Up)).unwrap();
+    tui.input_settled(key(KeyCode::Up)).unwrap();
     assert!(tui.focus.as_ref().unwrap().same(&outside));
-    tui.input(key(KeyCode::Tab)).unwrap();
+    tui.input_settled(key(KeyCode::Tab)).unwrap();
     assert_eq!(tui.focus.as_ref().unwrap().key, "observe");
     let mut held = KeyEvent::new(KeyCode::Up, KeyModifiers::NONE);
     held.kind = KeyEventKind::Repeat;
-    tui.input(Event::Key(held)).unwrap();
+    tui.input_settled(Event::Key(held)).unwrap();
     assert_eq!(tui.focus.as_ref().unwrap().key, "observe");
-    tui.input(Event::Paste("draft".into())).unwrap();
-    tui.input(key(KeyCode::Up)).unwrap();
+    tui.input_settled(Event::Paste("draft".into())).unwrap();
+    tui.input_settled(key(KeyCode::Up)).unwrap();
     assert_eq!(tui.focus.as_ref().unwrap().key, "observe");
-    tui.input(Event::Key(KeyEvent::new(
+    tui.input_settled(Event::Key(KeyEvent::new(
         KeyCode::Char('a'),
         KeyModifiers::CONTROL,
     )))
     .unwrap();
-    tui.input(key(KeyCode::Backspace)).unwrap();
+    tui.input_settled(key(KeyCode::Backspace)).unwrap();
     draw(&mut tui, 40, 10);
-    tui.input(key(KeyCode::Tab)).unwrap();
+    tui.input_settled(key(KeyCode::Tab)).unwrap();
     assert_eq!(tui.focus.as_ref().unwrap().key, "send");
-    tui.input(key(KeyCode::Up)).unwrap();
+    tui.input_settled(key(KeyCode::Up)).unwrap();
     assert_eq!(tui.focus.as_ref().unwrap().key, "send");
-    tui.input(key(KeyCode::BackTab)).unwrap();
-    tui.input(key(KeyCode::Up)).unwrap();
+    tui.input_settled(key(KeyCode::BackTab)).unwrap();
+    tui.input_settled(key(KeyCode::Up)).unwrap();
     assert_eq!(tui.focus.as_ref().unwrap().key, "rows");
     assert!(text(&draw(&mut tui, 40, 10)).contains("pending 5"));
-    tui.input(key(KeyCode::Delete)).unwrap();
+    tui.input_settled(key(KeyCode::Delete)).unwrap();
     assert_eq!(
         tui.application.frame(&tui.root).unwrap().state["observation"]["row"],
         "row-5"
@@ -700,7 +706,7 @@ fn native_focus_shortcut_never_retargets_an_unflushed_replacement_or_hidden_chil
             Rc::new(Cell::new(true)),
         );
         draw(&mut tui, 40, 10);
-        tui.input(key(KeyCode::Tab)).unwrap();
+        tui.input_settled(key(KeyCode::Tab)).unwrap();
         let composer = tui.focus.clone().unwrap();
         if replace {
             // Remove then recreate the same declared name: the old physical
@@ -718,10 +724,10 @@ fn native_focus_shortcut_never_retargets_an_unflushed_replacement_or_hidden_chil
             source.borrow_mut()["children"][2] = json!({"kind":"stack","key":"hidden","direction":"column","gap":0,"padding":0,"background":0,"visible":false,"children":[child]});
             refresh(&mut tui);
         }
-        tui.input(key(KeyCode::Up)).unwrap();
+        tui.input_settled(key(KeyCode::Up)).unwrap();
         assert!(tui.focus.as_ref().unwrap().same(&composer));
         draw(&mut tui, 40, 10);
-        tui.input(key(KeyCode::Up)).unwrap();
+        tui.input_settled(key(KeyCode::Up)).unwrap();
         assert_eq!(
             tui.focus.as_ref().unwrap().key,
             if replace { "rows" } else { "observe" }
@@ -741,9 +747,9 @@ fn native_focus_shortcut_respects_disabled_scope_and_modal_boundary() {
         Rc::new(Cell::new(true)),
     );
     draw(&mut tui, 40, 20);
-    tui.input(key(KeyCode::Tab)).unwrap();
+    tui.input_settled(key(KeyCode::Tab)).unwrap();
     let editor = tui.focus.clone().unwrap();
-    tui.input(key(KeyCode::Up)).unwrap();
+    tui.input_settled(key(KeyCode::Up)).unwrap();
     assert!(tui.focus.as_ref().unwrap().same(&editor));
     let background = focus_scene();
     let mut foreground = background["children"][1].clone();
@@ -758,7 +764,7 @@ fn native_focus_shortcut_respects_disabled_scope_and_modal_boundary() {
     let foreground = tui.focus.clone().unwrap();
     assert!(!foreground.same(&editor));
     assert_eq!(foreground.key, "observe");
-    tui.input(key(KeyCode::Up)).unwrap();
+    tui.input_settled(key(KeyCode::Up)).unwrap();
     assert!(tui.focus.as_ref().unwrap().same(&foreground));
     close(tui);
 }

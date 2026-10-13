@@ -42,7 +42,12 @@ use maka_ui_runtime::{
     NativeExport, NativeRegistry, NativeView, label_contract,
 };
 use serde_json::{Value, json};
-use std::{any::Any, cell::RefCell, collections::BTreeMap, rc::Rc};
+use std::{
+    any::Any,
+    cell::{OnceCell, RefCell},
+    collections::BTreeMap,
+    rc::Rc,
+};
 
 /// The presenter supplies its native view ABI; the plugin kernel never depends
 /// on GPUI. Only native drawing happens here. Input bindings retain their mount
@@ -53,6 +58,10 @@ use std::{any::Any, cell::RefCell, collections::BTreeMap, rc::Rc};
 pub trait Widget: Any {
     /// Allocate custody without taking focus. The presenter applies actual
     /// visibility, including initially hidden owners, before the first commit.
+    /// Trusted bounds for reliable outcomes introduced by the candidate.
+    fn publication_capacity(&self, _: &dyn Any, _: &App) -> Vec<(&'static str, usize)> {
+        Vec::new()
+    }
     fn create(&self, _: LiveInput, _: &mut Window, _: &mut App) -> Box<dyn Any> {
         Box::new(())
     }
@@ -112,35 +121,134 @@ pub trait Widget: Any {
 /// they are not button events against a retained old scene. Removal clears it
 /// before dropping the owner, so delayed observations cannot retarget a new one.
 #[derive(Clone)]
-pub struct LiveInput(
-    pub Rc<RefCell<Option<Input>>>,
-    pub NativeBudget,
-    pub std::sync::Arc<maka_capabilities::call::Resources>,
-    pub Option<maka_ui_runtime::checkpoint::Scope>,
-);
+pub struct LiveInput {
+    pub current: Rc<RefCell<Option<Input>>>,
+    pub budget: NativeBudget,
+    pub resources: std::sync::Arc<maka_capabilities::call::Resources>,
+    pub checkpoint: Option<maka_ui_runtime::checkpoint::Scope>,
+    pub observations: maka_ui_runtime::publication::Observations,
+    // A mechanical weak callback, bound once by this mount's native producer.
+    // It clears matching flags in the original logical ACK turn, before paint.
+    publisher: Rc<OnceCell<Box<Published>>>,
+}
+type Published = dyn Fn(&str, &Value, &mut Window, &mut App);
 impl LiveInput {
     pub fn with_checkpoint(mut self, scope: Option<maka_ui_runtime::checkpoint::Scope>) -> Self {
-        self.3 = scope;
+        self.checkpoint = scope;
         self
     }
     pub fn new(
-        input: Rc<RefCell<Option<Input>>>,
+        current: Rc<RefCell<Option<Input>>>,
         budget: NativeBudget,
         resources: std::sync::Arc<maka_capabilities::call::Resources>,
+        wake: impl Fn() + Send + Sync + 'static,
     ) -> Self {
-        Self(input, budget, resources, None)
+        let observations = maka_ui_runtime::publication::Observations::new(budget.clone(), wake);
+        Self {
+            current,
+            budget,
+            resources,
+            checkpoint: None,
+            observations,
+            publisher: Rc::new(OnceCell::new()),
+        }
+    }
+    pub(crate) fn bind_publisher(
+        &self,
+        published: impl Fn(&str, &Value, &mut Window, &mut App) + 'static,
+    ) {
+        assert!(
+            self.publisher.set(Box::new(published)).is_ok(),
+            "original native producer already bound"
+        );
+    }
+    pub fn advance(
+        &self,
+        input: &Input,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Vec<maka_ui_runtime::Error> {
+        self.observations.advance(
+            input.revision,
+            &mut (window, cx),
+            |key, value, (window, cx)| (input.observe)(key, value, window, cx),
+            |key, value, (window, cx)| {
+                if self.current.borrow().is_some()
+                    && let Some(published) = self.publisher.get()
+                {
+                    published(key, value, window, cx);
+                }
+            },
+        )
+    }
+    /// Capture while holding the native owner, then dispatch after leaving its
+    /// entity borrow. Only the original logical commit resolves the returned ACK.
+    pub fn capture(
+        &self,
+        key: &str,
+        value: Value,
+        replaceable: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> maka_ui_runtime::Result<Option<maka_ui_runtime::backend::Job<()>>> {
+        if self.current.borrow().is_none() {
+            return Ok(None);
+        }
+        let acknowledgement = self.observations.capture(key, value, replaceable)?;
+        if acknowledgement.is_some() {
+            let live = self.clone();
+            window.defer(cx, move |window, cx| {
+                let Some(input) = live.current.borrow().clone() else {
+                    return;
+                };
+                for error in live.advance(&input, window, cx) {
+                    eprintln!("native observation candidate rejected: {error}");
+                }
+            });
+        }
+        Ok(acknowledgement)
     }
 }
 type Dispatch = dyn Fn(&str, Value, &mut Window, &mut App) -> maka_ui_runtime::Result<()>;
+type Observe = dyn Fn(
+    &str,
+    Value,
+    &mut Window,
+    &mut App,
+) -> maka_ui_runtime::Result<maka_ui_runtime::backend::Job<()>>;
 #[derive(Clone)]
-pub struct Input(pub Rc<Dispatch>);
+pub struct Input {
+    pub dispatch: Rc<Dispatch>,
+    pub observe: Rc<Observe>,
+    pub revision: (u64, u64),
+}
 impl Input {
+    pub fn new(revision: (u64, u64), dispatch: Rc<Dispatch>, observe: Rc<Observe>) -> Self {
+        Self {
+            revision,
+            dispatch,
+            observe,
+        }
+    }
+    #[cfg(test)]
+    pub(crate) fn testing(dispatch: Rc<Dispatch>) -> Self {
+        let observation = dispatch.clone();
+        Self::new(
+            (0, 0),
+            dispatch,
+            Rc::new(move |key, value, window, cx| {
+                Ok(maka_ui_runtime::backend::Job::ready(observation(
+                    key, value, window, cx,
+                )))
+            }),
+        )
+    }
     pub fn bind<E: 'static>(
         &self,
         key: String,
         encode: impl Fn(&E) -> Value + 'static,
     ) -> impl Fn(&E, &mut Window, &mut App) + 'static {
-        let dispatch = self.0.clone();
+        let dispatch = self.dispatch.clone();
         move |event, window, cx| {
             if let Err(error) = dispatch(&key, encode(event), window, cx) {
                 eprintln!("component input rejected: {error}");
@@ -468,23 +576,18 @@ mod tests {
     }
 
     #[gpui::test]
-    fn committed_decisions_control_native_defaults_and_bubbling_and_failure_rejects(
-        cx: &mut TestAppContext,
-    ) {
+    fn input_admission_failure_consumes_the_native_default_and_bubbling(cx: &mut TestAppContext) {
         let mode = Rc::new(Cell::new(0_u8));
         let delivered = Rc::new(Cell::new(0_usize));
         let parent = Rc::new(Cell::new(0_usize));
         let decision = mode.clone();
         let seen = delivered.clone();
-        let input = Input(Rc::new(move |_, _, _, _| {
+        let input = Input::testing(Rc::new(move |_, _, _, _| {
             seen.set(seen.get() + 1);
-            if decision.get() == 4 {
+            if decision.get() == 1 {
                 return Err(maka_ui_runtime::Error::Invalid("uncommitted batch".into()));
             }
-            Ok(maka_ui_runtime::InputDecision {
-                prevent_default: decision.get() & 1 != 0,
-                stop_propagation: decision.get() & 2 != 0,
-            })
+            Ok(())
         }));
         let observed = parent.clone();
         let (_, _) = cx.add_window_view(move |_, _| DecisionSurface {
@@ -497,7 +600,7 @@ mod tests {
         })
         .unwrap();
         cx.run_until_parked();
-        for current in 0..=4 {
+        for current in 0..=1 {
             mode.set(current);
             let before = parent.get();
             let result = cx
@@ -515,8 +618,8 @@ mod tests {
                 })
                 .unwrap();
             assert_eq!(delivered.get(), usize::from(current) + 1);
-            assert_eq!(result.default_prevented, current & 1 != 0 || current == 4);
-            assert_eq!(parent.get() - before, usize::from(current < 2));
+            assert_eq!(result.default_prevented, current == 1);
+            assert_eq!(parent.get() - before, usize::from(current == 0));
         }
     }
 }

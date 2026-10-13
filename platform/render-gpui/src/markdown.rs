@@ -47,7 +47,7 @@ struct Owner {
 impl Owner {
     fn new(props: &MarkdownProps, input: LiveInput, cx: &mut App) -> Entity<Self> {
         let keep = input
-            .0
+            .current
             .borrow()
             .as_ref()
             .expect("live Markdown mount")
@@ -175,7 +175,7 @@ impl Render for Owner {
                         return denied;
                     }
                     (
-                        owner.input.0.borrow().clone(),
+                        owner.input.current.borrow().clone(),
                         owner.open_web_links,
                         owner.bubble_links,
                     )
@@ -183,7 +183,8 @@ impl Render for Owner {
                 let Some(input) = input else {
                     return denied;
                 };
-                let Ok(()) = (input.0)("link", json!({"url":url.as_str()}), window, cx) else {
+                let Ok(()) = (input.dispatch)("link", json!({"url":url.as_str()}), window, cx)
+                else {
                     return denied;
                 };
                 // Kit rechecks original occurrence admission before the native default.
@@ -382,11 +383,12 @@ mod tests {
     fn committed_recipe_keeps_original_document_focus_and_native_copy(cx: &mut TestAppContext) {
         cx.update(gpui_kit::base::init);
         let input = LiveInput::new(
-            Rc::new(RefCell::new(Some(crate::Input(Rc::new(|_, _, _, _| {
-                Ok(Default::default())
-            }))))),
+            Rc::new(RefCell::new(Some(crate::Input::testing(Rc::new(
+                |_, _, _, _| Ok(()),
+            ))))),
             crate::NativeBudget::default(),
             std::sync::Arc::new(maka_capabilities::call::Resources::default()),
+            || {},
         );
         let (root, cx) = cx.add_window_view(|_, cx| Root(Owner::new(&props(), input, cx)));
         let owner = root.read_with(cx, |r, _| r.0.clone());
@@ -470,11 +472,12 @@ mod tests {
         props.source = "preview selection".into();
         props.focus_on_pointer = false;
         let input = LiveInput::new(
-            Rc::new(RefCell::new(Some(crate::Input(Rc::new(|_, _, _, _| {
-                Ok(Default::default())
-            }))))),
+            Rc::new(RefCell::new(Some(crate::Input::testing(Rc::new(
+                |_, _, _, _| Ok(()),
+            ))))),
             crate::NativeBudget::default(),
             Arc::new(maka_capabilities::call::Resources::default()),
+            || {},
         );
         let (root, cx) = cx.add_window_view(|_, cx| FocusRoot {
             owner: Owner::new(&props, input, cx),
@@ -535,7 +538,7 @@ mod tests {
         let decision = mode.clone();
         let target = locator.clone();
         let input = LiveInput::new(
-            Rc::new(RefCell::new(Some(crate::Input(Rc::new(
+            Rc::new(RefCell::new(Some(crate::Input::testing(Rc::new(
                 move |key, event, window, cx| {
                     assert_eq!(key, "link");
                     assert!(
@@ -547,10 +550,7 @@ mod tests {
                         .contains(&event["url"].as_str().unwrap())
                     );
                     match decision.get() {
-                        0 => Ok(maka_ui_runtime::InputDecision {
-                            prevent_default: true,
-                            stop_propagation: false,
-                        }),
+                        0 => Ok(()),
                         1 => Err(maka_ui_runtime::Error::Invalid(
                             "failed plugin batch".into(),
                         )),
@@ -559,16 +559,19 @@ mod tests {
                             let mut disabled = props();
                             disabled.disabled = true;
                             owner.update(cx, |o, cx| o.apply(&disabled, window, cx));
-                            Ok(Default::default())
+                            Ok(())
                         }
-                        _ => Ok(Default::default()),
+                        _ => Ok(()),
                     }
                 },
             ))))),
             crate::NativeBudget::default(),
             std::sync::Arc::new(maka_capabilities::call::Resources::default()),
+            || {},
         );
-        let (root, cx) = cx.add_window_view(|_, cx| Root(Owner::new(&props(), input, cx)));
+        let mut blocked = props();
+        blocked.open_web_links = false;
+        let (root, cx) = cx.add_window_view(|_, cx| Root(Owner::new(&blocked, input, cx)));
         let owner = root.read_with(cx, |r, _| r.0.clone());
         *locator.borrow_mut() = Some(owner.downgrade());
         cx.run_until_parked();
@@ -578,6 +581,8 @@ mod tests {
         ax(cx, id, accesskit::Action::Click);
         assert_eq!(cx.cx.opened_url(), None);
         mode.set(1);
+        cx.update(|window, cx| owner.update(cx, |o, cx| o.apply(&props(), window, cx)));
+        draw(cx);
         ax(cx, id, accesskit::Action::Click);
         assert_eq!(cx.cx.opened_url(), None);
         ax(cx, id, accesskit::Action::Focus);

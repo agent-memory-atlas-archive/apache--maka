@@ -177,6 +177,7 @@ impl SceneState {
         }
         chosen.map_or(WidgetInput::Consumed(None), |key| {
             WidgetInput::Emitted(NativeInput {
+                replaceable: false,
                 key: choice.key.clone(),
                 value: json!({"kind":"selected","key":key}),
             })

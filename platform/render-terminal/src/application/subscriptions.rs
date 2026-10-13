@@ -123,10 +123,10 @@ fn terminal_task_owner_delivers_each_item_then_drains_real_close_after_restorati
     )
     .unwrap();
     draw(&mut tui, 30, 12);
-    tui.input(key(KeyCode::Enter)).unwrap();
+    tui.input_settled(key(KeyCode::Enter)).unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     while state.waiting.available_permits() == 0 {
-        tui.pump().unwrap();
+        tui.pump_settled().unwrap();
         assert!(Instant::now() < deadline);
         std::thread::yield_now();
     }
@@ -136,7 +136,7 @@ fn terminal_task_owner_delivers_each_item_then_drains_real_close_after_restorati
     assert!(payload.upgrade().is_some());
     tui.surface_closed(&tui.surface(), Ok(())).unwrap();
     while state.closing.available_permits() == 0 {
-        tui.pump().unwrap();
+        tui.pump_settled().unwrap();
         assert!(Instant::now() < deadline);
         std::thread::yield_now();
     }
@@ -144,11 +144,11 @@ fn terminal_task_owner_delivers_each_item_then_drains_real_close_after_restorati
     assert!(payload.upgrade().is_some());
     state.release.add_permits(1);
     while !tui.can_shutdown() {
-        tui.pump().unwrap();
+        tui.pump_settled().unwrap();
         assert!(Instant::now() < deadline);
         std::thread::yield_now();
     }
     assert!(payload.upgrade().is_none());
     assert_eq!(tui.application.accepted_action_count(), 0);
-    tui.shutdown().unwrap();
+    tui.shutdown_settled().unwrap();
 }

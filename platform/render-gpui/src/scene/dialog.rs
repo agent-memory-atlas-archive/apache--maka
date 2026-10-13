@@ -142,7 +142,7 @@ impl State {
                 .confirm_on_enter(false)
                 .on_ok(|_, _, _| false)
                 .on_open_change(move |open, reason, window, cx| {
-                    if open || !opening.is_active(window) || live.0.borrow().is_none() {
+                    if open || !opening.is_active(window) || live.current.borrow().is_none() {
                         return;
                     }
                     let reason = match reason {

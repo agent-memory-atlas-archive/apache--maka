@@ -33,6 +33,8 @@ mod rows;
 mod terminal;
 
 use super::*;
+#[path = "tests/driver.rs"]
+mod driver;
 use crossterm::event::{KeyEvent, MouseEvent};
 use maka_ui_runtime::Surface;
 use maka_ui_runtime::actions::ServiceCompletion;
@@ -50,13 +52,24 @@ pub(super) fn fixture(handler: &str) -> (tokio::runtime::Runtime, Input, Vec<Pac
     (runtime, input, packages)
 }
 fn draw(presenter: &mut Presenter, width: u16, height: u16) -> Buffer {
+    for _ in 0..16 {
+        let buffer = draw_frame(presenter, width, height);
+        if !presenter.resources.redraw {
+            return buffer;
+        }
+    }
+    panic!("fixture presentation did not converge");
+}
+fn draw_frame(presenter: &mut Presenter, width: u16, height: u16) -> Buffer {
+    presenter.settle().unwrap();
     presenter.sync_native().unwrap();
-    let area = Rect::new(0, 0, width, height);
-    let mut buffer = Buffer::empty(area);
-    let scene = presenter.paint(area, &mut buffer).unwrap();
+    let mut buffer = Buffer::empty(Rect::new(0, 0, width, height));
+    let scene = presenter.paint(buffer.area, &mut buffer).unwrap();
     presenter.present(scene);
+    presenter.settle().unwrap();
     buffer
 }
+
 fn key(code: KeyCode) -> Event {
     Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
 }
@@ -78,19 +91,19 @@ fn idle_presentation_waits_for_input_and_committed_changes() {
     assert!(!tui.resources.redraw);
     assert!(tui.next_frame.is_none());
     for _ in 0..10 {
-        tui.pump().unwrap();
+        tui.pump_settled().unwrap();
     }
     assert!(
         !tui.resources.redraw,
         "unchanged native polling must not request another layout"
     );
-    tui.input(key(KeyCode::Enter)).unwrap();
+    tui.input_settled(key(KeyCode::Enter)).unwrap();
     assert!(tui.resources.redraw);
     let painted = draw(&mut tui, 30, 12);
     assert!(painted.content.iter().any(|cell| cell.symbol() == "1"));
     draw(&mut tui, 30, 12);
     assert!(!tui.resources.redraw);
-    tui.input(Event::Resize(50, 20)).unwrap();
+    tui.input_settled(Event::Resize(50, 20)).unwrap();
     assert!(
         tui.resources.redraw,
         "resize must redraw even without guest changes"
@@ -112,7 +125,9 @@ fn same_package_has_native_surfaces_and_distinct_layouts_and_paint_never_calls_g
         Default::default(),
     )
     .unwrap();
+    runtime.block_on(desktop.wait_ready()).unwrap();
     let mount = desktop.mount_launch(json!({})).unwrap();
+    runtime.block_on(desktop.wait_frame(&mount)).unwrap();
     assert!(matches!(
         desktop.frame(&mount).unwrap().surface,
         Some(Surface::Window { width: 640, .. })
@@ -138,13 +153,14 @@ fn same_package_has_native_surfaces_and_distinct_layouts_and_paint_never_calls_g
         tui.application.frame(&tui.root).unwrap().state,
         json!({"count":0,"revision":0})
     );
-    tui.input(key(KeyCode::Enter)).unwrap();
+    tui.input_settled(key(KeyCode::Enter)).unwrap();
     assert_eq!(tui.application.frame(&tui.root).unwrap().state["count"], 1);
     // Coordinates bind the last flushed scene revision. No repaint/re-resolution.
-    assert!(tui.input(key(KeyCode::Enter)).is_err());
+    tui.input_settled(key(KeyCode::Enter)).unwrap();
+    assert_eq!(tui.application.frame(&tui.root).unwrap().state["count"], 1);
     draw(&mut tui, 30, 12);
     let hit = tui.scene[0].area.visible();
-    tui.input(Event::Mouse(MouseEvent {
+    tui.input_settled(Event::Mouse(MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: hit.x,
         row: hit.y,
@@ -154,9 +170,19 @@ fn same_package_has_native_surfaces_and_distinct_layouts_and_paint_never_calls_g
     assert_eq!(tui.application.frame(&tui.root).unwrap().state["count"], 2);
     tui.surface_closed(&tui.surface(), Ok(())).unwrap();
     assert!(tui.can_shutdown());
-    tui.shutdown().unwrap();
+    tui.shutdown_settled().unwrap();
     desktop.close(&mount, Ok(())).unwrap();
-    desktop.shutdown().unwrap();
+    runtime
+        .block_on(std::future::poll_fn(|cx| {
+            desktop.set_waker(cx.waker().clone());
+            match desktop.shutdown() {
+                Err(Error::Core(maka_plugin_core::Error::CleanupPending)) => {
+                    std::task::Poll::Pending
+                }
+                result => std::task::Poll::Ready(result),
+            }
+        }))
+        .unwrap();
 }
 #[test]
 fn unflushed_geometry_is_not_interactive_and_failure_receipt_preserves_owner() {
@@ -174,7 +200,7 @@ fn unflushed_geometry_is_not_interactive_and_failure_receipt_preserves_owner() {
     let area = Rect::new(0, 0, 30, 12);
     let mut buffer = Buffer::empty(area);
     let _unflushed = tui.paint(area, &mut buffer).unwrap();
-    tui.input(key(KeyCode::Enter)).unwrap();
+    tui.input_settled(key(KeyCode::Enter)).unwrap();
     assert_eq!(tui.application.frame(&tui.root).unwrap().state["count"], 0);
     draw(&mut tui, 30, 12);
     assert!(
@@ -191,7 +217,7 @@ fn unflushed_geometry_is_not_interactive_and_failure_receipt_preserves_owner() {
     // A later explicit real restoration retry recovers this exact physical owner.
     tui.surface_recovered(&tui.surface()).unwrap();
     assert!(tui.can_shutdown());
-    tui.shutdown().unwrap();
+    tui.shutdown_settled().unwrap();
 }
 #[test]
 fn unicode_geometry_clips_and_every_untrusted_text_sink_removes_controls() {
@@ -305,8 +331,8 @@ fn accepted_worker_survives_surface_close_and_cleanup_failure_keeps_actual_capac
         )
         .unwrap();
         draw(&mut tui, 30, 12);
-        tui.input(key(KeyCode::Enter)).unwrap();
-        tui.pump().unwrap();
+        tui.input_settled(key(KeyCode::Enter)).unwrap();
+        tui.pump_settled().unwrap();
         let actual_payload = rx.recv_timeout(Duration::from_secs(5)).unwrap();
         assert_eq!(tui.application.accepted_action_count(), 1);
         tui.surface_closed(&tui.surface(), Ok(())).unwrap();
@@ -316,7 +342,7 @@ fn accepted_worker_survives_surface_close_and_cleanup_failure_keeps_actual_capac
         gate.add_permits(1);
         let deadline = Instant::now() + Duration::from_secs(5);
         while !tui.jobs.is_empty() && Instant::now() < deadline {
-            let _ = tui.pump();
+            let _ = tui.pump_settled();
             std::thread::yield_now();
         }
         assert!(tui.jobs.is_empty());
@@ -334,7 +360,7 @@ fn accepted_worker_survives_surface_close_and_cleanup_failure_keeps_actual_capac
             assert_eq!(tui.application.accepted_action_count(), 0);
         }
         assert!(tui.can_shutdown());
-        tui.shutdown().unwrap();
+        tui.shutdown_settled().unwrap();
     }
 }
 
@@ -472,7 +498,7 @@ fn imported_native_recipe_child_state_and_focus_use_real_mount_lifetimes() {
         .unwrap()
         .clone();
     tui.focus = Some(old.clone());
-    tui.input(key(KeyCode::Enter)).unwrap();
+    tui.input_settled(key(KeyCode::Enter)).unwrap();
     assert_eq!(tui.application.frame(&right).unwrap().state["count"], 21);
     draw(&mut tui, 80, 20);
     let toggle = tui
@@ -484,7 +510,7 @@ fn imported_native_recipe_child_state_and_focus_use_real_mount_lifetimes() {
     tui.application
         .dispatch(&toggle.mount, toggle.revision, &toggle.key, json!({}))
         .unwrap();
-    tui.pump().unwrap();
+    tui.pump_settled().unwrap();
     assert!(tui.focus.is_none());
     draw(&mut tui, 80, 20);
     let toggle = tui
@@ -514,7 +540,7 @@ fn imported_native_recipe_child_state_and_focus_use_real_mount_lifetimes() {
     );
     tui.surface_closed(&tui.surface(), Ok(())).unwrap();
     assert!(tui.can_shutdown());
-    tui.shutdown().unwrap();
+    tui.shutdown_settled().unwrap();
 }
 
 #[test]
@@ -574,7 +600,7 @@ fn narrow_row_uses_the_same_remaining_width_for_measure_and_unicode_paint() {
     assert_eq!(buffer[(0, 2)].symbol(), "a");
     assert_eq!(buffer[(4, 2)].symbol(), "r");
     tui.surface_closed(&tui.surface(), Ok(())).unwrap();
-    tui.shutdown().unwrap();
+    tui.shutdown_settled().unwrap();
 }
 
 fn service_fixture(
@@ -847,7 +873,7 @@ fn native_terminal_slots_measure_and_paint_js_children_with_original_input_mount
         .find(|t| t.mount == left && t.key == "inc")
         .unwrap()
         .clone();
-    tui.input(Event::Mouse(MouseEvent {
+    tui.input_settled(Event::Mouse(MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: target.area.visible().x,
         row: target.area.visible().y,
@@ -867,7 +893,7 @@ fn native_terminal_slots_measure_and_paint_js_children_with_original_input_mount
         "left 1"
     );
     tui.surface_closed(&tui.surface(), Ok(())).unwrap();
-    tui.shutdown().unwrap();
+    tui.shutdown_settled().unwrap();
 }
 #[test]
 fn native_terminal_hidden_slots_override_custom_parent_measurement_and_paint() {
@@ -899,6 +925,7 @@ fn native_terminal_hidden_slots_override_custom_parent_measurement_and_paint() {
     tui.application
         .dispatch(&root, 0, "parent", Value::Null)
         .unwrap();
+    tui.settle().unwrap();
     let frame = tui.application.frame(&root).unwrap();
     assert_eq!(frame.view.slots().len(), 2);
     assert_eq!(
@@ -949,7 +976,7 @@ fn native_terminal_hidden_slots_override_custom_parent_measurement_and_paint() {
         &tui.resources.owners[&left.id()].identity
     ));
     tui.surface_closed(&tui.surface(), Ok(())).unwrap();
-    tui.shutdown().unwrap();
+    tui.shutdown_settled().unwrap();
 }
 #[test]
 fn duplicate_native_terminal_placement_rejects_pending_scene_before_input_publication() {
@@ -965,23 +992,18 @@ fn duplicate_native_terminal_placement_rejects_pending_scene_before_input_public
     assert!(tui.scene.is_empty());
     assert_eq!(tui.application.frame(&tui.root).unwrap().revision, 0);
     tui.surface_closed(&tui.surface(), Ok(())).unwrap();
-    tui.shutdown().unwrap();
+    tui.shutdown_settled().unwrap();
 }
 
 #[test]
-fn raw_click_focus_is_a_default_after_successful_commit() {
+fn raw_click_focus_is_immediate_even_when_business_candidate_is_rejected() {
     for (handler, accepts, focuses) in [
-        (
-            "const out=frame({count:state.count+1,revision:state.revision+1});out.decision={preventDefault:true};return out;",
-            true,
-            false,
-        ),
         (
             "return frame({count:state.count+1,revision:state.revision+1});",
             true,
             true,
         ),
-        ("throw new Error('reject input');", false, false),
+        ("throw new Error('reject input');", false, true),
     ] {
         let (runtime, input, packages) = fixture(handler);
         let mut tui = Presenter::new(
@@ -996,7 +1018,7 @@ fn raw_click_focus_is_a_default_after_successful_commit() {
         draw(&mut tui, 30, 12);
         let hit = tui.scene[0].area.visible();
         tui.focus = None;
-        let result = tui.input(Event::Mouse(MouseEvent {
+        let result = tui.input_settled(Event::Mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: hit.x,
             row: hit.y,
@@ -1009,7 +1031,7 @@ fn raw_click_focus_is_a_default_after_successful_commit() {
             u64::from(accepts)
         );
         tui.surface_closed(&tui.surface(), Ok(())).unwrap();
-        tui.shutdown().unwrap();
+        tui.shutdown_settled().unwrap();
     }
 }
 
@@ -1070,16 +1092,20 @@ fn pure_native_paint_panics_drain_original_state_and_failed_drop_keeps_root() {
         let drops = Arc::new(AtomicUsize::new(0));
         let watched = drops.clone();
         let native = NativeRegistry::with_surface(PresentationTarget::Tui)
-            .with_scene_compiler(scene::language(), move |_, _| {
-                maka_ui_runtime::NativeView::<dyn Widget>::new(
-                    Rc::new(Panic {
-                        drops: watched.clone(),
-                        failed,
-                    }),
-                    BTreeMap::new(),
-                    vec![],
-                )
-            })
+            .with_scene_compiler(
+                scene::language(),
+                move |_, _| {
+                    maka_ui_runtime::PreparedScene::new(
+                        Panic {
+                            drops: watched.clone(),
+                            failed,
+                        },
+                        BTreeMap::new(),
+                        vec![],
+                    )
+                },
+                |prepared| prepared.finish::<Panic, dyn Widget>(|recipe| Rc::new(recipe)),
+            )
             .unwrap();
         let mut tui = Presenter::new(
             &input,
@@ -1106,9 +1132,9 @@ fn pure_native_paint_panics_drain_original_state_and_failed_drop_keeps_root() {
         assert_eq!(tui.can_shutdown(), !failed);
         if failed {
             assert!(tui.application.frame(&tui.root).is_ok());
-            assert!(tui.shutdown().is_err());
+            assert!(tui.shutdown_settled().is_err());
         } else {
-            tui.shutdown().unwrap();
+            tui.shutdown_settled().unwrap();
         }
     }
 }
@@ -1181,10 +1207,10 @@ fn retired_target_cleanup_preserves_the_original_nested_scroll_ancestor_identity
         .application
         .dispatch(&toggle.mount, toggle.revision, &toggle.key, json!({}))
         .unwrap();
-    presenter.pump().unwrap();
+    presenter.pump_settled().unwrap();
     assert!(!presenter.scene.iter().any(|target| target.mount == retired));
     presenter
-        .input(Event::Mouse(MouseEvent {
+        .input_settled(Event::Mouse(MouseEvent {
             kind: MouseEventKind::ScrollDown,
             column: point.x,
             row: point.y,
@@ -1200,7 +1226,7 @@ fn retired_target_cleanup_preserves_the_original_nested_scroll_ancestor_identity
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
-    presenter.shutdown().unwrap();
+    presenter.shutdown_settled().unwrap();
 }
 
 #[test]
@@ -1256,18 +1282,25 @@ fn held_native_work_waits_through_kind_handoff_and_original_surface_close() {
         let ticket = Arc::new(Mutex::new(None));
         let held = ticket.clone();
         let native = NativeRegistry::with_surface(PresentationTarget::Tui)
-            .with_scene_compiler(scene::language(), move |view, _| {
-                let new = view["children"][0]["text"] == "1";
-                maka_ui_runtime::NativeView::<dyn Widget>::new(
-                    if new {
-                        Rc::new(New) as Rc<dyn Widget>
-                    } else {
-                        Rc::new(Old(held.clone())) as Rc<dyn Widget>
-                    },
-                    BTreeMap::from([("inc".into(), json!({"type":"object"}))]),
-                    vec![],
-                )
-            })
+            .with_scene_compiler(
+                scene::language(),
+                |view, _| {
+                    maka_ui_runtime::PreparedScene::new(
+                        view["children"][0]["text"] == "1",
+                        BTreeMap::from([("inc".into(), json!({"type":"object"}))]),
+                        vec![],
+                    )
+                },
+                move |prepared| {
+                    prepared.finish::<bool, dyn Widget>(|new| {
+                        if new {
+                            Rc::new(New) as Rc<dyn Widget>
+                        } else {
+                            Rc::new(Old(held.clone())) as Rc<dyn Widget>
+                        }
+                    })
+                },
+            )
             .unwrap();
         let mut tui = Presenter::new(
             &input,
@@ -1280,48 +1313,45 @@ fn held_native_work_waits_through_kind_handoff_and_original_surface_close() {
         .unwrap();
         let original = tui.root.clone();
         if change_kind {
-            tui.application
-                .dispatch(&original, 0, "inc", json!({}))
-                .unwrap();
-            tui.pump().unwrap();
-            assert!(!tui.resources.ready(&tui.application, &original).unwrap());
-            let scene = tui
-                .paint(
-                    Rect::new(0, 0, 20, 4),
-                    &mut Buffer::empty(Rect::new(0, 0, 20, 4)),
-                )
-                .unwrap();
-            assert!(scene.targets.is_empty());
-            tui.pump().unwrap();
-            if aba {
-                let revision = tui.application.frame(&original).unwrap().revision;
+            let identity = tui.resources.owners[&original.id()].identity.clone();
+            for _ in 0..if aba { 2 } else { 1 } {
                 tui.application
-                    .dispatch(&original, revision, "inc", json!({}))
+                    .dispatch(&original, 0, "inc", json!({}))
                     .unwrap();
-                tui.pump().unwrap();
-                assert!(!tui.resources.ready(&tui.application, &original).unwrap());
+                runtime
+                    .block_on(tui.application.wait_prepared(&original))
+                    .unwrap();
+                let error = tui.pump_settled().unwrap_err().to_string();
+                assert!(error.contains("native recipe type changed"), "{error}");
+                assert_eq!(tui.application.frame(&original).unwrap().revision, 0);
+                let owner = &tui.resources.owners[&original.id()];
+                assert!(Rc::ptr_eq(&identity, &owner.identity));
+                assert_eq!(
+                    owner.recipe.as_ref().type_id(),
+                    std::any::TypeId::of::<Old>()
+                );
+                assert!(tui.resources.ready(&tui.application, &original).unwrap());
+                assert!(
+                    ticket.lock().unwrap().is_some(),
+                    "failed candidate must retain the original worker"
+                );
+                draw(&mut tui, 20, 4);
             }
             ticket.lock().unwrap().take().unwrap().complete(Ok(()));
-            tui.pump().unwrap();
-            assert!(tui.resources.ready(&tui.application, &original).unwrap());
-            draw(&mut tui, 20, 4);
-            if aba {
-                ticket.lock().unwrap().take().unwrap().complete(Ok(()));
-            }
         } else {
             tui.surface_closed(&original, Ok(())).unwrap();
-            tui.pump().unwrap();
+            tui.pump_settled().unwrap();
             assert!(!tui.can_shutdown());
             assert!(tui.resources.owners.contains_key(&original.id()));
             ticket.lock().unwrap().take().unwrap().complete(Ok(()));
-            tui.pump().unwrap();
+            tui.pump_settled().unwrap();
             assert!(!tui.resources.owners.contains_key(&original.id()));
         }
         if change_kind {
             tui.surface_closed(&original, Ok(())).unwrap();
         }
         assert!(tui.can_shutdown());
-        tui.shutdown().unwrap();
+        tui.shutdown_settled().unwrap();
     }
 }
 
@@ -1340,7 +1370,7 @@ fn recovery_uses_independent_component_after_exact_original_surface_restoration(
     .unwrap();
     draw(&mut tui, 30, 12);
     let old = tui.surface();
-    tui.input(key(KeyCode::Enter)).unwrap();
+    tui.input_settled(key(KeyCode::Enter)).unwrap();
     assert!(tui.requires_surface_replacement());
     assert!(tui.try_replace_surface(json!({})).is_err());
     assert!(
@@ -1350,7 +1380,7 @@ fn recovery_uses_independent_component_after_exact_original_surface_restoration(
     assert!(tui.try_replace_surface(json!({})).is_err());
     assert_eq!(tui.surface(), old);
     tui.surface_recovered(&old).unwrap();
-    assert!(tui.try_replace_surface(json!({})).unwrap());
+    assert!(tui.replace_surface_settled(json!({})).unwrap());
     assert_ne!(tui.surface(), old);
     assert_eq!(
         tui.application.root_kind(&tui.surface()).unwrap(),
@@ -1358,11 +1388,11 @@ fn recovery_uses_independent_component_after_exact_original_surface_restoration(
     );
     assert!(tui.surface_closed(&old, Ok(())).is_err());
     draw(&mut tui, 30, 12);
-    tui.input(key(KeyCode::Enter)).unwrap();
+    tui.input_settled(key(KeyCode::Enter)).unwrap();
     assert_eq!(tui.application.frame(&tui.root).unwrap().state["count"], 1);
     tui.surface_closed(&tui.surface(), Ok(())).unwrap();
     assert!(tui.can_shutdown());
-    tui.shutdown().unwrap();
+    tui.shutdown_settled().unwrap();
 }
 
 #[test]
@@ -1380,21 +1410,21 @@ fn recovery_failure_does_not_recursively_replace_the_failed_recovery_root() {
     )
     .unwrap();
     draw(&mut tui, 30, 12);
-    tui.input(key(KeyCode::Enter)).unwrap();
+    tui.input_settled(key(KeyCode::Enter)).unwrap();
     tui.surface_closed(&tui.surface(), Ok(())).unwrap();
-    assert!(tui.try_replace_surface(json!({})).unwrap());
+    assert!(tui.replace_surface_settled(json!({})).unwrap());
     let recovery = tui.surface();
     assert_eq!(
         tui.application.root_kind(&recovery).unwrap(),
         RootKind::Recovery
     );
     draw(&mut tui, 30, 12);
-    assert!(tui.input(key(KeyCode::Enter)).is_err());
+    assert!(tui.input_settled(key(KeyCode::Enter)).is_err());
     assert!(tui.application.is_retiring(&recovery));
     assert!(!tui.requires_surface_replacement());
     assert!(tui.try_replace_surface(json!({})).is_err());
     tui.surface_closed(&recovery, Ok(())).unwrap();
-    tui.shutdown().unwrap();
+    tui.shutdown_settled().unwrap();
 }
 
 fn editor_owner(state: &dyn std::any::Any) -> &super::editor::Owner {

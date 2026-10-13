@@ -229,6 +229,7 @@ impl super::Widget for Node {
                     return Ok(super::WidgetInput::Unhandled);
                 }
                 return Ok(super::WidgetInput::Emitted(super::NativeInput {
+                    replaceable: false,
                     key: if mouse.kind == crossterm::event::MouseEventKind::ScrollUp {
                         wheel.up.clone()
                     } else {

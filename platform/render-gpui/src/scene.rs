@@ -692,7 +692,7 @@ impl NodePresentation for Node {
                 let click_key = key.clone();
                 let copy_text = copy_text.clone();
                 let bubble_activation = *bubble_activation;
-                let enabled = button.admitted.get() && alive.0.borrow().is_some();
+                let enabled = button.admitted.get() && alive.current.borrow().is_some();
                 let handle = button.focus.clone();
                 let focus_action = handle.clone();
                 let hover = hover.clone();
@@ -707,22 +707,22 @@ impl NodePresentation for Node {
                     .tab_index(handle.tab_index)
                     .tab_stop(handle.tab_stop)
                     .capture_any_mouse_down(move |_, _, cx| {
-                        if !down.get() || down_alive.0.borrow().is_none() {
+                        if !down.get() || down_alive.current.borrow().is_none() {
                             cx.stop_propagation();
                         }
                     })
                     .capture_any_mouse_up(move |_, _, cx| {
-                        if !up.get() || up_alive.0.borrow().is_none() {
+                        if !up.get() || up_alive.current.borrow().is_none() {
                             cx.stop_propagation();
                         }
                     })
                     .capture_key_down(move |_, _, cx| {
-                        if !key_down.get() || key_down_alive.0.borrow().is_none() {
+                        if !key_down.get() || key_down_alive.current.borrow().is_none() {
                             cx.stop_propagation();
                         }
                     })
                     .capture_key_up(move |_, _, cx| {
-                        if !key_up.get() || key_up_alive.0.borrow().is_none() {
+                        if !key_up.get() || key_up_alive.current.borrow().is_none() {
                             cx.stop_propagation();
                         }
                     })
@@ -730,7 +730,7 @@ impl NodePresentation for Node {
                         this.on_a11y_action(
                             gpui_kit::AccessibleAction::Focus,
                             move |_, window, cx| {
-                                if a11y.get() && a11y_alive.0.borrow().is_some() {
+                                if a11y.get() && a11y_alive.current.borrow().is_some() {
                                     focus_action.focus(window, cx);
                                 }
                             },
@@ -741,8 +741,13 @@ impl NodePresentation for Node {
                     .focus_visible(move |s| focus.apply(s))
                     .child(SharedString::from(label.clone()))
                     .on_click(move |_, window, cx| {
-                        if click_admission.get() && click_alive.0.borrow().is_some() {
-                            match (click_input.0)(&click_key, json!({"kind":"click"}), window, cx) {
+                        if click_admission.get() && click_alive.current.borrow().is_some() {
+                            match (click_input.dispatch)(
+                                &click_key,
+                                json!({"kind":"click"}),
+                                window,
+                                cx,
+                            ) {
                                 Ok(()) => (),
                                 Err(error) => {
                                     eprintln!("component input rejected: {error}");
@@ -754,7 +759,7 @@ impl NodePresentation for Node {
                             if let Some(text) = &copy_text
                                 // Closing a menu settles this admitted default;
                                 // it only revokes admission for later events.
-                                && click_alive.0.borrow().is_some()
+                                && click_alive.current.borrow().is_some()
                             {
                                 cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(
                                     text.clone(),

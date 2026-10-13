@@ -222,7 +222,7 @@ impl State {
             .on_key_down(move |event, window: &mut Window, cx| {
                 if event.keystroke.key == "escape"
                     && escape_admission.allows(window)
-                    && escape_live.0.borrow().is_some()
+                    && escape_live.current.borrow().is_some()
                 {
                     window.prevent_default();
                     cx.stop_propagation();
@@ -231,7 +231,7 @@ impl State {
             })
             .on_mouse_down_out(move |event, window: &mut Window, cx| {
                 if outside_admission.allows(window)
-                    && outside_live.0.borrow().is_some()
+                    && outside_live.current.borrow().is_some()
                     && !trigger_bounds.get().contains(&event.position)
                     && !pointer_scope.contains_hovered(window)
                 {

@@ -90,7 +90,7 @@ pub(super) struct QueuedInput {
     mount: Mount,
     event: abi::ComponentInput,
     bytes: usize,
-    snapshot: bool,
+    publication: Option<tokio::sync::oneshot::Sender<std::result::Result<(), String>>>,
 }
 pub(super) struct Feedback {
     pub consumer: Mount,
@@ -145,6 +145,7 @@ pub(super) struct Update<V: ?Sized> {
     feedback: Option<Feedback>,
     ready: bool,
     native_prepared: bool,
+    publication: Option<tokio::sync::oneshot::Sender<std::result::Result<(), String>>>,
 }
 impl<V: ?Sized> Update<V> {
     fn new(slice: std::time::Duration) -> Self {
@@ -164,6 +165,7 @@ impl<V: ?Sized> Update<V> {
             feedback: None,
             ready: false,
             native_prepared: false,
+            publication: None,
         }
     }
     // Global presentation changes can visit every retained component. Bound
@@ -254,6 +256,13 @@ impl<V: ?Sized> Update<V> {
         Ok(())
     }
 }
+impl<V: ?Sized> Drop for Update<V> {
+    fn drop(&mut self) {
+        if let Some(publication) = self.publication.take() {
+            let _ = publication.send(Err("original UI candidate closed before publication".into()));
+        }
+    }
+}
 
 impl<V: ?Sized + 'static> Application<V> {
     pub fn root_kind(&self, mount: &Mount) -> Result<maka_plugin_core::composition::RootKind> {
@@ -294,9 +303,10 @@ impl<V: ?Sized + 'static> Application<V> {
     pub async fn mount_bootstrap_ready(&mut self, props: Value) -> Result<Mount> {
         self.wait_ready().await?;
         let root = self.mount_bootstrap(props.clone())?;
+        let launch = self.root_kind(&root)? == maka_plugin_core::composition::RootKind::Launch;
         match self.wait_frame(&root).await {
             Ok(()) => Ok(root),
-            Err(error) if self.runtime.desired().recovery().is_some() => {
+            Err(error) if launch && self.runtime.desired().recovery().is_some() => {
                 self.deployment_error.get_or_insert(error.to_string());
                 let recovery = self.mount_selected_root(
                     maka_plugin_core::composition::RootKind::Recovery,
@@ -391,6 +401,9 @@ impl<V: ?Sized + 'static> Application<V> {
         key: &str,
         event: Value,
     ) -> Result<()> {
+        if self.is_retiring(mount) {
+            return Err(maka_plugin_core::Error::Retired.into());
+        }
         let current = self
             .views
             .get(&mount.id())
@@ -406,20 +419,23 @@ impl<V: ?Sized + 'static> Application<V> {
                 key: key.into(),
                 event,
             },
-            false,
+            None,
         )?;
         Ok(())
     }
 
-    /// Latest native evidence is replaceable only while still queued. Callers
-    /// keep one-shot commands and receipts on the reliable admission path.
-    pub fn dispatch_snapshot(
+    /// Native evidence remains in its original renderer's custody until this
+    /// whole component transaction commits. Admission alone is not publication.
+    pub fn dispatch_observation(
         &mut self,
         mount: &Mount,
         revision: u64,
         key: &str,
         event: Value,
-    ) -> Result<()> {
+    ) -> Result<super::backend::Job<()>> {
+        if self.is_retiring(mount) {
+            return Err(maka_plugin_core::Error::Retired.into());
+        }
         let current = self
             .views
             .get(&mount.id())
@@ -428,39 +444,30 @@ impl<V: ?Sized + 'static> Application<V> {
             return Err(Error::Invalid("stale native observation".into()));
         }
         current.frame.view.validate_input(key, &event)?;
+        let (publication, receipt) = tokio::sync::oneshot::channel();
         self.enqueue_input(
             mount,
             abi::ComponentInput::Raw {
                 key: key.into(),
                 event,
             },
-            true,
-        )
+            Some(publication),
+        )?;
+        Ok(super::backend::Job::new(async move {
+            receipt
+                .await
+                .map_err(|_| Error::Invalid("original UI publication owner stopped".into()))?
+                .map_err(Error::Invalid)
+        }))
     }
 
     fn enqueue_input(
         &mut self,
         mount: &Mount,
         event: abi::ComponentInput,
-        snapshot: bool,
+        publication: Option<tokio::sync::oneshot::Sender<std::result::Result<(), String>>>,
     ) -> Result<()> {
         let bytes = call_bytes(&event)?;
-        if snapshot {
-            let abi::ComponentInput::Raw { key, .. } = &event else {
-                unreachable!()
-            };
-            // Do not cross a reliable input fence such as submitted or a receipt.
-            if let Some(old) = self.ui_inputs.back_mut().filter(|old| old.snapshot && old.mount == *mount
-                && matches!(&old.event, abi::ComponentInput::Raw { key: old_key, .. } if old_key == key)) {
-                if self.ui_input_bytes - old.bytes + bytes > 1024 * 1024 {
-                    return Err(Error::Invalid("UI input queue byte limit".into()));
-                }
-                self.ui_input_bytes -= old.bytes;
-                *old = QueuedInput { mount: mount.clone(), event, bytes, snapshot };
-                self.ui_input_bytes += bytes;
-                return Ok(());
-            }
-        }
         if self.ui_inputs.len() >= 128 || self.ui_input_bytes + bytes > 1024 * 1024 {
             return Err(Error::Invalid("UI input queue limit".into()));
         }
@@ -468,7 +475,7 @@ impl<V: ?Sized + 'static> Application<V> {
             mount: mount.clone(),
             event,
             bytes,
-            snapshot,
+            publication,
         });
         self.ui_input_bytes += bytes;
         self.advance_ui().map(|_| ())
@@ -488,6 +495,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 event,
             },
             Some(feedback),
+            None,
         )
         .map(|_| ())
     }
@@ -496,11 +504,13 @@ impl<V: ?Sized + 'static> Application<V> {
         mount: &Mount,
         event: super::abi::ComponentInput,
         feedback: Option<Feedback>,
+        publication: Option<tokio::sync::oneshot::Sender<std::result::Result<(), String>>>,
     ) -> Result<()> {
         let event =
             serde_json::to_value(event).map_err(|error| Error::Invalid(error.to_string()))?;
         let mut update = Update::new(self.slice);
         update.feedback = feedback;
+        update.publication = publication;
         let current = self
             .views
             .get(&mount.id())
@@ -535,7 +545,11 @@ impl<V: ?Sized + 'static> Application<V> {
             ));
         }
         self.ui_update = Some(update);
-        self.advance_ui().map(|_| ())
+        self.advance_ui()?;
+        if self.ui_update.as_ref().is_some_and(|update| update.ready) {
+            self.waker().wake_by_ref();
+        }
+        Ok(())
     }
 
     /// Run only ready work. The committed tree remains available to native input
@@ -545,9 +559,12 @@ impl<V: ?Sized + 'static> Application<V> {
             while let Some(input) = self.ui_inputs.pop_front() {
                 self.ui_input_bytes -= input.bytes;
                 if self.is_retiring(&input.mount) {
+                    if let Some(publication) = input.publication {
+                        let _ = publication.send(Err("original UI mount retired".into()));
+                    }
                     continue;
                 }
-                self.dispatch_origin(&input.mount, input.event, None)?;
+                self.dispatch_origin(&input.mount, input.event, None, input.publication)?;
                 return Ok(true);
             }
             return Ok(false);
@@ -621,7 +638,10 @@ impl<V: ?Sized + 'static> Application<V> {
                 Ok(false)
             }
             Ok(true) => {
-                if let Some(feedback) = update.feedback
+                if let Some(publication) = update.publication.take() {
+                    let _ = publication.send(Ok(()));
+                }
+                if let Some(feedback) = update.feedback.take()
                     && feedback.item
                     && let Some(id) = feedback.request
                 {
@@ -634,7 +654,11 @@ impl<V: ?Sized + 'static> Application<V> {
             }
             Err(error) => {
                 self.rollback(&update)?;
-                if let Some(feedback) = update.feedback {
+                let observation = update.publication.is_some();
+                if let Some(publication) = update.publication.take() {
+                    let _ = publication.send(Err(error.to_string()));
+                }
+                if let Some(feedback) = update.feedback.take() {
                     if feedback.item
                         && let Some(id) = feedback.request
                     {
@@ -643,7 +667,7 @@ impl<V: ?Sized + 'static> Application<V> {
                     self.runtime.retire_mount(&feedback.consumer)?;
                     self.sync_subscription_demand();
                 }
-                Err(error)
+                if observation { Ok(false) } else { Err(error) }
             }
         }
     }
@@ -652,8 +676,16 @@ impl<V: ?Sized + 'static> Application<V> {
     /// then publishes the whole pending batch in this same bounded owner turn.
     pub fn commit_ui(
         &mut self,
+        surface: &Mount,
         prepare: impl FnOnce(&Self, Candidate<'_, V>) -> Result<()>,
     ) -> Result<bool> {
+        if let Some(update) = self.ui_update.as_ref().filter(|update| update.ready)
+            && let Some(changed) = update.changed.values().next()
+            && self.mount_root(&changed.mount)? != *surface
+        {
+            // Another physical owner cannot prepare or reject this batch.
+            return Ok(false);
+        }
         let Some(mut update) = self.ui_update.take() else {
             return Ok(false);
         };
@@ -664,6 +696,13 @@ impl<V: ?Sized + 'static> Application<V> {
         update.native_prepared = true;
         let result = (|| {
             self.validate_commit_fence(&update)?;
+            for changed in update.changed.values() {
+                if self.mount_root(&changed.mount)? != *surface {
+                    return Err(Error::Invalid(
+                        "UI candidate crosses native surfaces".into(),
+                    ));
+                }
+            }
             prepare(
                 self,
                 Candidate {
@@ -674,7 +713,10 @@ impl<V: ?Sized + 'static> Application<V> {
         })();
         match result {
             Ok(()) => {
-                if let Some(feedback) = update.feedback
+                if let Some(publication) = update.publication.take() {
+                    let _ = publication.send(Ok(()));
+                }
+                if let Some(feedback) = update.feedback.take()
                     && feedback.item
                     && let Some(id) = feedback.request
                 {
@@ -685,7 +727,11 @@ impl<V: ?Sized + 'static> Application<V> {
             }
             Err(error) => {
                 self.rollback(&update)?;
-                if let Some(feedback) = update.feedback {
+                let observation = update.publication.is_some();
+                if let Some(publication) = update.publication.take() {
+                    let _ = publication.send(Err(error.to_string()));
+                }
+                if let Some(feedback) = update.feedback.take() {
                     if feedback.item
                         && let Some(id) = feedback.request
                     {
@@ -694,7 +740,7 @@ impl<V: ?Sized + 'static> Application<V> {
                     self.runtime.retire_mount(&feedback.consumer)?;
                     self.sync_subscription_demand();
                 }
-                Err(error)
+                if observation { Ok(false) } else { Err(error) }
             }
         }
     }
@@ -756,6 +802,12 @@ impl<V: ?Sized + 'static> Application<V> {
 
     pub fn logical_pending(&self) -> bool {
         self.ui_update.is_some()
+    }
+
+    /// Whether admitted UI input or its original logical transaction is pending.
+    /// This does not include independent service executions or native interaction.
+    pub fn ui_pending(&self) -> bool {
+        self.logical_pending() || !self.ui_inputs.is_empty()
     }
 
     fn check_initial(frame: &Frame<NativeView<V>>) -> Result<()> {

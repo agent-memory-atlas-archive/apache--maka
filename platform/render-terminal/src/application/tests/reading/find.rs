@@ -23,7 +23,7 @@ fn command(presenter: &mut Presenter, props: &Rc<RefCell<Value>>, sequence: u64,
     refresh(presenter);
 }
 fn settle(presenter: &mut Presenter, width: u16, height: u16) -> Buffer {
-    let buffer = draw(presenter, width, height);
+    let buffer = draw_frame(presenter, width, height);
     presenter.sync_native().unwrap();
     buffer
 }
@@ -247,7 +247,7 @@ fn delayed_find_cannot_override_newer_physical_intent_even_when_guest_refuses_ob
     all(&mut presenter);
     presenter.present(delayed);
     accept.set(true);
-    presenter.sync_native().unwrap();
+    refresh(&mut presenter);
     assert_eq!(observation(&presenter)["find"], Value::Null);
     assert_eq!(
         observation(&presenter)["receipt"],

@@ -257,7 +257,9 @@ fn actual_quit_drains_cohost_native_sql_write_before_shared_store_close(cx: &mut
         ))
         .unwrap();
     let connections = Arc::new(tokio::sync::Mutex::new(connections));
-    let mount = application.mount_launch(serde_json::json!({})).unwrap();
+    let mount = timer
+        .block_on(application.mount_bootstrap_ready(serde_json::json!({})))
+        .unwrap();
     let application = Rc::new(RefCell::new(application));
     let owner = cx.update(|cx| {
         gpui_kit::init(cx);
@@ -328,13 +330,15 @@ fn actual_quit_drains_cohost_native_sql_write_before_shared_store_close(cx: &mut
     );
     cx.update(|cx| actions::quit_when_drained(&scene.app, cx));
     cx.run_until_parked();
-    timer.block_on(async {
-        tokio::time::timeout(std::time::Duration::from_secs(5), closing.acquire())
-            .await
-            .unwrap()
-            .unwrap()
-            .forget();
-    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while closing.available_permits() == 0 {
+        // Original UI module-close receipts must reach the foreground before
+        // that same owner starts draining the original cohost connection.
+        cx.run_until_parked();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::park_timeout(std::time::Duration::from_millis(1));
+    }
+    closing.try_acquire().unwrap().forget();
     cx.run_until_parked();
     assert!(cx.update(|cx| cx.has_global::<actions::Owner>()));
     assert!(!committed.load(Ordering::Acquire));

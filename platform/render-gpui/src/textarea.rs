@@ -40,7 +40,7 @@ pub struct TextareaOwner {
     last_request: Option<EditorCommand>,
     sequence: u64,
     pub receipt: Option<EditorReceipt>,
-    pending: bool,
+    queued_receipt: Option<EditorReceipt>,
     needs_publication: bool,
     visible: bool,
     focus: maka_ui_runtime::focus::FocusOnReveal,
@@ -70,8 +70,9 @@ impl TextareaOwner {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
+        let publisher = input.clone();
         let keep = input
-            .0
+            .current
             .borrow()
             .as_ref()
             .expect("live editor mount")
@@ -105,10 +106,10 @@ impl TextareaOwner {
         });
         let checkpoint = props.persistence.as_ref().map(|policy| {
             maka_ui_runtime::checkpoint::EditorCheckpoint::new(
-                input.3.clone(),
+                input.checkpoint.clone(),
                 policy,
-                &input.2,
-                input.1.clone(),
+                &input.resources,
+                input.budget.clone(),
             )
         });
         let owner = cx.new(|cx: &mut Context<Self>| {
@@ -128,7 +129,7 @@ impl TextareaOwner {
                 last_request: None,
                 sequence: 0,
                 receipt: None,
-                pending: false,
+                queued_receipt: None,
                 needs_publication: true,
                 visible: true,
                 focus: {
@@ -152,6 +153,35 @@ impl TextareaOwner {
         });
         let subscription = Self::install_menu_input(&owner, cx);
         owner.update(cx, |owner, _| owner._menu_input = Some(subscription));
+        let original = owner.downgrade();
+        publisher.bind_publisher(move |key, value, _, cx| {
+            if !matches!(key, "observe" | "checkpoint") {
+                return;
+            }
+            let _ = original.update(cx, |owner, _| {
+                if owner.input.current.borrow().is_none() {
+                    return;
+                }
+                if key == "observe" {
+                    let observation: EditorObservation =
+                        serde_json::from_value(value.clone()).expect("original editor publication");
+                    if owner.revision == observation.revision
+                        && owner.receipt == observation.receipt
+                    {
+                        owner.needs_publication = false;
+                    }
+                } else if owner
+                    .checkpoint_observation
+                    .as_ref()
+                    .is_some_and(|observation| {
+                        serde_json::to_value(observation).expect("original checkpoint publication")
+                            == *value
+                    })
+                {
+                    owner.checkpoint_observation = None;
+                }
+            });
+        });
         let weak = owner.downgrade();
         let window_id = window.window_handle().window_id();
         let keyboard = cx.intercept_keystrokes(move |event, window, cx| {
@@ -194,7 +224,7 @@ impl TextareaOwner {
                 if owner.snapshot.marked.is_some() {
                     return None;
                 }
-                let input = owner.input.0.borrow().clone()?;
+                let input = owner.input.current.borrow().clone()?;
                 Some((
                     input,
                     EditorObservation {
@@ -209,7 +239,7 @@ impl TextareaOwner {
             window.prevent_default();
             cx.stop_propagation();
             // Leave the entity borrow before the original component dispatch.
-            if (input.0)(
+            if (input.dispatch)(
                 "submit",
                 serde_json::to_value(observation).expect("native submit observation"),
                 window,
@@ -270,7 +300,7 @@ impl TextareaOwner {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<String, EditorReadError> {
-        if self.input.0.borrow().is_none() || reference.owner != self.id {
+        if self.input.current.borrow().is_none() || reference.owner != self.id {
             return Err(EditorReadError::Owner);
         }
         self.refresh(false, window, cx);
@@ -348,65 +378,40 @@ impl TextareaOwner {
         self.schedule(window, cx);
     }
     fn schedule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.pending
-            || (!self.needs_publication && self.checkpoint_observation.is_none())
-            || self.input.0.borrow().is_none()
-        {
-            return;
-        }
-        self.pending = true;
-        let owner = cx.weak_entity();
-        // Leave the native owner borrow before either observation can commit a
-        // new plugin frame. Keep both channels until their own publication succeeds.
-        window.defer(cx, move |window, cx| {
-            let Ok(Some((input, observation, checkpoint))) = owner.update(cx, |owner, cx| {
-                owner.refresh(false, window, cx);
-                owner.pending = false;
-                let input = owner.input.0.borrow().clone()?;
-                let observation = owner.needs_publication.then(|| EditorObservation {
-                    revision: owner.revision,
-                    snapshot: owner.observation_snapshot(),
-                    receipt: owner.receipt.clone(),
-                });
-                Some((input, observation, owner.checkpoint_observation.clone()))
-            }) else {
-                return;
+        if self.needs_publication && self.input.current.borrow().is_some() {
+            let observation = EditorObservation {
+                revision: self.revision,
+                snapshot: self.observation_snapshot(),
+                receipt: self.receipt.clone(),
             };
-            if let Some(observation) = observation {
-                if let Err(error) = (input.0)(
-                    "observe",
-                    serde_json::to_value(&observation).expect("editor observation"),
-                    window,
-                    cx,
-                ) {
-                    eprintln!("editor observation rejected: {error}");
-                } else {
-                    let _ = owner.update(cx, |owner, _| {
-                        if owner.revision == observation.revision
-                            && owner.receipt == observation.receipt
-                        {
-                            owner.needs_publication = false;
-                        }
-                    });
+            let replaceable = self.queued_receipt == observation.receipt;
+            match self.input.capture(
+                "observe",
+                serde_json::to_value(&observation).expect("editor observation"),
+                replaceable,
+                window,
+                cx,
+            ) {
+                Ok(Some(_)) => {
+                    self.queued_receipt.clone_from(&observation.receipt);
                 }
+                Ok(None) => {}
+                Err(error) => eprintln!("editor observation admission rejected: {error}"),
             }
-            if let Some(checkpoint) = checkpoint {
-                if let Err(error) = (input.0)(
-                    "checkpoint",
-                    serde_json::to_value(&checkpoint).expect("checkpoint observation"),
-                    window,
-                    cx,
-                ) {
-                    eprintln!("editor checkpoint observation rejected: {error}");
-                } else {
-                    let _ = owner.update(cx, |owner, _| {
-                        if owner.checkpoint_observation.as_ref() == Some(&checkpoint) {
-                            owner.checkpoint_observation = None;
-                        }
-                    });
-                }
+        }
+        if let Some(checkpoint) = self.checkpoint_observation.clone() {
+            match self.input.capture(
+                "checkpoint",
+                serde_json::to_value(&checkpoint).expect("checkpoint observation"),
+                false,
+                window,
+                cx,
+            ) {
+                Ok(Some(_)) => {}
+                Ok(None) => {}
+                Err(error) => eprintln!("checkpoint observation admission rejected: {error}"),
             }
-        });
+        }
     }
     fn apply(&mut self, props: &TextareaProps, window: &mut Window, cx: &mut Context<Self>) {
         self.persistence = props.persistence.clone();
@@ -555,7 +560,7 @@ impl Render for TextareaOwner {
             .capture_any_mouse_down(move |event, window, cx| {
                 // A commit can disable/remove this owner before the next paint.
                 // Admit against live native facts, never a prior frame's flags.
-                if mouse_input.0.borrow().is_none()
+                if mouse_input.current.borrow().is_none()
                     || mouse_state.read(cx).presentation().is_disabled()
                     || (event.button == MouseButton::Right
                         && mouse_state
@@ -566,7 +571,7 @@ impl Render for TextareaOwner {
                 }
             })
             .capture_any_mouse_up(move |_, _, cx| {
-                if mouse_up_input.0.borrow().is_none()
+                if mouse_up_input.current.borrow().is_none()
                     || mouse_up_state.read(cx).presentation().is_disabled()
                 {
                     cx.stop_propagation();
@@ -579,7 +584,7 @@ impl Render for TextareaOwner {
             .aria_readonly(readonly)
             .when_some(value, |this, value| this.aria_value(value))
             .on_a11y_action(AccessibleAction::Focus, move |_, window, cx| {
-                if focus_input.0.borrow().is_some() {
+                if focus_input.current.borrow().is_some() {
                     focus_state.update(cx, |state, cx| {
                         if !state.presentation().is_disabled() {
                             state.focus(window, cx);
@@ -591,7 +596,7 @@ impl Render for TextareaOwner {
                 this.on_a11y_action(AccessibleAction::SetValue, move |data, window, cx| {
                     if let Some(accesskit::ActionData::Value(value)) = data {
                         let _ = edit_owner.update(cx, |owner, cx| {
-                            if owner.input.0.borrow().is_none()
+                            if owner.input.current.borrow().is_none()
                                 || owner.open_menu.is_some()
                                 || !owner.state.read(cx).is_editable()
                                 || owner
@@ -680,7 +685,7 @@ impl Element for Proxy {
         let owner = self.owner.read(cx);
         owner.focus.pending()
             && owner.visible
-            && owner.input.0.borrow().is_some()
+            && owner.input.current.borrow().is_some()
             && !owner.state.read(cx).presentation().is_disabled()
             && !bounds.intersect(&window.content_mask().bounds).is_empty()
     }
@@ -699,7 +704,7 @@ impl Element for Proxy {
             let owner = self.owner.read(cx);
             owner.focus.pending()
                 && owner.visible
-                && owner.input.0.borrow().is_some()
+                && owner.input.current.borrow().is_some()
                 && !owner.state.read(cx).presentation().is_disabled()
         };
         let presented = admitted && window.focus_on_reveal(&focus, cx);
@@ -811,7 +816,7 @@ impl EntityInputHandler for TextareaOwner {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.input.0.borrow().is_none()
+        if self.input.current.borrow().is_none()
             || self.open_menu.is_some()
             || !self
                 .state
@@ -832,7 +837,7 @@ impl EntityInputHandler for TextareaOwner {
             .update(cx, |s, cx| s.text_length_utf16(window, cx))
     }
     fn accepts_text_input(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        self.input.0.borrow().is_some()
+        self.input.current.borrow().is_some()
             && self.open_menu.is_none()
             && self.state.read(cx).is_editable()
             && self
@@ -864,6 +869,23 @@ struct TextareaRecipe {
     props: TextareaProps,
 }
 impl Widget for TextareaRecipe {
+    fn publication_capacity(&self, state: &dyn Any, cx: &App) -> Vec<(&'static str, usize)> {
+        let owner = state
+            .downcast_ref::<Entity<TextareaOwner>>()
+            .unwrap()
+            .read(cx);
+        if self
+            .props
+            .command
+            .as_ref()
+            .is_some_and(|command| owner.last_request.as_ref() != Some(command))
+        {
+            vec![("observe", 4096)]
+        } else {
+            Vec::new()
+        }
+    }
+
     fn capture(
         &self,
         state: &mut dyn Any,
@@ -882,7 +904,7 @@ impl Widget for TextareaRecipe {
             .downcast_ref::<Entity<TextareaOwner>>()
             .expect("editor owner")
             .update(cx, |owner, cx| {
-                if owner.input.0.borrow().is_none() {
+                if owner.input.current.borrow().is_none() {
                     return Err(maka_ui_runtime::Error::Invalid("editor closed".into()));
                 }
                 owner.refresh(false, window, cx);

@@ -37,12 +37,14 @@ struct Usage {
 pub struct BudgetLimits {
     pub encoded_bytes: usize,
     pub pixel_bytes: usize,
+    pub worker_jobs: usize,
 }
 impl Default for BudgetLimits {
     fn default() -> Self {
         Self {
             encoded_bytes: 64 * 1024 * 1024,
             pixel_bytes: 128 * 1024 * 1024,
+            worker_jobs: 16,
         }
     }
 }
@@ -78,7 +80,7 @@ impl NativeBudget {
         let (used, limit) = match kind {
             Kind::Encoded => (usage.encoded, usage.limits.encoded_bytes),
             Kind::Pixels => (usage.pixels, usage.limits.pixel_bytes),
-            Kind::Job => (usage.jobs, 16),
+            Kind::Job => (usage.jobs, usage.limits.worker_jobs),
         };
         let next = used
             .checked_add(bytes)
@@ -95,9 +97,9 @@ impl NativeBudget {
             bytes,
         })
     }
-    pub fn usage(&self) -> (usize, usize) {
+    pub fn usage(&self) -> (usize, usize, usize) {
         let u = self.0.lock().unwrap();
-        (u.encoded, u.pixels)
+        (u.encoded, u.pixels, u.jobs)
     }
 }
 impl Drop for Permit {

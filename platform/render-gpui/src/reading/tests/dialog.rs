@@ -78,7 +78,7 @@ fn fixture(cx: &mut TestAppContext) -> Fixture {
         ));
         let slots = Slots::new(
             vec!["background".into(), "foreground".into()],
-            Input(Rc::new(|_, _, _, _| Ok(Default::default()))),
+            Input::testing(Rc::new(|_, _, _, _| Ok(()))),
             move |key, window, cx| match key {
                 "background" => bg
                     .widget
@@ -292,7 +292,7 @@ fn controlled_dialog_foreground_reading_establishes_its_original_document(cx: &m
             let handle = fg.handle.clone();
             let inner = Slots::new(
                 vec!["text".into()],
-                Input(Rc::new(|_, _, _, _| Ok(Default::default()))),
+                Input::testing(Rc::new(|_, _, _, _| Ok(()))),
                 move |_, window, cx| {
                     fg.widget
                         .render(fg.state.as_ref(), &empty_slots(), window, cx)
@@ -354,6 +354,8 @@ fn controlled_dialog_restores_nonselectable_markdown_but_not_disabled_document(
                     selectable: false,
                     disabled: false,
                     focus_on_pointer: true,
+                    open_web_links: true,
+                    bubble_links: true,
                 },
                 input(),
                 window,

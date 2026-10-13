@@ -96,7 +96,7 @@ pub(super) fn start(
                         // Background native observations wake this original window;
                         // they do not constitute a cleanup acknowledgement.
                         for owner in resources.borrow_mut().owners.values_mut() {
-                            if owner.input.0.borrow().is_some() {
+                            if owner.input.current.borrow().is_some() {
                                 owner.recipe.publish_pending(owner.state.as_mut(), window, cx);
                             }
                         }

@@ -48,8 +48,6 @@ mod terminal;
 mod text_file;
 mod textarea;
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
-#[cfg(test)]
-use futures_util::{FutureExt, StreamExt};
 use futures_util::{Stream, stream::FuturesUnordered};
 pub use geometry::{CellRect, Placement};
 use maka_packages::Package;
@@ -100,6 +98,11 @@ pub trait Widget: std::any::Any {
     fn create(&self, _: NativeContext) -> Box<dyn std::any::Any> {
         Box::new(())
     }
+    /// Upper bounds for reliable outcomes introduced by this candidate. Capacity
+    /// is admitted before commit; original command receipts consume it in order.
+    fn publication_capacity(&self, _: &dyn std::any::Any) -> Vec<(&'static str, usize)> {
+        Vec::new()
+    }
     fn commit(&self, _: &mut dyn std::any::Any) -> maka_ui_runtime::Result<Option<NativeInput>> {
         Ok(None)
     }
@@ -136,6 +139,8 @@ pub trait Widget: std::any::Any {
         false
     }
     /// Poll original native observations independently of recipe revisions.
+    /// Confirm only an observation adopted by the original logical commit.
+    fn published(&self, _: &mut dyn std::any::Any, _: &str, _: &Value) {}
     fn observe(&self, _: &mut dyn std::any::Any) -> Option<NativeInput> {
         None
     }
@@ -209,6 +214,8 @@ pub struct NativeContext {
 /// Owner-originated observation; never a guest-created native resource.
 #[derive(Clone, PartialEq)]
 pub struct NativeInput {
+    /// Only complete replaceable evidence may supersede another snapshot.
+    pub replaceable: bool,
     pub key: String,
     pub value: Value,
 }
@@ -543,7 +550,7 @@ impl Presenter {
             self.resources.cancel_pointer()?;
             self.drag = None;
         }
-        if !self.surface.is_live() || !self.resources.ready(&self.application, &self.root)? {
+        if !self.surface.is_live() {
             return Ok(());
         }
         if !self.physical_admitted() {
@@ -773,7 +780,7 @@ impl Presenter {
                 }
 
                 if let Some(observed) = observed {
-                    self.resources.observe(&target.mount, observed);
+                    self.resources.observe(&target.mount, observed)?;
                 }
                 if !preserve_focus
                     && !matches!(event,Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown | MouseEventKind::Drag(_) | MouseEventKind::Up(_) | MouseEventKind::Moved))
@@ -813,7 +820,7 @@ impl Presenter {
                     _ => continue,
                 };
                 if let Some(observed) = observed {
-                    self.resources.observe(&ancestor.mount, observed);
+                    self.resources.observe(&ancestor.mount, observed)?;
                 }
                 self.sync_native()?;
                 return Ok(());
@@ -854,6 +861,12 @@ impl Presenter {
                 && (self.application.frame(&target.mount)?.revision != target.revision
                     || matches!(event, Event::Key(key) if key.kind != KeyEventKind::Press))
             {
+                return Ok(());
+            }
+            if self.application.frame(&target.mount)?.revision != target.revision {
+                // A newer logical frame can commit while the original output
+                // buffer is still writing. The displayed old binding is no
+                // longer admitted; rejecting it is ordinary physical input.
                 return Ok(());
             }
             self.clear_item_selection(&target);
@@ -902,10 +915,7 @@ impl Presenter {
     }
     /// Allow a live declared command to own an otherwise reserved embedding key.
     fn dispatch_focused_shortcut(&mut self, event: &Event) -> maka_ui_runtime::Result<bool> {
-        if !self.surface.is_live()
-            || !self.physical_admitted()
-            || !self.resources.ready(&self.application, &self.root)?
-        {
+        if !self.surface.is_live() || !self.physical_admitted() {
             return Ok(false);
         }
         let ancestors = match self.focus.clone() {
@@ -961,6 +971,8 @@ impl Presenter {
                     && self.target_admitted(ancestor)
                     && self.resources.admits(ancestor)
                     && self.application.mount_visible(&ancestor.mount)
+                    && !self.application.is_retiring(&ancestor.mount)
+                    && self.application.frame(&ancestor.mount)?.revision == ancestor.revision
                 {
                     self.application.dispatch(
                         &ancestor.mount,
@@ -1025,7 +1037,36 @@ impl Presenter {
         }
     }
     pub fn pump(&mut self) -> maka_ui_runtime::Result<()> {
+        // This original launch candidate has no physical surface yet. Capture
+        // its existing recovery permission before rollback can retire its mount.
+        let replacement = self
+            .replacement
+            .as_ref()
+            .filter(|mount| {
+                matches!(
+                    self.surface,
+                    SurfaceState::Closed {
+                        cause: Retirement::Replace(RootKind::Launch)
+                    }
+                ) && self.application.can_recover(mount)
+                    && !self.resources.owners.contains_key(&mount.id())
+            })
+            .cloned();
         let result = self.pump_inner();
+        if let (Some(mount), Err(error @ (Error::Script(_) | Error::Invalid(_)))) =
+            (replacement, &result)
+            && !self.application.logical_pending()
+            && self.application.frame(&mount).is_err()
+            && self.application.prepared_frame(&mount).is_err()
+            && !self.resources.owners.contains_key(&mount.id())
+        {
+            self.report(error);
+            self.replacement = None;
+            self.surface = SurfaceState::Closed {
+                cause: Retirement::Replace(RootKind::Recovery),
+            };
+            return Ok(());
+        }
         self.recover_result(result)
     }
     fn recover_result(

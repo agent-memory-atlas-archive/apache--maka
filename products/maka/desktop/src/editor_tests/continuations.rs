@@ -151,7 +151,11 @@ fn original_native_continuation_is_checked_before_scene_publication(cx: &mut Tes
     for change in ["none", "reading", "owner", "retained_owner", "recipe"] {
         let (input, packages, contract) = support::continuation_fixture();
         let mut registry = NativeRegistry::with_surface(PresentationTarget::Desktop)
-            .with_scene_compiler(widgets::scene::language(), widgets::scene::compile)
+            .with_scene_compiler(
+                widgets::scene::language(),
+                widgets::scene::prepare,
+                widgets::scene::finish,
+            )
             .unwrap();
         registry
             .register("maka.ui.textarea", move |_, _| {
@@ -178,6 +182,7 @@ fn original_native_continuation_is_checked_before_scene_publication(cx: &mut Tes
             .dispatch(&scene.root, 0, "read", json!({"key":"A"}))
             .unwrap();
         cx.update_window(scene.window, |_, window, cx| {
+            scene.commit_in(window, cx).unwrap();
             scene
                 .app
                 .borrow_mut()
@@ -237,7 +242,13 @@ fn original_native_continuation_is_checked_before_scene_publication(cx: &mut Tes
                         .type_id()
                         == std::any::TypeId::of::<Probe>()
                 );
-                assert!(
+                cx.update_window(scene.window, |_, window, cx| {
+                    let error = scene.commit_in(window, cx).unwrap_err();
+                    assert!(error.to_string().contains("native recipe type changed"));
+                })
+                .unwrap();
+                assert_eq!(scene.app.borrow().frame(&scene.root).unwrap().revision, 1);
+                assert_eq!(
                     scene
                         .app
                         .borrow()
@@ -246,8 +257,8 @@ fn original_native_continuation_is_checked_before_scene_publication(cx: &mut Tes
                         .view
                         .view
                         .as_ref()
-                        .type_id()
-                        == std::any::TypeId::of::<Replacement>()
+                        .type_id(),
+                    std::any::TypeId::of::<Probe>()
                 );
             }
             _ => {}
@@ -272,9 +283,10 @@ fn original_native_continuation_is_checked_before_scene_publication(cx: &mut Tes
             )
         })
         .unwrap();
+        scene.settle(cx);
         assert_eq!(
             scene.app.borrow().frame(&scene.root).unwrap().state["outcome"]["status"],
-            if change == "none" {
+            if matches!(change, "none" | "recipe") {
                 "succeeded"
             } else {
                 "stale"
@@ -284,6 +296,7 @@ fn original_native_continuation_is_checked_before_scene_publication(cx: &mut Tes
         assert_eq!(scene.app.borrow().accepted_action_count(), 0);
         drop(retained_owner);
         scene.close(cx);
+        await_action(cx, &scene.app, |app| app.can_shutdown());
         scene.app.borrow_mut().shutdown().unwrap();
     }
 }

@@ -84,18 +84,36 @@ fn source(disabled: bool, removed: bool, move_rule: bool) -> Value {
 }
 type Seen = Rc<RefCell<Vec<(u8, CanvasInput)>>>;
 fn input(source: u8, seen: Seen, mode: Rc<Cell<u8>>) -> Input {
-    Input(Rc::new(move |key, event, _, _| {
+    Input::testing(Rc::new(move |key, event, _, _| {
         assert_eq!(key, "board");
         seen.borrow_mut()
             .push((source, serde_json::from_value(event).unwrap()));
         if mode.get() == 4 {
             return Err(maka_ui_runtime::Error::Invalid("uncommitted rule".into()));
         }
-        Ok(maka_ui_runtime::InputDecision {
-            prevent_default: mode.get() & 1 != 0,
-            stop_propagation: mode.get() & 2 != 0,
-        })
+        Ok(())
     }))
+}
+fn policy(
+    cx: &mut TestAppContext,
+    entity: &Entity<Harness>,
+    window: AnyWindowHandle,
+    focus: bool,
+    draggable: bool,
+    preview: bool,
+    bubble: bool,
+) {
+    let mut value = source(false, false, true);
+    let card = &mut value["contents"]["regions"][1];
+    card["focusOnPointer"] = json!(focus);
+    card["draggable"] = json!(draggable);
+    card["dragPreview"] = json!(preview);
+    card["bubbleInput"] = json!(bubble);
+    cx.update_window(window, |_, window, cx| {
+        entity.update(cx, |h, cx| h.replace(value, window, cx));
+    })
+    .unwrap();
+    draw(cx, window);
 }
 type TestHarness = (
     Entity<Harness>,
@@ -129,6 +147,7 @@ fn harness(cx: &mut TestAppContext, move_rule: bool) -> TestHarness {
             Rc::new(RefCell::new(Some(dispatcher.clone()))),
             crate::NativeBudget::default(),
             std::sync::Arc::new(maka_capabilities::call::Resources::default()),
+            || {},
         );
         let mut state = recipe.create(live.clone(), window, cx);
         recipe.presentation(state.as_mut(), true, window, cx);
@@ -214,7 +233,7 @@ fn native_gesture_tracks_without_guest_moves_uses_latest_drop_and_original_windo
     cx.update_window(window,|_,w,cx| {
         let mut value=source(false,false,false);
         value=json!({"kind":"stack","key":"layout","direction":"column","padding":0,"gap":0,"background":0xffffff,"children":[{"kind":"text","key":"spacer","text":"","color":0,"style":{"height":{"unit":"pixels","value":40},"shrink":0}},value]});
-        entity.update(cx,|h,cx| { h.replace(value,w,cx); *h.live.0.borrow_mut()=Some(input(1,seen.clone(),mode.clone())); });
+        entity.update(cx,|h,cx| { h.replace(value,w,cx); *h.live.current.borrow_mut()=Some(input(1,seen.clone(),mode.clone())); });
     }).unwrap();
     draw(cx, window);
     assert!(Rc::ptr_eq(
@@ -262,56 +281,61 @@ fn native_gesture_tracks_without_guest_moves_uses_latest_drop_and_original_windo
     );
 }
 #[gpui::test]
-fn foreground_rules_gate_focus_and_moves_and_keyboard_precedes_native_action(
-    cx: &mut TestAppContext,
-) {
+fn committed_defaults_gate_focus_drag_and_keyboard_before_native_action(cx: &mut TestAppContext) {
     let (entity, window, seen, mode, actions) = harness(cx, true);
     let shared = cx.update(|cx| entity.read(cx).shared());
-    for reject in [1, 4] {
-        mode.set(reject);
-        down(cx, window, 20., 20.);
-        assert!(shared.gesture.borrow().is_none());
-        cx.update_window(window, |_, w, cx| assert!(w.focused(cx).is_none()))
-            .unwrap();
-    }
+    policy(cx, &entity, window, false, false, false, true);
+    down(cx, window, 20., 20.);
+    assert!(shared.gesture.borrow().is_none());
+    cx.update_window(window, |_, w, cx| assert!(w.focused(cx).is_none()))
+        .unwrap();
+    policy(cx, &entity, window, true, true, true, true);
+    mode.set(4);
+    down(cx, window, 20., 20.);
+    assert!(shared.gesture.borrow().is_none());
+    cx.update_window(window, |_, w, cx| assert!(w.focused(cx).is_none()))
+        .unwrap();
     mode.set(0);
+    policy(cx, &entity, window, true, true, false, true);
     down(cx, window, 20., 20.);
     let accepted = shared.gesture.borrow().clone().unwrap();
-    mode.set(1);
     movement(cx, window, 50., 50.);
     assert_eq!(
         shared.gesture.borrow().as_ref().unwrap().position.x,
         accepted.position.x,
-        "prevented move has no native default"
+        "disabled native preview still admits the business drag event"
     );
-    mode.set(0);
+    assert!(matches!(
+        &seen.borrow().last().unwrap().1,
+        CanvasInput::DragMove { .. }
+    ));
+    policy(cx, &entity, window, true, true, true, true);
+    assert!(
+        shared.gesture.borrow().is_none(),
+        "changed committed policy retires the old gesture route"
+    );
+    down(cx, window, 20., 20.);
     movement(cx, window, 50., 50.);
     assert_eq!(shared.gesture.borrow().as_ref().unwrap().position.x, 50.);
-    mode.set(2);
+    policy(cx, &entity, window, true, true, true, false);
     cx.simulate_keystrokes(window, "enter");
     assert_eq!(
         actions.get(),
         0,
-        "early stop propagation prevents actual bound action"
+        "committed propagation consumes the actual bound action"
     );
     assert!(
-        matches!(&seen.borrow().last().unwrap().1,CanvasInput::KeyDown { key,.. } if key=="enter")
+        matches!(&seen.borrow().last().unwrap().1, CanvasInput::KeyDown { key, .. } if key == "enter")
     );
-    mode.set(0);
+    policy(cx, &entity, window, true, true, true, true);
     cx.simulate_keystrokes(window, "enter");
     assert_eq!(actions.get(), 1, "native action positive control");
-    mode.set(1);
-    cx.simulate_keystrokes(window, "enter");
-    assert_eq!(
-        actions.get(),
-        2,
-        "GPUI action consumption requires stopPropagation; preventDefault alone does not bypass action resolution"
-    );
+    down(cx, window, 20., 20.);
     mode.set(4);
     movement(cx, window, 60., 60.);
     assert!(
         shared.gesture.borrow().is_none(),
-        "failure cancels native session"
+        "failed admission cancels the native session"
     );
     let before = seen.borrow().len();
     up(cx, window, 160., 20.);
@@ -422,7 +446,7 @@ fn retained_presentation_cancels_canvas_gesture_and_rejects_old_routes_before_pa
         .unwrap();
         assert!(shared.gesture.borrow().is_none());
         assert!(!region.admitted.get());
-        assert!(shared.live.0.borrow().is_some());
+        assert!(shared.live.current.borrow().is_some());
         down(cx, window, 20., 20.);
         movement(cx, window, 40., 40.);
         up(cx, window, 160., 20.);
@@ -596,16 +620,16 @@ fn reentrant_modal_opening_prevents_canvas_press_from_installing_old_gesture(
     let calls = Rc::new(Cell::new(0));
     let count = calls.clone();
     cx.update_window(window, |_, _, cx| {
-        let input = Input(Rc::new(move |_, _, window, cx| {
+        let input = Input::testing(Rc::new(move |_, _, window, cx| {
             count.set(count.get() + 1);
             let focus = cx.focus_handle();
             let opening = window.input_scope(&focus, cx);
             drop(opening);
-            Ok(Default::default())
+            Ok(())
         }));
         entity.update(cx, |h, cx| {
             h.slots.input = input.clone();
-            *h.live.0.borrow_mut() = Some(input);
+            *h.live.current.borrow_mut() = Some(input);
             cx.notify();
         });
     })

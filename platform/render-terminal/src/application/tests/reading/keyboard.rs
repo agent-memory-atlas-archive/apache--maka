@@ -21,7 +21,7 @@ use super::*;
 
 fn key(presenter: &mut Presenter, code: KeyCode) {
     presenter
-        .input(Event::Key(KeyEvent::new(code, KeyModifiers::SHIFT)))
+        .input_settled(Event::Key(KeyEvent::new(code, KeyModifiers::SHIFT)))
         .unwrap();
 }
 fn settle(presenter: &mut Presenter, width: u16, height: u16) {
@@ -44,7 +44,7 @@ fn alt_click_extends_original_range_across_sources_and_preserves_exact_unicode()
     );
     mouse(&mut presenter, MouseEventKind::Up(MouseButton::Left), 4, 0);
     presenter
-        .input(Event::Mouse(MouseEvent {
+        .input_settled(Event::Mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 2,
             row: 1,
@@ -166,7 +166,7 @@ fn tab_cancels_pending_reveal_and_settled_range_never_steals_new_focus() {
     key(&mut presenter, KeyCode::Down);
     key(&mut presenter, KeyCode::Down);
     presenter
-        .input(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)))
+        .input_settled(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)))
         .unwrap();
     let chosen = presenter.focus.as_ref().unwrap().mount.id();
     settle(&mut presenter, 12, 2);
@@ -176,7 +176,7 @@ fn tab_cancels_pending_reveal_and_settled_range_never_steals_new_focus() {
     key(&mut presenter, KeyCode::Up);
     settle(&mut presenter, 12, 4);
     presenter
-        .input(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)))
+        .input_settled(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)))
         .unwrap();
     let chosen = presenter.focus.as_ref().unwrap().mount.id();
     settle(&mut presenter, 12, 4);

@@ -66,7 +66,7 @@ fn grouped_items_reuse_two_line_content_and_reveal_offscreen_keyboard_targets() 
             .area
             .is_empty()
     );
-    p.input(key(KeyCode::Tab)).unwrap();
+    p.input_settled(key(KeyCode::Tab)).unwrap();
     let buffer = draw(&mut p, 24, 6);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-2");
     let target = p.focus.as_ref().unwrap();
@@ -79,13 +79,13 @@ fn grouped_items_reuse_two_line_content_and_reveal_offscreen_keyboard_targets() 
             .contains(ratatui::style::Modifier::UNDERLINED)
     );
     assert!(style.modifier.contains(ratatui::style::Modifier::REVERSED));
-    p.input(key(KeyCode::End)).unwrap();
+    p.input_settled(key(KeyCode::End)).unwrap();
     draw(&mut p, 24, 6);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-11");
     assert_eq!(p.focus.as_ref().unwrap().area.visible().height, 2);
     assert_eq!(observation(&p), json!({"kind":"activate"}));
     let count = root_count(&p);
-    p.input(key(KeyCode::Down)).unwrap();
+    p.input_settled(key(KeyCode::Down)).unwrap();
     assert_eq!(root_count(&p), count + 1);
     assert_eq!(
         p.application.frame(&p.root).unwrap().state["last_input"],
@@ -93,14 +93,14 @@ fn grouped_items_reuse_two_line_content_and_reveal_offscreen_keyboard_targets() 
     );
     assert_eq!(p.focus.as_ref().unwrap().key, "item-11");
     draw(&mut p, 24, 6);
-    p.input(key(KeyCode::Enter)).unwrap();
+    p.input_settled(key(KeyCode::Enter)).unwrap();
     draw(&mut p, 24, 6);
     assert_eq!(observation(&p), json!({"kind":"submit"}));
-    p.input(key(KeyCode::Home)).unwrap();
+    p.input_settled(key(KeyCode::Home)).unwrap();
     draw(&mut p, 24, 6);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-0");
     let count = root_count(&p);
-    p.input(key(KeyCode::Up)).unwrap();
+    p.input_settled(key(KeyCode::Up)).unwrap();
     assert_eq!(root_count(&p), count + 1);
     assert_eq!(
         p.application.frame(&p.root).unwrap().state["last_input"],
@@ -108,7 +108,7 @@ fn grouped_items_reuse_two_line_content_and_reveal_offscreen_keyboard_targets() 
     );
     assert_eq!(p.focus.as_ref().unwrap().key, "item-0");
     draw(&mut p, 24, 6);
-    p.input(key(KeyCode::Tab)).unwrap();
+    p.input_settled(key(KeyCode::Tab)).unwrap();
     assert_eq!(p.focus.as_ref().unwrap().key, "after");
     close(&mut p);
 }
@@ -141,24 +141,24 @@ fn context_wrapped_items_keep_offscreen_navigation_and_visible_only_menu_hits() 
             .is_empty()
     );
     assert!(!p.scene.iter().any(|target| target.key == "menu-11"));
-    p.input(key(KeyCode::Tab)).unwrap();
+    p.input_settled(key(KeyCode::Tab)).unwrap();
     draw(&mut p, 24, 6);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-2");
-    p.input(key(KeyCode::End)).unwrap();
+    p.input_settled(key(KeyCode::End)).unwrap();
     draw(&mut p, 24, 6);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-11");
     assert_eq!(p.focus.as_ref().unwrap().area.visible().height, 2);
-    p.input(Event::Key(KeyEvent::new(
+    p.input_settled(Event::Key(KeyEvent::new(
         KeyCode::F(10),
         KeyModifiers::SHIFT,
     )))
     .unwrap();
     draw(&mut p, 24, 6);
     assert_eq!(p.focus.as_ref().unwrap().key, "action-11");
-    p.input(key(KeyCode::Esc)).unwrap();
+    p.input_settled(key(KeyCode::Esc)).unwrap();
     draw(&mut p, 24, 6);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-11");
-    p.input(key(KeyCode::Home)).unwrap();
+    p.input_settled(key(KeyCode::Home)).unwrap();
     draw(&mut p, 24, 6);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-0");
     close(&mut p);
@@ -188,12 +188,12 @@ fn grouped_items_directory_arrows_reveal_without_activating_a_destination() {
             .count(),
         64
     );
-    p.input(key(KeyCode::End)).unwrap();
+    p.input_settled(key(KeyCode::End)).unwrap();
     draw(&mut p, 24, 6);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-63");
     assert_eq!(p.focus.as_ref().unwrap().area.visible().height, 2);
     assert_eq!(p.application.frame(&p.root).unwrap().revision, before);
-    p.input(key(KeyCode::Enter)).unwrap();
+    p.input_settled(key(KeyCode::Enter)).unwrap();
     draw(&mut p, 24, 6);
     assert_eq!(observation(&p), json!({"kind":"activate"}));
     close(&mut p);
@@ -222,10 +222,10 @@ fn grouped_items_pointer_hover_does_not_select_and_second_line_submits() {
     draw(&mut p, 24, 6);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-0");
     assert_eq!(observation(&p), json!({"kind":"submit"}));
-    p.input(key(KeyCode::Down)).unwrap();
+    p.input_settled(key(KeyCode::Down)).unwrap();
     draw(&mut p, 24, 6);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-1");
-    p.input(key(KeyCode::Char(' '))).unwrap();
+    p.input_settled(key(KeyCode::Char(' '))).unwrap();
     assert_eq!(observation(&p), json!({"kind":"activate"}));
     close(&mut p);
 }
@@ -235,18 +235,18 @@ fn grouped_items_reject_navigation_from_unflushed_replacement_and_keep_reading_o
     source.borrow_mut()["content"]["focus_group"] = json!(true);
     refresh(&mut p);
     draw(&mut p, 24, 4);
-    p.input(key(KeyCode::End)).unwrap();
+    p.input_settled(key(KeyCode::End)).unwrap();
     draw(&mut p, 24, 4);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-11");
     assert!(state(&p).scrolls["reading"].offset > 0);
     source.borrow_mut()["content"]["children"][0]["disabled"] = json!(true);
     refresh(&mut p);
     let before = p.application.frame(&p.root).unwrap().revision;
-    p.input(key(KeyCode::Home)).unwrap();
-    p.input(key(KeyCode::Enter)).unwrap();
+    p.input_settled(key(KeyCode::Home)).unwrap();
+    p.input_settled(key(KeyCode::Enter)).unwrap();
     assert_eq!(p.application.frame(&p.root).unwrap().revision, before);
     draw(&mut p, 24, 4);
-    p.input(key(KeyCode::Home)).unwrap();
+    p.input_settled(key(KeyCode::Home)).unwrap();
     draw(&mut p, 24, 4);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-1");
     close(&mut p);
@@ -280,11 +280,11 @@ fn grouped_items_reveal_through_entirely_clipped_nested_scrollers() {
             .area
             .is_empty()
     );
-    p.input(key(KeyCode::Tab)).unwrap();
+    p.input_settled(key(KeyCode::Tab)).unwrap();
     draw(&mut p, 24, 6);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-2");
     assert_eq!(p.focus.as_ref().unwrap().area.visible().height, 2);
-    p.input(key(KeyCode::End)).unwrap();
+    p.input_settled(key(KeyCode::End)).unwrap();
     draw(&mut p, 24, 6);
     let point = p.focus.as_ref().unwrap().area.visible();
     assert_eq!(p.focus.as_ref().unwrap().key, "item-11");
@@ -324,21 +324,21 @@ fn grouped_items_cross_component_slots_and_focus_child_share_original_entry() {
         Rc::new(Cell::new(true)),
     );
     draw(&mut p, 24, 6);
-    p.input(key(KeyCode::Tab)).unwrap();
+    p.input_settled(key(KeyCode::Tab)).unwrap();
     draw(&mut p, 24, 6);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-2");
-    p.input(key(KeyCode::End)).unwrap();
+    p.input_settled(key(KeyCode::End)).unwrap();
     draw(&mut p, 24, 6);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-11");
     assert_eq!(p.focus.as_ref().unwrap().area.visible().height, 2);
-    p.input(key(KeyCode::Tab)).unwrap();
-    p.input(key(KeyCode::Tab)).unwrap();
+    p.input_settled(key(KeyCode::Tab)).unwrap();
+    p.input_settled(key(KeyCode::Tab)).unwrap();
     assert_eq!(p.focus.as_ref().unwrap().key, "jump");
-    p.input(key(KeyCode::Enter)).unwrap();
+    p.input_settled(key(KeyCode::Enter)).unwrap();
     draw(&mut p, 24, 6);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-8");
     assert_eq!(p.focus.as_ref().unwrap().area.visible().height, 2);
-    p.input(key(KeyCode::Enter)).unwrap();
+    p.input_settled(key(KeyCode::Enter)).unwrap();
     assert_eq!(observation(&p)["event"]["kind"], "submit");
     draw(&mut p, 24, 6);
     let old_last = p
@@ -355,11 +355,11 @@ fn grouped_items_cross_component_slots_and_focus_child_share_original_entry() {
         .unwrap();
     p.sync_native().unwrap();
     let revision = p.application.frame(&p.root).unwrap().revision;
-    p.input(key(KeyCode::End)).unwrap();
+    p.input_settled(key(KeyCode::End)).unwrap();
     assert_eq!(p.application.frame(&p.root).unwrap().revision, revision);
     assert_ne!(p.focus.as_ref().unwrap().mount, old_last);
     draw(&mut p, 24, 6);
-    p.input(key(KeyCode::End)).unwrap();
+    p.input_settled(key(KeyCode::End)).unwrap();
     draw(&mut p, 24, 6);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-11");
     assert_ne!(p.focus.as_ref().unwrap().mount, old_last);
@@ -395,7 +395,7 @@ fn grouped_item_content_preserves_original_modal_opening_and_choice_owner() {
     assert!(!p.physical_admitted());
     draw(&mut p, 30, 10);
     assert_eq!(p.physical_path.len(), 2);
-    p.input(key(KeyCode::Esc)).unwrap();
+    p.input_settled(key(KeyCode::Esc)).unwrap();
     draw(&mut p, 30, 10);
     assert_eq!(p.physical_path.len(), 1);
     close(&mut p);
@@ -418,24 +418,24 @@ fn horizontal_group_uses_its_published_axis_and_preserves_explicit_activation() 
         Rc::new(Cell::new(true)),
     );
     draw(&mut p, 60, 8);
-    p.input(key(KeyCode::Tab)).unwrap();
+    p.input_settled(key(KeyCode::Tab)).unwrap();
     draw(&mut p, 60, 8);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-2");
     let revision = p.application.frame(&p.root).unwrap().revision;
-    p.input(key(KeyCode::Left)).unwrap();
+    p.input_settled(key(KeyCode::Left)).unwrap();
     draw(&mut p, 60, 8);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-0");
-    p.input(key(KeyCode::Down)).unwrap();
+    p.input_settled(key(KeyCode::Down)).unwrap();
     draw(&mut p, 60, 8);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-0");
-    p.input(key(KeyCode::Right)).unwrap();
+    p.input_settled(key(KeyCode::Right)).unwrap();
     draw(&mut p, 60, 8);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-2");
     assert_eq!(p.application.frame(&p.root).unwrap().revision, revision);
-    p.input(key(KeyCode::Enter)).unwrap();
+    p.input_settled(key(KeyCode::Enter)).unwrap();
     draw(&mut p, 60, 8);
     assert_eq!(observation(&p), json!({"kind":"activate"}));
-    p.input(key(KeyCode::Tab)).unwrap();
+    p.input_settled(key(KeyCode::Tab)).unwrap();
     assert_eq!(p.focus.as_ref().unwrap().key, "after");
     close(&mut p);
 }
@@ -459,7 +459,7 @@ fn reading_focus_command_waits_for_actual_reveal_and_only_queues_follow_focus() 
     assert_ne!(p.focus.as_ref().unwrap().key, "item-10");
     drop(candidate);
     assert_eq!(state(&p).scrolls["reading"].offset, 0);
-    draw(&mut p, 24, 4);
+    draw_frame(&mut p, 24, 4);
     assert!(state(&p).reading.as_ref().unwrap().pending.is_some());
     assert_ne!(p.focus.as_ref().unwrap().key, "item-10");
     // A current flushed item is revealed before the command can own focus.
@@ -471,33 +471,28 @@ fn reading_focus_command_waits_for_actual_reveal_and_only_queues_follow_focus() 
     assert_eq!(p.focus.as_ref().unwrap().key, "item-10");
     assert_eq!(p.focus.as_ref().unwrap().area.visible().height, 2);
     assert!(state(&p).reading.as_ref().unwrap().pending.is_none());
-    p.sync_native().unwrap();
+    p.settle().unwrap();
     assert!(p.application.frame(&p.root).unwrap().revision > revision);
     draw(&mut p, 24, 4);
-    p.input(key(KeyCode::Down)).unwrap();
+    p.input_settled(key(KeyCode::Down)).unwrap();
     draw(&mut p, 24, 4);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-11");
     // Replacing the page before the follow-focus notification is delivered must
     // retire the old item input while retaining the ReadingArea itself.
     focus_command(&mut p, &props, 2, "item-0");
-    draw(&mut p, 24, 4);
-    draw(&mut p, 24, 4);
-    assert!(
-        p.resources
-            .commit(&p.application, &p.root)
-            .unwrap()
-            .iter()
-            .any(|(_, input)| input.key == "item-0")
-    );
+    // Publish real geometry while retaining the original follow-focus input.
+    // Do not await its business publication before replacing that declaration.
+    for _ in 0..2 {
+        p.sync_native().unwrap();
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 24, 4));
+        let scene = p.paint(buffer.area, &mut buffer).unwrap();
+        p.present(scene);
+    }
+    assert!(p.resources.owners[&p.root.id()].pending.contains("item-0"));
     props.borrow_mut()["content"]["children"] = json!([]);
     refresh(&mut p);
-    assert!(
-        !p.resources
-            .commit(&p.application, &p.root)
-            .unwrap()
-            .iter()
-            .any(|(_, input)| input.key == "item-0")
-    );
+    p.settle().unwrap();
+    assert!(!p.resources.owners[&p.root.id()].pending.contains("item-0"));
     assert!(p.reported.is_empty(), "{:?}", p.reported);
     close(&mut p);
 }
@@ -519,7 +514,7 @@ fn reading_focus_request_rejects_disabled_or_nonitem_keys_and_new_input_cancels_
     }
     focus_command(&mut p, &props, 4, "item-10");
     draw(&mut p, 24, 4);
-    p.input(key(KeyCode::Tab)).unwrap();
+    p.input_settled(key(KeyCode::Tab)).unwrap();
     for _ in 0..3 {
         draw(&mut p, 24, 4);
     }
@@ -578,10 +573,10 @@ fn reading_item_arrows_skip_embedded_text_sources_and_buttons() {
     props.borrow_mut()["content"]["focus_group"] = json!(true);
     refresh(&mut p);
     draw(&mut p, 24, 8);
-    p.input(key(KeyCode::Down)).unwrap();
+    p.input_settled(key(KeyCode::Down)).unwrap();
     draw(&mut p, 24, 8);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-1");
-    p.input(key(KeyCode::Up)).unwrap();
+    p.input_settled(key(KeyCode::Up)).unwrap();
     assert_eq!(p.focus.as_ref().unwrap().key, "item-0");
     close(&mut p);
 }
@@ -657,7 +652,7 @@ fn foreground_item_focus_does_not_clear_background_reading_selection() {
     props.borrow_mut()["content"]["children"][0]["open"] = json!(true);
     refresh(&mut p);
     draw(&mut p, 40, 12);
-    p.input(key(KeyCode::Down)).unwrap();
+    p.input_settled(key(KeyCode::Down)).unwrap();
     draw(&mut p, 40, 12);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-1");
     shift(&mut p, KeyCode::End);
@@ -685,7 +680,7 @@ fn message(index: usize, text: &str) -> Value {
     )
 }
 fn shift(p: &mut Presenter, code: KeyCode) {
-    p.input(Event::Key(KeyEvent::new(code, KeyModifiers::SHIFT)))
+    p.input_settled(Event::Key(KeyEvent::new(code, KeyModifiers::SHIFT)))
         .unwrap();
 }
 #[test]
@@ -770,7 +765,7 @@ fn reading_header_shift_pending_focus_is_cancelled_by_tab() {
     draw(&mut p, 24, 3);
     shift(&mut p, KeyCode::End);
     assert_eq!(copied(&mut p), Some(b"abc".to_vec()));
-    p.input(key(KeyCode::Tab)).unwrap();
+    p.input_settled(key(KeyCode::Tab)).unwrap();
     let focus = p.focus.clone().unwrap();
     draw(&mut p, 24, 3);
     draw(&mut p, 24, 3);
@@ -801,11 +796,11 @@ fn item_space_submission_is_explicit_and_focus_remains_activation() {
         Rc::new(Cell::new(true)),
     );
     draw(&mut p, 24, 8);
-    p.input(key(KeyCode::Char(' '))).unwrap();
+    p.input_settled(key(KeyCode::Char(' '))).unwrap();
     assert_eq!(observation(&p), json!({"kind":"submit"}));
     draw(&mut p, 24, 8);
     let revision = p.application.frame(&p.root).unwrap().revision;
-    p.input(Event::Key(KeyEvent::new_with_kind(
+    p.input_settled(Event::Key(KeyEvent::new_with_kind(
         KeyCode::Char(' '),
         KeyModifiers::NONE,
         crossterm::event::KeyEventKind::Repeat,
@@ -813,7 +808,7 @@ fn item_space_submission_is_explicit_and_focus_remains_activation() {
     .unwrap();
     assert_eq!(p.application.frame(&p.root).unwrap().revision, revision);
     assert_eq!(observation(&p), json!({"kind":"submit"}));
-    p.input(key(KeyCode::Enter)).unwrap();
+    p.input_settled(key(KeyCode::Enter)).unwrap();
     assert_eq!(observation(&p), json!({"kind":"activate"}));
     draw(&mut p, 24, 8);
     mouse(&mut p, MouseEventKind::Down(MouseButton::Left), 2, 0);
@@ -822,7 +817,7 @@ fn item_space_submission_is_explicit_and_focus_remains_activation() {
     mouse(&mut p, MouseEventKind::Down(MouseButton::Left), 2, 2);
     draw(&mut p, 24, 8);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-1");
-    p.input(key(KeyCode::Char(' '))).unwrap();
+    p.input_settled(key(KeyCode::Char(' '))).unwrap();
     assert_eq!(observation(&p), json!({"kind":"activate"}));
     close(&mut p);
 }

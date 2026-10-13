@@ -358,7 +358,7 @@ fn native_slots_virtual_measurement_repaint_preserve_editor_and_composing_state(
     scene.close(cx);
 }
 #[gpui::test]
-fn native_slots_old_owner_and_detached_children_never_retarget_after_same_mount_rebuild(
+fn native_slots_old_revision_and_detached_children_never_retarget_after_committed_update(
     cx: &mut TestAppContext,
 ) {
     let timer = timer();
@@ -367,8 +367,8 @@ fn native_slots_old_owner_and_detached_children_never_retarget_after_same_mount_
     let snapshot = capture(&scene, cx);
     let old = snapshot.slots();
     drop(snapshot);
-    dispatch(&scene, cx, "tree");
-    dispatch(&scene, cx, "tree");
+    dispatch(&scene, cx, "parent");
+    dispatch(&scene, cx, "parent");
     cx.update_window(scene.window, |_, window, cx| {
         assert!(old.render("left", window, cx).is_err())
     })
@@ -558,66 +558,57 @@ fn retained_slots_and_input_reject_a_different_platform_window(cx: &mut TestAppC
 }
 
 #[gpui::test]
-fn native_recipe_replacement_clears_focus_before_old_scene_listeners_release(
+fn failed_native_type_candidate_preserves_original_editor_and_committed_geometry(
     cx: &mut TestAppContext,
 ) {
-    use gpui_kit::{AccessibleAction, Role, accesskit};
     let timer = timer();
     let scene = scene(cx, &timer, false, false, false);
-    dispatch(&scene, cx, "tree");
-    cx.activate_accessibility(scene.window);
     scene.draw(cx);
     let snapshot = capture(&scene, cx);
-    let target = cx
-        .accessibility_update(scene.window)
-        .unwrap()
-        .nodes
-        .iter()
-        .find(|(_, n)| n.role() == Role::Button && n.label() == Some("Native"))
-        .unwrap()
-        .0;
-    cx.simulate_accessibility_action(
-        scene.window,
-        accesskit::ActionRequest {
-            action: AccessibleAction::Focus,
-            target_tree: accesskit::TreeId::ROOT,
-            target_node: target,
-            data: None,
-        },
-    );
-    cx.update_window(scene.window, |_, w, cx| assert!(w.focused(cx).is_some()))
-        .unwrap();
+    let owner = scene.owner();
+    let engine = cx.update(|cx| owner.read(cx).state.clone());
+    let before = scene.app.borrow().frame(&scene.root).unwrap().revision;
     cx.with_paused_automatic_drawing(|cx| {
-        let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
-        scene
-            .app
-            .borrow_mut()
-            .dispatch(&scene.root, revision, "tree", Value::Null)
-            .unwrap();
-        cx.update_window(scene.window, |_, w, cx| {
+        cx.update_window(scene.window, |_, window, cx| {
+            owner.update(cx, |native, cx| {
+                let focus = engine.read(cx).presentation().focus_handle().clone();
+                focus.focus(window, cx);
+                native.replace_and_mark_text_in_range(Some(0..5), "原始🙂", Some(2..2), window, cx);
+            });
+            let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
             scene
-                .surface
-                .update(cx, |s, cx| s.sync_native(w, cx).unwrap())
+                .app
+                .borrow_mut()
+                .dispatch(&scene.root, revision, "tree", Value::Null)
+                .unwrap();
+            let error = scene.commit_in(window, cx).unwrap_err();
+            assert!(error.to_string().contains("native recipe type changed"));
+            assert_eq!(
+                scene.app.borrow().frame(&scene.root).unwrap().revision,
+                before
+            );
+            assert_eq!(scene.owner(), owner);
+            assert!(
+                engine
+                    .read(cx)
+                    .presentation()
+                    .focus_handle()
+                    .is_focused(window)
+            );
+            owner.update(cx, |native, cx| {
+                assert_eq!(native.state.read(cx).value().as_ref(), "原始🙂");
+                assert!(native.marked_text_range(window, cx).is_some());
+            });
+            assert!(
+                snapshot.render(window, cx).is_ok(),
+                "a rejected candidate cannot stale the committed geometry"
+            );
         })
         .unwrap();
-        cx.update_window(scene.window, |_, w, cx| {
-            assert!(w.focused(cx).is_none());
-            assert!(snapshot.render(w, cx).is_err());
-        })
-        .unwrap();
-        cx.simulate_accessibility_action(
-            scene.window,
-            accesskit::ActionRequest {
-                action: AccessibleAction::Focus,
-                target_tree: accesskit::TreeId::ROOT,
-                target_node: target,
-                data: None,
-            },
-        );
-        cx.update_window(scene.window, |_, w, cx| assert!(w.focused(cx).is_none()))
-            .unwrap();
     });
     drop(snapshot);
+    drop(engine);
+    drop(owner);
     scene.close(cx);
 }
 
@@ -687,9 +678,7 @@ fn newly_created_hidden_popup_slots_cannot_steal_the_original_composer_focus(
             .borrow_mut()
             .dispatch(&scene.root, revision, "parent", Value::Null)
             .unwrap();
-        scene
-            .surface
-            .update(cx, |surface, cx| surface.sync_native(window, cx).unwrap());
+        scene.settle_in(window, cx).unwrap();
         assert!(
             original.is_focused(window),
             "allocating two hidden popup owners must not move native focus"

@@ -257,8 +257,14 @@ impl TextFile {
             closed: false,
         }
     }
+    pub fn will_update(&self, props: &TextFileProps) -> bool {
+        !self.closed
+            && self.path.is_some()
+            && props.command.as_ref().is_some_and(|command| {
+                command.owner == self.current.owner && command.sequence > self.current.sequence
+            })
+    }
     pub fn update(&mut self, props: &TextFileProps) {
-        self.poll();
         let Some(command) = &props.command else {
             return;
         };
@@ -486,7 +492,7 @@ mod tests {
         drop(owner);
         resources.finish().await.unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "accepted");
-        assert_eq!(budget.usage(), (0, 0));
+        assert_eq!(budget.usage(), (0, 0, 0));
         let budget = NativeBudget::new(crate::budget::BudgetLimits {
             encoded_bytes: 1,
             ..Default::default()
@@ -507,7 +513,7 @@ mod tests {
             }
         );
         resources.finish().await.unwrap();
-        assert_eq!(budget.usage(), (0, 0));
+        assert_eq!(budget.usage(), (0, 0, 0));
         assert_eq!(std::fs::read_to_string(path).unwrap(), "accepted");
     }
 }

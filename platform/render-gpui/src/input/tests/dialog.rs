@@ -78,19 +78,22 @@ fn fixture(
 ) {
     let events = Rc::new(RefCell::new(Vec::new()));
     let seen = events.clone();
-    let input = Input(Rc::new(move |key, value, _, _| {
+    let input = Input::testing(Rc::new(move |key, value, _, _| {
         if key == "modal" {
             seen.borrow_mut().push(value);
         }
-        Ok(Default::default())
+        Ok(())
     }));
     let (entity, _) = cx.add_window_view(move |window, cx| {
         gpui_kit::init(cx);
-        let live = LiveInput::new(
-            Rc::new(RefCell::new(Some(input.clone()))),
-            crate::NativeBudget::default(),
-            std::sync::Arc::new(maka_capabilities::call::Resources::default()),
-        );
+        let mounted_input = || {
+            LiveInput::new(
+                Rc::new(RefCell::new(Some(input.clone()))),
+                crate::NativeBudget::default(),
+                std::sync::Arc::new(maka_capabilities::call::Resources::default()),
+                || {},
+            )
+        };
         let background_recipe = InputRecipe {
             props: props(),
             secret: false,
@@ -102,8 +105,8 @@ fn fixture(
             props: query_props,
             secret: false,
         };
-        let mut background = background_recipe.create(live.clone(), window, cx);
-        let mut query = query_recipe.create(live.clone(), window, cx);
+        let mut background = background_recipe.create(mounted_input(), window, cx);
+        let mut query = query_recipe.create(mounted_input(), window, cx);
         background_recipe.presentation(background.as_mut(), true, window, cx);
         query_recipe.presentation(query.as_mut(), false, window, cx);
         let recipe = crate::scene::compile(
@@ -112,7 +115,7 @@ fn fixture(
         )
         .unwrap()
         .view;
-        let mut scene = recipe.create(live, window, cx);
+        let mut scene = recipe.create(mounted_input(), window, cx);
         recipe.presentation(scene.as_mut(), true, window, cx);
         let bg = background
             .downcast_ref::<Entity<InputOwner>>()

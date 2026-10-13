@@ -41,6 +41,7 @@ pub mod markdown;
 pub mod morph_mark;
 mod native;
 pub mod operations;
+pub mod publication;
 pub mod reading;
 pub mod rows;
 pub mod scene;
@@ -122,7 +123,7 @@ struct PendingInvocation<V: ?Sized> {
     realm: Option<ExecutionRealm>,
 }
 enum InvocationResult<V: ?Sized> {
-    Native(Option<Result<ComponentOutput<NativeView<V>>>>),
+    Native(backend::Job<ComponentOutput<NativeView<V>>>),
     Script(backend::Job<ComponentOutput<PreparedScene>>),
 }
 struct CaptureDefinition {
@@ -571,17 +572,21 @@ impl<V: ?Sized + 'static> Application<V> {
             }
         }
         let progressed = !completed.is_empty();
+        let mut failure = None;
         for (id, result) in completed {
             match result.and_then(|exports| self.publish_script_exports(id.clone(), exports)) {
                 Ok(()) => {}
                 Err(error) => {
                     self.runtime.retire(&self.activations[&id])?;
                     self.deployment_error.get_or_insert(error.to_string());
-                    return Err(error);
+                    failure.get_or_insert(error);
                 }
             }
         }
-        Ok(progressed)
+        match failure {
+            Some(error) => Err(error),
+            None => Ok(progressed),
+        }
     }
 
     fn close_module(&mut self, id: &InstanceId) -> Result<bool> {
@@ -639,8 +644,19 @@ impl<V: ?Sized + 'static> Application<V> {
     pub async fn wait_ready(&mut self) -> Result<()> {
         std::future::poll_fn(|cx| {
             self.set_waker(cx.waker().clone());
-            if let Err(error) = self.advance_deployment() {
+            if let Err(error) = self.advance_deployment()
+                && self.runtime.desired().recovery().is_none()
+            {
                 return Poll::Ready(Err(error));
+            }
+            if self.deployment_error.is_some()
+                && self.runtime.desired().recovery().is_some()
+                && self
+                    .modules
+                    .values()
+                    .all(|loaded| loaded.activation.is_none())
+            {
+                return Poll::Ready(Ok(()));
             }
             if self.deployment_converging() {
                 Poll::Pending
@@ -659,7 +675,7 @@ impl<V: ?Sized + 'static> Application<V> {
             if let Err(error) = self.advance_ui() {
                 return Poll::Ready(Err(error));
             }
-            if self.ui_update.is_none() && self.ui_inputs.is_empty() {
+            if !self.ui_pending() {
                 Poll::Ready(Ok(()))
             } else {
                 Poll::Pending
@@ -754,7 +770,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 Some(realm.clone()),
             ),
             Component::Native(component) => (
-                InvocationResult::Native(Some(component.call(call, &values))),
+                InvocationResult::Native(component.start(call, &values, &self.scheduler, deadline)),
                 None,
             ),
         };
@@ -771,7 +787,12 @@ impl<V: ?Sized + 'static> Application<V> {
         cx: &mut Context<'_>,
     ) -> Poll<Result<Invocation<V>>> {
         let result = match &mut pending.result {
-            InvocationResult::Native(result) => result.take().expect("native result consumed once"),
+            InvocationResult::Native(job) => {
+                let Poll::Ready(result) = Pin::new(job).poll(cx) else {
+                    return Poll::Pending;
+                };
+                result
+            }
             InvocationResult::Script(job) => {
                 let Poll::Ready(result) = Pin::new(job).poll(cx) else {
                     return Poll::Pending;
