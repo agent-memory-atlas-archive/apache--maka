@@ -192,7 +192,11 @@ pub(crate) fn catalog(
                     },
                     freeform: None,
                 },
-                nesting: ToolNesting::DirectOnly,
+                nesting: if selection.nestable {
+                    ToolNesting::Nestable
+                } else {
+                    ToolNesting::DirectOnly
+                },
                 semantics: if method.mode == MethodMode::Mutation {
                     ToolSemantics::ExclusiveStep
                 } else {

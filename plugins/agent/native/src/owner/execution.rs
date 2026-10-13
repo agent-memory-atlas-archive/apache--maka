@@ -274,7 +274,7 @@ impl Owner {
         {
             return Ok(parked(Reason::WorkspaceChanged));
         }
-        let (source, prepared) = crate::model::Source::select(
+        let (mut source, prepared) = crate::model::Source::select(
             self.configuration.clone(),
             self.credentials.clone(),
             input.model,
@@ -284,6 +284,9 @@ impl Owner {
         )
         .await
         .map_err(public_error)?;
+        // A continuation retains the original tool protocol even when the
+        // user selects a model whose default differs from the original Run.
+        source.accepted.tool_mode = configuration.tool_mode;
         let basis = MessageBasis {
             allowed_tools: session.configuration.tools.clone(),
             background: None,

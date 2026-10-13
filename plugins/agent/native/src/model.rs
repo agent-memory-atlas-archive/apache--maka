@@ -27,6 +27,7 @@ use maka_agent_facts::configuration::ModelInfo;
 use maka_agent_facts::configuration::ModelSelection;
 use maka_agent_facts::execution::ModelBinding;
 use maka_agent_facts::execution::ThinkingLevel;
+use maka_agent_facts::execution::ToolMode;
 use maka_agent_ports::provider::Connection;
 use maka_agent_ports::provider::Definition;
 use maka_agent_ports::provider::Model;
@@ -69,6 +70,10 @@ impl ExecutionBasis {
 pub(crate) struct AcceptedModel {
     pub binding: ModelBinding,
     pub thinking_level: Option<ThinkingLevel>,
+    /// Execution policy is captured at message admission. Later model settings
+    /// do not reinterpret queued work. Older accepted messages remain Direct.
+    #[serde(default)]
+    pub tool_mode: ToolMode,
     provider: maka_agent_facts::provider::Identity,
     provider_configuration: Value,
     basis: ExecutionBasis,
@@ -109,6 +114,14 @@ impl Source {
             configuration,
             credentials,
             accepted: AcceptedModel {
+                tool_mode: ToolMode::for_model(
+                    &selection.model_id,
+                    &model.base_url,
+                    row.model_overrides
+                        .as_ref()
+                        .and_then(|models| models.get(&selection.model_id))
+                        .and_then(|overrides| overrides.code_mode),
+                ),
                 binding: ModelBinding {
                     connection_id: row.connection_id.clone(),
                     connection_slug: row.slug.clone(),

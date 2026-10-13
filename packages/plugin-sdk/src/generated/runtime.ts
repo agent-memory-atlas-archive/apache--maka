@@ -6645,6 +6645,11 @@ export interface DirectoryRootSpec {
 }
 export interface AgentServiceTool {
   /**
+   * Allow this selected service inside Code Mode. Binding and permission
+   * checks are identical to a direct call; omitted keeps direct-only behavior.
+   */
+  nestable?: boolean;
+  /**
    * Explicit input projection. Skill tools receive the actual Agent tool names,
    * outside model-controlled arguments; this is compatibility data, not authority.
    */

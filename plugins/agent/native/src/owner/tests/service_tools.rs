@@ -133,6 +133,7 @@ pub(super) struct Setup {
     title: Option<maka_agent_facts::display::Text>,
     counter: Option<Arc<Counter>>,
     granted: bool,
+    nestable: bool,
     query: bool,
     questions: bool,
     forms: bool,
@@ -178,6 +179,7 @@ impl Setup {
             preparation: None,
             images: None,
             confirmation: contract::ToolConfirmation::Preapproved,
+            nestable: false,
         }
     }
     fn native(counter: Arc<Counter>, granted: bool) -> Self {
@@ -202,6 +204,7 @@ impl Setup {
             preparation: None,
             images: None,
             confirmation: contract::ToolConfirmation::Preapproved,
+            nestable: false,
         }
     }
     pub(super) fn forms() -> Self {
@@ -232,6 +235,7 @@ impl Setup {
             preparation: None,
             images: None,
             confirmation: contract::ToolConfirmation::Preapproved,
+            nestable: false,
         }
     }
     pub(super) fn files(method: &'static str) -> Self {
@@ -429,6 +433,7 @@ impl Setup {
     }
     pub(super) fn selection(&self) -> contract::ServiceTool {
         contract::ServiceTool {
+            nestable: self.nestable,
             input: if self.web {
                 contract::ToolInput::Web
             } else {
@@ -1724,6 +1729,11 @@ async fn resume_replays_original_settlements_without_redispatching_effects() {
                 &format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None,
                 Some(Setup::native(counter.clone(), true)),
             ).await;
+            selection::edit(&fixture, |changes| {
+                changes.model_overrides = Patch::Set(BTreeMap::from([("fixture-model".into(), ModelOverride {
+                    code_mode: Some(true), ..Default::default()
+                })]));
+            }).await;
             let session = fixture.create("Resume settled tool").await;
             let sent = fixture.send(&session).await.unwrap();
             let (mut first, _) = listener.accept().await.unwrap();
@@ -1736,6 +1746,11 @@ async fn resume_replays_original_settlements_without_redispatching_effects() {
             fixture.drained().await;
             let source = fixture.query("execution", json!({"sessionId":session,"invocationId":sent["invocationId"]})).await.unwrap();
             assert_eq!(source["execution"]["state"], "cancelled");
+            selection::edit(&fixture, |changes| {
+                changes.model_overrides = Patch::Set(BTreeMap::from([("fixture-model".into(), ModelOverride {
+                    code_mode: Some(false), ..Default::default()
+                })]));
+            }).await;
             let resumed = fixture.mutation(2, "resume", json!({
                 "sessionId":session, "sourceInvocationId":sent["invocationId"],
                 "sourceHighWater":source["execution"]["highWater"], "model":fixture.selection().await
@@ -1743,6 +1758,7 @@ async fn resume_replays_original_settlements_without_redispatching_effects() {
             assert_eq!(resumed["kind"], "started", "{resumed}");
             let (mut replay, _) = listener.accept().await.unwrap();
             let prompt = request(&mut replay).await;
+            assert!(prompt["tools"].as_array().unwrap().iter().any(|tool| tool["function"]["name"] == "exec"), "resume retains the original Code Mode despite changed model settings");
             let result = prompt["messages"].as_array().unwrap().iter().find(|message| message["role"] == "tool").unwrap();
             if matches!(behavior, Behavior::Returned) {
                 assert_eq!(serde_json::from_str::<Value>(result["content"].as_str().unwrap()).unwrap()["effects"], 1);
@@ -1800,5 +1816,113 @@ async fn session_tool_selection_is_an_execution_ceiling_and_is_inherited() {
         assert!(facts(&fixture, session).await.iter().any(|fact| matches!(fact, Fact::ToolRejected { name, reason: maka_agent_facts::tool_call::ToolRejection::Unavailable, .. } if name == "Counter")));
         fixture.app.shutdown().await.unwrap();
         fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn code_mode_calls_selected_native_services_with_original_grants_and_receipts() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        for (nestable, granted) in [(true, true), (true, false), (false, true)] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}/v1", listener.local_addr().unwrap());
+            let counter = Counter::new(Behavior::Returned);
+            let mut setup = Setup::native(counter.clone(), granted);
+            setup.nestable = nestable;
+            let fixture = Fixture::with_services(&base, 1, None, None, Some(setup)).await;
+            selection::edit(&fixture, |changes| {
+                changes.model_overrides = Patch::Set(BTreeMap::from([("fixture-model".into(), ModelOverride {
+                    code_mode: Some(true), ..Default::default()
+                })]));
+            }).await;
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let first = request(&mut socket).await;
+                let names: Vec<_> = first["tools"].as_array().unwrap().iter().filter_map(|tool| tool["function"]["name"].as_str()).collect();
+                assert!(names.contains(&"exec") && names.contains(&"wait"));
+                assert_eq!(names.contains(&"Counter"), !nestable);
+                let code = "text(await tools.Counter({amount:1})); text(await tools.Counter({amount:1}));";
+                code_response(&mut socket, code).await;
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let next = request(&mut socket).await;
+                let result = next["messages"].as_array().unwrap().iter().find(|message| message["role"] == "tool").unwrap();
+                assert_eq!(result["tool_call_id"], "code-call");
+                if nestable && granted {
+                    assert!(result["content"].as_str().unwrap().contains("effects"));
+                }
+                response(&mut socket).await;
+            });
+            let session = fixture.create("Code Mode native services").await;
+            fixture.send(&session).await.unwrap();
+            fixture.drained().await;
+            server.await.unwrap();
+            assert_eq!(counter.effects.load(Ordering::SeqCst), if nestable && granted { 2 } else { 0 });
+            let recorded = facts(&fixture, &session).await;
+            assert!(recorded.iter().any(|fact| matches!(fact, Fact::InvocationOpened { configuration: Some(configuration), .. } if configuration.tool_mode == ToolMode::CodeMode)));
+            if nestable && granted {
+                assert_eq!(recorded.iter().filter(|fact| matches!(fact, Fact::ToolDispatched { name, .. } if name == "Counter")).count(), 2);
+                let operations: Vec<_> = recorded.iter().filter_map(|fact| match fact {
+                    Fact::ToolDispatched { name, operation_id, .. } if name == "Counter" => Some(operation_id),
+                    _ => None,
+                }).collect();
+                assert_ne!(operations[0], operations[1]);
+                for expected in operations {
+                    assert_eq!(recorded.iter().filter(|fact| matches!(fact,
+                        Fact::ToolSettled { operation_id, outcome: ToolOutcome::Succeeded { .. } }
+                        if operation_id == expected
+                    )).count(), 1, "each nested service has its own successful durable settlement");
+                }
+            }
+            fixture.app.shutdown().await.unwrap();
+            fixture.config.shutdown().await.unwrap();
+        }
+    }).await.unwrap();
+}
+
+async fn code_response(socket: &mut TcpStream, code: &str) {
+    let delta = json!({"id":"code-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"code-call","type":"function","function":{"name":"exec","arguments":json!({"code":code}).to_string()}}]},"finish_reason":null}]});
+    let body = format!(
+        "data: {delta}\n\ndata: {{\"id\":\"code-model\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"tool_calls\"}}]}}\n\ndata: [DONE]\n\n"
+    );
+    socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+}
+
+#[tokio::test]
+async fn code_mode_native_file_writes_obey_the_live_session_permission_boundary() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        for writable in [true, false] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}/v1", listener.local_addr().unwrap());
+            let mut setup = Setup::files("write");
+            setup.nestable = true;
+            let fixture = Fixture::with_services(&base, 1, None, None, Some(setup)).await;
+            selection::edit(&fixture, |changes| {
+                changes.model_overrides = Patch::Set(BTreeMap::from([("fixture-model".into(), ModelOverride {
+                    code_mode: Some(true), ..Default::default()
+                })]));
+            }).await;
+            let session = fixture.create("Code Mode files").await;
+            if !writable {
+                files::change(&fixture, &session, "read_only", false, true).await;
+            }
+            fixture.send(&session).await.unwrap();
+            let (mut first, _) = listener.accept().await.unwrap();
+            let prompt = request(&mut first).await;
+            assert!(prompt["tools"].as_array().unwrap().iter().any(|tool| tool["function"]["name"] == "exec"));
+            code_response(&mut first, "text(await tools.WorkspaceFile({path:'code-mode.txt',content:'native Code Mode write'}));").await;
+            let (mut next, _) = listener.accept().await.unwrap();
+            let observed = request(&mut next).await;
+            let tool = observed["messages"].as_array().unwrap().iter().find(|message| message["role"] == "tool").unwrap();
+            assert_eq!(tool["tool_call_id"], "code-call");
+            let target = fixture.workspace.join("code-mode.txt");
+            assert_eq!(target.exists(), writable);
+            if writable {
+                assert_eq!(std::fs::read_to_string(target).unwrap(), "native Code Mode write");
+            }
+            assert!(fixture.store.pending_interactions(&session).await.unwrap().is_empty());
+            response(&mut next).await;
+            fixture.drained().await;
+            fixture.app.shutdown().await.unwrap();
+            fixture.config.shutdown().await.unwrap();
+        }
     }).await.unwrap();
 }

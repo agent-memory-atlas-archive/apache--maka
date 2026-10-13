@@ -44,7 +44,15 @@ export function installation(
     description: string,
     result: 'json' | 'image' = 'json',
   ) =>
-    tools.push({ import: service, method, name, description, result, confirmation: 'preapproved' });
+    tools.push({
+      import: service,
+      method,
+      name,
+      description,
+      result,
+      confirmation: 'preapproved',
+      nestable: ['files', 'processes', 'web', 'skills'].includes(service),
+    });
   add('files', 'readText', 'Read', 'Read text from a file in the selected workspace.');
   add('files', 'readImage', 'ReadImage', 'Read an image in the selected workspace.', 'image');
   add('files', 'glob', 'Glob', 'Find files in the selected workspace.');

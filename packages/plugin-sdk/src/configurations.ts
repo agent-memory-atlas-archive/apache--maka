@@ -337,6 +337,11 @@ export const configurations = {
       AgentServiceTool: {
         type: 'object',
         properties: {
+          nestable: {
+            description:
+              'Allow this selected service inside Code Mode. Binding and permission\nchecks are identical to a direct call; omitted keeps direct-only behavior.',
+            type: 'boolean',
+          },
           input: {
             description:
               'Explicit input projection. Skill tools receive the actual Agent tool names,\noutside model-controlled arguments; this is compatibility data, not authority.',
@@ -796,6 +801,11 @@ export const configurations = {
         type: 'object',
         additionalProperties: false,
         properties: {
+          nestable: {
+            type: 'boolean',
+            description:
+              'Allow this selected service inside Code Mode. Binding and permission\nchecks are identical to a direct call; omitted keeps direct-only behavior.',
+          },
           input: {
             $ref: '#/$defs/AgentToolInput',
             description:

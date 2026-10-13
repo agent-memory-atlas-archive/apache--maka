@@ -708,3 +708,68 @@ async fn invalid_thinking_default_remains_unavailable_without_poisoning_other_mo
     fixture.app.shutdown().await.unwrap();
     fixture.config.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn accepted_code_mode_survives_settings_changes_and_legacy_messages_remain_direct() {
+    let fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    let session = fixture.create("Frozen tool policy").await;
+    edit(&fixture, |changes| {
+        changes.model_overrides = Patch::Set(BTreeMap::from([(
+            "fixture-model".into(),
+            ModelOverride {
+                code_mode: Some(true),
+                ..Default::default()
+            },
+        )]));
+    })
+    .await;
+    let (source, _) = crate::model::Source::select(
+        fixture.config.clone(),
+        fixture.owner.credentials.clone(),
+        fixture.selection().await,
+        None,
+        session.clone(),
+        fixture.owner.revision.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(source.accepted.tool_mode, ToolMode::CodeMode);
+    let stored = serde_json::to_value(&source.accepted).unwrap();
+    edit(&fixture, |changes| {
+        changes.model_overrides = Patch::Set(BTreeMap::from([(
+            "fixture-model".into(),
+            ModelOverride {
+                code_mode: Some(false),
+                ..Default::default()
+            },
+        )]));
+    })
+    .await;
+    let restored = crate::model::Source::restore(
+        fixture.config.clone(),
+        fixture.owner.credentials.clone(),
+        serde_json::from_value(stored.clone()).unwrap(),
+        session.clone(),
+        fixture.owner.revision.clone(),
+    )
+    .unwrap();
+    restored.capture().await.unwrap();
+    assert_eq!(restored.accepted.tool_mode, ToolMode::CodeMode);
+    let (next, _) = crate::model::Source::select(
+        fixture.config.clone(),
+        fixture.owner.credentials.clone(),
+        fixture.selection().await,
+        None,
+        session.clone(),
+        fixture.owner.revision.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(next.accepted.tool_mode, ToolMode::Direct);
+    let mut legacy = stored;
+    legacy.as_object_mut().unwrap().remove("tool_mode");
+    let accepted: crate::model::AcceptedModel = serde_json::from_value(legacy).unwrap();
+    assert_eq!(accepted.tool_mode, ToolMode::Direct);
+    fixture.app.shutdown().await.unwrap();
+    fixture.config.shutdown().await.unwrap();
+}

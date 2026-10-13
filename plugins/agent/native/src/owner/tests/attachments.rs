@@ -192,7 +192,7 @@ async fn attachment_payload_validation_and_image_read_use_actual_bytes() {
         let clipboard = f.mutation_with(2, "uploadAttachment", json!({"sessionId":session,"name":descriptor["name"],"bytes":descriptor["bytes"],"digest":descriptor["digest"]}), Uuid::new_v4(),
             BTreeMap::from([("file".into(), snapshot as Arc<dyn ReadResource>)])).await.unwrap();
         assert_eq!(clipboard["attachment"]["mimeType"], "image/png");
-        assert_eq!(budget.usage(), (0, 0, 0));
+        assert_eq!(budget.usage(), (0, 0));
         assert!(!f._dir.path().join("clipboard.png").exists());
         f.mutation(2, "send", json!({"sessionId":session,"message":"","attachments":[attachment["id"],clipboard["attachment"]["id"]],"model":f.selection().await}), Uuid::new_v4()).await.unwrap();
         let (mut socket, _) = listener.accept().await.unwrap();

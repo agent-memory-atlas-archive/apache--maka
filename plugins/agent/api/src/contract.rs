@@ -105,6 +105,10 @@ pub struct AssistantConfiguration {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentServiceTool")]
 pub struct ServiceTool {
+    /// Allow this selected service inside Code Mode. Binding and permission
+    /// checks are identical to a direct call; omitted keeps direct-only behavior.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub nestable: bool,
     /// Explicit input projection. Skill tools receive the actual Agent tool names,
     /// outside model-controlled arguments; this is compatibility data, not authority.
     #[serde(default)]

@@ -324,6 +324,7 @@ impl Owner {
                 let (source, prepared) = *value;
                 configuration.model = Some(source.accepted.binding.clone());
                 configuration.thinking_level = source.accepted.thinking_level;
+                configuration.tool_mode = source.accepted.tool_mode;
                 PreparedRun::Model(Box::new(RunInput {
                     model_source: Some(Arc::new(source)),
                     model_revision: Some(prepared.revision),
