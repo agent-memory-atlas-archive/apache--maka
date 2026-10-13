@@ -339,6 +339,17 @@ impl Handler for Requests {
     }
 }
 impl NativeOwner for Requests {
+    fn execution_basis(&self) -> Option<Value> {
+        let root = self.store.owned_root().ok()?;
+        let namespace = namespace();
+        serde_json::to_value((
+            root.root_id(),
+            namespace.package(),
+            namespace.scope(),
+            &self.prefix,
+        ))
+        .ok()
+    }
     fn prepare_retirement(
         &self,
     ) -> Option<Box<dyn maka_host_runtime::application::NativeRetirement>> {
@@ -376,6 +387,10 @@ mod tests {
         );
         let store = Arc::new(EventLog::for_root(owner).await.unwrap());
         let first = requests(store.clone());
+        let basis = first.execution_basis().unwrap();
+        let mut other = requests(store.clone());
+        other.prefix = "other/".into();
+        assert_ne!(other.execution_basis().unwrap(), basis);
         let id = "a".repeat(64);
         let command: Command =
             serde_json::from_value(json!({"method":"instances","input":{"kind":"start"}})).unwrap();
@@ -403,6 +418,7 @@ mod tests {
         assert_eq!(claims.iter().filter(|v| !v["request"].is_null()).count(), 1);
         drop(first);
         let resumed = requests(store);
+        assert_eq!(resumed.execution_basis().unwrap(), basis);
         assert!(resumed.claim().await.unwrap()["request"].is_null());
         assert!(matches!(
             resumed.result(Some("session-a"), &id).await.unwrap(),

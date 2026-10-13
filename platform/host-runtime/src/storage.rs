@@ -47,6 +47,18 @@ impl Storage {
             resources: Arc::default(),
         }
     }
+    /// Captured data target, for comparing native executions across activations.
+    /// Mutable records and call lifecycle are deliberately not identity facts.
+    pub fn execution_basis(&self) -> Option<serde_json::Value> {
+        let root = self.log.owned_root().ok()?;
+        serde_json::to_value((
+            root.root_id(),
+            self.namespace.package(),
+            self.namespace.scope(),
+            &self.prefix,
+        ))
+        .ok()
+    }
     pub async fn finish(&self) -> Result<(), String> {
         self.drain.cancel();
         self.resources.finish().await.map_err(|e| e.to_string())

@@ -41,7 +41,8 @@ pub fn open(path: &Path, expected: &DirectoryIdentity) -> io::Result<Dir> {
     }
     Ok(directory)
 }
-fn identity(directory: &Dir) -> io::Result<DirectoryIdentity> {
+/// Identify the held directory, without reopening its ambient pathname.
+pub fn identity(directory: &Dir) -> io::Result<DirectoryIdentity> {
     let metadata = directory.dir_metadata()?;
     let birth = metadata
         .created()

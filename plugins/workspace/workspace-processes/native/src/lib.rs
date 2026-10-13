@@ -269,6 +269,21 @@ impl Handler for Service {
     }
 }
 impl NativeOwner for Service {
+    fn execution_basis(&self) -> Option<Value> {
+        // Setup captures a shell and directory at activation; until those facts
+        // are comparable, retain the default activation-specific boundary.
+        if self.0.setup.is_some() {
+            return None;
+        }
+        let root = self.0.store.owned_root().ok()?;
+        serde_json::to_value((
+            root.root_id(),
+            &self.0.state_root,
+            &self.0.prefix,
+            &self.0.session_prefix,
+        ))
+        .ok()
+    }
     fn prepare_retirement(
         &self,
     ) -> Option<Box<dyn maka_host_runtime::application::NativeRetirement>> {

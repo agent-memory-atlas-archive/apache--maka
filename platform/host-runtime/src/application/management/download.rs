@@ -155,8 +155,14 @@ mod tests {
         );
         let worker = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
-            let mut request = [0; 8192];
-            stream.read(&mut request).await.unwrap();
+            let mut request = Vec::new();
+            while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                let mut buffer = [0; 1024];
+                let count = stream.read(&mut buffer).await.unwrap();
+                assert_ne!(count, 0, "request ended before its headers");
+                request.extend_from_slice(&buffer[..count]);
+                assert!(request.len() <= 8192);
+            }
             stream.write_all(&response).await.unwrap();
         });
         (url, worker)

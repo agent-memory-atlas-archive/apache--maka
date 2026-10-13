@@ -588,6 +588,38 @@ impl Handler for Library {
     }
 }
 impl NativeOwner for Library {
+    fn execution_basis(&self) -> Option<Value> {
+        let sources = self
+            .sources
+            .iter()
+            .map(|source| source.root.execution_basis())
+            .collect::<std::io::Result<Vec<_>>>()
+            .ok()?;
+        let projects = self
+            .projects
+            .iter()
+            .map(|project| {
+                project
+                    .identity()
+                    .map(|identity| (project.path(), identity))
+            })
+            .collect::<std::io::Result<Vec<_>>>()
+            .ok()?;
+        let managed = match &self.managed {
+            Some(managed) => Some(managed.execution_basis()?),
+            None => None,
+        };
+        // Source order and metadata come from configuration. Held directories,
+        // the private boundary and persistent stores are additional captures.
+        serde_json::to_value((
+            sources,
+            projects,
+            &self.private,
+            self.preferences.execution_basis()?,
+            managed,
+        ))
+        .ok()
+    }
     fn prepare_retirement(
         &self,
     ) -> Option<Box<dyn maka_host_runtime::application::NativeRetirement>> {

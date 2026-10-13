@@ -363,3 +363,87 @@ async fn escaped_instruction_pages_remain_within_the_remote_delivery_budget() {
     assert_eq!(value["after"], TEXT_BYTES);
     call.finish().await.unwrap();
 }
+
+#[tokio::test]
+async fn execution_basis_preserves_real_captures_and_rejects_replaced_skill_directories() {
+    use maka_event_log::{
+        EventLog,
+        root::{RootNamespaces, RootOwner},
+    };
+    let temporary = tempfile::tempdir().unwrap();
+    let path = temporary.path();
+    let root = Arc::new(
+        RootOwner::create(
+            &path.join("private"),
+            &RootNamespaces {
+                ownership: path.join("owners"),
+                control: path.join("control"),
+            },
+        )
+        .unwrap(),
+    );
+    let store = Arc::new(EventLog::for_root(root.clone()).await.unwrap());
+    for name in ["home", "projects", "custom"] {
+        std::fs::create_dir(path.join(name)).unwrap();
+    }
+    let config = || Configuration {
+        home: Some(path.join("home").to_str().unwrap().into()),
+        project_roots: vec![maka_host_runtime::DirectoryRootSpec {
+            label: "Projects".into(),
+            path: path.join("projects"),
+        }],
+        bundled: true,
+        manage: true,
+        preferences: true,
+        sources: vec![source("custom", &path.join("custom"))],
+    };
+    let open = || {
+        Library::open(
+            config(),
+            root.canonical_path().to_owned(),
+            preferences::Store::new(store.clone(), "stable/".into()),
+        )
+        .unwrap()
+    };
+    let mut first = open();
+    first.managed = Some(
+        management::Managed::open(root.clone(), "stable".into())
+            .await
+            .unwrap(),
+    );
+    let basis = first.execution_basis().unwrap();
+    let mut same = open();
+    same.managed = Some(
+        management::Managed::open(root.clone(), "stable".into())
+            .await
+            .unwrap(),
+    );
+    assert_eq!(same.execution_basis().unwrap(), basis);
+    write(
+        &path.join("custom"),
+        "mutable",
+        "live contents do not change the target",
+    );
+    assert_eq!(first.execution_basis().unwrap(), basis);
+    let mut other_namespace = first.clone();
+    other_namespace.preferences = preferences::Store::new(store.clone(), "other/".into());
+    assert_ne!(other_namespace.execution_basis().unwrap(), basis);
+    let mut other_managed = first.clone();
+    other_managed.managed = Some(
+        management::Managed::open(root.clone(), "other".into())
+            .await
+            .unwrap(),
+    );
+    assert_ne!(other_managed.execution_basis().unwrap(), basis);
+    for name in ["custom", "home", "projects"] {
+        std::fs::rename(path.join(name), path.join(format!("original-{name}"))).unwrap();
+        std::fs::create_dir(path.join(name)).unwrap();
+        let mut changed = open();
+        changed.managed = first.managed.clone();
+        assert_ne!(changed.execution_basis().unwrap(), basis, "{name}");
+        assert_eq!(first.execution_basis().unwrap(), basis, "held {name}");
+        std::fs::remove_dir(path.join(name)).unwrap();
+        std::fs::rename(path.join(format!("original-{name}")), path.join(name)).unwrap();
+    }
+    store.shutdown().await.unwrap();
+}

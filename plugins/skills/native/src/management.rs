@@ -56,6 +56,15 @@ pub(super) struct Managed {
     pub serial: tokio::sync::Mutex<()>,
 }
 impl Managed {
+    pub fn execution_basis(&self) -> Option<Value> {
+        // These read roots are clones of the actual publication handles.
+        serde_json::to_value((
+            self.root.root_id(),
+            self.read.execution_basis().ok()?,
+            self.imported_read.execution_basis().ok()?,
+        ))
+        .ok()
+    }
     pub async fn open(root: Arc<RootOwner>, namespace: String) -> Result<Arc<Self>, String> {
         let (managed, publisher, imported_publisher) = tokio::task::spawn_blocking(move || {
             root.validate_current().map_err(store_error)?;

@@ -299,6 +299,11 @@ impl Handler for Service {
     }
 }
 impl NativeOwner for Service {
+    fn execution_basis(&self) -> Option<Value> {
+        // Settings and credentials share this Root and instance namespace.
+        // The origin epoch identifies audit records, not an execution target.
+        self.0.storage.execution_basis()
+    }
     fn prepare_retirement(
         &self,
     ) -> Option<Box<dyn maka_host_runtime::application::NativeRetirement>> {

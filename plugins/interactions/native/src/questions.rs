@@ -152,6 +152,9 @@ fn encode(answer: Answer) -> Result<Value, String> {
     serde_json::to_value(answer).map_err(|_| "question_output_unavailable".into())
 }
 impl NativeOwner for Questions {
+    fn execution_basis(&self) -> Option<Value> {
+        Some(serde_json::json!({"root": self.0.owned_root().ok()?.root_id()}))
+    }
     fn prepare_retirement(
         &self,
     ) -> Option<Box<dyn maka_host_runtime::application::NativeRetirement>> {

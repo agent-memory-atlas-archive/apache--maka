@@ -2399,3 +2399,55 @@ async fn editing_policy_and_code_mode_survive_actual_host_restart_with_original_
         fixture.config.shutdown().await.unwrap();
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn queued_messages_resume_with_equivalent_native_service_targets_after_restart() {
+    tokio::time::timeout(Duration::from_secs(90), async {
+        let home = tempfile::tempdir().unwrap();
+        for setup in [Setup::questions(), Setup::forms(), Setup::processes(), Setup::web(),
+            Setup::skills(home.path().to_owned()),
+            Setup::skill_preparation(home.path().to_owned(), true).with_standard_sources(),
+        ] {
+            let name = setup.export().to_owned();
+            let policy = setup.policy();
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let fixture = Fixture::with_services(
+                &format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None, Some(setup),
+            ).await;
+            let session = fixture.create(&format!("Restore {name}")).await;
+            let deployment = fixture.app.client().snapshot().effective.unwrap().deployment;
+            let raw = rusqlite::Connection::open(fixture.root.join(maka_event_log::root::ROOT_DATABASE)).unwrap();
+            raw.execute_batch("CREATE TRIGGER hold_opening BEFORE INSERT ON event_log WHEN NEW.kind='invocation_opened' BEGIN SELECT RAISE(ABORT, 'fixture opening failure'); END;").unwrap();
+            assert!(fixture.send(&session).await.is_err());
+            assert_eq!(fixture.store.pending_messages(&session).await.unwrap().len(), 1);
+            fixture.app.shutdown().await.unwrap();
+            raw.execute_batch("DROP TRIGGER hold_opening").unwrap();
+            drop(raw);
+            let mut native = NativeRegistry::default();
+            provide_all(&mut native).unwrap();
+            maka_settings_native::provide(&mut native).unwrap();
+            let restored = Application::start_from_store(
+                fixture.store.clone(), deployment, native, fixture.issuer.clone(),
+                Arc::new(Grant(fixture.issuer.clone(), Some(policy))), Some(maka_host_js::factory(Default::default())),
+            ).await.unwrap();
+            restored.ready().await.unwrap();
+            let next = tokio::time::timeout(Duration::from_secs(10), listener.accept()).await;
+            assert!(next.is_ok(), "{name} refused equivalent targets: {:?}", facts(&fixture, &session).await);
+            let (mut socket, _) = next.unwrap().unwrap();
+            request(&mut socket).await;
+            let mut commits = fixture.store.subscribe_commits();
+            response(&mut socket).await;
+            loop {
+                let recorded = facts(&fixture, &session).await;
+                if recorded.iter().any(|fact| matches!(fact, Fact::InvocationEnded { .. })) {
+                    assert!(recorded.iter().any(|fact| matches!(fact, Fact::InvocationEnded { outcome: maka_agent_facts::event::InvocationOutcome::Completed })), "{name}: {recorded:?}");
+                    assert_eq!(recorded.iter().filter(|fact| matches!(fact, Fact::InvocationOpened { .. })).count(), 1);
+                    break;
+                }
+                commits.changed().await.unwrap();
+            }
+            restored.shutdown().await.unwrap();
+            fixture.config.shutdown().await.unwrap();
+        }
+    }).await.unwrap();
+}

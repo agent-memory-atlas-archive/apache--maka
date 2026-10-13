@@ -46,6 +46,17 @@ impl Store {
             key: format!("{owner}preferences"),
         }
     }
+    pub fn execution_basis(&self) -> Option<Value> {
+        let root = self.log.owned_root().ok()?;
+        let namespace = namespace();
+        serde_json::to_value((
+            root.root_id(),
+            namespace.package(),
+            namespace.scope(),
+            &self.key,
+        ))
+        .ok()
+    }
     async fn snapshot(&self) -> Result<Snapshot, String> {
         let record = self
             .log

@@ -46,6 +46,32 @@ impl Directory {
         }
     }
 
+    pub(super) fn execution_basis(&self) -> io::Result<serde_json::Value> {
+        use cap_fs_ext::MetadataExt;
+        let identities = self
+            .parents
+            .iter()
+            .map(|directory| {
+                let metadata = directory.dir_metadata()?;
+                let birth = metadata
+                    .created()
+                    .ok()
+                    .and_then(|time| time.into_std().duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|duration| (duration.as_secs(), duration.subsec_nanos()));
+                Ok((metadata.dev(), metadata.ino(), birth))
+            })
+            .collect::<io::Result<Vec<_>>>()?;
+        // Aliases and policy affect link resolution. Observe held handles, never
+        // the directory currently occupying one of those ambient names.
+        serde_json::to_value((
+            identities,
+            &self.names,
+            &self.aliases,
+            self.policy.as_ref().map(|policy| policy.policy()),
+        ))
+        .map_err(io::Error::other)
+    }
+
     pub(super) fn path(&self) -> &Path {
         &self.aliases[1]
     }

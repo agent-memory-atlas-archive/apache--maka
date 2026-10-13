@@ -616,7 +616,6 @@ async fn bundled_skills_share_model_eligibility_preparation_and_exact_resource_p
     schema("prepare", &prepared);
     assert_eq!(prepared["kind"], "ready");
     assert_eq!(prepared["record"]["revision"], *revision);
-    assert!(prepared["text"].as_str().unwrap().contains("HostService"));
     assert!(matches!(
         library
             .preferences

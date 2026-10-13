@@ -121,6 +121,13 @@ pub struct ReadRoot {
     open_files: Arc<tokio::sync::Semaphore>,
 }
 impl ReadRoot {
+    /// Compare captured read targets and restrictions without granting or
+    /// restoring access. A replaced pathname cannot change the held identity.
+    pub fn execution_basis(&self) -> io::Result<serde_json::Value> {
+        serde_json::to_value((self.directory.execution_basis()?, &self.files))
+            .map_err(io::Error::other)
+    }
+
     /// Capture on the embedding's blocking worker, before publishing a view.
     pub fn capture(path: impl AsRef<Path>) -> io::Result<Self> {
         Directory::capture(path.as_ref()).map(|directory| Self {
@@ -526,6 +533,58 @@ mod tests {
             )
             .await
             .unwrap()
+    }
+
+    #[test]
+    fn execution_basis_tracks_held_directories_aliases_and_read_restrictions() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("source");
+        std::fs::create_dir(&path).unwrap();
+        let root = ReadRoot::capture(&path).unwrap();
+        let basis = root.execution_basis().unwrap();
+        assert_eq!(
+            ReadRoot::capture(&path).unwrap().execution_basis().unwrap(),
+            basis
+        );
+        std::fs::write(path.join("new-file"), b"mutable data").unwrap();
+        assert_eq!(root.execution_basis().unwrap(), basis);
+        assert_ne!(
+            root.clone()
+                .select(["new-file".into()].into())
+                .unwrap()
+                .execution_basis()
+                .unwrap(),
+            basis
+        );
+        let policy = Arc::new(
+            maka_sandbox::filesystem::Policy {
+                default: maka_sandbox::filesystem::Access::Deny,
+                rules: vec![],
+                deny_globs: vec![],
+            }
+            .compile()
+            .unwrap(),
+        );
+        assert_ne!(
+            root.clone()
+                .restrict(policy)
+                .unwrap()
+                .execution_basis()
+                .unwrap(),
+            basis
+        );
+        let same_handle_other_alias = ReadRoot::from_handle(
+            cap_std::fs::Dir::open_ambient_dir(&path, cap_std::ambient_authority()).unwrap(),
+            temporary.path().join("alias"),
+        );
+        assert_ne!(same_handle_other_alias.execution_basis().unwrap(), basis);
+        std::fs::rename(&path, temporary.path().join("original")).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert_eq!(root.execution_basis().unwrap(), basis);
+        assert_ne!(
+            ReadRoot::capture(&path).unwrap().execution_basis().unwrap(),
+            basis
+        );
     }
 
     #[tokio::test]
