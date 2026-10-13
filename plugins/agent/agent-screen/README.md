@@ -36,3 +36,5 @@
 | `tui.ts`, `desktop.ts`, `package.ts` | Target adapters and package declaration |
 
 Modules share the existing `State`; they do not own separate stores or dispatch loops. View helpers return native scenes. Publication of a candidate frame and its intents still happens once at the component boundary. The default footer is a bound component, documented in the [runtime UI guide](../../../skills/maka-plugin-authoring/references/runtime-ui.md).
+
+The Goal command opens a session-scoped panel with objective, iteration limit and optional token threshold. Native editors supply immutable snapshots for review before creation. The confirmation retains the selected model, workspace and permission boundary. Controls use the displayed Goal revision; a newer observation dismisses a stale confirmation. Original operation recovery checks the saved receipt rather than submitting another Goal.

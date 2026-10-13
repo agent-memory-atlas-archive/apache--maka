@@ -289,6 +289,7 @@ impl Owner {
         source.accepted.tool_mode = configuration.tool_mode;
         source.accepted.editing_tools = configuration.editing_tools;
         let basis = MessageBasis {
+            background_kind: BackgroundKind::Schedule,
             tool_discovery: configuration.tool_discovery,
             allowed_tools: session.configuration.tools.clone(),
             background: None,

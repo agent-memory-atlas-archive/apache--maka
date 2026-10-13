@@ -207,6 +207,11 @@ export type RuntimeProtocol =
   | SkillPreparationRecord
   | AgentList
   | AgentCreate
+  | AgentGoalRead
+  | AgentGoalView
+  | AgentGoalChange
+  | AgentGoalResult
+  | AgentGoalReceiptRead
   | AgentChecklistRead
   | AgentChecklist
   | AgentRecapRead
@@ -2971,6 +2976,56 @@ export type AgentWorkspaceSelection =
   | {
       sessionId: string;
       kind: 'session';
+    };
+export type GoalStatus =
+  | 'armed'
+  | 'active'
+  | 'paused'
+  | 'waiting'
+  | 'achieved'
+  | 'impossible'
+  | 'cancelled'
+  | 'cancellation_unknown'
+  | 'max_iterations'
+  | 'budget_limited'
+  | 'budget_unknown'
+  | 'blocked';
+export type GoalReportKind = 'progress' | 'achieved' | 'waiting' | 'impossible';
+export type AgentGoalChange =
+  | {
+      sessionId: string;
+      objective: string;
+      maxIterations: number;
+      tokenBudget?: number | null;
+      start: boolean;
+      approval: AgentGoalApproval;
+      kind: 'create';
+    }
+  | {
+      sessionId: string;
+      goalId: string;
+      revision: number;
+      action: GoalControl;
+      /**
+       * Explicit renewed model and session authority, only for Resume without a pending iteration.
+       */
+      approval?: AgentGoalApproval | null;
+      kind: 'control';
+    };
+export type GoalControl = 'pause' | 'resume' | 'cancel' | 'complete';
+export type AgentGoalResult =
+  | {
+      goalId: string;
+      revision: number;
+      kind: 'committed';
+    }
+  | {
+      actual?: number | null;
+      kind: 'conflict';
+    }
+  | {
+      reason: string;
+      kind: 'rejected';
     };
 export type AgentTodoStatus = 'pending' | 'in_progress' | 'completed';
 export type AgentRecapReceipt =
@@ -6547,6 +6602,10 @@ export interface AgentConfiguration {
    */
   scheduledTasks?: boolean;
   /**
+   * Enable explicitly approved, bounded Goal continuation.
+   */
+  goals?: boolean;
+  /**
    * Enable the session-scoped, model-maintained checklist.
    */
   todo?: boolean;
@@ -8479,6 +8538,53 @@ export interface AgentProjectRef {
   id: string;
   revision: string;
 }
+export interface AgentGoalRead {
+  sessionId: string;
+}
+export interface AgentGoalView {
+  enabled: boolean;
+  current?: AgentGoalDetail | null;
+}
+export interface AgentGoalDetail {
+  id: string;
+  revision: number;
+  objective: string;
+  status: GoalStatus;
+  iterations: number;
+  maxIterations: number;
+  tokenBudget?: number | null;
+  consumed: GoalMeter;
+  pending: boolean;
+  report?: GoalReport | null;
+  note: string;
+}
+export interface GoalMeter {
+  known: number;
+  missing: number;
+  [k: string]: unknown | undefined;
+}
+export interface GoalReport {
+  status: GoalReportKind;
+  note: string;
+}
+export interface AgentGoalApproval {
+  target: AgentScheduledTarget;
+  model: ModelSelection;
+  thinkingLevel?: ThinkingLevel | null;
+}
+/**
+ * Exact observed source boundary. This data is checked against the original
+ * Session; passing it never grants execution by itself.
+ */
+export interface AgentScheduledTarget {
+  sessionId: string;
+  workspace: AgentWorkspace;
+  permissions: AgentWorkspacePermissions;
+  boundaryRevision: number;
+}
+export interface AgentGoalReceiptRead {
+  reference: RecoveryRef;
+}
 export interface AgentChecklistRead {
   sessionId: string;
   offset?: number;
@@ -8768,16 +8874,6 @@ export interface Task {
   updatedAt: number;
   runs: Run[];
   lastError?: string | null;
-}
-/**
- * Exact observed source boundary. This data is checked against the original
- * Session; passing it never grants execution by itself.
- */
-export interface AgentScheduledTarget {
-  sessionId: string;
-  workspace: AgentWorkspace;
-  permissions: AgentWorkspacePermissions;
-  boundaryRevision: number;
 }
 export interface Run {
   id: string;

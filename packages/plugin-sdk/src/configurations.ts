@@ -175,6 +175,11 @@ export const configurations = {
         type: 'boolean',
         default: false,
       },
+      goals: {
+        description: 'Enable explicitly approved, bounded Goal continuation.',
+        type: 'boolean',
+        default: false,
+      },
       todo: {
         description: 'Enable the session-scoped, model-maintained checklist.',
         type: 'boolean',
@@ -667,6 +672,11 @@ export const configurations = {
           scheduledTasks: {
             type: 'boolean',
             description: 'Enable model proposals and approved scheduled work for this Agent.',
+            default: false,
+          },
+          goals: {
+            type: 'boolean',
+            description: 'Enable explicitly approved, bounded Goal continuation.',
             default: false,
           },
           todo: {

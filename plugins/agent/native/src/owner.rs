@@ -27,6 +27,7 @@ mod assistant;
 mod attachments;
 mod auxiliary;
 mod execution;
+mod goal;
 mod imports;
 mod interactions;
 mod notifications;
@@ -65,6 +66,8 @@ use maka_agent_api::session::SessionConfiguration;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MessageBasis {
+    #[serde(default, skip_serializing_if = "BackgroundKind::is_schedule")]
+    background_kind: BackgroundKind,
     #[serde(default)]
     tool_discovery: bool,
     #[serde(default)]
@@ -85,6 +88,18 @@ struct MessageBasis {
     fingerprint: String,
     tools: Vec<crate::tools::SelectedTool>,
     max_steps: usize,
+}
+#[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum BackgroundKind {
+    #[default]
+    Schedule,
+    Goal(Uuid),
+}
+impl BackgroundKind {
+    fn is_schedule(&self) -> bool {
+        *self == Self::Schedule
+    }
 }
 enum Selection {
     Model(ModelSelection, Option<ThinkingLevel>),
@@ -118,6 +133,7 @@ pub(crate) struct Owner {
     pub recall: Arc<recall::Recall>,
     scheduler: Arc<scheduler::Scheduler>,
     todo: Arc<todo::Todo>,
+    goals: Arc<goal::Goals>,
     recap_storage: Arc<maka_host_runtime::storage::Storage>,
     auxiliary: auxiliary::Auxiliary,
     pub settings: Configuration,
@@ -258,6 +274,13 @@ impl Owner {
         if settings.scheduled_tasks {
             additional.extend(scheduler.tools());
         }
+        let goals = Arc::new(goal::Goals::new(
+            persistence.store().clone(),
+            prefix.clone(),
+        ));
+        if settings.goals {
+            additional.extend(goals.tools());
+        }
         let todo = Arc::new(todo::Todo::new(persistence.store().clone(), prefix.clone()));
         let recap_storage = Arc::new(maka_host_runtime::storage::Storage::new(
             persistence.store().clone(),
@@ -283,6 +306,12 @@ impl Owner {
             workers.clone(),
         )
         .and_then(|mut catalog| {
+            if settings.goals {
+                catalog.tools = catalog
+                    .tools
+                    .with_always_visible(&["GoalStatus"])
+                    .map_err(|error| error.to_string())?;
+            }
             if settings.recall {
                 catalog.tools = catalog
                     .tools
@@ -324,6 +353,7 @@ impl Owner {
             Arc::new(crate::model::Prices(configuration.clone())),
         );
         Ok(Arc::new(Self {
+            goals,
             auxiliary,
             todo,
             recap_storage,
@@ -782,6 +812,7 @@ impl Owner {
         .await?;
         let external = executor.is_some();
         let basis = MessageBasis {
+            background_kind: BackgroundKind::Schedule,
             tool_discovery: !external && self.settings.tool_discovery,
             allowed_tools: session.configuration.tools.clone(),
             background: None,
@@ -958,6 +989,7 @@ impl Owner {
             || !runs.quarantined.is_empty()
             || !self.workers.is_empty()
             || !self.auxiliary.resources.is_idle()
+            || self.goals.keeps_host_awake()
         {
             return None;
         }
@@ -982,6 +1014,7 @@ impl Owner {
             owner.engine.drain().await;
             let scheduler = owner.scheduler.finish().await;
             let todo = owner.todo.finish().await;
+            let goals = owner.goals.finish().await;
             let recap = owner.recap_storage.finish().await;
             let auxiliary = owner.auxiliary.resources.finish().await;
             let configuration = owner.configuration.shutdown().await;
@@ -991,6 +1024,7 @@ impl Owner {
             }
             scheduler?;
             todo?;
+            goals?;
             recap?;
             auxiliary.map_err(|error| error.to_string())?;
             configuration.map_err(|_| "agent_configuration_cleanup_unconfirmed".into())

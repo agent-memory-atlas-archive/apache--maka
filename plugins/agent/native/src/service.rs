@@ -82,6 +82,38 @@ impl Handler for Agent {
                     }
                 }
                 "tools" => encode(owner.tool_names()),
+                "goalReceipt" => encode(owner.goal_receipt(decode(input)?).await?),
+                "goal" => encode(owner.goal(decode(input)?).await?),
+                "changeGoal" => {
+                    let operation = context
+                        .operation()
+                        .ok_or("agent_mutation_required")?
+                        .clone();
+                    encode(
+                        owner
+                            .goal_change(decode(input)?, operation, context.scope())
+                            .await?,
+                    )
+                }
+                "watchGoal" => {
+                    let input: GoalRead = decode(input)?;
+                    let mut changes = owner.goal_changes();
+                    let mut revision = None;
+                    loop {
+                        changes.borrow_and_update();
+                        let page = owner.goal(input.clone()).await?;
+                        let next = page.current.as_ref().map(|goal| goal.revision);
+                        if revision != Some(next) {
+                            revision = Some(next);
+                            context.emit(encode(page)?).await?;
+                        }
+                        tokio::select! {
+                            biased;
+                            _ = context.scope().cancellation.cancelled() => return Err("goal_observation_cancelled".into()),
+                            result = changes.changed() => result.map_err(|_| "goal_observation_closed")?,
+                        }
+                    }
+                }
                 "checklist" => encode(owner.checklist(&decode(input)?).await?),
                 "recap" => encode(owner.recap(decode(input)?, context.scope()).await?),
                 "generateRecap" => {

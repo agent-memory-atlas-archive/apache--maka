@@ -41,6 +41,8 @@ impl Owner {
     pub fn activated(self: &Arc<Self>) {
         self.scheduler.bind(self);
         self.todo.bind(self);
+        self.goals.bind(self);
+        self.start_goals();
         self.start_schedules();
         let owner = self.clone();
         self.workers.spawn(async move { owner.schedule().await });
@@ -107,6 +109,7 @@ impl Owner {
         if let Some(model) = &basis.model {
             self.title_after_message(running.invocation().clone(), model.clone());
         }
+        self.goals.execution_changed();
         runs.controls.insert(
             running.invocation().session_id.clone(),
             Control {
@@ -151,6 +154,7 @@ impl Owner {
                     }
                     Ok(None) => {
                         runs.controls.remove(&session);
+                        self.goals.execution_changed();
                         drop(permit);
                         drop(runs);
                         self.schedule().await;

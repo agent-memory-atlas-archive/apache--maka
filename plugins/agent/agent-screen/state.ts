@@ -65,6 +65,8 @@ import { type AttachmentDrafts } from '../../shared/attachments.js';
 
 import { type DraftRecord, type DraftStep } from '../../shared/drafts.js';
 
+import type { GoalState, GoalRequest } from './goal.js';
+
 type Notice = keyof Copy | null;
 
 export type Backend =
@@ -72,6 +74,7 @@ export type Backend =
   | { kind: 'executor'; selection: AgentExecutorSelection };
 
 export type Request =
+  | GoalRequest
   | DraftStep
   | { kind: 'observe'; epoch: number }
   | { kind: 'recapRead'; epoch: number; attempt: number }
@@ -145,7 +148,8 @@ export type Mutation =
           | 'respond'
           | 'markRead'
           | 'uploadAttachment'
-          | 'recapGenerate';
+          | 'recapGenerate'
+          | 'goalChange';
       }
     >
   | { kind: 'restored' };
@@ -259,6 +263,7 @@ export interface State {
   scheduledTasks: boolean;
   web: boolean;
   jev: boolean;
+  goal: GoalState;
   recap: {
     receipt: AgentRecapReceipt | null;
     loaded: boolean;
@@ -277,7 +282,7 @@ export interface State {
   settingsCategory: SettingsCategory;
   insightsScope: InsightsProps['scope'];
   sidebar: { open: boolean } | { command: TerminalPaneCommand | null };
-  inspector: 'details' | 'terminal' | 'outputs' | 'checklist' | 'recap' | null;
+  inspector: 'details' | 'terminal' | 'outputs' | 'checklist' | 'recap' | 'goal' | null;
   terminals: boolean;
   skills: boolean;
   place: string;
@@ -289,6 +294,7 @@ export interface State {
     | 'directories'
     | 'checklist'
     | 'recap'
+    | 'goal'
     | 'details'
     | 'help'
     | 'queue'
@@ -384,6 +390,7 @@ export type RootCommand =
   | 'skills-open'
   | 'checklist-open'
   | 'recap-open'
+  | 'goal-open'
   | 'details-open'
   | 'usage-open'
   | 'create-workspace'

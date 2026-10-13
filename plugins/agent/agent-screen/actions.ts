@@ -45,6 +45,7 @@ import { draftReady } from '../../shared/drafts.js';
 import { type Backend, type Request, type State, type RootCommand } from './state.js';
 import { toolCards } from '../../shared/tool-cards.js';
 import { readingKey } from './state.js';
+import { newGoalState, watchGoal } from './goal.js';
 import { messages } from './messages.js';
 
 export function intent(
@@ -300,6 +301,8 @@ export function select(state: State, actions: Action[], session: AgentSession | 
   state.recallAnchor = null;
   state.selected = session;
   state.epoch++;
+  state.goal = newGoalState();
+  if (session) watchGoal(state);
   state.recap = { receipt: null, loaded: false, loading: null, failed: false, confirmation: null };
   state.checklist = { watch: null, page: null, failed: false };
   if (session) watchChecklist(state);
@@ -417,6 +420,9 @@ export function mutationPending(state: State) {
         'queue',
         'receipt',
         'recapGenerate',
+        'goalChange',
+        'goalField',
+        'goalReceipt',
       ].includes(request.kind),
     )
   );
@@ -711,6 +717,13 @@ export function rootCommands(
         ]
       : []),
     {
+      kind: 'goal-open',
+      id: 'goal-open',
+      label: text.goalTitle,
+      hint: '',
+      disabled: !route || !state.selected || state.goal.page?.enabled === false,
+    },
+    {
       kind: 'recap-open',
       id: 'recap-open',
       label: text.recapTitle,
@@ -923,6 +936,10 @@ export function rootCommand(
     if (!state.checklist.watch) watchChecklist(state);
     if (target === 'tui') state.inspector = state.inspector === 'checklist' ? null : 'checklist';
     else state.dialog = 'checklist';
+  } else if (kind === 'goal-open') {
+    if (!state.goal.watch) watchGoal(state);
+    if (target === 'tui') state.inspector = state.inspector === 'goal' ? null : 'goal';
+    else state.dialog = 'goal';
   } else if (kind === 'recap-open') {
     readRecap(state, actions);
     if (target === 'tui') state.inspector = state.inspector === 'recap' ? null : 'recap';

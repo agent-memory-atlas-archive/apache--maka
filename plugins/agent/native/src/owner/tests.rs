@@ -17,6 +17,9 @@
  * under the License.
  */
 
+#[path = "tests/goal.rs"]
+mod goal_tests;
+
 #[path = "tests/recap.rs"]
 mod recap_tests;
 
@@ -526,6 +529,7 @@ impl Fixture {
             isolated_workspaces: false,
             assistant: None,
             scheduled_tasks: false,
+            goals: false,
             todo: false,
             automatic_titles: false,
             recaps: false,

@@ -928,6 +928,8 @@ function agentComposition(configuration: CompositionConfiguration): ApplicationS
         file: [local('file', 'FilePicker')],
         receipts: [remote('receipts', 'Receipts')],
         reader: [local('reader', 'Reader')],
+        input: [local('input', 'TextInput')],
+        editor: [local('editor', 'Textarea')],
         history: [local('history', 'History')],
         composer: [local('composer', 'Composer')],
         footer: [local('composer-footer', 'Footer')],
@@ -937,7 +939,6 @@ function agentComposition(configuration: CompositionConfiguration): ApplicationS
               rows: [local('rows', 'Rows')],
               checkpoint: [local('checkpoint', 'Checkpoint')],
               themeFile: [local('text-file', 'TextFile')],
-              input: [local('input', 'TextInput')],
             }
           : {}),
         palette: [local('command-palette', 'CommandPalette')],

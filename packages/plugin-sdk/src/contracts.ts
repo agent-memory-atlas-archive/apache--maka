@@ -7222,6 +7222,315 @@ export const contracts = {
           },
           resources: {},
         },
+        changeGoal: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentGoalChange',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  objective: {
+                    type: 'string',
+                  },
+                  maxIterations: {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                  tokenBudget: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  start: {
+                    type: 'boolean',
+                  },
+                  approval: {
+                    $ref: '#/$defs/AgentGoalApproval',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'create',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'sessionId', 'objective', 'maxIterations', 'start', 'approval'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  goalId: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  action: {
+                    $ref: '#/$defs/GoalControl',
+                  },
+                  approval: {
+                    description:
+                      'Explicit renewed model and session authority, only for Resume without a pending iteration.',
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentGoalApproval',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                    default: null,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'control',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'sessionId', 'goalId', 'revision', 'action'],
+              },
+            ],
+            $defs: {
+              AgentGoalApproval: {
+                type: 'object',
+                properties: {
+                  target: {
+                    $ref: '#/$defs/AgentScheduledTarget',
+                  },
+                  model: {
+                    $ref: '#/$defs/ModelSelection',
+                  },
+                  thinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
+                required: ['target', 'model'],
+              },
+              AgentScheduledTarget: {
+                description:
+                  'Exact observed source boundary. This data is checked against the original\nSession; passing it never grants execution by itself.',
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  workspace: {
+                    $ref: '#/$defs/AgentWorkspace',
+                  },
+                  permissions: {
+                    $ref: '#/$defs/AgentWorkspacePermissions',
+                  },
+                  boundaryRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['sessionId', 'workspace', 'permissions', 'boundaryRevision'],
+              },
+              AgentWorkspace: {
+                type: 'object',
+                properties: {
+                  worktree: {
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  projectId: {
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                  },
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['path', 'directoryIdentity', 'identity'],
+              },
+              Binding: {
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
+              },
+              AgentWorkspacePermissions: {
+                type: 'object',
+                properties: {
+                  access: {
+                    $ref: '#/$defs/AgentWorkspaceAccess',
+                  },
+                  requestPermissions: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['access', 'requestPermissions'],
+              },
+              AgentWorkspaceAccess: {
+                description:
+                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                type: 'string',
+                enum: ['read_only', 'workspace_write'],
+              },
+              ModelSelection: {
+                description:
+                  'Exact public selection observed by a caller, checked once at run admission.',
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  modelId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 512,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision', 'modelId'],
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+              GoalControl: {
+                type: 'string',
+                enum: ['pause', 'resume', 'cancel', 'complete'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentGoalResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  goalId: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'committed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'goalId', 'revision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  actual: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'conflict',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  reason: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'reason'],
+              },
+            ],
+          },
+          resources: {},
+        },
         checklist: {
           mode: 'query',
           input: {
@@ -8816,6 +9125,518 @@ export const contracts = {
               AgentRecapFailure: {
                 type: 'string',
                 enum: ['empty_or_oversized_output', 'incomplete_output', 'model_unavailable'],
+              },
+            },
+          },
+          resources: {},
+        },
+        goal: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentGoalRead',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentGoalView',
+            type: 'object',
+            properties: {
+              enabled: {
+                type: 'boolean',
+              },
+              current: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/AgentGoalDetail',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+            },
+            additionalProperties: false,
+            required: ['enabled'],
+            $defs: {
+              AgentGoalDetail: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  objective: {
+                    type: 'string',
+                  },
+                  status: {
+                    $ref: '#/$defs/GoalStatus',
+                  },
+                  iterations: {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                  maxIterations: {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                  tokenBudget: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  consumed: {
+                    $ref: '#/$defs/GoalMeter',
+                  },
+                  pending: {
+                    type: 'boolean',
+                  },
+                  report: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/GoalReport',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  note: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'id',
+                  'revision',
+                  'objective',
+                  'status',
+                  'iterations',
+                  'maxIterations',
+                  'consumed',
+                  'pending',
+                  'note',
+                ],
+              },
+              GoalStatus: {
+                type: 'string',
+                enum: [
+                  'armed',
+                  'active',
+                  'paused',
+                  'waiting',
+                  'achieved',
+                  'impossible',
+                  'cancelled',
+                  'cancellation_unknown',
+                  'max_iterations',
+                  'budget_limited',
+                  'budget_unknown',
+                  'blocked',
+                ],
+              },
+              GoalMeter: {
+                type: 'object',
+                properties: {
+                  known: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  missing: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                required: ['known', 'missing'],
+              },
+              GoalReport: {
+                type: 'object',
+                properties: {
+                  status: {
+                    $ref: '#/$defs/GoalReportKind',
+                  },
+                  note: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['status', 'note'],
+              },
+              GoalReportKind: {
+                type: 'string',
+                enum: ['progress', 'achieved', 'waiting', 'impossible'],
+              },
+            },
+          },
+          resources: {},
+        },
+        goalReceipt: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentGoalReceiptRead',
+            type: 'object',
+            properties: {
+              reference: {
+                $ref: '#/$defs/RecoveryRef',
+              },
+            },
+            additionalProperties: false,
+            required: ['reference'],
+            $defs: {
+              RecoveryRef: {
+                type: 'object',
+                properties: {
+                  source: {
+                    $ref: '#/$defs/DeploymentRef',
+                  },
+                  namespace: {
+                    $ref: '#/$defs/InstanceId',
+                  },
+                  export: {
+                    type: 'string',
+                  },
+                  method: {
+                    type: 'string',
+                  },
+                  operation: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  fingerprint: {
+                    type: 'string',
+                  },
+                  contract: {
+                    $ref: '#/$defs/Contract',
+                  },
+                  recovery: {
+                    $ref: '#/$defs/RecoveryProtocol',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'source',
+                  'namespace',
+                  'export',
+                  'method',
+                  'operation',
+                  'fingerprint',
+                  'contract',
+                  'recovery',
+                ],
+              },
+              DeploymentRef: {
+                type: 'object',
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['stateDomain', 'deployment', 'revision'],
+              },
+              InstanceId: {
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
+              },
+              Contract: {
+                description:
+                  'Public contract definitions are package data, not live registration records.',
+                type: 'object',
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  version: {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                  transport: {
+                    $ref: '#/$defs/Transport',
+                  },
+                  interface: {
+                    $ref: '#/$defs/Interface',
+                  },
+                },
+                additionalProperties: false,
+                required: ['name', 'version', 'transport', 'interface'],
+              },
+              Transport: {
+                type: 'string',
+                enum: ['local', 'remote'],
+              },
+              Interface: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      methods: {
+                        type: 'object',
+                        additionalProperties: {
+                          $ref: '#/$defs/Method',
+                        },
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'service',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'methods'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      props: true,
+                      events: {
+                        type: 'object',
+                        additionalProperties: true,
+                      },
+                      captures: {
+                        type: 'object',
+                        additionalProperties: {
+                          $ref: '#/$defs/Capture',
+                        },
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'component',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'props', 'events', 'captures'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      schema: true,
+                      kind: {
+                        type: 'string',
+                        const: 'value',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'schema'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      resource: {
+                        type: 'string',
+                      },
+                      schema: true,
+                      kind: {
+                        type: 'string',
+                        const: 'resource',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'resource', 'schema'],
+                  },
+                ],
+              },
+              Method: {
+                type: 'object',
+                properties: {
+                  mode: {
+                    $ref: '#/$defs/MethodMode',
+                  },
+                  input: true,
+                  output: true,
+                  progress: {
+                    description:
+                      'Bounded transient observations from this mutation, separate from its\noriginal final receipt. Only mutation methods may declare progress.',
+                  },
+                  resources: {
+                    type: 'object',
+                    additionalProperties: {
+                      $ref: '#/$defs/ResourceSlot',
+                    },
+                  },
+                },
+                additionalProperties: false,
+                required: ['mode', 'input', 'output', 'resources'],
+              },
+              MethodMode: {
+                type: 'string',
+                enum: ['query', 'mutation', 'subscription'],
+              },
+              ResourceSlot: {
+                description:
+                  'One declared input slot: its nominal type and whether the caller may omit it.',
+                type: 'object',
+                properties: {
+                  type: {
+                    $ref: '#/$defs/ResourceType',
+                  },
+                  optional: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['type', 'optional'],
+              },
+              ResourceType: {
+                description:
+                  'Nominal read-only resource shape, not a resource id or authorization token.',
+                type: 'object',
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  version: {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['name', 'version'],
+              },
+              Capture: {
+                type: 'object',
+                properties: {
+                  input: true,
+                  output: {
+                    $ref: '#/$defs/CaptureOutput',
+                  },
+                },
+                additionalProperties: false,
+                required: ['input', 'output'],
+              },
+              CaptureOutput: {
+                description:
+                  'Resource captures enter checked service slots; continuations remain in the\noriginal presentation owner and only decide admission of query feedback.',
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      resource: {
+                        $ref: '#/$defs/ResourceType',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'resource',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'resource'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'continuation',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                ],
+              },
+              RecoveryProtocol: {
+                type: 'string',
+                enum: ['journal_v1'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'Nullable_AgentGoalResult',
+            anyOf: [
+              {
+                $ref: '#/$defs/AgentGoalResult',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            $defs: {
+              AgentGoalResult: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      goalId: {
+                        type: 'string',
+                        format: 'uuid',
+                      },
+                      revision: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'committed',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'goalId', 'revision'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      actual: {
+                        type: ['integer', 'null'],
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'conflict',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      reason: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'rejected',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'reason'],
+                  },
+                ],
               },
             },
           },
@@ -19046,6 +19867,162 @@ export const contracts = {
               AgentTodoStatus: {
                 type: 'string',
                 enum: ['pending', 'in_progress', 'completed'],
+              },
+            },
+          },
+          resources: {},
+        },
+        watchGoal: {
+          mode: 'subscription',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentGoalRead',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentGoalView',
+            type: 'object',
+            properties: {
+              enabled: {
+                type: 'boolean',
+              },
+              current: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/AgentGoalDetail',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+            },
+            additionalProperties: false,
+            required: ['enabled'],
+            $defs: {
+              AgentGoalDetail: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  objective: {
+                    type: 'string',
+                  },
+                  status: {
+                    $ref: '#/$defs/GoalStatus',
+                  },
+                  iterations: {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                  maxIterations: {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                  tokenBudget: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  consumed: {
+                    $ref: '#/$defs/GoalMeter',
+                  },
+                  pending: {
+                    type: 'boolean',
+                  },
+                  report: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/GoalReport',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  note: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'id',
+                  'revision',
+                  'objective',
+                  'status',
+                  'iterations',
+                  'maxIterations',
+                  'consumed',
+                  'pending',
+                  'note',
+                ],
+              },
+              GoalStatus: {
+                type: 'string',
+                enum: [
+                  'armed',
+                  'active',
+                  'paused',
+                  'waiting',
+                  'achieved',
+                  'impossible',
+                  'cancelled',
+                  'cancellation_unknown',
+                  'max_iterations',
+                  'budget_limited',
+                  'budget_unknown',
+                  'blocked',
+                ],
+              },
+              GoalMeter: {
+                type: 'object',
+                properties: {
+                  known: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  missing: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                required: ['known', 'missing'],
+              },
+              GoalReport: {
+                type: 'object',
+                properties: {
+                  status: {
+                    $ref: '#/$defs/GoalReportKind',
+                  },
+                  note: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['status', 'note'],
+              },
+              GoalReportKind: {
+                type: 'string',
+                enum: ['progress', 'achieved', 'waiting', 'impossible'],
               },
             },
           },

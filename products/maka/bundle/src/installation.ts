@@ -123,6 +123,7 @@ export function installation(
     recall: true,
     scheduledTasks: true,
     todo: true,
+    goals: true,
     automaticTitles: true,
     recaps: true,
     tools,

@@ -20,6 +20,7 @@
 import type {
   Action,
   AgentRecapReceipt,
+  AgentGoalResult,
   AgentDeliveryPage,
   InteractionRecord,
   AgentInteractionResult,
@@ -37,6 +38,7 @@ import type {
   OperationReply,
   TextChunk,
 } from '../../../packages/plugin-sdk/src/index.js';
+import { goalChanged, goalFieldResult } from './goal.js';
 import { sameValue } from '../../shared/value.js';
 
 import { sameFile } from '../../shared/attachments.js';
@@ -87,6 +89,9 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
       state.catalogFilter = 'all';
       catalog(state, { kind: 'at', cursor: created.session.id });
     }
+  } else if (request.kind === 'goalChange') {
+    if (request.epoch === state.epoch && request.sessionId === state.selected?.id)
+      goalChanged(state, value as AgentGoalResult);
   } else if (request.kind === 'recapGenerate') {
     if (request.epoch === state.epoch && request.sessionId === state.selected?.id)
       state.recap = {
@@ -222,10 +227,30 @@ export function receipt(state: State, actions: Action[], request: Mutation, repl
   } else {
     state.uncertain = { reference: reply.reference, request };
     state.notice = 'unknown';
+    if (reply.reference.method === 'changeGoal')
+      intent(
+        state,
+        actions,
+        { kind: 'goalReceipt', reference: reply.reference },
+        'agent',
+        'goalReceipt',
+        { reference: reply.reference },
+      );
   }
 }
 
 export function queryFailed(state: State, request: Request) {
+  if (request.kind === 'goalField' || request.kind === 'goalChange') {
+    if (request.epoch === state.epoch) {
+      state.goal.capture = null;
+      state.notice = 'goalUnavailable';
+    }
+    return;
+  }
+  if (request.kind === 'goalReceipt') {
+    state.notice = 'unknown';
+    return;
+  }
   if (request.kind === 'recapRead' || request.kind === 'recapGenerate') {
     if (
       request.epoch === state.epoch &&
@@ -302,6 +327,16 @@ export function queryFailed(state: State, request: Request) {
 
 export function querySucceeded(state: State, actions: Action[], request: Request, value: unknown) {
   switch (request.kind) {
+    case 'goalField':
+      goalFieldResult(state, actions, request, value);
+      break;
+    case 'goalReceipt': {
+      const original = state.uncertain;
+      if (value && original && sameValue(original.reference, request.reference))
+        settled(state, actions, original.request, value);
+      else state.notice = 'unknown';
+      break;
+    }
     case 'recapRead': {
       if (request.epoch === state.epoch && request.attempt === state.recap.loading)
         state.recap = {

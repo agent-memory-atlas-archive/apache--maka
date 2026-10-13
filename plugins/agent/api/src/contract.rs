@@ -27,8 +27,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+#[path = "contract_goal.rs"]
+mod goal;
 #[path = "contract_imports.rs"]
 mod imports;
+pub use goal::*;
 #[path = "contract_todo.rs"]
 mod todo;
 pub use todo::*;
@@ -73,6 +76,9 @@ pub struct Configuration {
     /// Enable model proposals and approved scheduled work for this Agent.
     #[serde(default)]
     pub scheduled_tasks: bool,
+    /// Enable explicitly approved, bounded Goal continuation.
+    #[serde(default)]
+    pub goals: bool,
     /// Enable the session-scoped, model-maintained checklist.
     #[serde(default)]
     pub todo: bool,
@@ -1078,6 +1084,22 @@ pub fn contract() -> Contract {
                         output: schemars::schema_for!(ToolNames).into(),
                         resources: BTreeMap::new(),
                     },
+                ),
+                (
+                    "goal".into(),
+                    method::<GoalRead, GoalView>(MethodMode::Query),
+                ),
+                (
+                    "goalReceipt".into(),
+                    method::<GoalReceiptRead, Option<GoalResult>>(MethodMode::Query),
+                ),
+                (
+                    "watchGoal".into(),
+                    method::<GoalRead, GoalView>(MethodMode::Subscription),
+                ),
+                (
+                    "changeGoal".into(),
+                    method::<GoalChange, GoalResult>(MethodMode::Mutation),
                 ),
                 (
                     "checklist".into(),
