@@ -62,6 +62,8 @@ use maka_agent_api::session::SessionConfiguration;
 #[serde(deny_unknown_fields)]
 struct MessageBasis {
     #[serde(default)]
+    tool_discovery: bool,
+    #[serde(default)]
     allowed_tools: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     background: Option<ScheduledTarget>,
@@ -599,8 +601,12 @@ impl Owner {
             names: self.tools.names(),
         }
     }
-    fn selected_tools(&self, allowed: Option<&[String]>) -> maka_tools::ToolCatalog {
-        match allowed {
+    fn selected_tools(
+        &self,
+        allowed: Option<&[String]>,
+        discovery: bool,
+    ) -> maka_tools::ToolCatalog {
+        let selected = match allowed {
             None => self.tools.clone(),
             Some(allowed) => {
                 let names = self.tools.names();
@@ -611,6 +617,11 @@ impl Owner {
                     .collect();
                 self.tools.excluding(&excluded)
             }
+        };
+        if discovery {
+            selected.with_discovery()
+        } else {
+            selected
         }
     }
     pub async fn send(
@@ -728,6 +739,7 @@ impl Owner {
         .await?;
         let external = executor.is_some();
         let basis = MessageBasis {
+            tool_discovery: !external && self.settings.tool_discovery,
             allowed_tools: session.configuration.tools.clone(),
             background: None,
             internal_tools: if external {
@@ -772,7 +784,7 @@ impl Owner {
                 if basis.executor.is_some() {
                     vec![]
                 } else {
-                    self.selected_tools(session.configuration.tools.as_deref())
+                    self.selected_tools(session.configuration.tools.as_deref(), false)
                         .names()
                 },
             )

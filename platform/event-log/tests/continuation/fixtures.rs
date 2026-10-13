@@ -33,6 +33,7 @@ pub(super) fn opening(id: &str, claim: Option<ContinuationClaim>) -> RuntimeEven
                 approval_policy: maka_agent_facts::execution::ApprovalPolicy::OnRequest,
                 boundary_revision: 0,
                 system_prompt: None,
+                tool_discovery: false,
                 tool_composition: None,
                 cwd: ".".into(),
                 workspace_identity: Some(

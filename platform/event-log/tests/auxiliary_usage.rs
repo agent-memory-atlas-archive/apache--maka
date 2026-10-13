@@ -227,6 +227,7 @@ async fn title_accounting_uses_first_opening_after_stop_and_never_replays_after_
             connection_slug: "frozen".into(),
             model: "title-model".into(),
         }),
+        tool_discovery: false,
         tool_composition: None,
         system_prompt: None,
         thinking_level: None,

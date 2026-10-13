@@ -27,4 +27,6 @@ The service owns its activation and delegates runs to `maka-agent-engine`. Sessi
 
 The Agent captures the model's Code Mode default or explicit `codeMode` override when it accepts a message. Queued work and resumed runs retain their original mode. A service tool can opt into Code Mode with `nestable: true`; nested calls use the same permissions, operation receipts and cleanup as direct calls. Omitted `nestable` keeps the tool callable only directly. The Maka default composition enables nesting for files, processes, Web and Skills.
 
+The default Maka composition enables `toolDiscovery`: optional tool schemas load through `tool_search`, with loaded schemas retained across turns in the same active Host session. Code Mode can still call authorized nested tools before their descriptions are loaded. Discovery policy is captured when a message is accepted and retained on continuation. Loaded schemas and Code Mode `store`/`load` values are session-local, in-memory state; restarting the Host clears them. Committed context compaction resets the loaded schema set.
+
 [Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

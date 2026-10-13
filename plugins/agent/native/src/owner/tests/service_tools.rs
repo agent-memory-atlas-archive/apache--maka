@@ -751,7 +751,10 @@ async fn tool_response(socket: &mut TcpStream) {
     tool_response_input(socket, json!({"amount":1})).await;
 }
 async fn tool_response_input(socket: &mut TcpStream, input: Value) {
-    let delta = json!({"id":"tool-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"counter-call","type":"function","function":{"name":"Counter","arguments":input.to_string()}}]},"finish_reason":null}]});
+    named_tool_response(socket, "Counter", input).await;
+}
+async fn named_tool_response(socket: &mut TcpStream, name: &str, input: Value) {
+    let delta = json!({"id":"tool-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"counter-call","type":"function","function":{"name":name,"arguments":input.to_string()}}]},"finish_reason":null}]});
     let body = format!(
         "data: {delta}\n\ndata: {{\"id\":\"tool-model\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"tool_calls\"}}]}}\n\ndata: [DONE]\n\n"
     );
@@ -1924,5 +1927,122 @@ async fn code_mode_native_file_writes_obey_the_live_session_permission_boundary(
             fixture.app.shutdown().await.unwrap();
             fixture.config.shutdown().await.unwrap();
         }
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn discovery_retains_loaded_tools_between_turns_without_crossing_session_ceiling() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let counter = Counter::new(Behavior::Returned);
+        let fixture = Fixture::configured(
+            &format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None,
+            Some(Setup::native(counter.clone(), true)),
+            |settings| settings.tool_discovery = true,
+        ).await;
+        let session = fixture.create("Discover native services").await;
+        fixture.send(&session).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let first = request(&mut socket).await;
+        assert!(has_tool(&first, "tool_search"));
+        assert!(!has_tool(&first, "Counter"));
+        named_tool_response(&mut socket, "tool_search", json!({"query":"Counter"})).await;
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let loaded = request(&mut socket).await;
+        assert!(has_tool(&loaded, "Counter"));
+        response(&mut socket).await;
+        fixture.drained().await;
+
+        fixture.send(&session).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let warm = request(&mut socket).await;
+        assert_eq!(warm["tools"], loaded["tools"]);
+        tool_response(&mut socket).await;
+        let (mut socket, _) = listener.accept().await.unwrap();
+        request(&mut socket).await;
+        response(&mut socket).await;
+        fixture.drained().await;
+        assert_eq!(counter.effects.load(Ordering::SeqCst), 1);
+        assert!(facts(&fixture, &session).await.iter().any(|fact| matches!(fact,
+            Fact::InvocationOpened { configuration: Some(configuration), .. } if configuration.tool_discovery
+        )));
+
+        let other = fixture.create("Separate discovery").await;
+        fixture.send(&other).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let isolated = request(&mut socket).await;
+        assert!(has_tool(&isolated, "tool_search"));
+        assert!(!has_tool(&isolated, "Counter"));
+        response(&mut socket).await;
+        fixture.drained().await;
+
+        let mut input = fixture.create_input("Restricted discovery").await;
+        input["tools"] = json!([]);
+        let created = fixture.mutation(2, "create", input, Uuid::new_v4()).await.unwrap();
+        let restricted = created["session"]["id"].as_str().unwrap();
+        fixture.send(restricted).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let restricted_request = request(&mut socket).await;
+        assert!(!has_tool(&restricted_request, "Counter"));
+        tool_response(&mut socket).await;
+        let (mut socket, _) = listener.accept().await.unwrap();
+        request(&mut socket).await;
+        response(&mut socket).await;
+        fixture.drained().await;
+        assert_eq!(counter.effects.load(Ordering::SeqCst), 1, "discovery cannot lift the session's tool ceiling");
+        assert!(facts(&fixture, restricted).await.iter().any(|fact| matches!(fact,
+            Fact::ToolRejected { name, reason: maka_agent_facts::tool_call::ToolRejection::Unavailable, .. } if name == "Counter"
+        )));
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+
+fn has_tool(request: &Value, name: &str) -> bool {
+    request["tools"]
+        .as_array()
+        .is_some_and(|tools| tools.iter().any(|tool| tool["function"]["name"] == name))
+}
+
+#[tokio::test]
+async fn code_mode_discovery_preserves_session_store_and_nested_callability_between_turns() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let counter = Counter::new(Behavior::Returned);
+        let mut setup = Setup::native(counter.clone(), true);
+        setup.nestable = true;
+        let fixture = Fixture::configured(
+            &format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None,
+            Some(setup), |settings| settings.tool_discovery = true,
+        ).await;
+        selection::edit(&fixture, |changes| {
+            changes.model_overrides = Patch::Set(BTreeMap::from([("fixture-model".into(), ModelOverride {
+                code_mode: Some(true), ..Default::default()
+            })]));
+        }).await;
+        let session = fixture.create("Code store").await;
+        let other = fixture.create("Isolated code store").await;
+        for (target, code, expected_effects) in [
+            (&session, "if (!ALL_TOOLS.some(t => t.name === 'Counter')) throw Error('missing deferred tool'); store('amount', 2); text(await tools.Counter({amount:load('amount')}));", 2),
+            (&session, "if (load('amount') !== 2) throw Error('session store lost'); text(await tools.Counter({amount:load('amount')}));", 4),
+            (&other, "if (load('amount') !== undefined) throw Error('session store leaked'); text('isolated');", 4),
+        ] {
+            fixture.send(target).await.unwrap();
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let prompt = request(&mut socket).await;
+            assert!(has_tool(&prompt, "exec"));
+            assert!(!has_tool(&prompt, "Counter"));
+            code_response(&mut socket, code).await;
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let next = request(&mut socket).await;
+            let result = next["messages"].as_array().unwrap().iter().rev().find(|message| message["role"] == "tool").unwrap();
+            let content = result["content"].as_str().unwrap();
+            assert!(content.contains(if expected_effects == 4 && target == &other { "isolated" } else { "effects" }), "{content}");
+            assert_eq!(counter.effects.load(Ordering::SeqCst), expected_effects);
+            response(&mut socket).await;
+            fixture.drained().await;
+        }
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
     }).await.unwrap();
 }

@@ -93,6 +93,7 @@ impl Owner {
             return Ok(None);
         }
         let basis = MessageBasis {
+            tool_discovery: self.settings.tool_discovery,
             allowed_tools: session.configuration.tools.clone(),
             background: None,
             model: Some(route.model.clone()),

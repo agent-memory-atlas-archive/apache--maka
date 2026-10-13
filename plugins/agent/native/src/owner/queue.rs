@@ -142,7 +142,6 @@ impl Owner {
                     }
                     Ok(None) => {
                         runs.controls.remove(&session);
-                        self.engine.release_session_state(&session);
                         drop(permit);
                         drop(runs);
                         self.schedule().await;
@@ -305,6 +304,7 @@ impl Owner {
             prompt.validate().map_err(|_| "agent_prompt_invalid")?;
         }
         let mut configuration = InvocationConfiguration {
+            tool_discovery: basis.tool_discovery,
             cwd: basis.workspace.path,
             workspace_identity: Some(basis.workspace.identity),
             workspace_origin: WorkspaceOrigin::Selected,
@@ -340,7 +340,8 @@ impl Owner {
                     work: RunWork::Message {
                         message: delivered.message.content.clone(),
                         source_messages: vec![delivered],
-                        tools: self.selected_tools(basis.allowed_tools.as_deref()),
+                        tools: self
+                            .selected_tools(basis.allowed_tools.as_deref(), basis.tool_discovery),
                         max_steps: basis.max_steps,
                         allow_prior_unknown: false,
                     },

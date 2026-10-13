@@ -92,6 +92,7 @@ export function installation(
   add('skills', 'search', 'SkillSearch', 'Find applicable skills in the selected collections.');
   add('skills', 'load', 'Skill', 'Read a selected skill and its resources.');
   const agent: CompositionConfiguration['agent'] = {
+    toolDiscovery: true,
     isolatedWorkspaces: true,
     workspaceRoots,
     assistant: options.home ? { home: options.home } : {},

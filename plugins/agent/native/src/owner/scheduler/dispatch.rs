@@ -108,6 +108,7 @@ impl Owner {
         .map_err(public_error)?;
         Ok(Approval::Execution {
             basis: Box::new(MessageBasis {
+                tool_discovery: self.settings.tool_discovery,
                 allowed_tools: session.configuration.tools.clone(),
                 background: Some(target.clone()),
                 internal_tools: self.internal_tools.clone(),

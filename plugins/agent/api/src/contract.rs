@@ -54,6 +54,10 @@ pub use permissions::*;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentConfiguration")]
 pub struct Configuration {
+    /// Defer optional tool schemas until the model discovers them. This affects
+    /// presentation only; every call still uses its current authorized binding.
+    #[serde(default)]
+    pub tool_discovery: bool,
     /// Permit creation of Host-owned Git worktrees from published directories.
     #[serde(default)]
     pub isolated_workspaces: bool,

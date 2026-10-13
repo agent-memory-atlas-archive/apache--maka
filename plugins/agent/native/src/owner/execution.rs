@@ -288,6 +288,7 @@ impl Owner {
         // user selects a model whose default differs from the original Run.
         source.accepted.tool_mode = configuration.tool_mode;
         let basis = MessageBasis {
+            tool_discovery: configuration.tool_discovery,
             allowed_tools: session.configuration.tools.clone(),
             background: None,
             internal_tools: self.internal_tools.clone(),
@@ -309,6 +310,10 @@ impl Owner {
         configuration.thinking_level = source.accepted.thinking_level;
         // Replay the original prepared prompt. Native service tools continue to
         // resolve the live Session permission boundary through their actual owner.
+        let tools = self.selected_tools(
+            session.configuration.tools.as_deref(),
+            configuration.tool_discovery,
+        );
         let run = RunInput {
             invocation: invocation.clone(),
             model_source: Some(Arc::new(source)),
@@ -323,7 +328,7 @@ impl Owner {
             configuration,
             work: RunWork::Continuation {
                 source: source_boundary,
-                tools: self.selected_tools(session.configuration.tools.as_deref()),
+                tools,
                 max_steps: basis.max_steps,
             },
         };

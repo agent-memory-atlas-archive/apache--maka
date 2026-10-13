@@ -6448,6 +6448,11 @@ export interface TextChunk {
 }
 export interface AgentConfiguration {
   /**
+   * Defer optional tool schemas until the model discovers them. This affects
+   * presentation only; every call still uses its current authorized binding.
+   */
+  toolDiscovery?: boolean;
+  /**
    * Permit creation of Host-owned Git worktrees from published directories.
    */
   isolatedWorkspaces?: boolean;

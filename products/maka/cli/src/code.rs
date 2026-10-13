@@ -173,6 +173,7 @@ pub(super) async fn run(args: Args) -> Result<(), maka_host_runtime::HostError> 
             configuration: Some(Box::new(InvocationConfiguration {
                 workspace_origin: maka_agent_facts::execution::WorkspaceOrigin::Selected,
                 system_prompt: None,
+                tool_discovery: false,
                 tool_composition: None,
                 workspace_identity: None,
                 cwd: cwd

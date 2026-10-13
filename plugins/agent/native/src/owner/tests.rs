@@ -508,6 +508,7 @@ impl Fixture {
             maka_config::oauth::enrollment::LoginCompletion::Committed(_)
         ));
         let mut settings = Configuration {
+            tool_discovery: false,
             isolated_workspaces: false,
             assistant: None,
             scheduled_tasks: false,
