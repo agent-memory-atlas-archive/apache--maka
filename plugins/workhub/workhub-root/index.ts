@@ -397,7 +397,6 @@ export function workhubRoot<N extends Node>(
                     'coordinator',
                     {
                       embedded: true,
-                      fixed: true,
                       session: state.coordinatorSelection,
                     } satisfies AgentScreenProps,
                     {},

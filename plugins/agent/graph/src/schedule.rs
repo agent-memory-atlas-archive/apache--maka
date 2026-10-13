@@ -30,6 +30,7 @@ use std::collections::{BTreeMap, BTreeSet};
     rename_all_fields = "camelCase",
     deny_unknown_fields
 )]
+#[schemars(rename = "GraphTarget")]
 pub enum Target {
     Agent {
         #[schemars(length(min = 1, max = 256))]
@@ -56,8 +57,9 @@ pub struct HistoricalInput {
     pub result_id: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "GraphWorkDefinition")]
 pub struct Work {
     pub work_id: WorkId,
     pub target: Target,
@@ -78,8 +80,9 @@ pub struct Stop {
     pub reason: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "GraphFinish")]
 pub struct Finish {
     pub result_ids: Vec<String>,
     pub reason: String,

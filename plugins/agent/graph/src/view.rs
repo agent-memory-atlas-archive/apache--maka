@@ -27,8 +27,9 @@ use maka_agent_ports::execution::Progress;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[schemars(rename = "GraphStatus")]
 pub enum Status {
     Empty,
     Active,
@@ -38,8 +39,9 @@ pub enum Status {
     Completed,
     Failed,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[schemars(rename = "GraphWorkState")]
 pub enum WorkState {
     Requested,
     Waiting,

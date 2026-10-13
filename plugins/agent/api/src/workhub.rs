@@ -18,6 +18,7 @@
  */
 
 pub mod contract;
+pub mod graph;
 pub mod presets;
 pub use contract::{configuration_schema, contract};
 pub const IMPLEMENTATION: &str = "maka.workhub.api";

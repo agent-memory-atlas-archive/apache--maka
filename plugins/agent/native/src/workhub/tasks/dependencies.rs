@@ -94,7 +94,7 @@ impl Hub {
         cancellation: CancellationToken,
     ) -> Result<Value, String> {
         let assignment = self.assignment(id).await?;
-        if assignment.dependencies.is_empty() {
+        if assignment.dependencies.is_empty() && assignment.graph.is_none() {
             return Ok(serde_json::json!({"kind":"not_deferred"}));
         }
         if cancellation.is_cancelled() {
@@ -115,7 +115,7 @@ impl Hub {
         advance: bool,
         cancellation: CancellationToken,
     ) -> Result<Result<Option<String>, TaskStatus>, String> {
-        if assignment.dependencies.is_empty() {
+        if assignment.dependencies.is_empty() && assignment.graph.is_none() {
             return Ok(Ok(None));
         }
         let captured = self.dependency_capture(id).await?;
@@ -126,6 +126,18 @@ impl Hub {
                 return Ok(Err(TaskStatus::Blocked {
                     dependencies: assignment.dependencies.clone(),
                 }));
+            }
+            if assignment.graph.is_some() {
+                let capture = match self.graph_input(assignment, cancellation.clone()).await? {
+                    Ok(message) => Capture::Ready { message },
+                    Err(TaskStatus::Rejected { reason }) => Capture::Rejected { reason },
+                    Err(status) => return Ok(Err(status)),
+                };
+                return Ok(match self.capture_dependencies(id, capture).await? {
+                    Capture::Ready { message } => Ok(Some(message)),
+                    Capture::Cancelled => Err(TaskStatus::Cancelled),
+                    Capture::Rejected { reason } => Err(TaskStatus::Rejected { reason }),
+                });
             }
             let mut message = assignment.input["message"]
                 .as_str()

@@ -58,7 +58,9 @@ pub struct Page<'a> {
     next_after: Option<&'a WorkId>,
 }
 impl Snapshot {
-    fn new(graph_id: GraphId, items: Vec<Item>, quiescent: bool) -> Self {
+    /// Build the compact policy view from the execution owner's observations.
+    /// Terminal status alone does not establish physical quiescence.
+    pub fn new(graph_id: GraphId, items: Vec<Item>, quiescent: bool) -> Self {
         let mut counts = BTreeMap::new();
         for item in &items {
             *counts.entry(item.status).or_default() += 1;
@@ -91,7 +93,7 @@ impl Snapshot {
             next_after: (end < self.items.len()).then(|| &self.items[end - 1].work_id),
         }
     }
-    pub(crate) fn signal_key(&self) -> Option<String> {
+    pub fn signal_key(&self) -> Option<String> {
         if self.status == Status::Running {
             return None;
         }

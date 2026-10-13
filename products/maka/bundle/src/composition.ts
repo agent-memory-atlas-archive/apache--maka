@@ -1574,6 +1574,11 @@ export function workhubComposition(
       }),
     };
   }
+  const coordinatorScreen = worker.ui.instances['coordinator-agent-screen']!;
+  coordinatorScreen.configuration!.values!.graphs = true;
+  coordinatorScreen.bindings!.workhub = [
+    { kind: 'remote', deployment: 'local', instance: [keys.workhub], export: 'workhub' },
+  ];
   worker.ui.instances['workhub-root'] = {
     key: keys['workhub-root'],
     package: { source: 'pinned', package: packages['workhub-root'] },

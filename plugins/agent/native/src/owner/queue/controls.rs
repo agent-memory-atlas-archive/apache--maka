@@ -22,7 +22,8 @@ use maka_event_log::message_queue::{MessageQueue, QueueCommand, QueueEdit};
 
 impl MessageBasis {
     fn same_execution(&self, other: &Self) -> bool {
-        self.collaboration_mode == other.collaboration_mode
+        self.graph == other.graph
+            && self.collaboration_mode == other.collaboration_mode
             && self.tool_discovery == other.tool_discovery
             && self.background_kind == other.background_kind
             && self.background == other.background

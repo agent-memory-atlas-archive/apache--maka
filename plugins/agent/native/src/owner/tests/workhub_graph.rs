@@ -1,0 +1,378 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use super::*;
+
+async fn change(fixture: &Fixture, input: Value) -> Value {
+    let client = fixture.app.client();
+    let prepared = client
+        .prepare_mutation(
+            binding(fixture).await,
+            "changeGraph".into(),
+            input,
+            scope(&fixture.issuer, true),
+            Uuid::new_v4(),
+            Attachments::default().into(),
+        )
+        .await
+        .unwrap();
+    let original = prepared.reference().clone();
+    let intent = fixture
+        .store
+        .record_application_intent(
+            original.source.clone(),
+            prepared.consumer().instance().clone(),
+            original,
+            Value::Null,
+        )
+        .await
+        .unwrap();
+    let reply = client
+        .mutate(prepared, intent)
+        .await
+        .unwrap()
+        .result()
+        .await;
+    match reply.receipt {
+        Receipt::Recorded {
+            outcome: OperationOutcome::Returned { value },
+            cleanup: maka_plugin_core::operation::OperationCleanup::Confirmed,
+        } => value,
+        other => panic!("graph control receipt: {other:?}"),
+    }
+}
+async fn graph(fixture: &Fixture, session: &str) -> Value {
+    query_import(fixture, hub::EXPORT, "graph", json!({"sessionId": session})).await
+}
+async fn graph_tool(socket: &mut TcpStream, name: &str, input: Value) {
+    let delta = json!({"id":"graph-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":Uuid::new_v4().to_string(),"type":"function","function":{"name":name,"arguments":input.to_string()}}]},"finish_reason":null}]});
+    let body = format!(
+        "data: {delta}\n\ndata: {{\"id\":\"graph-model\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"tool_calls\"}}]}}\n\ndata: [DONE]\n\n"
+    );
+    socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+}
+
+#[tokio::test]
+async fn graph_modes_are_per_conversation_and_keep_pinned_epochs_across_restart() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let mut fixture = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+        activate_workers(&mut fixture, true, true, true).await;
+        let ready = resolve(&fixture, selection(&fixture).await, Uuid::new_v4()).await;
+        let first = ready["session"]["id"].as_str().unwrap();
+        let second = fixture.create("Second coordinator").await;
+        let first_epoch = change(&fixture, json!({"sessionId":first,"action":{"kind":"start","mode":"swarm"}})).await;
+        assert_eq!(first_epoch["kind"], "committed", "{first_epoch}");
+        let second_epoch = change(&fixture, json!({"sessionId":second,"action":{"kind":"start","mode":"graph"}})).await;
+        assert_eq!(second_epoch["kind"], "committed", "{second_epoch}");
+        assert_ne!(first_epoch["epoch"]["graphId"], second_epoch["epoch"]["graphId"]);
+        assert_eq!(graph(&fixture, first).await["selectedMode"], "swarm");
+        assert_eq!(graph(&fixture, &second).await["selectedMode"], "graph");
+        let conflict = change(&fixture, json!({"sessionId":first,"expectedGraphId":second_epoch["epoch"]["graphId"],"action":{"kind":"stop"}})).await;
+        assert_eq!(conflict["kind"], "conflict");
+        let stopped = change(&fixture, json!({"sessionId":first,"expectedGraphId":first_epoch["epoch"]["graphId"],"action":{"kind":"stop"}})).await;
+        assert_eq!(stopped["kind"], "committed");
+        let next = change(&fixture, json!({"sessionId":first,"expectedGraphId":first_epoch["epoch"]["graphId"],"action":{"kind":"start","mode":"graph"}})).await;
+        assert_eq!(next["kind"], "committed", "{next}");
+        assert_eq!(next["epoch"]["epoch"].as_u64(), Some(first_epoch["epoch"]["epoch"].as_u64().unwrap() + 1));
+        let pinned = query_import(&fixture, hub::EXPORT, "graph", json!({"sessionId":first,"graphId":first_epoch["epoch"]["graphId"]})).await;
+        assert_eq!(pinned["status"], "stopped");
+        assert_eq!(pinned["epoch"]["mode"], "swarm");
+        activate_workers(&mut fixture, false, true, true).await;
+        assert_eq!(graph(&fixture, first).await["epoch"], next["epoch"]);
+        assert_eq!(graph(&fixture, &second).await["epoch"], second_epoch["epoch"]);
+        let history = query_import(&fixture, hub::EXPORT, "graphHistory", json!({"sessionId":first})).await;
+        assert_eq!(history["epochs"].as_array().unwrap().len(), 2);
+        fixture.app.shutdown().await.unwrap(); fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn graph_real_model_dispatches_original_work_wakes_and_selects_actual_result() {
+    tokio::time::timeout(Duration::from_secs(90), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut fixture = Fixture::new(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None).await;
+        activate_workers(&mut fixture, true, true, true).await;
+        let ready = resolve(&fixture, selection(&fixture).await, Uuid::new_v4()).await;
+        let session = ready["session"]["id"].as_str().unwrap();
+        let epoch = change(&fixture, json!({"sessionId":session,"action":{"kind":"start","mode":"swarm"}})).await;
+        assert_eq!(epoch["kind"], "committed", "{epoch}");
+        let directory = query_import(&fixture, "worker", "directories", json!({"kind":"roots"})).await["roots"][0]["selection"].clone();
+        fixture.send(session).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let input = request(&mut socket).await;
+        let tools = input["tools"].to_string();
+        assert!(tools.contains("update_agent_graph"), "{input}");
+        assert!(tools.contains("workhub_tasks"), "Original result and patch inspection remain available");
+        graph_tool(&mut socket, "agent_list", json!({"operation":"workers"})).await;
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let catalog = tool_value(&request(&mut socket).await);
+        assert_eq!(catalog["workers"][0]["name"], "worker");
+        assert_eq!(catalog["supervisorModel"]["model"], serde_json::to_value(fixture.selection().await).unwrap());
+        // Visibility of the original inspection tool must not permit a second
+        // untracked route outside the graph decision and its atomic outbox.
+        graph_tool(&mut socket, "workhub_tasks", json!({"operation":"route","worker":"worker","target":{"kind":"new","title":"Untracked","workspace":directory,"tools":[]},"note":"Must be refused","model":catalog["supervisorModel"]["model"]})).await;
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let denied = request(&mut socket).await;
+        assert!(denied["messages"].to_string().contains("graph_decision_required"), "{denied}");
+        assert!(query_import(&fixture, hub::EXPORT, "tasks", json!({})).await["entries"].as_array().unwrap().is_empty());
+        response(&mut socket).await;
+        idle(&fixture, EXPORT, session).await;
+        fixture.send(session).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        request(&mut socket).await;
+        graph_tool(&mut socket, "update_agent_graph", json!({"operation":"add_work","work":[{"target":{"kind":"worker","worker":"worker","title":"Graph child","workspace":directory,"tools":[],"model":fixture.selection().await},"instruction":"Produce the original graph result."}]})).await;
+        let mut worker_calls = 0;
+        let mut finished = false;
+        while !finished {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let input = request(&mut socket).await;
+            if !is_coordinator(&input) {
+                worker_calls += 1;
+                assert!(input["messages"].to_string().contains("Produce the original graph result."));
+                response(&mut socket).await;
+            } else if input["messages"].to_string().contains("has new durable worker observations") {
+                let view = graph(&fixture, session).await;
+                let work = &view["work"][0];
+                assert_eq!(work["status"], "completed", "{view}");
+                let result = query_import(&fixture, hub::EXPORT, "graphResult", json!({"sessionId":session,"graphId":epoch["epoch"]["graphId"],"workId":work["workId"],"resultId":work["resultId"],"offset":0})).await;
+                assert_eq!(result["text"], "Elegant response");
+                graph_tool(&mut socket, "update_agent_graph", json!({"operation":"finish","resultIds":[work["resultId"]],"reason":"Verified original result"})).await;
+                let (mut final_socket, _) = listener.accept().await.unwrap();
+                let final_input = request(&mut final_socket).await;
+                assert!(is_coordinator(&final_input));
+                response(&mut final_socket).await;
+                finished = true;
+            } else {
+                assert_eq!(tool_value(&input)["revision"], 1, "{input}");
+                graph_tool(&mut socket, "yield_agent_graph", json!({})).await;
+            }
+        }
+        idle(&fixture, EXPORT, session).await;
+        assert_eq!(worker_calls, 1);
+        let view = graph(&fixture, session).await;
+        assert_eq!(view["status"], "completed", "{view}");
+        assert_eq!(view["finish"]["resultIds"][0], view["work"][0]["resultId"]);
+        let task = query_import(&fixture, hub::EXPORT, "task", json!({"taskId":view["work"][0]["taskId"]})).await;
+        let result_id = view["work"][0]["resultId"].clone();
+        activate_workers(&mut fixture, false, true, true).await;
+        let restored = graph(&fixture, session).await;
+        assert_eq!(restored["work"][0]["resultId"], result_id);
+        assert_eq!(query_import(&fixture, hub::EXPORT, "task", json!({"taskId":view["work"][0]["taskId"]})).await["operation"], task["operation"]);
+        assert!(tokio::time::timeout(Duration::from_millis(50), listener.accept()).await.is_err());
+        fixture.app.shutdown().await.unwrap(); fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn graph_stop_cancels_original_worker_and_other_coordinator_cannot_read_its_task() {
+    tokio::time::timeout(Duration::from_secs(90), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut fixture = Fixture::new(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None).await;
+        activate_workers(&mut fixture, true, true, true).await;
+        let ready = resolve(&fixture, selection(&fixture).await, Uuid::new_v4()).await;
+        let session = ready["session"]["id"].as_str().unwrap();
+        let epoch = change(&fixture, json!({"sessionId":session,"action":{"kind":"start","mode":"graph"}})).await;
+        let directory = query_import(&fixture, "worker", "directories", json!({"kind":"roots"})).await["roots"][0]["selection"].clone();
+        fixture.send(session).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap(); request(&mut socket).await;
+        graph_tool(&mut socket, "update_agent_graph", json!({"operation":"add_work","work":[{"target":{"kind":"worker","worker":"worker","title":"Original child","workspace":directory,"tools":[],"model":fixture.selection().await},"instruction":"Keep running until the original stop arrives."}]})).await;
+        let mut worker_socket = None;
+        let mut yielded = false;
+        while worker_socket.is_none() || !yielded {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let input = request(&mut socket).await;
+            if is_coordinator(&input) {
+                assert!(!yielded);
+                graph_tool(&mut socket, "yield_agent_graph", json!({})).await;
+                yielded = true;
+            } else { assert!(worker_socket.is_none()); worker_socket = Some(socket); }
+        }
+        idle(&fixture, EXPORT, session).await;
+        let original = graph(&fixture, session).await;
+        let task_id = original["work"][0]["taskId"].clone();
+        assert!(!original["quiescent"].as_bool().unwrap());
+        let premature = change(&fixture, json!({"sessionId":session,"expectedGraphId":epoch["epoch"]["graphId"],"action":{"kind":"start","mode":"swarm"}})).await;
+        assert_eq!(premature["kind"], "rejected");
+        let stopped = change(&fixture, json!({"sessionId":session,"expectedGraphId":epoch["epoch"]["graphId"],"action":{"kind":"stop"}})).await;
+        assert_eq!(stopped["kind"], "committed");
+        loop {
+            let view = graph(&fixture, session).await;
+            if view["quiescent"] == true { assert_eq!(view["status"], "stopped"); break; }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let original_task = query_import(&fixture, hub::EXPORT, "task", json!({"taskId":task_id})).await;
+        assert_eq!(original_task["status"]["progress"]["execution"]["state"], "cancelled", "{original_task}");
+        let next = change(&fixture, json!({"sessionId":session,"expectedGraphId":epoch["epoch"]["graphId"],"action":{"kind":"start","mode":"swarm"}})).await;
+        assert_eq!(next["kind"], "committed", "{next}");
+        assert!(graph(&fixture, session).await["work"].as_array().unwrap().is_empty());
+        let second = fixture.create("Other coordinator").await;
+        fixture.send(&second).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap(); request(&mut socket).await;
+        graph_tool(&mut socket, "workhub_tasks", json!({"operation":"assignments"})).await;
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let listed = tool_value(&request(&mut socket).await);
+        assert!(listed["entries"].as_array().unwrap().is_empty(), "{listed}");
+        graph_tool(&mut socket, "workhub_tasks", json!({"operation":"inspect","taskId":task_id})).await;
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let denied = request(&mut socket).await;
+        assert!(denied["messages"].to_string().contains("workhub_task_source_invalid"), "{denied}");
+        assert!(!denied["messages"].to_string().contains("Keep running until"));
+        response(&mut socket).await;
+        idle(&fixture, EXPORT, &second).await;
+        activate_workers(&mut fixture, false, true, true).await;
+        assert_eq!(query_import(&fixture, hub::EXPORT, "task", json!({"taskId":task_id})).await["operation"], original_task["operation"]);
+        assert!(tokio::time::timeout(Duration::from_millis(50), listener.accept()).await.is_err());
+        drop(worker_socket);
+        fixture.app.shutdown().await.unwrap(); fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+
+async fn graph_answer(socket: &mut TcpStream, answer: &str) {
+    let delta = json!({"id":"graph-worker","choices":[{"index":0,"delta":{"content":answer},"finish_reason":null}]});
+    let body = format!(
+        "data: {delta}\n\ndata: {{\"id\":\"graph-worker\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"stop\"}}]}}\n\ndata: [DONE]\n\n"
+    );
+    socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+}
+fn last_user(input: &Value) -> String {
+    input["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|m| m["role"] == "user")
+        .unwrap()["content"]
+        .to_string()
+}
+async fn graph_work_round(
+    fixture: &Fixture,
+    listener: &TcpListener,
+    session: &str,
+    work: Value,
+    answer: Option<&str>,
+) -> (Value, Option<String>) {
+    fixture.send(session).await.unwrap();
+    let (mut socket, _) = listener.accept().await.unwrap();
+    request(&mut socket).await;
+    graph_tool(
+        &mut socket,
+        "update_agent_graph",
+        json!({"operation":"add_work","work":[work]}),
+    )
+    .await;
+    let mut child_input = None;
+    loop {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let input = request(&mut socket).await;
+        if !is_coordinator(&input) {
+            assert!(
+                child_input.is_none(),
+                "An original graph work must dispatch exactly once"
+            );
+            child_input = Some(last_user(&input));
+            graph_answer(
+                &mut socket,
+                answer.expect("Invalid historical input must not reach a worker"),
+            )
+            .await;
+        } else if last_user(&input).contains("has new durable worker observations") {
+            response(&mut socket).await;
+            break;
+        } else {
+            assert!(tool_value(&input)["revision"].as_u64().is_some(), "{input}");
+            graph_tool(&mut socket, "yield_agent_graph", json!({})).await;
+        }
+    }
+    idle(fixture, EXPORT, session).await;
+    assert_eq!(child_input.is_some(), answer.is_some());
+    let page = graph(fixture, session).await;
+    let item = page["work"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["instructionExcerpt"] == work["instruction"])
+        .unwrap()
+        .clone();
+    (item, child_input)
+}
+async fn finish_graph(fixture: &Fixture, listener: &TcpListener, session: &str, result: &Value) {
+    fixture.send(session).await.unwrap();
+    let (mut socket, _) = listener.accept().await.unwrap();
+    request(&mut socket).await;
+    graph_tool(
+        &mut socket,
+        "update_agent_graph",
+        json!({"operation":"finish","resultIds":[result],"reason":"Selected the verified result"}),
+    )
+    .await;
+    let (mut socket, _) = listener.accept().await.unwrap();
+    assert_eq!(
+        tool_value(&request(&mut socket).await)["update"]["finish"]["resultIds"][0],
+        *result
+    );
+    response(&mut socket).await;
+    idle(fixture, EXPORT, session).await;
+}
+
+#[tokio::test]
+async fn graph_operator_and_selected_history_preserve_large_original_results_without_redispatch() {
+    tokio::time::timeout(Duration::from_secs(120), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut fixture = Fixture::new(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None).await;
+        activate_workers(&mut fixture, true, true, true).await;
+        let ready = resolve(&fixture, selection(&fixture).await, Uuid::new_v4()).await;
+        let session = ready["session"]["id"].as_str().unwrap();
+        let first_epoch = change(&fixture, json!({"sessionId":session,"action":{"kind":"start","mode":"swarm"}})).await;
+        let directory = query_import(&fixture, "worker", "directories", json!({"kind":"roots"})).await["roots"][0]["selection"].clone();
+        let target = json!({"kind":"worker","worker":"worker","title":"Result source","workspace":directory,"tools":[],"model":fixture.selection().await});
+        let long_answer = format!("{}ORIGINAL_TAIL", "A".repeat(80_000));
+        let (first, _) = graph_work_round(&fixture, &listener, session,
+            json!({"target":target,"instruction":"Produce a large original result."}), Some(&long_answer)).await;
+        let (second, input) = graph_work_round(&fixture, &listener, session,
+            json!({"target":{"kind":"operator","workId":first["workId"]},"instruction":"Continue the original operator with its bounded result.","inputIds":[first["resultId"]]}), Some("Selected operator result")).await;
+        let input = input.unwrap();
+        assert!(input.contains("Result preview truncated"), "{input}");
+        assert!(!input.contains("ORIGINAL_TAIL"));
+        assert!(input.len() < 20_000);
+        let first_task = query_import(&fixture, hub::EXPORT, "task", json!({"taskId":first["taskId"]})).await;
+        let second_task = query_import(&fixture, hub::EXPORT, "task", json!({"taskId":second["taskId"]})).await;
+        assert_eq!(first_task["status"]["sessionId"], second_task["status"]["sessionId"], "Operator continuation must use the original worker session");
+        assert_ne!(first_task["operation"], second_task["operation"]);
+        let tail = query_import(&fixture, hub::EXPORT, "graphResult", json!({"sessionId":session,"graphId":first_epoch["epoch"]["graphId"],"workId":first["workId"],"resultId":first["resultId"],"offset":80_000})).await;
+        assert_eq!(tail["text"], "ORIGINAL_TAIL");
+        finish_graph(&fixture, &listener, session, &second["resultId"]).await;
+        let next = change(&fixture, json!({"sessionId":session,"expectedGraphId":first_epoch["epoch"]["graphId"],"action":{"kind":"start","mode":"swarm"}})).await;
+        assert_eq!(next["kind"], "committed");
+        let (invalid, _) = graph_work_round(&fixture, &listener, session,
+            json!({"target":target,"instruction":"Reject an unselected historical result.","selectedResultInputs":[{"sourceGraphId":first_epoch["epoch"]["graphId"],"resultId":first["resultId"]}]}), None).await;
+        assert_eq!(invalid["status"], "failed");
+        assert_eq!(invalid["failure"], "graph_historical_result_not_selected");
+        let (third, input) = graph_work_round(&fixture, &listener, session,
+            json!({"target":target,"instruction":"Use the selected historical result.","replaces":invalid["workId"],"selectedResultInputs":[{"sourceGraphId":first_epoch["epoch"]["graphId"],"resultId":second["resultId"]}]}), Some("Historical result verified")).await;
+        assert!(input.unwrap().contains("Selected operator result"));
+        finish_graph(&fixture, &listener, session, &third["resultId"]).await;
+        activate_workers(&mut fixture, false, true, true).await;
+        let pinned = query_import(&fixture, hub::EXPORT, "graph", json!({"sessionId":session,"graphId":first_epoch["epoch"]["graphId"]})).await;
+        assert_eq!(pinned["finish"]["resultIds"][0], second["resultId"]);
+        assert_eq!(graph(&fixture, session).await["finish"]["resultIds"][0], third["resultId"]);
+        assert_eq!(query_import(&fixture, hub::EXPORT, "task", json!({"taskId":first["taskId"]})).await["operation"], first_task["operation"]);
+        assert!(tokio::time::timeout(Duration::from_millis(50), listener.accept()).await.is_err());
+        fixture.app.shutdown().await.unwrap(); fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}

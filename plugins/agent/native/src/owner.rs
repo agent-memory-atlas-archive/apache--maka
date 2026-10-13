@@ -28,6 +28,7 @@ mod attachments;
 mod auxiliary;
 mod execution;
 mod goal;
+mod graph;
 mod imports;
 mod interactions;
 mod notifications;
@@ -67,6 +68,8 @@ use maka_agent_api::session::SessionConfiguration;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MessageBasis {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    graph: Option<maka_graph::Epoch>,
     #[serde(default, skip_serializing_if = "is_agent_collaboration")]
     collaboration_mode: CollaborationMode,
     #[serde(default, skip_serializing_if = "BackgroundKind::is_schedule")]
@@ -136,6 +139,7 @@ struct Runs {
     quarantined: Vec<OwnedSemaphorePermit>,
 }
 pub(crate) struct Owner {
+    graphs: Option<Arc<crate::workhub::tasks::graph::Graphs>>,
     pub store: Arc<EventLog>,
     pub recall: Arc<recall::Recall>,
     scheduler: Arc<scheduler::Scheduler>,
@@ -190,6 +194,7 @@ impl Owner {
             None,
             vec![],
             BTreeMap::new(),
+            None,
         )
         .await
     }
@@ -200,6 +205,7 @@ impl Owner {
         prompt: Option<&'static str>,
         mut additional: Vec<maka_agent_facts::tools::ToolRegistration>,
         internal_bindings: BTreeMap<String, Option<String>>,
+        graphs: Option<Arc<crate::workhub::tasks::graph::Graphs>>,
     ) -> Result<Arc<Self>, String> {
         if !jsonschema_valid(&input) {
             return Err("agent_configuration_invalid".into());
@@ -338,6 +344,12 @@ impl Owner {
                     })
                     .map_err(|error| error.to_string())?;
             }
+            if graphs.as_ref().is_some_and(|graphs| graphs.enabled()) {
+                catalog.tools = catalog
+                    .tools
+                    .with_always_visible(crate::workhub::tasks::graph::NAMES)
+                    .map_err(|error| error.to_string())?;
+            }
             if settings.goals {
                 catalog.tools = catalog
                     .tools
@@ -389,6 +401,7 @@ impl Owner {
             Arc::new(crate::model::Prices(configuration.clone())),
         );
         Ok(Arc::new(Self {
+            graphs,
             plans,
             goals,
             auxiliary,
@@ -654,6 +667,11 @@ impl Owner {
             .collaboration_mode
             .is_some_and(|mode| mode != session.configuration.collaboration_mode);
         if mode_changed {
+            if self.graph_selected(&input.session_id).await? {
+                return Ok(MetadataResult::Rejected {
+                    reason: Rejection::Busy,
+                });
+            }
             if input.collaboration_mode == Some(CollaborationMode::Plan) && !self.settings.plans {
                 return Ok(MetadataResult::Rejected {
                     reason: Rejection::ToolsUnavailable,
@@ -733,6 +751,11 @@ impl Owner {
         editing: Option<maka_agent_facts::execution::EditingTools>,
     ) -> maka_tools::ToolCatalog {
         let selected = plan::select(&self.tools, basis, &self.planning_tools);
+        let selected = if basis.graph.is_some() {
+            selected
+        } else {
+            selected.excluding(crate::workhub::tasks::graph::NAMES)
+        };
         let selected = match basis.allowed_tools.as_deref() {
             None => selected.clone(),
             Some(allowed) => {
@@ -883,6 +906,7 @@ impl Owner {
             return Err("agent_planning_unavailable".into());
         }
         let mut basis = MessageBasis {
+            graph: None,
             collaboration_mode: session.configuration.collaboration_mode,
             background_kind: BackgroundKind::Schedule,
             tool_discovery: !external && self.settings.tool_discovery,
@@ -913,6 +937,8 @@ impl Owner {
             max_steps: self.settings.max_steps,
         };
         self.prepare_plan_behavior(&id, &mut basis).await?;
+        self.prepare_graph_behavior(&id, &mut basis, queued.is_none())
+            .await?;
         let identity = self.operation_id(operation);
         let invocation = queued.clone().unwrap_or_else(|| Invocation {
             session_id: id.clone(),
@@ -1064,6 +1090,10 @@ impl Owner {
             || !self.auxiliary.resources.is_idle()
             || self.goals.keeps_host_awake()
             || self.plans.keeps_host_awake()
+            || self
+                .graphs
+                .as_ref()
+                .is_some_and(|graphs| graphs.keeps_host_awake())
         {
             return None;
         }
@@ -1090,6 +1120,10 @@ impl Owner {
             let todo = owner.todo.finish().await;
             let goals = owner.goals.finish().await;
             let plans = owner.plans.finish().await;
+            let graph = match &owner.graphs {
+                Some(graphs) => graphs.finish().await,
+                None => Ok(()),
+            };
             let recap = owner.recap_storage.finish().await;
             let auxiliary = owner.auxiliary.resources.finish().await;
             let configuration = owner.configuration.shutdown().await;
@@ -1101,6 +1135,7 @@ impl Owner {
             todo?;
             goals?;
             plans?;
+            graph?;
             recap?;
             auxiliary.map_err(|error| error.to_string())?;
             configuration.map_err(|_| "agent_configuration_cleanup_unconfirmed".into())

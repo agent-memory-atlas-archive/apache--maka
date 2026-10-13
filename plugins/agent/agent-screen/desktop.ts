@@ -29,6 +29,7 @@ export function activate(configuration: {
   scheduledTasks?: boolean;
   web?: boolean;
   jev?: boolean;
+  graphs?: boolean;
 }) {
   component = agentScreen(
     presentations.desktop,
@@ -39,6 +40,7 @@ export function activate(configuration: {
     configuration.scheduledTasks === true,
     configuration.web === true,
     configuration.jev === true,
+    configuration.graphs === true,
   );
   return {
     AgentScreen: { kind: 'component', contract: agentScreenContract, component: ['component'] },

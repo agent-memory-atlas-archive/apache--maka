@@ -331,7 +331,7 @@ pub fn contract() -> Contract {
                         resources: BTreeMap::new(),
                     },
                 ),
-            ]),
+            ]).into_iter().chain(super::graph::methods()).collect(),
         },
     }
 }

@@ -39,6 +39,8 @@ import { type Node, type Presentation } from '../../shared/view.js';
 
 import { goalUpdate } from './goal.js';
 import { planUpdate } from './plan.js';
+import { graphUpdate } from './graph.js';
+import type { WorkHubGraphView } from '../../../packages/plugin-sdk/src/index.js';
 import { messages } from './messages.js';
 import { toolCards } from '../../shared/tool-cards.js';
 import { follow, select } from './actions.js';
@@ -183,7 +185,13 @@ export function handleEvent<N extends Node>(
     return frame(presentation, configuredLocale, state, values, actions);
   if (input.kind === 'action') {
     const outcome = input.event as ActionOutcome;
-    if (state.plan.watch?.key === input.key) {
+    if (state.graph.watch?.key === input.key) {
+      if (outcome.status === 'updated') graphUpdate(state, outcome.value as WorkHubGraphView);
+      else {
+        state.graph.watch = null;
+        state.graph.failed = true;
+      }
+    } else if (state.plan.watch?.key === input.key) {
       if (outcome.status === 'updated') planUpdate(state, outcome.value as AgentPlanView);
       else if (outcome.status === 'failed' || outcome.status === 'not_accepted') {
         state.plan.watch = null;
@@ -248,6 +256,7 @@ export function handleEvent<N extends Node>(
             request.kind === 'uploadAttachment' ||
             request.kind === 'recapGenerate' ||
             request.kind === 'goalChange' ||
+            request.kind === 'graphChange' ||
             request.kind === 'planChange' ||
             request.kind === 'planMode')
         )

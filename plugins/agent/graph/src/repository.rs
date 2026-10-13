@@ -169,6 +169,22 @@ impl Repository {
         previous: Option<&GraphId>,
         now: u64,
     ) -> Result<Epoch, Error> {
+        self.open_with(root, mode, previous, now, |_| Ok(vec![]))
+            .await
+    }
+
+    /// Freeze caller-owned control receipts in the same original epoch CAS.
+    pub async fn open_with<F>(
+        &self,
+        root: &str,
+        mode: Mode,
+        previous: Option<&GraphId>,
+        now: u64,
+        additional: F,
+    ) -> Result<Epoch, Error>
+    where
+        F: FnOnce(&Epoch) -> Result<Vec<Mutation>, Error>,
+    {
         crate::identity(root)?;
         if now > MAX_SAFE {
             return Err(invalid("invalid Graph time"));
@@ -211,6 +227,7 @@ impl Repository {
         let header = Header {
             control: Control {
                 epoch: epoch.clone(),
+                selected: true,
                 schedule_revision: 0,
                 stop_requested: false,
                 stop_target: None,
@@ -218,7 +235,7 @@ impl Repository {
             },
             work_count: 0,
         };
-        self.commit(vec![
+        let mut mutations = vec![
             self.mutation(key, revision, &epoch.graph_id)?,
             self.mutation(
                 self.key(format!("headers/{}", epoch.graph_id)),
@@ -234,8 +251,9 @@ impl Repository {
                 None,
                 &epoch,
             )?,
-        ])
-        .await?;
+        ];
+        mutations.extend(additional(&epoch)?);
+        self.commit(mutations).await?;
         Ok(epoch)
     }
 
@@ -274,6 +292,18 @@ impl Repository {
         graph: &GraphId,
         target: Option<maka_agent_facts::event::Invocation>,
     ) -> Result<Control, Error> {
+        self.stop_with(root, graph, target, false, vec![]).await
+    }
+
+    /// Stop intent and original control receipt share the same epoch fence.
+    pub async fn stop_with(
+        &self,
+        root: &str,
+        graph: &GraphId,
+        target: Option<maka_agent_facts::event::Invocation>,
+        leave: bool,
+        additional: Vec<Mutation>,
+    ) -> Result<Control, Error> {
         if target
             .as_ref()
             .is_some_and(|target| target.session_id != root)
@@ -286,14 +316,20 @@ impl Repository {
         if header.control.epoch.root_session_id != root || current != *graph {
             return Err(Error::Conflict);
         }
-        if !header.control.stop_requested {
-            header.control.stop_requested = true;
-            header.control.stop_target = target;
-            self.commit(vec![
+        if !header.control.stop_requested || leave || !additional.is_empty() {
+            if leave {
+                header.control.selected = false;
+            }
+            if !header.control.stop_requested {
+                header.control.stop_requested = true;
+                header.control.stop_target = target;
+            }
+            let mut mutations = vec![
                 self.write_header(revision, &header)?,
                 self.mutation(root_key, Some(root_revision), graph)?,
-            ])
-            .await?;
+            ];
+            mutations.extend(additional);
+            self.commit(mutations).await?;
         }
         Ok(header.control)
     }
@@ -340,6 +376,124 @@ impl Repository {
             committed_at: record.committed_at,
         })
     }
+    /// Recover the exact original decision before consulting current routing choices.
+    pub async fn recorded_update(&self, update: &Update) -> Result<Option<CommittedUpdate>, Error> {
+        update.validate()?;
+        let fingerprint = update.fingerprint()?;
+        let identity = self.key(format!(
+            "decisions/{}/{}",
+            update.graph_id,
+            update.identity()
+        ));
+        if let Some((_, previous)) = self.read::<DecisionIdentity>(&identity).await? {
+            if previous.fingerprint != fingerprint {
+                return Err(Error::Conflict);
+            }
+            return self
+                .decision(&update.graph_id, previous.revision)
+                .await
+                .map(Some);
+        }
+        Ok(None)
+    }
+    /// Commit the graph decision and its caller-owned task dispatch records in
+    /// the same CAS transaction. A replay returns the original decision without
+    /// writing replacement records; execution remains with the task owner.
+    pub async fn commit_update_with(
+        &self,
+        update: Update,
+        expected: u64,
+        now: u64,
+        additional: Vec<Mutation>,
+    ) -> Result<CommittedUpdate, Error> {
+        update.validate()?;
+        if expected >= MAX_SAFE || now > MAX_SAFE {
+            return Err(invalid("invalid schedule revision or time"));
+        }
+        let fingerprint = update.fingerprint()?;
+        let identity = self.key(format!(
+            "decisions/{}/{}",
+            update.graph_id,
+            update.identity()
+        ));
+        if let Some((_, previous)) = self.read::<DecisionIdentity>(&identity).await? {
+            if previous.fingerprint != fingerprint {
+                return Err(Error::Conflict);
+            }
+            return self.decision(&update.graph_id, previous.revision).await;
+        }
+        let (revision, mut header) = self.header(&update.graph_id).await?;
+        if header.control.epoch.root_session_id != update.source.invocation.session_id
+            || header.control.schedule_revision != expected
+        {
+            return Err(Error::Conflict);
+        }
+        if header.control.closed() {
+            return Err(Error::Closed);
+        }
+        if header.work_count + update.add_work.len() > 1024 {
+            return Err(invalid("graph epoch exceeds 1024 work items"));
+        }
+        header.control.schedule_revision += 1;
+        header.control.finished = update.finish.is_some();
+        header.work_count += update.add_work.len();
+        let record = Decision {
+            graph_id: update.graph_id.clone(),
+            source: update.source.clone(),
+            work_ids: update.add_work.iter().map(|w| w.work_id.clone()).collect(),
+            stop: update.stop.clone(),
+            finish: update.finish.clone(),
+            revision: expected + 1,
+            committed_at: now,
+        };
+        let mut mutations = vec![
+            self.write_header(revision, &header)?,
+            self.mutation(
+                identity,
+                None,
+                &DecisionIdentity {
+                    fingerprint,
+                    revision: record.revision,
+                },
+            )?,
+            self.mutation(
+                self.key(format!(
+                    "updates/{}/{:016}",
+                    update.graph_id, record.revision
+                )),
+                None,
+                &record,
+            )?,
+        ];
+        for work in &update.add_work {
+            mutations.push(self.mutation(
+                self.key(format!("work/{}/{}", update.graph_id, work.work_id)),
+                None,
+                &WorkRecord {
+                    work: work.clone(),
+                    revision: record.revision,
+                },
+            )?);
+        }
+        let stops = update
+            .stop
+            .iter()
+            .map(|s| &s.target_id)
+            .chain(update.add_work.iter().filter_map(|w| w.replaces.as_ref()))
+            .collect::<std::collections::BTreeSet<_>>();
+        for target in stops {
+            let key = self.key(format!("stops/{}/{}", update.graph_id, digest(target)));
+            let previous = self.read::<u64>(&key).await?.map(|(revision, _)| revision);
+            mutations.push(self.mutation(key, previous, &record.revision)?);
+        }
+        mutations.extend(additional);
+        self.commit(mutations).await?;
+        Ok(CommittedUpdate {
+            update,
+            revision: record.revision,
+            committed_at: now,
+        })
+    }
 }
 
 impl Store for Repository {
@@ -384,94 +538,7 @@ impl Store for Repository {
         expected: u64,
         now: u64,
     ) -> BoxFuture<'_, Result<CommittedUpdate, Error>> {
-        Box::pin(async move {
-            update.validate()?;
-            if expected >= MAX_SAFE || now > MAX_SAFE {
-                return Err(invalid("invalid schedule revision or time"));
-            }
-            let fingerprint = update.fingerprint()?;
-            let identity = self.key(format!(
-                "decisions/{}/{}",
-                update.graph_id,
-                update.identity()
-            ));
-            if let Some((_, previous)) = self.read::<DecisionIdentity>(&identity).await? {
-                if previous.fingerprint != fingerprint {
-                    return Err(Error::Conflict);
-                }
-                return self.decision(&update.graph_id, previous.revision).await;
-            }
-            let (revision, mut header) = self.header(&update.graph_id).await?;
-            if header.control.epoch.root_session_id != update.source.invocation.session_id
-                || header.control.schedule_revision != expected
-            {
-                return Err(Error::Conflict);
-            }
-            if header.control.closed() {
-                return Err(Error::Closed);
-            }
-            if header.work_count + update.add_work.len() > 1024 {
-                return Err(invalid("graph epoch exceeds 1024 work items"));
-            }
-            header.control.schedule_revision += 1;
-            header.control.finished = update.finish.is_some();
-            header.work_count += update.add_work.len();
-            let record = Decision {
-                graph_id: update.graph_id.clone(),
-                source: update.source.clone(),
-                work_ids: update.add_work.iter().map(|w| w.work_id.clone()).collect(),
-                stop: update.stop.clone(),
-                finish: update.finish.clone(),
-                revision: expected + 1,
-                committed_at: now,
-            };
-            let mut mutations = vec![
-                self.write_header(revision, &header)?,
-                self.mutation(
-                    identity,
-                    None,
-                    &DecisionIdentity {
-                        fingerprint,
-                        revision: record.revision,
-                    },
-                )?,
-                self.mutation(
-                    self.key(format!(
-                        "updates/{}/{:016}",
-                        update.graph_id, record.revision
-                    )),
-                    None,
-                    &record,
-                )?,
-            ];
-            for work in &update.add_work {
-                mutations.push(self.mutation(
-                    self.key(format!("work/{}/{}", update.graph_id, work.work_id)),
-                    None,
-                    &WorkRecord {
-                        work: work.clone(),
-                        revision: record.revision,
-                    },
-                )?);
-            }
-            let stops = update
-                .stop
-                .iter()
-                .map(|s| &s.target_id)
-                .chain(update.add_work.iter().filter_map(|w| w.replaces.as_ref()))
-                .collect::<std::collections::BTreeSet<_>>();
-            for target in stops {
-                let key = self.key(format!("stops/{}/{}", update.graph_id, digest(target)));
-                let previous = self.read::<u64>(&key).await?.map(|(revision, _)| revision);
-                mutations.push(self.mutation(key, previous, &record.revision)?);
-            }
-            self.commit(mutations).await?;
-            Ok(CommittedUpdate {
-                update,
-                revision: record.revision,
-                committed_at: now,
-            })
-        })
+        Box::pin(self.commit_update_with(update, expected, now, vec![]))
     }
     fn intent(
         &self,

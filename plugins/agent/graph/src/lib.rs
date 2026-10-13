@@ -121,15 +121,17 @@ id!(GraphId, "agent_graph_");
 id!(WorkId, "graph_work_");
 id!(OperatorId, "graph_operator_");
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[schemars(rename = "GraphMode")]
 pub enum Mode {
     Graph,
     Swarm,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "GraphEpoch")]
 pub struct Epoch {
     pub root_session_id: String,
     pub epoch: u64,

@@ -21,7 +21,7 @@
 //! explicit service imports, never a dependency from the Agent back to itself.
 use maka_agent_api::workhub::contract;
 pub mod presets;
-mod tasks;
+pub(crate) mod tasks;
 mod watch;
 use crate::{owner::Owner, service::Agent};
 use contract::{Coordinator, Resolve};
@@ -48,7 +48,7 @@ struct Intent {
     operation: RecoveryRef,
     workspace: crate::contract::DirectorySelection,
 }
-struct Hub {
+pub(crate) struct Hub {
     agent: Agent,
     key: String,
     tasks: tasks::Tasks,
@@ -79,6 +79,7 @@ pub fn provide(registry: &mut NativeRegistry) -> Result<(), String> {
                     Some(PROMPT),
                     additional,
                     tasks.bindings(),
+                    Some(tasks.graphs.clone()),
                 )
                 .await
                 {
@@ -88,6 +89,7 @@ pub fn provide(registry: &mut NativeRegistry) -> Result<(), String> {
                             agent: Agent(agent),
                             tasks,
                         });
+                        owner.tasks.graphs.bind(&owner.agent.0);
                         let _ = link.set(Arc::downgrade(&owner));
                         NativeActivation {
                             exports: Ok(BTreeMap::from([
@@ -284,6 +286,18 @@ impl Handler for Hub {
                 let result = async {
                     if scope.cancellation.is_cancelled() {
                         return Err("workhub_call_cancelled".into());
+                    }
+                    if matches!(
+                        method.as_str(),
+                        "graph"
+                            | "watchGraph"
+                            | "graphWork"
+                            | "graphResult"
+                            | "graphHistory"
+                            | "changeGraph"
+                            | "graphReceipt"
+                    ) {
+                        return hub.graph_api(&method, input, &context).await;
                     }
                     if method == "watchTasks" || method == "watchTask" {
                         return hub.watch(input, method == "watchTask", &context).await;

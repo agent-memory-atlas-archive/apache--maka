@@ -23232,6 +23232,180 @@ export const contracts = {
     interface: {
       kind: 'service',
       methods: {
+        changeGraph: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              expectedGraphId: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/GraphId',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+              action: {
+                $ref: '#/$defs/WorkHubGraphAction',
+              },
+            },
+            required: ['sessionId', 'action'],
+            title: 'WorkHubGraphChange',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              GraphId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 256,
+              },
+              WorkHubGraphAction: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      mode: {
+                        $ref: '#/$defs/GraphMode',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'start',
+                      },
+                    },
+                    required: ['kind', 'mode'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'stop',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'leave',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                ],
+              },
+              GraphMode: {
+                type: 'string',
+                enum: ['graph', 'swarm'],
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  epoch: {
+                    $ref: '#/$defs/GraphEpoch',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'committed',
+                  },
+                },
+                required: ['kind', 'epoch'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  current: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/GraphEpoch',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'conflict',
+                  },
+                },
+                required: ['kind'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  reason: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                required: ['kind', 'reason'],
+              },
+            ],
+            title: 'WorkHubGraphChanged',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              GraphEpoch: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  rootSessionId: {
+                    type: 'string',
+                  },
+                  epoch: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  graphId: {
+                    $ref: '#/$defs/GraphId',
+                  },
+                  createdAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  mode: {
+                    $ref: '#/$defs/GraphMode',
+                  },
+                },
+                required: ['rootSessionId', 'epoch', 'graphId', 'createdAt', 'mode'],
+              },
+              GraphId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 256,
+              },
+              GraphMode: {
+                type: 'string',
+                enum: ['graph', 'swarm'],
+              },
+            },
+          },
+          resources: {},
+        },
         control: {
           mode: 'query',
           input: {
@@ -23975,6 +24149,1086 @@ export const contracts = {
                   'session_unavailable',
                   'closed',
                 ],
+              },
+            },
+          },
+          resources: {},
+        },
+        graph: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              graphId: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/GraphId',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+              after: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/WorkId',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+            },
+            required: ['sessionId'],
+            title: 'WorkHubGraphRead',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              GraphId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 256,
+              },
+              WorkId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 256,
+              },
+            },
+          },
+          output: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              enabled: {
+                type: 'boolean',
+              },
+              currentEpoch: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/GraphEpoch',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+              selectedMode: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/GraphMode',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+              epoch: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/GraphEpoch',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+              revision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              status: {
+                $ref: '#/$defs/GraphStatus',
+              },
+              quiescent: {
+                type: 'boolean',
+              },
+              work: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/WorkHubGraphWork',
+                },
+                maxItems: 16,
+              },
+              after: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/WorkId',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+              finish: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/GraphFinish',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+            },
+            required: ['enabled', 'revision', 'status', 'quiescent', 'work'],
+            title: 'WorkHubGraphView',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              GraphEpoch: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  rootSessionId: {
+                    type: 'string',
+                  },
+                  epoch: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  graphId: {
+                    $ref: '#/$defs/GraphId',
+                  },
+                  createdAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  mode: {
+                    $ref: '#/$defs/GraphMode',
+                  },
+                },
+                required: ['rootSessionId', 'epoch', 'graphId', 'createdAt', 'mode'],
+              },
+              GraphId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 256,
+              },
+              GraphMode: {
+                type: 'string',
+                enum: ['graph', 'swarm'],
+              },
+              GraphStatus: {
+                type: 'string',
+                enum: ['empty', 'active', 'waiting', 'closing', 'stopped', 'completed', 'failed'],
+              },
+              WorkHubGraphWork: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  workId: {
+                    $ref: '#/$defs/WorkId',
+                  },
+                  taskId: {
+                    type: 'string',
+                  },
+                  target: {
+                    $ref: '#/$defs/GraphTarget',
+                  },
+                  status: {
+                    $ref: '#/$defs/GraphWorkState',
+                  },
+                  instructionExcerpt: {
+                    type: 'string',
+                  },
+                  instructionTruncated: {
+                    type: 'boolean',
+                  },
+                  resultId: {
+                    type: ['string', 'null'],
+                  },
+                  failure: {
+                    type: ['string', 'null'],
+                  },
+                },
+                required: [
+                  'workId',
+                  'taskId',
+                  'target',
+                  'status',
+                  'instructionExcerpt',
+                  'instructionTruncated',
+                ],
+              },
+              WorkId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 256,
+              },
+              GraphTarget: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      agentId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 256,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'agent',
+                      },
+                    },
+                    required: ['kind', 'agentId'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      presetId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 256,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'preset',
+                      },
+                    },
+                    required: ['kind', 'presetId'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      executorId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 256,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'executor',
+                      },
+                    },
+                    required: ['kind', 'executorId'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      operatorId: {
+                        $ref: '#/$defs/OperatorId',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'operator',
+                      },
+                    },
+                    required: ['kind', 'operatorId'],
+                  },
+                ],
+              },
+              OperatorId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 256,
+              },
+              GraphWorkState: {
+                type: 'string',
+                enum: [
+                  'requested',
+                  'waiting',
+                  'running',
+                  'blocked',
+                  'completed',
+                  'failed',
+                  'cancelled',
+                  'stopped',
+                  'superseded',
+                ],
+              },
+              GraphFinish: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  resultIds: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  reason: {
+                    type: 'string',
+                  },
+                },
+                required: ['resultIds', 'reason'],
+              },
+            },
+          },
+          resources: {},
+        },
+        graphHistory: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              before: {
+                type: ['integer', 'null'],
+                format: 'uint64',
+                minimum: 0,
+              },
+            },
+            required: ['sessionId'],
+            title: 'WorkHubGraphHistoryRead',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              epochs: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/GraphEpoch',
+                },
+                maxItems: 32,
+              },
+              currentEpoch: {
+                type: ['integer', 'null'],
+                format: 'uint64',
+                minimum: 0,
+              },
+              nextBefore: {
+                type: ['integer', 'null'],
+                format: 'uint64',
+                minimum: 0,
+              },
+            },
+            required: ['epochs'],
+            title: 'WorkHubGraphHistory',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              GraphEpoch: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  rootSessionId: {
+                    type: 'string',
+                  },
+                  epoch: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  graphId: {
+                    $ref: '#/$defs/GraphId',
+                  },
+                  createdAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  mode: {
+                    $ref: '#/$defs/GraphMode',
+                  },
+                },
+                required: ['rootSessionId', 'epoch', 'graphId', 'createdAt', 'mode'],
+              },
+              GraphId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 256,
+              },
+              GraphMode: {
+                type: 'string',
+                enum: ['graph', 'swarm'],
+              },
+            },
+          },
+          resources: {},
+        },
+        graphReceipt: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              reference: {
+                $ref: '#/$defs/RecoveryRef',
+              },
+            },
+            required: ['reference'],
+            title: 'WorkHubGraphReceiptRead',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              RecoveryRef: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  source: {
+                    $ref: '#/$defs/DeploymentRef',
+                  },
+                  namespace: {
+                    $ref: '#/$defs/InstanceId',
+                  },
+                  export: {
+                    type: 'string',
+                  },
+                  method: {
+                    type: 'string',
+                  },
+                  operation: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  fingerprint: {
+                    type: 'string',
+                  },
+                  contract: {
+                    $ref: '#/$defs/Contract',
+                  },
+                  recovery: {
+                    $ref: '#/$defs/RecoveryProtocol',
+                  },
+                },
+                required: [
+                  'source',
+                  'namespace',
+                  'export',
+                  'method',
+                  'operation',
+                  'fingerprint',
+                  'contract',
+                  'recovery',
+                ],
+              },
+              DeploymentRef: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                required: ['stateDomain', 'deployment', 'revision'],
+              },
+              InstanceId: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+              },
+              Contract: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  version: {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                  transport: {
+                    $ref: '#/$defs/Transport',
+                  },
+                  interface: {
+                    $ref: '#/$defs/Interface',
+                  },
+                },
+                required: ['name', 'version', 'transport', 'interface'],
+                description:
+                  'Public contract definitions are package data, not live registration records.',
+              },
+              Transport: {
+                type: 'string',
+                enum: ['local', 'remote'],
+              },
+              Interface: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      methods: {
+                        type: 'object',
+                        additionalProperties: {
+                          $ref: '#/$defs/Method',
+                        },
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'service',
+                      },
+                    },
+                    required: ['kind', 'methods'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      props: true,
+                      events: {
+                        type: 'object',
+                        additionalProperties: true,
+                      },
+                      captures: {
+                        type: 'object',
+                        additionalProperties: {
+                          $ref: '#/$defs/Capture',
+                        },
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'component',
+                      },
+                    },
+                    required: ['kind', 'props', 'events', 'captures'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      schema: true,
+                      kind: {
+                        type: 'string',
+                        const: 'value',
+                      },
+                    },
+                    required: ['kind', 'schema'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      resource: {
+                        type: 'string',
+                      },
+                      schema: true,
+                      kind: {
+                        type: 'string',
+                        const: 'resource',
+                      },
+                    },
+                    required: ['kind', 'resource', 'schema'],
+                  },
+                ],
+              },
+              Method: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  mode: {
+                    $ref: '#/$defs/MethodMode',
+                  },
+                  input: true,
+                  output: true,
+                  progress: {
+                    description:
+                      'Bounded transient observations from this mutation, separate from its\noriginal final receipt. Only mutation methods may declare progress.',
+                  },
+                  resources: {
+                    type: 'object',
+                    additionalProperties: {
+                      $ref: '#/$defs/ResourceSlot',
+                    },
+                  },
+                },
+                required: ['mode', 'input', 'output', 'resources'],
+              },
+              MethodMode: {
+                type: 'string',
+                enum: ['query', 'mutation', 'subscription'],
+              },
+              ResourceSlot: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  type: {
+                    $ref: '#/$defs/ResourceType',
+                  },
+                  optional: {
+                    type: 'boolean',
+                  },
+                },
+                required: ['type', 'optional'],
+                description:
+                  'One declared input slot: its nominal type and whether the caller may omit it.',
+              },
+              ResourceType: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  version: {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                },
+                required: ['name', 'version'],
+                description:
+                  'Nominal read-only resource shape, not a resource id or authorization token.',
+              },
+              Capture: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  input: true,
+                  output: {
+                    $ref: '#/$defs/CaptureOutput',
+                  },
+                },
+                required: ['input', 'output'],
+              },
+              CaptureOutput: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      resource: {
+                        $ref: '#/$defs/ResourceType',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'resource',
+                      },
+                    },
+                    required: ['kind', 'resource'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'continuation',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                ],
+                description:
+                  'Resource captures enter checked service slots; continuations remain in the\noriginal presentation owner and only decide admission of query feedback.',
+              },
+              RecoveryProtocol: {
+                type: 'string',
+                enum: ['journal_v1'],
+              },
+            },
+          },
+          output: {
+            anyOf: [
+              {
+                $ref: '#/$defs/WorkHubGraphChanged',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            title: 'Nullable_WorkHubGraphChanged',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              WorkHubGraphChanged: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      epoch: {
+                        $ref: '#/$defs/GraphEpoch',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'committed',
+                      },
+                    },
+                    required: ['kind', 'epoch'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      current: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/GraphEpoch',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'conflict',
+                      },
+                    },
+                    required: ['kind'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      reason: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'rejected',
+                      },
+                    },
+                    required: ['kind', 'reason'],
+                  },
+                ],
+              },
+              GraphEpoch: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  rootSessionId: {
+                    type: 'string',
+                  },
+                  epoch: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  graphId: {
+                    $ref: '#/$defs/GraphId',
+                  },
+                  createdAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  mode: {
+                    $ref: '#/$defs/GraphMode',
+                  },
+                },
+                required: ['rootSessionId', 'epoch', 'graphId', 'createdAt', 'mode'],
+              },
+              GraphId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 256,
+              },
+              GraphMode: {
+                type: 'string',
+                enum: ['graph', 'swarm'],
+              },
+            },
+          },
+          resources: {},
+        },
+        graphResult: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              graphId: {
+                $ref: '#/$defs/GraphId',
+              },
+              workId: {
+                $ref: '#/$defs/WorkId',
+              },
+              resultId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 256,
+              },
+              offset: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+            },
+            required: ['sessionId', 'graphId', 'workId', 'resultId', 'offset'],
+            title: 'WorkHubGraphResultRead',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              GraphId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 256,
+              },
+              WorkId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 256,
+              },
+            },
+          },
+          output: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              workId: {
+                $ref: '#/$defs/WorkId',
+              },
+              resultId: {
+                type: 'string',
+              },
+              execution: {
+                $ref: '#/$defs/AgentExecution',
+              },
+              text: {
+                type: 'string',
+              },
+              nextOffset: {
+                type: ['integer', 'null'],
+                format: 'uint64',
+                minimum: 0,
+              },
+            },
+            required: ['workId', 'resultId', 'execution', 'text'],
+            title: 'WorkHubGraphResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              WorkId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 256,
+              },
+              AgentExecution: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  turnId: {
+                    type: 'string',
+                  },
+                  runId: {
+                    type: 'string',
+                  },
+                  invocationId: {
+                    type: 'string',
+                  },
+                  highWater: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    description: 'Run-local event count, not the root-global transcript cursor.',
+                  },
+                  state: {
+                    $ref: '#/$defs/AgentExecutionState',
+                  },
+                },
+                required: ['sessionId', 'turnId', 'runId', 'invocationId', 'highWater', 'state'],
+                description:
+                  'Canonical physical execution receipt, independent of the current Session tip.',
+              },
+              AgentExecutionState: {
+                type: 'string',
+                enum: [
+                  'admitted',
+                  'running',
+                  'waiting',
+                  'paused',
+                  'completed',
+                  'failed',
+                  'cancelled',
+                ],
+              },
+            },
+          },
+          resources: {},
+        },
+        graphWork: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              graphId: {
+                $ref: '#/$defs/GraphId',
+              },
+              workId: {
+                $ref: '#/$defs/WorkId',
+              },
+            },
+            required: ['sessionId', 'graphId', 'workId'],
+            title: 'WorkHubGraphWorkRead',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              GraphId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 256,
+              },
+              WorkId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 256,
+              },
+            },
+          },
+          output: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              workId: {
+                $ref: '#/$defs/WorkId',
+              },
+              target: {
+                $ref: '#/$defs/GraphTarget',
+              },
+              instruction: {
+                type: 'string',
+              },
+              inputIds: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                },
+              },
+              selectedResultInputs: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/HistoricalInput',
+                },
+              },
+              replaces: {
+                type: ['string', 'null'],
+              },
+            },
+            required: ['workId', 'target', 'instruction', 'inputIds'],
+            title: 'GraphWorkDefinition',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              WorkId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 256,
+              },
+              GraphTarget: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      agentId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 256,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'agent',
+                      },
+                    },
+                    required: ['kind', 'agentId'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      presetId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 256,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'preset',
+                      },
+                    },
+                    required: ['kind', 'presetId'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      executorId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 256,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'executor',
+                      },
+                    },
+                    required: ['kind', 'executorId'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      operatorId: {
+                        $ref: '#/$defs/OperatorId',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'operator',
+                      },
+                    },
+                    required: ['kind', 'operatorId'],
+                  },
+                ],
+              },
+              OperatorId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 256,
+              },
+              HistoricalInput: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  sourceGraphId: {
+                    $ref: '#/$defs/GraphId',
+                  },
+                  resultId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 256,
+                  },
+                },
+                required: ['sourceGraphId', 'resultId'],
+              },
+              GraphId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 256,
               },
             },
           },
@@ -25259,6 +26513,321 @@ export const contracts = {
                   },
                 },
                 required: ['taskId', 'worker', 'title'],
+              },
+            },
+          },
+          resources: {},
+        },
+        watchGraph: {
+          mode: 'subscription',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              graphId: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/GraphId',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+              after: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/WorkId',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+            },
+            required: ['sessionId'],
+            title: 'WorkHubGraphRead',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              GraphId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 256,
+              },
+              WorkId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 256,
+              },
+            },
+          },
+          output: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              enabled: {
+                type: 'boolean',
+              },
+              currentEpoch: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/GraphEpoch',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+              selectedMode: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/GraphMode',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+              epoch: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/GraphEpoch',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+              revision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              status: {
+                $ref: '#/$defs/GraphStatus',
+              },
+              quiescent: {
+                type: 'boolean',
+              },
+              work: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/WorkHubGraphWork',
+                },
+                maxItems: 16,
+              },
+              after: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/WorkId',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+              finish: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/GraphFinish',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+            },
+            required: ['enabled', 'revision', 'status', 'quiescent', 'work'],
+            title: 'WorkHubGraphView',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              GraphEpoch: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  rootSessionId: {
+                    type: 'string',
+                  },
+                  epoch: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  graphId: {
+                    $ref: '#/$defs/GraphId',
+                  },
+                  createdAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  mode: {
+                    $ref: '#/$defs/GraphMode',
+                  },
+                },
+                required: ['rootSessionId', 'epoch', 'graphId', 'createdAt', 'mode'],
+              },
+              GraphId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 256,
+              },
+              GraphMode: {
+                type: 'string',
+                enum: ['graph', 'swarm'],
+              },
+              GraphStatus: {
+                type: 'string',
+                enum: ['empty', 'active', 'waiting', 'closing', 'stopped', 'completed', 'failed'],
+              },
+              WorkHubGraphWork: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  workId: {
+                    $ref: '#/$defs/WorkId',
+                  },
+                  taskId: {
+                    type: 'string',
+                  },
+                  target: {
+                    $ref: '#/$defs/GraphTarget',
+                  },
+                  status: {
+                    $ref: '#/$defs/GraphWorkState',
+                  },
+                  instructionExcerpt: {
+                    type: 'string',
+                  },
+                  instructionTruncated: {
+                    type: 'boolean',
+                  },
+                  resultId: {
+                    type: ['string', 'null'],
+                  },
+                  failure: {
+                    type: ['string', 'null'],
+                  },
+                },
+                required: [
+                  'workId',
+                  'taskId',
+                  'target',
+                  'status',
+                  'instructionExcerpt',
+                  'instructionTruncated',
+                ],
+              },
+              WorkId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 256,
+              },
+              GraphTarget: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      agentId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 256,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'agent',
+                      },
+                    },
+                    required: ['kind', 'agentId'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      presetId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 256,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'preset',
+                      },
+                    },
+                    required: ['kind', 'presetId'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      executorId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 256,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'executor',
+                      },
+                    },
+                    required: ['kind', 'executorId'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      operatorId: {
+                        $ref: '#/$defs/OperatorId',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'operator',
+                      },
+                    },
+                    required: ['kind', 'operatorId'],
+                  },
+                ],
+              },
+              OperatorId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 256,
+              },
+              GraphWorkState: {
+                type: 'string',
+                enum: [
+                  'requested',
+                  'waiting',
+                  'running',
+                  'blocked',
+                  'completed',
+                  'failed',
+                  'cancelled',
+                  'stopped',
+                  'superseded',
+                ],
+              },
+              GraphFinish: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  resultIds: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  reason: {
+                    type: 'string',
+                  },
+                },
+                required: ['resultIds', 'reason'],
               },
             },
           },

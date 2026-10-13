@@ -47,6 +47,7 @@ import { toolCards } from '../../shared/tool-cards.js';
 import { readingKey } from './state.js';
 import { newGoalState, watchGoal } from './goal.js';
 import { newPlanState, watchPlan } from './plan.js';
+import { newGraphState, watchGraph } from './graph.js';
 import { messages } from './messages.js';
 
 export function intent(
@@ -302,6 +303,8 @@ export function select(state: State, actions: Action[], session: AgentSession | 
   state.recallAnchor = null;
   state.selected = session;
   state.epoch++;
+  state.graph = newGraphState(state.graph.enabled);
+  if (session) watchGraph(state);
   state.plan = newPlanState();
   if (session) watchPlan(state);
   state.goal = newGoalState();
@@ -423,6 +426,8 @@ export function mutationPending(state: State) {
         'queue',
         'receipt',
         'recapGenerate',
+        'graphChange',
+        'graphReceipt',
         'planChange',
         'planMode',
         'planReceipt',
@@ -722,6 +727,17 @@ export function rootCommands(
           },
         ]
       : []),
+    ...(state.graph.enabled
+      ? [
+          {
+            kind: 'graph-open' as const,
+            id: 'graph-open',
+            label: text.graphTitle,
+            hint: '',
+            disabled: !route || !state.selected,
+          },
+        ]
+      : []),
     {
       kind: 'plan-open',
       id: 'plan-open',
@@ -949,6 +965,10 @@ export function rootCommand(
     if (!state.checklist.watch) watchChecklist(state);
     if (target === 'tui') state.inspector = state.inspector === 'checklist' ? null : 'checklist';
     else state.dialog = 'checklist';
+  } else if (kind === 'graph-open') {
+    if (!state.graph.watch) watchGraph(state);
+    if (target === 'tui') state.inspector = state.inspector === 'graph' ? null : 'graph';
+    else state.dialog = 'graph';
   } else if (kind === 'plan-open') {
     if (!state.plan.watch) watchPlan(state);
     if (target === 'tui') state.inspector = state.inspector === 'plan' ? null : 'plan';

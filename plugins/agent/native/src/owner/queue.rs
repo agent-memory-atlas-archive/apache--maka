@@ -248,6 +248,8 @@ impl Owner {
         let basis: MessageBasis = serde_json::from_value(entry.execution.basis.clone())
             .map_err(|_| "agent_message_basis_invalid")?;
         self.validate_background(&basis).await?;
+        self.validate_graph_basis(&invocation.session_id, &basis)
+            .await?;
         let tools_changed = if basis.executor.is_some() {
             !basis.tools.is_empty()
                 || !basis.internal_tools.is_empty()
@@ -333,7 +335,9 @@ impl Owner {
             approval_policy: ApprovalPolicy::OnRequest,
             boundary_revision: 0,
             collaboration_mode: basis.collaboration_mode,
-            orchestration_mode: if matches!(basis.background_kind, BackgroundKind::Plan(_)) {
+            orchestration_mode: if let Some(epoch) = &basis.graph {
+                graph::behavior(epoch)
+            } else if matches!(basis.background_kind, BackgroundKind::Plan(_)) {
                 plan::EXECUTION
                     .to_owned()
                     .try_into()

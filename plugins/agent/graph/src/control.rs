@@ -70,6 +70,9 @@ pub struct EpochPage {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Control {
     pub epoch: Epoch,
+    /// The current conversation keeps this behavior selected across closed epochs.
+    #[serde(default = "selected")]
+    pub selected: bool,
     pub schedule_revision: u64,
     pub stop_requested: bool,
     /// Exact supervisor control intent. Retrying after a crash cannot stop a
@@ -82,4 +85,8 @@ impl Control {
     pub fn closed(&self) -> bool {
         self.stop_requested || self.finished
     }
+}
+
+fn selected() -> bool {
+    true
 }
