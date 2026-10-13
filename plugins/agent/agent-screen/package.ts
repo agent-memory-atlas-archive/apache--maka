@@ -34,6 +34,8 @@ const entries = uiEntries({
     receipts: one(sdk.contracts.receiptReader),
     history: one(sdk.contracts.callerHistory),
     reader: one(sdk.contracts.textReader),
+    input: one(sdk.contracts.textInput),
+    editor: one(sdk.contracts.textarea),
     composer: one(own.composerContract),
     footer: one(own.composerFooterContract),
     authoring: one(own.uiAuthoringContract),
@@ -89,7 +91,6 @@ Object.assign(entries.tui.imports, {
   rows: one(sdk.contracts.rows),
   checkpoint: one(sdk.contracts.valueCheckpoint),
   themeFile: one(sdk.contracts.textFile),
-  input: one(sdk.contracts.textInput),
 });
 for (const target of ['desktop', 'tui'] as const)
   entries[target].imports.surface = one(

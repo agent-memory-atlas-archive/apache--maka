@@ -21,6 +21,7 @@ use super::{AuxiliarySource as Source, Outcome, invalid};
 use crate::{EventLog, StoreError};
 use maka_agent_facts::execution::ModelBinding;
 use maka_agent_facts::model::ModelUsage;
+use maka_plugin_core::operation::RecoveryRef;
 use serde::{Deserialize, Serialize};
 use sqlx::{Connection, SqliteConnection};
 use std::time::SystemTime;
@@ -56,13 +57,51 @@ impl EventLog {
         source: Source,
         quote: Option<maka_agent_facts::pricing::Quote>,
     ) -> Result<Uuid, StoreError> {
+        self.admit_auxiliary_model(source, None, quote).await
+    }
+
+    /// Trusted native owners supply their captured model selection only after
+    /// application admission. Validate the complete original receipt before billing.
+    pub async fn begin_auxiliary_operation_model(
+        &self,
+        reference: RecoveryRef,
+        binding: ModelBinding,
+        session_id: String,
+        quote: Option<maka_agent_facts::pricing::Quote>,
+    ) -> Result<Uuid, StoreError> {
+        self.operation_domain(&reference)?;
+        let source = Source::ApplicationOperation {
+            source: reference.source.clone(),
+            namespace: reference.namespace.clone(),
+            operation: reference.operation,
+            fingerprint: reference.fingerprint.clone(),
+        };
+        self.admit_auxiliary_model(source, Some((reference, binding, session_id)), quote)
+            .await
+    }
+
+    async fn admit_auxiliary_model(
+        &self,
+        source: Source,
+        operation: Option<(RecoveryRef, ModelBinding, String)>,
+        quote: Option<maka_agent_facts::pricing::Quote>,
+    ) -> Result<Uuid, StoreError> {
         self.validate_root()?;
         let commits = self.commits.clone();
         self.connection
             .run(move |connection| {
                 Box::pin(async move {
                     let mut tx = connection.begin_with("BEGIN IMMEDIATE").await?;
-                    let (binding, session_id) = binding(&mut tx, &source).await?;
+                    let (binding, session_id) = if let Some((reference, binding, session)) = operation {
+                        crate::applications::operations::require_pending(&mut tx, &reference).await?;
+                        crate::sessions::removal::require_accepting(&mut tx, &session).await?;
+                        let used: bool = sqlx::query_scalar(
+                            "SELECT EXISTS(SELECT 1 FROM event_log WHERE kind='auxiliary_model_started'
+                             AND json_extract(event_json, '$.source') = json(?))"
+                        ).bind(serde_json::to_string(&source)?).fetch_one(&mut *tx).await?;
+                        if used { return Err(invalid("Application operation already attempted its auxiliary model")); }
+                        (binding, Some(session))
+                    } else { binding(&mut tx, &source).await? };
                     if let Some(quote) = &quote {
                         quote.validate(&binding.model).map_err(invalid)?;
                     }
@@ -174,6 +213,9 @@ async fn binding(
     source: &Source,
 ) -> Result<(ModelBinding, Option<String>), StoreError> {
     match source {
+        Source::ApplicationOperation { .. } => Err(invalid(
+            "Application auxiliary model requires its original operation",
+        )),
         Source::SessionTitle { invocation } => {
             crate::sessions::removal::require_accepting(connection, &invocation.session_id).await?;
             let archived: Option<bool> =

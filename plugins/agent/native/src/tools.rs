@@ -66,6 +66,8 @@ pub(crate) struct Catalog {
     pub basis: Vec<SelectedTool>,
     /// Derived from actual bound contracts and methods, never display names.
     pub editing: Vec<(String, EditingTools)>,
+    /// Planning eligibility follows the actual service contract and method.
+    pub planning: Vec<String>,
 }
 
 pub(crate) fn catalog(
@@ -97,6 +99,9 @@ pub(crate) fn catalog(
             Some((selection.name.clone(), style))
         })
         .collect();
+    let mut planning = Vec::new();
+    let questions_contract = maka_interactions_api::questions::contract();
+    let web_contract = maka_web_api::contract();
     let mut web_bindings = Vec::new();
     let mut computer_bindings = Vec::new();
     let skill_contract = maka_skills_api::contract();
@@ -131,6 +136,18 @@ pub(crate) fn catalog(
             let method = methods
                 .get(&selection.method)
                 .ok_or("agent_tool_method_unavailable")?;
+            if (binding.contract() == &file_contract
+                && matches!(
+                    selection.method.as_str(),
+                    "readText" | "readImage" | "glob" | "grep"
+                ))
+                || (binding.contract() == &web_contract
+                    && matches!(selection.method.as_str(), "fetch" | "search"))
+                || (binding.contract() == &questions_contract && selection.method == "ask")
+            {
+                planning.push(selection.name.clone());
+            }
+
             if !method.resources.is_empty()
                 || match selection.result {
                     ToolResult::Json => method.mode == MethodMode::Subscription,
@@ -274,6 +291,7 @@ pub(crate) fn catalog(
         tools: catalog,
         basis,
         editing,
+        planning,
     })
 }
 #[derive(Clone)]

@@ -175,6 +175,16 @@ export const configurations = {
         type: 'boolean',
         default: false,
       },
+      goals: {
+        description: 'Enable explicitly approved, bounded Goal continuation.',
+        type: 'boolean',
+        default: false,
+      },
+      plans: {
+        description: 'Enable planning, reviewed approval and execution progress.',
+        type: 'boolean',
+        default: false,
+      },
       todo: {
         description: 'Enable the session-scoped, model-maintained checklist.',
         type: 'boolean',
@@ -182,6 +192,11 @@ export const configurations = {
       },
       automaticTitles: {
         description: 'Generate a bounded auxiliary title for automatically named conversations.',
+        type: 'boolean',
+        default: false,
+      },
+      recaps: {
+        description: 'Enable explicit, bounded session recap requests and cached reads.',
         type: 'boolean',
         default: false,
       },
@@ -664,6 +679,16 @@ export const configurations = {
             description: 'Enable model proposals and approved scheduled work for this Agent.',
             default: false,
           },
+          goals: {
+            type: 'boolean',
+            description: 'Enable explicitly approved, bounded Goal continuation.',
+            default: false,
+          },
+          plans: {
+            type: 'boolean',
+            description: 'Enable planning, reviewed approval and execution progress.',
+            default: false,
+          },
           todo: {
             type: 'boolean',
             description: 'Enable the session-scoped, model-maintained checklist.',
@@ -673,6 +698,11 @@ export const configurations = {
             type: 'boolean',
             description:
               'Generate a bounded auxiliary title for automatically named conversations.',
+            default: false,
+          },
+          recaps: {
+            type: 'boolean',
+            description: 'Enable explicit, bounded session recap requests and cached reads.',
             default: false,
           },
           recall: {

@@ -23,6 +23,8 @@ import type { AgentScreenProps } from '../../shared/contracts.js';
 import { bookmark } from '../../shared/bookmark.js';
 import { type Presentation, type Node } from '../../shared/view.js';
 
+import { newGoalState } from './goal.js';
+import { newPlanState } from './plan.js';
 import { type State } from './state.js';
 import { intent, catalog } from './actions.js';
 import { frame } from './frame.js';
@@ -75,6 +77,9 @@ export function agentScreen<N extends Node>(
         scheduledTasks,
         web,
         jev,
+        goal: newGoalState(),
+        plan: newPlanState(),
+        recap: { receipt: null, loaded: false, loading: null, failed: false, confirmation: null },
         checklist: { watch: null, page: null, failed: false },
         scheduleAlerts: { pending: 0, reminders: [] },
         scheduleWatch: scheduledTasks ? 'schedule-alerts-initial' : null,

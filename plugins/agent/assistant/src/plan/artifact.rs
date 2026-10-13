@@ -23,6 +23,7 @@ use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(rename = "PlanArtifact")]
 pub struct Artifact {
     pub title: String,
     pub overview: Option<String>,
@@ -35,6 +36,7 @@ pub struct Artifact {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(rename = "PlanStep")]
 pub struct Step {
     #[schemars(length(min = 1, max = 128), regex(pattern = "^[A-Za-z0-9_-]+$"))]
     pub id: String,
@@ -49,6 +51,7 @@ pub struct Step {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[schemars(rename = "PlanComplexity")]
 pub enum Complexity {
     Low,
     Medium,

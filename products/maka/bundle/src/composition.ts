@@ -806,11 +806,17 @@ function agentComposition(configuration: CompositionConfiguration): ApplicationS
     }
   }
   if (configuration.processes)
-    host.instances['workspace-processes'] = node('workspace-processes', {
-      ...configuration.processes,
-      sessionOwner: [keys.agent],
-      sessionKind: 'agent',
-    });
+    host.instances['workspace-processes'] = node(
+      'workspace-processes',
+      {
+        ...configuration.processes,
+        sessionOwner: [keys.agent],
+        sessionKind: 'agent',
+      },
+      configuration.web && processMethods.includes('health')
+        ? { web: [local('workspace-web', 'web')] }
+        : {},
+    );
   host.instances.gateway!.bindings!.agent = [local('agent', 'agent')];
   if (configuration.processes)
     host.instances.gateway!.bindings!.terminal = [local('workspace-processes', 'terminal')];
@@ -922,6 +928,8 @@ function agentComposition(configuration: CompositionConfiguration): ApplicationS
         file: [local('file', 'FilePicker')],
         receipts: [remote('receipts', 'Receipts')],
         reader: [local('reader', 'Reader')],
+        input: [local('input', 'TextInput')],
+        editor: [local('editor', 'Textarea')],
         history: [local('history', 'History')],
         composer: [local('composer', 'Composer')],
         footer: [local('composer-footer', 'Footer')],
@@ -931,7 +939,6 @@ function agentComposition(configuration: CompositionConfiguration): ApplicationS
               rows: [local('rows', 'Rows')],
               checkpoint: [local('checkpoint', 'Checkpoint')],
               themeFile: [local('text-file', 'TextFile')],
-              input: [local('input', 'TextInput')],
             }
           : {}),
         palette: [local('command-palette', 'CommandPalette')],
@@ -1374,6 +1381,18 @@ function agentComposition(configuration: CompositionConfiguration): ApplicationS
                 provider: [keys['workspace-processes']],
                 export: 'processes',
                 methods: processMethods,
+                recovery: true,
+              },
+            ]
+          : []),
+        ...(processMethods.includes('health') && configuration.web
+          ? [
+              {
+                origin: [keys.agent],
+                consumer: [keys['workspace-processes']],
+                provider: [keys['workspace-web']],
+                export: 'web',
+                methods: ['probe'],
                 recovery: true,
               },
             ]

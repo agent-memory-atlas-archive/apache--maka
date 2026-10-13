@@ -27,6 +27,14 @@ use maka_capabilities::call::Resources;
 use maka_event_log::usage::{AuxiliarySource, Outcome};
 use maka_model::{ModelRequest, ModelStream, StepBuilder};
 
+pub(super) enum Admission {
+    Source(AuxiliarySource),
+    Operation {
+        reference: Box<maka_plugin_core::operation::RecoveryRef>,
+        binding: ModelBinding,
+        session_id: String,
+    },
+}
 pub(super) struct Auxiliary {
     models: ModelExecutor,
     pub resources: Arc<Resources>,
@@ -45,23 +53,38 @@ impl Auxiliary {
         request: ModelRequest,
         cancellation: CancellationToken,
         log: &EventLog,
-        source: AuxiliarySource,
+        admission: Admission,
         quote: maka_agent_facts::pricing::Quote,
     ) -> Result<ModelGeneration, ToolError> {
         if cancellation.is_cancelled() {
             return Err(failed("Auxiliary generation cancelled before dispatch"));
         }
-        let id = log
-            .begin_auxiliary_model(source, Some(quote))
-            .await
-            .map_err(|error| match error {
-                maka_event_log::StoreError::InvalidTransition(_)
-                | maka_event_log::StoreError::SessionNotFound
-                | maka_event_log::StoreError::SessionRetired
-                | maka_event_log::StoreError::SessionBusy
-                | maka_event_log::StoreError::PrefixTooLarge => failed(error),
-                _ => persistence(error),
-            })?;
+        let id = match admission {
+            Admission::Operation {
+                reference,
+                binding,
+                session_id,
+            } => log
+                .begin_auxiliary_operation_model(*reference, binding, session_id, Some(quote))
+                .await
+                .map_err(|error| match error {
+                    maka_event_log::StoreError::SessionNotFound
+                    | maka_event_log::StoreError::SessionRetired
+                    | maka_event_log::StoreError::SessionBusy => failed(error),
+                    other => persistence(other),
+                })?,
+            Admission::Source(source) => log
+                .begin_auxiliary_model(source, Some(quote))
+                .await
+                .map_err(|error| match error {
+                    maka_event_log::StoreError::InvalidTransition(_)
+                    | maka_event_log::StoreError::SessionNotFound
+                    | maka_event_log::StoreError::SessionRetired
+                    | maka_event_log::StoreError::SessionBusy
+                    | maka_event_log::StoreError::PrefixTooLarge => failed(error),
+                    _ => persistence(error),
+                })?,
+        };
         let model_id = request.provider.model.clone();
         let result = async {
             let stream = self

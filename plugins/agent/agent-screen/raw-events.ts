@@ -35,10 +35,14 @@ import {
   selectedFile,
 } from '../../shared/attachments.js';
 
+import { goalAction } from './goal.js';
+import { planAction } from './plan.js';
 import { draftReady } from '../../shared/drafts.js';
 
 import {
   watchChecklist,
+  readRecap,
+  canGenerateRecap,
   catalog,
   catalogPending,
   checkInteraction,
@@ -252,6 +256,31 @@ export function handleRaw<N extends Node>(
     history(state, actions, { kind: 'tail' }, state.latestKnown, true);
   } else if (input.key === 'catalog-refresh') {
     if (!mutationPending(state) && !catalogPending(state)) catalog(state);
+  } else if (planAction(state, actions, input.key) || goalAction(state, actions, input.key)) {
+    // Goal fields and controls retain their captured session and revision.
+  } else if (input.key === 'recap-close') {
+    if (state.dialog === 'recap') closeDialog(state);
+    if (state.inspector === 'recap') state.inspector = null;
+    state.recap.confirmation = null;
+  } else if (input.key === 'recap-check' && state.uncertain?.reference.method === 'generateRecap') {
+    rootCommand(state, actions, locale, 'check', target);
+  } else if (input.key === 'recap-refresh') {
+    readRecap(state, actions);
+  } else if (input.key === 'recap-generate' && canGenerateRecap(state)) {
+    state.recap.confirmation = { ...state.model!.choice.selection };
+  } else if (input.key === 'recap-cancel') {
+    state.recap.confirmation = null;
+  } else if (input.key === 'recap-confirm' && canGenerateRecap(state) && state.recap.confirmation) {
+    const model = state.recap.confirmation;
+    state.recap.confirmation = null;
+    intent(
+      state,
+      actions,
+      { kind: 'recapGenerate', epoch: state.epoch, sessionId: state.selected!.id },
+      'agent',
+      'generateRecap',
+      { sessionId: state.selected!.id, model },
+    );
   } else if (input.key === 'checklist-close') {
     if (state.dialog === 'checklist') closeDialog(state);
     if (state.inspector === 'checklist') state.inspector = null;

@@ -56,6 +56,21 @@ async function client(target) {
   };
 }
 for (const target of ['tui', 'desktop']) {
+  test(`${target} authoring dispatches a large source once without duplicating its document in state`, async () => {
+    const c = await client(target);
+    const large = structuredClone(request);
+    large.command.input.files['tui.js'] = '// ' + 'x'.repeat(600 * 1024);
+    c.value([]).operation({ request: large });
+    const apply = c.out.actions[0];
+    assert.deepEqual(apply.input, large.command.input);
+    assert.ok(Buffer.byteLength(JSON.stringify(c.out)) < 1024 * 1024);
+    assert.ok(Buffer.byteLength(JSON.stringify(c.out.frame.state)) < 1024);
+    c.watch();
+    assert.deepEqual(c.out.actions, []);
+    c.reply({ status: 'operation', reply: recorded({ status: 'committed' }) }, apply.key);
+    assert.equal(c.out.actions[0].method, 'complete');
+    assert.equal(c.out.actions[0].input.id, large.id);
+  });
   test(`${target} authoring preserves original manager outcome and serializes requests`, async () => {
     const c = await client(target);
     c.value([]).operation({ request });

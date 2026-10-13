@@ -129,6 +129,27 @@ impl ToolCatalog {
         self
     }
 
+    /// Keep an already registered control visible while discovery defers other
+    /// schemas. Selection and tool authorization still apply normally.
+    pub fn with_always_visible(mut self, names: &[&str]) -> Result<Self, CatalogError> {
+        for name in names {
+            let entries = Arc::make_mut(&mut self.entries);
+            let entry = entries.get(*name).ok_or_else(|| {
+                CatalogError::Invalid(format!("visible tool is not registered: {name}"))
+            })?;
+            entries.insert(
+                (*name).into(),
+                Arc::new(RegisteredTool {
+                    always_visible: true,
+                    registration: entry.registration.clone(),
+                    validator: entry.validator.clone(),
+                    bytes: entry.bytes,
+                }),
+            );
+        }
+        Ok(self)
+    }
+
     pub(super) fn select(&self, keep: impl Fn(&str) -> bool) -> Self {
         Self {
             entries: Arc::new(

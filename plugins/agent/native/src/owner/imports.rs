@@ -355,6 +355,7 @@ impl Owner {
                         &owner,
                         &transcript.source,
                         &SessionConfiguration {
+                            collaboration_mode: CollaborationMode::Agent,
                             tools: None,
                             title,
                             title_is_manual: true,

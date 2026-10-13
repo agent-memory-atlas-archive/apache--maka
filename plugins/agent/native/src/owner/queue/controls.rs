@@ -22,7 +22,9 @@ use maka_event_log::message_queue::{MessageQueue, QueueCommand, QueueEdit};
 
 impl MessageBasis {
     fn same_execution(&self, other: &Self) -> bool {
-        self.tool_discovery == other.tool_discovery
+        self.collaboration_mode == other.collaboration_mode
+            && self.tool_discovery == other.tool_discovery
+            && self.background_kind == other.background_kind
             && self.background == other.background
             && self.model == other.model
             && self.executor == other.executor
@@ -195,7 +197,12 @@ impl Owner {
                         if basis.executor.is_some() {
                             vec![]
                         } else {
-                            self.tools.names()
+                            self.selected_tools(
+                                &basis,
+                                false,
+                                basis.model.as_ref().and_then(|model| model.editing_tools),
+                            )
+                            .names()
                         },
                     )
                     .await?

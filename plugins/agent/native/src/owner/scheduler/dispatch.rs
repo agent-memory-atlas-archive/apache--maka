@@ -48,8 +48,28 @@ impl Owner {
         let Some(boundary) = &basis.background else {
             return Ok(());
         };
-        if !self.settings.scheduled_tasks {
-            return Err("scheduler_disabled".into());
+        if !match &basis.background_kind {
+            BackgroundKind::Schedule => self.settings.scheduled_tasks,
+            BackgroundKind::Goal(_) => self.settings.goals,
+            BackgroundKind::Plan(_) => self.settings.plans,
+        } {
+            return Err(match &basis.background_kind {
+                BackgroundKind::Schedule => "scheduler_disabled",
+                BackgroundKind::Goal(_) => "goal_disabled",
+                BackgroundKind::Plan(_) => "plan_disabled",
+            }
+            .into());
+        }
+        match &basis.background_kind {
+            BackgroundKind::Goal(id) => {
+                self.check_goal_background(&boundary.session_id, *id)
+                    .await?
+            }
+            BackgroundKind::Plan(proposal) => {
+                self.check_plan_background(&boundary.session_id, proposal, basis)
+                    .await?
+            }
+            BackgroundKind::Schedule => {}
         }
         let source = self.session(&boundary.session_id).await?;
         if source.archived
@@ -75,6 +95,20 @@ impl Owner {
                 thinking_level,
             } => (target, model, thinking_level),
         };
+        Ok(Approval::Execution {
+            basis: Box::new(
+                self.approve_background(target, model.clone(), *thinking, BackgroundKind::Schedule)
+                    .await?,
+            ),
+        })
+    }
+    pub(in crate::owner) async fn approve_background(
+        &self,
+        target: &ScheduledTarget,
+        model: ModelSelection,
+        thinking: Option<ThinkingLevel>,
+        kind: BackgroundKind,
+    ) -> Result<MessageBasis, String> {
         let runs = self.runs.lock().await;
         if runs.closing {
             return Err("agent_closed".into());
@@ -90,6 +124,11 @@ impl Owner {
         if session.archived {
             return Err("agent_session_configuration_changed".into());
         }
+        if session.configuration.collaboration_mode == CollaborationMode::Plan
+            && !matches!(kind, BackgroundKind::Plan(_))
+        {
+            return Err("agent_planning_does_not_authorize_background_execution".into());
+        }
         workspace::validate(
             &self.workspace_roots,
             &session.configuration.workspace,
@@ -99,31 +138,33 @@ impl Owner {
         let (source, _) = crate::model::Source::select(
             self.configuration.clone(),
             self.credentials.clone(),
-            model.clone(),
-            *thinking,
+            model,
+            thinking,
             id.clone(),
             self.revision.clone(),
         )
         .await
         .map_err(public_error)?;
-        Ok(Approval::Execution {
-            basis: Box::new(MessageBasis {
-                tool_discovery: self.settings.tool_discovery,
-                allowed_tools: session.configuration.tools.clone(),
-                background: Some(target.clone()),
-                internal_tools: self.internal_tools.clone(),
-                internal_bindings: self.internal_bindings.clone(),
-                behavior: self
-                    .capture_behavior(&session.configuration.workspace)
-                    .await?,
-                model: Some(source.accepted),
-                executor: None,
-                workspace: session.configuration.workspace,
-                fingerprint: String::new(),
-                tools: self.tool_basis.clone(),
-                max_steps: self.settings.max_steps,
-            }),
-        })
+        let mut basis = MessageBasis {
+            collaboration_mode: CollaborationMode::Agent,
+            background_kind: kind,
+            tool_discovery: self.settings.tool_discovery,
+            allowed_tools: session.configuration.tools.clone(),
+            background: Some(target.clone()),
+            internal_tools: self.internal_tools.clone(),
+            internal_bindings: self.internal_bindings.clone(),
+            behavior: self
+                .capture_behavior(&session.configuration.workspace)
+                .await?,
+            model: Some(source.accepted),
+            executor: None,
+            workspace: session.configuration.workspace,
+            fingerprint: String::new(),
+            tools: self.tool_basis.clone(),
+            max_steps: self.settings.max_steps,
+        };
+        self.prepare_plan_behavior(id, &mut basis).await?;
+        Ok(basis)
     }
     pub(in crate::owner) fn start_schedules(self: &Arc<Self>) {
         if !self.settings.scheduled_tasks {
@@ -325,6 +366,7 @@ impl Owner {
                             &session_id,
                             &basis.fingerprint,
                             &SessionConfiguration {
+                                collaboration_mode: CollaborationMode::Agent,
                                 tools: basis.allowed_tools.clone(),
                                 title: fire.title.clone(),
                                 title_is_manual: true,

@@ -23,6 +23,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+maka-goal.workspace = true
+maka-session-recap.workspace = true
 maka-agent-facts.workspace = true
 maka-agent-ports.workspace = true
 maka-capabilities.workspace = true
@@ -34,6 +36,7 @@ maka-agent-authority.workspace = true
 
 maka-web-api.workspace = true
 maka-agent-api.workspace = true
+maka-interactions-api.workspace = true
 base64 = "0.22.1"
 cap-std.workspace = true
 maka-agent-engine.workspace = true
@@ -69,7 +72,6 @@ uuid.workspace = true
 [dev-dependencies]
 maka-computer-native.workspace = true
 maka-external-agent.workspace = true
-maka-interactions-api.workspace = true
 maka-packages.workspace = true
 sqlx.workspace = true
 maka-host-js.workspace = true

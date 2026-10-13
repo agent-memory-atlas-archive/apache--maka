@@ -171,9 +171,9 @@ impl Owner {
                     },
                     cancellation.clone(),
                     &self.store,
-                    AuxiliarySource::SessionTitle {
+                    auxiliary::Admission::Source(AuxiliarySource::SessionTitle {
                         invocation: invocation.clone(),
-                    },
+                    }),
                     quote,
                 )
                 .await

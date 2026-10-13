@@ -92,7 +92,9 @@ impl Owner {
         {
             return Ok(None);
         }
-        let basis = MessageBasis {
+        let mut basis = MessageBasis {
+            collaboration_mode: session.configuration.collaboration_mode,
+            background_kind: BackgroundKind::Schedule,
             tool_discovery: self.settings.tool_discovery,
             allowed_tools: session.configuration.tools.clone(),
             background: None,
@@ -106,6 +108,8 @@ impl Owner {
             behavior: self.capture_behavior(&route.workspace).await?,
             max_steps: self.settings.max_steps,
         };
+        self.prepare_plan_behavior(&source.session_id, &mut basis)
+            .await?;
         let message: MessageInput = text.into();
         let delivered = RootSourceMessage {
             message: DeliveredMessage {

@@ -35,6 +35,7 @@ use tokio_util::sync::CancellationToken;
 
 mod control;
 mod execute;
+mod health;
 pub mod protocol;
 pub mod terminal;
 
@@ -218,7 +219,10 @@ impl Handler for Service {
     ) -> BoxFuture<'static, Result<Value, String>> {
         let owner = self.0.clone();
         Box::pin(async move {
-            if !matches!(name.as_str(), "execute" | "read" | "writeStdin" | "stop") {
+            if !matches!(
+                name.as_str(),
+                "execute" | "read" | "health" | "writeStdin" | "stop"
+            ) {
                 return Err("workspace_process_method_unavailable".into());
             }
             let invocation = context
@@ -246,9 +250,13 @@ impl Handler for Service {
                 .reserve()
                 .map_err(|e| e.to_string())?;
             ticket.start();
-            let result = owner
-                .call(&name, input, &tool, &context.scope().cancellation)
-                .await;
+            let result = if name == "health" {
+                owner.health(&context, input, &tool).await
+            } else {
+                owner
+                    .call(&name, input, &tool, &context.scope().cancellation)
+                    .await
+            };
             let cleanup = match &result {
                 Err(ToolError::CleanupUnconfirmed(message)) => {
                     owner.drain.cancel();

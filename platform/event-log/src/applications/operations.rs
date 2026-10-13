@@ -196,7 +196,7 @@ async fn read(
     }))
 }
 impl EventLog {
-    fn operation_domain(&self, reference: &RecoveryRef) -> Result<(), StoreError> {
+    pub(crate) fn operation_domain(&self, reference: &RecoveryRef) -> Result<(), StoreError> {
         reference.validate().map_err(|e| invalid(e.to_string()))?;
         if reference.source.state_domain != self.application_domain()? {
             return Err(invalid("foreign operation state domain"));
@@ -301,6 +301,19 @@ impl EventLog {
             })
             .await
     }
+}
+
+pub(crate) async fn require_pending(
+    connection: &mut SqliteConnection,
+    reference: &RecoveryRef,
+) -> Result<(), StoreError> {
+    let record = read(connection, reference)
+        .await?
+        .ok_or_else(|| invalid("original application operation missing"))?;
+    if !matches!(record.observation.outcome, OperationOutcome::Unresolved) {
+        return Err(invalid("original application operation is not pending"));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

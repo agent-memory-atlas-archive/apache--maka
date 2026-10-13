@@ -20,6 +20,7 @@
 //! Web plugin declarations and wire values, independent of HTTP execution.
 pub mod contract;
 pub mod fetch;
+pub mod probe;
 pub mod search;
 pub mod settings;
 pub use contract::{configuration_schema, contract};

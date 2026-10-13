@@ -43,16 +43,16 @@ pub fn invalid(e: impl std::fmt::Display) -> Error {
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Arm {
+pub struct Arm<A = Id> {
     pub operation_id: Uuid,
     pub objective: String,
-    pub grant: Id,
+    pub grant: A,
     pub max_iterations: u32,
     pub token_budget: Option<u64>,
     #[serde(default)]
     pub start: bool,
 }
-impl Arm {
+impl<A> Arm<A> {
     pub fn validate(&self) -> Result<(), Error> {
         if self.objective.trim().is_empty()
             || self.objective.len() > 8192
@@ -68,8 +68,9 @@ impl Arm {
         Ok(())
     }
 }
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[schemars(rename = "GoalStatus")]
 pub enum Status {
     Armed,
     Active,
@@ -98,22 +99,25 @@ impl Status {
         )
     }
 }
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[schemars(rename = "GoalControl")]
 pub enum Control {
     Pause,
     Resume,
     Cancel,
     Complete,
 }
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Default, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
+#[schemars(rename = "GoalMeter")]
 pub struct Meter {
     pub known: u64,
     pub missing: u64,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[schemars(rename = "GoalReportKind")]
 pub enum ReportKind {
     Progress,
     Achieved,
@@ -122,6 +126,7 @@ pub enum ReportKind {
 }
 #[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(rename = "GoalReport")]
 pub struct Report {
     pub status: ReportKind,
     pub note: String,
@@ -133,10 +138,10 @@ pub struct Pending {
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Goal {
+pub struct Goal<A = Id> {
     pub id: Uuid,
     pub session_id: String,
-    pub arm: Arm,
+    pub arm: Arm<A>,
     pub status: Status,
     pub iterations: u32,
     pub baseline: Meter,
@@ -147,7 +152,7 @@ pub struct Goal {
     pub note: String,
     pub authority_blocked: bool,
 }
-impl Goal {
+impl<A> Goal<A> {
     pub fn keeps_host_awake(&self) -> bool {
         !self.authority_blocked
             && (self.status == Status::Active
@@ -308,17 +313,20 @@ impl Goal {
 }
 
 #[derive(Clone)]
-pub struct Saved {
+pub struct Saved<A = Id> {
     pub revision: u64,
-    pub goal: Goal,
+    pub goal: Goal<A>,
 }
 #[derive(Clone)]
-pub struct Repository(pub Arc<dyn Store>);
+pub struct Repository<A = Id> {
+    store: Arc<dyn Store>,
+    authority: std::marker::PhantomData<A>,
+}
 fn key(session: &str) -> String {
     use sha2::{Digest, Sha256};
     format!("session/{:x}", Sha256::digest(session.as_bytes()))
 }
-fn decode(record: Record) -> Result<Saved, Error> {
+fn decode<A: serde::de::DeserializeOwned>(record: Record) -> Result<Saved<A>, Error> {
     let goal = serde_json::from_value(
         record
             .data
@@ -332,14 +340,30 @@ fn decode(record: Record) -> Result<Saved, Error> {
         goal,
     })
 }
-impl Repository {
-    pub async fn read(&self, session: &str) -> Result<Option<Saved>, Error> {
-        self.0.read(key(session)).await?.map(decode).transpose()
+impl<A: Clone + Serialize + serde::de::DeserializeOwned> Repository<A> {
+    pub fn new(store: Arc<dyn Store>) -> Self {
+        Self {
+            store,
+            authority: std::marker::PhantomData,
+        }
     }
-    pub async fn arm(&self, session: &str, arm: Arm, baseline: Meter) -> Result<Goal, Error> {
+    pub async fn read(&self, session: &str) -> Result<Option<Saved<A>>, Error> {
+        self.store.read(key(session)).await?.map(decode).transpose()
+    }
+    pub async fn arm(&self, session: &str, arm: Arm<A>, baseline: Meter) -> Result<Goal<A>, Error> {
+        self.arm_with(session, arm, baseline, vec![]).await
+    }
+    /// Commit caller receipts in the same transaction as the original arming.
+    pub async fn arm_with(
+        &self,
+        session: &str,
+        arm: Arm<A>,
+        baseline: Meter,
+        mut receipts: Vec<Mutation>,
+    ) -> Result<Goal<A>, Error> {
         arm.validate()?;
         let receipt_key = format!("arm/{}", arm.operation_id);
-        if let Some(receipt) = self.0.read(receipt_key.clone()).await? {
+        if let Some(receipt) = self.store.read(receipt_key.clone()).await? {
             let expected = serde_json::json!({"session":session,"arm":arm});
             if receipt.data.value() != Some(&expected) {
                 return Err(invalid("Operation ID belongs to another Goal request"));
@@ -380,38 +404,44 @@ impl Repository {
             note: String::new(),
             authority_blocked: false,
         };
-        self.0
-            .batch(vec![
-                Mutation {
-                    key: key(session),
-                    expected_revision: old.map(|v| v.revision),
-                    data: Data::Present(serde_json::to_value(&goal).map_err(invalid)?),
-                },
-                Mutation {
-                    key: receipt_key,
-                    expected_revision: None,
-                    data: Data::Present(serde_json::json!({"session":session,"arm":arm})),
-                },
-            ])
-            .await?;
+        receipts.extend([
+            Mutation {
+                key: key(session),
+                expected_revision: old.map(|v| v.revision),
+                data: Data::Present(serde_json::to_value(&goal).map_err(invalid)?),
+            },
+            Mutation {
+                key: receipt_key,
+                expected_revision: None,
+                data: Data::Present(serde_json::json!({"session":session,"arm":arm})),
+            },
+        ]);
+        self.store.batch(receipts).await?;
         Ok(goal)
     }
-    pub async fn save(&self, saved: Saved) -> Result<(), Error> {
-        self.0
-            .batch(vec![Mutation {
-                key: key(&saved.goal.session_id),
-                expected_revision: Some(saved.revision),
-                data: Data::Present(serde_json::to_value(saved.goal).map_err(invalid)?),
-            }])
-            .await?;
+    pub async fn save(&self, saved: Saved<A>) -> Result<(), Error> {
+        self.save_with(saved, vec![]).await
+    }
+    /// State transitions and their caller receipts share the original CAS.
+    pub async fn save_with(
+        &self,
+        saved: Saved<A>,
+        mut receipts: Vec<Mutation>,
+    ) -> Result<(), Error> {
+        receipts.push(Mutation {
+            key: key(&saved.goal.session_id),
+            expected_revision: Some(saved.revision),
+            data: Data::Present(serde_json::to_value(saved.goal).map_err(invalid)?),
+        });
+        self.store.batch(receipts).await?;
         Ok(())
     }
-    pub async fn sessions(&self) -> Result<Vec<Saved>, Error> {
+    pub async fn sessions(&self) -> Result<Vec<Saved<A>>, Error> {
         let mut result = vec![];
         let mut after = None;
         loop {
             let page = self
-                .0
+                .store
                 .scan(maka_capabilities::storage::Scan {
                     prefix: "session/".into(),
                     after,
@@ -523,9 +553,50 @@ mod tests {
         }
     }
     #[tokio::test]
+    async fn business_receipt_commits_atomically_with_goal_and_conflicts_leave_neither_effect() {
+        let store = Arc::new(Store::default());
+        let repo = Repository::new(store.clone());
+        let receipt = |key: &str| storage::Mutation {
+            key: key.into(),
+            expected_revision: None,
+            data: storage::Data::Present(serde_json::json!({"committed":true})),
+        };
+        store.1.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            repo.arm_with(
+                "session",
+                arm(),
+                Meter::default(),
+                vec![receipt("create-receipt")]
+            )
+            .await,
+            Err(Error::Storage(storage::StoreError::OutcomeUnknown(_)))
+        ));
+        assert!(store.0.lock().unwrap().contains_key("create-receipt"));
+        let mut saved = repo.read("session").await.unwrap().unwrap();
+        saved.goal.control(Control::Pause).unwrap();
+        let stale = saved.clone();
+        store.1.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            repo.save_with(saved, vec![receipt("pause-receipt")]).await,
+            Err(Error::Storage(storage::StoreError::OutcomeUnknown(_)))
+        ));
+        assert!(store.0.lock().unwrap().contains_key("pause-receipt"));
+        assert_eq!(
+            repo.read("session").await.unwrap().unwrap().goal.status,
+            Status::Paused
+        );
+        assert!(matches!(
+            repo.save_with(stale, vec![receipt("stale-receipt")]).await,
+            Err(Error::Storage(storage::StoreError::Conflict { .. }))
+        ));
+        assert!(!store.0.lock().unwrap().contains_key("stale-receipt"));
+    }
+
+    #[tokio::test]
     async fn arm_retry_preserves_baseline_and_cannot_replace_or_resurrect_a_goal() {
         let store = Arc::new(Store::default());
-        let repo = Repository(store.clone());
+        let repo = Repository::new(store.clone());
         let request = arm();
         let goal = repo
             .arm(
@@ -573,13 +644,13 @@ mod tests {
     #[tokio::test]
     async fn durable_outbox_survives_restart_and_stale_writers_cannot_undo_pause() {
         let store = Arc::new(Store::default());
-        let repo = Repository(store.clone());
+        let repo = Repository::new(store.clone());
         repo.arm("session", arm(), Meter::default()).await.unwrap();
         let mut saved = repo.read("session").await.unwrap().unwrap();
         saved.goal.reserve().unwrap();
         let request = saved.goal.pending.as_ref().unwrap().request.clone();
         repo.save(saved).await.unwrap();
-        let reopened = Repository(store);
+        let reopened = Repository::new(store);
         let mut stale = reopened.read("session").await.unwrap().unwrap();
         let mut control = reopened.read("session").await.unwrap().unwrap();
         control.goal.status = Status::Paused;
@@ -612,7 +683,7 @@ mod tests {
     }
     #[tokio::test]
     async fn iteration_reservations_are_bounded_and_budget_missing_fails_closed() {
-        let repo = Repository(Arc::new(Store::default()));
+        let repo = Repository::new(Arc::new(Store::default()));
         let mut goal = repo
             .arm(
                 "session",
@@ -655,7 +726,7 @@ mod tests {
     #[tokio::test]
     async fn lost_storage_reply_recovers_original_arm_and_outbox_without_new_identity() {
         let store = Arc::new(Store::default());
-        let repo = Repository(store.clone());
+        let repo = Repository::new(store.clone());
         let request = arm();
         store.1.store(true, Ordering::SeqCst);
         assert!(matches!(
@@ -690,7 +761,7 @@ mod tests {
 
     #[tokio::test]
     async fn terminal_controls_and_usage_failure_cannot_rewrite_execution_facts() {
-        let repo = Repository(Arc::new(Store::default()));
+        let repo = Repository::new(Arc::new(Store::default()));
         let mut goal = repo.arm("session", arm(), Meter::default()).await.unwrap();
         goal.reserve().unwrap();
         goal.report = Some(Report {
@@ -723,7 +794,7 @@ mod tests {
     }
     #[tokio::test]
     async fn sealed_handoff_and_unknown_cancellation_do_not_pin_background_work() {
-        let repo = Repository(Arc::new(Store::default()));
+        let repo = Repository::new(Arc::new(Store::default()));
         repo.arm("session", arm(), Meter::default()).await.unwrap();
         let mut saved = repo.read("session").await.unwrap().unwrap();
         saved.goal.reserve().unwrap();

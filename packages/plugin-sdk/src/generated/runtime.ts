@@ -111,6 +111,8 @@ export type RuntimeProtocol =
   | WebKey
   | WebUpdate
   | WebResult
+  | WebProbe
+  | WebEndpoint
   | AgentExecute
   | AgentExecutorsRead
   | AgentExecutors
@@ -205,8 +207,23 @@ export type RuntimeProtocol =
   | SkillPreparationRecord
   | AgentList
   | AgentCreate
+  | AgentPlanRead
+  | AgentPlanView
+  | AgentPlanHistoryRead
+  | AgentPlanHistory
+  | AgentPlanChange
+  | AgentPlanResult
+  | AgentPlanReceiptRead
+  | AgentGoalRead
+  | AgentGoalView
+  | AgentGoalChange
+  | AgentGoalResult
+  | AgentGoalReceiptRead
   | AgentChecklistRead
   | AgentChecklist
+  | AgentRecapRead
+  | AgentRecapGenerate
+  | AgentRecapReceipt
   | AgentScheduleRead
   | AgentSchedules
   | AgentScheduleChange
@@ -1539,6 +1556,23 @@ export type WebResult =
       message: string;
       kind: 'failed';
     };
+export type WebEndpoint =
+  | {
+      state: 'not_checked';
+    }
+  | {
+      target: string;
+      error: string;
+      state: 'unknown';
+    }
+  | {
+      target: string;
+      httpStatus: number;
+      elapsedMs: number;
+      health: WebReadiness;
+      state: 'checked';
+    };
+export type WebReadiness = 'healthy' | 'unknown' | 'unhealthy';
 export type ThinkingLevel =
   | 'off'
   | 'minimal'
@@ -1696,11 +1730,13 @@ export type WorkHubCoordinator =
       reason: AgentRejection;
       kind: 'rejected';
     };
+export type CollaborationMode = 'agent' | 'plan';
 export type AgentSessionActivity = 'idle' | 'working' | 'waiting';
 export type AgentRejection =
   | 'title_invalid'
   | 'labels_invalid'
   | 'tools_unavailable'
+  | 'busy'
   | 'workspace_unavailable'
   | 'session_unavailable'
   | 'closed';
@@ -2035,6 +2071,14 @@ export type UsageOrigin =
     };
 export type ModelPurpose = 'main' | 'summary';
 export type UsageAuxiliarySource =
+  | {
+      source: DeploymentRef;
+      namespace: InstanceId;
+      operation: string;
+      fingerprint: string;
+      kind: 'application_operation';
+      [k: string]: unknown | undefined;
+    }
   | {
       invocation: Invocation;
       kind: 'session_title';
@@ -2942,7 +2986,131 @@ export type AgentWorkspaceSelection =
       sessionId: string;
       kind: 'session';
     };
+export type PlanComplexity = 'low' | 'medium' | 'high';
+export type PlanProposalStatus =
+  | 'pending_approval'
+  | 'revision_requested'
+  | 'abandoned'
+  | 'approved';
+export type PlanStepStatus = 'pending' | 'in_progress' | 'completed' | 'skipped';
+export type AgentPlanPhase =
+  | 'awaiting_admission'
+  | 'active'
+  | 'interrupted'
+  | 'completed'
+  | 'cancelled';
+export type AgentPlanAction =
+  | {
+      proposalId: string;
+      proposalRevision: number;
+      approval: AgentPlanApproval;
+      kind: 'approve';
+    }
+  | {
+      proposalId: string;
+      kind: 'revise';
+    }
+  | {
+      proposalId: string;
+      kind: 'abandon';
+    }
+  | {
+      executionId: string;
+      approval: AgentPlanApproval;
+      kind: 'resume';
+    }
+  | {
+      executionId: string;
+      reason: string;
+      kind: 'cancel';
+    };
+export type AgentPlanResult =
+  | {
+      revision: number;
+      kind: 'committed';
+    }
+  | {
+      actual: number;
+      kind: 'conflict';
+    }
+  | {
+      reason: string;
+      kind: 'rejected';
+    };
+export type GoalStatus =
+  | 'armed'
+  | 'active'
+  | 'paused'
+  | 'waiting'
+  | 'achieved'
+  | 'impossible'
+  | 'cancelled'
+  | 'cancellation_unknown'
+  | 'max_iterations'
+  | 'budget_limited'
+  | 'budget_unknown'
+  | 'blocked';
+export type GoalReportKind = 'progress' | 'achieved' | 'waiting' | 'impossible';
+export type AgentGoalChange =
+  | {
+      sessionId: string;
+      objective: string;
+      maxIterations: number;
+      tokenBudget?: number | null;
+      start: boolean;
+      approval: AgentGoalApproval;
+      kind: 'create';
+    }
+  | {
+      sessionId: string;
+      goalId: string;
+      revision: number;
+      action: GoalControl;
+      /**
+       * Explicit renewed model and session authority, only for Resume without a pending iteration.
+       */
+      approval?: AgentGoalApproval | null;
+      kind: 'control';
+    };
+export type GoalControl = 'pause' | 'resume' | 'cancel' | 'complete';
+export type AgentGoalResult =
+  | {
+      goalId: string;
+      revision: number;
+      kind: 'committed';
+    }
+  | {
+      actual?: number | null;
+      kind: 'conflict';
+    }
+  | {
+      reason: string;
+      kind: 'rejected';
+    };
 export type AgentTodoStatus = 'pending' | 'in_progress' | 'completed';
+export type AgentRecapReceipt =
+  | {
+      operationId: string;
+      through: number;
+      kind: 'pending';
+    }
+  | {
+      operationId: string;
+      through: number;
+      text: string;
+      modelId: string;
+      kind: 'ready';
+    }
+  | {
+      operationId: string;
+      through: number;
+      reason: AgentRecapFailure;
+      kind: 'failed';
+    };
+export type AgentRecapFailure =
+  | 'empty_or_oversized_output'
+  | 'incomplete_output'
+  | 'model_unavailable';
 export type AgentScheduleRead =
   | {
       cursor?: string | null;
@@ -6494,6 +6662,14 @@ export interface AgentConfiguration {
    */
   scheduledTasks?: boolean;
   /**
+   * Enable explicitly approved, bounded Goal continuation.
+   */
+  goals?: boolean;
+  /**
+   * Enable planning, reviewed approval and execution progress.
+   */
+  plans?: boolean;
+  /**
    * Enable the session-scoped, model-maintained checklist.
    */
   todo?: boolean;
@@ -6501,6 +6677,10 @@ export interface AgentConfiguration {
    * Generate a bounded auxiliary title for automatically named conversations.
    */
   automaticTitles?: boolean;
+  /**
+   * Enable explicit, bounded session recap requests and cached reads.
+   */
+  recaps?: boolean;
   /**
    * Explicit access to this Agent’s earlier conversations for model tools.
    */
@@ -6834,6 +7014,9 @@ export interface WebCheck {
   credential_revision: number;
   outcome: WebCheckOutcome;
 }
+export interface WebProbe {
+  url: string;
+}
 export interface AgentExecute {
   /**
    * IDs of immutable user uploads in this Session, resolved by the Agent owner.
@@ -7055,6 +7238,7 @@ export interface AgentDirectorySelection {
   directoryIdentity: string;
 }
 export interface AgentSession {
+  collaborationMode?: CollaborationMode & string;
   tools?: string[] | null;
   dataSource: AgentDataSource;
   permissions: AgentWorkspacePermissions;
@@ -8419,6 +8603,315 @@ export interface AgentProjectRef {
   id: string;
   revision: string;
 }
+export interface AgentPlanRead {
+  sessionId: string;
+}
+export interface AgentPlanView {
+  enabled: boolean;
+  current: AgentPlanSnapshot;
+}
+/**
+ * Public business data only; frozen execution authority remains with the owner.
+ */
+export interface AgentPlanSnapshot {
+  revision: number;
+  proposal?: PlanProposal | null;
+  execution?: AgentPlanExecution | null;
+}
+export interface PlanProposal {
+  id: string;
+  planId: string;
+  revision: number;
+  turnId: string;
+  artifact: PlanArtifact;
+  status: PlanProposalStatus;
+  supersedes?: string | null;
+  sourceExecutionId?: string | null;
+  submittedAt: number;
+}
+export interface PlanArtifact {
+  title: string;
+  overview?: string | null;
+  /**
+   * @minItems 1
+   * @maxItems 50
+   */
+  steps: [PlanStep, ...PlanStep[]];
+  /**
+   * @maxItems 20
+   */
+  risks?:
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ];
+}
+export interface PlanStep {
+  id: string;
+  title: string;
+  description: string;
+  /**
+   * @maxItems 50
+   */
+  files?: string[];
+  complexity?: PlanComplexity | null;
+}
+export interface AgentPlanExecution {
+  id: string;
+  proposalId: string;
+  artifact: PlanArtifact;
+  steps: PlanProgress[];
+  phase: AgentPlanPhase;
+  invocation?: Invocation | null;
+  reason?: string | null;
+  cancellation?: string | null;
+  updatedAt: number;
+}
+export interface PlanProgress {
+  id: string;
+  status: PlanStepStatus;
+  note?: string | null;
+}
+export interface AgentPlanHistoryRead {
+  sessionId: string;
+  throughRevision?: number | null;
+  after?: number;
+}
+export interface AgentPlanHistory {
+  throughRevision: number;
+  snapshots: AgentPlanSnapshot[];
+  nextAfter?: number | null;
+}
+export interface AgentPlanChange {
+  sessionId: string;
+  revision: number;
+  action: AgentPlanAction;
+}
+export interface AgentPlanApproval {
+  target: AgentScheduledTarget;
+  model: ModelSelection;
+  thinkingLevel?: ThinkingLevel | null;
+}
+/**
+ * Exact observed source boundary. This data is checked against the original
+ * Session; passing it never grants execution by itself.
+ */
+export interface AgentScheduledTarget {
+  sessionId: string;
+  workspace: AgentWorkspace;
+  permissions: AgentWorkspacePermissions;
+  boundaryRevision: number;
+}
+export interface AgentPlanReceiptRead {
+  reference: RecoveryRef;
+}
+export interface AgentGoalRead {
+  sessionId: string;
+}
+export interface AgentGoalView {
+  enabled: boolean;
+  current?: AgentGoalDetail | null;
+}
+export interface AgentGoalDetail {
+  id: string;
+  revision: number;
+  objective: string;
+  status: GoalStatus;
+  iterations: number;
+  maxIterations: number;
+  tokenBudget?: number | null;
+  consumed: GoalMeter;
+  pending: boolean;
+  report?: GoalReport | null;
+  note: string;
+}
+export interface GoalMeter {
+  known: number;
+  missing: number;
+  [k: string]: unknown | undefined;
+}
+export interface GoalReport {
+  status: GoalReportKind;
+  note: string;
+}
+export interface AgentGoalApproval {
+  target: AgentScheduledTarget;
+  model: ModelSelection;
+  thinkingLevel?: ThinkingLevel | null;
+}
+export interface AgentGoalReceiptRead {
+  reference: RecoveryRef;
+}
 export interface AgentChecklistRead {
   sessionId: string;
   offset?: number;
@@ -8664,6 +9157,14 @@ export interface AgentTodoItem {
   content: string;
   status: AgentTodoStatus;
 }
+export interface AgentRecapRead {
+  sessionId: string;
+  operationId?: string | null;
+}
+export interface AgentRecapGenerate {
+  sessionId: string;
+  model: ModelSelection;
+}
 export interface AgentScheduledSummary {
   id: string;
   revision: number;
@@ -8700,16 +9201,6 @@ export interface Task {
   updatedAt: number;
   runs: Run[];
   lastError?: string | null;
-}
-/**
- * Exact observed source boundary. This data is checked against the original
- * Session; passing it never grants execution by itself.
- */
-export interface AgentScheduledTarget {
-  sessionId: string;
-  workspace: AgentWorkspace;
-  permissions: AgentWorkspacePermissions;
-  boundaryRevision: number;
 }
 export interface Run {
   id: string;
@@ -8894,6 +9385,10 @@ export interface AgentDirectory {
   selection: AgentDirectorySelection;
 }
 export interface AgentMetadata {
+  /**
+   * Changing collaboration is only allowed while the Session is idle.
+   */
+  collaborationMode?: CollaborationMode | null;
   /**
    * Omission leaves the permission boundary and its approvals unchanged.
    */

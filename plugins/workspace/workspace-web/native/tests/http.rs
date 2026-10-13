@@ -59,6 +59,7 @@ struct Body {
     chunks: Mutex<VecDeque<Vec<u8>>>,
     closes: AtomicUsize,
     reads: AtomicUsize,
+    fail_close: bool,
 }
 impl http::Body for Body {
     fn next(&self) -> BoxFuture<'_, Result<Option<Vec<u8>>, http::Error>> {
@@ -71,7 +72,11 @@ impl http::Body for Body {
     fn close(&self) -> BoxFuture<'_, Result<(), http::Error>> {
         Box::pin(async {
             self.closes.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            if self.fail_close {
+                Err(http::Error::CleanupUnconfirmed)
+            } else {
+                Ok(())
+            }
         })
     }
 }
@@ -315,4 +320,158 @@ async fn search_keeps_credentials_on_the_fixed_endpoint_and_settles_failure_bodi
         assert!(scope.cancellation.is_cancelled());
     }
     assert!(!parent.cancellation.is_cancelled());
+}
+
+#[tokio::test]
+async fn health_probe_reads_only_headers_without_redirects_or_repeated_fallbacks() {
+    use maka_web_api::probe::{Endpoint, Input, Readiness};
+    for (statuses, expected) in [
+        (vec![200], "healthy"),
+        (vec![302], "unknown"),
+        (vec![503], "unhealthy"),
+        (vec![405, 200], "healthy"),
+        (vec![501, 405], "unhealthy"),
+    ] {
+        let transport = Arc::new(Transport::default());
+        let bodies: Vec<_> = statuses
+            .iter()
+            .map(|status| {
+                reply(
+                    &transport,
+                    *status,
+                    "http://localhost/health",
+                    &[("location", "http://other.example/")],
+                    vec![0; 1024],
+                )
+            })
+            .collect();
+        let parent = scope();
+        let result = maka_web::probe::probe(
+            transport.clone(),
+            &parent,
+            Input {
+                url: "http://localhost/health".into(),
+            },
+        )
+        .await
+        .unwrap();
+        let Endpoint::Checked {
+            http_status,
+            health,
+            ..
+        } = result
+        else {
+            panic!("{result:?}")
+        };
+        assert_eq!(http_status, *statuses.last().unwrap());
+        assert_eq!(
+            match health {
+                Readiness::Healthy => "healthy",
+                Readiness::Unknown => "unknown",
+                Readiness::Unhealthy => "unhealthy",
+            },
+            expected
+        );
+        let calls = transport.calls.lock().unwrap();
+        assert_eq!(calls.len(), statuses.len());
+        assert!(matches!(calls[0].1.method, http::Method::Head));
+        if calls.len() == 2 {
+            assert!(matches!(calls[1].1.method, http::Method::Get));
+        }
+        assert!(
+            calls
+                .iter()
+                .all(|(scope, request)| scope.cancellation.is_cancelled()
+                    && request.url == "http://localhost/health")
+        );
+        assert!(!parent.cancellation.is_cancelled());
+        for body in bodies {
+            assert_eq!(body.reads.load(Ordering::SeqCst), 0);
+            assert_eq!(body.closes.load(Ordering::SeqCst), 1);
+        }
+    }
+}
+
+#[tokio::test]
+async fn health_probe_rejects_invalid_targets_and_cancellation_closes_its_scope() {
+    use maka_web_api::probe::Input;
+    let transport = Arc::new(Transport::default());
+    let parent = scope();
+    for url in [
+        "file:///etc/passwd",
+        "https://u:p@example.com/",
+        "http://example.com/#fragment",
+        "",
+        "not a url",
+    ] {
+        assert!(
+            maka_web::probe::probe(transport.clone(), &parent, Input { url: url.into() })
+                .await
+                .is_err()
+        );
+    }
+    assert!(transport.calls.lock().unwrap().is_empty());
+    let task = tokio::spawn({
+        let transport = transport.clone();
+        let parent = parent.clone();
+        async move {
+            maka_web::probe::probe(
+                transport,
+                &parent,
+                Input {
+                    url: "http://localhost/health".into(),
+                },
+            )
+            .await
+        }
+    });
+    transport.started.notified().await;
+    parent.cancellation.cancel();
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err()
+    );
+    assert!(
+        transport.calls.lock().unwrap()[0]
+            .0
+            .cancellation
+            .is_cancelled()
+    );
+}
+
+#[tokio::test]
+async fn health_probe_cannot_report_health_or_retry_when_body_cleanup_is_unconfirmed() {
+    for status in [200, 405] {
+        let transport = Arc::new(Transport::default());
+        let body = Arc::new(Body {
+            fail_close: true,
+            ..Default::default()
+        });
+        transport.replies.lock().unwrap().push_back(http::Response {
+            head: http::Head {
+                status,
+                url: "http://localhost/health".into(),
+                headers: vec![],
+            },
+            body: body.clone(),
+        });
+        let result = maka_web::probe::probe(
+            transport.clone(),
+            &scope(),
+            maka_web_api::probe::Input {
+                url: "http://localhost/health".into(),
+            },
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(maka_agent_facts::tools::ToolError::CleanupUnconfirmed(_))
+        ));
+        assert_eq!(transport.calls.lock().unwrap().len(), 1);
+        assert_eq!(body.reads.load(Ordering::SeqCst), 0);
+        assert_eq!(body.closes.load(Ordering::SeqCst), 1);
+    }
 }

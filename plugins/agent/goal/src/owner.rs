@@ -61,7 +61,7 @@ impl Owner {
         usage: Arc<dyn usage::Usage>,
     ) -> Arc<Self> {
         Arc::new(Self {
-            repo: Repository(storage),
+            repo: Repository::new(storage),
             executions,
             authorizations,
             preferences,

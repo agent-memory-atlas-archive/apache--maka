@@ -23,4 +23,6 @@
 
 Implements Web fetch and search through scoped network capabilities. `fetch` and `search` own content policy; `settings` manages provider configuration; `provide` registers the Host factory. It can run in a Host composition without an Agent engine.
 
+`probe` supports process health checks: send HEAD, fall back once to GET only for 405/501, never follow redirects or read the response body, and wait for response cleanup. It requires its own network authorization and is unavailable in incognito mode; retrieval settings and search credentials do not control endpoint probes. Permission wait is included in elapsed time. HTTP 2xx is healthy, 3xx is unknown, and 4xx/5xx is unhealthy; denied or failed requests report an unknown endpoint.
+
 [Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

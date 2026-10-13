@@ -82,6 +82,7 @@ import {
   selectedBackend,
   submitQuestion,
 } from './actions.js';
+import { goalComponent } from './goal.js';
 import { frame } from './frame.js';
 import { utf8Bytes } from './messages.js';
 import { type Page, type State } from './state.js';
@@ -98,6 +99,8 @@ export function handleComponent<N extends Node>(
   locale: string,
 ) {
   const target = presentation.target;
+  if (goalComponent(state, input))
+    return frame(presentation, configuredLocale, state, values, actions);
   if (input.name === 'chrome' && state.openedPages.includes(input.child as Page)) {
     state.pageChrome[input.child as Page] = input.event as PageChrome;
     return frame(presentation, configuredLocale, state, values, actions);

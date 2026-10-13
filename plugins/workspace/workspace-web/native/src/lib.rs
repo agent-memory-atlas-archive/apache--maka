@@ -20,6 +20,7 @@
 //! Web content and search policy consume the same capabilities as external plugins.
 
 pub mod fetch;
+pub mod probe;
 pub mod search;
 pub mod settings;
 

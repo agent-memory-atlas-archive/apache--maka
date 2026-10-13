@@ -41,6 +41,10 @@ impl Owner {
     pub fn activated(self: &Arc<Self>) {
         self.scheduler.bind(self);
         self.todo.bind(self);
+        self.goals.bind(self);
+        self.plans.bind(self);
+        self.start_plans();
+        self.start_goals();
         self.start_schedules();
         let owner = self.clone();
         self.workers.spawn(async move { owner.schedule().await });
@@ -107,6 +111,8 @@ impl Owner {
         if let Some(model) = &basis.model {
             self.title_after_message(running.invocation().clone(), model.clone());
         }
+        self.goals.execution_changed();
+        self.plans.execution_changed();
         runs.controls.insert(
             running.invocation().session_id.clone(),
             Control {
@@ -151,6 +157,8 @@ impl Owner {
                     }
                     Ok(None) => {
                         runs.controls.remove(&session);
+                        self.goals.execution_changed();
+                        self.plans.execution_changed();
                         drop(permit);
                         drop(runs);
                         self.schedule().await;
@@ -254,7 +262,10 @@ impl Owner {
         }
         let session = self.session(&invocation.session_id).await?;
         basis.validate_background_target(&session)?;
-        if session.archived
+        if (!matches!(basis.background_kind, BackgroundKind::Plan(_))
+            && session.configuration.collaboration_mode != basis.collaboration_mode)
+            || (basis.collaboration_mode == CollaborationMode::Plan && !self.settings.plans)
+            || session.archived
             || session.configuration.workspace != basis.workspace
             || session.configuration.tools != basis.allowed_tools
             || (basis.executor.is_some() && basis.allowed_tools.is_some())
@@ -315,14 +326,21 @@ impl Owner {
         let mut configuration = InvocationConfiguration {
             editing_tools: None,
             tool_discovery: basis.tool_discovery,
-            cwd: basis.workspace.path,
-            workspace_identity: Some(basis.workspace.identity),
+            cwd: basis.workspace.path.clone(),
+            workspace_identity: Some(basis.workspace.identity.clone()),
             workspace_origin: WorkspaceOrigin::Selected,
             sandbox_mode: SandboxMode::WorkspaceWrite,
             approval_policy: ApprovalPolicy::OnRequest,
             boundary_revision: 0,
-            collaboration_mode: CollaborationMode::Agent,
-            orchestration_mode: BehaviorId::default(),
+            collaboration_mode: basis.collaboration_mode,
+            orchestration_mode: if matches!(basis.background_kind, BackgroundKind::Plan(_)) {
+                plan::EXECUTION
+                    .to_owned()
+                    .try_into()
+                    .expect("Plan behavior")
+            } else {
+                BehaviorId::default()
+            },
             tool_mode: ToolMode::Direct,
             model: None,
             thinking_level: None,
@@ -336,11 +354,8 @@ impl Owner {
                 configuration.thinking_level = source.accepted.thinking_level;
                 configuration.tool_mode = source.accepted.tool_mode;
                 configuration.editing_tools = source.accepted.editing_tools;
-                let tools = self.selected_tools(
-                    basis.allowed_tools.as_deref(),
-                    basis.tool_discovery,
-                    configuration.editing_tools,
-                );
+                let tools =
+                    self.selected_tools(&basis, basis.tool_discovery, configuration.editing_tools);
                 PreparedRun::Model(Box::new(RunInput {
                     model_source: Some(Arc::new(source)),
                     model_revision: Some(prepared.revision),

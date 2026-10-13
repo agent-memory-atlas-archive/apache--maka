@@ -17,6 +17,15 @@
  * under the License.
  */
 
+#[path = "tests/plan.rs"]
+mod plan_tests;
+
+#[path = "tests/goal.rs"]
+mod goal_tests;
+
+#[path = "tests/recap.rs"]
+mod recap_tests;
+
 #[path = "tests/title.rs"]
 mod title_tests;
 
@@ -39,6 +48,8 @@ mod attachments;
 #[path = "tests/files.rs"]
 mod files;
 
+#[path = "tests/health.rs"]
+mod health;
 #[path = "tests/processes.rs"]
 mod processes;
 
@@ -521,8 +532,11 @@ impl Fixture {
             isolated_workspaces: false,
             assistant: None,
             scheduled_tasks: false,
+            goals: false,
+            plans: false,
             todo: false,
             automatic_titles: false,
+            recaps: false,
             recall: false,
             import_roots: vec![maka_host_runtime::DirectoryRootSpec {
                 label: "Import sources".into(),

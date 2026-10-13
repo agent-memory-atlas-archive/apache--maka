@@ -21,6 +21,6 @@
 
 [简体中文](README.zh-CN.md)
 
-Manages persistent goals, progress reports, control requests and token budgets. `goal` defines the state transitions; `owner` connects them to Session execution. A goal report and the completion of an execution are distinct observations. The owner decides whether another run may be admitted using the current goal state and available budget.
+Manages persistent goals, progress reports, control requests and token budgets. `goal` defines the state transitions; `owner` provides the execution-port adapter; the current native Agent connects the same repository and transitions to its original message queue. A goal report and the completion of an execution are distinct observations. The owner decides whether another run may be admitted using the current goal state and available budget. The repository stores the frozen approval with each Goal and can atomically commit a caller’s original operation receipt with the state change.
 
 [Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

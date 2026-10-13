@@ -82,7 +82,80 @@ impl Handler for Agent {
                     }
                 }
                 "tools" => encode(owner.tool_names()),
+                "plan" => encode(owner.plan(decode(input)?).await?),
+                "planHistory" => encode(owner.plan_history(decode(input)?).await?),
+                "planReceipt" => encode(owner.plan_receipt(decode(input)?).await?),
+                "changePlan" => {
+                    let operation = context
+                        .operation()
+                        .ok_or("agent_mutation_required")?
+                        .clone();
+                    encode(
+                        owner
+                            .plan_change(decode(input)?, operation, context.scope())
+                            .await?,
+                    )
+                }
+                "watchPlan" => {
+                    let input: PlanRead = decode(input)?;
+                    let mut changes = owner.plan_changes();
+                    let mut revision = None;
+                    loop {
+                        changes.borrow_and_update();
+                        let page = owner.plan(input.clone()).await?;
+                        if revision != Some(page.current.revision) {
+                            revision = Some(page.current.revision);
+                            context.emit(encode(page)?).await?;
+                        }
+                        tokio::select! {
+                            biased;
+                            _ = context.scope().cancellation.cancelled() => return Err("plan_observation_cancelled".into()),
+                            result = changes.changed() => result.map_err(|_| "plan_observation_closed")?,
+                        }
+                    }
+                }
+                "goalReceipt" => encode(owner.goal_receipt(decode(input)?).await?),
+                "goal" => encode(owner.goal(decode(input)?).await?),
+                "changeGoal" => {
+                    let operation = context
+                        .operation()
+                        .ok_or("agent_mutation_required")?
+                        .clone();
+                    encode(
+                        owner
+                            .goal_change(decode(input)?, operation, context.scope())
+                            .await?,
+                    )
+                }
+                "watchGoal" => {
+                    let input: GoalRead = decode(input)?;
+                    let mut changes = owner.goal_changes();
+                    let mut revision = None;
+                    loop {
+                        changes.borrow_and_update();
+                        let page = owner.goal(input.clone()).await?;
+                        let next = page.current.as_ref().map(|goal| goal.revision);
+                        if revision != Some(next) {
+                            revision = Some(next);
+                            context.emit(encode(page)?).await?;
+                        }
+                        tokio::select! {
+                            biased;
+                            _ = context.scope().cancellation.cancelled() => return Err("goal_observation_cancelled".into()),
+                            result = changes.changed() => result.map_err(|_| "goal_observation_closed")?,
+                        }
+                    }
+                }
                 "checklist" => encode(owner.checklist(&decode(input)?).await?),
+                "recap" => encode(owner.recap(decode(input)?, context.scope()).await?),
+                "generateRecap" => {
+                    let operation = context.operation().ok_or("agent_mutation_required")?;
+                    encode(
+                        owner
+                            .generate_recap(decode(input)?, context.scope(), operation)
+                            .await?,
+                    )
+                }
                 "watchChecklist" => {
                     let input: ChecklistRead = decode(input)?;
                     let mut changes = owner.checklist_changes();
@@ -726,6 +799,7 @@ pub(crate) fn summary_for(
         SessionActivity::Idle
     };
     Session {
+        collaboration_mode: session.configuration.collaboration_mode,
         tools: session.configuration.tools,
         data_source: Box::new(data_source.clone()),
         permissions: session.configuration.permissions,

@@ -28,6 +28,10 @@ use uuid::Uuid;
 
 mod code_mode;
 mod computer;
+mod goal;
+mod health;
+mod plan;
+mod recap;
 mod title;
 mod todo;
 

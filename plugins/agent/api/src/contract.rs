@@ -27,11 +27,21 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+#[path = "contract_goal.rs"]
+mod goal;
 #[path = "contract_imports.rs"]
 mod imports;
+#[path = "contract_plan.rs"]
+mod plan;
+pub use goal::*;
+pub use maka_agent_facts::execution::CollaborationMode;
+pub use plan::*;
 #[path = "contract_todo.rs"]
 mod todo;
 pub use todo::*;
+#[path = "contract_recap.rs"]
+mod recap;
+pub use recap::*;
 #[path = "contract_scheduler.rs"]
 mod scheduler;
 pub use scheduler::*;
@@ -70,12 +80,21 @@ pub struct Configuration {
     /// Enable model proposals and approved scheduled work for this Agent.
     #[serde(default)]
     pub scheduled_tasks: bool,
+    /// Enable explicitly approved, bounded Goal continuation.
+    #[serde(default)]
+    pub goals: bool,
+    /// Enable planning, reviewed approval and execution progress.
+    #[serde(default)]
+    pub plans: bool,
     /// Enable the session-scoped, model-maintained checklist.
     #[serde(default)]
     pub todo: bool,
     /// Generate a bounded auxiliary title for automatically named conversations.
     #[serde(default)]
     pub automatic_titles: bool,
+    /// Enable explicit, bounded session recap requests and cached reads.
+    #[serde(default)]
+    pub recaps: bool,
     /// Explicit access to this Agent’s earlier conversations for model tools.
     #[serde(default)]
     pub recall: bool,
@@ -344,6 +363,9 @@ pub struct Workspace {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentMetadata")]
 pub struct Metadata {
+    /// Changing collaboration is only allowed while the Session is idle.
+    #[serde(default)]
+    pub collaboration_mode: Option<CollaborationMode>,
     /// Omission leaves the permission boundary and its approvals unchanged.
     #[serde(default)]
     pub permissions: Option<PermissionChange>,
@@ -363,6 +385,7 @@ pub enum Rejection {
     TitleInvalid,
     LabelsInvalid,
     ToolsUnavailable,
+    Busy,
     WorkspaceUnavailable,
     SessionUnavailable,
     Closed,
@@ -509,6 +532,8 @@ pub struct DataSource {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentSession")]
 pub struct Session {
+    #[serde(default)]
+    pub collaboration_mode: CollaborationMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<String>>,
     pub data_source: Box<DataSource>,
@@ -1074,8 +1099,52 @@ pub fn contract() -> Contract {
                     },
                 ),
                 (
+                    "plan".into(),
+                    method::<PlanRead, PlanView>(MethodMode::Query),
+                ),
+                (
+                    "watchPlan".into(),
+                    method::<PlanRead, PlanView>(MethodMode::Subscription),
+                ),
+                (
+                    "planHistory".into(),
+                    method::<PlanHistoryRead, PlanHistory>(MethodMode::Query),
+                ),
+                (
+                    "planReceipt".into(),
+                    method::<PlanReceiptRead, Option<PlanResult>>(MethodMode::Query),
+                ),
+                (
+                    "changePlan".into(),
+                    method::<PlanChange, PlanResult>(MethodMode::Mutation),
+                ),
+                (
+                    "goal".into(),
+                    method::<GoalRead, GoalView>(MethodMode::Query),
+                ),
+                (
+                    "goalReceipt".into(),
+                    method::<GoalReceiptRead, Option<GoalResult>>(MethodMode::Query),
+                ),
+                (
+                    "watchGoal".into(),
+                    method::<GoalRead, GoalView>(MethodMode::Subscription),
+                ),
+                (
+                    "changeGoal".into(),
+                    method::<GoalChange, GoalResult>(MethodMode::Mutation),
+                ),
+                (
                     "checklist".into(),
                     method::<ChecklistRead, Checklist>(MethodMode::Query),
+                ),
+                (
+                    "recap".into(),
+                    method::<RecapRead, Option<RecapReceipt>>(MethodMode::Query),
+                ),
+                (
+                    "generateRecap".into(),
+                    method::<RecapGenerate, RecapReceipt>(MethodMode::Mutation),
                 ),
                 (
                     "watchChecklist".into(),

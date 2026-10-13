@@ -19,6 +19,8 @@
 
 import type {
   Action,
+  AgentRecapReceipt,
+  AgentGoalResult,
   AgentDeliveryPage,
   InteractionRecord,
   AgentInteractionResult,
@@ -35,6 +37,13 @@ import type {
   CallerIntent,
   OperationReply,
   TextChunk,
+} from '../../../packages/plugin-sdk/src/index.js';
+import { goalChanged, goalFieldResult } from './goal.js';
+import { planChanged, planModeChanged, planHistoryResult } from './plan.js';
+import type {
+  AgentPlanResult,
+  AgentPlanHistory,
+  AgentMetadataResult,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { sameValue } from '../../shared/value.js';
 
@@ -86,6 +95,23 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
       state.catalogFilter = 'all';
       catalog(state, { kind: 'at', cursor: created.session.id });
     }
+  } else if (request.kind === 'planChange' || request.kind === 'planMode') {
+    if (request.epoch === state.epoch && request.sessionId === state.selected?.id) {
+      if (request.kind === 'planChange') planChanged(state, value as AgentPlanResult);
+      else planModeChanged(state, value as AgentMetadataResult);
+    }
+  } else if (request.kind === 'goalChange') {
+    if (request.epoch === state.epoch && request.sessionId === state.selected?.id)
+      goalChanged(state, value as AgentGoalResult);
+  } else if (request.kind === 'recapGenerate') {
+    if (request.epoch === state.epoch && request.sessionId === state.selected?.id)
+      state.recap = {
+        receipt: value as AgentRecapReceipt,
+        loaded: true,
+        loading: null,
+        failed: false,
+        confirmation: null,
+      };
   } else if (request.kind === 'markRead') {
     const result = value as AgentMarkReadResult;
     if (result.kind === 'observed' && result.session.id === request.sessionId) {
@@ -212,10 +238,67 @@ export function receipt(state: State, actions: Action[], request: Mutation, repl
   } else {
     state.uncertain = { reference: reply.reference, request };
     state.notice = 'unknown';
+    if (reply.reference.method === 'changePlan')
+      intent(
+        state,
+        actions,
+        { kind: 'planReceipt', reference: reply.reference },
+        'agent',
+        'planReceipt',
+        { reference: reply.reference },
+      );
+    if (reply.reference.method === 'changeGoal')
+      intent(
+        state,
+        actions,
+        { kind: 'goalReceipt', reference: reply.reference },
+        'agent',
+        'goalReceipt',
+        { reference: reply.reference },
+      );
   }
 }
 
 export function queryFailed(state: State, request: Request) {
+  if (
+    request.kind === 'planChange' ||
+    request.kind === 'planMode' ||
+    request.kind === 'planHistory'
+  ) {
+    if (request.epoch === state.epoch) {
+      state.notice = 'planUnavailable';
+      if (request.kind === 'planHistory' && state.plan.history?.loading === request.attempt)
+        state.plan.history.loading = null;
+    }
+    return;
+  }
+  if (request.kind === 'planReceipt') {
+    state.notice = 'unknown';
+    return;
+  }
+
+  if (request.kind === 'goalField' || request.kind === 'goalChange') {
+    if (request.epoch === state.epoch) {
+      state.goal.capture = null;
+      state.notice = 'goalUnavailable';
+    }
+    return;
+  }
+  if (request.kind === 'goalReceipt') {
+    state.notice = 'unknown';
+    return;
+  }
+  if (request.kind === 'recapRead' || request.kind === 'recapGenerate') {
+    if (
+      request.epoch === state.epoch &&
+      (request.kind === 'recapGenerate' || request.attempt === state.recap.loading)
+    ) {
+      state.recap.loading = null;
+      state.recap.failed = true;
+      state.recap.confirmation = null;
+    }
+    return;
+  }
   if (request.kind === 'draftPage' || request.kind === 'draftReceipt') {
     draftFailed(state.drafts, request);
     return;
@@ -281,6 +364,31 @@ export function queryFailed(state: State, request: Request) {
 
 export function querySucceeded(state: State, actions: Action[], request: Request, value: unknown) {
   switch (request.kind) {
+    case 'goalField':
+      goalFieldResult(state, actions, request, value);
+      break;
+    case 'planHistory':
+      planHistoryResult(state, request, value as AgentPlanHistory);
+      break;
+    case 'planReceipt':
+    case 'goalReceipt': {
+      const original = state.uncertain;
+      if (value && original && sameValue(original.reference, request.reference))
+        settled(state, actions, original.request, value);
+      else state.notice = 'unknown';
+      break;
+    }
+    case 'recapRead': {
+      if (request.epoch === state.epoch && request.attempt === state.recap.loading)
+        state.recap = {
+          receipt: value as AgentRecapReceipt | null,
+          loaded: true,
+          loading: null,
+          failed: false,
+          confirmation: null,
+        };
+      break;
+    }
     case 'openSession': {
       if (!sameValue(request.selection, state.externalSelection)) break;
       const observed = value as AgentObservation;

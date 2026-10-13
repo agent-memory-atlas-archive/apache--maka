@@ -24,6 +24,8 @@ import type {
   AgentScheduleAlerts,
   AgentSessionPage,
   AgentChecklist,
+  AgentGoalView,
+  AgentPlanView,
   ComponentInput,
   ComponentValues,
   Emission,
@@ -35,6 +37,8 @@ import { settingsCategory } from '../../shared/settings.js';
 import { resolveLocale } from '../../shared/locale.js';
 import { type Node, type Presentation } from '../../shared/view.js';
 
+import { goalUpdate } from './goal.js';
+import { planUpdate } from './plan.js';
 import { messages } from './messages.js';
 import { toolCards } from '../../shared/tool-cards.js';
 import { follow, select } from './actions.js';
@@ -179,7 +183,19 @@ export function handleEvent<N extends Node>(
     return frame(presentation, configuredLocale, state, values, actions);
   if (input.kind === 'action') {
     const outcome = input.event as ActionOutcome;
-    if (state.checklist.watch?.key === input.key) {
+    if (state.plan.watch?.key === input.key) {
+      if (outcome.status === 'updated') planUpdate(state, outcome.value as AgentPlanView);
+      else if (outcome.status === 'failed' || outcome.status === 'not_accepted') {
+        state.plan.watch = null;
+        state.plan.failed = true;
+      }
+    } else if (state.goal.watch?.key === input.key) {
+      if (outcome.status === 'updated') goalUpdate(state, outcome.value as AgentGoalView);
+      else if (outcome.status === 'failed' || outcome.status === 'not_accepted') {
+        state.goal.watch = null;
+        state.goal.failed = true;
+      }
+    } else if (state.checklist.watch?.key === input.key) {
       if (outcome.status === 'updated') state.checklist.page = outcome.value as AgentChecklist;
       else if (outcome.status === 'failed' || outcome.status === 'not_accepted') {
         state.checklist = { watch: null, page: null, failed: true };
@@ -229,7 +245,11 @@ export function handleEvent<N extends Node>(
             request.kind === 'queue' ||
             request.kind === 'respond' ||
             request.kind === 'markRead' ||
-            request.kind === 'uploadAttachment')
+            request.kind === 'uploadAttachment' ||
+            request.kind === 'recapGenerate' ||
+            request.kind === 'goalChange' ||
+            request.kind === 'planChange' ||
+            request.kind === 'planMode')
         )
           receipt(state, actions, request, outcome.reply);
         else if (outcome.status === 'succeeded')

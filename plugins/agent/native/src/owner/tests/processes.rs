@@ -36,7 +36,7 @@ pub(super) async fn fixture() -> (TcpListener, Fixture, String) {
     let session = f.create("Native processes").await;
     (listener, f, session)
 }
-async fn call(
+pub(super) async fn call(
     listener: &TcpListener,
     f: &Fixture,
     session: &str,
@@ -60,7 +60,7 @@ async fn call(
     socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
     started
 }
-async fn finish(listener: &TcpListener, f: &Fixture) -> Value {
+pub(super) async fn finish(listener: &TcpListener, f: &Fixture) -> Value {
     let (mut socket, _) = listener.accept().await.unwrap();
     let sent = request(&mut socket).await;
     let tool = sent["messages"]
