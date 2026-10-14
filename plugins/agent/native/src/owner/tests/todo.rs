@@ -90,18 +90,18 @@ async fn todo_real_model_direct_and_code_mode_keep_full_list_isolation_and_resta
             }).await;
             let session = f.create("Checklist source").await;
             let other = f.create("Separate checklist").await;
-            let items: Vec<Value> = (0..200).map(|index| json!({"content":format!("{index:03} {}", "😀".repeat(196)),"status":if index == 0 { "completed" } else if index == 1 { "in_progress" } else { "pending" }})).collect();
+            let items: Vec<Value> = (0..240).map(|index| json!({"content":format!("{index:03} {}", "😀".repeat(256)),"status":if index == 0 { "completed" } else if index == 1 { "in_progress" } else { "pending" }})).collect();
             f.send(&session).await.unwrap();
             let (mut socket, _) = listener.accept().await.unwrap();
             let sent = request(&mut socket).await;
             let tool = if code { "exec" } else { "todo_write" };
             assert!(sent["tools"].as_array().unwrap().iter().any(|t| t["function"]["name"] == tool));
-            let input = if code { json!({"code":"const todos = Array.from({length:200}, (_, index) => ({content:String(index).padStart(3, '0') + ' ' + '😀'.repeat(196), status:index === 0 ? 'completed' : index === 1 ? 'in_progress' : 'pending'})); await tools.todo_write({todos}); const read = await tools.todo_read({}); if (JSON.stringify(read.items) !== JSON.stringify(todos)) throw Error('read differs from complete write'); text(read.items.at(-1));"}) } else { json!({"todos":items}) };
+            let input = if code { json!({"code":"const todos = Array.from({length:240}, (_, index) => ({content:String(index).padStart(3, '0') + ' ' + '😀'.repeat(256), status:index === 0 ? 'completed' : index === 1 ? 'in_progress' : 'pending'})); await tools.todo_write({todos}); const read = await tools.todo_read({}); if (JSON.stringify(read.items) !== JSON.stringify(todos)) throw Error('read differs from complete write'); text(read.items.at(-1));"}) } else { json!({"todos":items}) };
             service_tools::named_tool_response(&mut socket, tool, input).await;
             let (mut socket, _) = listener.accept().await.unwrap();
             let written = request(&mut socket).await;
             if code {
-                assert!(last_tool(&written).contains("199"), "Code Mode must read the complete list");
+                assert!(last_tool(&written).contains("239"), "Code Mode must read the complete list");
             } else {
                 // Ordinary large tool results use the existing bounded archive projection.
                 let archived: Value = serde_json::from_str(last_tool(&written)).unwrap();
@@ -120,13 +120,13 @@ async fn todo_real_model_direct_and_code_mode_keep_full_list_isolation_and_resta
             } else { response(&mut socket).await; }
             f.drained().await;
             let first = page(&f,&session,0).await;
-            assert_eq!(first["total"],200);
+            assert_eq!(first["total"],240);
             assert_eq!(first["completed"],1);
             assert_eq!(first["current"],items[1]);
             assert_eq!(first["items"],json!(items[..20]));
             assert!(serde_json::to_vec(&first).unwrap().len() < 48 * 1024);
             let mut all = vec![];
-            for offset in (0..200).step_by(20) {
+            for offset in (0..240).step_by(20) {
                 let current = page(&f,&session,offset).await;
                 all.extend(current["items"].as_array().unwrap().iter().cloned());
                 assert_eq!(current["revision"],first["revision"]);

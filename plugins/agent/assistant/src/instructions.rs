@@ -18,7 +18,6 @@
  */
 use maka_agent_facts::artifact::content_digest;
 use std::collections::HashSet;
-const MAX_FILE_CHARS: usize = 6000;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InstructionFile {
     Agents,
@@ -40,7 +39,6 @@ impl InstructionFile {
 pub struct WorkspaceInstruction {
     pub file: InstructionFile,
     pub text: String,
-    pub truncated: bool,
 }
 
 /// Interpretation belongs to the assistant; obtaining bytes is a file capability.
@@ -58,12 +56,9 @@ pub fn parse_instruction_files(
         if cleaned.is_empty() || !seen.insert(content_digest(cleaned.as_bytes())) {
             continue;
         }
-        let mut chars = cleaned.chars();
-        let text = chars.by_ref().take(MAX_FILE_CHARS).collect();
         instructions.push(WorkspaceInstruction {
             file,
-            text,
-            truncated: chars.next().is_some(),
+            text: cleaned,
         });
     }
     instructions

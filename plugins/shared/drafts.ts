@@ -306,7 +306,7 @@ export function draftReceipt(
     object(result) &&
     result.kind === 'rejected' &&
     result.sessionId === record.context &&
-    (result.reason === 'skills_unavailable' || result.reason === 'input_too_large')
+    result.reason === 'skills_unavailable'
   ) {
     // A known rejection consumed neither the submitted text nor its attachments.
     work.queue.shift();

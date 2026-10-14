@@ -215,9 +215,6 @@ async fn scan_impl(
     query: Option<&mut QuerySnapshot>,
     bundled: bool,
 ) -> Result<DiscoverySnapshot, ScanError> {
-    if sources.len() > 32 {
-        return Err(ScanError::LimitExceeded);
-    }
     let mut state = Scan {
         snapshot: DiscoverySnapshot::default(),
         query: query.as_ref().map(|_| QuerySnapshot::default()),

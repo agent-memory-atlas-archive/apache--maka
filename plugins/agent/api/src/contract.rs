@@ -100,7 +100,6 @@ pub struct Configuration {
     pub recall: bool,
     /// Explicit service backends; discovery does not authorize execution.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[schemars(length(max = 8))]
     pub executors: Vec<crate::executor::ServiceExecutor>,
     /// Explicit Library import for immutable skill input preparation and metadata.
     /// This does not select model tools or confer a service grant.
@@ -110,18 +109,15 @@ pub struct Configuration {
     /// Initial policy within the selected workspace capability.
     pub permissions: WorkspacePermissions,
     /// Installation-published directories, captured without creating workspace markers.
-    #[schemars(length(max = 8))]
     pub workspace_roots: Vec<maka_host_runtime::DirectoryRootSpec>,
     /// Explicit read-only roots for user-selected conversation sources.
     #[serde(default)]
-    #[schemars(length(max = 8))]
     pub import_roots: Vec<maka_host_runtime::DirectoryRootSpec>,
     #[schemars(range(min = 1, max = 16))]
     pub max_active_runs: usize,
     #[schemars(range(min = 1, max = 16))]
     pub max_steps: usize,
     /// Explicitly selected, frozen application service tools, alongside configured native tools.
-    #[schemars(length(max = 128))]
     pub tools: Vec<ServiceTool>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -263,7 +259,7 @@ pub struct Create {
     /// Immutable narrowing of this Agent's installed tools. None uses the installation;
     /// an empty list permits no model tools. External executors cannot enforce this.
     #[serde(default)]
-    #[schemars(length(max = 128), extend("uniqueItems" = true))]
+    #[schemars(extend("uniqueItems" = true))]
     pub tools: Option<Vec<String>>,
     #[schemars(length(min = 1, max = 128))]
     pub title: String,
@@ -331,7 +327,6 @@ pub struct Directory {
 #[schemars(rename = "AgentDirectoryPage")]
 pub enum DirectoryPage {
     Roots {
-        #[schemars(length(max = 8))]
         roots: Vec<Directory>,
     },
     Children {
@@ -418,7 +413,7 @@ pub struct Send {
     pub thinking_level: Option<maka_agent_facts::execution::ThinkingLevel>,
     #[schemars(length(min = 1, max = 128))]
     pub session_id: String,
-    #[schemars(length(max = 65536))]
+
     pub message: String,
 }
 #[derive(Deserialize, JsonSchema)]
@@ -442,7 +437,7 @@ pub struct Execute {
     pub attachments: Vec<String>,
     #[schemars(length(min = 1, max = 128))]
     pub session_id: String,
-    #[schemars(length(max = 65536))]
+
     pub message: String,
     pub executor: crate::executor::Selection,
 }
@@ -599,7 +594,6 @@ pub enum SendResult {
 #[schemars(rename = "AgentSkillInputRejection")]
 pub enum SkillInputRejection {
     SkillsUnavailable,
-    InputTooLarge,
 }
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -781,7 +775,7 @@ pub enum QueueMessageResult {
     Ready {
         revision: u64,
         has_attachments: bool,
-        #[schemars(length(max = 65536))]
+
         message: String,
     },
     RevisionConflict {
@@ -820,7 +814,7 @@ pub enum QueueAction {
     Update {
         #[schemars(length(min = 1, max = 128))]
         message_id: String,
-        #[schemars(length(max = 65536))]
+
         message: String,
     },
     Reorder {
@@ -892,6 +886,8 @@ pub struct History {
     pub position: HistoryPosition,
     #[serde(default)]
     pub include_thinking: bool,
+    #[serde(default)]
+    pub view: maka_agent_ports::session::history::HistoryView,
 }
 pub use maka_agent_ports::session::history::Position as HistoryPosition;
 
@@ -1069,7 +1065,6 @@ pub enum ToolImagePage {
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "AgentToolNames")]
 pub struct ToolNames {
-    #[schemars(length(max = 128))]
     pub names: Vec<String>,
 }
 pub fn contract() -> Contract {

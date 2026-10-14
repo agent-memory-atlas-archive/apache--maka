@@ -25,7 +25,6 @@ use super::*;
 #[serde(deny_unknown_fields)]
 pub struct SkillToolRequest<T> {
     pub workspace: Option<maka_agent_api::contract::Workspace>,
-    #[schemars(length(max = 128))]
     pub tools: Vec<String>,
     pub input: T,
 }
@@ -52,7 +51,6 @@ pub struct ModelLoad {
     /// UTF-8 resource path relative to this skill, or its exact continuation.
     pub resource: Option<maka_agent_facts::read::ReadInput>,
     /// UTF-8 byte offset from a returned instruction continuation; omit initially.
-    #[schemars(range(max = 96000))]
     pub instruction_offset: Option<usize>,
 }
 #[derive(Serialize, JsonSchema)]

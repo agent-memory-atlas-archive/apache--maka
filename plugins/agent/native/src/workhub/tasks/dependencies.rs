@@ -237,10 +237,6 @@ impl Hub {
                     } else {
                         None
                     };
-                    if message.len() > 64 * 1024 {
-                        rejection = Some("dependency_input_too_large".into());
-                        break;
-                    }
                     if next.is_none() {
                         break;
                     }

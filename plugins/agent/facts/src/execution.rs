@@ -98,10 +98,9 @@ pub struct SystemPrompt {
 impl SystemPrompt {
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.text.trim().is_empty()
-            || self.text.len() > 64 * 1024
             || self.policy_revision > crate::configuration::validation::MAX_SAFE_INTEGER
         {
-            return Err("invalid bounded system prompt");
+            return Err("invalid system prompt");
         }
         Ok(())
     }

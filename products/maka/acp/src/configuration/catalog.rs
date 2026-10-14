@@ -33,7 +33,7 @@ pub(super) async fn read(client: &Client) -> Result<Catalog, Error> {
     let mut input = json!({"kind":"start"});
     let mut choices = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    for _ in 0..512 {
+    loop {
         let ModelsPage::Ready {
             revision,
             choices: page,
@@ -44,9 +44,6 @@ pub(super) async fn read(client: &Client) -> Result<Catalog, Error> {
             return Err("Model catalog changed; retry the configuration request".into());
         };
         choices.extend(page);
-        if choices.len() > 2048 {
-            return Err("Model catalog exceeds ACP's selectable model limit".into());
-        }
         let Some(cursor) = next else {
             return Ok(Catalog {
                 choices,
@@ -58,5 +55,4 @@ pub(super) async fn read(client: &Client) -> Result<Catalog, Error> {
         }
         input = json!({"kind":"continue", "revision":revision, "cursor":cursor});
     }
-    Err("Model catalog exceeds ACP's page limit".into())
 }

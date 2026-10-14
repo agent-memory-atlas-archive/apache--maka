@@ -17,7 +17,7 @@
  * under the License.
  */
 
-//! Bounded ACP presentation of public observations and durable transcript rows.
+//! ACP presentation of public observations and durable transcript rows.
 use agent_client_protocol::schema::{MaybeUndefined, v2 as acp};
 use maka_agent_api::contract::{ContentKind, HistoryChunk};
 use maka_agent_ports::session::history::HistoryField;
@@ -27,10 +27,6 @@ use std::collections::HashMap;
 
 mod messages;
 mod tools;
-
-const IDENTITIES: usize = 4096;
-const TOTAL_BYTES: usize = 16 * 1024 * 1024;
-const TOOL_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum MessageKind {
@@ -42,14 +38,12 @@ enum MessageKind {
 struct Message {
     text: String,
     meta: acp::Meta,
-    bytes: usize,
 }
 
 #[derive(Default)]
 pub struct Projection {
     streams: HashMap<(String, String, MessageKind), Message>,
     tools: HashMap<String, Tool>,
-    bytes: usize,
     assembly: Option<(u64, HistoryField, String, acp::Meta)>,
 }
 
@@ -57,7 +51,6 @@ struct Tool {
     turn: String,
     card: acp::ToolCallUpdate,
     published: Option<acp::ToolCallUpdate>,
-    published_bytes: usize,
     authoritative: bool,
 }
 
@@ -78,9 +71,7 @@ impl Projection {
         {
             return Err("History field fragments are discontinuous".into());
         }
-        if chunk.total_bytes > TOTAL_BYTES as u64
-            || text.len() + chunk.text.len() > chunk.total_bytes as usize
-        {
+        if text.len() + chunk.text.len() > chunk.total_bytes as usize {
             return Err("History field exceeds its declared size".into());
         }
         text.push_str(&chunk.text);
@@ -111,9 +102,6 @@ impl Projection {
             .streams
             .get(&(turn.into(), id.into(), kind))
             .map_or("", |message| message.text.as_str());
-        if current.len() + delta.len() > TOTAL_BYTES {
-            return Err("ACP stream exceeds its text limit".into());
-        }
         let next = format!("{current}{delta}");
         self.text(turn, id, kind, &next, false, message_meta(turn, id))
     }
@@ -121,15 +109,4 @@ impl Projection {
 
 fn message_meta(turn: &str, id: &str) -> acp::Meta {
     acp::Meta::from_iter([("maka".into(), json!({"hostMessageId":id,"turnId":turn}))])
-}
-fn bounded(text: &str, max: usize) -> String {
-    if text.len() <= max {
-        return text.to_owned();
-    }
-    let suffix = "\n[Presentation truncated]";
-    let mut end = max - suffix.len();
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}{suffix}", &text[..end])
 }

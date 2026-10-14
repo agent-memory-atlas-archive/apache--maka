@@ -118,9 +118,6 @@ pub(super) fn projects(
     specs: Vec<maka_host_runtime::DirectoryRootSpec>,
     private: &Path,
 ) -> Result<Vec<Arc<PublishedDirectory>>, String> {
-    if specs.len() > 8 {
-        return Err("skills_configuration_invalid".into());
-    }
     maka_host_runtime::DirectoryRootSpec::normalize(specs)
         .map_err(|_| "skills_configuration_invalid")?
         .into_iter()

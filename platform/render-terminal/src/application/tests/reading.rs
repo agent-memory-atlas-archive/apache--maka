@@ -92,6 +92,42 @@ fn close(presenter: &mut Presenter) {
     presenter.shutdown_settled().unwrap();
 }
 #[test]
+fn wheel_batch_scrolls_immediately_and_publishes_only_its_final_observation() {
+    let lines = (0..100).map(|n| format!("row {n}\n")).collect::<String>();
+    let (_runtime, mut presenter, _) = native(vec![source("document", &lines)]);
+    draw(&mut presenter, 30, 12);
+    presenter.settle().unwrap();
+    let before = observation(&presenter);
+    for _ in 0..10 {
+        presenter
+            .wheel(Event::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 10,
+                row: 5,
+                modifiers: KeyModifiers::NONE,
+            }))
+            .unwrap();
+    }
+    assert_eq!(state(&presenter).scrolls["reading"].offset, 30);
+    assert_eq!(
+        observation(&presenter),
+        before,
+        "local wheel movement does not run a reducer per tick"
+    );
+    draw(&mut presenter, 30, 12);
+    presenter.sync_native().unwrap();
+    presenter.settle().unwrap();
+    let after = observation(&presenter);
+    assert_eq!(after["scroll"]["direction"], "down");
+    assert_eq!(after["viewport"]["atStart"], false);
+    assert_eq!(
+        after["viewport"]["readingRevision"],
+        after["readingRevision"]
+    );
+    close(&mut presenter);
+}
+
+#[test]
 fn wheel_above_a_short_page_reports_the_original_reading_boundary() {
     let (_runtime, mut presenter, _) = native(vec![source("one", "first")]);
     draw(&mut presenter, 30, 12);

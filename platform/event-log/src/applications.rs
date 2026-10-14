@@ -46,7 +46,6 @@ use std::{
 use uuid::Uuid;
 
 const MAX_JSON: usize = MAX_DOCUMENT_BYTES;
-const MAX_PACKAGES: usize = 128;
 
 /// One read transaction captures the source and every immutable byte it selects.
 pub struct LoadedDeployment {
@@ -92,9 +91,6 @@ fn validate(
     observations: &[RemoteObservation],
     bytes: &[Package],
 ) -> Result<Plan, StoreError> {
-    if bytes.len() > MAX_PACKAGES {
-        return Err(invalid("application package count exceeds 128"));
-    }
     let mut packages = Packages::default();
     let mut references = BTreeSet::new();
     for package in bytes {
@@ -376,11 +372,8 @@ async fn read_metadata(
     reference.validate().map_err(invalid)?;
     let refs = sqlx::query("SELECT CASE WHEN length(CAST(id AS BLOB)) <= 128 THEN id END AS id,
                 CASE WHEN length(CAST(revision AS BLOB)) = 71 THEN revision END AS revision
-                FROM application_source_packages WHERE deployment = ? AND source_revision = ? ORDER BY id, revision LIMIT 129")
+                FROM application_source_packages WHERE deployment = ? AND source_revision = ? ORDER BY id, revision")
                 .bind(&id).bind(revision as i64).fetch_all(&mut *connection).await?;
-    if refs.len() > MAX_PACKAGES {
-        return Err(invalid("application package count exceeds 128"));
-    }
     let mut packages = Vec::new();
     for row in refs {
         let reference = PackageRef {

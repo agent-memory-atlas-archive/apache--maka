@@ -27,7 +27,6 @@ pub use maka_assistant::todo::{Item as TodoItem, Status as TodoStatus};
 pub struct ChecklistRead {
     pub session_id: String,
     #[serde(default)]
-    #[schemars(range(max = 200))]
     pub offset: usize,
 }
 #[derive(Serialize, Deserialize, JsonSchema)]

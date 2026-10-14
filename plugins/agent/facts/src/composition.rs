@@ -60,17 +60,8 @@ pub struct RequestComposition {
 }
 impl RequestComposition {
     pub fn freeze(self) -> Result<FrozenComposition, &'static str> {
-        if self
-            .system_prompt
-            .as_ref()
-            .is_some_and(|text| text.len() > 64 * 1024)
-            || self.dynamic_context.len() > 128
-            || self.dynamic_context.iter().map(String::len).sum::<usize>() > 64 * 1024
-            || self.tools.len() > 129
-            || self.sources.len() > 512
-            || !crate::archive::valid_projection_digest(&self.tool_catalog_digest)
-        {
-            return Err("invalid request composition limits");
+        if !crate::archive::valid_projection_digest(&self.tool_catalog_digest) {
+            return Err("invalid tool catalog digest");
         }
         let mut names = BTreeSet::new();
         for tool in &self.tools {
@@ -93,9 +84,6 @@ impl RequestComposition {
         }
         let bytes =
             serde_json::to_vec(&self).map_err(|_| "invalid request composition encoding")?;
-        if bytes.len() > 4 * 1024 * 1024 {
-            return Err("request composition exceeds 4 MiB");
-        }
         Ok(FrozenComposition {
             digest: content_digest(&bytes),
             bytes: bytes.into_boxed_slice(),

@@ -114,8 +114,7 @@ pub struct ClientTools {
 impl Preparation {
     pub fn validate(&self) -> Result<(), crate::Error> {
         if let Some(clients) = &self.required_clients {
-            if clients.required.is_empty() || clients.required.len() + clients.optional.len() > 128
-            {
+            if clients.required.is_empty() {
                 return Err(crate::Error::Invalid(
                     "Invalid required Client tool selection".into(),
                 ));
@@ -133,21 +132,37 @@ impl Preparation {
                 ));
             }
         }
-        if self.instructions.len() > 16 * 1024
-            || self
-                .tool_ceiling
-                .as_ref()
-                .is_some_and(|names| names.len() > 128)
-        {
-            return Err(crate::Error::Invalid(
-                "Session behavior surface exceeds its budget".into(),
-            ));
-        }
         if let Some(names) = &self.tool_ceiling {
             for name in names {
                 crate::name(name)?;
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn large_tool_selections_preserve_client_binding_validation() {
+        let names: Vec<_> = (0..160).map(|i| format!("tool_{i}")).collect();
+        let mut preparation = Preparation {
+            tool_ceiling: Some(names.iter().cloned().collect()),
+            required_clients: Some(ClientTools {
+                required: names,
+                optional: vec![],
+                private: BTreeSet::from(["tool_159".into()]),
+            }),
+            ..Default::default()
+        };
+        preparation.validate().unwrap();
+        preparation
+            .required_clients
+            .as_mut()
+            .unwrap()
+            .private
+            .insert("unbound".into());
+        assert!(preparation.validate().is_err());
     }
 }

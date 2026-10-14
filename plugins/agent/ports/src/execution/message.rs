@@ -51,13 +51,6 @@ impl Enqueue {
         ] {
             name(id)?;
         }
-        if serde_json::to_vec(&self.content)
-            .map_err(|e| Error::Invalid(e.to_string()))?
-            .len()
-            > 64 * 1024
-        {
-            return Err(Error::Invalid("queued input exceeds 64 KiB".into()));
-        }
         maka_agent_facts::message::validate_sources(&self.content, &[])
             .map_err(|e| Error::Invalid(e.into()))
     }

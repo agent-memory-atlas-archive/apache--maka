@@ -19,6 +19,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import Ajv from 'ajv/dist/2020.js';
 const appearance = await import('../dist/packages/appearance/tui.js');
 const theme = appearance.activate({ scheme: 'dark' }).Appearance.value;
 const module = await import('../dist/packages/agent-screen/tui.js');
@@ -129,6 +130,49 @@ function client() {
   });
   return c;
 }
+
+test('an active turn retains compact history across pages without a tool or message count cap', async () => {
+  const { activate } = await import('../dist/packages/timeline/tui.js');
+  const schema = activate().Timeline.contract.interface.props;
+  const validate = new Ajv({ strict: false }).compile(schema.properties.liveTools);
+  const calls = Array.from({ length: 40 }, (_, index) => {
+    const sequence = index + 1;
+    return chunk(sequence, '', {
+      role: 'tool_call',
+      tool: {
+        toolUseId: 'tool-' + sequence,
+        call: {
+          sequence,
+          name: 'Read',
+          title: null,
+          presentation: null,
+          pending: false,
+          dispatched: true,
+        },
+        result: null,
+      },
+    });
+  });
+  const c = client()
+    .observe(40, { invocationId: 'run-a', turnId: 'turn-1', state: 'running' })
+    .history(page(40, calls.slice(32), { before: { sequence: 33, offset: 0, field: 'body' } }));
+  const reader = c.reader();
+  for (let start = 24; start >= 0; start -= 8) {
+    c.child(reader, 'older').history(
+      page(40, calls.slice(start, start + 8), {
+        before: start ? { sequence: start + 1, offset: 0, field: 'body' } : null,
+        after: { sequence: start + 9, offset: 0, field: 'body' },
+      }),
+    );
+  }
+  const props = c.find(reader).props;
+  assert.equal(props.messages.length, 40);
+  assert.deepEqual(
+    props.liveTools,
+    calls.map((entry) => entry.tool.toolUseId),
+  );
+  assert.equal(validate(props.liveTools), true, JSON.stringify(validate.errors));
+});
 
 test('switching tasks preserves the native reading owner, page, search basis and auxiliary context', () => {
   const c = client()

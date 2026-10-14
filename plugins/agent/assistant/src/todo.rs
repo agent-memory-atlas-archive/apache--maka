@@ -27,14 +27,12 @@ use std::sync::Arc;
 use tokio::sync::watch;
 
 pub const ID: &str = "maka.todo";
-pub const MAX_ITEMS: usize = 200;
-const MAX_CONTENT_CHARS: usize = 200;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "AgentTodoItem")]
 pub struct Item {
-    #[schemars(length(min = 1, max = MAX_CONTENT_CHARS))]
+    #[schemars(length(min = 1))]
     pub content: String,
     pub status: Status,
 }
@@ -62,22 +60,14 @@ pub struct Document {
 }
 impl Document {
     pub fn normalize(mut items: Vec<Item>) -> Result<Self, String> {
-        if items.len() > MAX_ITEMS {
-            return Err("Todo supports at most 200 items".into());
-        }
         for item in &mut items {
             item.content = item
                 .content
                 .split_whitespace()
                 .collect::<Vec<_>>()
                 .join(" ");
-            if item.content.is_empty()
-                || item.content.chars().count() > MAX_CONTENT_CHARS
-                || item.content.chars().any(char::is_control)
-            {
-                return Err(
-                    "Todo content must contain 1–200 characters without control codes".into(),
-                );
+            if item.content.is_empty() || item.content.chars().any(char::is_control) {
+                return Err("Todo content must be nonempty and contain no control codes".into());
             }
         }
         Ok(Self { items })

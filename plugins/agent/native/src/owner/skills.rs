@@ -197,7 +197,6 @@ impl Owner {
             Preparation::Blocked { invocation } => {
                 return reject(SkillInputRejection::SkillsUnavailable, Some(invocation));
             }
-            Preparation::InputTooLarge => return reject(SkillInputRejection::InputTooLarge, None),
         };
         record
             .invocation
@@ -215,14 +214,6 @@ impl Owner {
                 maka_skills::inline_references(&record.invocation.receipts, &message.text);
             message.inline_references = (!references.is_empty()).then_some(references);
             message.text = text;
-            if message.text_bytes() > 64 * 1024
-                || serde_json::to_vec(&message)
-                    .map_err(|_| "agent_skill_preparation_invalid")?
-                    .len()
-                    > 64 * 1024
-            {
-                return reject(SkillInputRejection::InputTooLarge, None);
-            }
         }
         let mut source = library.source.clone();
         source.revision = maka_agent_facts::artifact::content_digest(

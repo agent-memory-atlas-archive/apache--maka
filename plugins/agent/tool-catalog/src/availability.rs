@@ -75,21 +75,6 @@ fn default_limit() -> usize {
 #[serde(deny_unknown_fields)]
 struct SearchResult {
     activated: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    blocked: Option<Blocked>,
-}
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Blocked {
-    name: String,
-    reason: BlockReason,
-    schema_chars: usize,
-}
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum BlockReason {
-    SchemaTooLarge,
-    SchemaBudgetExhausted,
 }
 
 impl Availability {
@@ -182,7 +167,6 @@ impl Availability {
         checkpoint: &maka_agent_facts::handoff::HandoffTools,
     ) -> Result<(), ToolError> {
         if checkpoint.catalog_digest != self.catalog.digest()
-            || checkpoint.loaded.len() > 128
             || checkpoint
                 .loaded
                 .iter()
@@ -255,7 +239,7 @@ impl Availability {
             .filter(|s| !s.is_empty())
             .collect();
         let active = self.loaded.0.lock().unwrap();
-        // The bound inventory is small (at most 128 tools). Scan metadata directly;
+        // Scan the bound catalog metadata directly;
         // no search service or dependency graph is needed for this request view.
         let mut ranked: Vec<_> = self
             .catalog
@@ -281,39 +265,13 @@ impl Availability {
             })
             .collect();
         ranked.sort_by(|(left, a), (right, b)| right.cmp(left).then_with(|| a.name.cmp(&b.name)));
-        let mut result = SearchResult {
-            activated: Vec::new(),
-            blocked: None,
-        };
-        let mut used = 0;
-        for (_, definition) in ranked.into_iter().take(20) {
-            if result.activated.len() == input.limit {
-                break;
-            }
-            let chars = serde_json::to_string(definition)
-                .expect("function definition is JSON")
-                .encode_utf16()
-                .count();
-            if chars > 64 * 1024 {
-                result.blocked.get_or_insert(Blocked {
-                    name: definition.name.clone(),
-                    reason: BlockReason::SchemaTooLarge,
-                    schema_chars: chars,
-                });
-                continue;
-            }
-            if used + chars > 64 * 1024 {
-                result.blocked = Some(Blocked {
-                    name: definition.name.clone(),
-                    reason: BlockReason::SchemaBudgetExhausted,
-                    schema_chars: chars,
-                });
-                break;
-            }
-            used += chars;
-            result.activated.push(definition.name.clone());
+        SearchResult {
+            activated: ranked
+                .into_iter()
+                .take(input.limit)
+                .map(|(_, definition)| definition.name.clone())
+                .collect(),
         }
-        result
     }
 }
 fn invalid() -> ToolRejection {

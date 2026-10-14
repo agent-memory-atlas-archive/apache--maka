@@ -50,11 +50,19 @@ fn three_way_merge_preserves_customizations_and_reports_ambiguous_changes() {
     assert_eq!(outcome.conflicts, ["/deleted"]);
 }
 
-async fn old_installation(path: &std::path::Path) -> (EventLog, Uuid) {
+async fn old_installation(path: &std::path::Path, standard: bool) -> (EventLog, Uuid) {
     let store = launch::open(path.join("ui"), true, None).await.unwrap();
     let host = launch::open(path.join("host"), true, None).await.unwrap();
     let options = json!({"workspace": path, "hostRoot": path.join("host"), "themeFile": path.join("theme.json"), "helper": std::env::current_exe().unwrap(), "locale":"zh-CN"});
-    let config = super::super::installation(options).await.unwrap();
+    let mut config = super::super::installation(options.clone()).await.unwrap();
+    // Previous defaults had no Computer Use service or model-visible tools.
+    config.as_object_mut().unwrap().remove("computer");
+    for agent in ["agent", "coordinator"] {
+        config[agent]["tools"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|tool| tool["import"] != "computer");
+    }
     let mut packages = packages().unwrap();
     let package = packages.get("agent-screen").unwrap();
     let mut files = package.files().clone();
@@ -74,6 +82,7 @@ async fn old_installation(path: &std::path::Path) -> (EventLog, Uuid) {
         product: Some(Baseline {
             product: Product::Agent,
             installation,
+            default_options: standard.then_some(options),
             sources: sources.clone(),
         }),
         previous_connections: None,
@@ -106,9 +115,36 @@ async fn old_installation(path: &std::path::Path) -> (EventLog, Uuid) {
 
 #[tokio::test]
 #[ignore = "requires the built bundled product"]
+async fn explicit_installation_keeps_its_selected_tools_when_packages_upgrade() {
+    let directory = tempfile::tempdir().unwrap();
+    let (store, _) = old_installation(directory.path(), false).await;
+    assert!(begin(&store).await.unwrap());
+    let record = store.application_launch().await.unwrap().unwrap();
+    let preparation: launch::Preparation =
+        serde_json::from_slice(record.pending.as_ref().unwrap()).unwrap();
+    assert!(
+        !preparation
+            .sources
+            .host
+            .instances
+            .contains_key("workspace-computer")
+    );
+    let tools = preparation.sources.host.instances["agent"]
+        .configuration
+        .values["tools"]
+        .as_array()
+        .unwrap();
+    assert!(!tools.iter().any(|tool| tool["import"] == "computer"));
+    launch::prepare(&store, None, Product::Agent).await.unwrap();
+    assert!(!begin(&store).await.unwrap());
+    store.drain().await;
+}
+
+#[tokio::test]
+#[ignore = "requires the built bundled product"]
 async fn defaults_update_once_and_resume_an_acknowledgement_lost_after_commit() {
     let directory = tempfile::tempdir().unwrap();
-    let (store, ui) = old_installation(directory.path()).await;
+    let (store, ui) = old_installation(directory.path(), true).await;
     let original = store.load_application(ui).await.unwrap().unwrap();
     let preview = synchronize(&store, true, false).await.unwrap();
     assert!(preview.changed && !preview.customized && preview.conflicts.is_empty());
@@ -136,6 +172,21 @@ async fn defaults_update_once_and_resume_an_acknowledgement_lost_after_commit() 
         .pending
         .unwrap();
     let preparation: launch::Preparation = serde_json::from_slice(&pending).unwrap();
+    assert!(
+        preparation
+            .sources
+            .host
+            .instances
+            .contains_key("workspace-computer")
+    );
+    let tools = preparation.sources.host.instances["agent"]
+        .configuration
+        .values["tools"]
+        .as_array()
+        .unwrap();
+    for name in ["cua_repl", "cua_reset"] {
+        assert!(tools.iter().any(|tool| tool["name"] == name));
+    }
     let available = launch::decode_packages(preparation.packages).unwrap();
     let selected = super::super::selected(
         &preparation.sources.ui,
@@ -184,7 +235,7 @@ async fn defaults_update_once_and_resume_an_acknowledgement_lost_after_commit() 
 #[ignore = "requires the built bundled product"]
 async fn explicit_sync_keeps_custom_configuration_and_advances_the_default_baseline() {
     let directory = tempfile::tempdir().unwrap();
-    let (store, ui) = old_installation(directory.path()).await;
+    let (store, ui) = old_installation(directory.path(), true).await;
     let current = store.load_application(ui).await.unwrap().unwrap();
     let mut customized = current.source.input;
     customized
@@ -236,7 +287,7 @@ async fn explicit_sync_keeps_custom_configuration_and_advances_the_default_basel
 #[ignore = "requires the built bundled product"]
 async fn conflicting_custom_plugin_does_not_prepare_or_change_any_head() {
     let directory = tempfile::tempdir().unwrap();
-    let (store, ui) = old_installation(directory.path()).await;
+    let (store, ui) = old_installation(directory.path(), true).await;
     let current = store.load_application(ui).await.unwrap().unwrap();
     let old_ref = match &current.source.input.instances["agent-screen"].package {
         maka_plugin_core::package::PackageSelection::Pinned { package } => package.clone(),

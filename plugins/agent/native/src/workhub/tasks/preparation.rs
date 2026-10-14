@@ -40,7 +40,7 @@ pub(super) enum Target {
         #[serde(default)]
         isolated_workspace: bool,
         #[serde(default)]
-        #[schemars(length(max = 128), extend("uniqueItems" = true))]
+        #[schemars(extend("uniqueItems" = true))]
         tools: Option<Vec<String>>,
         title: String,
         workspace: crate::contract::DirectorySelection,

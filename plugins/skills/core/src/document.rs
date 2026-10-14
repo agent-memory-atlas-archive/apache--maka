@@ -24,7 +24,6 @@ use serde::Serialize;
 use std::borrow::Cow;
 
 const MAX_FRONTMATTER_BYTES: usize = 256 * 1024;
-pub const MAX_TOOL_BODY_CHARS: usize = 24_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SkillDocument {
@@ -182,9 +181,6 @@ pub fn parse(text: &str) -> Result<SkillDocument, Box<InvalidDocument>> {
     );
     attributes.metadata = fields::metadata(&raw["metadata"], issues);
     attributes.category = fields::optional(&raw["category"], "category", InvalidCategory, issues);
-    if result.body.chars().count() > MAX_TOOL_BODY_CHARS {
-        issues.push(Issue::new(BodyTooLarge, Severity::Warning, "body", format!("Skill instructions exceed {MAX_TOOL_BODY_CHARS} characters and will be truncated when loaded.")));
-    }
     match (name, description) {
         (Some(name), Some(description))
             if !issues.iter().any(|i| i.severity == Severity::Error) =>
@@ -261,9 +257,9 @@ mod tests {
             assert_eq!(rejected.issues[0].code, MalformedFrontmatter);
             assert_eq!(rejected.body, "body");
         }
-        let body = "😀".repeat(MAX_TOOL_BODY_CHARS + 1);
+        let body = "😀".repeat(100_000);
         let parsed = parse(&format!("---\nname: a\ndescription: b\n---\n{body}")).unwrap();
         assert_eq!(parsed.body, body);
-        assert_eq!(parsed.issues[0].code, BodyTooLarge);
+        assert!(parsed.issues.is_empty());
     }
 }

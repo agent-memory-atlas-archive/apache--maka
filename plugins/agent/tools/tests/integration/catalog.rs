@@ -183,7 +183,7 @@ fn schemas_validate_offline_without_coercion_and_catalog_rejects_ambiguous_autho
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn discovery_reports_schema_limits_without_loading_blocked_tools_or_running_effects() {
+async fn discovery_loads_complete_schemas_without_running_effects() {
     use crate::support::preflight;
     use maka_event_log::EventLog;
     use maka_js_runtime::{CellLimits, CodeExecutor};
@@ -243,19 +243,7 @@ async fn discovery_reports_schema_limits_without_loading_blocked_tools_or_runnin
             .invoke(&search, CancellationToken::new())
             .await
             .unwrap();
-        assert_eq!(
-            result["activated"],
-            json!([if oversized { "echo" } else { "direct" }])
-        );
-        assert_eq!(
-            result["blocked"]["reason"],
-            if oversized {
-                "schema_too_large"
-            } else {
-                "schema_budget_exhausted"
-            }
-        );
-        assert!(result["blocked"]["schemaChars"].as_u64().unwrap() > 33_000);
+        assert_eq!(result["activated"], json!(["direct", "echo"]));
         let next = run
             .capture(".", tokio_util::sync::CancellationToken::new())
             .await
@@ -347,7 +335,7 @@ async fn discovery_reports_schema_limits_without_loading_blocked_tools_or_runnin
                 .iter()
                 .filter(|d| d.name != "tool_search")
                 .count(),
-            1
+            2
         );
         assert_eq!(
             run.capture(".", tokio_util::sync::CancellationToken::new())

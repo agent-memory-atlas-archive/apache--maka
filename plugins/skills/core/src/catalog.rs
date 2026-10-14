@@ -164,12 +164,6 @@ impl Catalog<'_> {
         if instructions.is_empty() {
             instructions.push_str("(empty)");
         }
-        let maximum = crate::document::MAX_TOOL_BODY_CHARS;
-        let truncated = instructions.chars().count() > maximum;
-        if truncated {
-            instructions = instructions.chars().take(maximum - 25).collect();
-            instructions.push_str("\n[skill truncated]");
-        }
         let relative_path = skill
             .location
             .path
@@ -180,7 +174,7 @@ impl Catalog<'_> {
             skill,
             relative_path,
             instructions,
-            truncated,
+            truncated: false,
         })
     }
     fn enabled(&self, skill: &DiscoveredSkill) -> bool {

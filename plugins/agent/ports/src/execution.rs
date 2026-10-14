@@ -53,9 +53,6 @@ impl Submit {
     pub fn validate(&self) -> Result<(), Error> {
         name(&self.operation_id)?;
         name(&self.session_id)?;
-        if self.content.text_bytes() > 64 * 1024 {
-            return Err(Error::Invalid("execution message exceeds 64 KiB".into()));
-        }
         maka_agent_facts::message::validate_sources(&self.content, &[])
             .map_err(|reason| Error::Invalid(reason.into()))
     }
@@ -167,19 +164,6 @@ impl CreateChild {
             || self.name.chars().any(char::is_control)
         {
             return Err(Error::Invalid("invalid child Session name".into()));
-        }
-        if self
-            .instructions
-            .as_ref()
-            .is_some_and(|text| text.len() > 16 * 1024)
-            || self
-                .bound_tools
-                .as_ref()
-                .is_some_and(|tools| tools.len() > 128)
-        {
-            return Err(Error::Invalid(
-                "child Session surface exceeds its budget".into(),
-            ));
         }
         if let Some(tools) = &self.bound_tools {
             for tool in tools {

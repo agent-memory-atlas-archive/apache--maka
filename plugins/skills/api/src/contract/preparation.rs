@@ -23,7 +23,6 @@ use super::*;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "SkillPrepare")]
 pub struct Prepare {
-    #[schemars(length(max = 65536))]
     pub message: String,
     /// Actual selected tools bound to this Library; these names grant no access.
     #[schemars(length(min = 1, max = 128))]
@@ -57,5 +56,4 @@ pub enum Preparation {
     Blocked {
         invocation: maka_skills::SkillInvocationResult,
     },
-    InputTooLarge,
 }

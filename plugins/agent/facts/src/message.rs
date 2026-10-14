@@ -110,9 +110,7 @@ pub struct EditableMessage {
 impl RootSourceMessage {
     pub fn validate(&self) -> Result<(), &'static str> {
         self.message.validate()?;
-        if !self.unprepared_content.preparation.is_empty()
-            || self.unprepared_content.text_bytes() > 64 * 1024
-        {
+        if !self.unprepared_content.preparation.is_empty() {
             return Err("invalid unprepared source content");
         }
         if let Some(intent) = &self.submitted_intent {
@@ -138,8 +136,6 @@ pub fn validate_sources(
         return Err("too many root source messages");
     }
     let mut ids = HashSet::new();
-    let mut bytes = 0usize;
-    let mut unprepared_bytes = 0usize;
     let started = sources[0].disposition == MessageDisposition::TurnStarted;
     let orchestration = sources[0]
         .submitted_intent
@@ -167,16 +163,11 @@ pub fn validate_sources(
         {
             return Err("conflicting root message sources");
         }
-        bytes = bytes.saturating_add(source.message.content.text_bytes());
-        unprepared_bytes = unprepared_bytes.saturating_add(source.unprepared_content.text_bytes());
     }
-    if bytes > 64 * 1024
-        || unprepared_bytes > 64 * 1024
-        || content.text_bytes() > 64 * 1024
-        || serde_json::to_vec(sources)
-            .map_err(|_| "invalid root sources")?
-            .len()
-            > 1024 * 1024
+    if serde_json::to_vec(sources)
+        .map_err(|_| "invalid root sources")?
+        .len()
+        > 1024 * 1024
     {
         return Err("root sources exceed durable capacity");
     }

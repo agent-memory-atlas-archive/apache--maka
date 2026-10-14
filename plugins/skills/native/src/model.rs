@@ -24,10 +24,9 @@ use maka_skills::{
 };
 
 fn host(tools: Vec<String>) -> Result<HostCapabilities, String> {
-    if tools.len() > 128
-        || tools
-            .iter()
-            .any(|name| name.is_empty() || name.len() > 128 || name.chars().any(char::is_control))
+    if tools
+        .iter()
+        .any(|name| name.is_empty() || name.len() > 128 || name.chars().any(char::is_control))
     {
         return Err("skills_tool_context_invalid".into());
     }

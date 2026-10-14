@@ -33,9 +33,6 @@ pub struct DirectoryRootSpec {
 impl DirectoryRootSpec {
     /// Validate the published directory set and capture canonical paths once.
     pub fn normalize(specs: Vec<Self>) -> Result<Vec<Self>, HostError> {
-        if specs.len() > 8 {
-            return Err("too many project roots".into());
-        }
         let mut roots: Vec<Self> = Vec::new();
         for spec in specs {
             let label = spec
@@ -66,5 +63,34 @@ impl DirectoryRootSpec {
             });
         }
         Ok(roots)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn explicit_roots_have_no_count_cap_and_still_reject_duplicate_paths() {
+        let directory = tempfile::tempdir().unwrap();
+        let specs: Vec<_> = (0..12)
+            .map(|i| {
+                let path = directory.path().join(format!("project-{i}"));
+                std::fs::create_dir(&path).unwrap();
+                DirectoryRootSpec {
+                    label: format!("Project {i}"),
+                    path,
+                }
+            })
+            .collect();
+        assert_eq!(
+            DirectoryRootSpec::normalize(specs.clone()).unwrap().len(),
+            12
+        );
+        let mut duplicate = specs;
+        duplicate.push(DirectoryRootSpec {
+            label: "Another label".into(),
+            path: duplicate[0].path.clone(),
+        });
+        assert!(DirectoryRootSpec::normalize(duplicate).is_err());
     }
 }

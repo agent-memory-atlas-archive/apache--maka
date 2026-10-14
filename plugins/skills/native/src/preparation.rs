@@ -24,11 +24,10 @@ pub(super) fn prepare(
     revision: String,
     input: Prepare,
 ) -> Result<Value, String> {
-    if input.message.len() > 64 * 1024
-        || [&input.load_tool, &input.search_tool]
-            .into_iter()
-            .flatten()
-            .any(|name| !catalog.host.tools.contains(name))
+    if [&input.load_tool, &input.search_tool]
+        .into_iter()
+        .flatten()
+        .any(|name| !catalog.host.tools.contains(name))
     {
         return Err("skills_query_invalid".into());
     }
@@ -43,24 +42,7 @@ pub(super) fn prepare(
             text,
             result,
             required_tools,
-        } => {
-            // The original explicit-input boundary, including its unchanged display text.
-            let mut content: maka_agent_facts::input::MessageInput = text.into();
-            content.display_text = Some(input.message.clone());
-            content.inline_references = Some(maka_skills::inline_references(
-                &result.receipts,
-                &input.message,
-            ));
-            if content.text_bytes() > 64 * 1024
-                || serde_json::to_vec(&content)
-                    .map_err(|_| "skills_encoding_failed")?
-                    .len()
-                    > 64 * 1024
-            {
-                return preparation_json(Preparation::InputTooLarge);
-            }
-            (Some(content.text), result, required_tools)
-        }
+        } => (Some(text), result, required_tools),
     };
     let metadata_prompt = match input.load_tool {
         Some(load) => {
@@ -89,8 +71,5 @@ pub(super) fn prepare(
 }
 fn preparation_json(value: Preparation) -> Result<Value, String> {
     let value = serde_json::to_value(value).map_err(|_| "skills_encoding_failed")?;
-    // Preparation is a native query before admission, not a model tool result.
-    maka_plugin_core::json::check_delivery(&value, 256 * 1024)
-        .map_err(|_| "skills_preparation_too_large")?;
     Ok(value)
 }

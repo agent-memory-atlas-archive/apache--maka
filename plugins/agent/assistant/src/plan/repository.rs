@@ -69,7 +69,7 @@ impl<A: Clone + Serialize + DeserializeOwned> Repository<A> {
     /// Package/scope is already bound by Host. Entry and Session divide the
     /// plugin's domain data, not authorization to query or execute a Session.
     pub fn new(storage: Arc<dyn Store>, entry: &str, session: &str) -> Result<Self, Error> {
-        super::text(entry, 256)?;
+        super::text(entry)?;
         if entry.trim() != entry || entry.chars().any(char::is_control) {
             return Err(invalid("invalid Plan entry identity"));
         }

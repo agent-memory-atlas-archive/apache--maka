@@ -340,13 +340,16 @@ impl Handler for Agent {
                             after,
                         } = owner
                             .store
-                            .history_text(
+                            .history_view(
                                 &input.session_id,
                                 through,
                                 input.position,
                                 input.include_thinking,
-                                8192,
-                                2,
+                                input.view,
+                                32 * 1024,
+                                (input.view
+                                    == maka_agent_ports::session::history::HistoryView::Text)
+                                    .then_some(8),
                                 64 * 1024,
                             )
                             .await

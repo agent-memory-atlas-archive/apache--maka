@@ -543,10 +543,19 @@ impl Presenter {
     /// 输入立即绑定到最后成功输出的场景和真实 mount/revision。
     pub fn input(&mut self, event: Event) -> maka_ui_runtime::Result<()> {
         self.resources.redraw = true;
-        let result = self.input_inner(event);
+        let result = self.input_inner(event, false);
         self.recover_result(result)
     }
-    fn input_inner(&mut self, event: Event) -> maka_ui_runtime::Result<()> {
+    // The event loop publishes local scroll observations once per wheel batch.
+    // Explicit guest commands still enter their ordered input queue immediately.
+    pub(super) fn wheel(&mut self, event: Event) -> maka_ui_runtime::Result<()> {
+        debug_assert!(matches!(event, Event::Mouse(mouse) if matches!(mouse.kind,
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown)));
+        self.resources.redraw = true;
+        let result = self.input_inner(event, true);
+        self.recover_result(result)
+    }
+    fn input_inner(&mut self, event: Event, defer_scroll: bool) -> maka_ui_runtime::Result<()> {
         match event {
             Event::FocusLost => self.window_focused = false,
             Event::FocusGained => self.window_focused = true,
@@ -751,7 +760,8 @@ impl Presenter {
                     self.accept_native_input(
                         &target.mount,
                         emitted,
-                        submit_copy.map(|copy| (target.identity.clone(), ClipboardCopy::Submit(copy))),
+                        submit_copy
+                            .map(|copy| (target.identity.clone(), ClipboardCopy::Submit(copy))),
                     )?;
                     if !matches!(event, Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown))
                     {
@@ -791,7 +801,9 @@ impl Presenter {
                     self.focus = Some(target);
                 }
                 self.track_focus_return()?;
-                self.sync_native()?;
+                if !defer_scroll {
+                    self.sync_native()?;
+                }
                 return Ok(());
             }
             if self.dispatch_shortcut(
@@ -819,7 +831,9 @@ impl Presenter {
                 if let Some(observed) = observed {
                     self.resources.observe(&ancestor.mount, observed)?;
                 }
-                self.sync_native()?;
+                if !defer_scroll {
+                    self.sync_native()?;
+                }
                 return Ok(());
             }
             if self.dismiss_escape(&event)? {
@@ -887,7 +901,11 @@ impl Presenter {
             {
                 self.accept_native_input(
                     &target.mount,
-                    NativeInput { key: target.key.clone(), value: json!({"kind":kind}), replaceable: false },
+                    NativeInput {
+                        key: target.key.clone(),
+                        value: json!({"kind":kind}),
+                        replaceable: false,
+                    },
                     Some((target.identity.clone(), ClipboardCopy::Button(text.clone()))),
                 )?;
             } else {
@@ -1222,7 +1240,10 @@ impl Presenter {
                             ClipboardCopy::Button(text) => self.clipboard = Some(text),
                             ClipboardCopy::Submit(copy) => {
                                 if self.resources.owners.get(&mount.id()).is_some_and(|owner| {
-                                    owner.state.downcast_ref::<editor::Owner>().is_some_and(|owner| owner.snapshot().text == copy.basis)
+                                    owner
+                                        .state
+                                        .downcast_ref::<editor::Owner>()
+                                        .is_some_and(|owner| owner.snapshot().text == copy.basis)
                                 }) {
                                     self.clipboard = Some(copy.text.into());
                                 }

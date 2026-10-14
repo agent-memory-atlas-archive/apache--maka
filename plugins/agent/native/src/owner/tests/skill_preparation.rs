@@ -56,7 +56,8 @@ async fn skill_input_freezes_original_admission_and_queue_edits_before_actual_ht
         let session = f.create("Skill preparation").await;
         let workspace = f.owner.session(&session).await.unwrap().configuration.workspace;
         let source = std::path::Path::new(&workspace.path).join(".maka/skills");
-        document(&source, "VERSION ONE", "CAPTURED ONE");
+        let complete_instructions = format!("CAPTURED ONE {}", "完整说明".repeat(8_000));
+        document(&source, "VERSION ONE", &complete_instructions);
         let original = "🦀 /skill:review inspect this";
         assert_eq!(send(&f, &session, original, Uuid::new_v4()).await["kind"], "started");
         let (mut first, _) = listener.accept().await.unwrap();
@@ -66,7 +67,7 @@ async fn skill_input_freezes_original_admission_and_queue_edits_before_actual_ht
         assert!(prompt.contains("FindGuide"));
         assert!(prompt.contains("VERSION ONE"));
         let user = model_text(&sent, "user");
-        assert!(user.contains("CAPTURED ONE"));
+        assert!(user.contains(&complete_instructions));
         assert!(!user.contains("/skill:review"));
         let facts = service_tools::facts(&f, &session).await;
         let maka_agent_facts::event::Fact::InvocationOpened { input: maka_agent_facts::event::InvocationInput::Message { content, source_messages, .. }, .. } = facts.iter().find(|fact| matches!(fact, maka_agent_facts::event::Fact::InvocationOpened { .. })).unwrap() else { panic!() };
@@ -147,12 +148,15 @@ async fn skill_input_has_no_implicit_tools_grant_or_model_fallback_for_rejection
                 assert!(!user.contains("/skill:"));
                 response(&mut socket).await;
                 f.drained().await;
-                let before = service_tools::facts(&f, &session).await.len();
-                let large = format!("/skill:review {}", "x".repeat(65500));
-                let rejected = send(&f, &session, &large, Uuid::new_v4()).await;
-                assert_eq!(rejected["kind"], "rejected");
-                assert_eq!(rejected["reason"], "input_too_large");
-                assert_eq!(service_tools::facts(&f, &session).await.len(), before);
+                let body = "x".repeat(96 * 1024);
+                let large = format!("/skill:review {body}");
+                let accepted = send(&f, &session, &large, Uuid::new_v4()).await;
+                assert_eq!(accepted["kind"], "started", "{accepted}");
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let sent = request(&mut socket).await;
+                assert!(model_text(&sent, "user").contains(&body));
+                response(&mut socket).await;
+                f.drained().await;
             } else {
                 assert_eq!(value["kind"], "rejected", "{value}");
                 assert_eq!(value["reason"], "skills_unavailable");

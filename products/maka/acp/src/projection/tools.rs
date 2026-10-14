@@ -32,12 +32,12 @@ impl Projection {
         let tool = self.ensure_tool(&chunk.turn_id, &source.tool_use_id)?;
         if let Some(call) = &source.call {
             tool.card.name = MaybeUndefined::Value(call.name.clone());
-            tool.card.title = MaybeUndefined::Value(bounded(
+            tool.card.title = MaybeUndefined::Value(
                 call.title
                     .as_ref()
-                    .map_or(call.name.as_str(), |title| title.fallback.as_str()),
-                4096,
-            ));
+                    .map_or(call.name.as_str(), |title| title.fallback.as_str())
+                    .to_owned(),
+            );
             tool.meta("presentation", json!(call.presentation));
         }
         if let Some(result) = &source.result {
@@ -62,10 +62,9 @@ impl Projection {
             tool.meta("image", json!(result.image));
         }
         if chunk.role == Role::ToolResult {
-            tool.card.content = MaybeUndefined::Value(text_content(&bounded(text, TOOL_BYTES)));
+            tool.card.content = MaybeUndefined::Value(text_content(text));
         } else {
-            tool.card.raw_input =
-                MaybeUndefined::Value(json!({"preview":bounded(text, TOOL_BYTES)}));
+            tool.card.raw_input = MaybeUndefined::Value(json!({"preview":text}));
         }
         self.publish(&source.tool_use_id)
     }
@@ -103,15 +102,11 @@ impl Projection {
 
     fn ensure_tool(&mut self, turn: &str, id: &str) -> Result<&mut Tool, crate::Error> {
         if !self.tools.contains_key(id) {
-            if self.tools.len() + self.streams.len() >= IDENTITIES {
-                return Err("ACP presentation identity limit exceeded".into());
-            }
             self.tools.insert(
                 id.to_owned(),
                 Tool {
                     turn: turn.to_owned(),
                     published: None,
-                    published_bytes: 0,
                     authoritative: false,
                     card: acp::ToolCallUpdate::new(id.to_owned())
                         .title(id.to_owned())
@@ -137,12 +132,6 @@ impl Projection {
         if tool.published.as_ref() == Some(&tool.card) {
             return Ok(vec![]);
         }
-        let size = serde_json::to_vec(&tool.card)?.len();
-        if self.bytes - tool.published_bytes + size > TOTAL_BYTES {
-            return Err("ACP tool presentation limit exceeded".into());
-        }
-        self.bytes = self.bytes - tool.published_bytes + size;
-        tool.published_bytes = size;
         tool.published = Some(tool.card.clone());
         Ok(vec![acp::SessionUpdate::ToolCallUpdate(tool.card.clone())])
     }
@@ -160,4 +149,24 @@ fn text_content(text: &str) -> Vec<acp::ToolCallContent> {
     vec![acp::ToolCallContent::Content(Box::new(acp::Content::new(
         text,
     )))]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn complete_tool_output_survives_acp_projection() {
+        let text = "result".repeat(20_000);
+        let chunk: HistoryChunk = serde_json::from_value(json!({
+            "field":"body", "messageId":"result", "turnId":"turn", "timestamp":1,
+            "role":"tool_result", "sequence":2, "offset":0, "totalBytes":text.len(), "text":text,
+            "tool":{"toolUseId":"call", "call":null,
+                "result":{"sequence":2,"settlement":"returned","isError":false,"image":false}}
+        }))
+        .unwrap();
+        let mut projection = Projection::default();
+        let updates = projection.chunk(&chunk).unwrap();
+        let encoded = serde_json::to_value(&updates[0]).unwrap();
+        assert_eq!(encoded["content"][0]["content"]["text"], text);
+    }
 }

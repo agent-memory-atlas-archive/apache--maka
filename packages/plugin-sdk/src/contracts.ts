@@ -7893,7 +7893,6 @@ export const contracts = {
                 type: 'integer',
                 format: 'uint',
                 minimum: 0,
-                maximum: 200,
                 default: 0,
               },
             },
@@ -7960,7 +7959,6 @@ export const contracts = {
                   content: {
                     type: 'string',
                     minLength: 1,
-                    maxLength: 200,
                   },
                   status: {
                     $ref: '#/$defs/AgentTodoStatus',
@@ -7997,7 +7995,6 @@ export const contracts = {
                 items: {
                   type: 'string',
                 },
-                maxItems: 128,
                 default: null,
                 uniqueItems: true,
               },
@@ -8449,7 +8446,6 @@ export const contracts = {
                     items: {
                       $ref: '#/$defs/AgentDirectory',
                     },
-                    maxItems: 8,
                   },
                   kind: {
                     type: 'string',
@@ -8597,7 +8593,6 @@ export const contracts = {
                       },
                       message: {
                         type: 'string',
-                        maxLength: 65536,
                       },
                       kind: {
                         type: 'string',
@@ -8726,7 +8721,6 @@ export const contracts = {
               },
               message: {
                 type: 'string',
-                maxLength: 65536,
               },
               executor: {
                 $ref: '#/$defs/AgentExecutorSelection',
@@ -8851,7 +8845,7 @@ export const contracts = {
             $defs: {
               AgentSkillInputRejection: {
                 type: 'string',
-                enum: ['skills_unavailable', 'input_too_large'],
+                enum: ['skills_unavailable'],
               },
               SkillInvocationResult: {
                 type: 'object',
@@ -10024,6 +10018,10 @@ export const contracts = {
                 type: 'boolean',
                 default: false,
               },
+              view: {
+                $ref: '#/$defs/HistoryView',
+                default: 'text',
+              },
             },
             additionalProperties: false,
             required: ['sessionId', 'position'],
@@ -10132,6 +10130,12 @@ export const contracts = {
                 description: 'A readable field in a conversation window, in presentation order.',
                 type: 'string',
                 enum: ['thinking', 'body'],
+              },
+              HistoryView: {
+                description:
+                  'Tool output is available through source reads in both views. Conversation\nwindows carry tool metadata only, keeping large results out of chat paging.',
+                type: 'string',
+                enum: ['text', 'conversation'],
               },
             },
           },
@@ -11202,7 +11206,6 @@ export const contracts = {
                     items: {
                       $ref: '#/$defs/AgentDirectory',
                     },
-                    maxItems: 8,
                   },
                   kind: {
                     type: 'string',
@@ -14342,14 +14345,12 @@ export const contracts = {
                       $ref: '#/$defs/PlanStep',
                     },
                     minItems: 1,
-                    maxItems: 50,
                   },
                   risks: {
                     type: 'array',
                     items: {
                       type: 'string',
                     },
-                    maxItems: 20,
                     default: [],
                   },
                 },
@@ -14368,7 +14369,6 @@ export const contracts = {
                   title: {
                     type: 'string',
                     minLength: 1,
-                    maxLength: 30,
                   },
                   description: {
                     type: 'string',
@@ -14378,7 +14378,6 @@ export const contracts = {
                     items: {
                       type: 'string',
                     },
-                    maxItems: 50,
                     default: [],
                   },
                   complexity: {
@@ -14640,14 +14639,12 @@ export const contracts = {
                       $ref: '#/$defs/PlanStep',
                     },
                     minItems: 1,
-                    maxItems: 50,
                   },
                   risks: {
                     type: 'array',
                     items: {
                       type: 'string',
                     },
-                    maxItems: 20,
                     default: [],
                   },
                 },
@@ -14666,7 +14663,6 @@ export const contracts = {
                   title: {
                     type: 'string',
                     minLength: 1,
-                    maxLength: 30,
                   },
                   description: {
                     type: 'string',
@@ -14676,7 +14672,6 @@ export const contracts = {
                     items: {
                       type: 'string',
                     },
-                    maxItems: 50,
                     default: [],
                   },
                   complexity: {
@@ -15815,7 +15810,6 @@ export const contracts = {
                   },
                   message: {
                     type: 'string',
-                    maxLength: 65536,
                   },
                   kind: {
                     type: 'string',
@@ -19623,7 +19617,6 @@ export const contracts = {
               },
               message: {
                 type: 'string',
-                maxLength: 65536,
               },
             },
             additionalProperties: false,
@@ -19734,7 +19727,7 @@ export const contracts = {
             $defs: {
               AgentSkillInputRejection: {
                 type: 'string',
-                enum: ['skills_unavailable', 'input_too_large'],
+                enum: ['skills_unavailable'],
               },
               SkillInvocationResult: {
                 type: 'object',
@@ -20695,7 +20688,6 @@ export const contracts = {
                 items: {
                   type: 'string',
                 },
-                maxItems: 128,
               },
             },
             required: ['names'],
@@ -21146,7 +21138,6 @@ export const contracts = {
                 type: 'integer',
                 format: 'uint',
                 minimum: 0,
-                maximum: 200,
                 default: 0,
               },
             },
@@ -21213,7 +21204,6 @@ export const contracts = {
                   content: {
                     type: 'string',
                     minLength: 1,
-                    maxLength: 200,
                   },
                   status: {
                     $ref: '#/$defs/AgentTodoStatus',
@@ -21510,14 +21500,12 @@ export const contracts = {
                       $ref: '#/$defs/PlanStep',
                     },
                     minItems: 1,
-                    maxItems: 50,
                   },
                   risks: {
                     type: 'array',
                     items: {
                       type: 'string',
                     },
-                    maxItems: 20,
                     default: [],
                   },
                 },
@@ -21536,7 +21524,6 @@ export const contracts = {
                   title: {
                     type: 'string',
                     minLength: 1,
-                    maxLength: 30,
                   },
                   description: {
                     type: 'string',
@@ -21546,7 +21533,6 @@ export const contracts = {
                     items: {
                       type: 'string',
                     },
-                    maxItems: 50,
                     default: [],
                   },
                   complexity: {
@@ -25306,7 +25292,6 @@ export const contracts = {
                     },
                     description:
                       'Exact installed names; an empty list permits reasoning without tools.',
-                    maxItems: 128,
                     uniqueItems: true,
                   },
                   model: {
@@ -25758,7 +25743,6 @@ export const contracts = {
                     },
                     description:
                       'Exact installed names; an empty list permits reasoning without tools.',
-                    maxItems: 128,
                     uniqueItems: true,
                   },
                   model: {
@@ -25910,7 +25894,6 @@ export const contracts = {
                     },
                     description:
                       'Exact installed names; an empty list permits reasoning without tools.',
-                    maxItems: 128,
                     uniqueItems: true,
                   },
                   model: {
@@ -28657,7 +28640,6 @@ export const contracts = {
                 items: {
                   type: 'string',
                 },
-                maxItems: 128,
               },
               input: {
                 $ref: '#/$defs/SkillModelLoad',
@@ -28776,7 +28758,6 @@ export const contracts = {
                     minimum: 0,
                     description:
                       'UTF-8 byte offset from a returned instruction continuation; omit initially.',
-                    maximum: 96000,
                   },
                 },
                 required: ['name', 'revision'],
@@ -29059,7 +29040,6 @@ export const contracts = {
                     minimum: 0,
                     description:
                       'UTF-8 byte offset from a returned instruction continuation; omit initially.',
-                    maximum: 96000,
                   },
                 },
                 required: ['name', 'revision'],
@@ -29220,7 +29200,6 @@ export const contracts = {
                 items: {
                   type: 'string',
                 },
-                maxItems: 128,
               },
               input: {
                 $ref: '#/$defs/SkillPrepare',
@@ -29309,7 +29288,6 @@ export const contracts = {
                 properties: {
                   message: {
                     type: 'string',
-                    maxLength: 65536,
                   },
                   loadTool: {
                     type: ['string', 'null'],
@@ -29368,17 +29346,6 @@ export const contracts = {
                   },
                 },
                 required: ['kind', 'invocation'],
-              },
-              {
-                type: 'object',
-                properties: {
-                  kind: {
-                    type: 'string',
-                    const: 'input_too_large',
-                  },
-                },
-                required: ['kind'],
-                additionalProperties: false,
               },
             ],
             title: 'SkillPreparation',
@@ -30202,7 +30169,6 @@ export const contracts = {
                 items: {
                   type: 'string',
                 },
-                maxItems: 128,
               },
               input: {
                 $ref: '#/$defs/SkillModelSearch',

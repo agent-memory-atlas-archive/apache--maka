@@ -211,7 +211,6 @@ export const configurations = {
         items: {
           $ref: '#/$defs/AgentServiceExecutor',
         },
-        maxItems: 8,
       },
       skillLibrary: {
         description:
@@ -232,7 +231,6 @@ export const configurations = {
         items: {
           $ref: '#/$defs/DirectoryRootSpec',
         },
-        maxItems: 8,
       },
       importRoots: {
         description: 'Explicit read-only roots for user-selected conversation sources.',
@@ -240,7 +238,6 @@ export const configurations = {
         items: {
           $ref: '#/$defs/DirectoryRootSpec',
         },
-        maxItems: 8,
         default: [],
       },
       maxActiveRuns: {
@@ -262,7 +259,6 @@ export const configurations = {
         items: {
           $ref: '#/$defs/AgentServiceTool',
         },
-        maxItems: 128,
       },
     },
     additionalProperties: false,
@@ -716,7 +712,6 @@ export const configurations = {
               $ref: '#/$defs/AgentServiceExecutor',
             },
             description: 'Explicit service backends; discovery does not authorize execution.',
-            maxItems: 8,
           },
           skillLibrary: {
             type: ['string', 'null'],
@@ -737,7 +732,6 @@ export const configurations = {
             },
             description:
               'Installation-published directories, captured without creating workspace markers.',
-            maxItems: 8,
           },
           importRoots: {
             type: 'array',
@@ -745,7 +739,6 @@ export const configurations = {
               $ref: '#/$defs/DirectoryRootSpec',
             },
             description: 'Explicit read-only roots for user-selected conversation sources.',
-            maxItems: 8,
             default: [],
           },
           maxActiveRuns: {
@@ -767,7 +760,6 @@ export const configurations = {
             },
             description:
               'Explicitly selected, frozen application service tools, alongside configured native tools.',
-            maxItems: 128,
           },
         },
         required: ['permissions', 'workspaceRoots', 'maxActiveRuns', 'maxSteps', 'tools'],
@@ -997,7 +989,6 @@ export const configurations = {
         },
         description:
           "Explicit ceilings for a request's selected project. An observation grants no access.",
-        maxItems: 8,
         default: [],
       },
       bundled: {
@@ -1021,7 +1012,6 @@ export const configurations = {
         items: {
           $ref: '#/$defs/SkillLibrarySource',
         },
-        maxItems: 8,
       },
     },
     required: ['sources'],

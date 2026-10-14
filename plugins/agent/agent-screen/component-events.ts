@@ -222,7 +222,6 @@ export function handleComponent<N extends Node>(
           const draft = input.event as EditorObservation;
           if (!sameValue(draft, state.queueDraft) || draft.snapshot.marked)
             state.notice = 'draftKept';
-          else if (draft.snapshot.text.bytes > 65536) state.notice = 'tooLarge';
           else
             intent(
               state,
@@ -545,7 +544,6 @@ export function handleComponent<N extends Node>(
     const draft = input.event as EditorObservation;
     if (!canExecute(state)) openModelSetup(state);
     else if (draft.snapshot.marked) state.notice = 'draftKept';
-    else if (draft.snapshot.text.bytes > 65536) state.notice = 'tooLarge';
     else
       intent(
         state,

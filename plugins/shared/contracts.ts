@@ -820,7 +820,6 @@ export const timelineContract = component(
     browse: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
     timings: {
       type: 'array',
-      maxItems: 16,
       items: object({
         turnId: string,
         afterMessageId: string,
@@ -835,11 +834,11 @@ export const timelineContract = component(
         { type: 'null' },
       ],
     },
-    waitingTools: { type: 'array', maxItems: 16, items: string },
-    liveTools: { type: 'array', maxItems: 8, uniqueItems: true, items: string },
+    waitingTools: { type: 'array', items: string },
+    liveTools: { type: 'array', uniqueItems: true, items: string },
     theme: { $ref: '#/$defs/Theme' },
     locale,
-    messages: { type: 'array', maxItems: 32, items: { $ref: '#/$defs/Message' } },
+    messages: { type: 'array', items: { $ref: '#/$defs/Message' } },
     search: {
       anyOf: [
         object({
@@ -856,7 +855,6 @@ export const timelineContract = component(
           kind: { anyOf: [{ const: 'message' }, { $ref: '#/$defs/SourceField' }] },
           fields: {
             type: 'array',
-            maxItems: 8,
             uniqueItems: true,
             items: { $ref: '#/$defs/SourceField' },
           },

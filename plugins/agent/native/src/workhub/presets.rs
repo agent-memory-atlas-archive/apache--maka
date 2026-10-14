@@ -58,7 +58,6 @@ impl Hub {
                     || p.name.len() > 512
                     || p.description.len() > 16000
                     || !self.tasks.workers.contains_key(&p.worker)
-                    || p.tools.len() > 128
                     || p.tools.iter().any(|s| s.is_empty() || s.len() > 128)
                     || p.tools
                         .iter()

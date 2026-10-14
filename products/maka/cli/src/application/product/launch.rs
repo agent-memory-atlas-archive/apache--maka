@@ -38,6 +38,11 @@ use serde_json::Value;
 use std::{collections::BTreeMap, io::IsTerminal, path::PathBuf, sync::Arc};
 use uuid::Uuid;
 
+pub(super) enum Installation {
+    Standard(Value),
+    Configured(Value),
+}
+
 #[derive(Args, Default)]
 pub(crate) struct Launch {
     /// UI State Root (default: ~/.maka/application); reopen its saved product.
@@ -95,7 +100,7 @@ impl Launch {
                 return Err("first-install options cannot change a saved product; reopen with --root only and use Settings or Plugins".into());
             }
             let configuration = match self.configuration {
-                Some(path) => Some(read_json(&path)?),
+                Some(path) => Some(Installation::Configured(read_json(&path)?)),
                 None if existing => None,
                 None => match standard_configuration(root, self.workspace, self.locale, self.light, self.trust_workspace, &mut startup).await? {
                     Some(configuration) => Some(configuration),
@@ -133,7 +138,7 @@ async fn standard_configuration(
     light: bool,
     trusted: bool,
     startup: &mut Option<maka_render_terminal::startup::Startup>,
-) -> Result<Option<Value>, HostError> {
+) -> Result<Option<Installation>, HostError> {
     let workspace = std::fs::canonicalize(workspace.unwrap_or(std::env::current_dir()?))?;
     if !workspace.is_dir() {
         return Err("workspace must be a directory".into());
@@ -161,7 +166,7 @@ async fn standard_configuration(
         "locale": locale.unwrap_or_else(|| "auto".into()),
         "scheme": if light { "light" } else { "dark" },
     });
-    super::installation(options).await.map(Some)
+    Ok(Some(Installation::Standard(options)))
 }
 
 pub(super) async fn open(
@@ -217,7 +222,7 @@ pub(super) fn targets(
 }
 pub(super) async fn prepare(
     store: &EventLog,
-    configuration: Option<Value>,
+    configuration: Option<Installation>,
     product: Product,
 ) -> Result<(Uuid, Configuration), HostError> {
     let record = match store.application_launch().await? {
@@ -321,11 +326,13 @@ pub(super) async fn prepare(
     }
     Ok((record.deployment, connections))
 }
-async fn begin(
-    store: &EventLog,
-    mut configuration: Value,
-    product: Product,
-) -> Result<(), HostError> {
+async fn begin(store: &EventLog, input: Installation, product: Product) -> Result<(), HostError> {
+    let (mut configuration, mut default_options) = match input {
+        Installation::Standard(options) => {
+            (super::installation(options.clone()).await?, Some(options))
+        }
+        Installation::Configured(configuration) => (configuration, None),
+    };
     let values = configuration
         .as_object_mut()
         .ok_or("installation configuration must be an object")?;
@@ -348,6 +355,9 @@ async fn begin(
     let result = async {
         let owner = host_store.owned_root()?;
         configuration["hostRoot"] = serde_json::to_value(owner.canonical_path())?;
+        if let Some(options) = &mut default_options {
+            options["hostRoot"] = configuration["hostRoot"].clone();
+        }
         let packages = tokio::task::spawn_blocking(packages).await??;
         let (mut sources, installation) = author(product, configuration, &packages).await?;
         for host in sources.connections["hosts"].as_array_mut().ok_or("product connections missing")? {
@@ -364,7 +374,7 @@ async fn begin(
         }
         let selection = sources.connections.clone();
         let preparation = Preparation {
-            product: Some(super::update::Baseline { product, installation, sources: sources.clone() }),
+            product: Some(super::update::Baseline { product, installation, default_options, sources: sources.clone() }),
             previous_connections: None,
             restore: BTreeMap::new(),
             sources,
@@ -382,9 +392,6 @@ async fn begin(
 pub(super) fn decode_packages(
     files: Vec<BTreeMap<String, String>>,
 ) -> Result<Vec<Package>, HostError> {
-    if files.len() > 128 {
-        return Err("too many prepared packages".into());
-    }
     files
         .into_iter()
         .map(|files| {

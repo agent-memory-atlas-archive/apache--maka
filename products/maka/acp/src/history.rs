@@ -20,26 +20,10 @@
 use crate::{Error, client::Client};
 use maka_agent_api::contract::{HistoryChunk, HistoryPage, HistoryPosition};
 use serde_json::json;
-use std::{collections::HashSet, time::Duration};
-
-const MAX_BYTES: usize = 32 * 1024 * 1024;
-const MAX_PAGES: usize = 256;
+use std::collections::HashSet;
 
 /// Freeze the original raw-event fence, including while the durable view prepares.
 pub async fn read(
-    client: &Client,
-    session: &str,
-    through: Option<u64>,
-    after: Option<u64>,
-) -> Result<Vec<HistoryChunk>, Error> {
-    tokio::time::timeout(
-        Duration::from_secs(15),
-        read_inner(client, session, through, after),
-    )
-    .await
-    .map_err(|_| "ACP history preparation timed out")?
-}
-async fn read_inner(
     client: &Client,
     session: &str,
     mut through: Option<u64>,
@@ -49,9 +33,7 @@ async fn read_inner(
         sequence: sequence + 1,
     });
     let mut history = Vec::new();
-    let mut bytes = 0usize;
     let mut cursors = HashSet::new();
-    let mut pages = 0;
     loop {
         let page: HistoryPage = client.query("agent", "history", json!({"sessionId":session,"through":through,"position":position,"includeThinking":true})).await?;
         let (fence, chunks, next) = match page {
@@ -68,17 +50,7 @@ async fn read_inner(
             } => (through, chunks, after),
         };
         freeze(&mut through, fence)?;
-        pages += 1;
-        if pages > MAX_PAGES {
-            return Err("ACP history exceeds the 256 page limit".into());
-        }
-        for chunk in chunks {
-            bytes = bytes
-                .checked_add(serde_json::to_vec(&chunk)?.len())
-                .filter(|bytes| *bytes <= MAX_BYTES)
-                .ok_or("ACP history exceeds the 32 MiB limit")?;
-            history.push(chunk);
-        }
+        history.extend(chunks);
         let Some(cursor) = next else {
             return Ok(history);
         };

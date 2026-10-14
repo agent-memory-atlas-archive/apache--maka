@@ -252,9 +252,9 @@ fn identifier(value: &str) -> Result<(), Error> {
     Ok(())
 }
 
-fn text(value: &str, limit: usize) -> Result<(), Error> {
-    if value.trim().is_empty() || value.len() > limit || value.contains('\0') {
-        return Err(invalid("text is empty, too large, or contains NUL"));
+fn text(value: &str) -> Result<(), Error> {
+    if value.trim().is_empty() || value.contains('\0') {
+        return Err(invalid("text is empty or contains NUL"));
     }
     Ok(())
 }

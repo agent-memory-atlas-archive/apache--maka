@@ -1093,8 +1093,6 @@ export const en = {
   draftKept: 'A newer draft was kept.',
   skillInputUnavailable:
     'Requested skills are unavailable. Check the skill library or edit the /skill: references. Your draft was kept.',
-  skillInputTooLarge:
-    'The expanded skill instructions are too large. Select fewer skills or shorten the message. Your draft was kept.',
   draftRestoring: 'Restoring draft…',
   draftPersistenceFailed:
     'Draft could not be saved or restored. Its existing contents are preserved.',
@@ -2122,7 +2120,6 @@ const zhCN: Copy = {
   empty: '请先输入消息。',
   draftKept: '已保留后来编辑的草稿。',
   skillInputUnavailable: '请求的技能不可用。请检查技能库或修改 /skill: 引用；草稿已保留。',
-  skillInputTooLarge: '展开后的技能说明过长。请减少技能或缩短消息；草稿已保留。',
   draftRestoring: '正在恢复草稿…',
   draftPersistenceFailed: '草稿无法保存或恢复，已有内容仍保留。',
   draftUncertain: '上次发送结果未知，请先查询结果再恢复草稿。',
@@ -3150,7 +3147,6 @@ const zhTW: Copy = {
   empty: '請先輸入訊息。',
   draftKept: '已保留後來編輯的草稿。',
   skillInputUnavailable: '請求的技能不可用。請檢查技能庫或修改 /skill: 引用；草稿已保留。',
-  skillInputTooLarge: '展開後的技能說明過長。請減少技能或縮短訊息；草稿已保留。',
   draftRestoring: '正在恢復草稿…',
   draftPersistenceFailed: '草稿無法儲存或恢復，既有內容仍保留。',
   draftUncertain: '上次傳送結果未知，請先查詢結果再恢復草稿。',

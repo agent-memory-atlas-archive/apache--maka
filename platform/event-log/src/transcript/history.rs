@@ -24,10 +24,10 @@ use super::{
 use crate::{EventLog, StoreError, sequence_number};
 use maka_agent_ports::session::history::Chunk;
 use maka_agent_ports::session::history::Cursor;
-use maka_agent_ports::session::history::HistoryField;
 use maka_agent_ports::session::history::Page;
 use maka_agent_ports::session::history::Position;
 use maka_agent_ports::session::history::Role;
+use maka_agent_ports::session::history::{HistoryField, HistoryView};
 use sqlx::{Connection, Row, SqliteConnection};
 
 // One body projection for conversation windows and exact source reads.
@@ -72,9 +72,34 @@ impl EventLog {
         max_chunks: usize,
         max_json_bytes: usize,
     ) -> Result<Page, StoreError> {
+        self.history_view(
+            session,
+            through,
+            position,
+            include_thinking,
+            HistoryView::Text,
+            max_bytes,
+            Some(max_chunks),
+            max_json_bytes,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn history_view(
+        &self,
+        session: &str,
+        through: u64,
+        position: Position,
+        include_thinking: bool,
+        view: HistoryView,
+        max_bytes: usize,
+        max_chunks: Option<usize>,
+        max_json_bytes: usize,
+    ) -> Result<Page, StoreError> {
         self.validate_root()?;
         if !(4..=128 * 1024).contains(&max_bytes)
-            || !(1..=8).contains(&max_chunks)
+            || max_chunks == Some(0)
             || !(1024..=1024 * 1024).contains(&max_json_bytes)
         {
             return Err(invalid("invalid history window limits"));
@@ -82,6 +107,9 @@ impl EventLog {
         crate::sessions::validate_id(session)?;
         let fence = maka_presentation::watermark(through)?;
         let through_sql = sql_number(fence)?;
+        // A serialized chunk occupies at least one byte. The delivery budget
+        // therefore bounds rows even when a caller needs no item-count limit.
+        let max_chunks = max_chunks.unwrap_or(max_json_bytes).min(max_json_bytes);
         let session = session.to_owned();
         self.connection.run(move |connection| Box::pin(async move {
             let mut tx = connection.begin().await?;
@@ -96,15 +124,15 @@ impl EventLog {
                         return Err(invalid("history cursor exceeds its fence"));
                     }
                     sql_number(cursor.offset)?;
-                    materialize(&mut tx, &session, cursor.sequence).await?;
-                    let row = header(&mut tx, &session, cursor.sequence, cursor.field).await?;
+                    materialize(&mut tx, &session, cursor.sequence, view, through_sql).await?;
+                    let row = header(&mut tx, &session, cursor.sequence, cursor.field, view, through_sql).await?;
                     if cursor.offset > row.total {
                         return Err(invalid("history offset exceeds message"));
                     }
-                    let byte: Vec<u8> = sqlx::query_scalar(
+                    let byte: Vec<u8> = if cursor.offset == row.total { Vec::new() } else { sqlx::query_scalar(
                         "SELECT substr(body, ?3, 1) FROM transcript_text WHERE session_id = ?1 AND sequence = ?2 AND field = ?4"
                     ).bind(&session).bind(sql_number(cursor.sequence)?).bind(sql_number(cursor.offset)? + 1).bind(field_name(cursor.field))
-                        .fetch_one(&mut *tx).await?;
+                        .fetch_one(&mut *tx).await? };
                     if byte.first().is_some_and(|byte| byte & 0xc0 == 0x80) {
                         return Err(invalid("history offset splits UTF-8"));
                     }
@@ -144,7 +172,7 @@ impl EventLog {
                 let sequence = sequence_number(sequence)?;
                 // Materialize only actually visited rows, never a long message's
                 // following rows. One oversized first row still progresses.
-                projected += materialize(&mut tx, &session, sequence).await?;
+                projected += materialize(&mut tx, &session, sequence, view, through_sql).await?;
                 let has_thinking: bool = include_thinking && sqlx::query_scalar(
                     "SELECT EXISTS(SELECT 1 FROM transcript_text WHERE session_id = ?1 AND sequence = ?2 AND field = 'thinking')"
                 ).bind(&session).bind(sql_number(sequence)?).fetch_one(&mut *tx).await?;
@@ -153,7 +181,7 @@ impl EventLog {
                 if reverse { fields.reverse(); }
                 for field in fields {
                     if chunks.len() == max_chunks || bytes == max_bytes { break 'rows; }
-                    let row = header(&mut tx, &session, sequence, field).await?;
+                    let row = header(&mut tx, &session, sequence, field, view, through_sql).await?;
                     if let Some((cursor, _)) = &anchor && cursor.sequence == sequence {
                         let before = field == HistoryField::Thinking && cursor.field == HistoryField::Body;
                         let after = field == HistoryField::Body && cursor.field == HistoryField::Thinking;
@@ -169,10 +197,10 @@ impl EventLog {
                         let start = cursor_offset.unwrap_or(0);
                         (start, row.total.min(start + (max_bytes - bytes) as u64))
                     };
-                    let fragment: Vec<u8> = sqlx::query_scalar(
+                    let fragment: Vec<u8> = if row.total == 0 { Vec::new() } else { sqlx::query_scalar(
                         "SELECT substr(body, ?3, ?4) FROM transcript_text WHERE session_id = ?1 AND sequence = ?2 AND field = ?5"
                     ).bind(&session).bind(sql_number(sequence)?).bind(sql_number(start)? + 1)
-                        .bind(sql_number(end - start)?).bind(field_name(field)).fetch_one(&mut *tx).await?;
+                        .bind(sql_number(end - start)?).bind(field_name(field)).fetch_one(&mut *tx).await? };
                     let text = if reverse {
                         let skip = fragment.iter().take_while(|byte| **byte & 0xc0 == 0x80).count();
                         start += skip as u64;
@@ -246,8 +274,8 @@ impl EventLog {
                     ).bind(&session).bind(through_sql).fetch_one(&mut *tx).await?;
                     if let Some(sequence) = last {
                         let sequence = sequence_number(sequence)?;
-                        materialize(&mut tx, &session, sequence).await?;
-                        let row = header(&mut tx, &session, sequence, HistoryField::Body).await?;
+                        materialize(&mut tx, &session, sequence, view, through_sql).await?;
+                        let row = header(&mut tx, &session, sequence, HistoryField::Body, view, through_sql).await?;
                         let cursor = Cursor { field: HistoryField::Body, sequence, offset: row.total };
                         left = Some(cursor); right = Some((cursor, row.total));
                     }
@@ -301,7 +329,14 @@ async fn header(
     session: &str,
     sequence: u64,
     field: HistoryField,
+    view: HistoryView,
+    through: i64,
 ) -> Result<Header, StoreError> {
+    if view == HistoryView::Conversation
+        && let Some(row) = conversation_tool(tx, session, sequence, through).await?
+    {
+        return Ok(row);
+    }
     let row = sqlx::query(
         "SELECT source.message_id, source.turn_id, cached.timestamp, cached.role, length(cached.body)
             FROM transcript_rows source JOIN transcript_text cached USING(session_id, sequence)
@@ -315,6 +350,57 @@ async fn header(
         total: sequence_number(row.try_get(4)?)?,
     })
 }
+async fn conversation_tool(
+    tx: &mut SqliteConnection,
+    session: &str,
+    sequence: u64,
+    through: i64,
+) -> Result<Option<Header>, StoreError> {
+    let row = sqlx::query(
+        "SELECT row.message_id, row.turn_id, json_extract(row.payload, '$.ts'),
+            json_extract(row.payload, '$.type'), json_extract(row.payload, '$.origin'),
+            COALESCE(json_extract(row.payload, '$.toolName'), json_extract(call.payload, '$.toolName')),
+            COALESCE(json_extract(row.payload, '$.isError'), 0),
+            CASE WHEN COALESCE(json_extract(row.payload, '$.toolName'), json_extract(call.payload, '$.toolName')) = 'cua_repl'
+                THEN EXISTS(SELECT 1 FROM transcript_rows child WHERE child.session_id = row.session_id
+                AND child.turn_id = row.turn_id AND child.sequence <= ?3
+                AND json_extract(child.payload, '$.parentToolCallId') = COALESCE(call.message_id, row.message_id)
+                AND json_extract(child.payload, '$.type') = 'tool_call') ELSE 0 END
+        FROM transcript_rows row LEFT JOIN transcript_rows call
+            ON call.session_id = row.session_id AND call.turn_id = row.turn_id
+            AND call.message_id = json_extract(row.payload, '$.toolUseId')
+            AND json_extract(call.payload, '$.type') = 'tool_call'
+        WHERE row.session_id = ?1 AND row.sequence = ?2
+            AND json_extract(row.payload, '$.type') IN ('tool_call', 'tool_result')"
+    ).bind(session).bind(sql_number(sequence)?).bind(through).fetch_optional(tx).await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let origin: Option<String> = row.try_get(4)?;
+    let name: Option<String> = row.try_get(5)?;
+    let error: bool = row.try_get(6)?;
+    let children: bool = row.try_get(7)?;
+    let internal = !error
+        && (matches!(
+            (origin.as_deref(), name.as_deref()),
+            (Some("provider"), Some("exec" | "wait" | "tool_search"))
+                | (Some("code_mode"), Some("code_cell" | "tool_search"))
+        ) || (origin.as_deref() == Some("provider")
+            && name.as_deref() == Some("cua_repl")
+            && children));
+    Ok(Some(Header {
+        message: row.try_get(0)?,
+        turn: row.try_get(1)?,
+        timestamp: sequence_number(row.try_get(2)?)?,
+        role: if internal {
+            String::new()
+        } else {
+            row.try_get(3)?
+        },
+        total: 0,
+    }))
+}
+
 async fn neighbor(
     tx: &mut SqliteConnection,
     session: &str,
@@ -352,7 +438,16 @@ async fn materialize(
     tx: &mut SqliteConnection,
     session: &str,
     sequence: u64,
+    view: HistoryView,
+    through: i64,
 ) -> Result<usize, StoreError> {
+    if view == HistoryView::Conversation
+        && conversation_tool(tx, session, sequence, through)
+            .await?
+            .is_some()
+    {
+        return Ok(0);
+    }
     let source: Option<(i64, bool)> = sqlx::query_as(
         "SELECT total_bytes, EXISTS(SELECT 1 FROM transcript_text cached WHERE cached.session_id = source.session_id AND cached.sequence = source.sequence AND cached.field = 'body')
             FROM transcript_rows source WHERE session_id = ?1 AND sequence = ?2"
@@ -390,5 +485,61 @@ fn field_name(field: HistoryField) -> &'static str {
     match field {
         HistoryField::Body => "body",
         HistoryField::Thinking => "thinking",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn conversation_hides_orchestration_but_preserves_errors_and_imported_tools() {
+        let mut db = SqliteConnection::connect(":memory:").await.unwrap();
+        sqlx::query("CREATE TABLE transcript_rows (session_id TEXT, sequence INTEGER, message_id TEXT, turn_id TEXT, payload BLOB)").execute(&mut db).await.unwrap();
+        let rows = [
+            json!({"type":"tool_call","origin":"provider","toolName":"exec"}),
+            json!({"type":"tool_call","origin":"code_mode","toolName":"code_cell"}),
+            json!({"type":"tool_call","origin":"imported","toolName":"exec"}),
+            json!({"type":"tool_call","origin":"provider","toolName":"cua_repl"}),
+            json!({"type":"tool_call","origin":"host_sdk","toolName":"cua_operation","parentToolCallId":"4"}),
+            json!({"type":"tool_result","origin":"provider","toolUseId":"4","isError":false}),
+            json!({"type":"tool_result","origin":"provider","toolUseId":"1","isError":true}),
+        ];
+        for (i, mut value) in rows.into_iter().enumerate() {
+            value["ts"] = json!(1);
+            sqlx::query("INSERT INTO transcript_rows VALUES ('a', ?, ?, 'turn', ?)")
+                .bind((i + 1) as i64)
+                .bind((i + 1).to_string())
+                .bind(serde_json::to_vec(&value).unwrap())
+                .execute(&mut db)
+                .await
+                .unwrap();
+        }
+        for (sequence, visible) in [
+            (1, false),
+            (2, false),
+            (3, true),
+            (4, false),
+            (5, true),
+            (6, false),
+            (7, true),
+        ] {
+            let row = conversation_tool(&mut db, "a", sequence, 7)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(!row.role.is_empty(), visible, "sequence {sequence}");
+            assert_eq!(row.total, 0);
+        }
+        // A parent without a child at the requested fence remains visible.
+        assert_eq!(
+            conversation_tool(&mut db, "a", 4, 4)
+                .await
+                .unwrap()
+                .unwrap()
+                .role,
+            "tool_call"
+        );
     }
 }

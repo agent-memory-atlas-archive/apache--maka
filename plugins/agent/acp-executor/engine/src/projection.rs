@@ -26,7 +26,6 @@ use std::collections::BTreeMap;
 pub(crate) mod v2;
 
 const MAX_BYTES: usize = 1024 * 1024;
-const MAX_TOOLS: usize = 1024;
 // JSON escaping expands each byte at most sixfold; leave room for identities.
 const CHUNK_BYTES: usize = 8 * 1024;
 
@@ -176,9 +175,6 @@ impl Projection {
         }
         let tool_call_id = self.tool_id(&id);
         if !self.tools.contains_key(&id) {
-            if self.tools.len() == MAX_TOOLS {
-                return Err(invalid("ACP turn exceeds 1024 tool calls"));
-            }
             emit(
                 sink,
                 Output::ToolStart {

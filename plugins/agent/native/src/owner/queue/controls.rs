@@ -174,9 +174,8 @@ impl Owner {
                     .source
                     .unprepared_content
                     .clone();
-                if (message.trim().is_empty()
-                    && content.attachments.as_ref().is_none_or(Vec::is_empty))
-                    || message.len() > 64 * 1024
+                if message.trim().is_empty()
+                    && content.attachments.as_ref().is_none_or(Vec::is_empty)
                 {
                     return rejected(QueueRejection::InvalidEdit);
                 }

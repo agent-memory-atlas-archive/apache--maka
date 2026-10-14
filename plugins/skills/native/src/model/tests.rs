@@ -447,7 +447,7 @@ async fn model_resources_keep_original_root_and_revision_and_do_not_mix_changed_
     call.finish().await.unwrap();
 }
 #[tokio::test]
-async fn instruction_delivery_bounds_keep_utf8_and_report_truncation_in_the_original_receipt() {
+async fn instruction_pages_preserve_the_complete_body_and_original_receipt() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("selected");
     write(&root, "large", &"大段说明🦀\"\n".repeat(20_000));
@@ -478,8 +478,8 @@ async fn instruction_delivery_bounds_keep_utf8_and_report_truncation_in_the_orig
     schema("load", &result);
     assert!(maka_workspace_support::fits(&result));
     assert_eq!(result["kind"], "loaded");
-    assert_eq!(result["truncated"], true);
-    assert_eq!(result["receipt"]["truncated"], true);
+    assert_eq!(result["truncated"], false);
+    assert_eq!(result["receipt"]["truncated"], false);
     assert!(!result["instructions"].as_str().unwrap().is_empty());
     let mut current = result.clone();
     let mut complete = String::new();
@@ -495,8 +495,7 @@ async fn instruction_delivery_bounds_keep_utf8_and_report_truncation_in_the_orig
             .await
             .unwrap();
     }
-    assert!(complete.ends_with("[skill truncated]"));
-    assert!(complete.chars().count() > 23_900);
+    assert_eq!(complete, "大段说明🦀\"\n".repeat(20_000).trim_end());
     assert!(library.model("load", json!({"tools":[],"input":{"name":"large","revision":page["revision"],"instructionOffset":1}}), &call).await.is_err());
     let validator =
         jsonschema::validator_for(&schemars::schema_for!(SkillInvocationReceipt).into()).unwrap();

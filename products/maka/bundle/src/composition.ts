@@ -641,11 +641,10 @@ function agentComposition(configuration: CompositionConfiguration): ApplicationS
     settingsComposition(configuration, 'gateway');
   const executors = configuration.acpExecutors ?? [];
   if (
-    executors.length > 8 ||
     new Set(executors.map((e) => e.name)).size !== executors.length ||
     executors.some((e) => !/^[a-zA-Z][a-zA-Z0-9._:-]{0,127}$/.test(e.name))
   )
-    throw new Error('ACP backends require at most eight distinct executor names');
+    throw new Error('ACP backends require valid distinct executor names');
   if (configuration.agent.executors?.length)
     throw new Error('The standard composition selects executor imports through acpExecutors');
   if (executors.length && !configuration.executorProcesses)

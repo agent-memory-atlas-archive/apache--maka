@@ -220,9 +220,6 @@ impl Command {
 impl Check {
     fn read(self) -> Result<(Input, Vec<RemoteObservation>, Vec<Package>), HostError> {
         let input = read_json(&self.input)?;
-        if self.packages.len() > 128 {
-            return Err("application package count exceeds 128".into());
-        }
         let mut packages = Vec::new();
         for source in self.packages {
             let package = Package::read_from(&std::path::absolute(source)?)?;

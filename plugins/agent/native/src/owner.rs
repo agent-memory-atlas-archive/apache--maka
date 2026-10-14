@@ -491,8 +491,7 @@ impl Owner {
         let mut tools = input.tools;
         if let Some(names) = &mut tools {
             names.sort();
-            if names.len() > 128
-                || names.windows(2).any(|pair| pair[0] == pair[1])
+            if names.windows(2).any(|pair| pair[0] == pair[1])
                 || names.iter().any(|name| !self.tools.contains(name))
             {
                 return Ok(Created::Rejected {
@@ -841,7 +840,7 @@ impl Owner {
             attachments,
             selection,
         } = input;
-        if (text.trim().is_empty() && attachments.is_empty()) || text.len() > 64 * 1024 {
+        if text.trim().is_empty() && attachments.is_empty() {
             return Err("agent_message_invalid".into());
         }
         let mut runs = self.runs.lock().await;

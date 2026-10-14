@@ -794,9 +794,6 @@ impl Hub {
         } else {
             format!("Original user request:\n{original}\n\nCoordinator instructions:\n{note}")
         };
-        if message.len() > 64 * 1024 {
-            return Ok(None);
-        }
         input["message"] = serde_json::json!(message);
         Ok(Some(Assignment {
             graph,

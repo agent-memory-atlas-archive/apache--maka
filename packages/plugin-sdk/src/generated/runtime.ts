@@ -3022,9 +3022,6 @@ export type SkillPreparation =
   | {
       invocation: SkillInvocationResult;
       kind: 'blocked';
-    }
-  | {
-      kind: 'input_too_large';
     };
 export type SkillInvocationFailure = SkillRequestFailure | SkillOverflowFailure;
 export type AgentSessionFilter = 'all' | 'needs_you';
@@ -3989,43 +3986,7 @@ export type AgentDirectories =
     };
 export type AgentDirectoryPage =
   | {
-      /**
-       * @maxItems 8
-       */
-      roots:
-        | []
-        | [AgentDirectory]
-        | [AgentDirectory, AgentDirectory]
-        | [AgentDirectory, AgentDirectory, AgentDirectory]
-        | [AgentDirectory, AgentDirectory, AgentDirectory, AgentDirectory]
-        | [AgentDirectory, AgentDirectory, AgentDirectory, AgentDirectory, AgentDirectory]
-        | [
-            AgentDirectory,
-            AgentDirectory,
-            AgentDirectory,
-            AgentDirectory,
-            AgentDirectory,
-            AgentDirectory,
-          ]
-        | [
-            AgentDirectory,
-            AgentDirectory,
-            AgentDirectory,
-            AgentDirectory,
-            AgentDirectory,
-            AgentDirectory,
-            AgentDirectory,
-          ]
-        | [
-            AgentDirectory,
-            AgentDirectory,
-            AgentDirectory,
-            AgentDirectory,
-            AgentDirectory,
-            AgentDirectory,
-            AgentDirectory,
-            AgentDirectory,
-          ];
+      roots: AgentDirectory[];
       kind: 'roots';
     }
   | {
@@ -4438,7 +4399,7 @@ export type AgentSendResult =
       revision: number;
       kind: 'queued';
     };
-export type AgentSkillInputRejection = 'skills_unavailable' | 'input_too_large';
+export type AgentSkillInputRejection = 'skills_unavailable';
 export type AgentDeliveryFact =
   | {
       kind: 'opened';
@@ -4506,6 +4467,11 @@ export type HistoryPosition =
  * A readable field in a conversation window, in presentation order.
  */
 export type HistoryField = 'thinking' | 'body';
+/**
+ * Tool output is available through source reads in both views. Conversation
+ * windows carry tool metadata only, keeping large results out of chat paging.
+ */
+export type HistoryView = 'text' | 'conversation';
 export type AgentDeliveryPage =
   | {
       through: number;
@@ -6769,49 +6735,8 @@ export interface AgentConfiguration {
   recall?: boolean;
   /**
    * Explicit service backends; discovery does not authorize execution.
-   *
-   * @maxItems 8
    */
-  executors?:
-    | []
-    | [AgentServiceExecutor]
-    | [AgentServiceExecutor, AgentServiceExecutor]
-    | [AgentServiceExecutor, AgentServiceExecutor, AgentServiceExecutor]
-    | [AgentServiceExecutor, AgentServiceExecutor, AgentServiceExecutor, AgentServiceExecutor]
-    | [
-        AgentServiceExecutor,
-        AgentServiceExecutor,
-        AgentServiceExecutor,
-        AgentServiceExecutor,
-        AgentServiceExecutor,
-      ]
-    | [
-        AgentServiceExecutor,
-        AgentServiceExecutor,
-        AgentServiceExecutor,
-        AgentServiceExecutor,
-        AgentServiceExecutor,
-        AgentServiceExecutor,
-      ]
-    | [
-        AgentServiceExecutor,
-        AgentServiceExecutor,
-        AgentServiceExecutor,
-        AgentServiceExecutor,
-        AgentServiceExecutor,
-        AgentServiceExecutor,
-        AgentServiceExecutor,
-      ]
-    | [
-        AgentServiceExecutor,
-        AgentServiceExecutor,
-        AgentServiceExecutor,
-        AgentServiceExecutor,
-        AgentServiceExecutor,
-        AgentServiceExecutor,
-        AgentServiceExecutor,
-        AgentServiceExecutor,
-      ];
+  executors?: AgentServiceExecutor[];
   /**
    * Explicit Library import for immutable skill input preparation and metadata.
    * This does not select model tools or confer a service grant.
@@ -6823,100 +6748,16 @@ export interface AgentConfiguration {
   permissions: AgentWorkspacePermissions;
   /**
    * Installation-published directories, captured without creating workspace markers.
-   *
-   * @maxItems 8
    */
-  workspaceRoots:
-    | []
-    | [DirectoryRootSpec]
-    | [DirectoryRootSpec, DirectoryRootSpec]
-    | [DirectoryRootSpec, DirectoryRootSpec, DirectoryRootSpec]
-    | [DirectoryRootSpec, DirectoryRootSpec, DirectoryRootSpec, DirectoryRootSpec]
-    | [
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-      ]
-    | [
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-      ]
-    | [
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-      ]
-    | [
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-      ];
+  workspaceRoots: DirectoryRootSpec[];
   /**
    * Explicit read-only roots for user-selected conversation sources.
-   *
-   * @maxItems 8
    */
-  importRoots?:
-    | []
-    | [DirectoryRootSpec]
-    | [DirectoryRootSpec, DirectoryRootSpec]
-    | [DirectoryRootSpec, DirectoryRootSpec, DirectoryRootSpec]
-    | [DirectoryRootSpec, DirectoryRootSpec, DirectoryRootSpec, DirectoryRootSpec]
-    | [
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-      ]
-    | [
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-      ]
-    | [
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-      ]
-    | [
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-      ];
+  importRoots?: DirectoryRootSpec[];
   maxActiveRuns: number;
   maxSteps: number;
   /**
    * Explicitly selected, frozen application service tools, alongside configured native tools.
-   *
-   * @maxItems 128
    */
   tools: AgentServiceTool[];
 }
@@ -7269,9 +7110,6 @@ export interface ProtocolProcessWritten {
   closed: boolean;
 }
 export interface AgentToolNames {
-  /**
-   * @maxItems 128
-   */
   names: string[];
 }
 export interface WorkHubPresets {
@@ -7289,8 +7127,6 @@ export interface WorkHubPreset {
   worker: string;
   /**
    * Exact installed names; an empty list permits reasoning without tools.
-   *
-   * @maxItems 128
    */
   tools: string[];
   model: ModelSelection;
@@ -8642,49 +8478,8 @@ export interface SkillLibraryConfiguration {
   home?: string | null;
   /**
    * Explicit ceilings for a request's selected project. An observation grants no access.
-   *
-   * @maxItems 8
    */
-  projectRoots?:
-    | []
-    | [DirectoryRootSpec]
-    | [DirectoryRootSpec, DirectoryRootSpec]
-    | [DirectoryRootSpec, DirectoryRootSpec, DirectoryRootSpec]
-    | [DirectoryRootSpec, DirectoryRootSpec, DirectoryRootSpec, DirectoryRootSpec]
-    | [
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-      ]
-    | [
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-      ]
-    | [
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-      ]
-    | [
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-        DirectoryRootSpec,
-      ];
+  projectRoots?: DirectoryRootSpec[];
   /**
    * Include the immutable skill instructions and resources shipped with this build.
    */
@@ -8697,49 +8492,7 @@ export interface SkillLibraryConfiguration {
    * Allow edits to enabled/pinned preferences, independently of file management.
    */
   preferences?: boolean;
-  /**
-   * @maxItems 8
-   */
-  sources:
-    | []
-    | [SkillLibrarySource]
-    | [SkillLibrarySource, SkillLibrarySource]
-    | [SkillLibrarySource, SkillLibrarySource, SkillLibrarySource]
-    | [SkillLibrarySource, SkillLibrarySource, SkillLibrarySource, SkillLibrarySource]
-    | [
-        SkillLibrarySource,
-        SkillLibrarySource,
-        SkillLibrarySource,
-        SkillLibrarySource,
-        SkillLibrarySource,
-      ]
-    | [
-        SkillLibrarySource,
-        SkillLibrarySource,
-        SkillLibrarySource,
-        SkillLibrarySource,
-        SkillLibrarySource,
-        SkillLibrarySource,
-      ]
-    | [
-        SkillLibrarySource,
-        SkillLibrarySource,
-        SkillLibrarySource,
-        SkillLibrarySource,
-        SkillLibrarySource,
-        SkillLibrarySource,
-        SkillLibrarySource,
-      ]
-    | [
-        SkillLibrarySource,
-        SkillLibrarySource,
-        SkillLibrarySource,
-        SkillLibrarySource,
-        SkillLibrarySource,
-        SkillLibrarySource,
-        SkillLibrarySource,
-        SkillLibrarySource,
-      ];
+  sources: SkillLibrarySource[];
 }
 export interface SkillLibrarySource {
   id: string;
@@ -8911,8 +8664,6 @@ export interface AgentCreate {
   /**
    * Immutable narrowing of this Agent's installed tools. None uses the installation;
    * an empty list permits no model tools. External executors cannot enforce this.
-   *
-   * @maxItems 128
    */
   tools?: string[] | null;
   title: string;
@@ -8957,195 +8708,14 @@ export interface PlanArtifact {
   overview?: string | null;
   /**
    * @minItems 1
-   * @maxItems 50
    */
   steps: [PlanStep, ...PlanStep[]];
-  /**
-   * @maxItems 20
-   */
-  risks?:
-    | []
-    | [string]
-    | [string, string]
-    | [string, string, string]
-    | [string, string, string, string]
-    | [string, string, string, string, string]
-    | [string, string, string, string, string, string]
-    | [string, string, string, string, string, string, string]
-    | [string, string, string, string, string, string, string, string]
-    | [string, string, string, string, string, string, string, string, string]
-    | [string, string, string, string, string, string, string, string, string, string]
-    | [string, string, string, string, string, string, string, string, string, string, string]
-    | [
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-      ]
-    | [
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-      ]
-    | [
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-      ]
-    | [
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-      ]
-    | [
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-      ]
-    | [
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-      ]
-    | [
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-      ]
-    | [
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-      ]
-    | [
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-        string,
-      ];
+  risks?: string[];
 }
 export interface PlanStep {
   id: string;
   title: string;
   description: string;
-  /**
-   * @maxItems 50
-   */
   files?: string[];
   complexity?: PlanComplexity | null;
 }
@@ -10220,6 +9790,7 @@ export interface AgentHistoryRead {
   through?: number | null;
   position: HistoryPosition;
   includeThinking?: boolean;
+  view?: HistoryView & string;
 }
 /**
  * Byte offset in one message field's UTF-8 text, not a bearer capability.

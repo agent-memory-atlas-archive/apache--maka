@@ -57,7 +57,6 @@ impl ToolCatalog {
         registrations: impl IntoIterator<Item = ToolRegistration>,
     ) -> Result<Self, CatalogError> {
         let mut entries = BTreeMap::new();
-        let mut bytes = 0usize;
         for mut registration in registrations {
             if let Some(provider) = &registration.definition.provider {
                 provider
@@ -78,8 +77,7 @@ impl ToolCatalog {
                 ));
             }
             let definition = &registration.definition;
-            if entries.len() == 128
-                || definition.name.is_empty()
+            if definition.name.is_empty()
                 || definition.name.len() > 128
                 || matches!(
                     definition.name.as_str(),
@@ -89,16 +87,12 @@ impl ToolCatalog {
                 || !registration.handler.names().contains(&definition.name)
             {
                 return Err(CatalogError::Invalid(
-                    "duplicate, reserved, absent or excessive tool name".into(),
+                    "duplicate, reserved, absent or invalid tool name".into(),
                 ));
             }
             let definition_bytes = serde_json::to_vec(definition)
                 .map_err(|e| CatalogError::Schema(e.to_string()))?
                 .len();
-            bytes = bytes.saturating_add(definition_bytes);
-            if bytes > 1024 * 1024 {
-                return Err(CatalogError::Invalid("definition budget exceeded".into()));
-            }
             // Matches Maka's JSON-schema tool path: no format assertions,
             // defaults/coercion or fetching file/network references.
             let validator = jsonschema::options()
@@ -293,5 +287,61 @@ impl ToolCatalog {
             }
             Ok(effect)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use maka_agent_facts::tools::{ToolExecutor, ToolFuture};
+    struct Tools(Vec<String>);
+    impl ToolExecutor for Tools {
+        fn names(&self) -> Vec<String> {
+            self.0.clone()
+        }
+        fn invoke(&self, _: String, input: Value, _: CancellationToken) -> ToolFuture {
+            Box::pin(async move { Ok(input) })
+        }
+    }
+    #[test]
+    fn large_catalog_and_loaded_checkpoint_preserve_definitions() {
+        let names: Vec<_> = (0..160).map(|i| format!("tool_{i}")).collect();
+        let handler = crate::ToolHandler::Immediate(Arc::new(Tools(names.clone())));
+        let registrations: Vec<_> = names
+            .iter()
+            .map(|name| ToolRegistration {
+                definition: ToolDefinition {
+                    name: name.clone(),
+                    description: "test".into(),
+                    input_schema: serde_json::json!({"type":"object"}),
+                    output_schema: None,
+                    provider: None,
+                    freeform: None,
+                },
+                handler: handler.clone(),
+                nesting: ToolNesting::Nestable,
+                semantics: ToolSemantics::Parallel,
+            })
+            .collect();
+        let catalog = ToolCatalog::new(registrations.clone())
+            .unwrap()
+            .with_discovery();
+        assert_eq!(catalog.definitions().count(), 160);
+        let original = crate::availability::Availability::new(
+            catalog.clone(),
+            names
+                .into_iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .into(),
+        );
+        let restored = crate::availability::Availability::new(catalog, Default::default());
+        restored.restore(&original.checkpoint()).unwrap();
+        assert_eq!(restored.checkpoint().loaded.len(), 160);
+        let mut oversized = registrations;
+        oversized[0].definition.description = "x".repeat(1024 * 1024);
+        assert_eq!(
+            ToolCatalog::new(oversized).unwrap().definitions().count(),
+            160
+        );
     }
 }

@@ -109,6 +109,16 @@ impl CopyMaterial {
     }
 }
 
+/// Tool output is available through source reads in both views. Conversation
+/// windows carry tool metadata only, keeping large results out of chat paging.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoryView {
+    #[default]
+    Text,
+    Conversation,
+}
+
 /// A readable field in a conversation window, in presentation order.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]

@@ -65,7 +65,6 @@ impl HandoffExecution {
             || self
                 .main_output_limit
                 .is_some_and(|n| n == 0 || n > 10_000_000_000)
-            || self.tools.loaded.len() > 128
             || self
                 .tools
                 .loaded

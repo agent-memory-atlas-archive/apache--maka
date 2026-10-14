@@ -23,7 +23,7 @@ use maka_agent_facts::{
     tool_output::{DurableToolProjection, ToolOutput, ToolSuccess},
     tools::*,
 };
-use maka_assistant::todo::{Document, Item, MAX_ITEMS, Repository, Status};
+use maka_assistant::todo::{Document, Item, Repository, Status};
 use maka_capabilities::storage::{Namespace, StoreError};
 use std::sync::{OnceLock, Weak};
 
@@ -63,7 +63,7 @@ impl Todo {
     pub fn tools(self: &Arc<Self>) -> Vec<ToolRegistration> {
         [
             ("todo_read", "Read the complete current session checklist. Completed items are model-reported progress, not verified execution evidence.", serde_json::to_value(schemars::schema_for!(Read)).expect("todo schema")),
-            ("todo_write", "Atomically replace the complete current session checklist; include every item to keep. At most 200 items, each 1–200 characters. Completed is model-reported progress, not verified execution evidence.", serde_json::to_value(schemars::schema_for!(Write)).expect("todo schema")),
+            ("todo_write", "Atomically replace the complete current session checklist; include every item to keep. Completed is model-reported progress, not verified execution evidence.", serde_json::to_value(schemars::schema_for!(Write)).expect("todo schema")),
         ].into_iter().map(|(name, description, input_schema)| ToolRegistration {
             definition: ToolDefinition { provider: None, name: name.into(), description: description.into(), input_schema, output_schema: None, freeform: None },
             nesting: ToolNesting::Nestable, semantics: ToolSemantics::Parallel, handler: ToolHandler::Prepared(self.clone()),
@@ -76,7 +76,6 @@ struct Read {}
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct Write {
-    #[schemars(length(max = MAX_ITEMS))]
     todos: Vec<Item>,
 }
 impl ToolPreparer for Todo {
@@ -205,9 +204,6 @@ impl Owner {
     }
     pub async fn checklist(&self, input: &ChecklistRead) -> Result<Checklist, String> {
         self.session(&input.session_id).await?;
-        if input.offset > MAX_ITEMS {
-            return Err("checklist_offset_invalid".into());
-        }
         let snapshot = self
             .todo
             .repository

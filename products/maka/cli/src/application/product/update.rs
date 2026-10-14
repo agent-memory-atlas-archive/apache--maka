@@ -34,6 +34,8 @@ use std::{
 pub(super) struct Baseline {
     pub(super) product: Product,
     pub(super) installation: Value,
+    /// Standard launcher inputs regenerate defaults; explicit configurations stay explicit.
+    pub(super) default_options: Option<Value>,
     pub(super) sources: Sources,
 }
 
@@ -130,8 +132,19 @@ async fn synchronize(store: &EventLog, custom: bool, apply: bool) -> Result<Outc
             return Ok(outcome);
         }
         let packages = tokio::task::spawn_blocking(packages).await??;
-        let (mut next, installation) =
-            author(baseline.product, baseline.installation, &packages).await?;
+        let configuration = match &baseline.default_options {
+            Some(options) => {
+                let mut configuration = super::installation(options.clone()).await?;
+                // Product identities survive changes to the default feature set.
+                // The author allocates identities only for newly introduced instances.
+                for key in ["keys", "hostDeployment", "managementDeployment"] {
+                    configuration[key] = baseline.installation[key].clone();
+                }
+                configuration
+            }
+            None => baseline.installation,
+        };
+        let (mut next, installation) = author(baseline.product, configuration, &packages).await?;
         for endpoint in next.connections["hosts"]
             .as_array_mut()
             .ok_or("product connections missing")?
@@ -188,6 +201,7 @@ async fn synchronize(store: &EventLog, custom: bool, apply: bool) -> Result<Outc
                 product: Some(Baseline {
                     product: baseline.product,
                     installation,
+                    default_options: baseline.default_options,
                     sources: next,
                 }),
                 previous_connections: Some(record.configuration),

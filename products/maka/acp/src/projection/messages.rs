@@ -36,14 +36,6 @@ impl Projection {
         {
             return Ok(vec![]);
         }
-        if previous.is_none() && self.streams.len() + self.tools.len() >= IDENTITIES {
-            return Err("ACP presentation identity limit exceeded".into());
-        }
-        let size = next.len() + serde_json::to_vec(&meta)?.len();
-        let old_size = previous.map_or(0, |p| p.bytes);
-        if self.bytes - old_size + size > TOTAL_BYTES {
-            return Err("ACP text presentation limit exceeded".into());
-        }
         let current = previous.map_or("", |p| p.text.as_str());
         let message_id = match kind {
             MessageKind::Thinking => format!("thinking:{id}"),
@@ -83,13 +75,11 @@ impl Projection {
                 }
             }
         };
-        self.bytes = self.bytes - old_size + size;
         self.streams.insert(
             key,
             Message {
                 text: next.to_owned(),
                 meta,
-                bytes: size,
             },
         );
         Ok(vec![update])
@@ -99,6 +89,27 @@ impl Projection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn long_sessions_keep_every_message_instead_of_rejecting_total_history_size() {
+        let mut projection = Projection::default();
+        let text = "x".repeat(4096);
+        for i in 0..4200 {
+            let updates = projection
+                .append("turn", &format!("message-{i}"), &ContentKind::Text, &text)
+                .unwrap();
+            assert_eq!(updates.len(), 1);
+        }
+        assert_eq!(projection.streams.len(), 4200);
+        assert_eq!(
+            projection
+                .streams
+                .values()
+                .map(|message| message.text.len())
+                .sum::<usize>(),
+            4200 * 4096
+        );
+    }
+
     #[test]
     fn unicode_stream_and_canonical_history_keep_the_same_message() {
         let mut projection = Projection::default();

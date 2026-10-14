@@ -45,19 +45,6 @@ pub struct Settings {
 impl Settings {
     pub fn validate(&self) -> Result<(), Error> {
         self.target.validate()?;
-        if self
-            .instructions
-            .as_ref()
-            .is_some_and(|text| text.len() > 16 * 1024)
-            || self
-                .bound_tools
-                .as_ref()
-                .is_some_and(|tools| tools.len() > 128)
-        {
-            return Err(Error::Invalid(
-                "Session settings exceed their budget".into(),
-            ));
-        }
         if let Some(tools) = &self.bound_tools {
             for tool in tools {
                 name(tool)?;

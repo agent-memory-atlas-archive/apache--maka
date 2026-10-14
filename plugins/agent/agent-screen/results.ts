@@ -197,8 +197,7 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
       return;
     }
     if (started.kind === 'rejected') {
-      state.notice =
-        started.reason === 'input_too_large' ? 'skillInputTooLarge' : 'skillInputUnavailable';
+      state.notice = 'skillInputUnavailable';
       return;
     }
     state.attachments.files = state.attachments.files.filter(
@@ -639,6 +638,7 @@ export function querySucceeded(state: State, actions: Action[], request: Request
             through: request.through,
             position: request.position,
             includeThinking: true,
+            view: 'conversation',
           },
           {},
           request.implicit ? [{ child: readingKey(state), method: 'tail', input: null }] : [],
@@ -695,16 +695,18 @@ export function querySucceeded(state: State, actions: Action[], request: Request
           );
           return current ? { ...chunk, tool: current.tool } : chunk;
         });
-        let bytes = chunks.reduce((total, chunk) => total + utf8Bytes(chunk.text), 0);
+        // Tool rows may have no body; their metadata still occupies the window.
+        const size = (chunk: (typeof chunks)[number]) => utf8Bytes(JSON.stringify(chunk)) + 1;
+        let bytes = chunks.reduce((total, chunk) => total + size(chunk), 0);
         let first = before ? page.before : old.page.before;
         let last = before ? old.page.after : page.after;
         // Filling spare viewport space must never evict the visible tail.
-        if (before && request.implicit && (chunks.length > 16 || bytes > 131072)) break;
+        if (before && request.implicit && bytes > 131072) break;
         // Cursor-adjacent immutable text keeps its original reading owner when
         // the live fence advances. Retain a bounded window around that anchor.
-        while (chunks.length > 16 || bytes > 131072) {
+        while (bytes > 131072) {
           const removed = before ? chunks.pop()! : chunks.shift()!;
-          bytes -= utf8Bytes(removed.text);
+          bytes -= size(removed);
           if (before)
             last = { sequence: removed.sequence, offset: removed.offset, field: removed.field };
           else {

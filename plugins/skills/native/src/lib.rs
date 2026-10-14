@@ -121,9 +121,6 @@ impl Library {
         managed: PathBuf,
         preferences: preferences::Store,
     ) -> Result<Self, String> {
-        if configuration.sources.len() > 8 {
-            return Err("skills_configuration_invalid".into());
-        }
         let mut ids = BTreeSet::new();
         let policy = Arc::new(
             Policy {

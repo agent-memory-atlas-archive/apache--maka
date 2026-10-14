@@ -320,27 +320,27 @@ pub fn run(
                 presenter.resources.redraw = false;
                 presenter.next_frame = None;
             }
-            let input = match queued_input.take() {
-                Some(input) => Some(input),
-                None => {
-                    let at = [
-                        presenter.next_frame.filter(|_| pending_output.is_none()),
-                        exit_key.0.map(|(_, at)| at),
-                        updates.next_deadline(),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .min();
-                    scheduler
-                        .block_on(async {
-                            tokio::select! {
-                                input = events.next() => input.transpose(),
-                                _ = wake.0.notified() => Ok(None),
-                                _ = deadline(at) => Ok(None),
-                            }
-                        })
-                        .map_err(|e| e.to_string())?
-                }
+            let first_frame_pending = written_sequence == 0 && pending_output.is_some();
+            let input = if queued_input.is_some() && !first_frame_pending {
+                queued_input.take()
+            } else {
+                let at = [
+                    presenter.next_frame.filter(|_| pending_output.is_none()),
+                    exit_key.0.map(|(_, at)| at),
+                    updates.next_deadline(),
+                ]
+                .into_iter()
+                .flatten()
+                .min();
+                scheduler
+                    .block_on(async {
+                        tokio::select! {
+                            input = events.next(), if queued_input.is_none() => input.transpose(),
+                            _ = wake.0.notified() => Ok(None),
+                            _ = deadline(at) => Ok(None),
+                        }
+                    })
+                    .map_err(|e| e.to_string())?
             };
             if let Some(input) = input {
                 poll_output(
@@ -351,6 +351,13 @@ pub fn run(
                 )?;
                 if exit_key.ready(Some(&input), Instant::now()) {
                     return Ok(true);
+                }
+                // A terminal can expose the first frame before the writer sends
+                // its receipt. Retain input until that frame admits its keyboard
+                // and hit targets; later frames use the already presented scene.
+                if written_sequence == 0 && pending_output.is_some() && !is_exit(&input) {
+                    queued_input = Some(input);
+                    return Ok(false);
                 }
                 if is_copy(&input) {
                     let mut bytes = Vec::new();
@@ -378,7 +385,12 @@ pub fn run(
                         ));
                 }
                 let scrolling = is_wheel(&input);
-                presenter.input(input).map_err(|e| e.to_string())?;
+                if scrolling {
+                    presenter.wheel(input)
+                } else {
+                    presenter.input(input)
+                }
+                .map_err(|e| e.to_string())?;
                 // A trackpad gesture arrives as many small wheel events. Apply
                 // the queued gesture before another live update and repaint,
                 // so streaming cannot repeatedly move the tail ahead of it.
@@ -399,7 +411,10 @@ pub fn run(
                         Some(screen),
                         &mut presenter,
                     )?;
-                    presenter.input(input).map_err(|e| e.to_string())?;
+                    presenter.wheel(input).map_err(|e| e.to_string())?;
+                }
+                if scrolling {
+                    presenter.sync_native().map_err(|e| e.to_string())?;
                 }
                 let mut bytes = Vec::new();
                 if let Err(error) = presenter.flush_clipboard(&mut bytes) {

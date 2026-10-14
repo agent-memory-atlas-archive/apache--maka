@@ -142,9 +142,13 @@ async fn partial_initialization_resumes_original_inputs_and_preserves_new_heads(
         .await
         .unwrap();
     assert!(
-        prepare(&store, Some(json!({})), Product::Agent)
-            .await
-            .is_err()
+        prepare(
+            &store,
+            Some(Installation::Configured(json!({}))),
+            Product::Agent
+        )
+        .await
+        .is_err()
     );
     prepare(&store, None, Product::Agent).await.unwrap();
     assert_eq!(
@@ -235,7 +239,7 @@ async fn invalid_presentation_is_rejected_before_host_initialization() {
     for presentation in [json!("desktop"), json!(7), json!(null)] {
         let error = begin(
             &store,
-            json!({"presentation":presentation,"hostRoot":host}),
+            Installation::Configured(json!({"presentation":presentation,"hostRoot":host})),
             Product::Agent,
         )
         .await

@@ -232,7 +232,7 @@ impl<A: Clone> Snapshot<A> {
                 request_digest,
                 reason,
             } => {
-                text(reason, 1024)?;
+                text(reason)?;
                 let execution = self.execution_mut(execution_id)?;
                 if !matches!(execution.phase, Phase::AwaitingAdmission)
                     || &execution.request.digest().map_err(invalid)? != request_digest
@@ -270,7 +270,7 @@ impl<A: Clone> Snapshot<A> {
                 invocation,
                 reason,
             } => {
-                text(reason, 1024)?;
+                text(reason)?;
                 let execution = self.execution_mut(execution_id)?;
                 let receipt = execution.active(invocation)?.clone();
                 execution.phase = Phase::Interrupted {
@@ -284,7 +284,7 @@ impl<A: Clone> Snapshot<A> {
                 reason,
                 grant,
             } => {
-                text(reason, 1024)?;
+                text(reason)?;
                 let execution = self.execution_mut(execution_id)?;
                 match &execution.phase {
                     Phase::Interrupted { receipt, .. } => {
@@ -342,7 +342,7 @@ impl<A: Clone> Snapshot<A> {
                                     .into(),
                         },
                         Settlement::Interrupted { reason } => {
-                            text(reason, 1024)?;
+                            text(reason)?;
                             Phase::Interrupted {
                                 receipt: Some(receipt),
                                 reason: reason.clone(),

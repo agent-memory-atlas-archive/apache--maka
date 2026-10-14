@@ -27,10 +27,9 @@ use std::collections::BTreeSet;
 pub struct Artifact {
     pub title: String,
     pub overview: Option<String>,
-    #[schemars(length(min = 1, max = 50))]
+    #[schemars(length(min = 1))]
     pub steps: Vec<Step>,
     #[serde(default)]
-    #[schemars(length(max = 20))]
     pub risks: Vec<String>,
 }
 
@@ -40,11 +39,10 @@ pub struct Artifact {
 pub struct Step {
     #[schemars(length(min = 1, max = 128), regex(pattern = "^[A-Za-z0-9_-]+$"))]
     pub id: String,
-    #[schemars(length(min = 1, max = 30))]
+    #[schemars(length(min = 1))]
     pub title: String,
     pub description: String,
     #[serde(default)]
-    #[schemars(length(max = 50))]
     pub files: Vec<String>,
     pub complexity: Option<Complexity>,
 }
@@ -60,34 +58,27 @@ pub enum Complexity {
 
 impl Artifact {
     pub fn validate(&self) -> Result<(), Error> {
-        text(&self.title, 16 * 1024)?;
+        text(&self.title)?;
         if let Some(overview) = &self.overview {
-            text(overview, 16 * 1024)?;
+            text(overview)?;
         }
-        if self.steps.is_empty() || self.steps.len() > 50 || self.risks.len() > 20 {
-            return Err(invalid("Plan requires 1–50 steps and at most 20 risks"));
+        if self.steps.is_empty() {
+            return Err(invalid("Plan requires at least one step"));
         }
         let mut ids = BTreeSet::new();
         for step in &self.steps {
             identifier(&step.id)?;
-            text(&step.title, 120)?;
-            text(&step.description, 16 * 1024)?;
-            if step.title.chars().count() > 30 || !ids.insert(&step.id) || step.files.len() > 50 {
-                return Err(invalid(
-                    "invalid Plan step title, duplicate id, or too many files",
-                ));
+            text(&step.title)?;
+            text(&step.description)?;
+            if !ids.insert(&step.id) {
+                return Err(invalid("duplicate Plan step id"));
             }
             for file in &step.files {
-                text(file, 16 * 1024)?;
+                text(file)?;
             }
         }
         for risk in &self.risks {
-            text(risk, 16 * 1024)?;
-        }
-        // Reserve room for progress and the execution request in the 64 KiB
-        // public submit contract, including JSON escaping rather than just text.
-        if serde_json::to_vec(self).map_err(invalid)?.len() > 40 * 1024 {
-            return Err(invalid("Plan artifact exceeds 40 KiB"));
+            text(risk)?;
         }
         Ok(())
     }
@@ -109,11 +100,8 @@ impl Artifact {
         }
         for step in steps {
             if let Some(note) = &step.note {
-                text(note, 1024)?;
+                text(note)?;
             }
-        }
-        if serde_json::to_vec(steps).map_err(invalid)?.len() > 12 * 1024 {
-            return Err(invalid("Plan progress exceeds 12 KiB"));
         }
         Ok(())
     }
@@ -125,21 +113,22 @@ mod tests {
     use crate::plan::{Command, Phase, Snapshot};
 
     #[test]
-    fn bounded_artifacts_survive_request_freezing_and_reject_ambiguous_progress() {
+    fn large_artifacts_survive_request_freezing_and_reject_ambiguous_progress() {
         let mut artifact = Artifact {
             title: "界".repeat(30),
             overview: None,
-            steps: (0..50)
+            steps: (0..64)
                 .map(|i| Step {
                     id: format!("step_{i}"),
-                    title: "界".repeat(30),
-                    description: "\"\\\n".repeat(90),
+                    title: "界".repeat(40),
+                    description: "\"\\\n".repeat(600),
                     files: vec![],
                     complexity: None,
                 })
                 .collect(),
-            risks: vec![],
+            risks: vec!["Check dependencies".into(); 25],
         };
+        artifact.steps[0].files = (0..64).map(|i| format!("src/file_{i}.rs")).collect();
         let mut snapshot = Snapshot::default();
         snapshot
             .apply(
@@ -175,12 +164,5 @@ mod tests {
         progress[0].status = StepStatus::InProgress;
         progress[1].status = StepStatus::InProgress;
         assert!(artifact.progress(&progress).is_err());
-        for step in &mut artifact.steps {
-            step.description = "界".repeat(600);
-        }
-        assert!(
-            artifact.validate().is_err(),
-            "aggregate UTF-8 budget must apply before approval"
-        );
     }
 }

@@ -390,10 +390,8 @@ impl Engine {
                     ));
                 }
             }
-            RunWork::Message {
-                message, max_steps, ..
-            } if *max_steps == 0 || *max_steps > 256 || message.text_bytes() > 64 * 1024 => {
-                return Err(RunError::InvalidInput("step or message limit".into()));
+            RunWork::Message { max_steps, .. } if *max_steps == 0 || *max_steps > 256 => {
+                return Err(RunError::InvalidInput("step limit".into()));
             }
             RunWork::Continuation {
                 source, max_steps, ..

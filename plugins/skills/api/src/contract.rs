@@ -38,7 +38,6 @@ pub struct Configuration {
     pub home: Option<String>,
     /// Explicit ceilings for a request's selected project. An observation grants no access.
     #[serde(default)]
-    #[schemars(length(max = 8))]
     pub project_roots: Vec<maka_host_runtime::DirectoryRootSpec>,
     /// Include the immutable skill instructions and resources shipped with this build.
     #[serde(default)]
@@ -49,7 +48,6 @@ pub struct Configuration {
     /// Allow edits to enabled/pinned preferences, independently of file management.
     #[serde(default)]
     pub preferences: bool,
-    #[schemars(length(max = 8))]
     pub sources: Vec<Source>,
 }
 #[derive(Clone, Deserialize, Serialize, JsonSchema)]

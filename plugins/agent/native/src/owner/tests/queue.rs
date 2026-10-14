@@ -265,7 +265,7 @@ async fn queue_controls_are_bounded_revisioned_and_observed_without_transcript_p
         let events = watch.recv().await.unwrap();
         assert_eq!(events["kind"], "events");
         assert_eq!(events["events"], json!([]));
-        let message = "x".repeat(64 * 1024);
+        let message = "x".repeat(96 * 1024);
         let update = json!({"sessionId":session,"expectedRevision":queue["revision"],"edit":{"kind":"update","messageId":ids[0],"message":message}});
         let operation = Uuid::new_v4();
         let changed = fixture.mutation(2, "editQueue", update.clone(), operation).await.unwrap();

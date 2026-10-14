@@ -137,7 +137,6 @@ impl EventLog {
             let mut messages = Vec::new();
             let mut after = 0_i64;
             let mut bytes = 2;
-            let mut text_bytes = 0;
             loop {
                 let row: Option<(i64, Option<String>)> = sqlx::query_as(
                     "SELECT e.sequence, CASE WHEN length(CAST(e.event_json AS BLOB)) <= 1048576 THEN e.event_json END
@@ -155,9 +154,8 @@ impl EventLog {
                 let opening = decode_delivery(sequence, json)?;
                 for source in roots(&opening.event) {
                     let message = editable(&mut tx, &session, &opening, source).await?;
-                    text_bytes += message.content.text_bytes();
                     bytes += serde_json::to_vec(&message)?.len() + 1;
-                    if messages.len() == 64 || text_bytes > 64 * 1024 || bytes > 1024 * 1024 {
+                    if messages.len() == 64 || bytes > 1024 * 1024 {
                         return Err(StoreError::PrefixTooLarge);
                     }
                     messages.push(message);

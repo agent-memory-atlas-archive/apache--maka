@@ -34,7 +34,7 @@ pub struct Preset {
     #[schemars(length(min = 1, max = 256))]
     pub worker: String,
     /// Exact installed names; an empty list permits reasoning without tools.
-    #[schemars(length(max = 128), extend("uniqueItems" = true))]
+    #[schemars(extend("uniqueItems" = true))]
     pub tools: Vec<String>,
     pub model: crate::ModelSelection,
     pub thinking_level: Option<maka_agent_facts::execution::ThinkingLevel>,

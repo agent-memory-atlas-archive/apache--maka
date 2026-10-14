@@ -170,11 +170,10 @@ impl DeliveredMessage {
         if !crate::archive::valid_projection_digest(&self.submitted_content_digest) {
             return Err("invalid submitted message digest");
         }
-        if self.content.text_bytes() > 64 * 1024
-            || serde_json::to_vec(self)
-                .map_err(|_| "invalid steering message")?
-                .len()
-                > 1024 * 1024
+        if serde_json::to_vec(self)
+            .map_err(|_| "invalid steering message")?
+            .len()
+            > 1024 * 1024
         {
             return Err("steering message exceeds durable capacity");
         }

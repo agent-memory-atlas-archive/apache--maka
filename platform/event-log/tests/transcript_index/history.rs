@@ -124,6 +124,58 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
         .await
         .unwrap();
     assert!(archived.sessions[0].archived);
+    // Large tool payloads remain available to exact readers but occupy a single
+    // metadata row in chat, in either paging direction.
+    for reverse in [false, true] {
+        let mut position = if reverse {
+            Position::Tail
+        } else {
+            Position::Start
+        };
+        let mut calls = 0;
+        let mut results = 0;
+        loop {
+            let Page::Ready {
+                chunks,
+                before,
+                after,
+                ..
+            } = log
+                .history_view(
+                    "a",
+                    through,
+                    position,
+                    false,
+                    maka_agent_ports::session::history::HistoryView::Conversation,
+                    4096,
+                    Some(8),
+                    64 * 1024,
+                )
+                .await
+                .unwrap()
+            else {
+                panic!("prepared")
+            };
+            for chunk in chunks {
+                if matches!(chunk.role, Role::ToolCall | Role::ToolResult) {
+                    assert_eq!((chunk.offset, chunk.total_bytes), (0, 0));
+                    assert!(chunk.text.is_empty());
+                    assert!(chunk.tool.is_some());
+                    if chunk.role == Role::ToolCall {
+                        calls += 1;
+                    } else {
+                        results += 1;
+                    }
+                }
+            }
+            position = match if reverse { before } else { after } {
+                Some(cursor) if reverse => Position::Before { cursor },
+                Some(cursor) => Position::After { cursor },
+                None => break,
+            };
+        }
+        assert_eq!((calls, results), (1, 1));
+    }
     let mut position = Position::Start;
     let mut messages: BTreeMap<String, (Role, String)> = BTreeMap::new();
     let mut pages = 0;
@@ -798,7 +850,7 @@ async fn bounded_history_windows_cover_sparse_rows_both_directions_and_validate_
     .unwrap();
     let mut records = Vec::new();
     let mut expected = Vec::new();
-    for index in 0..24 {
+    for index in 0..40 {
         let content = if index % 4 == 2 {
             let text = format!("{index} a🦀中é\0tail\r\n{}", "🌏".repeat(index % 5 + 1));
             expected.push(text.clone());
@@ -832,6 +884,40 @@ async fn bounded_history_windows_cover_sparse_rows_both_directions_and_validate_
     log.publish_session_import("window", count).await.unwrap();
     let through = *log.subscribe_commits().borrow();
     while !log.prepare_transcript("window", through, 32).await.unwrap() {}
+    for position in [Position::Start, Position::Tail] {
+        let page = log
+            .history_view(
+                "window",
+                through,
+                position,
+                false,
+                maka_agent_ports::session::history::HistoryView::Conversation,
+                32 * 1024,
+                None,
+                64 * 1024,
+            )
+            .await
+            .unwrap();
+        assert!(serde_json::to_vec(&page).unwrap().len() <= 64 * 1024);
+        let Page::Ready {
+            chunks,
+            before,
+            after,
+            ..
+        } = page
+        else {
+            panic!("prepared")
+        };
+        assert_eq!(
+            chunks
+                .iter()
+                .map(|chunk| chunk.text.clone())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(chunks.len(), 10);
+        assert!(before.is_none() && after.is_none());
+    }
     let mut canonical = None;
     for budget in [4, 5, 7, 13, 128 * 1024] {
         for reverse in [false, true] {

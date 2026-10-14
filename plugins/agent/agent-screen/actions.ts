@@ -179,7 +179,13 @@ export function history(
     },
     'agent',
     'history',
-    { sessionId: state.selected.id, through, position, includeThinking: true },
+    {
+      sessionId: state.selected.id,
+      through,
+      position,
+      includeThinking: true,
+      view: 'conversation',
+    },
     {},
     implicit ? [{ child: readingKey(state), method: 'tail', input: null }] : [],
   );
