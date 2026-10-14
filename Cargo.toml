@@ -107,7 +107,7 @@ maka-workspace-api = { path = "plugins/workspace/api" }
 maka-agent-authority = { path = "plugins/agent/authority" }
 maka-web-api = { path = "plugins/workspace/workspace-web/api" }
 maka-agent-api = { path = "plugins/agent/api" }
-gpui-kit = { git = "https://github.com/longbridge/gpui-kit", rev = "29c04574dc838a8e59e84c9c9f3c4d15983222ce", default-features = false, features = ["gpui-fast"] }
+gpui-kit = { git = "https://github.com/longbridge/gpui-kit", rev = "c5f8eca4a0759f8c0c7ed624eddfd03f1c93a5f2", default-features = false, features = ["gpui-fast"] }
 maka-transport = { path = "platform/transport" }
 cua-driver-sdk = { git = "https://github.com/maka-agent/cua", rev = "79c9b58a1b61f66ae966635c464e54cb2c8151d6" }
 cua-driver-contract = { git = "https://github.com/maka-agent/cua", rev = "79c9b58a1b61f66ae966635c464e54cb2c8151d6" }

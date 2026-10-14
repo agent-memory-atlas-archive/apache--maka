@@ -1,12 +1,12 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
-    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, Decorations, DrawPhase,
-    Drawable, Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent,
-    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Platform, PlatformTextSystem, Point, Render, ResizeEdge, Result,
-    SharedString, Size, SystemNotification, SystemNotificationResponse, Task, TestDispatcher,
-    TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window,
-    WindowBounds, WindowHandle, WindowOptions, WindowVisibility, app::GpuiMode,
+    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, Decorations, DisplayId,
+    DrawPhase, Drawable, Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global,
+    InputEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Platform, PlatformTextSystem, Point, Render, ResizeEdge,
+    Result, SharedString, Size, SystemNotification, SystemNotificationResponse, Task,
+    TestDispatcher, TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem, VisualContext,
+    Window, WindowBounds, WindowHandle, WindowOptions, WindowVisibility, app::GpuiMode,
     window::ElementArenaScope,
 };
 use crate::{PlatformInputHandler, PlatformWindow};
@@ -523,6 +523,36 @@ impl TestAppContext {
     ) {
         self.test_window(window_handle)
             .simulate_visibility_change(visibility);
+    }
+
+    /// Simulates connecting a display.
+    pub fn simulate_display_added(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<std::time::Duration>,
+    ) {
+        self.test_platform
+            .simulate_display_added(display_id, refresh_interval);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_platform(&self) -> &TestPlatform {
+        &self.test_platform
+    }
+
+    /// Simulates disconnecting a display.
+    pub fn simulate_display_removed(&self, display_id: DisplayId) {
+        self.test_platform.simulate_display_removed(display_id);
+    }
+
+    /// Simulates a connected display changing its refresh interval.
+    pub fn simulate_display_refresh_interval_change(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<std::time::Duration>,
+    ) {
+        self.test_platform
+            .simulate_display_refresh_interval_change(display_id, refresh_interval);
     }
 
     /// Simulates visible viewport changes without resizing the window's layout area.

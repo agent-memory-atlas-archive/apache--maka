@@ -123,6 +123,7 @@ actions!(
         MoveToNextWord,
         Escape,
         ToggleCodeActions,
+        ShowCompletions,
         Search,
         Replace,
         GoToDefinition,
@@ -344,6 +345,58 @@ struct PasteTarget {
     selections: Vec<CursorSelection>,
 }
 
+/// Caret positioning geometry from the input's latest prepaint.
+///
+/// Unlike `last_layout` (published at paint time), this is stashed during
+/// prepaint so caret-anchored popups can position themselves from the
+/// current frame's geometry in their deferred prepaint, instead of the
+/// previous frame's paint.
+#[derive(Clone, Copy, Debug)]
+#[doc(hidden)]
+pub struct PrepaintCaretGeometry {
+    cursor_bounds: Bounds<Pixels>,
+    line_height: Pixels,
+    input_bounds: Bounds<Pixels>,
+    scroll_offset: Point<Pixels>,
+}
+
+impl PrepaintCaretGeometry {
+    pub(super) fn new(
+        cursor_bounds: Bounds<Pixels>,
+        line_height: Pixels,
+        input_bounds: Bounds<Pixels>,
+        scroll_offset: Point<Pixels>,
+    ) -> Self {
+        Self {
+            cursor_bounds,
+            line_height,
+            input_bounds,
+            scroll_offset,
+        }
+    }
+
+    /// The active caret's bounds from the fresh prepaint layout.
+    pub fn cursor_bounds(&self) -> Bounds<Pixels> {
+        self.cursor_bounds
+    }
+
+    /// Line height from the fresh prepaint layout.
+    pub fn line_height(&self) -> Pixels {
+        self.line_height
+    }
+
+    /// The input container bounds from the fresh prepaint.
+    pub fn input_bounds(&self) -> Bounds<Pixels> {
+        self.input_bounds
+    }
+
+    /// The scroll offset that will be in effect after paint, clamped like
+    /// `InputBaseState::update_scroll_offset` clamps it.
+    pub fn scroll_offset(&self) -> Point<Pixels> {
+        self.scroll_offset
+    }
+}
+
 /// The shared text-editing engine behind [`crate::input::InputState`],
 /// [`crate::input::TextareaState`] and [`crate::input::EditorState`].
 ///
@@ -405,6 +458,12 @@ pub struct InputBaseState<M: InputModeKind> {
     /// The marked range is the temporary insert text on IME typing.
     pub(super) ime_marked_range: Option<CursorSelection>,
     pub(super) last_layout: Option<LastLayout>,
+    /// Fresh caret geometry stashed during prepaint for caret-anchored popups.
+    ///
+    /// Popups are positioned in their deferred prepaint, which runs after the
+    /// input's prepaint but before its paint, so they read this instead of
+    /// the previous frame's `last_layout`.
+    pub(crate) prepaint_caret_geometry: Option<PrepaintCaretGeometry>,
     pub(super) last_cursor: Option<usize>,
     /// The input container bounds
     pub(super) input_bounds: Bounds<Pixels>,
@@ -578,6 +637,15 @@ impl<M: InputModeKind> InputBaseState<M> {
     pub fn cursor_layout(&self) -> Option<(Bounds<Pixels>, Pixels)> {
         let layout = self.last_layout.as_ref()?;
         Some((layout.cursor_bounds?, layout.line_height))
+    }
+
+    /// Caret geometry from the latest prepaint, for caret-anchored popups.
+    ///
+    /// Popups positioned in their deferred prepaint read this to anchor to
+    /// the current frame's caret instead of the previous frame's paint.
+    #[doc(hidden)]
+    pub fn prepaint_caret_geometry(&self) -> Option<PrepaintCaretGeometry> {
+        self.prepaint_caret_geometry
     }
 
     pub fn input_bounds(&self) -> Bounds<Pixels> {
@@ -802,6 +870,7 @@ impl<M: InputModeKind> InputBaseState<M> {
             number_max: None,
             mode: LayoutMode::default(),
             last_layout: None,
+            prepaint_caret_geometry: None,
             last_bounds: None,
             last_selected_range: None,
             column_select_start: None,
@@ -2239,23 +2308,32 @@ impl<M: InputModeKind> InputBaseState<M> {
 
         if let Some(handler) = self.context_menu_handler.clone() {
             let capabilities = self.context_menu_capabilities();
-            // The callback may inspect this same input. Deliver outside its lease.
-            let weak = cx.weak_entity();
+            let input = cx.weak_entity();
+            // The handler runs with the input released, so a custom builder can
+            // read it (cursor, selection, text) to build its items.
             window.defer(cx, move |window, cx| {
+                if input.upgrade().is_none() {
+                    return;
+                }
                 let previous_focus = window.focused(cx);
                 handler(NativeMenu::new(), capabilities, position, window, cx);
-                let _ = weak.update(cx, |this, cx| {
-                    if window.focused(cx) == previous_focus
-                        && !this.focus_handle.is_focused(window)
-                        && this.has_selection_focus(window, cx)
-                    {
-                        return;
-                    }
-                    let menu_focus = window.focused(cx).filter(|focus| {
-                        Some(focus) != previous_focus.as_ref() && *focus != this.focus_handle
-                    });
-                    this.set_selection_focus(menu_focus, cx);
-                });
+                // A drawn menu takes focus synchronously; native menus leave it
+                // on the input. Capture it here rather than in the handler.
+                input
+                    .update(cx, |this, cx| {
+                        if window.focused(cx) == previous_focus
+                            && !this.focus_handle.is_focused(window)
+                            && this.has_selection_focus(window, cx)
+                        {
+                            // A custom handler can reuse an already-focused popup.
+                            return;
+                        }
+                        let menu_focus = window.focused(cx).filter(|focus| {
+                            Some(focus) != previous_focus.as_ref() && *focus != this.focus_handle
+                        });
+                        this.set_selection_focus(menu_focus, cx);
+                    })
+                    .ok();
             });
         }
     }
@@ -2606,8 +2684,10 @@ impl<M: InputModeKind> InputBaseState<M> {
         let old_offset = self.scroll_handle.offset();
         self.update_scroll_offset(Some(old_offset + delta), cx);
 
-        // Only stop propagation if the offset actually changed
-        if self.scroll_handle.offset() != old_offset {
+        // Text that has room to scroll keeps a scroll over it even where the
+        // text ends, so reaching the end does not scroll the region around the
+        // input; text that fits leaves the scroll to that region.
+        if self.scroll_handle.offset() != old_offset || self.overflows_along(delta) {
             cx.stop_propagation();
         }
 
@@ -2617,6 +2697,19 @@ impl<M: InputModeKind> InputBaseState<M> {
         // The handles follow the text; the menu would sit over whatever
         // scrolls underneath it, so it steps aside until the finger lifts.
         self.edit_menu_on_scroll(event.touch_phase, cx);
+    }
+
+    /// Whether the text has room to scroll along the axis `delta` mostly
+    /// moves on. A trackpad swipe drifts a little off its axis, so the drift
+    /// alone does not claim the scroll.
+    fn overflows_along(&self, delta: Point<Pixels>) -> bool {
+        if delta.y.abs() >= delta.x.abs() {
+            self.is_multi_line()
+                && delta.y != px(0.)
+                && self.scroll_size.height > self.input_bounds.size.height
+        } else {
+            self.scroll_size.width > self.input_bounds.size.width
+        }
     }
 
     pub(super) fn update_scroll_offset(
@@ -3222,6 +3315,53 @@ impl<M: InputModeKind> InputBaseState<M> {
     /// Read current native prepaint data without granting text or selection mutation.
     pub fn text_accessibility(&self) -> super::InputTextAccessibility {
         self.text_accessibility.clone()
+    }
+
+    /// Add `range` as an additional selection, keeping the existing ones —
+    /// the programmatic equivalent of Alt-clicking another cursor into the
+    /// text.
+    ///
+    /// The range is clipped to the text and expanded to character
+    /// boundaries, like [`Self::set_selected_range`]. A range already
+    /// covered by a selection adds nothing. Overlapping selections are merged.
+    /// On a single-line input there is no second cursor to add, so the call
+    /// replaces the selection instead.
+    /// The view scrolls to the new selection.
+    pub fn add_selection(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
+        if !self.is_multi_line() {
+            self.set_selected_range(range, cx);
+            return;
+        }
+
+        let range = self.normalize_token_range(range);
+        let end_bias = if range.start == range.end {
+            Bias::Left
+        } else {
+            Bias::Right
+        };
+        let start = self.cursor_boundary(range.start, Bias::Left);
+        // Match set_selected_range: expand UTF-8 boundaries first, then place
+        // the selection endpoint without splitting a CRLF newline.
+        let end = self.cursor_boundary(self.text.clip_offset(range.end, end_bias), Bias::Left);
+
+        for sel in self.selections.iter() {
+            if sel.start <= start && end <= sel.end {
+                return;
+            }
+        }
+
+        self.undo_manager.break_transaction_coalescing();
+        self.selected_word_range = None;
+        self.pause_blink_cursor(cx);
+        M::hide_context_menu(self, cx);
+        M::clear_inline_completion(self, cx);
+        let id = self.selections.generate_id();
+        let mut selection = CursorSelection::new(id, start, end);
+        selection.column_anchor = self.preferred_column_for(end);
+        self.selections.add(selection);
+        self.selections.merge_overlapping();
+        self.scroll_to(end, None, cx);
+        cx.notify();
     }
 
     /// Resolve a mouse position to a byte offset in the text.
@@ -6195,6 +6335,42 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_set_line_number_notifies_only_on_change(cx: &mut TestAppContext) {
+        use std::{cell::Cell, rc::Rc};
+
+        cx.update(crate::init);
+        let mut input = None;
+        let window = cx.open_window(size(px(400.), px(100.)), |window, cx| {
+            input = Some(cx.new(|cx| crate::input::EditorState::new(window, cx)));
+            gpui::EmptyView
+        });
+        let input = input.unwrap();
+        let shown = input.read_with(cx, |state, _| state.mode.line_number());
+        let notifications = Rc::new(Cell::new(0));
+        let count = notifications.clone();
+        let _subscription =
+            cx.update(|cx| cx.observe(&input, move |_, _| count.set(count.get() + 1)));
+
+        window
+            .update(cx, |_, window, cx| {
+                input.update(cx, |state, cx| state.set_line_number(shown, window, cx))
+            })
+            .unwrap();
+        assert_eq!(notifications.get(), 0);
+
+        window
+            .update(cx, |_, window, cx| {
+                input.update(cx, |state, cx| state.set_line_number(!shown, window, cx))
+            })
+            .unwrap();
+        assert_eq!(notifications.get(), 1);
+        assert_eq!(
+            input.read_with(cx, |state, _| state.mode.line_number()),
+            !shown
+        );
+    }
+
+    #[gpui::test]
     fn test_set_value_on_unfocused_input_stays_quiet(cx: &mut TestAppContext) {
         use std::{cell::Cell, rc::Rc};
 
@@ -6427,6 +6603,29 @@ mod tests {
     }
 
     #[gpui::test]
+    fn context_menu_handler_can_read_its_input(cx: &mut TestAppContext) {
+        use std::{cell::Cell, rc::Rc};
+        cx.update(crate::init);
+        let input_view = InputView::new(cx);
+        let mut cx = VisualTestContext::from_window(input_view.window_handle.into(), cx);
+        let input = input_view.input;
+        let cursor = Rc::new(Cell::new(None));
+
+        cx.update(|window, cx| {
+            input.update(cx, |state, cx| {
+                state.set_value("hello", window, cx);
+                let weak = cx.weak_entity();
+                let cursor = cursor.clone();
+                state.on_context_menu(Rc::new(move |_, _, _, _, cx| {
+                    cursor.set(weak.upgrade().map(|input| input.read(cx).cursor()));
+                }));
+                state.handle_right_click_menu(point(px(0.), px(0.)), 2, window, cx);
+            })
+        });
+        assert_eq!(cursor.get(), Some(2));
+    }
+
+    #[gpui::test]
     fn test_readonly_rejects_user_edits_only(cx: &mut TestAppContext) {
         let input_view = InputView::new(cx);
         let mut cx = VisualTestContext::from_window(input_view.window_handle.into(), cx);
@@ -6544,6 +6743,43 @@ mod tests {
                 );
             });
         });
+    }
+
+    /// Regression test: changing the auto-grow limits keeps the rows fitted to
+    /// the text. `set_auto_grow` used to start over at `min_rows`, and the rows
+    /// were counted again only on the next edit or wrap width change.
+    #[gpui::test]
+    fn test_set_auto_grow_keeps_rows_fitted(cx: &mut TestAppContext) {
+        let mut input = None;
+        let window = cx.open_window(size(px(720.), px(400.)), |window, cx| {
+            cx.set_global(Theme::default());
+            super::super::init(cx);
+            let state = cx.new(|cx| crate::input::TextareaState::new(window, cx).auto_grow(1, 10));
+            input = Some(state.clone());
+            TestRoot(state)
+        });
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        let input = input.unwrap();
+
+        let text: String = (1..=8)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        cx.update(|window, cx| {
+            input.update(cx, |state, cx| state.set_value(text, window, cx));
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| input.read_with(cx, |state, _| assert_eq!(state.mode.rows(), 8)));
+
+        // A larger maximum keeps all eight rows.
+        cx.update(|_, cx| input.update(cx, |state, cx| state.set_auto_grow(1, 12, cx)));
+        cx.run_until_parked();
+        cx.update(|_, cx| input.read_with(cx, |state, _| assert_eq!(state.mode.rows(), 8)));
+
+        // A smaller maximum caps them.
+        cx.update(|_, cx| input.update(cx, |state, cx| state.set_auto_grow(1, 4, cx)));
+        cx.run_until_parked();
+        cx.update(|_, cx| input.read_with(cx, |state, _| assert_eq!(state.mode.rows(), 4)));
     }
 
     /// Regression test: `scroll_to` at end-of-buffer must produce a deferred
@@ -8673,6 +8909,100 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    fn test_prewrap_counts_wrapped_rows_before_the_first_paint(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let text = "select id, name, email, phone from users where active\nlimit 10";
+        for (soft_wrap, wraps) in [(true, true), (false, false)] {
+            let mut input = None;
+            cx.open_window(size(px(400.), px(100.)), |window, cx| {
+                let font = window.text_style().font();
+                let editor = cx.new(|cx| {
+                    let mut state = crate::input::EditorState::new(window, cx)
+                        .soft_wrap(soft_wrap)
+                        .default_value(text);
+                    state.prewrap(font, px(14.), px(120.), cx);
+                    state
+                });
+                input = Some(editor);
+                gpui::EmptyView
+            });
+            let rows = input
+                .unwrap()
+                .read_with(cx, |state, _| state.display_map().wrap_row_count());
+            // Two lines; at 120px the first wraps unless soft wrap is off.
+            assert_eq!(rows > 2, wraps, "soft_wrap({soft_wrap}): {rows} rows");
+            if !wraps {
+                assert_eq!(rows, 2);
+            }
+        }
+    }
+
+    /// Prewrap counts with the state's wrapping indent, as the first layout
+    /// does: continuation rows indented as deep as their line take more rows.
+    #[gpui::test]
+    fn test_prewrap_wraps_with_the_wrapping_indent(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let text = "            select id, name, email, phone from users where active";
+        let mut rows = Vec::new();
+        for indent in [WrappingIndent::Same, WrappingIndent::None] {
+            let mut input = None;
+            cx.open_window(size(px(400.), px(100.)), |window, cx| {
+                let font = window.text_style().font();
+                input = Some(cx.new(|cx| {
+                    let mut state = crate::input::EditorState::new(window, cx)
+                        .wrapping_indent(indent)
+                        .default_value(text);
+                    state.prewrap(font, px(14.), px(200.), cx);
+                    state
+                }));
+                gpui::EmptyView
+            });
+            rows.push(
+                input
+                    .unwrap()
+                    .read_with(cx, |state, _| state.display_map().wrap_row_count()),
+            );
+        }
+        assert!(rows[0] > rows[1], "rows with Same, None: {rows:?}");
+    }
+
+    /// Once the editor is laid out, layout owns the wrap and prewrap leaves it.
+    #[gpui::test]
+    fn test_prewrap_does_nothing_once_laid_out(cx: &mut TestAppContext) {
+        struct Frame(Entity<crate::input::EditorState>);
+        impl Render for Frame {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                crate::input::InputBase::new("frame")
+                    .h(px(100.))
+                    .child(crate::input::Editor::new(&self.0))
+            }
+        }
+
+        cx.update(crate::init);
+        let text = "select id, name, email, phone from users where active\nlimit 10";
+        let mut input = None;
+        let window = cx.open_window(size(px(400.), px(100.)), |window, cx| {
+            let state = cx.new(|cx| crate::input::EditorState::new(window, cx).default_value(text));
+            input = Some(state.clone());
+            Frame(state)
+        });
+        let input = input.unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        let laid_out = input.read_with(&cx, |state, _| state.display_map().wrap_row_count());
+        assert!(laid_out >= 2, "laid out to {laid_out} rows");
+        let font = cx.update(|window, _| window.text_style().font());
+        input.update(&mut cx, |state, cx| {
+            state.prewrap(font, px(14.), px(60.), cx)
+        });
+        assert_eq!(
+            input.read_with(&cx, |state, _| state.display_map().wrap_row_count()),
+            laid_out
+        );
+    }
+
     /// Soft wrap is on by default, for every mode that can wrap.
     ///
     /// The default lives in the shared constructor, where a mode-specific
@@ -9147,6 +9477,179 @@ mod tests {
         );
         view.input
             .read_with(&cx, |state, _| assert_eq!(state.selections.len(), 2));
+    }
+
+    #[gpui::test]
+    fn test_add_selection(cx: &mut TestAppContext) {
+        let view = InputView::<EditorMode>::new(cx);
+        let mut cx = VisualTestContext::from_window(view.window_handle.into(), cx);
+        cx.update(|window, cx| {
+            view.input.update(cx, |state, cx| {
+                state.focus(window, cx);
+                state.set_value("foo bar foo", window, cx);
+                state.set_selected_range(0..3, cx);
+                // The programmatic second cursor: the next occurrence.
+                state.add_selection(8..11, cx);
+                // Adding a range that is already selected changes nothing.
+                state.add_selection(0..3, cx);
+            });
+        });
+        view.input.read_with(&cx, |state, _| {
+            let mut ranges: Vec<Range<usize>> =
+                state.selections.iter().map(|s| s.start..s.end).collect();
+            ranges.sort_by_key(|r| r.start);
+            assert_eq!(ranges, vec![0..3, 8..11]);
+        });
+        // Typing replaces every selection at once.
+        cx.simulate_keystrokes("x");
+        view.input.read_with(&cx, |state, _| {
+            assert_eq!(state.text.to_string(), "x bar x")
+        });
+    }
+
+    #[gpui::test]
+    fn test_add_selection_preserves_crlf_boundaries(cx: &mut TestAppContext) {
+        let view = InputView::build_textarea(cx, |state| state.default_value("a\r\nb"));
+        let mut cx = VisualTestContext::from_window(view.window_handle.into(), cx);
+        cx.update(|window, cx| {
+            view.input.update(cx, |state, cx| {
+                state.focus(window, cx);
+                state.set_selected_range(4..4, cx);
+                state.add_selection(2..2, cx);
+                let ranges: Vec<_> = state.selections.iter().map(|s| s.start..s.end).collect();
+                assert_eq!(ranges, vec![4..4, 1..1]);
+            });
+        });
+        cx.simulate_keystrokes("x");
+        view.input.read_with(&cx, |state, _| {
+            assert_eq!(state.value(), "ax\r\nbx");
+        });
+        cx.update(|window, cx| {
+            view.input.update(cx, |state, cx| {
+                state.set_value("a\r\nb", window, cx);
+                state.set_selected_range(4..4, cx);
+                state.add_selection(2..3, cx);
+                state.cut(&Cut, window, cx);
+                assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), "\r\n");
+                assert_eq!(state.value(), "ab");
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn test_add_selection_merges_overlaps_before_copy_and_cut(cx: &mut TestAppContext) {
+        let view = InputView::<EditorMode>::new(cx);
+        let mut cx = VisualTestContext::from_window(view.window_handle.into(), cx);
+        cx.update(|window, cx| {
+            view.input.update(cx, |state, cx| {
+                // Cover partial overlaps, a containing range, and a bridge
+                // between two previously disjoint selections.
+                for additions in [vec![2..5], vec![0..5], vec![4..5, 2..4]] {
+                    state.set_value("abcdef", window, cx);
+                    state.set_selected_range(0..3, cx);
+                    let active_id = state.active_selection().id;
+                    for range in additions {
+                        state.add_selection(range, cx);
+                    }
+                    assert_eq!(state.active_selection().id, active_id);
+                    assert_eq!(state.selected_range(), 0..5);
+                    assert_eq!(state.selections.len(), 1);
+                    state.copy(&Copy, window, cx);
+                    assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), "abcde");
+                    state.cut(&Cut, window, cx);
+                    assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), "abcde");
+                    assert_eq!(state.value(), "f");
+                    state.undo(&Undo, window, cx);
+                    assert_eq!(state.value(), "abcdef");
+                    assert_eq!(state.selected_range(), 0..5);
+                }
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn test_add_selection_clears_inline_completion(cx: &mut TestAppContext) {
+        use crate::input::CompletionProvider;
+        use gpui::Task;
+        use lsp_types::{
+            CompletionContext, CompletionResponse, InlineCompletionContext, InlineCompletionItem,
+            InlineCompletionResponse,
+        };
+        use std::time::Duration;
+
+        struct Provider(Rc<Cell<usize>>);
+
+        impl CompletionProvider for Provider {
+            fn is_completion_trigger(&self, _: usize, _: &str, _: &mut App) -> bool {
+                false
+            }
+
+            fn completions(
+                &self,
+                _: &Rope,
+                _: usize,
+                _: CompletionContext,
+                _: &mut Window,
+                _: &mut App,
+            ) -> Task<anyhow::Result<CompletionResponse>> {
+                Task::ready(Ok(CompletionResponse::Array(vec![])))
+            }
+
+            fn inline_completion(
+                &self,
+                _: &Rope,
+                _: usize,
+                _: InlineCompletionContext,
+                _: &mut Window,
+                _: &mut App,
+            ) -> Task<anyhow::Result<InlineCompletionResponse>> {
+                self.0.set(self.0.get() + 1);
+                Task::ready(Ok(InlineCompletionResponse::Array(vec![])))
+            }
+        }
+
+        let view = InputView::<EditorMode>::new(cx);
+        let mut cx = VisualTestContext::from_window(view.window_handle.into(), cx);
+        let calls = Rc::new(Cell::new(0));
+        cx.update(|window, cx| {
+            view.input.update(cx, |state, cx| {
+                state.focus(window, cx);
+                state.set_value("aa\naa", window, cx);
+                state.set_selected_range(2..2, cx);
+                state.extras.inline_completion.item = Some(InlineCompletionItem {
+                    insert_text: "suggestion".into(),
+                    filter_text: None,
+                    range: None,
+                    command: None,
+                    insert_text_format: None,
+                });
+                state.add_selection(5..5, cx);
+                assert!(!state.has_inline_completion());
+                state.indent_inline(&IndentInline, window, cx);
+                assert_eq!(state.value(), "aa  \naa  ");
+                assert_eq!(state.selections.len(), 2);
+
+                // The active cursor stays put, so only canceling the task
+                // prevents this pending request from fetching a suggestion.
+                state.set_value("aa\naa", window, cx);
+                state.set_selected_range(2..2, cx);
+                state.extras.lsp.completion_provider = Some(Rc::new(Provider(calls.clone())));
+                state.schedule_inline_completion(window, cx);
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            view.input
+                .update(cx, |state, cx| state.add_selection(5..5, cx));
+        });
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(calls.get(), 0);
+        view.input.read_with(&cx, |state, _| {
+            assert!(!state.has_inline_completion());
+            assert_eq!(state.selections.len(), 2);
+            assert_eq!(state.value(), "aa\naa");
+        });
     }
 
     #[gpui::test]
@@ -11252,6 +11755,7 @@ impl InputBaseState<crate::input::TextareaMode> {
 
     pub fn set_auto_grow(&mut self, min_rows: usize, max_rows: usize, cx: &mut Context<Self>) {
         self.mode = LayoutMode::auto_grow(min_rows, max_rows.max(min_rows));
+        self.mode.update_auto_grow(&self.display_map);
         cx.notify();
     }
 
@@ -11413,9 +11917,47 @@ impl InputBaseState<crate::input::EditorMode> {
         self
     }
 
+    /// The editor's display map for querying wrapped rows and display positions.
+    ///
+    /// Text is prepared during layout or by [`Self::prewrap`].
+    pub fn display_map(&self) -> &DisplayMap {
+        &self.display_map
+    }
+
+    /// Wrap the text for `font`, `font_size` and `width` before the first
+    /// layout, so that [`DisplayMap::wrap_row_count`] is known on the first frame.
+    ///
+    /// Call it after setting the value and the wrapping indent. `width` is the
+    /// width of the editor's text area: its width less its padding, and less
+    /// the line-number gutter when line numbers are shown. It wraps as layout
+    /// does, a little short of that width and with the state's wrapping
+    /// indent. Once the editor has been laid out this does nothing, and layout
+    /// keeps the wrap up to date.
+    pub fn prewrap(
+        &mut self,
+        font: gpui::Font,
+        font_size: Pixels,
+        width: Pixels,
+        cx: &mut Context<Self>,
+    ) {
+        if self.last_layout.is_some() {
+            return;
+        }
+        let wrap_width = (width - RIGHT_MARGIN).max(px(1.));
+        self.display_map.set_font(font, font_size, cx);
+        self.display_map
+            .on_layout_changed(self.soft_wrap.then_some(wrap_width), cx);
+        self.display_map
+            .set_wrapping_indent(self.wrapping_indent, cx);
+        self.display_map.ensure_text_prepared(&self.text, cx);
+    }
+
     /// Set line number.
     pub fn set_line_number(&mut self, line_number: bool, _: &mut Window, cx: &mut Context<Self>) {
         if let LayoutMode::CodeEditor { line_number: l, .. } = &mut self.mode {
+            if *l == line_number {
+                return;
+            }
             *l = line_number;
         }
         cx.notify();

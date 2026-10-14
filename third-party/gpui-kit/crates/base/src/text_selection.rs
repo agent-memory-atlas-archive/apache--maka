@@ -1,4 +1,5 @@
 use std::{
+    cell::{Cell, RefCell},
     collections::HashMap,
     ops::Range,
     rc::Rc,
@@ -793,8 +794,11 @@ struct SelectableTextState {
     enabled: bool,
     admission: Arc<()>,
     fallback_copy_text: String,
-    projected_copy_text: Option<String>,
-    runs: Vec<TextSelectionRun>,
+    /// The selected text as the participant last painted it. Painting
+    /// projects it, which is not a change of the participant.
+    projected_copy_text: RefCell<Option<String>>,
+    /// The participant's text as it last painted it, for hit testing.
+    runs: RefCell<Vec<TextSelectionRun>>,
     local_selection: bool,
     snapshot: Option<TextSelectionSnapshot>,
     on_focus: Option<FocusCallback>,
@@ -813,8 +817,8 @@ impl SelectableTextState {
             enabled: true,
             admission: Arc::new(()),
             fallback_copy_text: fallback_copy_text.into(),
-            projected_copy_text: None,
-            runs: Vec::new(),
+            projected_copy_text: RefCell::new(None),
+            runs: RefCell::new(Vec::new()),
             local_selection: false,
             snapshot: None,
             on_focus: None,
@@ -833,13 +837,13 @@ impl SelectableTextState {
     /// Sets the text copied by this participant when it participates in selection.
     fn set_fallback_copy_text(&mut self, text: impl Into<String>) {
         self.fallback_copy_text = text.into();
-        self.projected_copy_text = None;
+        *self.projected_copy_text.get_mut() = None;
     }
 
     /// Marks participant-local selection (for example select-all) as active.
     fn set_local_selection(&mut self, active: bool) {
         if self.local_selection != active {
-            self.projected_copy_text = None;
+            *self.projected_copy_text.get_mut() = None;
         }
         self.local_selection = active;
     }
@@ -850,8 +854,8 @@ impl SelectableTextState {
     /// Call this once per painted run. A snapshot change or
     /// Clearing window selection invalidates the cache immediately, so copy
     /// never returns text from a previous projection while waiting to repaint.
-    fn update_runs(&mut self, runs: &[TextSelectionRun]) -> TextSelectionProjection {
-        self.runs = runs.to_vec();
+    fn update_runs(&self, runs: &[TextSelectionRun]) -> TextSelectionProjection {
+        *self.runs.borrow_mut() = runs.to_vec();
         let states = if self.local_selection && !runs.is_empty() {
             TextSelectionProjection {
                 ranges: runs.iter().map(|run| Some(0..run.text.len())).collect(),
@@ -879,7 +883,7 @@ impl SelectableTextState {
             })
             .collect::<Vec<_>>();
         selected_runs.sort_by_key(|(order, index, _)| (*order, *index));
-        self.projected_copy_text =
+        *self.projected_copy_text.borrow_mut() =
             Some(selected_runs.into_iter().map(|(_, _, text)| text).collect());
         states
     }
@@ -912,13 +916,19 @@ impl SelectableTextState {
             return;
         }
         self.snapshot = snapshot;
-        self.projected_copy_text = None;
+        *self.projected_copy_text.get_mut() = None;
         cx.emit(TextSelectionEvent::SelectionChanged(snapshot));
+    }
+
+    /// Whether clearing the participant would change anything: it is part
+    /// of the window selection, or selected on its own.
+    fn has_selection_to_clear(&self) -> bool {
+        self.snapshot.is_some() || self.local_selection
     }
 
     fn clear_state(&mut self, cx: &mut Context<Self>) -> Option<ClearHandler> {
         self.snapshot = None;
-        self.projected_copy_text = None;
+        *self.projected_copy_text.get_mut() = None;
         self.local_selection = false;
         cx.emit(TextSelectionEvent::Cleared);
         cx.emit(TextSelectionEvent::SelectionChanged(None));
@@ -969,6 +979,7 @@ impl SelectableTextState {
             callback: self.copy.clone(),
             fallback: self
                 .projected_copy_text
+                .borrow()
                 .clone()
                 .unwrap_or_else(|| self.fallback_copy_text.clone()),
         })
@@ -1003,10 +1014,10 @@ impl TextSelectionHandle {
 
     /// Revoke original participant admission synchronously, before another paint.
     pub fn set_enabled(&self, enabled: bool, cx: &mut App) {
+        if self.0.read(cx).enabled == enabled {
+            return;
+        }
         let revoked = self.0.update(cx, |state, cx| {
-            if state.enabled == enabled {
-                return false;
-            }
             state.enabled = enabled;
             if !enabled {
                 state.admission = Arc::new(());
@@ -1051,7 +1062,8 @@ impl TextSelectionHandle {
             move |position, cx| {
                 let state = weak.upgrade()?;
                 let state = state.read(cx);
-                let [run] = state.runs.as_slice() else {
+                let runs = state.runs.borrow();
+                let [run] = runs.as_slice() else {
                     return None;
                 };
                 Some(TextSelectionContentKey::new(
@@ -1072,11 +1084,13 @@ impl TextSelectionHandle {
             let state = state.read(cx);
             let scope = state
                 .participants
+                .borrow()
                 .get(&self.entity_id())?
                 .registration
                 .scope;
             state
                 .participants
+                .borrow()
                 .values()
                 .filter(|entry| entry.registration.scope == scope)
                 .filter_map(|entry| {
@@ -1092,7 +1106,7 @@ impl TextSelectionHandle {
             .filter_map(|(participant, order)| {
                 participant.query(cx, |participant, _| {
                     if !participant.local_selection && participant.copy.is_none() {
-                        let runs = participant.runs.clone();
+                        let runs = participant.runs.borrow().clone();
                         participant.update_runs(&runs);
                     }
                     participant.copy_item(order)
@@ -1128,6 +1142,7 @@ impl TextSelectionHandle {
         let scope = state
             .read(cx)
             .participants
+            .borrow()
             .get(&self.entity_id())
             .map(|entry| entry.registration.scope);
         let Some(scope) = scope else {
@@ -1182,10 +1197,13 @@ impl TextSelectionHandle {
         let Some(state) = WindowSelectionState::at(placement_group(window), cx) else {
             return;
         };
+        schedule_selection_finish_frame(&state, window, cx);
+        let Some(registration) = state.read(cx).register_quietly(self, registration, cx) else {
+            return;
+        };
         state.query(cx, |state, cx| {
             state.register_participant(self.clone(), registration, cx)
         });
-        schedule_selection_finish_frame(&state, window, cx);
     }
 
     // Plain text supplies its own original laid-out caret geometry. Preserve
@@ -1208,6 +1226,7 @@ impl TextSelectionHandle {
             state
                 .read(cx)
                 .participants
+                .borrow()
                 .get(&self.entity_id())
                 .and_then(|participant| participant.registration.selection_edges)
         });
@@ -1229,7 +1248,7 @@ impl TextSelectionHandle {
             .and_then(|group| group.in_window(window))
         {
             state.query(cx, |state, cx| {
-                if let Some(participant) = state.participants.get_mut(&self.entity_id())
+                if let Some(participant) = state.participants.get_mut().get_mut(&self.entity_id())
                     && participant.registration.selection_edges != edges
                 {
                     Rc::make_mut(&mut participant.registration).selection_edges = edges;
@@ -1244,12 +1263,12 @@ impl TextSelectionHandle {
 
     /// Projects the current snapshot onto plain-text runs and caches their copy text.
     pub fn update_runs(&self, runs: &[TextSelectionRun], cx: &mut App) -> TextSelectionProjection {
-        self.0.query(cx, |state, _| state.update_runs(runs))
+        self.0.read(cx).update_runs(runs)
     }
 
     // Rich text renders its own selection; retain geometry only for word hit testing.
     pub(crate) fn set_hit_test_runs(&self, runs: &[TextSelectionRun], cx: &mut App) {
-        self.0.query(cx, |state, _| state.runs = runs.to_vec());
+        *self.0.read(cx).runs.borrow_mut() = runs.to_vec();
     }
 
     /// Subscribes to participant selection notifications.
@@ -1506,15 +1525,18 @@ impl TouchSelection {
 #[derive(Default)]
 struct WindowSelectionState {
     group: Option<SelectionGroupKey>,
-    participants: HashMap<EntityId, ParticipantRegistration>,
+    /// What each participant painted this frame, or last painted. Painting
+    /// reports it without changing the selection: see
+    /// [`WindowSelectionState::register_quietly`].
+    participants: RefCell<HashMap<EntityId, ParticipantRegistration>>,
     active_scope: TextSelectionScopeId,
     anchor: Option<SelectionEndpoint>,
     cursor: Option<SelectionEndpoint>,
     pending_extension_anchor: Option<SelectionEndpoint>,
     selecting: Option<gpui::InputGesture>,
     did_hit_text: bool,
-    frame_generation: u64,
-    finish_frame_scheduled: bool,
+    frame_generation: Cell<u64>,
+    finish_frame_scheduled: Cell<bool>,
     refresh_held_cursor: bool,
     mouse_down_prepared: bool,
     auto_scroll: AutoScroll,
@@ -1531,7 +1553,7 @@ struct WindowSelectionState {
 
 impl WindowSelectionState {
     fn resolve_content_keys(state: &Entity<Self>, cx: &mut App) {
-        let pending = state.update(cx, |state, _| {
+        let pending = state.read_with(cx, |state, _| {
             [
                 state
                     .anchor
@@ -1543,6 +1565,11 @@ impl WindowSelectionState {
                     .and_then(|endpoint| endpoint.content_key_resolver.clone()),
             ]
         });
+        // Nothing to resolve and no selection to publish: an event that
+        // changed nothing does not change the state either.
+        if pending.iter().all(Option::is_none) && !state.read(cx).is_active() {
+            return;
+        }
         let resolved =
             pending.map(|pending| pending.and_then(|(callback, point)| callback(point, cx)));
         state.update(cx, |state, cx| {
@@ -1647,6 +1674,7 @@ impl WindowSelectionState {
         glyph_required: bool,
     ) -> Option<TextSelectionScopeId> {
         self.participants
+            .borrow()
             .values()
             .filter(|entry| {
                 entry
@@ -1689,36 +1717,109 @@ impl WindowSelectionState {
     /// the registration it last reported, which still describes what is on
     /// screen; only one whose element GPUI has dropped is swept.
     pub fn finish_frame(&mut self, cx: &mut App) -> Vec<ClearHandler> {
-        self.finish_frame_scheduled = false;
+        self.finish_frame_scheduled.set(false);
+        let generation = self.frame_generation.get();
         self.prune_dead_participants(cx);
         let stale = self
             .participants
+            .get_mut()
             .iter()
             .filter_map(|(id, registration)| {
-                (registration.generation != self.frame_generation
-                    && !registration.registration.is_rendered())
-                .then(|| (*id, registration.participant.clone()))
+                (registration.generation != generation && !registration.registration.is_rendered())
+                    .then(|| (*id, registration.participant.clone()))
             })
             .collect::<Vec<_>>();
         let mut handlers = Vec::new();
         for (id, participant) in stale {
-            self.participants.remove(&id);
-            if let Some(participant) = participant.upgrade() {
+            self.participants.get_mut().remove(&id);
+            if let Some(participant) = participant.upgrade()
+                && participant.read(cx).has_selection_to_clear()
+            {
                 if let Some(handler) = participant.update(cx, |state, cx| state.clear_state(cx)) {
                     handlers.push(handler);
                 }
             }
         }
         self.publish_snapshots(cx);
-        self.frame_generation = self.frame_generation.wrapping_add(1);
+        self.frame_generation.set(generation.wrapping_add(1));
         handlers
     }
 
-    fn schedule_finish_frame(&mut self) -> bool {
-        if self.finish_frame_scheduled {
+    fn schedule_finish_frame(&self) -> bool {
+        !self.finish_frame_scheduled.replace(true)
+    }
+
+    /// Whether there is a selection, or a gesture or touch selection that
+    /// may make one: what painting the participants reports can change it.
+    fn is_active(&self) -> bool {
+        self.anchor.is_some()
+            || self.cursor.is_some()
+            || self.pending_extension_anchor.is_some()
+            || self.is_selecting()
+            || self.refresh_held_cursor
+            || self.touch.active
+    }
+
+    /// Records this frame's geometry for a participant without updating
+    /// this state, when there is no selection for the geometry to change.
+    /// Every participant paints its geometry on every frame; doing so through
+    /// an update would mark the state, and every view that reads it, changed
+    /// on every frame. Returns the registration when it has to go through
+    /// [`Self::register_participant`].
+    fn register_quietly(
+        &self,
+        selection: &TextSelectionHandle,
+        registration: TextSelectionRegistration,
+        cx: &App,
+    ) -> Option<TextSelectionRegistration> {
+        let participant = selection.0.read(cx);
+        // A first registration or a move between physical openings still has
+        // to reconcile the original participant's revocable group custody.
+        let same_group = participant
+            .group
+            .as_ref()
+            .is_some_and(|group| Some(group.owner.entity_id()) == self.entity_id);
+        if self.is_active() || !same_group || !participant.enabled {
+            return Some(registration);
+        }
+        self.participants.borrow_mut().insert(
+            selection.entity_id(),
+            ParticipantRegistration {
+                participant: selection.downgrade(),
+                registration: Rc::new(registration),
+                generation: self.frame_generation.get(),
+            },
+        );
+        None
+    }
+
+    /// Ends the frame as [`Self::finish_frame`] does, without updating this
+    /// state, when there is no selection and no participant that left the
+    /// window has one to clear. Returns whether it could.
+    fn finish_frame_quietly(&self, cx: &App) -> bool {
+        if self.is_active() {
             return false;
         }
-        self.finish_frame_scheduled = true;
+        let generation = self.frame_generation.get();
+        let mut participants = self.participants.borrow_mut();
+        let gone = |registration: &ParticipantRegistration| {
+            registration.generation != generation && !registration.registration.is_rendered()
+        };
+        if participants.values().any(|registration| {
+            gone(registration)
+                && registration
+                    .participant
+                    .upgrade()
+                    .is_some_and(|participant| participant.read(cx).has_selection_to_clear())
+        }) {
+            return false;
+        }
+        participants.retain(|_, registration| {
+            !gone(registration) && registration.participant.upgrade().is_some()
+        });
+        drop(participants);
+        self.finish_frame_scheduled.set(false);
+        self.frame_generation.set(generation.wrapping_add(1));
         true
     }
 
@@ -1749,7 +1850,7 @@ impl WindowSelectionState {
                     if let Some(handler) = selection.0.query(cx, |state, cx| {
                         (state.local_selection
                             || state.snapshot.is_some()
-                            || state.projected_copy_text.is_some())
+                            || state.projected_copy_text.borrow().is_some())
                         .then(|| state.clear_state(cx))
                         .flatten()
                     }) {
@@ -1770,6 +1871,7 @@ impl WindowSelectionState {
                 == Some(selection.entity_id())
             && self
                 .participants
+                .get_mut()
                 .get(&selection.entity_id())
                 .is_some_and(|previous| {
                     previous.registration.scroll_offset != registration.scroll_offset
@@ -1783,16 +1885,17 @@ impl WindowSelectionState {
         let edges_moved = self.touch.active
             && self
                 .participants
+                .get_mut()
                 .get(&selection.entity_id())
                 .is_none_or(|previous| {
                     previous.registration.selection_edges != registration.selection_edges
                 });
-        self.participants.insert(
+        self.participants.get_mut().insert(
             selection.entity_id(),
             ParticipantRegistration {
                 participant: selection.downgrade(),
                 registration: Rc::new(registration),
-                generation: self.frame_generation,
+                generation: self.frame_generation.get(),
             },
         );
         self.publish_snapshots(cx);
@@ -1865,6 +1968,7 @@ impl WindowSelectionState {
         }
         self.prune_dead_participants(cx);
         self.participants
+            .borrow()
             .values()
             .filter_map(|registration| registration.participant.upgrade())
             .filter_map(|participant| participant.update(cx, |state, cx| state.clear_state(cx)))
@@ -1872,7 +1976,7 @@ impl WindowSelectionState {
     }
 
     fn withdraw(&mut self, participant: EntityId, cx: &mut App) -> Vec<ClearHandler> {
-        if !self.participants.contains_key(&participant) {
+        if !self.participants.borrow().contains_key(&participant) {
             return Vec::new();
         }
         let depends = [&self.anchor, &self.cursor, &self.pending_extension_anchor]
@@ -1884,7 +1988,7 @@ impl WindowSelectionState {
         } else {
             Vec::new()
         };
-        self.participants.remove(&participant);
+        self.participants.get_mut().remove(&participant);
         if let Some(entity_id) = self.entity_id {
             cx.notify(entity_id);
         }
@@ -1906,6 +2010,7 @@ impl WindowSelectionState {
     fn touch_changed(&self, cx: &mut App) {
         let participants = self
             .participants
+            .borrow()
             .values()
             .filter_map(|registration| registration.participant.upgrade())
             .filter(|participant| participant.read(cx).snapshot.is_some())
@@ -1925,6 +2030,7 @@ impl WindowSelectionState {
 
     fn copy_items(&self, cx: &App) -> Vec<CopyItem> {
         self.participants
+            .borrow()
             .values()
             .filter_map(|registration| {
                 let participant = registration.participant.upgrade()?;
@@ -1945,13 +2051,13 @@ impl WindowSelectionState {
     /// between them.
     fn selects_text(&self, cx: &App) -> bool {
         self.snapshot().is_some()
-            && self.participants.values().any(|registration| {
+            && self.participants.borrow().values().any(|registration| {
                 registration
                     .participant
                     .upgrade()
                     .is_some_and(|participant| {
                         let participant = participant.read(cx);
-                        project_ranges(participant.snapshot, &participant.runs)
+                        project_ranges(participant.snapshot, &participant.runs.borrow())
                             .ranges()
                             .iter()
                             .any(|range| range.as_ref().is_some_and(|range| !range.is_empty()))
@@ -1962,7 +2068,7 @@ impl WindowSelectionState {
     /// Returns whether a drag or a participant-local selection is active.
     pub fn has_selection(&self, cx: &App) -> bool {
         self.snapshot().is_some()
-            || self.participants.values().any(|registration| {
+            || self.participants.borrow().values().any(|registration| {
                 registration
                     .participant
                     .upgrade()
@@ -1972,7 +2078,7 @@ impl WindowSelectionState {
 
     fn has_selection_in_scope(&self, scope: TextSelectionScopeId, cx: &App) -> bool {
         (self.active_scope == scope && (self.is_selecting() || self.snapshot().is_some()))
-            || self.participants.values().any(|registration| {
+            || self.participants.borrow().values().any(|registration| {
                 registration.registration.scope == scope
                     && registration
                         .participant
@@ -1991,8 +2097,8 @@ impl WindowSelectionState {
         }
         let anchor_endpoint = self.anchor.as_ref()?;
         let cursor_endpoint = self.cursor.as_ref()?;
-        let anchor = anchor_endpoint.resolve(&self.participants)?;
-        let cursor = cursor_endpoint.resolve(&self.participants)?;
+        let anchor = anchor_endpoint.resolve(&self.participants.borrow())?;
+        let cursor = cursor_endpoint.resolve(&self.participants.borrow())?;
         let different_content = anchor_endpoint.entity_id() == cursor_endpoint.entity_id()
             && anchor_endpoint
                 .content_key
@@ -2026,6 +2132,7 @@ impl WindowSelectionState {
         self.prune_dead_participants(cx);
         let handlers = self
             .participants
+            .borrow()
             .values()
             .filter_map(|registration| registration.participant.upgrade())
             .filter_map(|participant| participant.update(cx, |state, cx| state.clear_state(cx)))
@@ -2048,7 +2155,7 @@ impl WindowSelectionState {
         // participant gets no handle.
         let mut start: Option<(u64, Bounds<Pixels>, bool)> = None;
         let mut end: Option<(u64, Bounds<Pixels>, bool)> = None;
-        for registration in self.participants.values() {
+        for registration in self.participants.borrow().values() {
             let geometry = &registration.registration;
             if geometry.scope != self.active_scope || registration.participant.upgrade().is_none() {
                 continue;
@@ -2096,7 +2203,7 @@ impl WindowSelectionState {
         if !self.touch.active {
             return Vec::new();
         }
-        let Some(own) = self.participants.get(&participant) else {
+        let Some(own) = self.participants.borrow().get(&participant).cloned() else {
             return Vec::new();
         };
         let Some((start, end)) = own.registration.selection_edges else {
@@ -2106,7 +2213,8 @@ impl WindowSelectionState {
             return Vec::new();
         }
         let order = own.registration.document_order;
-        let others = self.participants.iter().filter(|(id, registration)| {
+        let participants = self.participants.borrow();
+        let others = participants.iter().filter(|(id, registration)| {
             **id != participant
                 && registration.registration.scope == self.active_scope
                 && registration.registration.selection_edges.is_some()
@@ -2187,7 +2295,7 @@ impl WindowSelectionState {
         // those are clipped to the viewport, and a message taller than the
         // screen would only select what is on it.
         let (anchor, cursor) = {
-            let runs = &participant.read(cx).runs;
+            let runs = &participant.read(cx).runs.borrow();
             let (Some(first), Some(last)) = (
                 runs.iter().min_by_key(|run| run.document_order),
                 runs.iter().max_by_key(|run| run.document_order),
@@ -2362,11 +2470,17 @@ impl WindowSelectionState {
         else {
             return;
         };
-        let points = points_for_multi_click(&participant.read(cx).runs, position, click_count);
+        let points =
+            points_for_multi_click(&participant.read(cx).runs.borrow(), position, click_count);
         let Some((anchor, cursor)) = points else {
             return;
         };
-        let Some(registration) = self.participants.get(&participant.entity_id()) else {
+        let Some(registration) = self
+            .participants
+            .borrow()
+            .get(&participant.entity_id())
+            .cloned()
+        else {
             return;
         };
         let content_key_resolver = participant.read(cx).content_key_resolver.clone();
@@ -2427,7 +2541,7 @@ impl WindowSelectionState {
                     .or_else(|| self.anchor.clone())
             })
             .flatten()
-            .filter(|anchor| anchor.resolve(&self.participants).is_some());
+            .filter(|anchor| anchor.resolve(&self.participants.borrow()).is_some());
         if !extend && !already_prepared {
             self.clear(cx);
         }
@@ -2486,7 +2600,7 @@ impl WindowSelectionState {
             Rc<TextSelectionRegistration>,
         )> = None;
 
-        for registration in self.participants.values() {
+        for registration in self.participants.borrow().values() {
             if registration
                 .participant
                 .upgrade()
@@ -2588,7 +2702,7 @@ impl WindowSelectionState {
         self.prune_dead_participants(cx);
         let snapshot = self.snapshot();
         let single_participant = self.single_participant();
-        for (id, registration) in &self.participants {
+        for (id, registration) in self.participants.borrow().iter() {
             let Some(participant) = registration.participant.upgrade() else {
                 continue;
             };
@@ -2619,8 +2733,12 @@ impl WindowSelectionState {
         if anchor == cursor {
             return TextSelectionCoverage::Bounded;
         }
-        let anchor_order = self.participants[&anchor].registration.document_order;
-        let cursor_order = self.participants[&cursor].registration.document_order;
+        let anchor_order = self.participants.borrow()[&anchor]
+            .registration
+            .document_order;
+        let cursor_order = self.participants.borrow()[&cursor]
+            .registration
+            .document_order;
         if id != anchor && id != cursor {
             TextSelectionCoverage::Full
         } else if (id == anchor) == (anchor_order < cursor_order) {
@@ -2643,10 +2761,10 @@ impl WindowSelectionState {
         let Some(cursor) = self.cursor.as_ref().and_then(SelectionEndpoint::entity_id) else {
             return false;
         };
-        let Some(anchor_registration) = self.participants.get(&anchor) else {
+        let Some(anchor_registration) = self.participants.borrow().get(&anchor).cloned() else {
             return false;
         };
-        let Some(cursor_registration) = self.participants.get(&cursor) else {
+        let Some(cursor_registration) = self.participants.borrow().get(&cursor).cloned() else {
             return false;
         };
         let start = anchor_registration
@@ -2817,13 +2935,17 @@ impl WindowSelectionState {
         &self,
     ) -> Option<(Entity<SelectableTextState>, Rc<TextSelectionRegistration>)> {
         let participant = self.anchor_participant()?;
-        let registration = self.participants.get(&participant.entity_id())?;
+        let registration = self
+            .participants
+            .borrow()
+            .get(&participant.entity_id())?
+            .clone();
         Some((participant, registration.registration.clone()))
     }
 
     fn prune_dead_participants(&mut self, cx: &App) {
         let owner = self.entity_id;
-        self.participants.retain(|_, registration| {
+        self.participants.get_mut().retain(|_, registration| {
             registration
                 .participant
                 .upgrade()
@@ -2859,6 +2981,23 @@ pub(crate) fn current_text_selection_scope(window: &Window) -> Option<TextSelect
 pub struct TextSelection;
 
 impl TextSelection {
+    /// Returns whether `position` hits selectable text in the active scope.
+    ///
+    /// Uses the current frame's registered text geometry and hitboxes without
+    /// starting or changing a selection. Blank space and text outside the active
+    /// selection scope do not match. A containing control can yield a long press
+    /// to the window's text selection before claiming the gesture itself.
+    /// Call during pointer dispatch with the event's position, so the hitboxes
+    /// reflect the point being queried. Touch-selection controls do not match.
+    pub fn is_selectable_at(position: Point<Pixels>, window: &Window, cx: &mut App) -> bool {
+        live_text_selection_state(window, cx).is_some_and(|state| {
+            state.update(cx, |state, cx| {
+                !state.touch.covers(position, window)
+                    && state.endpoint(position, Some(window), cx).inside_text
+            })
+        })
+    }
+
     /// Returns the currently selected text in logical document order.
     pub fn selected_text(window: &mut Window, cx: &mut App) -> String {
         let Some(state) = live_text_selection_state(window, cx) else {
@@ -2991,6 +3130,9 @@ impl TextSelection {
         let Some(state) = WindowSelectionState::existing(window, cx) else {
             return;
         };
+        if state.read(cx).active_scope == scope {
+            return;
+        }
         let handlers = state.update(cx, |state, cx| state.set_active_scope_state(scope, cx));
         dispatch_clear_handlers(handlers, cx);
     }
@@ -3163,12 +3305,7 @@ fn schedule_selection_finish_frame(
     window: &mut Window,
     cx: &mut App,
 ) {
-    if state.query(cx, |state, _| {
-        if !state.schedule_finish_frame() {
-            return false;
-        }
-        true
-    }) {
+    if state.read(cx).schedule_finish_frame() {
         let state = state.downgrade();
         window.defer(cx, move |window, cx| {
             let Some(state) = state.upgrade() else {
@@ -3183,7 +3320,7 @@ fn schedule_selection_finish_frame(
                 state.touch.ui_hitboxes.retain(|id| live.contains(id));
                 // Dispatch IDs are frame-local: resolve the original stable
                 // handles only after the native tree has completed/replayed.
-                for participant in state.participants.values_mut() {
+                for participant in state.participants.get_mut().values_mut() {
                     if let Some(order) = participant
                         .registration
                         .native_focus
@@ -3193,7 +3330,12 @@ fn schedule_selection_finish_frame(
                         Rc::make_mut(&mut participant.registration).document_order = order;
                     }
                 }
-                state.finish_frame(cx)
+                state.prune_dead_participants(cx);
+                if state.finish_frame_quietly(cx) {
+                    Vec::new()
+                } else {
+                    state.finish_frame(cx)
+                }
             });
             dispatch_clear_handlers(handlers, cx);
             // Direct participant scrolling produces no wheel event. Refresh
@@ -4564,7 +4706,7 @@ mod tests {
                 assert!(!state.is_selecting());
                 assert!(state.anchor.is_none());
                 assert!(state.cursor.is_none());
-                assert!(!state.participants.contains_key(&first.entity_id()));
+                assert!(!state.participants.borrow().contains_key(&first.entity_id()));
                 state.update(point(px(8.), px(21.)), cx);
                 assert_eq!(state.selected_text(cx), "");
             });
@@ -5551,7 +5693,7 @@ mod tests {
             let _ = window.draw(cx);
             let state = WindowSelectionState::existing(window, cx).unwrap();
             assert_eq!(
-                state.read(cx).participants[&selection.entity_id()]
+                state.read(cx).participants.borrow()[&selection.entity_id()]
                     .registration
                     .scope,
                 TextSelectionScopeId::from_raw(23)
@@ -5560,6 +5702,7 @@ mod tests {
                 state
                     .read(cx)
                     .participants
+                    .borrow()
                     .contains_key(&selection.entity_id())
             );
         });
@@ -5609,6 +5752,76 @@ mod tests {
             TextSelection::clear(window, cx);
             assert_eq!(TextSelection::selected_text(window, cx), "");
         });
+    }
+
+    /// A view reading the window's selection state, beside selectable text,
+    /// counting its renders.
+    #[cfg(feature = "gpui-fast")]
+    struct SelectionStateReader {
+        renders: Rc<Cell<usize>>,
+    }
+
+    #[cfg(feature = "gpui-fast")]
+    impl Render for SelectionStateReader {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            if let Some(state) = WindowSelectionState::existing(window, cx) {
+                let _ = state.read(cx).participants.borrow().len();
+            }
+            div().size_full()
+        }
+    }
+
+    /// The selectable text of a [`ToggleSelectionElementView`] beside a
+    /// [`SelectionStateReader`].
+    #[cfg(feature = "gpui-fast")]
+    struct ReaderBesideSelectionView {
+        text: gpui::Entity<ToggleSelectionElementView>,
+        reader: gpui::Entity<SelectionStateReader>,
+    }
+
+    #[cfg(feature = "gpui-fast")]
+    impl Render for ReaderBesideSelectionView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .child(self.reader.clone())
+                .child(self.text.clone())
+        }
+    }
+
+    /// Selectable text drawn again, nothing about its selection changed,
+    /// writes neither the window's selection state nor its own: a view
+    /// reading them is retained, as it would not be had they changed.
+    #[cfg(feature = "gpui-fast")]
+    #[gpui::test]
+    fn redrawing_selectable_text_leaves_its_readers_retained(cx: &mut TestAppContext) {
+        let renders = Rc::new(Cell::new(0));
+        let (view, cx) = cx.add_window_view(|_, cx| ReaderBesideSelectionView {
+            text: cx.new(|cx| ToggleSelectionElementView {
+                enabled: true,
+                selection: TextSelectionHandle::new("text", cx),
+            }),
+            reader: cx.new(|_| SelectionStateReader {
+                renders: renders.clone(),
+            }),
+        });
+        let text = cx.update(|_, cx| view.read(cx).text.clone());
+        let redraw = |cx: &mut gpui::VisualTestContext| {
+            text.update(cx, |_, cx| cx.notify());
+            cx.update(|window, cx| {
+                let _ = window.draw(cx);
+                window.simulate_next_frame(cx);
+            });
+            cx.run_until_parked();
+        };
+        redraw(cx);
+        redraw(cx);
+        let before = renders.get();
+        for _ in 0..4 {
+            redraw(cx);
+        }
+        assert_eq!(renders.get(), before, "the reader rendered again");
     }
 
     #[gpui::test]

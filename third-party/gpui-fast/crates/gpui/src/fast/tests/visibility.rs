@@ -168,9 +168,9 @@ fn hidden_scope_preserves_outside_autoscroll_and_restores_after_unwind(cx: &mut 
 }
 
 /// A lower-priority nested draw still follows its actual ancestor; cached and
-/// spliced paint must replay that admission through the original frame stream.
+/// rebuilt paint must replay that admission through the original frame stream.
 #[crate::test]
-fn nested_deferred_priority_preserves_causal_paint_through_reuse_and_splice(
+fn nested_deferred_priority_preserves_causal_paint_through_reuse_and_rebuild(
     cx: &mut TestAppContext,
 ) {
     struct Gap(bool);
@@ -277,15 +277,15 @@ fn nested_deferred_priority_preserves_causal_paint_through_reuse_and_splice(
                 gap.0 = true;
                 cx.notify();
             });
-            let spliced = draw(cx);
+            let rebuilt = draw(cx);
             assert_eq!(
                 renders.get(),
-                if cached { 2 } else { 1 },
-                "uncached same-box gap splices; explicitly cached parent rebuilds"
+                2,
+                "deferred draws outside the gap require rebuilding their ancestor"
             );
             for _ in 0..3 {
                 window.update(cx, |_, _, cx| cx.notify()).unwrap();
-                assert_eq!(spliced, draw(cx), "replay a formerly spliced paint range");
+                assert_eq!(rebuilt, draw(cx), "replay the rebuilt deferred paint range");
             }
             let last = draw(cx);
             cx.update_window(window.into(), |_, window, _| window.forget_retained_state())

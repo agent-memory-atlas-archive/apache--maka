@@ -146,6 +146,21 @@ enum Origin {
     Explicit(Pixels),
 }
 impl ScrollHandleState {
+    pub(crate) fn pending_bottom_scroll(&self) -> bool {
+        self.scroll_request
+            .as_ref()
+            .is_some_and(|request| matches!(request.target, super::ScrollTarget::Bottom))
+    }
+
+    // Only the legacy fire-and-forget request may expire without a new paint.
+    // Explicit commands retain their original receipt until actual settlement.
+    pub(crate) fn drop_quiet_bottom_scroll(&mut self) {
+        if self.pending_bottom_scroll() {
+            let request = self.scroll_request.take().unwrap();
+            self.last_receipt = Some((request.id, ScrollRequestStatus::Cancelled));
+        }
+    }
+
     pub(super) fn note_reading_intent(&mut self) {
         self.reading_revision = self
             .reading_revision

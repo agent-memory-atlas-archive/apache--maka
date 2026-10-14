@@ -348,7 +348,6 @@ dtoa@1.0.11 (MIT OR Apache-2.0); authors declared by package: David Tolnay <dtol
 dyn-clone@1.0.20 (MIT OR Apache-2.0); authors declared by package: David Tolnay <dtolnay@gmail.com>
 endi@1.1.1 (MIT); authors declared by package: Zeeshan Ali Khan <zeenix@gmail.com>
 enumn@0.1.14 (MIT OR Apache-2.0); authors declared by package: David Tolnay <dtolnay@gmail.com>
-erased-serde@0.4.10 (MIT OR Apache-2.0); authors declared by package: David Tolnay <dtolnay@gmail.com>
 error_reporter@1.0.0 (MIT OR Apache-2.0)
 etcetera@0.11.0 (MIT OR Apache-2.0)
 evdev@0.12.2 (Apache-2.0 OR MIT); authors declared by package: Corey Richardson <corey@octayn.net>
@@ -419,7 +418,6 @@ thiserror-impl@2.0.20 (MIT OR Apache-2.0); authors declared by package: David To
 thiserror@1.0.69 (MIT OR Apache-2.0); authors declared by package: David Tolnay <dtolnay@gmail.com>
 thiserror@2.0.20 (MIT OR Apache-2.0); authors declared by package: David Tolnay <dtolnay@gmail.com>
 typed-path@0.12.3 (MIT OR Apache-2.0); authors declared by package: Chip Senkbeil <chip@senkbeil.org>
-typeid@1.0.3 (MIT OR Apache-2.0); authors declared by package: David Tolnay <dtolnay@gmail.com>
 unicode-id-start@1.4.0 ((MIT OR Apache-2.0) AND Unicode-3.0); authors declared by package: David Tolnay <dtolnay@gmail.com>, Boshen <boshenc@gmail.com>
 unicode-ident@1.0.24 ((MIT OR Apache-2.0) AND Unicode-3.0); authors declared by package: David Tolnay <dtolnay@gmail.com>
 unsafe-libyaml@0.2.11 (MIT); authors declared by package: David Tolnay <dtolnay@gmail.com>
@@ -464,7 +462,6 @@ https://crates.io/api/v1/crates/dtoa/1.0.11/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/dyn-clone/1.0.20/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/endi/1.1.1/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/enumn/0.1.14/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/erased-serde/0.4.10/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/error_reporter/1.0.0/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/etcetera/0.11.0/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/evdev/0.12.2/download :: LICENSE-MIT
@@ -535,7 +532,6 @@ https://crates.io/api/v1/crates/thiserror-impl/2.0.20/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/thiserror/1.0.69/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/thiserror/2.0.20/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/typed-path/0.12.3/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/typeid/1.0.3/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/unicode-id-start/1.4.0/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/unicode-ident/1.0.24/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/unsafe-libyaml/0.2.11/download :: LICENSE-MIT
@@ -591,7 +587,6 @@ const-hex@1.19.1 (MIT OR Apache-2.0); authors declared by package: DaniPopes <57
 dtoa@1.0.11 (MIT OR Apache-2.0); authors declared by package: David Tolnay <dtolnay@gmail.com>
 dyn-clone@1.0.20 (MIT OR Apache-2.0); authors declared by package: David Tolnay <dtolnay@gmail.com>
 enumn@0.1.14 (MIT OR Apache-2.0); authors declared by package: David Tolnay <dtolnay@gmail.com>
-erased-serde@0.4.10 (MIT OR Apache-2.0); authors declared by package: David Tolnay <dtolnay@gmail.com>
 error_reporter@1.0.0 (MIT OR Apache-2.0)
 etcetera@0.11.0 (MIT OR Apache-2.0)
 evdev@0.12.2 (Apache-2.0 OR MIT); authors declared by package: Corey Richardson <corey@octayn.net>
@@ -601,7 +596,6 @@ inventory@0.3.24 (MIT OR Apache-2.0); authors declared by package: David Tolnay 
 itoa@1.0.18 (MIT OR Apache-2.0); authors declared by package: David Tolnay <dtolnay@gmail.com>
 libc@0.2.189 (MIT OR Apache-2.0)
 litrs@1.0.0 (MIT OR Apache-2.0); authors declared by package: Lukas Kalbertodt <lukas.kalbertodt@gmail.com>
-mach2@0.5.0 (BSD-2-Clause OR MIT OR Apache-2.0)
 mach2@0.6.0 (BSD-2-Clause OR MIT OR Apache-2.0)
 paste@1.0.15 (MIT OR Apache-2.0); authors declared by package: David Tolnay <dtolnay@gmail.com>
 pastey@0.1.1 (MIT OR Apache-2.0); authors declared by package: Aditya Kumar <git@adityais.dev>, David Tolnay <dtolnay@gmail.com>
@@ -632,7 +626,6 @@ thiserror-impl@2.0.20 (MIT OR Apache-2.0); authors declared by package: David To
 thiserror@1.0.69 (MIT OR Apache-2.0); authors declared by package: David Tolnay <dtolnay@gmail.com>
 thiserror@2.0.20 (MIT OR Apache-2.0); authors declared by package: David Tolnay <dtolnay@gmail.com>
 typed-path@0.12.3 (MIT OR Apache-2.0); authors declared by package: Chip Senkbeil <chip@senkbeil.org>
-typeid@1.0.3 (MIT OR Apache-2.0); authors declared by package: David Tolnay <dtolnay@gmail.com>
 unicode-id-start@1.4.0 ((MIT OR Apache-2.0) AND Unicode-3.0); authors declared by package: David Tolnay <dtolnay@gmail.com>, Boshen <boshenc@gmail.com>
 unicode-ident@1.0.24 ((MIT OR Apache-2.0) AND Unicode-3.0); authors declared by package: David Tolnay <dtolnay@gmail.com>
 utf-8@0.7.6 (MIT OR Apache-2.0); authors declared by package: Simon Sapin <simon.sapin@exyr.org>
@@ -648,7 +641,6 @@ https://crates.io/api/v1/crates/const-hex/1.19.1/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/dtoa/1.0.11/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/dyn-clone/1.0.20/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/enumn/0.1.14/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/erased-serde/0.4.10/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/error_reporter/1.0.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/etcetera/0.11.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/evdev/0.12.2/download :: LICENSE-APACHE
@@ -658,7 +650,6 @@ https://crates.io/api/v1/crates/inventory/0.3.24/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/itoa/1.0.18/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/libc/0.2.189/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/litrs/1.0.0/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/mach2/0.5.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/mach2/0.6.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/paste/1.0.15/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/pastey/0.1.1/download :: LICENSE-APACHE
@@ -689,7 +680,6 @@ https://crates.io/api/v1/crates/thiserror-impl/2.0.20/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/thiserror/1.0.69/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/thiserror/2.0.20/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/typed-path/0.12.3/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/typeid/1.0.3/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/unicode-id-start/1.4.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/unicode-ident/1.0.24/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/utf-8/0.7.6/download :: LICENSE-APACHE
@@ -946,7 +936,6 @@ bs58@0.5.1 (MIT/Apache-2.0)
 bstr@1.13.1 (MIT OR Apache-2.0); authors declared by package: Andrew Gallant <jamslam@gmail.com>
 bumpalo@3.20.3 (MIT OR Apache-2.0); authors declared by package: Nick Fitzgerald <fitzgen@gmail.com>
 by_address@1.2.1 (MIT OR Apache-2.0); authors declared by package: Matt Brubeck <mbrubeck@limpet.net>
-bzip2@0.6.1 (MIT OR Apache-2.0)
 camino@1.2.6 (MIT OR Apache-2.0); authors declared by package: Without Boats <saoirse@without.boats>, Ashley Williams <ashley666ashley@gmail.com>, Steve Klabnik <steve@steveklabnik.com>, Rain <rain@sunshowers.io>
 cap-fs-ext@4.0.3 (Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT); authors declared by package: Dan Gohman <dev@sunfishcode.online>, Jakub Konka <kubkon@jakubkonka.com>
 cap-primitives@4.0.3 (Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT); authors declared by package: Dan Gohman <dev@sunfishcode.online>, Jakub Konka <kubkon@jakubkonka.com>
@@ -954,7 +943,6 @@ cap-std@4.0.3 (Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT); authors dec
 cc@1.4.5 (MIT OR Apache-2.0)
 cexpr@0.6.0 (Apache-2.0/MIT); authors declared by package: Jethro Beekman <jethro@jbeekman.nl>
 cfg-if@1.0.4 (MIT OR Apache-2.0); authors declared by package: Alex Crichton <alex@alexcrichton.com>
-cgl@0.3.2 (MIT / Apache-2.0); authors declared by package: The Servo Project Developers
 cmake@0.1.58 (MIT OR Apache-2.0); authors declared by package: Alex Crichton <alex@alexcrichton.com>
 cocoa-foundation@0.2.1 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
 cocoa@0.26.0 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
@@ -966,10 +954,8 @@ const-random@0.1.18 (MIT OR Apache-2.0); authors declared by package: Tom Kaitch
 core-foundation-sys@0.8.7 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
 core-foundation@0.10.1 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
 core-graphics-types@0.2.0 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
-core-graphics2@0.5.2 (MIT OR Apache-2.0); authors declared by package: Zhou Wei <zhouwei@ehom.net>
 core-graphics@0.24.0 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
 core-text@21.0.0 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
-core-video@0.5.2 (MIT OR Apache-2.0); authors declared by package: Zhou Wei <zhouwei@ehom.net>
 critical-section@1.2.0 (MIT OR Apache-2.0)
 crossbeam-channel@0.5.17 (MIT OR Apache-2.0)
 crossbeam-deque@0.8.8 (MIT OR Apache-2.0)
@@ -1041,7 +1027,6 @@ io-close@0.3.7 (MIT OR Apache-2.0); authors declared by package: wufz
 io-extras@0.19.0 (Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT); authors declared by package: Dan Gohman <dev@sunfishcode.online>
 io-lifetimes@2.0.4 (Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT); authors declared by package: Dan Gohman <dev@sunfishcode.online>
 io-lifetimes@3.0.1 (Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT); authors declared by package: Dan Gohman <dev@sunfishcode.online>
-io-surface@0.16.1 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
 ipconfig@0.3.4 (MIT/Apache-2.0); authors declared by package: Liran Ringel <liranringel@gmail.com>
 itertools@0.11.0 (MIT OR Apache-2.0); authors declared by package: bluss
 itertools@0.13.0 (MIT OR Apache-2.0); authors declared by package: bluss
@@ -1128,7 +1113,6 @@ scopeguard@1.2.0 (MIT OR Apache-2.0); authors declared by package: bluss
 secret-service@5.2.0 (MIT OR Apache-2.0); authors declared by package: Walther Chen <walther.chen@gmail.com>
 security-framework-sys@2.17.0 (MIT OR Apache-2.0); authors declared by package: Steven Fackler <sfackler@gmail.com>, Kornel <kornel@geekhood.net>
 security-framework@3.7.0 (MIT OR Apache-2.0); authors declared by package: Steven Fackler <sfackler@gmail.com>, Kornel <kornel@geekhood.net>
-serde_fmt@1.1.0 (Apache-2.0 OR MIT); authors declared by package: Ashley Mannix <ashleymannix@live.com.au>
 serde_with@3.23.0 (MIT OR Apache-2.0); authors declared by package: Jonas Bushart, Marcin Kaźmierczak
 serde_with_macros@3.23.0 (MIT OR Apache-2.0); authors declared by package: Jonas Bushart
 servo_arc@0.4.3 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
@@ -1150,14 +1134,6 @@ string_cache@0.8.9 (MIT OR Apache-2.0); authors declared by package: The Servo P
 string_cache@0.9.0 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
 string_cache_codegen@0.5.4 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
 string_cache_codegen@0.6.1 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
-sval@2.22.0 (Apache-2.0 OR MIT); authors declared by package: Ashley Mannix <hey@kodraus.com>
-sval_buffer@2.22.0 (Apache-2.0 OR MIT); authors declared by package: Ashley Mannix <hey@kodraus.com>
-sval_dynamic@2.22.0 (Apache-2.0 OR MIT); authors declared by package: Ashley Mannix <hey@kodraus.com>
-sval_fmt@2.22.0 (Apache-2.0 OR MIT); authors declared by package: Ashley Mannix <hey@kodraus.com>
-sval_json@2.22.0 (Apache-2.0 OR MIT); authors declared by package: Ashley Mannix <hey@kodraus.com>
-sval_nested@2.22.0 (Apache-2.0 OR MIT); authors declared by package: Ashley Mannix <hey@kodraus.com>
-sval_ref@2.22.0 (Apache-2.0 OR MIT); authors declared by package: Ashley Mannix <hey@kodraus.com>
-sval_serde@2.22.0 (Apache-2.0 OR MIT); authors declared by package: Ashley Mannix <hey@kodraus.com>
 svgtypes@0.15.3 (Apache-2.0 OR MIT)
 svgtypes@0.16.1 (Apache-2.0 OR MIT)
 swash@0.2.10 (Apache-2.0 OR MIT); authors declared by package: Chad Brokaw <cbrokaw@gmail.com>
@@ -1166,7 +1142,6 @@ tar@0.4.46 (MIT OR Apache-2.0); authors declared by package: Alex Crichton <alex
 tempfile@3.27.0 (MIT OR Apache-2.0); authors declared by package: Steven Allen <steven@stebalien.com>, The Rust Project Developers, Ashley Mannix <ashleymannix@live.com.au>, Jason White <me@jasonwhite.io>
 tendril@0.4.3 (MIT/Apache-2.0); authors declared by package: Keegan McAllister <mcallister.keegan@gmail.com>, Simon Sapin <simon.sapin@exyr.org>, Chris Morgan <me@chrismorgan.info>
 tendril@0.5.1 (MIT OR Apache-2.0); authors declared by package: Keegan McAllister <mcallister.keegan@gmail.com>, Simon Sapin <simon.sapin@exyr.org>, Chris Morgan <me@chrismorgan.info>
-thread_local@1.1.10 (MIT OR Apache-2.0); authors declared by package: Amanieu d'Antras <amanieu@gmail.com>
 ttf-parser@0.25.1 (MIT OR Apache-2.0); authors declared by package: Caleb Maclennan <caleb@alerque.com>, Laurenz Stampfl <laurenz.stampfl@gmail.com>, Yevhenii Reizner <razrfalcon@gmail.com>, خالد حسني (Khaled Hosny) <khaled@aliftype.com>
 tungstenite@0.24.0 (MIT OR Apache-2.0); authors declared by package: Alexey Galakhov, Daniel Abramov
 tungstenite@0.29.0 (MIT OR Apache-2.0); authors declared by package: Alexey Galakhov, Daniel Abramov
@@ -1184,9 +1159,6 @@ unicode-width@0.2.2 (MIT OR Apache-2.0); authors declared by package: kwantam <k
 unicode-xid@0.2.6 (MIT OR Apache-2.0); authors declared by package: erick.tryzelaar <erick.tryzelaar@gmail.com>, kwantam <kwantam@gmail.com>, Manish Goregaokar <manishsmail@gmail.com>
 url@2.5.8 (MIT OR Apache-2.0); authors declared by package: The rust-url developers
 uuid@1.26.1 (Apache-2.0 OR MIT); authors declared by package: Ashley Mannix<ashleymannix@live.com.au>, Dylan DPC<dylan.dpc@gmail.com>, Hunar Roop Kahlon<hunar.roop@gmail.com>
-value-bag-serde1@1.14.1 (Apache-2.0 OR MIT); authors declared by package: Ashley Mannix <ashleymannix@live.com.au>
-value-bag-sval2@1.14.1 (Apache-2.0 OR MIT); authors declared by package: Ashley Mannix <ashleymannix@live.com.au>
-value-bag@1.14.1 (Apache-2.0 OR MIT); authors declared by package: Ashley Mannix <ashleymannix@live.com.au>
 vcpkg@0.2.15 (MIT/Apache-2.0); authors declared by package: Jim McGrath <jimmc2@gmail.com>
 version_check@0.9.5 (MIT/Apache-2.0); authors declared by package: Sergio Benitez <sb@sergio.bz>
 wait-timeout@0.2.1 (MIT/Apache-2.0); authors declared by package: Alex Crichton <alex@alexcrichton.com>
@@ -1237,7 +1209,6 @@ https://crates.io/api/v1/crates/bs58/0.5.1/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/bstr/1.13.1/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/bumpalo/3.20.3/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/by_address/1.2.1/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/bzip2/0.6.1/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/camino/1.2.6/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/cap-fs-ext/4.0.3/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/cap-primitives/4.0.3/download :: LICENSE-APACHE
@@ -1245,7 +1216,6 @@ https://crates.io/api/v1/crates/cap-std/4.0.3/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/cc/1.4.5/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/cexpr/0.6.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/cfg-if/1.0.4/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/cgl/0.3.2/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/cmake/0.1.58/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/cocoa-foundation/0.2.1/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/cocoa/0.26.0/download :: LICENSE-APACHE
@@ -1258,9 +1228,7 @@ https://crates.io/api/v1/crates/core-foundation-sys/0.8.7/download :: LICENSE-AP
 https://crates.io/api/v1/crates/core-foundation/0.10.1/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/core-graphics-types/0.2.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/core-graphics/0.24.0/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/core-graphics2/0.5.2/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/core-text/21.0.0/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/core-video/0.5.2/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/critical-section/1.2.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/crossbeam-channel/0.5.17/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/crossbeam-deque/0.8.8/download :: LICENSE-APACHE
@@ -1332,7 +1300,6 @@ https://crates.io/api/v1/crates/io-close/0.3.7/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/io-extras/0.19.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/io-lifetimes/2.0.4/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/io-lifetimes/3.0.1/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/io-surface/0.16.1/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/ipconfig/0.3.4/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/itertools/0.11.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/itertools/0.13.0/download :: LICENSE-APACHE
@@ -1416,7 +1383,6 @@ https://crates.io/api/v1/crates/scopeguard/1.2.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/secret-service/5.2.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/security-framework-sys/2.17.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/security-framework/3.7.0/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/serde_fmt/1.1.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/serde_with/3.23.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/serde_with_macros/3.23.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/servo_arc/0.4.3/download :: LICENSE-APACHE
@@ -1438,13 +1404,6 @@ https://crates.io/api/v1/crates/string_cache/0.8.9/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/string_cache/0.9.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/string_cache_codegen/0.5.4/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/string_cache_codegen/0.6.1/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/sval/2.22.0/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/sval_buffer/2.22.0/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/sval_dynamic/2.22.0/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/sval_fmt/2.22.0/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/sval_json/2.22.0/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/sval_ref/2.22.0/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/sval_serde/2.22.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/svgtypes/0.15.3/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/svgtypes/0.16.1/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/swash/0.2.10/download :: LICENSE-APACHE
@@ -1453,7 +1412,6 @@ https://crates.io/api/v1/crates/tar/0.4.46/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/tempfile/3.27.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/tendril/0.4.3/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/tendril/0.5.1/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/thread_local/1.1.10/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/ttf-parser/0.25.1/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/tungstenite/0.24.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/tungstenite/0.29.0/download :: LICENSE-APACHE
@@ -1471,9 +1429,6 @@ https://crates.io/api/v1/crates/unicode-width/0.2.2/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/unicode-xid/0.2.6/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/url/2.5.8/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/uuid/1.26.1/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/value-bag-serde1/1.14.1/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/value-bag-sval2/1.14.1/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/value-bag/1.14.1/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/vcpkg/0.2.15/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/version_check/0.9.5/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/wait-timeout/0.2.1/download :: LICENSE-APACHE
@@ -1495,7 +1450,6 @@ https://raw.githubusercontent.com/aclysma/profiling/8271551172eb6fa4cba47369aedd
 https://raw.githubusercontent.com/rusticata/asn1-rs/28257314e48d1ad4e62b8159c939518e17caf826/LICENSE-APACHE
 https://raw.githubusercontent.com/rusticata/asn1-rs/78620ca0954d44ddc57d0280d0072dfbd8566de4/LICENSE-APACHE
 https://raw.githubusercontent.com/servo/pathfinder/6c3c0466f451c5bd2007087728cd168798cd64e8/LICENSE-APACHE
-https://raw.githubusercontent.com/sval-rs/sval/02395d2e20b5f703ca3ac35ae13efa5ad5248258/LICENSE-APACHE
 
 Apache License
                         Version 2.0, January 2004
@@ -5234,14 +5188,12 @@ lock_api@0.4.14 (MIT OR Apache-2.0); authors declared by package: Amanieu d'Antr
 parking_lot@0.12.5 (MIT OR Apache-2.0); authors declared by package: Amanieu d'Antras <amanieu@gmail.com>
 parking_lot_core@0.9.12 (MIT OR Apache-2.0); authors declared by package: Amanieu d'Antras <amanieu@gmail.com>
 rustc_version@0.4.1 (MIT OR Apache-2.0)
-thread_local@1.1.10 (MIT OR Apache-2.0); authors declared by package: Amanieu d'Antras <amanieu@gmail.com>
 
 https://crates.io/api/v1/crates/atomic/0.5.3/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/lock_api/0.4.14/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/parking_lot/0.12.5/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/parking_lot_core/0.9.12/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/rustc_version/0.4.1/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/thread_local/1.1.10/download :: LICENSE-MIT
 
 Copyright (c) 2016 The Rust Project Developers
 
@@ -6956,14 +6908,10 @@ block2@0.6.2 (MIT); authors declared by package: Mads Marquart <mads@marquart.dk
 dispatch2@0.3.1 (Zlib OR Apache-2.0 OR MIT); authors declared by package: Mads Marquart <mads@marquart.dk>, Mary <mary@mary.zone>
 objc2-app-kit@0.3.2 (Zlib OR Apache-2.0 OR MIT)
 objc2-cloud-kit@0.3.2 (Zlib OR Apache-2.0 OR MIT)
-objc2-core-audio-types@0.3.2 (Zlib OR Apache-2.0 OR MIT)
-objc2-core-audio@0.3.2 (Zlib OR Apache-2.0 OR MIT)
 objc2-core-data@0.3.2 (Zlib OR Apache-2.0 OR MIT)
 objc2-core-foundation@0.3.2 (Zlib OR Apache-2.0 OR MIT)
 objc2-core-graphics@0.3.2 (Zlib OR Apache-2.0 OR MIT)
 objc2-core-image@0.3.2 (Zlib OR Apache-2.0 OR MIT)
-objc2-core-location@0.3.2 (Zlib OR Apache-2.0 OR MIT)
-objc2-core-media@0.3.2 (Zlib OR Apache-2.0 OR MIT)
 objc2-core-text@0.3.2 (Zlib OR Apache-2.0 OR MIT)
 objc2-core-video@0.3.2 (Zlib OR Apache-2.0 OR MIT)
 objc2-encode@4.1.0 (MIT); authors declared by package: Mads Marquart <mads@marquart.dk>
@@ -6971,7 +6919,7 @@ objc2-foundation@0.3.2 (MIT)
 objc2-io-surface@0.3.2 (Zlib OR Apache-2.0 OR MIT)
 objc2-metal@0.3.2 (Zlib OR Apache-2.0 OR MIT)
 objc2-quartz-core@0.3.2 (Zlib OR Apache-2.0 OR MIT)
-objc2-screen-capture-kit@0.3.2 (Zlib OR Apache-2.0 OR MIT)
+objc2-security@0.3.2 (Zlib OR Apache-2.0 OR MIT)
 objc2-user-notifications@0.3.2 (Zlib OR Apache-2.0 OR MIT)
 objc2@0.6.4 (MIT); authors declared by package: Mads Marquart <mads@marquart.dk>
 
@@ -7023,8 +6971,6 @@ deno_tunnel@0.8.1 (MIT); authors declared by package: the Deno authors
 derive-io-macros@0.4.1 (MIT OR Apache-2.0); authors declared by package: Matt Mastracci <matthew@mastracci.com>
 derive-io@0.4.1 (MIT OR Apache-2.0); authors declared by package: Matt Mastracci <matthew@mastracci.com>
 fqdn@0.5.2 (MIT); authors declared by package: Xophe <christophe.dousson@orange.com>
-leak@0.1.2 (Apache-2.0 OR MIT); authors declared by package: Cody P Schafer <dev@codyps.com>
-leaky-cow@0.1.1 (MIT / Apache-2.0); authors declared by package: Michael Howell <michael@notriddle.com>
 mac@0.1.1 (MIT/Apache-2.0); authors declared by package: Jonathan Reem <jonathan.reem@gmail.com>
 malloc_buf@0.0.6 (MIT); authors declared by package: Steven Sheldon
 objc_exception@0.1.2 (MIT); authors declared by package: Steven Sheldon
@@ -7043,7 +6989,6 @@ https://github.com/Orange-OpenSource/fqdn/blob/a23fef8570522a3b98a79afc45322d648
 https://github.com/SSheldon/malloc_buf/blob/a7811e5f4c6f9685dd57ad9bfe34e9bf6b0ba4f9/Cargo.toml
 https://github.com/SSheldon/rust-block/blob/47178790cfc9d4a8b092051d8b413b78bd31254a/Cargo.toml
 https://github.com/SSheldon/rust-objc-exception/blob/c86ad3a52984461fc5c63980d12e8ceed847854c/Cargo.toml
-https://github.com/codyps/leak/blob/024bd1ccfa33aea1eff0026b0d8b676874b5e3d2/Cargo.toml
 https://github.com/denoland/deno_native_certs/blob/af63bfbea7d761ab286fa357bc38350b39ad2df0/Cargo.toml
 https://github.com/denoland/deno_tunnel/blob/c0572b46beac220e105e69317ff9e207babc7f09/Cargo.toml
 https://github.com/denoland/rustls-tokio-stream/blob/c8a9239c987dbfa7b1eaed78d27935fe8272319c/Cargo.toml
@@ -7054,7 +6999,6 @@ https://github.com/etemesi254/zune-image/blob/f8fbb123d5ed04441e8324a555bfcda0cb
 https://github.com/lu-zero/simd_helpers/blob/ca1a2f84aa386d758e98f8a609d990263932fb85/Cargo.toml
 https://github.com/mmastrac/derive-io/blob/69a023098378b66e8f8852173b65ca5762b201e2/crates/derive-io-macros/Cargo.toml
 https://github.com/mmastrac/derive-io/blob/69a023098378b66e8f8852173b65ca5762b201e2/crates/derive-io/Cargo.toml
-https://github.com/notriddle/rust-leaky-cow/blob/88f4a8cd01ffc634d9f7642b97eb764a8dcd3760/Cargo.toml
 https://github.com/reem/rust-mac/blob/66afc663b68a65633ea165c742b5a9c6734581c2/Cargo.toml
 
 These components explicitly declare MIT in their package metadata but omit a
@@ -7465,38 +7409,6 @@ bytes@1.12.1 (MIT); authors declared by package: Carl Lerche <me@carllerche.com>
 https://crates.io/api/v1/crates/bytes/1.12.1/download :: LICENSE
 
 Copyright (c) 2018 Carl Lerche
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-
-================================================================================
-
-bzip2@0.6.1 (MIT OR Apache-2.0)
-
-https://crates.io/api/v1/crates/bzip2/0.6.1/download :: LICENSE-MIT
-
-Copyright (c) 2014-2025 Alex Crichton and Contributors
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -8428,86 +8340,6 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ================================================================================
 
-cgl@0.3.2 (MIT / Apache-2.0); authors declared by package: The Servo Project Developers
-cocoa-foundation@0.2.1 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
-cocoa@0.26.0 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
-core-foundation-sys@0.8.7 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
-core-foundation@0.10.1 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
-core-graphics-types@0.2.0 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
-core-graphics@0.24.0 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
-core-text@21.0.0 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
-euclid@0.22.14 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
-io-surface@0.16.1 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
-string_cache@0.8.9 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
-string_cache@0.9.0 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
-string_cache_codegen@0.5.4 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
-string_cache_codegen@0.6.1 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
-
-https://crates.io/api/v1/crates/cgl/0.3.2/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/cocoa-foundation/0.2.1/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/cocoa/0.26.0/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/core-foundation-sys/0.8.7/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/core-foundation/0.10.1/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/core-graphics-types/0.2.0/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/core-graphics/0.24.0/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/core-text/21.0.0/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/euclid/0.22.14/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/io-surface/0.16.1/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/string_cache/0.8.9/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/string_cache/0.9.0/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/string_cache_codegen/0.5.4/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/string_cache_codegen/0.6.1/download :: LICENSE-MIT
-
-Copyright (c) 2012-2013 Mozilla Foundation
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-
-================================================================================
-
-cgl@0.3.2 (MIT / Apache-2.0); authors declared by package: The Servo Project Developers
-cocoa@0.26.0 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
-core-graphics@0.24.0 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
-core-text@21.0.0 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
-euclid@0.22.14 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
-io-surface@0.16.1 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
-
-https://crates.io/api/v1/crates/cgl/0.3.2/download :: COPYING
-https://crates.io/api/v1/crates/cocoa/0.26.0/download :: COPYRIGHT
-https://crates.io/api/v1/crates/core-graphics/0.24.0/download :: COPYRIGHT
-https://crates.io/api/v1/crates/core-text/21.0.0/download :: COPYRIGHT
-https://crates.io/api/v1/crates/euclid/0.22.14/download :: COPYRIGHT
-https://crates.io/api/v1/crates/io-surface/0.16.1/download :: COPYRIGHT
-
-Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-<LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-option. All files in the project carrying such notice may not be
-copied, modified, or distributed except according to those terms.
-
-================================================================================
-
 chacha20@0.10.2 (MIT OR Apache-2.0); authors declared by package: RustCrypto Developers
 chacha20poly1305@0.11.0 (Apache-2.0 OR MIT); authors declared by package: RustCrypto Developers
 zeroize_derive@1.5.0 (Apache-2.0 OR MIT); authors declared by package: The RustCrypto Project Developers
@@ -9255,6 +9087,78 @@ SOFTWARE.
 
 ================================================================================
 
+cocoa-foundation@0.2.1 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
+cocoa@0.26.0 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
+core-foundation-sys@0.8.7 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
+core-foundation@0.10.1 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
+core-graphics-types@0.2.0 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
+core-graphics@0.24.0 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
+core-text@21.0.0 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
+euclid@0.22.14 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
+string_cache@0.8.9 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
+string_cache@0.9.0 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
+string_cache_codegen@0.5.4 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
+string_cache_codegen@0.6.1 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
+
+https://crates.io/api/v1/crates/cocoa-foundation/0.2.1/download :: LICENSE-MIT
+https://crates.io/api/v1/crates/cocoa/0.26.0/download :: LICENSE-MIT
+https://crates.io/api/v1/crates/core-foundation-sys/0.8.7/download :: LICENSE-MIT
+https://crates.io/api/v1/crates/core-foundation/0.10.1/download :: LICENSE-MIT
+https://crates.io/api/v1/crates/core-graphics-types/0.2.0/download :: LICENSE-MIT
+https://crates.io/api/v1/crates/core-graphics/0.24.0/download :: LICENSE-MIT
+https://crates.io/api/v1/crates/core-text/21.0.0/download :: LICENSE-MIT
+https://crates.io/api/v1/crates/euclid/0.22.14/download :: LICENSE-MIT
+https://crates.io/api/v1/crates/string_cache/0.8.9/download :: LICENSE-MIT
+https://crates.io/api/v1/crates/string_cache/0.9.0/download :: LICENSE-MIT
+https://crates.io/api/v1/crates/string_cache_codegen/0.5.4/download :: LICENSE-MIT
+https://crates.io/api/v1/crates/string_cache_codegen/0.6.1/download :: LICENSE-MIT
+
+Copyright (c) 2012-2013 Mozilla Foundation
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+================================================================================
+
+cocoa@0.26.0 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
+core-graphics@0.24.0 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
+core-text@21.0.0 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
+euclid@0.22.14 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
+
+https://crates.io/api/v1/crates/cocoa/0.26.0/download :: COPYRIGHT
+https://crates.io/api/v1/crates/core-graphics/0.24.0/download :: COPYRIGHT
+https://crates.io/api/v1/crates/core-text/21.0.0/download :: COPYRIGHT
+https://crates.io/api/v1/crates/euclid/0.22.14/download :: COPYRIGHT
+
+Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+<LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+option. All files in the project carrying such notice may not be
+copied, modified, or distributed except according to those terms.
+
+================================================================================
+
 color_quant@1.1.0 (MIT); authors declared by package: nwin <nwin@users.noreply.github.com>
 
 https://crates.io/api/v1/crates/color_quant/1.1.0/download :: LICENSE
@@ -9452,40 +9356,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-================================================================================
-
-core-graphics2@0.5.2 (MIT OR Apache-2.0); authors declared by package: Zhou Wei <zhouwei@ehom.net>
-core-video@0.5.2 (MIT OR Apache-2.0); authors declared by package: Zhou Wei <zhouwei@ehom.net>
-
-https://crates.io/api/v1/crates/core-graphics2/0.5.2/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/core-video/0.5.2/download :: LICENSE-MIT
-
-Copyright (c) 2024 Zhou Wei
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
 
 ================================================================================
 
@@ -18092,14 +17962,14 @@ DEALINGS IN THE SOFTWARE.
 
 ================================================================================
 
-gpui-base@0.7.1 (Apache-2.0)
-gpui-component-macros@0.7.1 (Apache-2.0)
-gpui-component@0.7.1 (Apache-2.0)
-gpui-kit@0.7.1 (Apache-2.0)
+gpui-base@0.7.3 (Apache-2.0)
+gpui-component-macros@0.7.3 (Apache-2.0)
+gpui-component@0.7.3 (Apache-2.0)
+gpui-kit@0.7.3 (Apache-2.0)
 
-git+https://github.com/longbridge/gpui-kit?rev=29c04574dc838a8e59e84c9c9f3c4d15983222ce#29c04574dc838a8e59e84c9c9f3c4d15983222ce :: LICENSE-APACHE
-https://github.com/longbridge/gpui-kit#29c04574dc838a8e59e84c9c9f3c4d15983222ce (adapted; third-party/gpui-kit/crates/base) :: LICENSE-APACHE
-https://raw.githubusercontent.com/longbridge/gpui-kit/29c04574dc838a8e59e84c9c9f3c4d15983222ce/LICENSE-APACHE
+git+https://github.com/longbridge/gpui-kit?rev=c5f8eca4a0759f8c0c7ed624eddfd03f1c93a5f2#c5f8eca4a0759f8c0c7ed624eddfd03f1c93a5f2 :: LICENSE-APACHE
+https://github.com/longbridge/gpui-kit#c5f8eca4a0759f8c0c7ed624eddfd03f1c93a5f2 (adapted; third-party/gpui-kit/crates/base) :: LICENSE-APACHE
+https://raw.githubusercontent.com/longbridge/gpui-kit/c5f8eca4a0759f8c0c7ed624eddfd03f1c93a5f2/LICENSE-APACHE
 
 Copyright 2024 - 2026 Longbridge <https://longbridge.com>
 
@@ -18295,10 +18165,10 @@ END OF TERMS AND CONDITIONS
 
 ================================================================================
 
-gpui-component-macros@0.7.1 (Apache-2.0)
-gpui-kit@0.7.1 (Apache-2.0)
+gpui-component-macros@0.7.3 (Apache-2.0)
+gpui-kit@0.7.3 (Apache-2.0)
 
-https://raw.githubusercontent.com/longbridge/gpui-kit/29c04574dc838a8e59e84c9c9f3c4d15983222ce/LICENSE-DOCS.md
+https://raw.githubusercontent.com/longbridge/gpui-kit/c5f8eca4a0759f8c0c7ed624eddfd03f1c93a5f2/LICENSE-DOCS.md
 
 # Documentation license
 
@@ -18310,29 +18180,29 @@ This documentation license does **not** apply to software source, website implem
 
 ================================================================================
 
-gpui-fast-apple@0.1.2 (Apache-2.0); authors declared by package: Longbridge
-gpui-fast-linux@0.1.2 (Apache-2.0)
-gpui-fast-macos@0.1.2 (Apache-2.0)
-gpui-fast-macros@0.1.2 (Apache-2.0); authors declared by package: Longbridge
-gpui-fast-platform@0.1.2 (Apache-2.0); authors declared by package: Longbridge
-gpui-fast-wgpu@0.1.2 (Apache-2.0); authors declared by package: Longbridge
-gpui-fast-windows@0.1.2 (Apache-2.0)
-gpui-fast@0.1.2 (Apache-2.0); authors declared by package: Nathan Sobo <nathan@zed.dev>
-gpui-pre-scheduler@0.3.8 (Apache-2.0)
+gpui-fast-apple@0.1.7 (Apache-2.0); authors declared by package: Longbridge
+gpui-fast-linux@0.1.7 (Apache-2.0)
+gpui-fast-macos@0.1.7 (Apache-2.0)
+gpui-fast-macros@0.1.7 (Apache-2.0); authors declared by package: Longbridge
+gpui-fast-platform@0.1.7 (Apache-2.0); authors declared by package: Longbridge
+gpui-fast-wgpu@0.1.7 (Apache-2.0); authors declared by package: Longbridge
+gpui-fast-windows@0.1.7 (Apache-2.0)
+gpui-fast@0.1.7 (Apache-2.0); authors declared by package: Nathan Sobo <nathan@zed.dev>
+gpui-pre-scheduler@0.3.9 (Apache-2.0)
 
-https://crates.io/api/v1/crates/gpui-fast-apple/0.1.2/download :: LICENSE
-https://crates.io/api/v1/crates/gpui-fast-macros/0.1.2/download :: LICENSE
-https://crates.io/api/v1/crates/gpui-fast-platform/0.1.2/download :: LICENSE
-https://crates.io/api/v1/crates/gpui-fast-wgpu/0.1.2/download :: LICENSE
-https://github.com/longbridge/gpui-fast#8e1e1987fdb512bb8b0ab27261906a598aff2ab8 (adapted; third-party/gpui-fast/crates/gpui) :: ../../LICENSE-APACHE
-https://github.com/longbridge/gpui-fast#8e1e1987fdb512bb8b0ab27261906a598aff2ab8 (adapted; third-party/gpui-fast/crates/gpui) :: LICENSE-APACHE
-https://github.com/longbridge/gpui-fast#8e1e1987fdb512bb8b0ab27261906a598aff2ab8 (adapted; third-party/gpui-fast/crates/gpui_linux) :: ../../LICENSE-APACHE
-https://github.com/longbridge/gpui-fast#8e1e1987fdb512bb8b0ab27261906a598aff2ab8 (adapted; third-party/gpui-fast/crates/gpui_linux) :: LICENSE-APACHE
-https://github.com/longbridge/gpui-fast#8e1e1987fdb512bb8b0ab27261906a598aff2ab8 (adapted; third-party/gpui-fast/crates/gpui_macos) :: ../../LICENSE-APACHE
-https://github.com/longbridge/gpui-fast#8e1e1987fdb512bb8b0ab27261906a598aff2ab8 (adapted; third-party/gpui-fast/crates/gpui_macos) :: LICENSE-APACHE
-https://github.com/longbridge/gpui-fast#8e1e1987fdb512bb8b0ab27261906a598aff2ab8 (adapted; third-party/gpui-fast/crates/gpui_windows) :: ../../LICENSE-APACHE
-https://github.com/longbridge/gpui-fast#8e1e1987fdb512bb8b0ab27261906a598aff2ab8 (adapted; third-party/gpui-fast/crates/gpui_windows) :: LICENSE-APACHE
-https://github.com/longbridge/gpui-fast#8e1e1987fdb512bb8b0ab27261906a598aff2ab8 (adapted; third-party/gpui-fast/crates/scheduler) :: ../../LICENSE-APACHE
+https://crates.io/api/v1/crates/gpui-fast-apple/0.1.7/download :: LICENSE
+https://crates.io/api/v1/crates/gpui-fast-macros/0.1.7/download :: LICENSE
+https://crates.io/api/v1/crates/gpui-fast-platform/0.1.7/download :: LICENSE
+https://crates.io/api/v1/crates/gpui-fast-wgpu/0.1.7/download :: LICENSE
+https://github.com/longbridge/gpui-fast#371769f1ff378bc0bd886440e0f97fc94aaeae5d (adapted; third-party/gpui-fast/crates/gpui) :: ../../LICENSE-APACHE
+https://github.com/longbridge/gpui-fast#371769f1ff378bc0bd886440e0f97fc94aaeae5d (adapted; third-party/gpui-fast/crates/gpui) :: LICENSE-APACHE
+https://github.com/longbridge/gpui-fast#371769f1ff378bc0bd886440e0f97fc94aaeae5d (adapted; third-party/gpui-fast/crates/gpui_linux) :: ../../LICENSE-APACHE
+https://github.com/longbridge/gpui-fast#371769f1ff378bc0bd886440e0f97fc94aaeae5d (adapted; third-party/gpui-fast/crates/gpui_linux) :: LICENSE-APACHE
+https://github.com/longbridge/gpui-fast#371769f1ff378bc0bd886440e0f97fc94aaeae5d (adapted; third-party/gpui-fast/crates/gpui_macos) :: ../../LICENSE-APACHE
+https://github.com/longbridge/gpui-fast#371769f1ff378bc0bd886440e0f97fc94aaeae5d (adapted; third-party/gpui-fast/crates/gpui_macos) :: LICENSE-APACHE
+https://github.com/longbridge/gpui-fast#371769f1ff378bc0bd886440e0f97fc94aaeae5d (adapted; third-party/gpui-fast/crates/gpui_windows) :: ../../LICENSE-APACHE
+https://github.com/longbridge/gpui-fast#371769f1ff378bc0bd886440e0f97fc94aaeae5d (adapted; third-party/gpui-fast/crates/gpui_windows) :: LICENSE-APACHE
+https://github.com/longbridge/gpui-fast#371769f1ff378bc0bd886440e0f97fc94aaeae5d (adapted; third-party/gpui-fast/crates/scheduler) :: ../../LICENSE-APACHE
 
 Copyright 2022 - 2025 Zed Industries, Inc.
 Copyright 2026 Longbridge.
@@ -18543,9 +18413,9 @@ Apache License
 
 ================================================================================
 
-gpui-kit-assets@0.7.1 (Apache-2.0)
+gpui-kit-assets@0.7.3 (Apache-2.0)
 
-git+https://github.com/longbridge/gpui-kit?rev=29c04574dc838a8e59e84c9c9f3c4d15983222ce#29c04574dc838a8e59e84c9c9f3c4d15983222ce :: LICENSE-LUCIDE
+git+https://github.com/longbridge/gpui-kit?rev=c5f8eca4a0759f8c0c7ed624eddfd03f1c93a5f2#c5f8eca4a0759f8c0c7ed624eddfd03f1c93a5f2 :: LICENSE-LUCIDE
 
 ISC License
 
@@ -18593,9 +18463,9 @@ SOFTWARE.
 
 ================================================================================
 
-gpui-kit-assets@0.7.1 (Apache-2.0)
+gpui-kit-assets@0.7.3 (Apache-2.0)
 
-git+https://github.com/longbridge/gpui-kit?rev=29c04574dc838a8e59e84c9c9f3c4d15983222ce#29c04574dc838a8e59e84c9c9f3c4d15983222ce :: assets/icons/copyright.svg
+git+https://github.com/longbridge/gpui-kit?rev=c5f8eca4a0759f8c0c7ed624eddfd03f1c93a5f2#c5f8eca4a0759f8c0c7ed624eddfd03f1c93a5f2 :: assets/icons/copyright.svg
 
 <svg
   xmlns="http://www.w3.org/2000/svg"
@@ -18614,47 +18484,41 @@ git+https://github.com/longbridge/gpui-kit?rev=29c04574dc838a8e59e84c9c9f3c4d159
 
 ================================================================================
 
-gpui-pre-apple@0.3.8 (Apache-2.0)
-gpui-pre-collections@0.3.8 (Apache-2.0)
-gpui-pre-derive-refineable@0.3.8 (Apache-2.0)
-gpui-pre-http-client@0.3.8 (Apache-2.0)
-gpui-pre-linux@0.3.8 (Apache-2.0)
-gpui-pre-macos@0.3.8 (Apache-2.0)
-gpui-pre-macros@0.3.8 (Apache-2.0)
-gpui-pre-perf@0.3.8 (Apache-2.0)
-gpui-pre-platform@0.3.8 (Apache-2.0)
-gpui-pre-refineable@0.3.8 (Apache-2.0)
-gpui-pre-shared-string@0.3.8 (Apache-2.0)
-gpui-pre-sum-tree@0.3.8 (Apache-2.0)
-gpui-pre-util-macros@0.3.8 (Apache-2.0)
-gpui-pre-util@0.3.8 (Apache-2.0)
-gpui-pre-wgpu@0.3.8 (Apache-2.0)
-gpui-pre-windows@0.3.8 (Apache-2.0)
-gpui-pre-zlog@0.3.8 (Apache-2.0)
-gpui-pre-ztracing-macro@0.3.8 (Apache-2.0)
-gpui-pre-ztracing@0.3.8 (Apache-2.0)
-gpui-pre@0.3.8 (Apache-2.0); authors declared by package: Nathan Sobo <nathan@zed.dev>
+gpui-pre-apple@0.3.9 (Apache-2.0)
+gpui-pre-collections@0.3.9 (Apache-2.0)
+gpui-pre-derive-refineable@0.3.9 (Apache-2.0)
+gpui-pre-http-client@0.3.9 (Apache-2.0)
+gpui-pre-linux@0.3.9 (Apache-2.0)
+gpui-pre-macos@0.3.9 (Apache-2.0)
+gpui-pre-macros@0.3.9 (Apache-2.0)
+gpui-pre-platform@0.3.9 (Apache-2.0)
+gpui-pre-refineable@0.3.9 (Apache-2.0)
+gpui-pre-shared-string@0.3.9 (Apache-2.0)
+gpui-pre-sum-tree@0.3.9 (Apache-2.0)
+gpui-pre-util@0.3.9 (Apache-2.0)
+gpui-pre-wgpu@0.3.9 (Apache-2.0)
+gpui-pre-windows@0.3.9 (Apache-2.0)
+gpui-pre-ztracing-macro@0.3.9 (Apache-2.0)
+gpui-pre-ztracing@0.3.9 (Apache-2.0)
+gpui-pre@0.3.9 (Apache-2.0); authors declared by package: Nathan Sobo <nathan@zed.dev>
 
-https://crates.io/api/v1/crates/gpui-pre-apple/0.3.8/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/gpui-pre-collections/0.3.8/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/gpui-pre-derive-refineable/0.3.8/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/gpui-pre-http-client/0.3.8/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/gpui-pre-linux/0.3.8/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/gpui-pre-macos/0.3.8/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/gpui-pre-macros/0.3.8/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/gpui-pre-perf/0.3.8/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/gpui-pre-platform/0.3.8/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/gpui-pre-refineable/0.3.8/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/gpui-pre-shared-string/0.3.8/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/gpui-pre-sum-tree/0.3.8/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/gpui-pre-util-macros/0.3.8/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/gpui-pre-util/0.3.8/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/gpui-pre-wgpu/0.3.8/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/gpui-pre-windows/0.3.8/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/gpui-pre-zlog/0.3.8/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/gpui-pre-ztracing-macro/0.3.8/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/gpui-pre-ztracing/0.3.8/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/gpui-pre/0.3.8/download :: LICENSE-APACHE
+https://crates.io/api/v1/crates/gpui-pre-apple/0.3.9/download :: LICENSE-APACHE
+https://crates.io/api/v1/crates/gpui-pre-collections/0.3.9/download :: LICENSE-APACHE
+https://crates.io/api/v1/crates/gpui-pre-derive-refineable/0.3.9/download :: LICENSE-APACHE
+https://crates.io/api/v1/crates/gpui-pre-http-client/0.3.9/download :: LICENSE-APACHE
+https://crates.io/api/v1/crates/gpui-pre-linux/0.3.9/download :: LICENSE-APACHE
+https://crates.io/api/v1/crates/gpui-pre-macos/0.3.9/download :: LICENSE-APACHE
+https://crates.io/api/v1/crates/gpui-pre-macros/0.3.9/download :: LICENSE-APACHE
+https://crates.io/api/v1/crates/gpui-pre-platform/0.3.9/download :: LICENSE-APACHE
+https://crates.io/api/v1/crates/gpui-pre-refineable/0.3.9/download :: LICENSE-APACHE
+https://crates.io/api/v1/crates/gpui-pre-shared-string/0.3.9/download :: LICENSE-APACHE
+https://crates.io/api/v1/crates/gpui-pre-sum-tree/0.3.9/download :: LICENSE-APACHE
+https://crates.io/api/v1/crates/gpui-pre-util/0.3.9/download :: LICENSE-APACHE
+https://crates.io/api/v1/crates/gpui-pre-wgpu/0.3.9/download :: LICENSE-APACHE
+https://crates.io/api/v1/crates/gpui-pre-windows/0.3.9/download :: LICENSE-APACHE
+https://crates.io/api/v1/crates/gpui-pre-ztracing-macro/0.3.9/download :: LICENSE-APACHE
+https://crates.io/api/v1/crates/gpui-pre-ztracing/0.3.9/download :: LICENSE-APACHE
+https://crates.io/api/v1/crates/gpui-pre/0.3.9/download :: LICENSE-APACHE
 
 Copyright 2022 - 2025 Zed Industries, Inc.
 
@@ -21807,60 +21671,6 @@ USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
 
-libbz2-rs-sys@0.2.5 (bzip2-1.0.6)
-
-https://crates.io/api/v1/crates/libbz2-rs-sys/0.2.5/download :: LICENSE
-
---------------------------------------------------------------------------
-
-The original program, "bzip2", the associated library "libbzip2", and all
-documentation, are
-
-Copyright (C) 1996-2021 Julian R Seward.
-Copyright (C) 2019-2020 Federico Mena Quintero
-Copyright (C) 2021 Micah Snyder
-
-This Rust translation, "libbzip2-rs" is a derived work based on "bzip2" and
-"libbzip2", and is Copyright (C) 2024-2025 Trifecta Tech Foundation and contributors
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions
-are met:
-
-1. Redistributions of source code must retain the above copyright
-   notice, this list of conditions and the following disclaimer.
-
-2. The origin of this software must not be misrepresented; you must
-   not claim that you wrote the original software.  If you use this
-   software in a product, an acknowledgment in the product
-   documentation would be appreciated but is not required.
-
-3. Altered source versions must be plainly marked as such, and must
-   not be misrepresented as being the original software.
-
-4. The name of the author may not be used to endorse or promote
-   products derived from this software without specific prior written
-   permission.
-
-THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS
-OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
-DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE
-GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
-WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
-NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-Julian Seward, jseward@acm.org
-bzip2/libbzip2 version 1.1.0 of 6 September 2010
-
---------------------------------------------------------------------------
-
-================================================================================
-
 libc@0.2.189 (MIT OR Apache-2.0)
 
 https://crates.io/api/v1/crates/libc/0.2.189/download :: LICENSE-MIT
@@ -22711,10 +22521,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ================================================================================
 
-mach2@0.5.0 (BSD-2-Clause OR MIT OR Apache-2.0)
 mach2@0.6.0 (BSD-2-Clause OR MIT OR Apache-2.0)
 
-https://crates.io/api/v1/crates/mach2/0.5.0/download :: LICENSE-BSD
 https://crates.io/api/v1/crates/mach2/0.6.0/download :: LICENSE-BSD
 
 Copyright (c) 2019 Nick Fitzgerald, 2021 Yuki Okushi
@@ -22743,10 +22551,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
 
-mach2@0.5.0 (BSD-2-Clause OR MIT OR Apache-2.0)
 mach2@0.6.0 (BSD-2-Clause OR MIT OR Apache-2.0)
 
-https://crates.io/api/v1/crates/mach2/0.5.0/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/mach2/0.6.0/download :: LICENSE-MIT
 
 Copyright (c) 2019 Nick Fitzgerald, 2021 Yuki Okushi
@@ -25485,35 +25291,6 @@ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
 THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE 
-SOFTWARE.
-
-================================================================================
-
-nu-ansi-term@0.50.3 (MIT); authors declared by package: ogham@bsago.me, Ryan Scheel (Havvy) <ryan.havvy@gmail.com>, Josh Triplett <josh@joshtriplett.org>, The Nushell Project Developers
-
-https://crates.io/api/v1/crates/nu-ansi-term/0.50.3/download :: LICENSE
-
-The MIT License (MIT)
-
-Copyright (c) 2014 Benjamin Sago
-Copyright (c) 2021-2022 The Nushell Project Developers
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ================================================================================
@@ -32156,34 +31933,6 @@ Public License instead of this License.
 
 ================================================================================
 
-serde_fmt@1.1.0 (Apache-2.0 OR MIT); authors declared by package: Ashley Mannix <ashleymannix@live.com.au>
-
-https://crates.io/api/v1/crates/serde_fmt/1.1.0/download :: LICENSE-MIT
-
-MIT License
-
-Copyright (c) 2019 Ashley Mannix
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-================================================================================
-
 serde_urlencoded@0.7.1 (MIT/Apache-2.0); authors declared by package: Anthony Ramine <n.oxyde@gmail.com>
 
 https://crates.io/api/v1/crates/serde_urlencoded/0.7.1/download :: LICENSE-MIT
@@ -32466,32 +32215,6 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
-
-================================================================================
-
-sharded-slab@0.1.7 (MIT); authors declared by package: Eliza Weisman <eliza@buoyant.io>
-
-https://crates.io/api/v1/crates/sharded-slab/0.1.7/download :: LICENSE
-
-Copyright (c) 2019 Eliza Weisman
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
 
 ================================================================================
 
@@ -33659,54 +33382,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
 
-sval@2.22.0 (Apache-2.0 OR MIT); authors declared by package: Ashley Mannix <hey@kodraus.com>
-sval_buffer@2.22.0 (Apache-2.0 OR MIT); authors declared by package: Ashley Mannix <hey@kodraus.com>
-sval_dynamic@2.22.0 (Apache-2.0 OR MIT); authors declared by package: Ashley Mannix <hey@kodraus.com>
-sval_fmt@2.22.0 (Apache-2.0 OR MIT); authors declared by package: Ashley Mannix <hey@kodraus.com>
-sval_json@2.22.0 (Apache-2.0 OR MIT); authors declared by package: Ashley Mannix <hey@kodraus.com>
-sval_nested@2.22.0 (Apache-2.0 OR MIT); authors declared by package: Ashley Mannix <hey@kodraus.com>
-sval_ref@2.22.0 (Apache-2.0 OR MIT); authors declared by package: Ashley Mannix <hey@kodraus.com>
-sval_serde@2.22.0 (Apache-2.0 OR MIT); authors declared by package: Ashley Mannix <hey@kodraus.com>
-value-bag-serde1@1.14.1 (Apache-2.0 OR MIT); authors declared by package: Ashley Mannix <ashleymannix@live.com.au>
-value-bag-sval2@1.14.1 (Apache-2.0 OR MIT); authors declared by package: Ashley Mannix <ashleymannix@live.com.au>
-value-bag@1.14.1 (Apache-2.0 OR MIT); authors declared by package: Ashley Mannix <ashleymannix@live.com.au>
-
-https://crates.io/api/v1/crates/sval/2.22.0/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/sval_buffer/2.22.0/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/sval_dynamic/2.22.0/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/sval_fmt/2.22.0/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/sval_json/2.22.0/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/sval_ref/2.22.0/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/sval_serde/2.22.0/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/value-bag-serde1/1.14.1/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/value-bag-sval2/1.14.1/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/value-bag/1.14.1/download :: LICENSE-MIT
-https://raw.githubusercontent.com/sval-rs/sval/02395d2e20b5f703ca3ac35ae13efa5ad5248258/LICENSE-MIT
-
-MIT License
-
-Copyright (c) 2020 sval-rs
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-================================================================================
-
 svg_fmt@0.4.5 (MIT/Apache-2.0); authors declared by package: Nicolas Silva <nical@fastmail.com>
 
 https://raw.githubusercontent.com/nical/rust_debug/93f414cd572b5c2781df93dbdc068ed13443d05a/LICENSE
@@ -33928,8 +33603,10 @@ SOFTWARE.
 ================================================================================
 
 taffy@0.13.0 (MIT); authors declared by package: Alice Cecile <alice.i.cecile@gmail.com>, Johnathan Kelley <jkelleyrtp@gmail.com>, Nico Burns <nico@nicoburns.com>
+taffy@0.14.0 (MIT); authors declared by package: Alice Cecile <alice.i.cecile@gmail.com>, Johnathan Kelley <jkelleyrtp@gmail.com>, Nico Burns <nico@nicoburns.com>
 
 https://raw.githubusercontent.com/DioxusLabs/taffy/45a56299d366ddb383e593a1f0372158d00e8530/LICENSE
+https://raw.githubusercontent.com/DioxusLabs/taffy/77f385683c1d698c91a23a259f87fdddf26925fb/LICENSE
 
 MIT License
 
@@ -34774,15 +34451,11 @@ SOFTWARE.
 tokio-native-tls@0.3.1 (MIT); authors declared by package: Tokio Contributors <team@tokio.rs>
 tracing-attributes@0.1.31 (MIT); authors declared by package: Tokio Contributors <team@tokio.rs>, Eliza Weisman <eliza@buoyant.io>, David Barsky <dbarsky@amazon.com>
 tracing-core@0.1.36 (MIT); authors declared by package: Tokio Contributors <team@tokio.rs>
-tracing-log@0.2.0 (MIT); authors declared by package: Tokio Contributors <team@tokio.rs>
-tracing-subscriber@0.3.23 (MIT); authors declared by package: Eliza Weisman <eliza@buoyant.io>, David Barsky <me@davidbarsky.com>, Tokio Contributors <team@tokio.rs>
 tracing@0.1.44 (MIT); authors declared by package: Eliza Weisman <eliza@buoyant.io>, Tokio Contributors <team@tokio.rs>
 
 https://crates.io/api/v1/crates/tokio-native-tls/0.3.1/download :: LICENSE
 https://crates.io/api/v1/crates/tracing-attributes/0.1.31/download :: LICENSE
 https://crates.io/api/v1/crates/tracing-core/0.1.36/download :: LICENSE
-https://crates.io/api/v1/crates/tracing-log/0.2.0/download :: LICENSE
-https://crates.io/api/v1/crates/tracing-subscriber/0.3.23/download :: LICENSE
 https://crates.io/api/v1/crates/tracing/0.1.44/download :: LICENSE
 
 Copyright (c) 2019 Tokio Contributors

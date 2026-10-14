@@ -26,7 +26,7 @@ pub(crate) struct AppDependencies {
     global_read_log: Rc<RefCell<Vec<TypeId>>>,
     /// Every [`StateVersion`] read while a recording is open, with the
     /// version it was at.
-    state_read_log: RefCell<Vec<(StateVersion, u64)>>,
+    state_read_log: Rc<RefCell<Vec<(StateVersion, u64)>>>,
     /// For each open recording, innermost last, the stretches of the logs that
     /// recordings nested in it, or dependencies replayed into it, took up:
     /// what it read through a nested subtree rather than itself.
@@ -121,6 +121,14 @@ pub(crate) fn note_global_removed<G: 'static>(cx: &mut App) {
 #[inline(always)]
 pub(crate) fn global_changed(cx: &mut App, global_type: TypeId) {
     cx.dependencies.global_changed(global_type);
+}
+
+/// A count that grows with every entity updated, written or changed and
+/// every global changed: equal counts taken at two moments saw none of
+/// those between them.
+pub(crate) fn change_count(cx: &App) -> u64 {
+    let log = &cx.entities.access_log;
+    log.update_generation + log.write_generation.get() + cx.dependencies.global_generation
 }
 
 /// Stands for whether a global of type `G` is set, which a subtree that
@@ -245,14 +253,15 @@ impl App {
     /// while it is open, including what nested ones saw.
     pub(crate) fn begin_recording_dependencies(&mut self) -> DependencyRecording {
         self.dependencies.nested.push(Vec::new());
+        ReadLogs::share(&self.entities.access_log, &self.dependencies);
         DependencyRecording {
             entities: self.entities.begin_recording(),
             globals: self.dependencies.global_read_log.borrow_mut().len(),
-            states: self.dependencies.state_read_log.get_mut().len(),
+            states: self.dependencies.state_read_log.borrow_mut().len(),
             offset_reads: crate::fast::layers::invalidate::begin_offset_reads(),
             generation: self.dependencies.global_generation,
             updates: self.entities.access_log.update_generation,
-            writes: self.entities.access_log.write_generation,
+            writes: self.entities.access_log.write_generation.get(),
         }
     }
 
@@ -267,7 +276,7 @@ impl App {
         let ranges = LogRanges {
             entities: recording.entities..self.entities.access_log.len(),
             globals: recording.globals..log.global_read_log.borrow().len(),
-            states: recording.states..log.state_read_log.get_mut().len(),
+            states: recording.states..log.state_read_log.borrow_mut().len(),
             offset_reads: recording.offset_reads
                 ..crate::fast::layers::invalidate::offset_reads_len(),
         };
@@ -314,19 +323,22 @@ impl App {
             .no_states
             .get_or_insert_with(|| Rc::from(Vec::new()))
             .clone();
-        let states_log = log.state_read_log.get_mut();
-        let states = dedup_states(&states_log[ranges.states.clone()], &no_states);
-        let own_states = if ranges.states.is_empty() {
-            no_states
-        } else {
-            let mut own = Vec::new();
-            outside(
-                states_log,
-                &ranges.states,
-                nested.iter().map(|n| &n.states),
-                &mut own,
-            );
-            dedup_states(&own, &no_states)
+        let (states, own_states) = {
+            let states_log = log.state_read_log.borrow();
+            let states = dedup_states(&states_log[ranges.states.clone()], &no_states);
+            let own_states = if ranges.states.is_empty() {
+                no_states
+            } else {
+                let mut own = Vec::new();
+                outside(
+                    &states_log,
+                    &ranges.states,
+                    nested.iter().map(|n| &n.states),
+                    &mut own,
+                );
+                dedup_states(&own, &no_states)
+            };
+            (states, own_states)
         };
         self.entities.close_recording(recording.entities);
         if let Some(parent) = self.dependencies.nested.last_mut() {
@@ -334,10 +346,11 @@ impl App {
         }
         if !self.entities.is_recording() {
             self.dependencies.global_read_log.borrow_mut().clear();
-            self.dependencies.state_read_log.get_mut().clear();
+            self.dependencies.state_read_log.borrow_mut().clear();
         }
         let writes = writes_while_open(&recording, &self.entities.access_log);
         RecordedDependencies {
+            render: None,
             all: RenderDependencies {
                 entities,
                 globals,
@@ -361,13 +374,94 @@ impl App {
         }
     }
 
+    /// What `recording`, the innermost recording open, saw read so far
+    /// outside the recordings nested in it: what a view read itself while its
+    /// `render` ran, when taken as `render` returns, before the elements it
+    /// built are laid out and the views nested in them render. When it built a
+    /// list, only what it read before it built the last one counts (see
+    /// [`crate::fast::layers::invalidate::list_built`]).
+    pub(crate) fn dependencies_so_far(
+        &mut self,
+        recording: &DependencyRecording,
+    ) -> RenderDependencies {
+        let log = &mut self.dependencies;
+        let empty = Vec::new();
+        let nested = log.nested.last().unwrap_or(&empty);
+        let mut entities_range = recording.entities..self.entities.access_log.len();
+        let mut globals_range = recording.globals..log.global_read_log.borrow().len();
+        let mut states_range = recording.states..log.state_read_log.borrow().len();
+        let mut offset_range =
+            recording.offset_reads..crate::fast::layers::invalidate::offset_reads_len();
+        if let Some(built) =
+            crate::fast::layers::invalidate::list_built(offset_range.start, offset_range.end)
+        {
+            offset_range.end = built.offsets;
+            entities_range.end = built
+                .entities
+                .clamp(entities_range.start, entities_range.end);
+            globals_range.end = built.globals.clamp(globals_range.start, globals_range.end);
+            states_range.end = built.states.clamp(states_range.start, states_range.end);
+        }
+        let (_, offset_reads) = crate::fast::layers::invalidate::offset_reads_in(
+            &offset_range,
+            nested.iter().map(|n| &n.offset_reads),
+        );
+        let entities = {
+            let access_log = self.entities.access_log.access_log.borrow();
+            let scratch = &mut log.scratch_entities;
+            scratch.clear();
+            outside(
+                &access_log,
+                &entities_range,
+                nested.iter().map(|n| &n.entities),
+                scratch,
+            );
+            sort_unique(scratch);
+            log.interned_entities.get(scratch)
+        };
+        let globals = {
+            let globals_log = log.global_read_log.borrow();
+            let scratch = &mut log.scratch_globals;
+            scratch.clear();
+            outside(
+                &globals_log,
+                &globals_range,
+                nested.iter().map(|n| &n.globals),
+                scratch,
+            );
+            sort_unique(scratch);
+            log.interned_globals.get(scratch)
+        };
+        let no_states = log
+            .no_states
+            .get_or_insert_with(|| Rc::from(Vec::new()))
+            .clone();
+        let mut own_states = Vec::new();
+        outside(
+            &log.state_read_log.borrow(),
+            &states_range,
+            nested.iter().map(|n| &n.states),
+            &mut own_states,
+        );
+        let states = dedup_states(&own_states, &no_states);
+        RenderDependencies {
+            entities,
+            globals,
+            states,
+            offset_reads,
+            generation: recording.generation,
+            updates: recording.updates,
+            writes: writes_while_open(recording, &self.entities.access_log),
+        }
+    }
+
     /// Tells the window, and any recording that is open, that `dependencies`
     /// were read again, as they are when a subtree built from them is reused.
     pub(crate) fn replay_dependencies(&mut self, dependencies: &RenderDependencies) {
         let start = LogRanges {
             entities: self.entities.access_log.len()..0,
             globals: self.dependencies.global_read_log.borrow_mut().len()..0,
-            states: self.dependencies.state_read_log.get_mut().len()..0,
+            states: self.dependencies.state_read_log.borrow_mut().len()..0,
             offset_reads: 0..0,
         };
         self.entities.mark_access_boundary();
@@ -380,7 +474,7 @@ impl App {
                 .extend(dependencies.globals.iter().copied());
             self.dependencies
                 .state_read_log
-                .get_mut()
+                .borrow_mut()
                 .extend(dependencies.states.iter().cloned());
             let offset_reads =
                 crate::fast::layers::invalidate::replay_offset_reads(&dependencies.offset_reads);
@@ -389,7 +483,7 @@ impl App {
             let ranges = LogRanges {
                 entities: start.entities.start..self.entities.access_log.len(),
                 globals: start.globals.start..self.dependencies.global_read_log.borrow_mut().len(),
-                states: start.states.start..self.dependencies.state_read_log.get_mut().len(),
+                states: start.states.start..self.dependencies.state_read_log.borrow_mut().len(),
                 offset_reads,
             };
             if let Some(open) = self.dependencies.nested.last_mut() {
@@ -428,16 +522,42 @@ impl App {
             .entities
             .access_log
             .written_since(&dependencies.entities, &dependencies.writes)
-            || dependencies.globals.iter().any(|global| {
-                self.dependencies
-                    .global_changed_at
-                    .get(global)
-                    .is_some_and(|changed_at| *changed_at > dependencies.generation)
-            })
-            || dependencies
-                .states
-                .iter()
-                .any(|(version, read_at)| version.get() != *read_at)
+            || self.globals_or_states_changed(dependencies)
+    }
+
+    /// Whether anything in `dependencies`, read by a cached view
+    /// ([`crate::Entity::cached`]) or a view drawn inside one, changed in a
+    /// way that draws the cached view again: one of the entities was
+    /// notified, or a global or a versioned state changed.
+    ///
+    /// An entity updated without being notified does not count, whether it
+    /// was updated outside drawing or written while the window drew (see
+    /// [`note_update`]). Upstream builds a cached view again only when it,
+    /// or a view drawn in it, is notified, or it is drawn somewhere else: a
+    /// view around it rendering again, and writing to what it reads as it
+    /// does, as a view handing its child what to show does on every render,
+    /// does not. Such a write is counted for a view that is not cached
+    /// because upstream renders that view again with the view around it, and
+    /// shows what was written; it never shows it in a cached view that was
+    /// not notified. Drawing a cached view again for less than that never
+    /// draws it from older reads than upstream would.
+    pub(crate) fn notified_dependencies_changed(&self, dependencies: &RenderDependencies) -> bool {
+        self.entities
+            .access_log
+            .changed_since(&dependencies.entities, dependencies.updates, false)
+            || self.globals_or_states_changed(dependencies)
+    }
+
+    fn globals_or_states_changed(&self, dependencies: &RenderDependencies) -> bool {
+        dependencies.globals.iter().any(|global| {
+            self.dependencies
+                .global_changed_at
+                .get(global)
+                .is_some_and(|changed_at| *changed_at > dependencies.generation)
+        }) || dependencies
+            .states
+            .iter()
+            .any(|(version, read_at)| version.get() != *read_at)
     }
 }
 
@@ -468,7 +588,7 @@ pub(crate) struct EntityAccessLog {
     /// Every entity accessed while a recording is open, in order and with
     /// repeats, for a retained subtree to learn what it was built from. See
     /// [`App::begin_recording_dependencies`].
-    access_log: RefCell<Vec<EntityId>>,
+    access_log: Rc<RefCell<Vec<EntityId>>>,
     /// Where in `access_log` the last recording, or replay, began or ended.
     /// An access repeating the one just before it is left out, but only
     /// after this: the stretches recordings take up must each keep theirs.
@@ -482,8 +602,10 @@ pub(crate) struct EntityAccessLog {
     /// [`note_update`].
     updated_at: FxHashMap<EntityId, u64>,
     /// Counts the entities updated while a recording is open — written while
-    /// the window draws — each of which is stamped into `written_at`.
-    write_generation: u64,
+    /// the window draws — each of which is stamped into `written_at`. Shared
+    /// with the thread, as the log of entities read is (see
+    /// [`write_generation_now`]).
+    write_generation: Rc<Cell<u64>>,
     /// When each entity was last written while the window drew. See
     /// [`note_update`].
     written_at: FxHashMap<EntityId, u64>,
@@ -521,7 +643,7 @@ impl EntityAccessLog {
     /// Whether any of `entities` was written while the window drew, after
     /// `writes` began and other than by the subtree `writes` belongs to.
     fn written_since(&self, entities: &[EntityId], writes: &Writes) -> bool {
-        self.write_generation != writes.to
+        self.write_generation.get() != writes.to
             && entities.iter().any(|entity| {
                 self.written_at
                     .get(entity)
@@ -546,14 +668,14 @@ impl EntityAccessLog {
 
 impl EntityMap {
     /// Marks where the access log stands as a boundary between stretches.
-    fn mark_access_boundary(&mut self) {
+    pub(crate) fn mark_access_boundary(&mut self) {
         let log = &mut self.access_log;
-        log.boundary.set(log.access_log.get_mut().len());
+        log.boundary.set(log.access_log.borrow().len());
     }
 
     /// How many writes were made while the window drew so far.
     pub(crate) fn write_generation(&self) -> u64 {
-        self.access_log.write_generation
+        self.access_log.write_generation.get()
     }
 
     pub fn extend_accessed<'a>(&mut self, entities: impl IntoIterator<Item = &'a EntityId>) {
@@ -562,7 +684,7 @@ impl EntityMap {
         for entity_id in entities {
             accessed_entities.insert(*entity_id);
             if recording {
-                self.access_log.access_log.get_mut().push(*entity_id);
+                self.access_log.access_log.borrow_mut().push(*entity_id);
             }
         }
     }
@@ -578,7 +700,7 @@ impl EntityMap {
         self.mark_access_boundary();
         let log = &mut self.access_log;
         log.recordings.set(log.recordings.get() + 1);
-        log.access_log.get_mut().len()
+        log.access_log.borrow().len()
     }
 
     /// Closes the recording that started at `_start`, whose accesses have
@@ -592,7 +714,7 @@ impl EntityMap {
         let open = recordings.get() - 1;
         recordings.set(open);
         if open == 0 {
-            access_log.get_mut().clear();
+            access_log.borrow_mut().clear();
         }
         self.mark_access_boundary();
     }
@@ -667,8 +789,9 @@ pub(crate) fn note_update(entities: &mut EntityMap, entity_id: EntityId) {
         log.updated_at.insert(entity_id, log.update_generation);
         log.updated_unnotified.insert(entity_id);
     } else {
-        log.write_generation += 1;
-        log.written_at.insert(entity_id, log.write_generation);
+        let written_at = log.write_generation.get() + 1;
+        log.write_generation.set(written_at);
+        log.written_at.insert(entity_id, written_at);
     }
 }
 
@@ -714,13 +837,14 @@ pub(crate) struct DependencyRecording {
 /// The writes a recording made itself, from when it began to when it
 /// finished: `(began, finished]` in the write generation.
 fn writes_while_open(recording: &DependencyRecording, log: &EntityAccessLog) -> Writes {
+    let now = log.write_generation.get();
     let mut own = SmallVec::new();
-    if log.write_generation > recording.writes {
-        own.push((recording.writes, log.write_generation));
+    if now > recording.writes {
+        own.push((recording.writes, now));
     }
     Writes {
         from: recording.writes,
-        to: log.write_generation,
+        to: now,
         own,
     }
 }
@@ -736,6 +860,20 @@ pub(crate) struct Writes {
 }
 
 impl Writes {
+    /// These writes, and those made from `since` to `now` taken for the
+    /// subtree's own.
+    fn with_own(&self, since: u64, now: u64) -> Self {
+        let mut own = self.own.clone();
+        if now > since {
+            own.push((since, now));
+        }
+        Writes {
+            from: self.from,
+            to: self.to,
+            own,
+        }
+    }
+
     /// Whether a write at `written_at` came from outside the subtree after
     /// it began.
     fn is_foreign(&self, written_at: u64) -> bool {
@@ -757,11 +895,91 @@ impl Writes {
     }
 }
 
+/// The logs of what is read while a recording is open, and the count of
+/// writes, shared with the thread, for where they stand to be known where no
+/// app is at hand. See [`read_log_lengths`] and [`write_generation_now`].
+struct ReadLogs {
+    entities: Rc<RefCell<Vec<EntityId>>>,
+    writes: Rc<Cell<u64>>,
+    globals: Rc<RefCell<Vec<TypeId>>>,
+    states: Rc<RefCell<Vec<(StateVersion, u64)>>>,
+}
+
+thread_local! {
+    static READ_LOGS: RefCell<Option<ReadLogs>> = const { RefCell::new(None) };
+}
+
+impl ReadLogs {
+    /// Shares the logs of the app that `access_log` and `dependencies` are
+    /// part of with the thread, unless they already are.
+    fn share(access_log: &EntityAccessLog, dependencies: &AppDependencies) {
+        READ_LOGS.with_borrow_mut(|logs| {
+            if !logs
+                .as_ref()
+                .is_some_and(|logs| Rc::ptr_eq(&logs.entities, &access_log.access_log))
+            {
+                *logs = Some(ReadLogs {
+                    entities: access_log.access_log.clone(),
+                    writes: access_log.write_generation.clone(),
+                    globals: dependencies.global_read_log.clone(),
+                    states: dependencies.state_read_log.clone(),
+                });
+            }
+        });
+    }
+}
+
+impl App {
+    /// The entities read at `spans` of the log of entities read while a
+    /// recording is open (see [`read_log_lengths`]), sorted and without
+    /// repeats.
+    pub(crate) fn entities_read_in(
+        &mut self,
+        spans: impl IntoIterator<Item = Range<usize>>,
+    ) -> Rc<[EntityId]> {
+        let access_log = self.entities.access_log.access_log.borrow();
+        let scratch = &mut self.dependencies.scratch_entities;
+        scratch.clear();
+        for span in spans {
+            let end = span.end.min(access_log.len());
+            scratch.extend_from_slice(&access_log[span.start.min(end)..end]);
+        }
+        sort_unique(scratch);
+        self.dependencies.interned_entities.get(scratch)
+    }
+}
+
+/// How far the logs of the entities, globals and states read while a
+/// recording is open go, from where no app is at hand, as a `list` being
+/// built asks.
+pub(crate) fn read_log_lengths() -> Option<(usize, usize, usize)> {
+    READ_LOGS.with_borrow(|logs| {
+        logs.as_ref().map(|logs| {
+            (
+                logs.entities.borrow().len(),
+                logs.globals.borrow().len(),
+                logs.states.borrow().len(),
+            )
+        })
+    })
+}
+
+/// How many writes were made while the window drew so far (see
+/// [`EntityMap::write_generation`]), from where no app is at hand, as a
+/// `list` drawing a row asks.
+pub(crate) fn write_generation_now() -> u64 {
+    READ_LOGS.with_borrow(|logs| logs.as_ref().map_or(0, |logs| logs.writes.get()))
+}
+
 /// What a recording saw: everything read while it was open, and what was read
 /// outside the recordings nested in it, by the subtree itself.
 pub(crate) struct RecordedDependencies {
     pub(crate) all: RenderDependencies,
     pub(crate) own: RenderDependencies,
+    /// What a view read itself while its `render` ran, before its elements
+    /// were laid out, if the recording was of a view rendering. See
+    /// [`App::dependencies_so_far`].
+    pub(crate) render: Option<RenderDependencies>,
 }
 
 /// The entries of `log` in `range` that fall outside every range in `nested`,
@@ -977,6 +1195,38 @@ fn unique_states(states: &[(StateVersion, u64)]) -> Rc<[(StateVersion, u64)]> {
 }
 
 impl RenderDependencies {
+    /// The same dependencies, but for the entities, which are `entities`.
+    pub(crate) fn with_entities(&self, entities: Rc<[EntityId]>) -> Self {
+        Self {
+            entities,
+            ..self.clone()
+        }
+    }
+
+    /// The entities `entities` as of when these dependencies were recorded,
+    /// and nothing else.
+    pub(crate) fn entities_only(&self, entities: Rc<[EntityId]>) -> Self {
+        Self {
+            entities,
+            globals: Rc::from([]),
+            states: Rc::from([]),
+            offset_reads: Default::default(),
+            generation: self.generation,
+            updates: self.updates,
+            writes: self.writes.clone(),
+        }
+    }
+
+    /// The same dependencies, with the writes made from `since` to `now`
+    /// taken for the subtree's own: those of a view rendering again, which
+    /// are part of building it, as its writes the last time were.
+    pub(crate) fn with_own_writes(&self, since: u64, now: u64) -> Self {
+        Self {
+            writes: self.writes.with_own(since, now),
+            ..self.clone()
+        }
+    }
+
     /// The same dependencies, known to be up to date with every write up to
     /// `writes`: a reused subtree's, checked when it was reused.
     pub(crate) fn written_up_to(&self, writes: u64) -> Self {

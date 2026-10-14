@@ -4731,10 +4731,10 @@ impl ScrollAnchor {
 
 #[derive(Default, Debug)]
 pub(crate) struct ScrollHandleState {
-    offset: Rc<RefCell<Point<Pixels>>>,
+    pub(crate) offset: Rc<RefCell<Point<Pixels>>>,
     ongoing_scroll: Rc<RefCell<OngoingScroll>>,
     bounds: Bounds<Pixels>,
-    max_offset: Point<Pixels>,
+    pub(crate) max_offset: Point<Pixels>,
     child_bounds: Vec<Bounds<Pixels>>,
     scroll_request: Option<ScrollRequest>,
     painted_layout: Option<ScrollLayout>,
@@ -4753,6 +4753,7 @@ struct ScrollRequest {
 }
 #[derive(Debug, Clone)]
 enum ScrollTarget {
+    Bottom,
     Command(ScrollCommand),
     Item {
         index: usize,
@@ -4877,7 +4878,7 @@ impl ScrollHandle {
     /// Scroll to the bottom after layout. Requests remain pending until the
     /// container really paints; a discarded or hidden candidate cannot consume them.
     pub fn scroll_to_bottom(&self) {
-        self.request_scroll(ScrollCommand::End);
+        self.queue_scroll(ScrollTarget::Bottom);
     }
 
     /// Issue an explicit reading command against this original Div owner.
@@ -4889,7 +4890,11 @@ impl ScrollHandle {
     fn queue_scroll(&self, target: ScrollTarget) -> ScrollRequestId {
         let mut state = self.0.borrow_mut();
         state.note_reading_intent();
-        state.version.bump();
+        if matches!(target, ScrollTarget::Bottom) {
+            crate::fast::layers::scroll_to_bottom::note_scroll_to_bottom(self, &state);
+        } else {
+            state.version.bump();
+        }
         let id = ScrollRequestId(state.reading_revision);
         state.scroll_request = Some(ScrollRequest { id, target });
         id
@@ -4906,7 +4911,7 @@ impl ScrollHandle {
                 state.offset.borrow_mut().y = px(0.);
                 (None, ScrollStrategy::Top)
             }
-            ScrollTarget::Command(ScrollCommand::End) => {
+            ScrollTarget::Bottom | ScrollTarget::Command(ScrollCommand::End) => {
                 state.offset.borrow_mut().y = -state.max_offset.y;
                 (None, ScrollStrategy::Top)
             }

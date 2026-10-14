@@ -272,7 +272,7 @@ pub struct X11WindowState {
     scale_factor: f32,
     /// Taken when the window is dropped. Its GPU objects use the X connection, so they mustn't
     /// outlive the window, which a display mode switch relies on.
-    renderer: Option<WgpuRenderer>,
+    pub(crate) renderer: Option<WgpuRenderer>,
     pub(crate) fast_composition: crate::fast::composition::x11::Composition,
     display: Rc<dyn PlatformDisplay>,
     input_handler: Option<PlatformInputHandler>,
@@ -1745,6 +1745,10 @@ impl PlatformWindow for X11Window {
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
         self.0.callbacks.borrow_mut().moved = Some(callback);
     }
+
+    // A GPUI display on X11 is an X screen, which spans every monitor, and a
+    // window never changes screen.
+    fn on_display_changed(&self, _callback: Box<dyn FnMut()>) {}
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
         self.0.callbacks.borrow_mut().should_close = Some(callback);

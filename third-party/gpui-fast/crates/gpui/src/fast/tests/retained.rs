@@ -2026,3 +2026,698 @@ fn untracked_retained_input_keeps_its_original_marked_handler_during_reveal_pain
         }
     }
 }
+
+/// A child outside its parent's Taffy tree, laid out during prepaint like
+/// a uniform_list item. Keeping its parent must still run this placement.
+struct RootPlacer(crate::AnyElement);
+
+impl IntoElement for RootPlacer {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl crate::Element for RootPlacer {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+    fn id(&self) -> Option<crate::ElementId> {
+        None
+    }
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+    fn request_layout(
+        &mut self,
+        _: Option<&crate::GlobalElementId>,
+        _: Option<&crate::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut crate::App,
+    ) -> (crate::LayoutId, ()) {
+        let mut style = crate::Style::default();
+        style.size.width = crate::relative(1.).into();
+        style.size.height = crate::relative(1.).into();
+        (window.request_layout(style, None, cx), ())
+    }
+    fn prepaint(
+        &mut self,
+        _: Option<&crate::GlobalElementId>,
+        _: Option<&crate::InspectorElementId>,
+        bounds: crate::Bounds<crate::Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut crate::App,
+    ) {
+        self.0
+            .prepaint_as_root(bounds.origin, bounds.size.into(), window, cx);
+    }
+    fn paint(
+        &mut self,
+        _: Option<&crate::GlobalElementId>,
+        _: Option<&crate::InspectorElementId>,
+        _: crate::Bounds<crate::Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut crate::App,
+    ) {
+        self.0.paint(window, cx);
+    }
+}
+
+struct RootPlacedStatus(crate::SharedString);
+impl Render for RootPlacedStatus {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(self.0.clone())
+    }
+}
+
+#[derive(Clone, Copy)]
+enum StatusPlacement {
+    Flow,
+    Root,
+    List,
+    VariableList,
+    ContainerQuery,
+    Deferred,
+    Anchored,
+}
+
+struct StatusHost {
+    status: Entity<RootPlacedStatus>,
+    placement: StatusPlacement,
+    list: crate::ListState,
+}
+impl Render for StatusHost {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let child = div()
+            .size_full()
+            .child(self.status.clone())
+            .into_any_element();
+        let body = match self.placement {
+            StatusPlacement::Flow => child,
+            StatusPlacement::Root => RootPlacer(child).into_any_element(),
+            StatusPlacement::VariableList => {
+                let status = self.status.clone();
+                crate::list(self.list.clone(), move |_, _, _| {
+                    div().h(px(40.)).child(status.clone()).into_any_element()
+                })
+                .size_full()
+                .into_any_element()
+            }
+            StatusPlacement::ContainerQuery => {
+                crate::container_query(move |_, _, _| child).into_any_element()
+            }
+            StatusPlacement::Deferred => crate::deferred(child).into_any_element(),
+            StatusPlacement::Anchored => crate::anchored()
+                .position(crate::point(px(30.), px(40.)))
+                .child(child)
+                .into_any_element(),
+            StatusPlacement::List => {
+                let status = self.status.clone();
+                crate::uniform_list("status-list", 1, move |_, _, _| {
+                    vec![div().h(px(40.)).child(status.clone()).into_any_element()]
+                })
+                .size_full()
+                .into_any_element()
+            }
+        };
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child("header")
+            .child(div().flex_1().child(body))
+    }
+}
+
+fn status_change_at_placement(placement: StatusPlacement) {
+    let mut cx = TestAppContext::single();
+    let status = cx.new(|_| RootPlacedStatus("Starting…".into()));
+    // The shell exercises a splice around another splice, as in the real
+    // application's WindowBorder / WorkspaceView / editor hierarchy.
+    let (window, _) = shell(&mut cx, {
+        let status = status.clone();
+        move |cx| {
+            cx.new(|_| StatusHost {
+                status,
+                placement,
+                list: crate::ListState::new(1, crate::ListAlignment::Top, px(0.)),
+            })
+            .into()
+        }
+    });
+    let before = draw_shell(&mut cx, window);
+    for text in [
+        "Session unavailable: a longer status",
+        "Ready",
+        "Another longer status",
+    ] {
+        status.update(&mut cx, |status, cx| {
+            status.0 = text.into();
+            cx.notify();
+        });
+        let changed = describe_shell(&mut cx, window);
+        assert_ne!(before, changed);
+        cx.update_window(window.into(), |_, window, _| {
+            window.set_view_retention(false)
+        })
+        .unwrap();
+        assert_eq!(
+            changed,
+            draw_shell(&mut cx, window),
+            "retained output must match a full render"
+        );
+        cx.update_window(window.into(), |_, window, _| {
+            window.set_view_retention(true)
+        })
+        .unwrap();
+        draw_shell(&mut cx, window);
+    }
+}
+
+#[test]
+fn status_change_in_normal_flow_is_measured() {
+    status_change_at_placement(StatusPlacement::Flow);
+}
+#[test]
+fn status_change_under_prepaint_as_root_is_measured() {
+    status_change_at_placement(StatusPlacement::Root);
+}
+#[test]
+fn status_change_in_uniform_list_is_measured() {
+    status_change_at_placement(StatusPlacement::List);
+}
+
+#[test]
+fn status_change_in_variable_list_is_measured() {
+    status_change_at_placement(StatusPlacement::VariableList);
+}
+#[test]
+fn status_change_under_container_query_is_measured() {
+    status_change_at_placement(StatusPlacement::ContainerQuery);
+}
+#[test]
+fn status_change_under_deferred_is_measured() {
+    status_change_at_placement(StatusPlacement::Deferred);
+}
+#[test]
+fn status_change_under_anchored_is_measured() {
+    status_change_at_placement(StatusPlacement::Anchored);
+}
+
+struct MixedDeferredViews {
+    flow: Entity<Tinted>,
+    overlay: Entity<Tinted>,
+}
+
+impl Render for MixedDeferredViews {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .child(self.flow.clone())
+            .child(crate::deferred(
+                crate::anchored()
+                    .position(crate::point(px(10.), px(10.)))
+                    .child(div().w(px(200.)).h(px(40.)).child(self.overlay.clone())),
+            ))
+    }
+}
+
+/// Deferred view records follow the closed ancestor's subtree. Check the
+/// notification frame itself: an extra draw can hide a stale copied overlay.
+fn changed_flow_and_deferred_views_match_full_render(idle_first: bool) {
+    let mut cx = TestAppContext::single();
+    let flow_builds = Rc::new(Cell::new(0));
+    let overlay_builds = Rc::new(Cell::new(0));
+    let flow = cx.new(|_| Tinted {
+        tint: 0,
+        model: None,
+        builds: flow_builds.clone(),
+    });
+    let overlay = cx.new(|_| Tinted {
+        tint: 0,
+        model: None,
+        builds: overlay_builds.clone(),
+    });
+    let (window, _) = shell(&mut cx, {
+        let (flow, overlay) = (flow.clone(), overlay.clone());
+        move |cx| cx.new(|_| MixedDeferredViews { flow, overlay }).into()
+    });
+    draw_shell(&mut cx, window);
+    if idle_first {
+        draw_shell(&mut cx, window);
+    }
+    for tint in [1, 0, 1] {
+        let before = (flow_builds.get(), overlay_builds.get());
+        cx.update(|cx| {
+            flow.update(cx, |view, cx| {
+                view.tint = tint;
+                cx.notify();
+            });
+            overlay.update(cx, |view, cx| {
+                view.tint = tint;
+                cx.notify();
+            });
+        });
+        assert_eq!(
+            flow_builds.get(),
+            before.0 + 1,
+            "the flow child rebuilt in the notification frame"
+        );
+        assert_eq!(
+            overlay_builds.get(),
+            before.1 + 1,
+            "the deferred child must rebuild in the same frame"
+        );
+        let changed = describe_shell(&mut cx, window);
+        cx.update_window(window.into(), |_, window, _| {
+            window.set_view_retention(false)
+        })
+        .unwrap();
+        assert_eq!(
+            changed,
+            draw_shell(&mut cx, window),
+            "a splice must not replay a dirty deferred view"
+        );
+        cx.update_window(window.into(), |_, window, _| {
+            window.set_view_retention(true)
+        })
+        .unwrap();
+        draw_shell(&mut cx, window);
+    }
+}
+
+#[test]
+fn simultaneously_changed_flow_and_deferred_views_match_full_render() {
+    changed_flow_and_deferred_views_match_full_render(false);
+}
+
+#[test]
+fn simultaneously_changed_flow_and_reused_deferred_views_match_full_render() {
+    changed_flow_and_deferred_views_match_full_render(true);
+}
+
+struct OffsetDependentParent {
+    scroll: crate::ScrollHandle,
+    child: Entity<Tinted>,
+    builds: Rc<Cell<usize>>,
+}
+
+impl Render for OffsetDependentParent {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.builds.set(self.builds.get() + 1);
+        let color = if self.scroll.offset().y < px(0.) {
+            crate::white()
+        } else {
+            crate::black()
+        };
+        div().size_full().bg(color).child(self.child.clone())
+    }
+}
+
+#[test]
+fn a_parent_whose_scroll_offset_read_changed_is_not_spliced() {
+    if !crate::fast::layers::COMPILED {
+        return;
+    }
+    let mut cx = TestAppContext::single();
+    let builds = Rc::new(Cell::new(0));
+    let child = cx.new(|_| Tinted {
+        tint: 0,
+        model: None,
+        builds: Rc::new(Cell::new(0)),
+    });
+    let scroll = crate::ScrollHandle::new();
+    let (window, _) = shell(&mut cx, {
+        let (scroll, child, builds) = (scroll.clone(), child.clone(), builds.clone());
+        move |cx| {
+            cx.new(|_| OffsetDependentParent {
+                scroll,
+                child,
+                builds,
+            })
+            .into()
+        }
+    });
+    draw_shell(&mut cx, window);
+    let before = builds.get();
+    cx.update(|cx| {
+        scroll.set_offset(crate::point(px(0.), px(-20.)));
+        child.update(cx, |child, cx| {
+            child.tint = 1;
+            cx.notify();
+        });
+    });
+    let changed = describe_shell(&mut cx, window);
+    assert_eq!(
+        builds.get(),
+        before + 1,
+        "the parent's own offset read changed"
+    );
+    cx.update_window(window.into(), |_, window, _| {
+        window.set_view_retention(false)
+    })
+    .unwrap();
+    assert_eq!(changed, draw_shell(&mut cx, window));
+}
+
+struct GrowingFixedView {
+    extra: Rc<Cell<bool>>,
+    builds: Rc<Cell<usize>>,
+}
+
+impl Render for GrowingFixedView {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.builds.set(self.builds.get() + 1);
+        div()
+            .relative()
+            .w(px(100.))
+            .h(px(40.))
+            .child(div().id("base").size_full())
+            .when(self.extra.get(), |this| {
+                this.child(
+                    div()
+                        .id("extra")
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size(px(10.))
+                        .bg(crate::white()),
+                )
+            })
+    }
+}
+
+#[test]
+fn new_layout_nodes_in_a_spliced_gap_survive_idle_frames() {
+    let mut cx = TestAppContext::single();
+    let builds = Rc::new(Cell::new(0));
+    let extra = Rc::new(Cell::new(false));
+    let child = cx.new(|_| GrowingFixedView {
+        extra: extra.clone(),
+        builds: builds.clone(),
+    });
+    let (window, outer_builds) = shell(&mut cx, {
+        let child = child.clone();
+        move |_| child.into()
+    });
+    draw_shell(&mut cx, window);
+    extra.set(true);
+    cx.update(|cx| cx.notify(child.entity_id()));
+    let added = describe_shell(&mut cx, window);
+    let nodes = cx
+        .update_window(window.into(), |_, window, _| {
+            window.layout_engine.as_ref().unwrap().node_count()
+        })
+        .unwrap();
+    for _ in 0..3 {
+        assert_eq!(added, draw_shell(&mut cx, window));
+        assert_eq!(
+            nodes,
+            cx.update_window(window.into(), |_, window, _| window
+                .layout_engine
+                .as_ref()
+                .unwrap()
+                .node_count())
+                .unwrap(),
+            "a reused parent must retain the gap's new nodes"
+        );
+    }
+    assert_eq!(
+        outer_builds.get(),
+        1,
+        "the fixed-size parent can be spliced"
+    );
+    extra.set(false);
+    cx.update(|cx| cx.notify(child.entity_id()));
+    let removed = describe_shell(&mut cx, window);
+    assert_ne!(added, removed);
+    for _ in 0..3 {
+        assert_eq!(removed, draw_shell(&mut cx, window));
+        cx.update_window(window.into(), |_, window, _| {
+            assert!(
+                window
+                    .rendered_frame
+                    .element_states
+                    .keys()
+                    .all(|(id, _)| id.last() != Some(&crate::ElementId::from("extra"))),
+                "removed element state must not be replayed by the parent"
+            );
+            assert_eq!(
+                window.layout_engine.as_ref().unwrap().node_count(),
+                nodes - 1
+            );
+        })
+        .unwrap();
+    }
+    assert_eq!(outer_builds.get(), 1);
+    assert_eq!(builds.get(), 3);
+}
+
+/// What a [`HandingHost`] hands the view [`Handed`] draws in it.
+struct Shown(bool);
+
+/// A view drawn inside [`Handed`], reading what its host hands it.
+struct ShownReader {
+    shown: Entity<Shown>,
+    builds: Rc<Cell<usize>>,
+}
+
+impl Render for ShownReader {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.builds.set(self.builds.get() + 1);
+        let color = if self.shown.read(cx).0 {
+            crate::red()
+        } else {
+            crate::blue()
+        };
+        div().size(px(10.)).bg(color)
+    }
+}
+
+/// A cached view whose host writes into it, as it renders, whether it is
+/// active, as a window hands its panes whether they show.
+struct Handed {
+    active: bool,
+    reader: Entity<ShownReader>,
+    builds: Rc<Cell<usize>>,
+}
+
+impl Render for Handed {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.builds.set(self.builds.get() + 1);
+        let color = if self.active {
+            crate::green()
+        } else {
+            crate::black()
+        };
+        div().size_full().bg(color).child(self.reader.clone())
+    }
+}
+
+/// A view that writes into the cached view it draws, and into a model a
+/// view drawn in that one reads, on every render, notifying the cached view
+/// if `notify` and the model never.
+struct HandingHost {
+    handed: Entity<Handed>,
+    shown: Entity<Shown>,
+    active: bool,
+    notify: bool,
+}
+
+impl Render for HandingHost {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let (active, notify) = (self.active, self.notify);
+        self.handed.update(cx, |handed, cx| {
+            handed.active = active;
+            if notify {
+                cx.notify();
+            }
+        });
+        self.shown.update(cx, |shown, _| shown.0 = active);
+        div().size(px(300.)).child(
+            self.handed
+                .clone()
+                .cached(StyleRefinement::default().w(px(100.)).h(px(20.))),
+        )
+    }
+}
+
+struct Handing {
+    window: WindowHandle<HandingHost>,
+    handed_builds: Rc<Cell<usize>>,
+    reader_builds: Rc<Cell<usize>>,
+}
+
+fn handing(cx: &mut TestAppContext, notify: bool) -> Handing {
+    let handed_builds = Rc::new(Cell::new(0));
+    let reader_builds = Rc::new(Cell::new(0));
+    let window = cx.add_window({
+        let handed_builds = handed_builds.clone();
+        let reader_builds = reader_builds.clone();
+        move |_, cx| {
+            let shown = cx.new(|_| Shown(true));
+            let reader = cx.new(|_| ShownReader {
+                shown: shown.clone(),
+                builds: reader_builds,
+            });
+            HandingHost {
+                handed: cx.new(|_| Handed {
+                    active: true,
+                    reader,
+                    builds: handed_builds,
+                }),
+                shown,
+                active: true,
+                notify,
+            }
+        }
+    });
+    Handing {
+        window,
+        handed_builds,
+        reader_builds,
+    }
+}
+
+fn draw_handing(cx: &mut TestAppContext, window: WindowHandle<HandingHost>) -> Vec<String> {
+    cx.update_window(window.into(), |_, window, cx| {
+        window.draw(cx).clear(cx);
+        window.describe_rendered_frame()
+    })
+    .unwrap()
+}
+
+/// A cached view whose host writes into it as it renders, without
+/// notifying it, is drawn from last frame while what was written is what it
+/// holds, as upstream draws a cached view again only when it is notified: a
+/// pane told on every render of the window around it whether it shows is
+/// not built again for it, nor is a view drawn in it reading a model the
+/// host writes the same way. The frame is the one drawn from scratch.
+#[test]
+fn a_cached_view_its_host_writes_without_notifying_is_drawn_from_last_frame() {
+    let mut cx = TestAppContext::single();
+    let h = handing(&mut cx, false);
+    let first = draw_handing(&mut cx, h.window);
+    assert_eq!((h.handed_builds.get(), h.reader_builds.get()), (1, 1));
+
+    for _ in 0..5 {
+        h.window.update(&mut cx, |_, _, cx| cx.notify()).unwrap();
+        assert_eq!(first, draw_handing(&mut cx, h.window));
+    }
+    assert_eq!(
+        (h.handed_builds.get(), h.reader_builds.get()),
+        (1, 1),
+        "the cached view, and the view in it, were drawn from last frame"
+    );
+    let reused = cx
+        .update_window(h.window.into(), |_, window, _| {
+            window.layout_stats().views_reused
+        })
+        .unwrap();
+    assert!(reused > 0, "views were reused");
+
+    cx.update_window(h.window.into(), |_, window, _| {
+        window.forget_retained_state()
+    })
+    .unwrap();
+    assert_eq!(first, draw_handing(&mut cx, h.window));
+    assert_eq!(h.handed_builds.get(), 2, "drawn from scratch");
+
+    let off = handing(&mut cx, false);
+    cx.update_window(off.window.into(), |_, window, _| {
+        window.set_view_retention(false)
+    })
+    .unwrap();
+    for _ in 0..3 {
+        off.window.update(&mut cx, |_, _, cx| cx.notify()).unwrap();
+        assert_eq!(first, draw_handing(&mut cx, off.window));
+    }
+}
+
+/// A cached view its host writes into and notifies as it renders is built
+/// again, and shows what was written.
+#[test]
+fn a_cached_view_its_host_writes_and_notifies_is_built_again() {
+    let mut cx = TestAppContext::single();
+    let h = handing(&mut cx, true);
+    let active = draw_handing(&mut cx, h.window);
+    let builds = h.handed_builds.get();
+
+    h.window
+        .update(&mut cx, |host, _, cx| {
+            host.active = false;
+            cx.notify();
+        })
+        .unwrap();
+    let inactive = draw_handing(&mut cx, h.window);
+    assert_ne!(active, inactive, "what was written shows");
+    assert!(
+        h.handed_builds.get() > builds,
+        "the cached view was built again"
+    );
+
+    cx.update_window(h.window.into(), |_, window, _| {
+        window.forget_retained_state()
+    })
+    .unwrap();
+    assert_eq!(inactive, draw_handing(&mut cx, h.window));
+}
+
+/// A root drawing a [`PaintHost`] as a cached view.
+struct CachedPaintHost {
+    host: Entity<PaintHost>,
+}
+
+impl Render for CachedPaintHost {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().size(px(400.)).child(
+            self.host
+                .clone()
+                .cached(StyleRefinement::default().w(px(300.)).h(px(300.))),
+        )
+    }
+}
+
+/// A component writing into the view it renders, inside a cached view, as
+/// GPUI Kit's `Tree` writes its item renderer, writes as part of building
+/// the cached view: notified, the cached view is built again and the view
+/// written is drawn with what was written.
+#[test]
+fn a_view_written_inside_a_cached_view_is_rendered_again_with_it() {
+    let mut cx = TestAppContext::single();
+    let host = Rc::new(std::cell::RefCell::new(None));
+    let window = cx.add_window({
+        let host = host.clone();
+        move |_, cx| {
+            let painter = cx.new(|_| Painter {
+                color: crate::blue(),
+            });
+            let paint_host = cx.new(|_| PaintHost {
+                painter,
+                red: false,
+            });
+            *host.borrow_mut() = Some(paint_host.clone());
+            CachedPaintHost { host: paint_host }
+        }
+    });
+    let paint_host = host.borrow().clone().unwrap();
+    let blue = backgrounds(&mut cx, window.into());
+
+    paint_host.update(&mut cx, |host, cx| {
+        host.red = true;
+        cx.notify();
+    });
+    let red = backgrounds(&mut cx, window.into());
+    assert_ne!(blue, red, "the painter was drawn with the color written");
+    assert_eq!(red, backgrounds(&mut cx, window.into()));
+    cx.update_window(window.into(), |_, window, _| window.forget_retained_state())
+        .unwrap();
+    assert_eq!(red, backgrounds(&mut cx, window.into()));
+}

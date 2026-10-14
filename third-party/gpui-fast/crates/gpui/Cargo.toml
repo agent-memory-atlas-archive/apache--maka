@@ -1,7 +1,7 @@
 
 [package]
 name = "gpui-fast"
-version = "0.1.2"
+version = "0.1.7"
 edition = "2024"
 authors = ["Nathan Sobo <nathan@zed.dev>"]
 description = "Zed's GPU-accelerated UI framework"
@@ -56,7 +56,7 @@ leak-detection = []
 font-kit = []
 wayland = []
 x11 = ["scap?/x11"]
-screen-capture = ["scap", "dep:objc2-core-foundation", "dep:objc2-core-video"]
+screen-capture = ["scap"]
 windows-manifest = ["dep:embed-resource"]
 windows-manifest-provided-by-host = []
 profiler = ["dep:hdrhistogram"]
@@ -92,13 +92,13 @@ version = "0.3"
 version = "2.6.0"
 
 [dependencies.collections]
-version = "=0.3.8"
+version = "=0.3.9"
 package = "gpui-pre-collections"
 
 [dependencies.bench_metrics]
 optional = true
 package = "gpui-pre-bench-metrics"
-version = "=0.3.8"
+version = "=0.3.9"
 
 [dependencies.criterion]
 version = "0.8.2"
@@ -124,15 +124,15 @@ optional = true
 
 [dependencies.gpui_macros]
 package = "gpui-fast-macros"
-version = "=0.1.2"
+version = "=0.1.7"
 
 [dependencies.gpui_shared_string]
 package = "gpui-pre-shared-string"
-version = "=0.3.8"
+version = "=0.3.9"
 
 [dependencies.http_client]
 package = "gpui-pre-http-client"
-version = "=0.3.8"
+version = "=0.3.9"
 
 [dependencies.image]
 version = "0.25.1"
@@ -187,11 +187,11 @@ features = ["std", "perf"]
 
 [dependencies.refineable]
 package = "gpui-pre-refineable"
-version = "=0.3.8"
+version = "=0.3.9"
 
 [dependencies.scheduler]
 package = "gpui-pre-scheduler"
-version = "=0.3.8"
+version = "=0.3.9"
 
 [dependencies.resvg]
 version = "0.46.0"
@@ -232,10 +232,10 @@ features = ["derive"]
 
 [dependencies.sum_tree]
 package = "gpui-pre-sum-tree"
-version = "=0.3.8"
+version = "=0.3.9"
 
 [dependencies.taffy]
-version = "=0.13.0"
+version = "=0.14.0"
 default-features = false
 features = ["std", "taffy_tree", "flexbox", "grid", "block_layout", "float_layout", "content_size"]
 
@@ -244,7 +244,7 @@ version = "2.0.12"
 
 [dependencies.gpui_util]
 package = "gpui-pre-util"
-version = "=0.3.8"
+version = "=0.3.9"
 
 [dependencies.hdrhistogram]
 version = "7"
@@ -304,7 +304,7 @@ version = "0.4.0"
 [target."cfg(not(target_family = \"wasm\"))".dev-dependencies.http_client]
 features = ["test-support"]
 package = "gpui-pre-http-client"
-version = "=0.3.8"
+version = "=0.3.9"
 
 [target."cfg(not(target_family = \"wasm\"))".dev-dependencies.proptest]
 features = ["attr-macro"]
@@ -313,7 +313,7 @@ version = "1"
 [target."cfg(not(target_family = \"wasm\"))".dev-dependencies.reqwest_client]
 features = ["test-support"]
 package = "gpui-pre-reqwest-client"
-version = "=0.3.8"
+version = "=0.3.9"
 
 [target."cfg(target_family = \"wasm\")"]
 
@@ -339,25 +339,18 @@ version = "0.3"
 
 [target."cfg(any(target_os = \"macos\", target_os = \"ios\"))".dependencies]
 
-[target."cfg(any(target_os = \"macos\", target_os = \"ios\"))".dependencies.core-video]
-version = "0.5"
+[target."cfg(any(target_os = \"macos\", target_os = \"ios\"))".dependencies.objc2-core-foundation]
+version = "=0.3.2"
 default-features = false
-features = ["link"]
+
+[target."cfg(any(target_os = \"macos\", target_os = \"ios\"))".dependencies.objc2-core-video]
+version = "=0.3.2"
+default-features = false
+features = ["CVBuffer", "CVImageBuffer", "CVPixelBuffer"]
 
 [target."cfg(target_os = \"macos\")"]
 
 [target."cfg(target_os = \"macos\")".dependencies]
-
-[target."cfg(target_os = \"macos\")".dependencies.objc2-core-foundation]
-version = "=0.3.2"
-default-features = false
-optional = true
-
-[target."cfg(target_os = \"macos\")".dependencies.objc2-core-video]
-version = "=0.3.2"
-default-features = false
-features = ["CVBuffer", "CVImageBuffer"]
-optional = true
 
 [target."cfg(target_os = \"macos\")".dependencies.log]
 version = "0.4"
@@ -405,10 +398,10 @@ version = "0.3"
 [dev-dependencies.bench_metrics]
 features = ["test-support"]
 package = "gpui-pre-bench-metrics"
-version = "=0.3.8"
+version = "=0.3.9"
 
 [dev-dependencies.collections]
-version = "=0.3.8"
+version = "=0.3.9"
 features = ["test-support"]
 package = "gpui-pre-collections"
 
@@ -430,11 +423,11 @@ version = "1.1.0"
 default-features = false
 features = ["font-kit", "wayland", "x11", "runtime_shaders"]
 package = "gpui-fast-platform"
-version = "=0.1.2"
+version = "=0.1.7"
 
 [dev-dependencies.gpui_util]
 package = "gpui-pre-util"
-version = "=0.3.8"
+version = "=0.3.9"
 
 [dev-dependencies.lyon]
 version = "1.0"
@@ -448,14 +441,10 @@ features = ["std", "std_rng", "os_rng"]
 [dev-dependencies.scheduler]
 features = ["test-support"]
 package = "gpui-pre-scheduler"
-version = "=0.3.8"
+version = "=0.3.9"
 
 [dev-dependencies.unicode-segmentation]
 version = "1.10"
-
-[dev-dependencies.util_macros]
-package = "gpui-pre-util-macros"
-version = "=0.3.8"
 
 [build-dependencies]
 

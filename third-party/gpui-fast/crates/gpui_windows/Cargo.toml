@@ -1,7 +1,7 @@
 
 [package]
 name = "gpui-fast-windows"
-version = "0.1.2"
+version = "0.1.7"
 edition = "2024"
 publish = false
 license = "Apache-2.0"
@@ -53,7 +53,7 @@ screen-capture = ["gpui/screen-capture", "scap"]
 [dependencies.gpui]
 default-features = false
 package = "gpui-fast"
-version = "=0.1.2"
+version = "=0.1.7"
 path = "../gpui"
 
 [target]
@@ -74,7 +74,7 @@ version = "0.34"
 version = "1.0.86"
 
 [target."cfg(target_os = \"windows\")".dependencies.collections]
-version = "=0.3.8"
+version = "=0.3.9"
 package = "gpui-pre-collections"
 
 [target."cfg(target_os = \"windows\")".dependencies.dunce]
@@ -88,7 +88,7 @@ version = "0.3.34"
 
 [target."cfg(target_os = \"windows\")".dependencies.gpui_util]
 package = "gpui-pre-util"
-version = "=0.3.8"
+version = "=0.3.9"
 
 [target."cfg(target_os = \"windows\")".dependencies.image]
 version = "0.25.1"
@@ -116,7 +116,7 @@ version = "0.6"
 
 [target."cfg(target_os = \"windows\")".dependencies.scheduler]
 package = "gpui-pre-scheduler"
-version = "=0.3.8"
+version = "=0.3.9"
 
 [target."cfg(target_os = \"windows\")".dependencies.smallvec]
 version = "1.6"

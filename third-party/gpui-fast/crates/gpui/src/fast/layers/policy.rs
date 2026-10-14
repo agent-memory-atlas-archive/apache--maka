@@ -7,8 +7,9 @@
 //! composited on frames that only scrolled it and painted again on the
 //! others. A layer is demoted — dropped, the container kept on today's path
 //! until its content has been stable for a while — when its content keeps
-//! changing, when it paints paths, or when its visible tiles alone exceed
-//! the budget. Content holding what a layer cannot composite otherwise
+//! changing, when a list row draws over the paths of a row before it (see
+//! [`crate::fast::layers::overlay`]), or when its visible tiles alone
+//! exceed the budget. Content holding what a layer cannot composite otherwise
 //! (spec §6.5) keeps the container on today's path only while it does: the
 //! layer is dropped and painted again a few frames later, to see whether it
 //! still does. Layers are dropped when the window is resized or rescaled,
@@ -40,9 +41,6 @@ const PROMOTE_AFTER_SCROLLED_FRAMES: u8 = 2;
 /// A layer whose content changed on at least this many of the last 16
 /// frames is demoted. Include the halfway boundary at 120 Hz.
 const DEMOTE_AFTER_CHANGED_FRAMES: u32 = 8;
-/// Lists rebuild about five viewports on content changes, so their
-/// frequency limit is lower even before the work budget is exhausted.
-const LIST_DEMOTE_AFTER_CHANGED_FRAMES: u32 = 4;
 /// How many frames a demoted container's content must be stable for before
 /// it may get a layer again.
 const REPROMOTE_AFTER_STABLE_FRAMES: u64 = 60;
@@ -190,7 +188,20 @@ pub(crate) fn decide(
     let scrolled =
         noted && (invalidate::is_list(window, id) || policy.last_offset != Some(scroll_offset));
 
-    let streak = if !scrolled {
+    // A scroll past everything the layer holds shows none of it: the frame
+    // would render all it shows, as without a layer, and the layer's upkeep
+    // on top. A scrollbar's thumb dragged fast, or a jump to an item, is
+    // drawn without the layer, which is painted again on the next frame.
+    let jumped = layer
+        .record
+        .as_ref()
+        .is_some_and(|record| !shows_any(record, scroll_offset));
+    // Nor is a layer promoted while a scroll leaps by its viewport's
+    // extent a frame.
+    let leapt = policy
+        .last_offset
+        .is_some_and(|last| leaps(last, scroll_offset, bounds.size));
+    let streak = if !scrolled || leapt {
         0
     } else if policy
         .last_scrolled_frame
@@ -200,13 +211,20 @@ pub(crate) fn decide(
     } else {
         1
     };
-    let mut demoted_until = policy.demoted_until;
+    // A list's layer replays its rows (see
+    // [`crate::fast::layers::paint::replays`]): it costs no more than drawing
+    // them without it, so it is not demoted for what it costs or for changing
+    // often, and has no tiles to keep within budget.
+    let replayed = layer.rows.list;
+    let mut demoted_until = if replayed { None } else { policy.demoted_until };
     let changed_while_demoted =
         demoted_until.is_some() && invalidate::changed_without_layer(window, cx, id);
     if changed_while_demoted {
-        demoted_until = demoted_until.map(|until| {
-            until.max(frame + policy.cooldown_frames.max(REPROMOTE_AFTER_STABLE_FRAMES))
-        });
+        // The cooldown runs from the demotion; a change while it runs only
+        // asks the content to stay as it is a while before the layer is
+        // tried again, so that one changed now and then, as a view notified
+        // every few seconds, is not kept off its layer for good.
+        demoted_until = demoted_until.map(|until| until.max(frame + REPROMOTE_AFTER_STABLE_FRAMES));
     }
     if demoted_until.is_some_and(|until| frame >= until) {
         demoted_until = None;
@@ -216,11 +234,18 @@ pub(crate) fn decide(
     // for it, and whether it is dropped for holding what it cannot
     // composite.
     let mut changed = false;
-    let mut demote = layer.record.is_some() && policy.work.over_budget();
+    let mut rerendered = false;
+    let mut demote = layer.record.is_some() && !replayed && policy.work.over_budget();
     let mut ineligible = false;
+    let mut owner_animating = false;
     let decision = match &layer.record {
         _ if demoted_until.is_some() => Decision::Bypass,
-        Some(record) if !fits(window, record) => {
+        _ if jumped => Decision::Bypass,
+        _ if invalidate::owner_animating(window, id) => {
+            owner_animating = true;
+            Decision::Bypass
+        }
+        Some(record) if !replayed && !fits(window, record) => {
             demote = true;
             Decision::Bypass
         }
@@ -241,6 +266,18 @@ pub(crate) fn decide(
                 Decision::Repaint
             }
         }
+        Some(record)
+            if policy.painted_in.as_ref() == Some(&context)
+                && layer.rows.repaints_shown_rows
+                && !layer.rows.items_changed
+                && invalidate::owner_rerendered_only(window, cx, id, record) =>
+        {
+            // Only the view holding a `list` renders again: the rows it shows
+            // are rendered again, and the rows the layer holds besides as
+            // they come to show (see `lists::LayerRows::rerendered`).
+            rerendered = true;
+            Decision::Composite
+        }
         Some(_) => {
             changed = true;
             Decision::Repaint
@@ -259,18 +296,14 @@ pub(crate) fn decide(
         .unwrap_or_default();
     if changed {
         history |= 1;
-        let changed_limit = if layer.rows.list {
-            LIST_DEMOTE_AFTER_CHANGED_FRAMES
-        } else {
-            DEMOTE_AFTER_CHANGED_FRAMES
-        };
-        demote |= history.count_ones() >= changed_limit;
+        demote |= !replayed && history.count_ones() >= DEMOTE_AFTER_CHANGED_FRAMES;
     }
     let decision = if demote { Decision::Bypass } else { decision };
 
     let starting_cache = decision == Decision::Repaint && layer.record.is_none();
     let owner = invalidate::owner_view(window);
     let layer = window.fast_layers.layers.get_mut(id).unwrap();
+    layer.rows.rerendered = rerendered && decision == Decision::Composite;
     let policy = &mut layer.policy;
     if policy.owner.as_ref().map(OwnerWatch::view) != owner {
         policy.owner = owner.map(OwnerWatch::new);
@@ -315,10 +348,12 @@ pub(crate) fn decide(
     if changed_while_demoted {
         policy.stable_since = frame;
     }
-    if ineligible {
+    if ineligible || owner_animating || jumped {
         layer.record = None;
         policy.painted_in = None;
-        policy.retry_at = Some(frame + RETRY_AFTER_INELIGIBLE_FRAMES);
+        if ineligible {
+            policy.retry_at = Some(frame + RETRY_AFTER_INELIGIBLE_FRAMES);
+        }
         return decision;
     }
     match decision {
@@ -330,6 +365,37 @@ pub(crate) fn decide(
         Decision::Bypass => {}
     }
     decision
+}
+
+/// Whether a scroll from `from` to `to` moved the content of a viewport of
+/// `size` by at least the viewport's extent on an axis.
+fn leaps(from: Point<Pixels>, to: Point<Pixels>, size: Size<Pixels>) -> bool {
+    let moved = |from: Pixels, to: Pixels, extent: Pixels| {
+        extent > Pixels::ZERO && (to - from).abs() >= extent
+    };
+    moved(from.x, to.x, size.width) || moved(from.y, to.y, size.height)
+}
+
+/// Whether any of what `record` painted shows in its viewport with the
+/// content scrolled by `scroll_offset`.
+fn shows_any(record: &LayerRecord, scroll_offset: Point<Pixels>) -> bool {
+    let painted = Bounds {
+        origin: record.painted_region.origin + scroll_offset - record.scroll_offset,
+        size: record.painted_region.size,
+    };
+    painted.intersects(&record.viewport)
+}
+
+/// Notes that the layer of `id`, painted afresh this frame for a change of
+/// its content, came out as it was: the frame does not count as one its
+/// content changed on (see [`DEMOTE_AFTER_CHANGED_FRAMES`]).
+pub(crate) fn note_unchanged_repaint(window: &mut Window, id: &GlobalElementId) {
+    let frame = window.fast_layers.frame;
+    if let Some(layer) = window.fast_layers.layers.get_mut(id)
+        && layer.policy.last_seen_frame == frame
+    {
+        layer.policy.change_history &= !1;
+    }
 }
 
 /// Records work completed for the layer in this frame. One unit is the
@@ -349,7 +415,8 @@ pub(crate) fn note_work(window: &mut Window, id: &GlobalElementId, work: f32) {
 }
 
 /// Whether the content `record` holds can ever be composited from a layer:
-/// it painted no path, and the tiles covering its viewport fit the budget.
+/// its overlay can be drawn over its tiles (see [`LayerRecord::has_paths`]),
+/// and the tiles covering its viewport fit the budget.
 /// A layer whose content does not is demoted.
 fn fits(window: &Window, record: &LayerRecord) -> bool {
     let scale_factor = window.scale_factor();
@@ -364,7 +431,7 @@ fn fits(window: &Window, record: &LayerRecord) -> bool {
 /// Whether the content `record` holds of the scroll container `id` can be
 /// composited from a layer this frame (spec §5.6, §6.5): it deferred no
 /// draws (anchored popovers), placed no anchored element, handles no text
-/// input (a focused input is inside), and no view in it asked for an
+/// input (a focused input is inside), and nothing in it asked for an
 /// animation frame.
 fn eligible(window: &Window, id: &GlobalElementId, layer: &Layer, record: &LayerRecord) -> bool {
     let prepaint = &record.prepaint_range;

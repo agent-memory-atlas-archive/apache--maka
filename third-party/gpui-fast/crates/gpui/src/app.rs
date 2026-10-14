@@ -46,15 +46,16 @@ use crate::asset_cache::CachedLoad;
 use crate::{
     Action, ActionBuildError, ActionRegistry, ActivationPolicy, ActivityGuard, Any, AnyView,
     AnyWindowHandle, AppContext, Arena, ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds,
-    ClipboardItem, ClipboardReadError, CursorStyle, DispatchPhase, DisplayId, EventEmitter,
-    ExternalDragPayload, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
-    Keymap, Keystroke, LayoutId, Menu, MenuItem, MissingGlyph, OwnedMenu, PathPromptOptions,
-    Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point,
-    Priority, PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
-    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, SystemNotification, SystemNotificationResponse, Task,
-    TextRenderingMode, TextSystem, ThermalState, Window, WindowAppearance, WindowButtonLayout,
-    WindowHandle, WindowId, WindowInvalidator, WindowingRequest,
+    ClipboardItem, ClipboardReadError, CursorStyle, DispatchPhase, DisplayChanges, DisplayEvent,
+    DisplayId, EventEmitter, ExternalDragPayload, FocusHandle, FocusMap, ForegroundExecutor,
+    Global, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, MissingGlyph,
+    OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton, PromptHandle,
+    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
+    SharedString, SubscriberSet, Subscription, SvgRenderer, SystemNotification,
+    SystemNotificationResponse, Task, TextRenderingMode, TextSystem, ThermalState, Window,
+    WindowAppearance, WindowButtonLayout, WindowHandle, WindowId, WindowInvalidator,
+    WindowingRequest,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
 };
@@ -253,6 +254,8 @@ impl Application {
         let platform = self.0.borrow().platform.clone();
         platform.run(Box::new(move || {
             let cx = &mut *this.borrow_mut();
+            // Some platforms only connect to their display server in `run`.
+            cx.displays_changed();
             on_finish_launching(cx);
         }));
 
@@ -277,6 +280,8 @@ impl Application {
         let platform = self.0.borrow().platform.clone();
         platform.run(Box::new(move || {
             let cx = &mut *this.borrow_mut();
+            // Some platforms only connect to their display server in `run`.
+            cx.displays_changed();
             on_finish_launching(cx);
         }));
         ApplicationHandle { app: self.0 }
@@ -329,6 +334,59 @@ impl Application {
 }
 
 type Handler = Box<dyn FnMut(&mut App) -> bool + 'static>;
+type DisplayHandler = Box<dyn FnMut(DisplayEvent, &mut App) -> bool + 'static>;
+
+/// The properties of a display that GPUI reports changes to.
+#[derive(Clone, Copy, PartialEq)]
+struct DisplayState {
+    bounds: Bounds<Pixels>,
+    refresh_interval: Option<Duration>,
+}
+
+impl DisplayState {
+    fn changes_from(&self, previous: &DisplayState) -> DisplayChanges {
+        let mut changes = DisplayChanges::empty();
+        changes.set(DisplayChanges::BOUNDS, self.bounds != previous.bounds);
+        changes.set(
+            DisplayChanges::REFRESH_INTERVAL,
+            self.refresh_interval != previous.refresh_interval,
+        );
+        changes
+    }
+}
+
+fn read_displays(platform: &dyn Platform) -> HashMap<DisplayId, DisplayState> {
+    platform
+        .displays()
+        .into_iter()
+        .map(|display| {
+            let state = DisplayState {
+                bounds: display.bounds(),
+                refresh_interval: display.refresh_interval(),
+            };
+            (display.id(), state)
+        })
+        .collect()
+}
+
+/// The events that turn one snapshot of the connected displays into the next.
+fn display_events(
+    previous: &HashMap<DisplayId, DisplayState>,
+    current: &HashMap<DisplayId, DisplayState>,
+) -> Vec<DisplayEvent> {
+    let removed = previous
+        .keys()
+        .filter(|id| !current.contains_key(id))
+        .map(|id| DisplayEvent::Removed(*id));
+    let added_or_changed = current.iter().filter_map(|(id, state)| {
+        let Some(previous_state) = previous.get(id) else {
+            return Some(DisplayEvent::Added(*id));
+        };
+        let changes = state.changes_from(previous_state);
+        (!changes.is_empty()).then_some(DisplayEvent::Changed { id: *id, changes })
+    });
+    removed.chain(added_or_changed).collect()
+}
 type Listener = Box<dyn FnMut(&dyn Any, &mut App) -> bool + 'static>;
 type MissingGlyphCallback = Box<dyn FnMut(&[MissingGlyph], &mut App) + 'static>;
 pub(crate) type KeystrokeObserver =
@@ -790,6 +848,10 @@ pub struct App {
     pub(crate) keyboard_layout_observers: SubscriberSet<(), Handler>,
     missing_glyph_callback: Rc<MissingGlyphCallbackSlot>,
     pub(crate) thermal_state_observers: SubscriberSet<(), Handler>,
+    pub(crate) display_observers: SubscriberSet<(), DisplayHandler>,
+    /// The connected displays, as of the platform's last display change
+    /// notification.
+    displays: HashMap<DisplayId, DisplayState>,
     pub(crate) system_sleep_observers: SubscriberSet<(), Handler>,
     pub(crate) system_wake_observers: SubscriberSet<(), Handler>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
@@ -930,6 +992,8 @@ impl App {
                 keyboard_layout_observers: SubscriberSet::new(),
                 missing_glyph_callback: Rc::default(),
                 thermal_state_observers: SubscriberSet::new(),
+                display_observers: SubscriberSet::new(),
+                displays: read_displays(platform.as_ref()),
                 system_sleep_observers: SubscriberSet::new(),
                 system_wake_observers: SubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
@@ -995,6 +1059,15 @@ impl App {
             }
         }));
 
+        platform.on_displays_changed(Box::new({
+            let app = Rc::downgrade(&app);
+            move || {
+                if let Some(app) = app.upgrade() {
+                    app.borrow_mut().displays_changed();
+                }
+            }
+        }));
+
         platform.on_system_sleep(Box::new({
             let app = Rc::downgrade(&app);
             move || {
@@ -1027,7 +1100,9 @@ impl App {
                 };
                 match cx.try_borrow_mut() {
                     Ok(mut cx) => {
-                        if !cx.allow_quit() { return false; }
+                        if !cx.allow_quit() {
+                            return false;
+                        }
                         cx.shutdown();
                         true
                     }
@@ -1165,21 +1240,32 @@ impl App {
 
     /// Gracefully quit the application via the platform's standard routine.
     pub fn quit(&mut self) {
-        if self.allow_quit() { self.platform.quit(); }
+        if self.allow_quit() {
+            self.platform.quit();
+        }
     }
 
     /// Install the embedding's single quit admission gate. Unlike `on_app_quit`,
     /// this runs before stopping the platform loop and may refuse termination.
     /// Returning false keeps normal event processing alive for actual cleanup.
-    pub fn on_request_quit(&mut self, callback: impl FnMut(&mut App) -> bool + 'static) -> anyhow::Result<()> {
-        if self.quit_request.is_some() { anyhow::bail!("quit admission gate already installed"); }
+    pub fn on_request_quit(
+        &mut self,
+        callback: impl FnMut(&mut App) -> bool + 'static,
+    ) -> anyhow::Result<()> {
+        if self.quit_request.is_some() {
+            anyhow::bail!("quit admission gate already installed");
+        }
         self.quit_request = Some(Box::new(callback));
         Ok(())
     }
 
     fn allow_quit(&mut self) -> bool {
-        if self.checking_quit { return false; }
-        let Some(mut callback) = self.quit_request.take() else { return true; };
+        if self.checking_quit {
+            return false;
+        }
+        let Some(mut callback) = self.quit_request.take() else {
+            return true;
+        };
         self.checking_quit = true;
         let allowed = callback(self);
         self.quit_request = Some(callback);
@@ -1566,6 +1652,57 @@ impl App {
         subscription
     }
 
+    pub(crate) fn displays_changed(&mut self) {
+        let current = read_displays(self.platform.as_ref());
+        let events = display_events(&self.displays, &current);
+        self.displays = current;
+        for event in &events {
+            let DisplayEvent::Changed { id, .. } = *event else {
+                continue;
+            };
+            for handle in self.windows() {
+                self.update_window(handle, |_, window, cx| {
+                    if window.display_id == Some(id) {
+                        window.notify_display_observers(cx);
+                    }
+                })
+                .log_err();
+            }
+        }
+        for event in events {
+            self.display_observers
+                .clone()
+                .retain(&(), |callback| (callback)(event, self));
+        }
+    }
+
+    pub(crate) fn knows_display(&self, id: DisplayId) -> bool {
+        self.displays.contains_key(&id)
+    }
+
+    /// The refresh interval of a connected display, as of the platform's last
+    /// display change notification.
+    pub(crate) fn display_refresh_interval(&self, id: DisplayId) -> Option<Duration> {
+        self.displays.get(&id)?.refresh_interval
+    }
+
+    /// Invokes a handler when a display is connected, disconnected, or its
+    /// properties change.
+    pub fn observe_displays<F>(&self, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(DisplayEvent, &mut App),
+    {
+        let (subscription, activate) = self.display_observers.insert(
+            (),
+            Box::new(move |event, cx| {
+                callback(event, cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
     /// Invokes a handler when the system wakes from sleep.
     pub fn on_system_wake<F>(&self, mut callback: F) -> Subscription
     where
@@ -1920,7 +2057,13 @@ impl App {
                 }
             } else {
                 #[cfg(any(test, feature = "test-support"))]
-                if matches!(self.mode, GpuiMode::Test { automatic_drawing: true, .. }) {
+                if matches!(
+                    self.mode,
+                    GpuiMode::Test {
+                        automatic_drawing: true,
+                        ..
+                    }
+                ) {
                     for window in self
                         .windows
                         .values()

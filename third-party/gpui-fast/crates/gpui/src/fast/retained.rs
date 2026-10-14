@@ -33,6 +33,8 @@ use std::{any::TypeId, cell::RefCell, mem, ops::Range, rc::Rc};
 #[inline(always)]
 pub(crate) fn begin_frame(window: &mut Window, cx: &App) {
     window.fast_layout.phase_times.begin();
+    crate::fast::layers::hover_freeze::begin_draw(window);
+    crate::fast::a11y::new_frame(window);
     window.mark_changed_retained_views_dirty(cx);
 }
 
@@ -84,6 +86,12 @@ pub(crate) struct RetainedSubtree {
     /// container's content included. `None` when it was laid out without
     /// being rendered. See [`crate::fast::layers::invalidate`].
     pub(crate) render_offset_reads: Option<crate::fast::layers::invalidate::OffsetReads>,
+    /// What the subtree's view read itself while its `render` ran, before
+    /// the elements it built were laid out: unlike what they read as they
+    /// are laid out, prepainted or painted, it shapes the closures its render
+    /// handed its elements, such as a list's row renderer. `None` when the
+    /// view was not rendered.
+    pub(crate) render_dependencies: Option<RenderDependencies>,
     /// The hovers the subtree was painted by, nested subtrees included.
     pub(crate) hover_dependencies: Rc<[(HitboxId, bool)]>,
     /// The hovers it was painted by itself, outside nested subtrees.
@@ -96,6 +104,15 @@ pub(crate) struct RetainedSubtree {
     /// How to build this subtree again on its own, where it was, when the
     /// subtree around it is drawn from last frame.
     pub(crate) rebuild: Option<Rc<Rebuild>>,
+}
+
+impl RetainedSubtree {
+    /// Whether the subtree is a cached view ([`crate::Entity::cached`]).
+    pub(crate) fn is_cached(&self) -> bool {
+        self.rebuild
+            .as_ref()
+            .is_some_and(|rebuild| rebuild.is_cached())
+    }
 }
 
 pub(crate) enum PaintStatus {
@@ -151,6 +168,25 @@ pub(crate) struct RetainedLayoutRecording {
     rem_size: Pixels,
     selection_context: crate::window::SelectionContext,
     parent_layout_key: Option<u64>,
+    /// What the view read while its `render` ran. See
+    /// [`RetainedLayoutRecording::rendered`].
+    render: Option<RenderDependencies>,
+}
+
+impl RetainedLayoutRecording {
+    /// Notes that the view whose layout request this records has rendered,
+    /// before the elements it built are laid out.
+    pub(crate) fn rendered(&mut self, cx: &mut App) {
+        self.render = Some(cx.dependencies_so_far(&self.dependencies));
+    }
+}
+
+impl RetainedRecording {
+    /// What the view this records the prepaint of read while its `render`
+    /// ran, taken as `render` returns.
+    pub(crate) fn rendered(&self, cx: &mut App) -> RenderDependencies {
+        cx.dependencies_so_far(&self.dependencies)
+    }
 }
 
 /// A retained subtree being prepainted. See [`Window::begin_retained`].
@@ -213,6 +249,15 @@ pub(crate) struct RetainedState {
     /// Room to sort out the layout keys a spliced view keeps, kept from one
     /// splice to the next. See [`crate::fast::splice`].
     pub(crate) splice_keys: FxHashSet<u64>,
+    /// Where in the write generation each view rendered this frame began to
+    /// render: what it writes from then on is part of building it, not a
+    /// change of what it read. See [`note_rendering`].
+    pub(crate) rendering_since: FxHashMap<EntityId, u64>,
+    /// The writes each view rendered this frame made in its `render` the
+    /// last time it ran, `start..end` in the write generation: what it
+    /// handed the elements it built, rather than what they wrote as they
+    /// were laid out. See [`note_rendered`].
+    pub(crate) render_writes: FxHashMap<EntityId, Range<u64>>,
 }
 
 impl RetainedState {
@@ -229,6 +274,8 @@ impl RetainedState {
             notified_entities: FxHashSet::default(),
             view_retention: std::env::var("GPUI_VIEW_RETENTION").map_or(true, |value| value != "0"),
             splice_keys: FxHashSet::default(),
+            rendering_since: FxHashMap::default(),
+            render_writes: FxHashMap::default(),
         }
     }
 
@@ -274,6 +321,7 @@ impl PrepaintStateIndex {
             line_layout_index: self
                 .line_layout_index
                 .shifted(&from.line_layout_index, &to.line_layout_index),
+            fast_a11y_index: self.fast_a11y_index - from.fast_a11y_index + to.fast_a11y_index,
         }
     }
 }
@@ -290,8 +338,10 @@ impl PartialEq for PrepaintStateIndex {
             dispatch_tree_index,
             accessed_element_states_index,
             line_layout_index,
+            fast_a11y_index,
         } = self;
         *placement_claims_index == other.placement_claims_index
+            && *fast_a11y_index == other.fast_a11y_index
             && *hitboxes_index == other.hitboxes_index
             && *tooltips_index == other.tooltips_index
             && *deferred_draws_index == other.deferred_draws_index
@@ -309,7 +359,7 @@ impl PartialEq for PaintIndex {
             scene_index,
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds_index,
-            fast_window_control_hitboxes_index,
+            fast,
             mouse_listeners_index,
             input_scopes_index,
             input_handlers_index,
@@ -319,8 +369,8 @@ impl PartialEq for PaintIndex {
             line_layout_index,
         } = self;
         *deferred_paints_index == other.deferred_paints_index
+            && *fast == other.fast
             && *scene_index == other.scene_index
-            && *fast_window_control_hitboxes_index == other.fast_window_control_hitboxes_index
             && *mouse_listeners_index == other.mouse_listeners_index
             && *input_scopes_index == other.input_scopes_index
             && *input_handlers_index == other.input_handlers_index
@@ -348,9 +398,13 @@ impl PaintIndex {
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds_index: self.debug_bounds_index - from.debug_bounds_index
                 + to.debug_bounds_index,
-            fast_window_control_hitboxes_index: self.fast_window_control_hitboxes_index
-                - from.fast_window_control_hitboxes_index
-                + to.fast_window_control_hitboxes_index,
+            fast: FastPaintIndex {
+                window_control_hitboxes: self.fast.window_control_hitboxes
+                    - from.fast.window_control_hitboxes
+                    + to.fast.window_control_hitboxes,
+                a11y_actions: self.fast.a11y_actions - from.fast.a11y_actions
+                    + to.fast.a11y_actions,
+            },
             mouse_listeners_index: self.mouse_listeners_index - from.mouse_listeners_index
                 + to.mouse_listeners_index,
             input_scopes_index: self.input_scopes_index - from.input_scopes_index
@@ -525,10 +579,23 @@ impl Window {
     /// Where it is drawn is not checked here; see
     /// [`Window::retained_context_matches`].
     pub(crate) fn reusable_retained(&self, id: &GlobalElementId, cx: &App) -> Option<usize> {
+        self.reusable_record(id, cx, false)
+    }
+
+    /// The record the cached view `id` left last frame, if nothing about
+    /// this frame rules out drawing it again, as [`Self::reusable_retained`]
+    /// finds it, but for what it read updated without being notified, which
+    /// does not draw a cached view again (see
+    /// [`App::notified_dependencies_changed`]).
+    pub(crate) fn reusable_cached(&self, id: &GlobalElementId, cx: &App) -> Option<usize> {
+        self.reusable_record(id, cx, true)
+    }
+
+    fn reusable_record(&self, id: &GlobalElementId, cx: &App, cached: bool) -> Option<usize> {
         if self.refreshing
             || self.focus_reveal_pending()
             || cx.has_active_drag()
-            || self.a11y.is_active()
+            || crate::fast::a11y::stale(&self.a11y)
             || self.is_inspector_picking(cx)
             || self.retained_state.dirty_subtrees.contains(id)
             || self.next_frame.retained.by_id.contains_key(id)
@@ -538,7 +605,12 @@ impl Window {
         }
         let index = self.rendered_frame.retained.find(id)?;
         let record = &self.rendered_frame.retained.records[index];
-        if cx.dependencies_changed(&record.dependencies, self.inside_notified_view())
+        let changed = if cached {
+            cx.notified_dependencies_changed(&record.dependencies)
+        } else {
+            cx.dependencies_changed(&record.dependencies, self.inside_notified_view())
+        };
+        if changed
             || crate::fast::layers::invalidate::offset_read_changed(self, &record.dependencies)
             || !self.hovers_unchanged(&record.hover_dependencies)
         {
@@ -627,6 +699,7 @@ impl Window {
             rem_size: self.rem_size(),
             selection_context: self.selection_context,
             parent_layout_key: self.parent_layout_key(),
+            render: None,
         }
     }
 
@@ -639,7 +712,8 @@ impl Window {
         cx: &mut App,
     ) -> (Option<Rc<RetainedLayout>>, RecordedDependencies) {
         let keys = self.finish_recording_claimed_layout_keys(recording.keys);
-        let dependencies = cx.finish_recording_dependencies(recording.dependencies);
+        let mut dependencies = cx.finish_recording_dependencies(recording.dependencies);
+        dependencies.render = recording.render;
         // A node nothing retains is gone at the end of the frame.
         if self.layout_engine.as_ref().unwrap().transient_count() != recording.transient {
             return (None, dependencies);
@@ -736,6 +810,10 @@ impl Window {
                 dependencies: record.dependencies.written_up_to(writes_now),
                 own_dependencies: record.own_dependencies.written_up_to(writes_now),
                 render_offset_reads: record.render_offset_reads.clone(),
+                render_dependencies: record
+                    .render_dependencies
+                    .as_ref()
+                    .map(|render| render.written_up_to(writes_now)),
                 hover_dependencies: record.hover_dependencies.clone(),
                 own_hovers: record.own_hovers.clone(),
                 layout_keys: record.layout_keys.clone(),
@@ -836,6 +914,7 @@ impl Window {
                 dependencies: RenderDependencies::default(),
                 own_dependencies: RenderDependencies::default(),
                 render_offset_reads: None,
+                render_dependencies: None,
                 hover_dependencies: Rc::new([]),
                 own_hovers: Rc::new([]),
                 layout_keys: Rc::new([]),
@@ -892,6 +971,7 @@ impl Window {
             dependencies = RecordedDependencies {
                 all: layout_dependencies.all.union(&dependencies.all),
                 own: layout_dependencies.own.union(&dependencies.own),
+                render: layout_dependencies.render,
             };
         }
         let context = RetainedContext {
@@ -914,6 +994,7 @@ impl Window {
         record.dependencies = dependencies.all;
         record.own_dependencies = dependencies.own;
         record.render_offset_reads = render_offset_reads;
+        record.render_dependencies = dependencies.render;
         record.layout_keys = layout_keys.into();
         record.layout = layout;
         record.rebuild = rebuild.map(Rc::new);
@@ -1037,25 +1118,48 @@ impl Window {
             return;
         }
         let notified = &self.retained_state.notified_entities;
+        let records = &self.rendered_frame.retained.records;
         let mut changed = SmallVec::<[EntityId; 8]>::new();
-        for record in &self.rendered_frame.retained.records {
+        // The last record inside each cached view the walk is in, innermost
+        // last.
+        let mut cached = SmallVec::<[usize; 4]>::new();
+        for (index, record) in records.iter().enumerate() {
+            while cached.last().is_some_and(|until| index > *until) {
+                cached.pop();
+            }
             let Some(entity) = crate::fast::splice::view_entity(&record.id) else {
                 continue;
             };
+            let changed_alone = || {
+                crate::fast::layers::invalidate::offset_read_changed(self, &record.own_dependencies)
+            };
+            if record.is_cached() {
+                // A cached view is drawn again for what is notified, not
+                // for what is only updated. See
+                // `App::notified_dependencies_changed`.
+                if cx.notified_dependencies_changed(&record.own_dependencies) || changed_alone() {
+                    changed.push(entity);
+                }
+                cached.push(index + record.nested);
+                continue;
+            }
             let inside_notified = !notified.is_empty()
                 && self
                     .rendered_frame
                     .dispatch_tree
                     .view_path_reversed(entity)
                     .any(|view| notified.contains(&view));
-            if cx.dependencies_changed(&record.own_dependencies, inside_notified)
-                || crate::fast::layers::invalidate::offset_read_changed(
-                    self,
-                    &record.own_dependencies,
-                )
+            if !cx.dependencies_changed(&record.own_dependencies, inside_notified)
+                && !changed_alone()
             {
-                changed.push(entity);
+                continue;
             }
+            // A view inside a cached view only updated is built again only
+            // if the cached view is, as upstream does.
+            if !cached.is_empty() && !cx.notified_dependencies_changed(&record.own_dependencies) {
+                continue;
+            }
+            changed.push(entity);
         }
         // As a notification marks a view and the views around it.
         for entity in changed {
@@ -1079,18 +1183,37 @@ impl Window {
     }
 }
 
-/// Copies the window control hitboxes last frame's paint of `range`
-/// inserted, which upstream's [`Window::reuse_paint`] leaves out: a subtree
-/// drawn again from last frame would otherwise lose the window controls it
-/// painted.
+/// Where a frame's paint stands in what gpui-fast adds to the frame: the
+/// part of a [`PaintIndex`] upstream's lacks.
+#[derive(Clone, Default, PartialEq)]
+pub(crate) struct FastPaintIndex {
+    pub(crate) window_control_hitboxes: usize,
+    pub(crate) a11y_actions: usize,
+}
+
+impl FastPaintIndex {
+    #[inline(always)]
+    pub(crate) fn new(window: &Window) -> Self {
+        FastPaintIndex {
+            window_control_hitboxes: window.next_frame.window_control_hitboxes.len(),
+            a11y_actions: crate::fast::a11y::actions_index(window),
+        }
+    }
+}
+
+/// Copies what last frame's paint of `range` added that upstream's
+/// [`Window::reuse_paint`] leaves out: a subtree drawn again from last frame
+/// would otherwise lose the window controls it painted and the listeners
+/// for accessibility actions it registered.
 #[inline(always)]
-pub(crate) fn reuse_window_control_hitboxes(window: &mut Window, range: &Range<PaintIndex>) {
+pub(crate) fn reuse_paint_records(window: &mut Window, range: &Range<PaintIndex>) {
     window.next_frame.window_control_hitboxes.extend(
-        window.rendered_frame.window_control_hitboxes[range.start.fast_window_control_hitboxes_index
-            ..range.end.fast_window_control_hitboxes_index]
+        window.rendered_frame.window_control_hitboxes
+            [range.start.fast.window_control_hitboxes..range.end.fast.window_control_hitboxes]
             .iter()
             .cloned(),
     );
+    crate::fast::a11y::reuse_paint(window, range);
 }
 
 /// The retained subtrees around the element being painted, for a listener
@@ -1256,6 +1379,8 @@ pub(crate) fn finish_retained_frame(window: &mut Window) {
         mem::take(&mut window.retained_state.subtrees_dirty_next_frame);
     window.retained_state.hover_dependencies.clear();
     window.retained_state.hover_reads.get_mut().clear();
+    window.retained_state.rendering_since.clear();
+    window.retained_state.render_writes.clear();
     window.next_frame.retained.finish_frame();
     crate::fast::layers::paint::finish_frame(window);
     crate::fast::layers::finish_frame(window);
@@ -1403,13 +1528,16 @@ impl<V: View> ViewElement<V> {
                         {
                             return (root, ViewLayout::Spliced(splice));
                         }
-                        let recording = window.begin_retained_layout(cx);
+                        let start = note_rendering(window, cx, entity_id);
+                        let mut recording = window.begin_retained_layout(cx);
                         let mut element = self
                             .view
                             .take()
                             .unwrap()
                             .render(window, cx)
                             .into_any_element();
+                        note_rendered(window, cx, entity_id, start);
+                        recording.rendered(cx);
                         let layout_id = element.request_layout(window, cx);
                         let retained = window.finish_retained_layout(recording, layout_id, cx);
                         (
@@ -1565,13 +1693,25 @@ impl<V: View> ViewElement<V> {
                     retained: (layout, layout_dependencies),
                 } => {
                     if !window.dirty_views.contains(&entity_id)
-                        && let Some(previous) = window.reusable_retained(global_id, cx)
+                        && let Some(previous) = window.reusable_cached(global_id, cx)
                         && window.retained_context_matches(previous, bounds)
                     {
-                        return ViewPrepaint::Reused(
-                            window.reuse_retained_prepaint(previous, false, cx),
+                        let rebuild = window.rebuild_here(
+                            &self.rebuild,
+                            self.cached_style.as_ref(),
+                            layout.as_ref().and_then(|layout| layout.parent_layout_key),
                         );
+                        let index = window.reuse_retained_prepaint(previous, false, cx);
+                        // Cached paint can survive a changed element path, but
+                        // its style node was requested again at the new path.
+                        // Keep that node and rebuild location, not the copied
+                        // ones which may be released at the end of this frame.
+                        let record = &mut window.next_frame.retained.records[index];
+                        record.layout = layout;
+                        record.rebuild = rebuild.map(Rc::new);
+                        return ViewPrepaint::Reused(index);
                     }
+                    let start = note_rendering(window, cx, entity_id);
                     let recording = window.begin_retained(global_id, cx);
                     let mut element = self
                         .view
@@ -1579,6 +1719,8 @@ impl<V: View> ViewElement<V> {
                         .unwrap()
                         .render(window, cx)
                         .into_any_element();
+                    note_rendered(window, cx, entity_id, start);
+                    let render = recording.rendered(cx);
                     element.layout_as_root(bounds.size.into(), window, cx);
                     element.prepaint_at(bounds.origin, window, cx);
                     // Kept so that the view can be built again on its own
@@ -1597,6 +1739,10 @@ impl<V: View> ViewElement<V> {
                         rebuild,
                         cx,
                     );
+                    if let Some(index) = record {
+                        window.next_frame.retained.records[index].render_dependencies =
+                            Some(render);
+                    }
                     ViewPrepaint::Built { element, record }
                 }
                 ViewLayout::Taken => unreachable!("a view is prepainted once"),
@@ -1641,12 +1787,18 @@ impl<V: View> ViewElement<V> {
         window: &mut Window,
         cx: &mut App,
     ) -> ViewPrepaint {
-        let layout_recording = window.begin_retained_layout(cx);
+        let mut layout_recording = window.begin_retained_layout(cx);
         let changes_before = window.layout_changes();
         let remeasures_before = window.layout_remeasures();
+        let entity_id = self.entity_id;
+        let start = entity_id.map(|entity_id| note_rendering(window, cx, entity_id));
         let view = self.view.take().unwrap();
         let (mut element, layout_id) = window.with_layout_key_of_prepainting_element(|window| {
             let mut element = view.render(window, cx).into_any_element();
+            if let (Some(entity_id), Some(start)) = (entity_id, start) {
+                note_rendered(window, cx, entity_id, start);
+            }
+            layout_recording.rendered(cx);
             let layout_id = element.request_layout(window, cx);
             (element, layout_id)
         });
@@ -1684,6 +1836,29 @@ impl<V: View> ViewElement<V> {
     }
 }
 
+/// Notes that the view `entity_id` begins to render, if it has not yet this
+/// frame: see [`RetainedState::rendering_since`]. Returns where in the write
+/// generation this render begins.
+fn note_rendering(window: &mut Window, cx: &App, entity_id: EntityId) -> u64 {
+    let since = cx.entities.write_generation();
+    window
+        .retained_state
+        .rendering_since
+        .entry(entity_id)
+        .or_insert(since);
+    since
+}
+
+/// Notes that the `render` of the view `entity_id`, begun at `start` in the
+/// write generation, returned: see [`RetainedState::render_writes`].
+fn note_rendered(window: &mut Window, cx: &App, entity_id: EntityId, start: u64) {
+    let end = cx.entities.write_generation();
+    window
+        .retained_state
+        .render_writes
+        .insert(entity_id, start..end);
+}
+
 /// Lays the view out as [`crate::Element::request_layout`] does, drawing it
 /// again from last frame when it is retained and nothing it depends on
 /// changed.
@@ -1694,8 +1869,33 @@ pub(crate) fn request_view_layout<V: View>(
     window: &mut Window,
     cx: &mut App,
 ) -> (LayoutId, ViewLayoutState) {
+    #[cfg(feature = "profiler")]
+    let start = view.entity_id.map(|_| window.window_profiler.begin_view());
     let (layout_id, layout) = view.request_view_layout_inner(global_id, window, cx);
+    #[cfg(feature = "profiler")]
+    end_view_profile(
+        view,
+        start,
+        crate::profiler::ViewPhase::RequestLayout,
+        window,
+    );
     (layout_id, ViewLayoutState(layout))
+}
+
+/// Attributes the time since `start` to the view's type in the window's
+/// profiler, as upstream's `ViewElement` does for views with an entity.
+#[cfg(feature = "profiler")]
+fn end_view_profile<V: View>(
+    view: &ViewElement<V>,
+    start: Option<std::time::Instant>,
+    phase: crate::profiler::ViewPhase,
+    window: &mut Window,
+) {
+    if let Some(start) = start {
+        window
+            .window_profiler
+            .end_view(start, view.view_type_name, phase);
+    }
 }
 
 /// Prepaints the view as [`crate::Element::prepaint`] does, following up on how
@@ -1710,7 +1910,12 @@ pub(crate) fn prepaint_view<V: View>(
     cx: &mut App,
 ) -> ViewPrepaintState {
     let layout = mem::replace(&mut layout.0, ViewLayout::Taken);
-    ViewPrepaintState(view.prepaint_view_inner(global_id, bounds, layout, window, cx))
+    #[cfg(feature = "profiler")]
+    let start = view.entity_id.map(|_| window.window_profiler.begin_view());
+    let prepaint = view.prepaint_view_inner(global_id, bounds, layout, window, cx);
+    #[cfg(feature = "profiler")]
+    end_view_profile(view, start, crate::profiler::ViewPhase::Prepaint, window);
+    ViewPrepaintState(prepaint)
 }
 
 /// Paints the view as [`crate::Element::paint`] does.
@@ -1724,7 +1929,11 @@ pub(crate) fn paint_view<V: View>(
 ) {
     if let Some(entity_id) = view.entity_id {
         // Stateful path.
+        #[cfg(feature = "profiler")]
+        let start = window.window_profiler.begin_view();
         paint_entity_view(entity_id, global_id, &mut prepaint.0, window, cx);
+        #[cfg(feature = "profiler")]
+        end_view_profile(view, Some(start), crate::profiler::ViewPhase::Paint, window);
     } else {
         // Stateless path: just paint the element.
         paint_component(std::any::type_name::<V>(), &mut prepaint.0, window, cx);

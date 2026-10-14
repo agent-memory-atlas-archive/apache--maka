@@ -19,7 +19,7 @@
 
 # GPUI Fast 平台清理补丁
 
-从 [GPUI Fast](https://github.com/longbridge/gpui-fast/tree/8e1e1987fdb512bb8b0ab27261906a598aff2ab8) 正式 `v0.1.2` tag 保留 core、macOS、Windows、Linux 和 scheduler 五个 crate。按上游发布规则使用 `gpui-fast*` 包名，保持原 Rust library 名；修改过的 scheduler 对应 `gpui-pre-scheduler` 0.3.8。未修改 helper 使用同一正式发布及其 0.3.8 支持快照。Kit 选择官方 `gpui-fast` feature，根 registry source patch 提供修改过的实现；移除旧 gpui-pre Git 兼容 facade。
+从 [GPUI Fast](https://github.com/longbridge/gpui-fast/tree/371769f1ff378bc0bd886440e0f97fc94aaeae5d) `main` 固定 revision（manifest 采用正式 `0.1.7` 发布依赖规则） 保留 core、macOS、Windows、Linux 和 scheduler 五个 crate。按上游发布规则使用 `gpui-fast*` 包名，保持原 Rust library 名；修改过的 scheduler 对应 `gpui-pre-scheduler` 0.3.9。未修改 helper 使用同一正式发布及其 0.3.9 支持快照。Kit 选择官方 `gpui-fast` feature，根 registry source patch 提供修改过的实现；移除旧 gpui-pre Git 兼容 facade。
 
 `upstream.json` 列出改动前的有限原始文件清单与 SHA-256。保留上游许可和署名；Maka 新文件不进入该清单。隔离 workspace 仅规范化 helper 依赖和显式许可文件路径。
 
@@ -65,3 +65,11 @@ Window 可根据原 ClickInputState interruption 创建不可 clone 的 InputGes
 原继承选择上下文同时携带文档 scope 与 InputScope 的稳定焦点组身份，沿布局、retained/splice/layer 与 deferred 绘制传递及比较。组改变使复用失效，已失效 opening 不会把保留前景误归后台。这只证明原生放置来源；物理输入仍由原弱 opening 与 gesture 准入控制。
 
 图层准入读取原实际绘制的输入 owner，而不把未聚焦 handler 当作活动输入。只有原完成帧对应的范围才可读取；已有原生 input 决策重绘失效的未聚焦记录。回归保留失焦后有界恢复合成、短暂隐藏再出现的 fresh 可见场景 oracle 和真实恢复 handler 查询。手工通知帧与 held callback 测试仅暂停 test 自动绘制，匹配平台 callback 归还原 handler 后再绘制下一帧的顺序。
+
+## 同步上游（2026-10-14）
+
+固定到 `371769f1ff378bc0bd886440e0f97fc94aaeae5d`，使用 0.1.7 平台包与 0.3.9 支持快照；旧 macOS 文本实现副本按上游移除，改由 Apple 包提供。引入上游保留帧可访问性日志、列表/图层优化、CJK 换行及平台修复，新增原始文件均记录 provenance。
+
+可访问性日志接入既有 prepaint 回滚，action listener 的所有权不被复制；保留的 action 继续携带原物理输入来源的弱引用。上游静默 scroll-to-bottom 优化只用于无回执的旧接口，显式滚动命令仍以真实绘制结算。上游未提供等价行为的输入隔离、焦点揭示、滚动观察和资源清理继续保留。
+
+程序设置 List offset 时仍推进原依赖版本，使未显式 notify 的保留祖先也能看到偏移变化；图层单独将该版本识别为滚动，避免把它算作内容变化。未修补上游也可复现旧偏移残留。保留上游 deferred-view 拼接保护：重建 gap 外存在延迟绘制时重建祖先，防止复用过时视图；本地测试相应断言重建，并继续验证绘制因果顺序、缓存重放及与全量绘制的一致性。

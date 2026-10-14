@@ -19,7 +19,7 @@
 
 # GPUI Kit local presentation projection
 
-The `gpui-base` crate is copied from [GPUI Kit](https://github.com/longbridge/gpui-kit/tree/29c04574dc838a8e59e84c9c9f3c4d15983222ce), revision `29c04574dc838a8e59e84c9c9f3c4d15983222ce`, under Apache-2.0. Other Kit crates remain dependencies from that exact revision. `upstream.json` records the finite imported file inventory and original SHA-256 hashes before modifications; licenses are retained byte-for-byte. The root README is retained because upstream library tests include it. Examples, benchmarks and website sources are omitted. Benchmark-only dependencies and GPUI profiler features are omitted; library tests keep their original test support. The crate manifest is normalized to explicit upstream dependencies/lints and disables automatic example targets; this repository includes the adapted Base crate as a workspace member so its actual unit tests can run with the same source patches as the application.
+The `gpui-base` crate is copied from [GPUI Kit](https://github.com/longbridge/gpui-kit/tree/c5f8eca4a0759f8c0c7ed624eddfd03f1c93a5f2), revision `c5f8eca4a0759f8c0c7ed624eddfd03f1c93a5f2`, under Apache-2.0. Other Kit crates remain dependencies from that exact revision. `upstream.json` records the finite imported file inventory and original SHA-256 hashes before modifications; licenses are retained byte-for-byte. The root README is retained because upstream library tests include it. Examples, benchmarks and website sources are omitted. Benchmark-only dependencies and GPUI profiler features are omitted; library tests keep their original test support. The crate manifest is normalized to explicit upstream dependencies/lints and disables automatic example targets; this repository includes the adapted Base crate as a workspace member so its actual unit tests can run with the same source patches as the application.
 
 The bounded changes preserve the single native editing engine:
 
@@ -159,3 +159,13 @@ TextSelectionLayer 在实际绘制访问的原 element state 中持有每个窗�
 Plain-text paint compares its own attached document's copy projection, rather than resolving the physically current group's callbacks. Native runs and copy projection updates are derived cache queries; snapshot, local selection and source changes retain their original model updates and notifications.
 
 普通文本 paint 只比较原附着文档的复制投影，不解析物理当前组的回调。原生 runs 与复制投影使用派生缓存 query；snapshot、本地选择及源文本改变仍走原 model update 与通知。
+
+## Upstream synchronization (2026-10-14)
+
+Kit is pinned to `c5f8eca4a0759f8c0c7ed624eddfd03f1c93a5f2` (0.7.3). The input-menu callback and parser acknowledgement now use upstream's implementations, replacing the equivalent local patches. Upstream's immutable run/copy projections and quiet participant registration replace the corresponding mutable query paths. Its reflow selection preservation, table rendering and native controls are retained.
+
+The local physical input groups, exact byte selections, per-hitbox retained geometry and locally projected theme values remain: the upstream global traversal stack and paint-order counter do not provide those behaviors. Quiet registration still passes a participant's first or changed group through original custody reconciliation; completed-frame pruning remains tied to the native focus tree and hitboxes. This update does not merge the separate UI performance branch or migrate Maka to gpui-shell.
+
+同步上游后，菜单回调、解析确认和部分只读选区投影直接采用上游实现。仍保留上游尚未覆盖的物理输入隔离、精确字节选区、保留帧几何与局部主题投影；本次不合并独立性能分支，也不代表完成 gpui-shell 迁移。
+
+Participant enablement checks the current value before acquiring a write lease. Repeating the same admission state during layout must not invalidate retained rows under upstream's finer-grained entity-write tracking; real enablement changes retain the original revocation and group withdrawal path.

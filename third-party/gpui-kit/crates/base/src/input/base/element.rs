@@ -21,7 +21,7 @@ use crate::{
 };
 
 use super::{
-    InputBaseState, RangeDecorationStyle, TextDecoration,
+    InputBaseState, PrepaintCaretGeometry, RangeDecorationStyle, TextDecoration,
     layout::{LastLayout, WhitespaceIndicators},
     mode::LayoutMode,
 };
@@ -310,17 +310,12 @@ pub(super) fn clamp_horizontal_scroll_offset(
     offset.clamp(min_offset, px(0.))
 }
 
-fn clamp_auto_grow_vertical_scroll_offset(
-    mode: &LayoutMode,
+fn clamp_vertical_scroll_offset(
     scroll_top: Pixels,
     scroll_height: Pixels,
     input_height: Pixels,
 ) -> Pixels {
-    if mode.is_auto_grow() {
-        scroll_top.clamp((input_height - scroll_height).min(px(0.)), px(0.))
-    } else {
-        scroll_top
-    }
+    scroll_top.clamp((input_height - scroll_height).min(px(0.)), px(0.))
 }
 
 fn editor_gutter_bounds(
@@ -714,12 +709,8 @@ impl<M: InputModeKind> TextElement<M> {
                 info.bounds.origin.x = info.bounds.origin.x.min(bounds.right() - CURSOR_WIDTH);
             }
         }
-        scroll_offset.y = clamp_auto_grow_vertical_scroll_offset(
-            &state.mode,
-            scroll_offset.y,
-            scroll_size.height,
-            bounds.size.height,
-        );
+        scroll_offset.y =
+            clamp_vertical_scroll_offset(scroll_offset.y, scroll_size.height, bounds.size.height);
 
         bounds.origin = bounds.origin + scroll_offset;
 
@@ -1045,12 +1036,17 @@ impl<M: InputModeKind> TextElement<M> {
         } else {
             state.scroll_handle.offset().y
         };
-        scroll_top = clamp_auto_grow_vertical_scroll_offset(
-            &state.mode,
-            scroll_top,
-            line_height * total_lines,
-            input_height,
-        );
+        // Clamp as `layout_cursors` does, so we lay out the rows we paint.
+        // Ghost lines are left out: a tighter clamp only lays out extra rows
+        // above, and the last row stays in range.
+        let scroll_height = line_height * total_lines
+            + empty_bottom_height(
+                state.is_code_editor(),
+                state.scroll_beyond_last_line,
+                input_height,
+                line_height,
+            );
+        scroll_top = clamp_vertical_scroll_offset(scroll_top, scroll_height, input_height);
 
         // Display rows are uniformly `line_height` tall, so the visible window maps
         // directly to a display-row range.
@@ -2870,6 +2866,34 @@ impl<M: InputModeKind> Element for TextElement<M> {
             .find(|info| info.is_active)
             .map(|info| info.bounds);
 
+        // Stash the fresh caret geometry for caret-anchored popups. Their
+        // deferred prepaint runs after this prepaint but before paint, so
+        // they anchor to the current frame's caret instead of the previous
+        // frame's. Only the positioning geometry is stashed here; the rest
+        // of the paint-time state updates stay where they are.
+        let caret_geometry = last_layout.cursor_bounds.map(|cursor_bounds| {
+            let mut scroll_offset = cursor_scroll_offset;
+            // Mirror update_scroll_offset's clamping with the fresh values,
+            // so the stash matches what paint will publish.
+            let state = self.state.read(cx);
+            let safe_y_range = (-scroll_size.height + input_bounds.size.height).min(px(0.))..px(0.);
+            scroll_offset.y = if state.is_single_line() {
+                px(0.)
+            } else {
+                scroll_offset.y.clamp(safe_y_range.start, safe_y_range.end)
+            };
+            scroll_offset.x = clamp_horizontal_scroll_offset(
+                scroll_offset.x,
+                scroll_size.width,
+                input_bounds.size.width,
+                last_layout.text_align,
+            );
+            PrepaintCaretGeometry::new(cursor_bounds, line_height, input_bounds, scroll_offset)
+        });
+        self.state.update(cx, |state, _| {
+            state.prepaint_caret_geometry = caret_geometry;
+        });
+
         let search_match_paths = self.layout_search_matches(&last_layout, &mut bounds, cx);
         let selection_paths = self.layout_selections(&last_layout, &mut bounds, window, cx);
         let hover_highlight_path = self.layout_hover_highlight(&last_layout, &mut bounds, cx);
@@ -3639,6 +3663,81 @@ mod tests {
         (editor.unwrap(), window)
     }
 
+    struct TextareaHarness(Entity<crate::input::TextareaState>);
+
+    impl Render for TextareaHarness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(self.0.clone())
+        }
+    }
+
+    #[gpui::test]
+    fn set_scroll_offset_past_the_end_is_clamped(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let text = (1..=40)
+            .map(|line| format!("line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut textarea = None;
+        let window = cx.open_window(size(px(240.), px(400.)), |window, cx| {
+            let state =
+                cx.new(|cx| crate::input::TextareaState::new(window, cx).default_value(text));
+            textarea = Some(state.clone());
+            TextareaHarness(state)
+        });
+        let textarea = textarea.unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            textarea.update(cx, |state, cx| {
+                state.set_scroll_offset(point(px(0.), px(-10_000.)), cx)
+            });
+            window.draw(cx).clear(cx);
+
+            let state = textarea.read(cx);
+            let painted = state
+                .editor_scrollbar_snapshot
+                .get()
+                .unwrap()
+                .cursor_scroll_offset;
+            let furthest = (state.input_bounds.size.height - state.scroll_size.height).min(px(0.));
+            assert!(furthest < px(0.));
+            assert_eq!(painted.y, furthest);
+
+            let layout = state.last_layout.as_ref().unwrap();
+            let rows = viewport_visible_lines(state.input_bounds.size.height, layout.line_height);
+            assert!(layout.visible_range.len() >= rows);
+        });
+    }
+
+    #[gpui::test]
+    fn set_scroll_offset_past_the_end_is_clamped_in_a_code_editor(cx: &mut TestAppContext) {
+        let text = (1..=40)
+            .map(|line| format!("line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (editor, window) = decoration_editor(cx, &text, false);
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            editor.update(cx, |state, cx| {
+                state.set_scroll_offset(point(px(0.), px(-10_000.)), cx)
+            });
+            window.draw(cx).clear(cx);
+
+            let state = editor.read(cx);
+            let painted = state
+                .editor_scrollbar_snapshot
+                .get()
+                .unwrap()
+                .cursor_scroll_offset;
+            // The furthest offset includes the room below the last line.
+            let furthest = state.input_bounds.size.height - state.scroll_size.height;
+            assert!(-furthest > state.input_bounds.size.height);
+            assert_eq!(painted.y, furthest);
+        });
+    }
+
     #[gpui::test]
     fn builtin_editor_scrollbar_uses_its_local_mode_in_two_windows(cx: &mut TestAppContext) {
         cx.update(crate::init);
@@ -4405,26 +4504,22 @@ mod tests {
     }
 
     #[test]
-    fn test_auto_grow_scroll_offset_is_clamped_to_current_viewport() {
-        let mode = LayoutMode::auto_grow(3, 8);
-
+    fn test_vertical_scroll_offset_is_clamped_to_current_viewport() {
         assert_eq!(
-            clamp_auto_grow_vertical_scroll_offset(&mode, px(-260.), px(340.), px(160.)),
+            clamp_vertical_scroll_offset(px(-260.), px(340.), px(160.)),
             px(-180.)
         );
         assert_eq!(
-            clamp_auto_grow_vertical_scroll_offset(&mode, px(-40.), px(340.), px(160.)),
+            clamp_vertical_scroll_offset(px(-40.), px(340.), px(160.)),
             px(-40.)
         );
         assert_eq!(
-            clamp_auto_grow_vertical_scroll_offset(&mode, px(20.), px(340.), px(160.)),
+            clamp_vertical_scroll_offset(px(20.), px(340.), px(160.)),
             px(0.)
         );
-
-        let plain_text = LayoutMode::plain_text();
         assert_eq!(
-            clamp_auto_grow_vertical_scroll_offset(&plain_text, px(-260.), px(340.), px(160.)),
-            px(-260.)
+            clamp_vertical_scroll_offset(px(-40.), px(100.), px(160.)),
+            px(0.)
         );
     }
 
