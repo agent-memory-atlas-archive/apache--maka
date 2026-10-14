@@ -406,7 +406,11 @@ fn textarea_accessible_geometry_words_and_wrap_affinity_match_native(cx: &mut Te
     appearance::event(&scene, json!({"softWrap":false}), cx);
     cx.update_window(scene.window, |_, window, cx| {
         state.update(cx, |s, cx| {
-            s.set_value("can't a b\n\n".to_owned() + &"a".repeat(600), window, cx);
+            s.set_value(
+                "can't a b\n\n".to_owned() + &"a".repeat(600) + "\n" + &"offscreen\n".repeat(100),
+                window,
+                cx,
+            );
             // Keep the entire third logical line on one visual row to force the
             // bounded fragments to link within the same actual line.
             s.set_selection_anchor_focus(0, 0, false, cx);
@@ -436,9 +440,14 @@ fn textarea_accessible_geometry_words_and_wrap_affinity_match_native(cx: &mut Te
         ) * 2.
     );
     assert!(runs[0].1.character_widths().unwrap().last().unwrap() > &0.);
+    assert_eq!(runs[1].1.value(), Some("\n"));
     assert!(
-        runs[1].1.bounds().is_none(),
-        "unmeasured offscreen row has no invented geometry"
+        runs[1].1.bounds().is_some(),
+        "visible empty row has native geometry"
+    );
+    assert!(
+        runs.last().unwrap().1.bounds().is_none(),
+        "offscreen row has no invented geometry"
     );
     let fragments: Vec<_> = runs
         .iter()

@@ -227,7 +227,10 @@ pub fn run(
         if let Err(error) = retain_clipboard(&mut clipboard_output, bytes) {
             presenter.report(&error);
         }
-        if !clipboard_output.is_empty() {
+        // A blocked write already owns its completion wakeup. Queued clipboard
+        // bytes become runnable only after it finishes; waking ourselves while
+        // it is pending would spin the foreground under output backpressure.
+        if pending_output.is_none() && !clipboard_output.is_empty() {
             wake.0.notify_one();
         }
         if failure.is_some()
@@ -405,7 +408,7 @@ pub fn run(
                 if let Err(error) = retain_clipboard(&mut clipboard_output, bytes) {
                     presenter.report(&error);
                 }
-                if !clipboard_output.is_empty() {
+                if pending_output.is_none() && !clipboard_output.is_empty() {
                     wake.0.notify_one();
                 }
             }

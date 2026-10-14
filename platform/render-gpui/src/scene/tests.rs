@@ -278,13 +278,13 @@ fn copy_button_default_action_requires_success_and_original_live_owner(cx: &mut 
     let route = entity.downgrade();
     cx.update_window(window, |_, _, cx| {
         entity.update(cx, |h, _| {
-            let live = h.state().input.current.clone();
+            let live = Rc::downgrade(&h.state().input.current);
             h.slots.input = Input::testing(Rc::new(move |_, _, window, cx| {
                 if current.get() == 2 {
                     return Err(maka_ui_runtime::Error::Invalid("rejected click".into()));
                 }
                 if current.get() == 3 {
-                    *live.borrow_mut() = None;
+                    *live.upgrade().unwrap().borrow_mut() = None;
                 }
                 if current.get() == 4 {
                     route
@@ -295,6 +295,7 @@ fn copy_button_default_action_requires_success_and_original_live_owner(cx: &mut 
                 }
                 Ok(())
             }));
+            *h.state().input.current.borrow_mut() = Some(h.slots.input.clone());
         });
     })
     .unwrap();

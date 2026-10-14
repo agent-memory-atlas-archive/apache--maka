@@ -48,7 +48,9 @@ The EventLog owns the durable Root and canonical records. Stable plugin data bel
 
 Mutations have receipts. Business completion and physical cleanup are recorded separately. If a reply is lost, the caller resolves the original receipt instead of issuing a replacement operation. Cancellation asks work to stop; resources remain owned until their actual cleanup completes.
 
-UI callbacks propose a state/frame update and actions. A validated batch commits atomically. Renderers read committed frames; they do not execute plugin code during paint. Native editors own buffers, selection and IME, while plugins use bounded captures and commands.
+Desktop and TUI entries share the [UI runtime](platform/ui-runtime/README.md), service contracts and lifecycle rules. Each renderer owns its layout, input and native resources. A plugin can share business logic between its entries without sharing pixels, terminal cells or control state.
+
+JavaScript UI callbacks run on a bounded background worker and propose state, frames, actions and subscriptions. The UI owner validates and commits the whole batch atomically. Renderers read committed frames; native editing, selection and IME continue while a callback runs. Plugins use bounded captures and commands to operate on native buffers. Retirement rejects late candidates and waits for accepted work and native cleanup through their original owners.
 
 ## Development and distribution
 
