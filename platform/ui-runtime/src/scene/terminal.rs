@@ -23,10 +23,7 @@ use crate::ComponentSlot;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    time::Instant,
-};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Semantic terminal colors for rich text and editors, supplied by the product.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -517,18 +514,10 @@ impl Node {
     pub fn visible(&self) -> bool {
         !matches!(self, Self::Stack { visible: false, .. })
     }
-    pub fn validate_root(&self, deadline: Instant) -> Result<(), String> {
-        self.validate(0, &mut BTreeSet::new(), deadline)
+    pub fn validate_root(&self) -> Result<(), String> {
+        self.validate(0, &mut BTreeSet::new())
     }
-    fn validate(
-        &self,
-        depth: usize,
-        keys: &mut BTreeSet<String>,
-        deadline: Instant,
-    ) -> Result<(), String> {
-        if Instant::now() >= deadline {
-            return Err("scene compilation deadline".into());
-        }
+    fn validate(&self, depth: usize, keys: &mut BTreeSet<String>) -> Result<(), String> {
         let key = match self {
             Self::Stack { key, .. }
             | Self::Rule { key, .. }
@@ -584,7 +573,7 @@ impl Node {
                 {
                     return Err("invalid item selection color".into());
                 }
-                content.validate(depth + 1, keys, deadline)?;
+                content.validate(depth + 1, keys)?;
             }
             Self::ContextMenu {
                 appearance,
@@ -599,8 +588,8 @@ impl Node {
                 ..
             } => {
                 appearance.validate()?;
-                background.validate(depth + 1, keys, deadline)?;
-                content.validate(depth + 1, keys, deadline)?;
+                background.validate(depth + 1, keys)?;
+                content.validate(depth + 1, keys)?;
             }
             Self::AdaptivePane {
                 background,
@@ -622,8 +611,8 @@ impl Node {
                 {
                     return Err("invalid terminal adaptive pane".into());
                 }
-                background.validate(depth + 1, keys, deadline)?;
-                content.validate(depth + 1, keys, deadline)?;
+                background.validate(depth + 1, keys)?;
+                content.validate(depth + 1, keys)?;
             }
             Self::Stack {
                 gap,
@@ -679,7 +668,7 @@ impl Node {
                     return Err("invalid UI style".into());
                 }
                 for child in children {
-                    child.validate(depth + 1, keys, deadline)?;
+                    child.validate(depth + 1, keys)?;
                 }
             }
             Self::Text {
@@ -884,11 +873,7 @@ impl Node {
         inputs: &mut BTreeMap<String, Value>,
         hidden_slots: &mut BTreeSet<String>,
         visible: bool,
-        deadline: Instant,
     ) -> Result<(), String> {
-        if Instant::now() >= deadline {
-            return Err("scene compilation deadline".into());
-        }
         match self {
             Self::Item {
                 key,
@@ -908,7 +893,7 @@ impl Node {
                         return Err("reserved scene input identity".into());
                     }
                 }
-                content.metadata(slots, inputs, hidden_slots, visible, deadline)?;
+                content.metadata(slots, inputs, hidden_slots, visible)?;
             }
             Self::Choice(choice) => {
                 if visible && !choice.disabled && !choice.options.is_empty() {
@@ -942,8 +927,8 @@ impl Node {
                 {
                     return Err("reserved scene input identity".into());
                 }
-                background.metadata(slots, inputs, hidden_slots, visible, deadline)?;
-                content.metadata(slots, inputs, hidden_slots, visible && *open, deadline)?;
+                background.metadata(slots, inputs, hidden_slots, visible)?;
+                content.metadata(slots, inputs, hidden_slots, visible && *open)?;
             }
             Self::ContextMenu {
                 background,
@@ -957,8 +942,8 @@ impl Node {
             } => {
                 // Native visibility is local layout; both declarations keep
                 // their original component owners and input schemas.
-                background.metadata(slots, inputs, hidden_slots, visible, deadline)?;
-                content.metadata(slots, inputs, hidden_slots, visible, deadline)?;
+                background.metadata(slots, inputs, hidden_slots, visible)?;
+                content.metadata(slots, inputs, hidden_slots, visible)?;
             }
             Self::Component(slot) => {
                 slots.push(slot.clone());
@@ -986,7 +971,7 @@ impl Node {
                 ..
             } => {
                 for child in children {
-                    child.metadata(slots, inputs, hidden_slots, visible && *local, deadline)?;
+                    child.metadata(slots, inputs, hidden_slots, visible && *local)?;
                 }
             }
             _ => {}

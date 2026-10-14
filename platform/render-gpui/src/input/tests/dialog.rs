@@ -37,12 +37,7 @@ fn source(open: bool) -> Value {
 }
 impl SceneDialog {
     fn replace(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let recipe = crate::scene::compile(
-            &source(open),
-            std::time::Instant::now() + std::time::Duration::from_secs(1),
-        )
-        .unwrap()
-        .view;
+        let recipe = crate::scene::compile(&source(open)).unwrap().view;
         recipe.commit(self.scene.as_mut(), window, cx);
         self.recipe = recipe;
         self.query_recipe
@@ -109,12 +104,7 @@ fn fixture(
         let mut query = query_recipe.create(mounted_input(), window, cx);
         background_recipe.presentation(background.as_mut(), true, window, cx);
         query_recipe.presentation(query.as_mut(), false, window, cx);
-        let recipe = crate::scene::compile(
-            &source(false),
-            std::time::Instant::now() + std::time::Duration::from_secs(1),
-        )
-        .unwrap()
-        .view;
+        let recipe = crate::scene::compile(&source(false)).unwrap().view;
         let mut scene = recipe.create(mounted_input(), window, cx);
         recipe.presentation(scene.as_mut(), true, window, cx);
         let bg = background
@@ -266,7 +256,7 @@ fn controlled_dialog_close_and_hide_keeps_retained_original_input_unfocused(
             root.replace(false,window,cx);
             let mut hidden=source(false);
             hidden["background"]=json!({"kind":"stack","key":"hidden-background","direction":"column","gap":0,"padding":0,"background":0,"visible":false,"children":[hidden["background"].clone()]});
-            let recipe=crate::scene::compile(&hidden,std::time::Instant::now()+std::time::Duration::from_secs(1)).unwrap().view;
+            let recipe=crate::scene::compile(&hidden).unwrap().view;
             recipe.commit(root.scene.as_mut(),window,cx);root.recipe=recipe;
             InputRecipe{props:props(),secret:false}.presentation(root.background.as_mut(),false,window,cx);
         })).unwrap();
@@ -357,12 +347,7 @@ fn reparent_retained_dialog(cx: &mut TestAppContext, foreground: bool) {
     };
     cx.update_window(window, |_, window, cx| {
         root.update(cx, |root, cx| {
-            let next = crate::scene::compile(
-                &recipe,
-                std::time::Instant::now() + std::time::Duration::from_secs(1),
-            )
-            .unwrap()
-            .view;
+            let next = crate::scene::compile(&recipe).unwrap().view;
             next.commit(root.scene.as_mut(), window, cx);
             root.recipe = next;
             cx.notify();
@@ -414,12 +399,7 @@ fn controlled_dialog_inner_close_restores_original_outer_query(cx: &mut TestAppC
             "content":{"kind":"text","key":"inner-content","text":"Inner","color":0}}]});
     cx.update_window(window, |_, window, cx| {
         root.update(cx, |root, cx| {
-            let next = crate::scene::compile(
-                &nested,
-                std::time::Instant::now() + std::time::Duration::from_secs(1),
-            )
-            .unwrap()
-            .view;
+            let next = crate::scene::compile(&nested).unwrap().view;
             next.commit(root.scene.as_mut(), window, cx);
             root.recipe = next;
             cx.notify();
@@ -458,7 +438,7 @@ fn controlled_dialog_retained_marked_query_has_platform_handler_in_the_completed
         let next = json!({"kind":"dialog","key":"outer","label":"Outer","open":true,
             "background":{"kind":"text","key":"outer-background","text":"Outer","color":0},"content":source(true)});
         cx.update_window(window, |_, window, cx| root.update(cx, |root, cx| {
-            let next = crate::scene::compile(&next, std::time::Instant::now() + std::time::Duration::from_secs(1)).unwrap().view;
+            let next = crate::scene::compile(&next).unwrap().view;
             next.commit(root.scene.as_mut(), window, cx); root.recipe = next; cx.notify();
         })).unwrap();
         draw(cx, window);

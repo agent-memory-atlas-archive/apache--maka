@@ -79,7 +79,7 @@ fn scene_compile_failure_preserves_last_committed_frame_and_input_custody() {
     let native = NativeRegistry::with_surface(PresentationTarget::Desktop)
         .with_scene_compiler(
             language(),
-            move |_, _| {
+            move |_| {
                 if observed.load(std::sync::atomic::Ordering::SeqCst) {
                     return Err(maka_ui_runtime::Error::Invalid(
                         "scene compile failure".into(),
@@ -172,9 +172,7 @@ fn selected_languages_are_checked_before_any_factory_or_guest_evaluates() {
         let mut native = NativeRegistry::default()
             .with_scene_compiler(
                 language(),
-                |_, _| {
-                    PreparedScene::new((), BTreeMap::from([("inc".into(), json!(true))]), vec![])
-                },
+                |_| PreparedScene::new((), BTreeMap::from([("inc".into(), json!(true))]), vec![]),
                 |prepared| prepared.finish::<(), ()>(Rc::new),
             )
             .unwrap();
@@ -222,7 +220,7 @@ fn selected_languages_are_checked_before_any_factory_or_guest_evaluates() {
                     name: "invalid/name".into(),
                     version: 1
                 },
-                |_, _| PreparedScene::new((), BTreeMap::new(), vec![]),
+                |_| PreparedScene::new((), BTreeMap::new(), vec![]),
                 |prepared| prepared.finish::<(), ()>(Rc::new)
             )
             .is_err()
@@ -310,8 +308,8 @@ fn composed_render_budget_rejects_child_only_updates_against_retained_ancestors(
         .with_render_depth_limit(10)
         .with_scene_compiler(
             support::scene::language(PresentationTarget::Desktop),
-            |source, deadline| {
-                let view = support::scene::prepare(source, deadline)?;
+            |source| {
+                let view = support::scene::prepare(source)?;
                 let root = source["key"] == "root";
                 let depth = if root {
                     if view.slots()[0].props["label"] == "Left 0" {
@@ -382,8 +380,8 @@ fn hidden_native_slot_retains_custody_without_consuming_render_depth() {
         .with_render_depth_limit(10)
         .with_scene_compiler(
             support::scene::language(PresentationTarget::Desktop),
-            |source, deadline| {
-                let view = support::scene::prepare(source, deadline)?;
+            |source| {
+                let view = support::scene::prepare(source)?;
                 if source["key"] == "root" {
                     let hide = view.slots()[0].props["label"] == "Left 0";
                     let slots = view
@@ -439,4 +437,48 @@ fn hidden_native_slot_retains_custody_without_consuming_render_depth() {
         app.close(&mount, Ok(())).unwrap();
     }
     app.shutdown().unwrap();
+}
+
+#[test]
+fn delayed_scene_preparation_does_not_expire_or_consume_the_next_callback_budget() {
+    let timer = timer();
+    let (input, packages) =
+        support::fixture("return frame({count:state.count+1,revision:state.revision+1});");
+    let (release, waiting) = std::sync::mpsc::channel();
+    let waiting = std::sync::Mutex::new(Some(waiting));
+    let native = NativeRegistry::with_surface(PresentationTarget::Desktop)
+        .with_scene_compiler(
+            support::scene::language(PresentationTarget::Desktop),
+            move |source| {
+                if let Some(waiting) = waiting.lock().unwrap().take() {
+                    waiting.recv().unwrap();
+                }
+                support::scene::prepare(source)
+            },
+            support::scene::finish::<()>,
+        )
+        .unwrap();
+    let slice = std::time::Duration::from_millis(100);
+    let mut app = Application::new(
+        &input,
+        packages,
+        timer.handle().clone(),
+        maka_ui_js::execution(maka_js_runtime::plugin::Limits {
+            synchronous_slice: slice,
+            ..Default::default()
+        }),
+        native,
+        Default::default(),
+    )
+    .unwrap();
+    let root = maka_ui_runtime::Application::mount_launch(&mut app, json!({"count":10})).unwrap();
+    let waiting = timer.block_on(async { tokio::time::timeout(slice * 2, app.wait_idle()).await });
+    release.send(()).unwrap();
+    assert!(waiting.is_err());
+    timer.block_on(app.wait_idle()).unwrap();
+    assert_eq!(app.frame(&root).unwrap().state["count"], 10);
+    app.dispatch(&root, 0, "inc", json!({})).unwrap();
+    assert_eq!(app.frame(&root).unwrap().state["count"], 11);
+    app.retire(&root).unwrap();
+    app.close(&root, Ok(())).unwrap();
 }

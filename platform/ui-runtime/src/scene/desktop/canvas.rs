@@ -22,7 +22,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::BTreeSet, time::Instant};
+use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -144,7 +144,7 @@ fn native_default() -> bool {
     true
 }
 impl Contents {
-    pub fn preflight(source: &Value, work: &mut usize, deadline: Instant) -> Result<(), String> {
+    pub fn preflight(source: &Value, work: &mut usize) -> Result<(), String> {
         let mut text_bytes = 0;
         for (field, limit) in [("commands", 1024), ("regions", 256)] {
             let Some(items) = source.get(field).and_then(Value::as_array) else {
@@ -155,9 +155,6 @@ impl Contents {
                 return Err("canvas work limit".into());
             }
             for item in items {
-                if Instant::now() >= deadline {
-                    return Err("scene compilation deadline".into());
-                }
                 for (name, max) in [("text", 4096), ("label", 4096), ("key", 128), ("font", 128)] {
                     if item
                         .get(name)
@@ -182,15 +179,12 @@ impl Contents {
         }
         Ok(())
     }
-    pub fn validate(&self, deadline: Instant) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), String> {
         if self.commands.len() > 1024 || self.regions.len() > 256 {
             return Err("canvas work limit".into());
         }
         let mut text_bytes = 0;
         for command in &self.commands {
-            if Instant::now() >= deadline {
-                return Err("scene compilation deadline".into());
-            }
             match command {
                 Command::Rect { rect, radius, .. } => {
                     rect.validate()?;
@@ -230,9 +224,6 @@ impl Contents {
         }
         let mut keys = BTreeSet::new();
         for region in &self.regions {
-            if Instant::now() >= deadline {
-                return Err("scene compilation deadline".into());
-            }
             region.rect.validate()?;
             if !region.radius.is_finite() || !(0.0..=8000.0).contains(&region.radius) {
                 return Err("invalid canvas region radius".into());

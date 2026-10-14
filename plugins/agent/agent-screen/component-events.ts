@@ -532,7 +532,12 @@ export function handleComponent<N extends Node>(
       observation.receipt?.owner === state.command.owner &&
       observation.receipt.sequence === state.command.sequence
     ) {
-      if (observation.receipt.outcome.status === 'conflict') state.notice = 'draftKept';
+      if (observation.receipt.outcome.status === 'conflict') {
+        state.notice = 'draftKept';
+        // A rejected clear can leave already-sent text in a native draft. Keep
+        // its full recovery history until the next native restoration.
+        state.draftHistorySafe = false;
+      }
       state.command = null;
     }
   } else if (
@@ -544,7 +549,7 @@ export function handleComponent<N extends Node>(
     !state.dialog &&
     !state.image &&
     !state.source &&
-    !executionPending(state) &&
+    (target === 'tui' || !executionPending(state)) &&
     state.notice !== 'unavailable' &&
     !mutationPending(state) &&
     state.selected &&

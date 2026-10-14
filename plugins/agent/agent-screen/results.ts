@@ -58,6 +58,7 @@ import { readingKey } from './state.js';
 import { utf8Bytes, appendLive, closeLive, rememberActivity } from './messages.js';
 import {
   intent,
+  mutationPending,
   catalog,
   observe,
   history,
@@ -292,6 +293,12 @@ export function receipt(state: State, actions: Action[], request: Mutation, repl
       state.notice = 'unknown';
       return;
     }
+    // Evicted entries still use their original journal; this only avoids repeat reads.
+    state.settledOperations = [
+      ...state.settledOperations.filter((id) => id !== reply.reference.operation),
+      reply.reference.operation,
+    ].slice(-32);
+    state.recoveryDirty = true;
     settled(state, actions, request, value);
   } else {
     state.uncertain = { reference: reply.reference, request };
@@ -327,6 +334,11 @@ export function receipt(state: State, actions: Action[], request: Mutation, repl
 }
 
 export function queryFailed(state: State, request: Request) {
+  // A failed background checkpoint can be retried on the next confirmed result.
+  if ((request.kind === 'restorePage' || request.kind === 'restoreReceipt') && !state.restoring) {
+    state.restoreAfter = state.restoreThrough;
+    return;
+  }
   if (request.kind === 'graphChange' || request.kind === 'graphRead') {
     if (request.epoch === state.epoch) {
       state.graph.failed = true;
@@ -978,13 +990,47 @@ export function querySucceeded(state: State, actions: Action[], request: Request
       break;
     }
     case 'restorePage': {
+      state.restoreStarted = true;
+      // New work may have entered after this background page was requested.
+      // Resume later instead of treating its still-running journal as unknown.
+      if (!state.restoring && mutationPending(state)) {
+        state.recoveryDirty = true;
+        break;
+      }
       const page = value as CallerIntent[];
       if (!page.length) {
+        // Persist only a completely checked prefix. Unknown receipts never
+        // advance this checkpoint; a lost checkpoint only repeats safe reads.
+        state.restoreThrough = state.restoreAfter;
         state.restoring = false;
         break;
       }
       const original = page[0];
+      // History is scoped to the original caller. A bookmark from a replaced
+      // consumer must never skip that consumer's unchecked operations.
+      state.historyScope = JSON.stringify([
+        original.caller.stateDomain,
+        original.caller.deployment,
+        original.consumer,
+      ]);
+      const saved = state.recoveryCheckpoint.saved;
+      if (saved?.scope === state.historyScope && saved.through >= original.cursor) {
+        state.restoreAfter = saved.through;
+        state.restoreThrough = saved.through;
+        intent(state, actions, { kind: 'restorePage' }, 'history', 'page', {
+          after: saved.through,
+          limit: 1,
+        });
+        break;
+      }
       state.restoreAfter = original.cursor;
+      if (state.settledOperations.includes(original.reference.operation)) {
+        intent(state, actions, { kind: 'restorePage' }, 'history', 'page', {
+          after: original.cursor,
+          limit: 1,
+        });
+        break;
+      }
       intent(
         state,
         actions,
@@ -997,6 +1043,17 @@ export function querySucceeded(state: State, actions: Action[], request: Request
     }
     case 'restoreReceipt': {
       const reply = value as OperationReply;
+      if (
+        !state.restoring &&
+        (!sameValue(request.reference, reply.reference) ||
+          reply.receipt.kind !== 'recorded' ||
+          reply.receipt.outcome.kind !== 'returned')
+      ) {
+        // Other mounts may still be running. A background checkpoint grants
+        // no completion and must not change the foreground's admission state.
+        state.restoreAfter = state.restoreThrough;
+        break;
+      }
       if (!sameValue(request.reference, reply.reference)) {
         state.uncertain = { reference: request.reference, request: { kind: 'restored' } };
         state.notice = 'unknown';

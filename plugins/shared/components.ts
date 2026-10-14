@@ -254,6 +254,8 @@ export function composer<N extends Node>(
                   format: 'maka.agent.draft@1',
                   dataSource: entry.dataSource,
                   metadata: {
+                    historyAfter: props.historyAfter ?? 0,
+                    historyScope: props.historyScope ?? null,
                     attachments: props.attachments
                       .filter(
                         (file) =>

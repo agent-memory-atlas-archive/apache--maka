@@ -100,15 +100,46 @@ export function frame<N extends Node>(
     state.copyRequest = null;
     state.messageCopy = null;
   }
+  const recovering = Object.values(state.pending).some(
+    (request) => request.kind === 'restorePage' || request.kind === 'restoreReceipt',
+  );
+  if (
+    target === 'tui' &&
+    state.restoring &&
+    !state.restoreStarted &&
+    !recovering &&
+    (state.recoveryCheckpoint.restored ||
+      (state.recoveryCheckpoint.observed?.state.kind === 'failed' &&
+        state.recoveryCheckpoint.readRetries >= 2))
+  ) {
+    state.restoreStarted = true;
+    intent(state, actions, { kind: 'restorePage' }, 'history', 'page', { after: 0, limit: 1 });
+  }
+  if (
+    target === 'tui' &&
+    state.recoveryCheckpoint.restored &&
+    state.recoveryDirty &&
+    !mutationPending(state) &&
+    !state.command &&
+    !state.drafts.some((record) => record.work) &&
+    !recovering
+  ) {
+    state.recoveryDirty = false;
+    intent(state, actions, { kind: 'restorePage' }, 'history', 'page', {
+      after: state.restoreThrough,
+      limit: 1,
+    });
+  }
   retainSelectedDraft(state.drafts, state.selected);
   if (
     !state.restoring &&
     !state.uncertain &&
+    !recovering &&
     !Object.values(state.pending).some(
       (request) => request.kind === 'draftPage' || request.kind === 'draftReceipt',
     )
   ) {
-    const step = nextDraftStep(state.drafts, state.attachments);
+    const step = nextDraftStep(state.drafts, state.attachments, state.historyScope);
     if (step)
       intent(
         state,
@@ -388,6 +419,19 @@ export function frame<N extends Node>(
           ]
         : []),
       conversation,
+      ...(target === 'tui'
+        ? [
+            bookmarkView(
+              presentation,
+              state.recoveryCheckpoint,
+              'recovery-checkpoint',
+              'operations/agent-screen',
+              state.restoring || recovering
+                ? (state.recoveryCheckpoint.saved ?? { through: 0, scope: null })
+                : { through: state.restoreThrough, scope: state.historyScope },
+            ),
+          ]
+        : []),
       ...(target === 'tui' && (!state.embedding.fixed || state.embedding.session)
         ? [
             bookmarkView(

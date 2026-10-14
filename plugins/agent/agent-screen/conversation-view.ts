@@ -261,12 +261,14 @@ export function conversationView<N extends Node>(
       dataSource: state.selected?.dataSource ?? null,
       attachments: state.attachments.files,
       drafts: draftStatuses(state.drafts),
+      historyAfter: state.draftHistorySafe && !state.command ? state.restoreThrough : 0,
+      historyScope: state.historyScope,
       theme,
       locale,
       busy:
         busy ||
         !!state.attachments.paste ||
-        executionPending(state) ||
+        (target !== 'tui' && executionPending(state)) ||
         (target === 'tui' && !!state.run && !state.queue),
       filePaste:
         target === 'tui' &&

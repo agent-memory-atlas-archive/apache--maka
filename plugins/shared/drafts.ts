@@ -46,6 +46,7 @@ export interface DraftRecord {
   observation: EditorCheckpointObservation;
   work: {
     after: number;
+    checkpoint?: { after: number; scope: string };
     done: boolean;
     queue: CallerIntent[];
     clearText: boolean;
@@ -67,7 +68,13 @@ function text(value: unknown, limit: number): value is string {
 function attachments(value: unknown, session: string): AgentAttachment[] | null {
   if (
     !object(value) ||
-    Object.keys(value).some((key) => key !== 'attachments') ||
+    Object.keys(value).some(
+      (key) => !['attachments', 'historyAfter', 'historyScope'].includes(key),
+    ) ||
+    (value.historyScope != null &&
+      (typeof value.historyScope !== 'string' || value.historyScope.length > 4096)) ||
+    (value.historyAfter !== undefined &&
+      (!Number.isSafeInteger(value.historyAfter) || (value.historyAfter as number) < 0)) ||
     !Array.isArray(value.attachments) ||
     value.attachments.length > 8
   )
@@ -174,6 +181,16 @@ export function observeDraft(
     const files = attachments(event.observation.state.metadata, event.context);
     record.work = {
       after: 0,
+      ...(files &&
+      object(event.observation.state.metadata) &&
+      typeof event.observation.state.metadata.historyScope === 'string'
+        ? {
+            checkpoint: {
+              after: (event.observation.state.metadata.historyAfter as number | undefined) ?? 0,
+              scope: event.observation.state.metadata.historyScope,
+            },
+          }
+        : {}),
       done: false,
       queue: [],
       clearText: false,
@@ -216,11 +233,16 @@ export function draftStatuses(records: DraftRecord[]): DraftStatus[] {
 export function nextDraftStep(
   records: DraftRecord[],
   retained: AttachmentDrafts,
+  historyScope: string | null = null,
 ): DraftStep | null {
   for (const record of records) {
     const work = record.work;
     if (!work || work.status !== 'checking' || record.observation.state.kind !== 'restore')
       continue;
+    if (work.checkpoint) {
+      if (work.checkpoint.scope === historyScope) work.after = work.checkpoint.after;
+      delete work.checkpoint;
+    }
     if (work.queue.length)
       return { kind: 'draftReceipt', owner: record.observation.owner, original: work.queue[0] };
     if (!work.done)
@@ -270,7 +292,8 @@ export function draftPage(
       const sent = correlation(entry, record);
       if (
         sent &&
-        (sent.owner === record.observation.state.snapshot.text.owner ||
+        ((sent.owner === record.observation.state.snapshot.text.owner &&
+          sent.revision >= record.observation.state.snapshot.text.revision) ||
           work.attachments.some((file) => sent.attachments.includes(file.id)))
       )
         work.queue.push(entry);

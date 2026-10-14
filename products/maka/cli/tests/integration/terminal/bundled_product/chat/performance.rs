@@ -18,6 +18,7 @@
  */
 
 use super::*;
+use serde_json::Value;
 
 #[test]
 #[ignore = "real default product, stopped PTY stdout and original model input"]
@@ -303,11 +304,16 @@ fn default_product_sends_over_large_imported_history() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}/v1", listener.local_addr().unwrap());
     let (requests, received) = mpsc::channel();
-    let server = model_server(listener, requests, 2, 0);
+    let rounds = std::env::var("MAKA_SEND_PROFILE_ROUNDS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(2);
+    let server = model_server(listener, requests, rounds, 0);
     let (_directory, ui) = large_history_fixture(Some(&base));
     let mut tui = Pty::spawn(&["application", "launch", "--root", ui.to_str().unwrap()]);
     eprintln!("send fixture PID {}", tui.child.id());
     tui.wait_until_with_timeout(|s| s.contains("Scroll fixture"), Duration::from_secs(60));
+    let opening = Instant::now();
     click(&mut tui, "Scroll fixture");
     tui.wait_until_with_timeout(
         |s| {
@@ -318,12 +324,17 @@ fn default_product_sends_over_large_imported_history() {
         },
         Duration::from_secs(60),
     );
-    for turn in 0..2 {
+    eprintln!(
+        "large history open to composer ready: {:?}",
+        opening.elapsed()
+    );
+    for turn in 0..rounds {
         let prompt = format!("Persistent history send {turn}");
         click(&mut tui, "Message…");
         paste(&mut tui, &prompt);
         tui.wait_for(&prompt);
         let started = Instant::now();
+        eprintln!("send profiling turn {turn} PID {}", tui.child.id());
         tui.send(b"\r");
         let (sent, mut socket) = next_request(&mut tui, &received);
         assert!(sent.to_string().contains(&prompt));
@@ -338,7 +349,7 @@ fn default_product_sends_over_large_imported_history() {
             started.elapsed()
         );
         let observed = Instant::now();
-        while observed.elapsed() < Duration::from_secs(6) {
+        while turn < 2 && observed.elapsed() < Duration::from_secs(6) {
             tui.read();
             if tui.frames.ready() {
                 assert!(
@@ -363,7 +374,44 @@ fn default_product_sends_over_large_imported_history() {
         assert!(tui.screen.snapshot().unwrap().screen.contains(&transcript));
     }
     evidence(&tui, "large-history-send");
+    let draft = "Unsent draft after history benchmark";
+    click(&mut tui, "Message…");
+    paste(&mut tui, draft);
+    tui.wait_for(draft);
     tui.send(b"\x11");
     tui.finish();
     server.join().unwrap();
+    for reopen in 0..2 {
+        let mut restored = Pty::spawn(&["application", "launch", "--root", ui.to_str().unwrap()]);
+        eprintln!("draft restore fixture PID {}", restored.child.id());
+        restored.wait_until_with_timeout(|s| s.contains("Scroll fixture"), Duration::from_secs(60));
+        let opening = Instant::now();
+        click(&mut restored, "Scroll fixture");
+        restored.wait_until_with_timeout(
+            |s| s.contains(draft) && !s.contains("Restoring draft…"),
+            Duration::from_secs(60),
+        );
+        eprintln!(
+            "large history open to saved draft ready ({rounds} sends, reopen {reopen}): {:?}",
+            opening.elapsed()
+        );
+        evidence(&restored, "large-history-draft-restored");
+        restored.send(b"\x11");
+        restored.finish();
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            use sqlx::{Connection, Row};
+            let mut db = sqlx::SqliteConnection::connect_with(&sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(ui.join(maka_event_log::root::ROOT_DATABASE)).read_only(true)).await.unwrap();
+            let rows = sqlx::query("SELECT key, format, metadata_json, content FROM application_ui_checkpoints WHERE key='operations/agent-screen' OR format='maka.ui.editor@1/maka.agent.draft@1'").fetch_all(&mut db).await.unwrap();
+            let progress = rows.iter().find(|row| row.get::<String, _>("key") == "operations/agent-screen").expect("persisted recovery progress");
+            let progress: Value = serde_json::from_slice(&progress.get::<Vec<u8>, _>("content")).unwrap();
+            assert!(progress["through"].as_u64().unwrap() >= rounds as u64);
+            let saved = rows.iter().find(|row| row.get::<String, _>("format") == "maka.ui.editor@1/maka.agent.draft@1").expect("persisted native draft");
+            let metadata: Value = serde_json::from_str(&saved.get::<String, _>("metadata_json")).unwrap();
+            assert_eq!(metadata["metadata"]["historyAfter"], progress["through"]);
+            assert_eq!(metadata["metadata"]["historyScope"], progress["scope"]);
+            assert_eq!(saved.get::<Vec<u8>, _>("content"), draft.as_bytes());
+            db.close().await.unwrap();
+        });
+    }
 }

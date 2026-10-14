@@ -92,18 +92,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 type ExecutionRealm = Rc<dyn backend::Realm>;
 
 /// Trusted execution setup. A native-only UI does not require a script backend.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ExecutionOptions {
-    pub synchronous_slice: std::time::Duration,
     pub script: Option<Rc<dyn backend::Factory>>,
-}
-impl Default for ExecutionOptions {
-    fn default() -> Self {
-        Self {
-            synchronous_slice: std::time::Duration::from_secs(5),
-            script: None,
-        }
-    }
 }
 
 enum Component<V: ?Sized> {
@@ -170,7 +161,6 @@ pub struct Application<V: ?Sized = ()> {
     values: BTreeMap<Uuid, values::Imports<V>>,
     views: BTreeMap<Uuid, tree::Mounted<V>>,
     actions: actions::Actions<V>,
-    slice: std::time::Duration,
     pub(crate) scheduler: tokio::runtime::Handle,
     target: PresentationTarget,
     scene_compiler: Option<Rc<native::SceneCompiler<V>>>,
@@ -327,7 +317,6 @@ impl<V: ?Sized + 'static> Application<V> {
             values: BTreeMap::new(),
             views: BTreeMap::new(),
             actions: actions::Actions::default(),
-            slice: options.synchronous_slice,
             target,
             scene_compiler: native.scene_compiler.clone(),
             render_depth_limit: native.render_depth_limit,
@@ -741,7 +730,6 @@ impl<V: ?Sized + 'static> Application<V> {
         method: &str,
         args: &[Value],
         previous: Option<&NativeView<V>>,
-        deadline: std::time::Instant,
     ) -> Result<PendingInvocation<V>> {
         let input = if method == "event" {
             Some(
@@ -790,7 +778,6 @@ impl<V: ?Sized + 'static> Application<V> {
                         .call(
                             call,
                             &values,
-                            deadline,
                             self.scene_compiler
                                 .as_ref()
                                 .expect("preflight compiler")
@@ -802,13 +789,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 Some(realm.clone()),
             ),
             Component::Native(component) => (
-                InvocationResult::Native(component.start(
-                    call,
-                    previous,
-                    &values,
-                    &self.scheduler,
-                    deadline,
-                )),
+                InvocationResult::Native(component.start(call, previous, &values, &self.scheduler)),
                 None,
             ),
         };

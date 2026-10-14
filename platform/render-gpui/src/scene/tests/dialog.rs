@@ -263,7 +263,7 @@ fn controlled_dialog_compiler_retains_hidden_children_and_counts_deferred_work()
     let mut source = modal(button("background", "Background", 0), false, false);
     source["content"] =
         json!({"kind":"component","key":"query","binding":"input","member":0,"props":{},"on":{}});
-    let compiled = compile(&source, Instant::now() + std::time::Duration::from_secs(1)).unwrap();
+    let compiled = compile(&source).unwrap();
     assert_eq!(compiled.slots().len(), 1);
     assert_eq!(compiled.visible_slots().count(), 0);
     for level in 0..11 {
@@ -271,14 +271,14 @@ fn controlled_dialog_compiler_retains_hidden_children_and_counts_deferred_work()
             "background":{"kind":"text","key":format!("background-{level}"),"text":"Background","color":0},"content":source});
     }
     assert!(
-        compile(&source, Instant::now() + std::time::Duration::from_secs(1))
+        compile(&source)
             .err()
             .unwrap()
             .to_string()
             .contains("render depth")
     );
     source["open"] = json!(false);
-    assert!(compile(&source, Instant::now() + std::time::Duration::from_secs(1)).is_ok());
+    assert!(compile(&source).is_ok());
     source["content"]["style"] = json!({"maxWidth":1e300});
-    assert!(compile(&source, Instant::now() + std::time::Duration::from_secs(1)).is_err());
+    assert!(compile(&source).is_err());
 }

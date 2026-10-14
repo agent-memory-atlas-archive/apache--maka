@@ -73,8 +73,12 @@ pub(crate) fn schema(value: &serde_json::Value) -> Result<(), Error> {
     validator(value).map(|_| ())
 }
 
-fn validator(value: &serde_json::Value) -> Result<std::sync::Arc<jsonschema::Validator>, Error> {
-    // Package imports repeat the same immutable public schemas. Cache compiled
+/// Compile an immutable JSON schema, reusing an equivalent checked validator.
+/// Validation of each value remains the caller's responsibility.
+pub fn validator(
+    value: &serde_json::Value,
+) -> Result<std::sync::Arc<jsonschema::Validator>, Error> {
+    // Packages and scene inputs repeat immutable public schemas. Cache compiled
     // validators by the complete schema, never by contract name/version.
     // Configuration values are still validated on every call.
     // JSON Schema is built without external file/network resolution features.

@@ -115,7 +115,11 @@ function client() {
       return c.state.visits.find((visit) => visit.id === c.state.selected?.id).key;
     },
   };
-  c.reply(c.action('page'), { entries: [], nextAfter: 0 });
+  c.child('recovery-checkpoint', 'changed', {
+    sequence: 0,
+    state: { kind: 'ready', revision: null, value: null },
+  });
+  c.reply(c.action('page'), []);
   c.event({
     kind: 'action',
     key: c.state.catalogWatch.key,

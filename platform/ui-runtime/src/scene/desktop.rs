@@ -24,10 +24,7 @@ use crate::ComponentSlot;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    time::Instant,
-};
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -135,8 +132,8 @@ fn visible() -> bool {
     true
 }
 impl Node {
-    pub fn validate_root(&self, deadline: Instant) -> Result<(), String> {
-        self.validate(0, &mut BTreeSet::new(), deadline)
+    pub fn validate_root(&self) -> Result<(), String> {
+        self.validate(0, &mut BTreeSet::new())
     }
     pub fn key(&self) -> &str {
         match self {
@@ -168,15 +165,7 @@ impl Node {
             _ => false,
         }
     }
-    fn validate(
-        &self,
-        depth: usize,
-        keys: &mut BTreeSet<String>,
-        deadline: Instant,
-    ) -> Result<(), String> {
-        if Instant::now() >= deadline {
-            return Err("scene compilation deadline".into());
-        }
+    fn validate(&self, depth: usize, keys: &mut BTreeSet<String>) -> Result<(), String> {
         let key = match self {
             Self::Stack { key, .. }
             | Self::Text { key, .. }
@@ -231,8 +220,8 @@ impl Node {
                 if label.is_empty() || label.len() > 4096 {
                     return Err("invalid dialog presentation".into());
                 }
-                background.validate(depth + 1, keys, deadline)?;
-                content.validate(depth + 1, keys, deadline)?;
+                background.validate(depth + 1, keys)?;
+                content.validate(depth + 1, keys)?;
             }
             Self::Popup {
                 trigger,
@@ -244,8 +233,8 @@ impl Node {
                 if label.is_empty() || label.len() > 4096 || *offset > 1024 {
                     return Err("invalid popup presentation".into());
                 }
-                trigger.validate(depth + 1, keys, deadline)?;
-                content.validate(depth + 1, keys, deadline)?;
+                trigger.validate(depth + 1, keys)?;
+                content.validate(depth + 1, keys)?;
             }
             Self::Stack {
                 gap,
@@ -258,7 +247,7 @@ impl Node {
                     return Err("invalid UI style".into());
                 }
                 for child in children {
-                    child.validate(depth + 1, keys, deadline)?;
+                    child.validate(depth + 1, keys)?;
                 }
             }
             Self::Text { text, color, .. } => {
@@ -277,7 +266,7 @@ impl Node {
                     return Err("invalid button label".into());
                 }
             }
-            Self::Canvas { contents, .. } => contents.validate(deadline)?,
+            Self::Canvas { contents, .. } => contents.validate()?,
             Self::Component(slot) => {
                 if slot.binding.is_empty() || slot.binding.len() > 128 {
                     return Err("invalid slot binding".into());
@@ -376,11 +365,7 @@ impl Node {
         inputs: &mut BTreeMap<String, Value>,
         hidden_slots: &mut BTreeSet<String>,
         visible: bool,
-        deadline: Instant,
     ) -> Result<(), String> {
-        if Instant::now() >= deadline {
-            return Err("scene compilation deadline".into());
-        }
         match self {
             Self::Dialog {
                 key,
@@ -396,8 +381,8 @@ impl Node {
                             .expect("dialog input schema"),
                     );
                 }
-                background.metadata(slots, inputs, hidden_slots, visible, deadline)?;
-                content.metadata(slots, inputs, hidden_slots, visible && *open, deadline)?;
+                background.metadata(slots, inputs, hidden_slots, visible)?;
+                content.metadata(slots, inputs, hidden_slots, visible && *open)?;
             }
             Self::Popup {
                 key,
@@ -413,8 +398,8 @@ impl Node {
                             .expect("popup input schema"),
                     );
                 }
-                trigger.metadata(slots, inputs, hidden_slots, visible, deadline)?;
-                content.metadata(slots, inputs, hidden_slots, visible && *open, deadline)?;
+                trigger.metadata(slots, inputs, hidden_slots, visible)?;
+                content.metadata(slots, inputs, hidden_slots, visible && *open)?;
             }
             Self::Component(slot) => {
                 slots.push(slot.clone());
@@ -442,7 +427,7 @@ impl Node {
                 ..
             } => {
                 for child in children {
-                    child.metadata(slots, inputs, hidden_slots, visible && *local, deadline)?;
+                    child.metadata(slots, inputs, hidden_slots, visible && *local)?;
                 }
             }
             _ => {}

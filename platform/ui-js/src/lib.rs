@@ -35,13 +35,11 @@ use std::{
         atomic::{AtomicU64, Ordering},
         mpsc,
     },
-    time::Instant,
 };
 use tokio::sync::oneshot;
 
 pub fn execution(limits: Limits) -> ExecutionOptions {
     ExecutionOptions {
-        synchronous_slice: limits.synchronous_slice,
         script: Some(Rc::new(Factory {
             limits,
             worker: RefCell::new(None),
@@ -308,7 +306,6 @@ impl Component {
         &self,
         method: &'static str,
         args: Vec<Value>,
-        deadline: Instant,
         decode: impl FnOnce(Value) -> Result<T> + Send + 'static,
     ) -> Result<backend::Job<T>> {
         delivery(&args)?;
@@ -320,10 +317,7 @@ impl Component {
                     .get(&id)
                     .and_then(|module| module.callbacks.get(&namespace))
                     .ok_or_else(|| script("UI callbacks are retired or unavailable"))?;
-                let value = vm
-                    .vm
-                    .call_bound_until(callbacks, method, &args, deadline)
-                    .map_err(script)?;
+                let value = vm.vm.call_bound(callbacks, method, &args).map_err(script)?;
                 decode(value)
             })
         })
@@ -334,7 +328,6 @@ impl backend::Component for Component {
         &self,
         call: ComponentCall<'_>,
         values: &abi::ValueBindings,
-        deadline: Instant,
         prepare: Arc<PrepareScene>,
     ) -> Result<backend::Job<ComponentOutput<PreparedScene>>> {
         let (method, mut args) = match call {
@@ -376,20 +369,16 @@ impl backend::Component for Component {
             }
         };
         args.push(serde_json::to_value(values).map_err(invalid)?);
-        self.execute(method, args, deadline, move |value| {
+        self.execute(method, args, move |value| {
             // Validate number precision before compiler code observes the result.
             maka_plugin_core::json::exact_numbers(&value).map_err(Error::Invalid)?;
-            let output: ComponentOutput = serde_json::from_value(value).map_err(script)?;
-            let view = prepare(&output.frame.view, deadline)?
-                .with_declaration(output.frame.view.clone())?;
+            let mut output = component_output(value)?;
+            let view = prepare(&output.frame.view)?;
+            let view = view.with_declaration(std::mem::take(&mut output.frame.view))?;
             Ok(output.map_view(|_| view))
         })
     }
-    fn capture(
-        &self,
-        call: CaptureCall<'_>,
-        deadline: Instant,
-    ) -> Result<backend::Job<CapturePlan>> {
+    fn capture(&self, call: CaptureCall<'_>) -> Result<backend::Job<CapturePlan>> {
         self.execute(
             "capture",
             vec![
@@ -399,7 +388,6 @@ impl backend::Component for Component {
                 call.input.clone(),
                 serde_json::to_value(call.values).map_err(invalid)?,
             ],
-            deadline,
             |value| serde_json::from_value(value).map_err(invalid),
         )
     }
@@ -415,4 +403,71 @@ fn script(error: impl ToString) -> Error {
 }
 fn invalid(error: impl ToString) -> Error {
     Error::Invalid(error.to_string())
+}
+
+// State and scene are already checked JSON values. Preserve them directly while
+// deserializing the typed envelope, instead of rebuilding both value trees.
+fn component_output(mut value: Value) -> Result<ComponentOutput> {
+    let payload = value
+        .get_mut("frame")
+        .and_then(Value::as_object_mut)
+        .map(|frame| {
+            (
+                frame.get_mut("state").map(Value::take),
+                frame.get_mut("view").map(Value::take),
+            )
+        });
+    let mut output: ComponentOutput = serde_json::from_value(value).map_err(script)?;
+    if let Some((state, view)) = payload {
+        if let Some(state) = state {
+            output.frame.state = state;
+        }
+        if let Some(view) = view {
+            output.frame.view = view;
+        }
+    }
+    Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn output_decoding_preserves_payloads_and_envelope_validation() {
+        let valid = json!({
+            "frame": {"revision": 1, "state": {"nested": [null, true, "text", 42]},
+                "surface": null, "view": {"children": [{"kind": "text", "text": "中😀"}]}},
+            "events": [], "actions": []
+        });
+        let mut cases = vec![valid.clone(), Value::Null, json!({})];
+        for key in ["state", "view", "revision", "surface"] {
+            let mut missing = valid.clone();
+            missing["frame"].as_object_mut().unwrap().remove(key);
+            cases.push(missing);
+        }
+        for (key, value) in [
+            ("revision", json!(-1)),
+            ("surface", json!({"kind": "invalid"})),
+            ("unexpected", json!(true)),
+        ] {
+            let mut invalid = valid.clone();
+            invalid["frame"][key] = value;
+            cases.push(invalid);
+        }
+        let mut unknown = valid;
+        unknown["unexpected"] = json!(true);
+        cases.push(unknown);
+        for value in cases {
+            let expected = serde_json::from_value::<ComponentOutput>(value.clone());
+            let actual = component_output(value);
+            assert_eq!(actual.is_ok(), expected.is_ok());
+            if let (Ok(actual), Ok(expected)) = (actual, expected) {
+                assert_eq!(
+                    serde_json::to_value(actual).unwrap(),
+                    serde_json::to_value(expected).unwrap()
+                );
+            }
+        }
+    }
 }

@@ -665,7 +665,7 @@ mod tests {
             NativeRegistry::with_surface(maka_plugin_core::composition::PresentationTarget::Tui)
                 .with_scene_compiler(
                     super::super::scene::language(),
-                    move |_, _| {
+                    move |_| {
                         maka_ui_runtime::PreparedScene::new(
                             Recipe(FileView {
                                 props: p.clone(),

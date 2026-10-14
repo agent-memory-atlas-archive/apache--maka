@@ -24,9 +24,8 @@ use std::{
 };
 
 /// Measure stream payloads without allocating a serialized copy.
-pub(super) fn serialized_bytes(value: &impl serde::Serialize) -> Result<usize> {
-    maka_plugin_core::json::encoded_size(value, usize::MAX)
-        .map_err(|error| Error::Invalid(error.to_string()))
+pub(super) fn serialized_bytes(value: &Value) -> Result<usize> {
+    maka_plugin_core::json::value_size(value, usize::MAX).map_err(Error::Invalid)
 }
 
 #[derive(Clone)]
@@ -527,13 +526,8 @@ impl<V: ?Sized + 'static> Application<V> {
                         }
                         None => None,
                     };
-                    let pending = self.begin_invoke(
-                        &call.mount,
-                        call.method,
-                        &call.args,
-                        previous.as_ref(),
-                        Instant::now() + self.slice,
-                    )?;
+                    let pending =
+                        self.begin_invoke(&call.mount, call.method, &call.args, previous.as_ref())?;
                     update.pending = Some((call, pending));
                     continue;
                 }

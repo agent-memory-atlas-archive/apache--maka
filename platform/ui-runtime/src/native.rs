@@ -26,6 +26,7 @@ use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
     rc::Rc,
+    sync::Arc,
 };
 
 /// Native render payload stays on the presenter thread and is never serialized.
@@ -40,7 +41,7 @@ pub struct NativeView<V: ?Sized> {
     slots: Rc<Vec<ComponentSlot>>,
     hidden_slots: Rc<BTreeSet<String>>,
     root_visible: bool,
-    inputs: Rc<BTreeMap<String, jsonschema::Validator>>,
+    inputs: Rc<BTreeMap<String, Arc<jsonschema::Validator>>>,
     pub(crate) render_depth: u16,
     pub(crate) slot_render_depth: Rc<BTreeMap<String, u16>>,
     declaration: Option<Rc<Value>>,
@@ -49,7 +50,7 @@ pub struct NativeView<V: ?Sized> {
 fn input_validators(
     schemas: &BTreeMap<String, Value>,
     slots: &[ComponentSlot],
-) -> Result<BTreeMap<String, jsonschema::Validator>> {
+) -> Result<BTreeMap<String, Arc<jsonschema::Validator>>> {
     let mut keys = std::collections::BTreeSet::new();
     for slot in slots {
         slot.validate().map_err(Error::Invalid)?;
@@ -64,7 +65,8 @@ fn input_validators(
         }
         inputs.insert(
             key.clone(),
-            jsonschema::validator_for(schema).map_err(|error| Error::Invalid(error.to_string()))?,
+            maka_plugin_core::validator(schema)
+                .map_err(|error| Error::Invalid(error.to_string()))?,
         );
     }
     Ok(inputs)
@@ -75,7 +77,7 @@ fn input_validators(
 pub struct PreparedScene {
     payload: Box<dyn std::any::Any + Send>,
     schemas: BTreeMap<String, Value>,
-    inputs: BTreeMap<String, jsonschema::Validator>,
+    inputs: BTreeMap<String, Arc<jsonschema::Validator>>,
     slots: Vec<ComponentSlot>,
     hidden: BTreeSet<String>,
     visible: bool,
@@ -302,7 +304,6 @@ pub trait NativeComponent<V: ?Sized>: 'static {
         _previous: Option<&NativeView<V>>,
         values: &super::abi::ValueBindings,
         _: &tokio::runtime::Handle,
-        _: std::time::Instant,
     ) -> super::backend::Job<ComponentOutput<NativeView<V>>>
     where
         V: 'static,
@@ -332,9 +333,9 @@ type Factory<V> =
     dyn Fn(&Value, &super::abi::ValueBindings) -> Result<BTreeMap<String, NativeExport<V>>>;
 
 /// Presenter-owned, pure translation. No runtime or native owner is available
-/// at this precommit boundary. Implementations bound expansion and honor the
-/// current callback's deadline; painting never executes a compiler.
-pub type PrepareScene = dyn Fn(&Value, std::time::Instant) -> Result<PreparedScene> + Send + Sync;
+/// at this precommit boundary. Implementations validate finite declarations;
+/// painting never executes a compiler.
+pub type PrepareScene = dyn Fn(&Value) -> Result<PreparedScene> + Send + Sync;
 type FinishScene<V> = dyn Fn(PreparedScene) -> Result<NativeView<V>>;
 pub(crate) struct SceneCompiler<V: ?Sized> {
     pub language: maka_plugin_core::package::SceneLanguage,
@@ -365,7 +366,7 @@ impl<V: ?Sized + 'static> NativeRegistry<V> {
     pub fn with_scene_compiler(
         mut self,
         language: maka_plugin_core::package::SceneLanguage,
-        prepare: impl Fn(&Value, std::time::Instant) -> Result<PreparedScene> + Send + Sync + 'static,
+        prepare: impl Fn(&Value) -> Result<PreparedScene> + Send + Sync + 'static,
         finish: impl Fn(PreparedScene) -> Result<NativeView<V>> + 'static,
     ) -> Result<Self> {
         language.validate()?;
@@ -547,6 +548,36 @@ pub fn surface_native(target: PresentationTarget) -> maka_plugin_core::package::
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn repeated_scene_inputs_reuse_validators_and_changed_contracts_still_reject_input() {
+        use serde_json::json;
+        let view = |schema| {
+            NativeView::new(
+                Rc::new(()),
+                BTreeMap::from([("choose".into(), schema)]),
+                vec![],
+            )
+            .unwrap()
+        };
+        let first = view(json!({"type":"integer", "minimum":1}));
+        let same = view(json!({"type":"integer", "minimum":1}));
+        let changed = view(json!({"type":"integer", "minimum":2}));
+        assert!(Arc::ptr_eq(&first.inputs["choose"], &same.inputs["choose"]));
+        assert!(same.validate_input("choose", &json!(1)).is_ok());
+        assert!(changed.validate_input("choose", &json!(1)).is_err());
+        assert!(changed.validate_input("choose", &json!(2)).is_ok());
+        assert!(same.validate_input("choose", &json!("1")).is_err());
+        assert!(same.validate_input("missing", &json!(1)).is_err());
+        assert!(
+            NativeView::new(
+                Rc::new(()),
+                BTreeMap::from([("choose".into(), json!({"type":"invalid"}))]),
+                vec![]
+            )
+            .is_err()
+        );
+    }
+
     #[test]
     fn hidden_slot_projection_retains_exact_declarations_and_rejects_unbound_keys() {
         let slots = ["one", "two"].map(|key| ComponentSlot {

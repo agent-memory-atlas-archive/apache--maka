@@ -418,7 +418,22 @@ impl Presenter {
     /// Resume the same application after actual old-surface cleanup. Pending
     /// original service work and its observers remain with this presenter.
     pub fn try_replace_surface(&mut self, props: Value) -> maka_ui_runtime::Result<bool> {
+        if matches!(
+            self.surface,
+            SurfaceState::Retiring {
+                cause: Retirement::Replace(_),
+                cleanup: Some(Ok(())),
+            }
+        ) {
+            self.pump()?;
+        }
         let kind = match self.surface {
+            // The terminal's physical receipt can precede the last native or
+            // callback cleanup. Keep waiting for that original owner to close.
+            SurfaceState::Retiring {
+                cause: Retirement::Replace(_),
+                cleanup: Some(Ok(())),
+            } => return Ok(false),
             SurfaceState::Closed {
                 cause: Retirement::Replace(kind),
             } => kind,
@@ -1123,6 +1138,22 @@ impl Presenter {
         &mut self,
         result: maka_ui_runtime::Result<()>,
     ) -> maka_ui_runtime::Result<()> {
+        // Realm failure can retire the original surface before its callback's
+        // completion arrives. That late script error belongs to the recovery
+        // already selected, rather than turning recovery into terminal failure.
+        if matches!(&result, Err(Error::Script(_)))
+            && matches!(
+                self.surface,
+                SurfaceState::Retiring {
+                    cause: Retirement::Replace(RootKind::Recovery),
+                    ..
+                }
+            )
+            && self.application.is_retiring(&self.root)
+        {
+            self.report(result.as_ref().unwrap_err());
+            return Ok(());
+        }
         if self.surface.is_live()
             && self.application.is_retiring(&self.root)
             && self.application.can_recover(&self.root)

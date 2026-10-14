@@ -311,6 +311,8 @@ export interface QueueEditorProps {
   command: EditorCommand | null;
 }
 export interface ComposerProps {
+  historyAfter?: number;
+  historyScope?: string | null;
   sendLabel?: string;
   dataSource: AgentDataSource | null;
   attachments: AttachmentDrafts['files'];
@@ -1124,6 +1126,8 @@ export const composerContract = component(
   'maka.agent.Composer',
   object(
     {
+      historyAfter: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      historyScope: { anyOf: [{ type: 'string', maxLength: 4096 }, { type: 'null' }] },
       sendLabel: string,
       context: { anyOf: [{ type: 'string', minLength: 1, maxLength: 512 }, { type: 'null' }] },
       dataSource: { anyOf: [{ $ref: '#/$defs/AgentDataSource' }, { type: 'null' }] },

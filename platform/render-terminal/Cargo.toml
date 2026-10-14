@@ -43,6 +43,7 @@ crossterm = { workspace = true, features = ["use-dev-tty", "event-stream"] }
 futures-util.workspace = true
 tokio.workspace = true
 serde_json.workspace = true
+serde.workspace = true
 schemars.workspace = true
 libc.workspace = true
 unicode-segmentation.workspace = true
@@ -58,13 +59,8 @@ clipboard-rs = { version = "0.3.5", features = ["wayland"] }
 clipboard-win = "5.4.1"
 
 [dev-dependencies]
-serde.workspace = true
 maka-ui-js.workspace = true
 
 tempfile.workspace = true
 tokio-util.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
-
-# Counter test fixtures include serde derives from ui-js.
-[package.metadata.cargo-machete]
-ignored = ["serde"]

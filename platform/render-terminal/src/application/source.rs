@@ -871,27 +871,13 @@ impl NativeComponent<dyn Widget> for Component {
         _: Option<&NativeView<dyn Widget>>,
         _: &maka_ui_runtime::abi::ValueBindings,
         scheduler: &tokio::runtime::Handle,
-        deadline: std::time::Instant,
     ) -> maka_ui_runtime::backend::Job<ComponentOutput<NativeView<dyn Widget>>> {
         let (props, revision) = match call_data(call) {
             Ok((props, revision)) => (props.clone(), revision),
             Err(error) => return maka_ui_runtime::backend::Job::ready(Err(error)),
         };
         let prepare = self.0;
-        let work = scheduler.spawn_blocking(move || {
-            if std::time::Instant::now() >= deadline {
-                return Err(maka_ui_runtime::Error::Invalid(
-                    "native source preparation deadline".into(),
-                ));
-            }
-            let prepared = prepare(&props)?;
-            if std::time::Instant::now() >= deadline {
-                return Err(maka_ui_runtime::Error::Invalid(
-                    "native source preparation deadline".into(),
-                ));
-            }
-            Ok(prepared)
-        });
+        let work = scheduler.spawn_blocking(move || prepare(&props));
         maka_ui_runtime::backend::Job::new(async move {
             let prepared = work
                 .await

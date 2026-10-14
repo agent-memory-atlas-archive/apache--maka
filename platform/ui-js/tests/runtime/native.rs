@@ -42,7 +42,6 @@ impl NativeComponent<String> for Counter {
         previous: Option<&NativeView<String>>,
         values: &maka_ui_runtime::abi::ValueBindings,
         _: &tokio::runtime::Handle,
-        _: std::time::Instant,
     ) -> maka_ui_runtime::backend::Job<ComponentOutput<NativeView<String>>> {
         match &call {
             ComponentCall::Mount { .. } => assert!(previous.is_none()),
@@ -217,7 +216,6 @@ impl NativeComponent<String> for DelayedCounter {
         _: Option<&NativeView<String>>,
         values: &maka_ui_runtime::abi::ValueBindings,
         _: &tokio::runtime::Handle,
-        _: std::time::Instant,
     ) -> maka_ui_runtime::backend::Job<ComponentOutput<NativeView<String>>> {
         let release = if matches!(&call, ComponentCall::Event { .. }) {
             self.release.borrow_mut().take()

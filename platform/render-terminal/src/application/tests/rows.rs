@@ -770,12 +770,7 @@ fn native_focus_shortcut_respects_disabled_scope_and_modal_boundary() {
 }
 #[test]
 fn focus_shortcuts_require_declared_children_and_unambiguous_chords() {
-    let compile = |value: &Value| {
-        super::super::scene::compile(
-            value,
-            std::time::Instant::now() + std::time::Duration::from_secs(1),
-        )
-    };
+    let compile = |value: &Value| super::super::scene::compile(value);
     let mut scene = focus_scene();
     scene["children"][1]["focus_shortcuts"][0]["child"] = json!("missing");
     assert!(compile(&scene).is_err());

@@ -254,6 +254,13 @@ export function readingKey(state: State): string {
 export interface State {
   visits: Visit[];
   bookmark: Bookmark<Navigation>;
+  recoveryCheckpoint: Bookmark<{ through: number; scope: string | null }>;
+  historyScope: string | null;
+  restoreStarted: boolean;
+  restoreThrough: number;
+  recoveryDirty: boolean;
+  settledOperations: string[];
+  draftHistorySafe: boolean;
   embedding: AgentScreenProps;
   externalSelection: AgentScreenProps['session'] | null;
   preferences: AppearanceEditor;

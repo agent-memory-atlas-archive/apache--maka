@@ -51,6 +51,13 @@ export function agentScreen<N extends Node>(
         externalSelection: null,
         place,
         preferences: initialAppearance(),
+        recoveryCheckpoint: bookmark({ through: 0, scope: null }),
+        historyScope: null,
+        restoreStarted: target !== 'tui',
+        restoreThrough: 0,
+        recoveryDirty: false,
+        settledOperations: [],
+        draftHistorySafe: true,
         bookmark: bookmark({ pages: [], category: 'appearance' }),
         revision: 0,
         attachments: { files: [], selection: null, paste: null },
@@ -134,7 +141,8 @@ export function agentScreen<N extends Node>(
       };
       const actions: Action[] = [];
       catalog(state);
-      intent(state, actions, { kind: 'restorePage' }, 'history', 'page', { after: 0, limit: 1 });
+      if (target !== 'tui')
+        intent(state, actions, { kind: 'restorePage' }, 'history', 'page', { after: 0, limit: 1 });
       return frame(presentation, configuredLocale, state, values, actions);
     },
     update(state, props, values) {

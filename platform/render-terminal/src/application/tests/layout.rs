@@ -111,16 +111,10 @@ impl NativeComponent<dyn Widget> for Root {
             }
         };
         let mut view = match &self.view {
-            View::Scene(source) => super::super::scene::compile(
-                source,
-                std::time::Instant::now() + std::time::Duration::from_secs(1),
-            )?,
+            View::Scene(source) => super::super::scene::compile(source)?,
             View::ChangingScene(source)
             | View::SourceScene(source)
-            | View::InteractiveScene(source) => super::super::scene::compile(
-                &source.borrow(),
-                std::time::Instant::now() + std::time::Duration::from_secs(1),
-            )?,
+            | View::InteractiveScene(source) => super::super::scene::compile(&source.borrow())?,
             View::MetadataVisibility { scene, visible } => NativeView::<dyn Widget>::new(
                 scene.clone(),
                 BTreeMap::from([("back".into(), json!(true))]),
@@ -153,7 +147,6 @@ impl NativeComponent<dyn Widget> for Root {
                 super::super::scene::compile(
                     &json!({"kind":"stack","key":"container","direction":"column","gap":0,"padding":0,"background":0,
                     "children":[reader,{"kind":"button","key":"back","label":"Back"}]}),
-                    std::time::Instant::now() + std::time::Duration::from_secs(1),
                 )?
             }
             View::Reading(props) => {
@@ -167,15 +160,12 @@ impl NativeComponent<dyn Widget> for Root {
                     .frame
                     .view
             }
-            View::PanicLayout(_) => super::super::scene::compile(
-                &json!({
-                "kind":"dialog","key":"modal","label":"Commands","open":true,"width":24,"height":8,"background_color":0,"border_color":0xffffff,
-                "background":{"kind":"text","key":"background","text":"Background","color":0xffffff},
-                "content":{"kind":"stack","key":"foreground","direction":"column","gap":0,"padding":0,"background":0,"children":[
-                    {"kind":"component","key":"reader","binding":"reading","member":0,"on":{},"props":{"content":{"kind":"stack","key":"reading","direction":"column","gap":0,"padding":0,"background":0,"scroll":"manual","children":[]},"command":null}}
-                ]}}),
-                std::time::Instant::now() + std::time::Duration::from_secs(1),
-            )?,
+            View::PanicLayout(_) => super::super::scene::compile(&json!({
+            "kind":"dialog","key":"modal","label":"Commands","open":true,"width":24,"height":8,"background_color":0,"border_color":0xffffff,
+            "background":{"kind":"text","key":"background","text":"Background","color":0xffffff},
+            "content":{"kind":"stack","key":"foreground","direction":"column","gap":0,"padding":0,"background":0,"children":[
+                {"kind":"component","key":"reader","binding":"reading","member":0,"on":{},"props":{"content":{"kind":"stack","key":"reading","direction":"column","gap":0,"padding":0,"background":0,"scroll":"manual","children":[]},"command":null}}
+            ]}}))?,
             View::NestedRows(props, phase) => super::super::scene::compile(
                 &json!({"kind":"dialog","key":"outer","label":"Outer","open":phase.get() > 0,"width":36,"height":10,"background_color":0,"border_color":0xffffff,
                     "background":{"kind":"button","key":"root-composer","label":"Root Composer"},
@@ -185,7 +175,6 @@ impl NativeComponent<dyn Widget> for Root {
                             {"kind":"component","key":"rows","binding":"rows","member":0,"props":props.borrow().clone(),"on":{"activated":"row-activated"}}
                         ]},
                         "content":{"kind":"button","key":"close","label":"Close"}}}),
-                std::time::Instant::now() + std::time::Duration::from_secs(1),
             )?,
             View::Rows(props, modal) => super::super::scene::compile(
                 &json!({"kind":"dialog","key":"modal","label":"Commands","open":modal.get(),"width":20,"height":4,"background_color":0,"border_color":0xffffff,
@@ -194,7 +183,6 @@ impl NativeComponent<dyn Widget> for Root {
                         {"kind":"component","key":"rows","binding":"rows","member":0,"props":props.borrow().clone(),"on":{"activated":"row-activated"}}
                     ]},
                     "content":{"kind":"button","key":"close","label":"Close"}}),
-                std::time::Instant::now() + std::time::Duration::from_secs(1),
             )?,
             View::Flush => NativeView::<dyn Widget>::new(
                 Rc::new(Flush),

@@ -111,7 +111,311 @@ async function client(target) {
   return c;
 }
 
+test('tui checkpoints confirmed live operations without blocking new submissions', async () => {
+  const c = await client('tui');
+  c.event({
+    kind: 'component',
+    child: 'recovery-checkpoint',
+    name: 'changed',
+    key: 'bookmark',
+    event: { sequence: 0, state: { kind: 'ready', revision: null, value: null } },
+  });
+  c.state.pending.confirm = { kind: 'markRead', sessionId: 'session' };
+  const reference = { operation: 'known-operation' };
+  c.event({
+    kind: 'action',
+    key: 'confirm',
+    event: {
+      status: 'operation',
+      reply: {
+        reference,
+        receipt: {
+          kind: 'recorded',
+          outcome: { kind: 'returned', value: { kind: 'observed', session: c.state.selected } },
+          cleanup: { kind: 'confirmed' },
+        },
+      },
+    },
+  });
+  assert.equal(c.state.restoring, false);
+  assert.equal(c.out.actions[0].method, 'page');
+  const original = {
+    cursor: 7,
+    caller: { stateDomain: 'ui-domain', deployment: 'ui' },
+    consumer: ['consumer'],
+    reference,
+  };
+  c.state.pending.newSend = { kind: 'send' };
+  c.reply([original]);
+  assert.equal(
+    c.state.uncertain,
+    null,
+    'a concurrent submission is not an unknown recovered operation',
+  );
+  assert.deepEqual(c.out.actions, []);
+  delete c.state.pending.newSend;
+  c.raw('unused');
+  c.reply([original]);
+  assert.equal(
+    c.out.actions[0].method,
+    'page',
+    'the original returned receipt needs no second query',
+  );
+  c.reply([]);
+  assert.equal(c.state.restoreThrough, 7);
+  assert.equal(c.state.recoveryCheckpoint.command.value.through, 7);
+  c.state.recoveryDirty = true;
+  c.raw('unused');
+  c.reply([{ ...original, cursor: 8, reference: { operation: 'other-mount' } }]);
+  assert.equal(c.out.actions[0].method, 'read');
+  c.reply({
+    reference: { operation: 'other-mount' },
+    receipt: {
+      kind: 'recorded',
+      outcome: { kind: 'unresolved' },
+      cleanup: { kind: 'unconfirmed' },
+    },
+  });
+  assert.equal(c.state.uncertain, null);
+  assert.equal(
+    c.state.restoreThrough,
+    7,
+    'a background observation never checkpoints an unfinished operation',
+  );
+});
+
 for (const target of ['tui', 'desktop']) {
+  test(`${target} recovery checkpoints preserve caller scope and advance only a settled prefix`, async () => {
+    const caller = { stateDomain: 'ui-domain', deployment: 'ui-deployment' };
+    const consumer = ['original-consumer'];
+    const scope = JSON.stringify([caller.stateDomain, caller.deployment, consumer]);
+    for (const sameScope of [false, true]) {
+      for (const known of [false, true]) {
+        const c = await client(target);
+        c.state.restoring = true;
+        c.state.pending.initial = { kind: 'restorePage' };
+        c.event({
+          kind: 'component',
+          child: 'recovery-checkpoint',
+          name: 'changed',
+          key: 'bookmark',
+          event: {
+            sequence: 0,
+            state: {
+              kind: 'ready',
+              revision: 1,
+              value: { through: 41, scope: sameScope ? scope : 'another-consumer' },
+            },
+          },
+        });
+        const original = {
+          cursor: 1,
+          caller,
+          consumer,
+          reference: { operation: 'first-operation' },
+        };
+        c.reply([original], 'initial');
+        if (target === 'tui' && sameScope) {
+          assert.deepEqual(c.out.actions[0].input, { after: 41, limit: 1 });
+          assert.equal(c.state.restoreThrough, 41);
+        } else {
+          assert.equal(
+            c.out.actions[0].method,
+            'read',
+            'another consumer must check its own history',
+          );
+          assert.equal(c.state.restoreThrough, 0);
+          c.reply({
+            reference: original.reference,
+            receipt: {
+              kind: 'recorded',
+              outcome: { kind: 'returned', value: {} },
+              cleanup: { kind: 'confirmed' },
+            },
+          });
+        }
+        const through = c.state.restoreThrough;
+        const reference = { operation: 'next-operation' };
+        c.reply([{ cursor: 42, caller, consumer, reference }]);
+        assert.equal(c.state.restoreThrough, through);
+        c.reply({
+          reference,
+          receipt: known
+            ? {
+                kind: 'recorded',
+                outcome: { kind: 'returned', value: {} },
+                cleanup: { kind: 'confirmed' },
+              }
+            : { kind: 'unavailable', diagnostic: 'unknown' },
+        });
+        assert.equal(c.state.restoreThrough, through);
+        if (known) {
+          c.reply([]);
+          assert.equal(c.state.restoreThrough, 42);
+          if (target === 'tui')
+            assert.deepEqual(c.state.recoveryCheckpoint.command.value, { through: 42, scope });
+        } else {
+          assert.ok(c.state.uncertain);
+          assert.equal(
+            c.state.restoreThrough,
+            through,
+            'an unknown operation must not advance the saved prefix',
+          );
+        }
+      }
+    }
+  });
+  test(`${target} draft restoration resumes its own checkpoint and ignores older sent text`, async () => {
+    for (const metadata of [
+      {},
+      { historyAfter: 17, historyScope: 'caller-history' },
+      { historyAfter: 17, historyScope: 'another-caller' },
+    ]) {
+      for (const retainedAttachment of [false, true]) {
+        const c = await client(target);
+        const file = {
+          sessionId: 'session',
+          id: 'file',
+          name: 'original.txt',
+          mimeType: 'text/plain',
+          bytes: 4,
+        };
+        c.state.restoreThrough = 100;
+        c.state.historyScope = 'caller-history';
+        c.event({
+          kind: 'component',
+          child: 'composer',
+          name: 'checkpoint',
+          key: 'checkpoint',
+          event: {
+            context: 'session',
+            dataSource: c.state.selected.dataSource,
+            owners: ['new-editor'],
+            observation: {
+              owner: 'new-editor',
+              state: {
+                kind: 'restore',
+                version: 1,
+                snapshot: { text: { owner: 'old-editor', revision: 10 } },
+                metadata: {
+                  ...metadata,
+                  attachments: retainedAttachment ? [file] : [],
+                },
+              },
+            },
+          },
+        });
+        assert.deepEqual(
+          c.out.actions[0].input,
+          { after: metadata.historyScope === 'caller-history' ? 17 : 0, limit: 1 },
+          'the global checkpoint must not skip checks needed by an older saved draft',
+        );
+        const original = {
+          cursor: 18,
+          reference: {
+            method: 'send',
+            source: c.state.selected.dataSource,
+            namespace: c.state.selected.dataSource.namespace,
+          },
+          recovery: {
+            format: 'maka.agent.draft-send@1',
+            sessionId: 'session',
+            editor: { owner: 'old-editor', revision: 9 },
+            attachments: ['file'],
+          },
+        };
+        c.reply([original]);
+        if (retainedAttachment) {
+          assert.equal(
+            c.out.actions[0].method,
+            'read',
+            'consumed attachments still need their original receipt',
+          );
+          c.reply({
+            reference: original.reference,
+            receipt: { kind: 'unavailable', diagnostic: 'unknown' },
+          });
+          assert.equal(c.state.drafts[0].work.status, 'unknown');
+          assert.equal(c.state.drafts[0].work.restore, null);
+        } else {
+          assert.deepEqual(c.out.actions[0].input, { after: 18, limit: 1 });
+          c.reply([]);
+          assert.equal(c.state.drafts[0].work.restore.clearText, false);
+        }
+      }
+    }
+  });
+  test(`${target} composer keeps submission independent of a background execution refresh`, async () => {
+    const c = await client(target);
+    c.state.dialog = null;
+    c.state.pending.refresh = { kind: 'observe', epoch: c.state.epoch };
+    c.state.drafts = [
+      {
+        context: 'session',
+        dataSource: c.state.selected.dataSource,
+        observation: { owner: 'editor', state: { kind: 'ready', initialized: true } },
+        work: null,
+      },
+    ];
+    c.raw('plan-refresh');
+    function composer(node) {
+      if (!node || typeof node !== 'object') return null;
+      if (node.binding === 'composer') return node;
+      return Object.values(node)
+        .flatMap((value) => (Array.isArray(value) ? value : [value]))
+        .map(composer)
+        .find(Boolean);
+    }
+    assert.equal(composer(c.out.frame.view).props.busy, target !== 'tui');
+    const submitted = {
+      kind: 'component',
+      child: 'composer',
+      name: 'send',
+      key: 'send',
+      event: {
+        revision: 4,
+        snapshot: { marked: null, text: { owner: 'editor', revision: 4, bytes: 5 } },
+      },
+    };
+    c.event(submitted);
+    assert.equal(
+      c.out.actions.some((action) => action.binding === 'reader'),
+      target === 'tui',
+    );
+    if (target === 'tui') {
+      assert.deepEqual(c.out.actions[0].input, { start: 0, end: 5 });
+      c.event(submitted);
+      assert.deepEqual(
+        c.out.actions,
+        [],
+        'the outstanding submission still prevents duplicate sends',
+      );
+    }
+    c.state.pending = {};
+    c.state.restoreThrough = 99;
+    c.state.command = { owner: 'editor', sequence: 1 };
+    c.event({
+      kind: 'component',
+      child: 'composer',
+      name: 'changed',
+      key: 'draft',
+      event: {
+        ...submitted.event,
+        receipt: {
+          owner: 'editor',
+          sequence: 1,
+          outcome: { status: 'conflict', reason: 'revision' },
+        },
+      },
+    });
+    c.state.notice = null;
+    c.raw('unused');
+    assert.equal(
+      composer(c.out.frame.view).props.historyAfter,
+      0,
+      'a rejected native clear must retain the sent text recovery evidence',
+    );
+  });
   test(`${target} restart settles original operations before restoring a newer draft`, async () => {
     const c = await client(target);
     const reference = {
@@ -140,6 +444,8 @@ for (const target of ['tui', 'desktop']) {
     };
     c.state.restoring = true;
     c.state.pending.restore = { kind: 'restoreReceipt', reference, cursor: 1 };
+    c.state.recoveryCheckpoint.restored = true;
+    c.state.recoveryDirty = true;
     c.state.drafts = [
       {
         context: 'session',

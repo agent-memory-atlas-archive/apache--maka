@@ -35,12 +35,7 @@ use maka_ui_runtime::{
     reading::*,
 };
 use serde_json::json;
-use std::{
-    any::Any,
-    collections::BTreeMap,
-    rc::Rc,
-    time::{Duration, Instant},
-};
+use std::{any::Any, collections::BTreeMap, rc::Rc};
 const OBSERVED: &str = "__reading_observation";
 
 // Identity only: preserves the child's exact LayoutId and all original geometry.
@@ -495,7 +490,6 @@ impl NativeComponent<dyn Widget> for Component {
         }
         let mut view = crate::scene::compile_with_inputs(
             &props.content,
-            Instant::now() + Duration::from_millis(25),
             BTreeMap::from([(OBSERVED.into(), observation_schema())]),
         )?;
         let node = (view.view.as_ref() as &dyn Any)

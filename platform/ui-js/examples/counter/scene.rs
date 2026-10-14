@@ -22,7 +22,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
-use std::{rc::Rc, time::Instant};
+use std::rc::Rc;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -54,18 +54,10 @@ pub enum Node {
     Component(ComponentSlot),
 }
 impl Node {
-    pub(crate) fn validate_root(&self, deadline: Instant) -> Result<(), String> {
-        self.validate(0, &mut BTreeSet::new(), deadline)
+    pub(crate) fn validate_root(&self) -> Result<(), String> {
+        self.validate(0, &mut BTreeSet::new())
     }
-    fn validate(
-        &self,
-        depth: usize,
-        keys: &mut BTreeSet<String>,
-        deadline: Instant,
-    ) -> Result<(), String> {
-        if Instant::now() >= deadline {
-            return Err("scene compilation deadline".into());
-        }
+    fn validate(&self, depth: usize, keys: &mut BTreeSet<String>) -> Result<(), String> {
         let key = match self {
             Self::Stack { key, .. } | Self::Text { key, .. } | Self::Button { key, .. } => key,
             Self::Component(slot) => &slot.key,
@@ -90,7 +82,7 @@ impl Node {
                     return Err("invalid UI style".into());
                 }
                 for child in children {
-                    child.validate(depth + 1, keys, deadline)?;
+                    child.validate(depth + 1, keys)?;
                 }
             }
             Self::Text { text, color, .. } => {
@@ -115,11 +107,7 @@ impl Node {
         &self,
         slots: &mut Vec<ComponentSlot>,
         inputs: &mut BTreeMap<String, Value>,
-        deadline: Instant,
     ) -> Result<(), String> {
-        if Instant::now() >= deadline {
-            return Err("scene compilation deadline".into());
-        }
         match self {
             Self::Component(slot) => {
                 slots.push(slot.clone());
@@ -129,7 +117,7 @@ impl Node {
             }
             Self::Stack { children, .. } => {
                 for child in children {
-                    child.metadata(slots, inputs, deadline)?;
+                    child.metadata(slots, inputs)?;
                 }
             }
             _ => {}
@@ -140,53 +128,41 @@ impl Node {
 
 pub(crate) fn compile<V: Default + 'static>(
     source: &Value,
-    deadline: Instant,
 ) -> maka_ui_runtime::Result<NativeView<V>> {
-    prepare(source, deadline)?.finish::<Node, V>(|_| Rc::new(V::default()))
+    prepare(source)?.finish::<Node, V>(|_| Rc::new(V::default()))
 }
 pub(crate) fn finish<V: Default + 'static>(
     prepared: maka_ui_runtime::PreparedScene,
 ) -> maka_ui_runtime::Result<NativeView<V>> {
     prepared.finish::<Node, V>(|_| Rc::new(V::default()))
 }
-pub(crate) fn prepare(
-    source: &Value,
-    deadline: Instant,
-) -> maka_ui_runtime::Result<maka_ui_runtime::PreparedScene> {
-    if Instant::now() >= deadline {
-        return Err(maka_ui_runtime::Error::Invalid(
-            "fixture scene deadline".into(),
-        ));
-    }
-    fn scan(source: &Value, depth: usize, deadline: Instant) -> maka_ui_runtime::Result<()> {
-        if Instant::now() >= deadline || depth > 32 {
+pub(crate) fn prepare(source: &Value) -> maka_ui_runtime::Result<maka_ui_runtime::PreparedScene> {
+    fn scan(source: &Value, depth: usize) -> maka_ui_runtime::Result<()> {
+        if depth > 32 {
             return Err(maka_ui_runtime::Error::Invalid(
-                "scene source depth/deadline limit".into(),
+                "scene source depth limit".into(),
             ));
         }
         if let Some(children) = source.get("children").and_then(Value::as_array) {
             for child in children {
-                scan(child, depth + 1, deadline)?;
+                scan(child, depth + 1)?;
             }
         }
         Ok(())
     }
-    scan(source, 0, deadline)?;
+    scan(source, 0)?;
     let node: Node = serde_json::from_value(source.clone())
         .map_err(|e| maka_ui_runtime::Error::Invalid(e.to_string()))?;
-    node.validate_root(deadline)
+    node.validate_root()
         .map_err(maka_ui_runtime::Error::Invalid)?;
     let mut slots = vec![];
     let mut inputs = BTreeMap::new();
-    node.metadata(&mut slots, &mut inputs, deadline)
+    node.metadata(&mut slots, &mut inputs)
         .map_err(maka_ui_runtime::Error::Invalid)?;
     maka_ui_runtime::PreparedScene::new(node, inputs, slots)?.with_declaration(source.clone())
 }
 pub(crate) fn view<V: Default + 'static>(node: Node) -> maka_ui_runtime::Result<NativeView<V>> {
-    compile(
-        &serde_json::to_value(node).unwrap(),
-        Instant::now() + std::time::Duration::from_secs(1),
-    )
+    compile(&serde_json::to_value(node).unwrap())
 }
 pub(crate) fn registry<V: Default + 'static>(
     target: maka_plugin_core::composition::PresentationTarget,

@@ -29,7 +29,6 @@ use gpui_kit::{
 use serde_json::Value;
 use serde_json::json;
 use std::any::Any;
-use std::time::Instant;
 
 struct Harness {
     recipe: Rc<dyn Widget>,
@@ -54,9 +53,7 @@ impl Render for Harness {
 }
 impl Harness {
     fn replace(&mut self, source: Value, window: &mut Window, cx: &mut Context<Self>) {
-        let recipe = compile(&source, Instant::now() + std::time::Duration::from_secs(1))
-            .unwrap()
-            .view;
+        let recipe = compile(&source).unwrap().view;
         recipe.commit(self.state.as_mut(), window, cx);
         self.recipe = recipe;
         cx.notify();
@@ -137,12 +134,7 @@ fn harness(cx: &mut TestAppContext, move_rule: bool) -> TestHarness {
         )]);
     });
     let (entity, _) = cx.add_window_view(move |window, cx| {
-        let recipe = compile(
-            &source(false, false, move_rule),
-            Instant::now() + std::time::Duration::from_secs(1),
-        )
-        .unwrap()
-        .view;
+        let recipe = compile(&source(false, false, move_rule)).unwrap().view;
         let live = LiveInput::new(
             Rc::new(RefCell::new(Some(dispatcher.clone()))),
             crate::NativeBudget::default(),
@@ -487,32 +479,31 @@ fn retained_presentation_cancels_canvas_gesture_and_rejects_old_routes_before_pa
 }
 #[test]
 fn bounded_canvas_rejects_source_precision_and_work_before_native_conversion() {
-    let deadline = || Instant::now() + std::time::Duration::from_secs(1);
     let mut value = source(false, false, false);
     value["contents"]["commands"][0]["rect"]["width"] = json!(16000.00000001_f64);
-    assert!(compile(&value, deadline()).is_err());
+    assert!(compile(&value).is_err());
     value = source(false, false, false);
     value["contents"]["commands"][2]["text"] = json!("a\nb");
-    assert!(compile(&value, deadline()).is_err());
+    assert!(compile(&value).is_err());
     value = source(false, false, false);
     let command = value["contents"]["commands"][0].clone();
     value["contents"]["commands"] = json!(vec![command; 1025]);
-    assert!(compile(&value, deadline()).is_err());
+    assert!(compile(&value).is_err());
     value = source(false, false, false);
     let region = value["contents"]["regions"][1].clone();
     value["contents"]["regions"]
         .as_array_mut()
         .unwrap()
         .push(region);
-    assert!(compile(&value, deadline()).is_err());
+    assert!(compile(&value).is_err());
     value = source(false, false, false);
     value["contents"]["regions"][1]["listen"] =
         json!(["drop", "drop", "drop", "drop", "drop", "drop"]);
-    assert!(compile(&value, deadline()).is_err());
+    assert!(compile(&value).is_err());
     value = source(false, false, false);
     value["contents"]["regions"][1]["radius"] = json!(8000.00000001_f64);
-    assert!(compile(&value, deadline()).is_err());
-    assert!(compile(&source(false, false, false), deadline()).is_ok());
+    assert!(compile(&value).is_err());
+    assert!(compile(&source(false, false, false)).is_ok());
 }
 
 #[gpui::test]

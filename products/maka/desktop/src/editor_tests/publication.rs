@@ -22,10 +22,7 @@ use maka_ui_runtime::{
     ComponentCall, ComponentOutput, Frame, NativeCapability, NativeComponent, NativeExport,
 };
 use serde_json::json;
-use std::{
-    cell::Cell,
-    time::{Duration, Instant},
-};
+use std::cell::Cell;
 struct Parent {
     reject: Rc<Cell<bool>>,
 }
@@ -78,7 +75,6 @@ impl NativeComponent<dyn widgets::Widget> for Parent {
              {"kind":"stack","key":"presentation","direction":"column","gap":0,"padding":0,"background":0x101010,"visible":state["visible"],"children":[{"kind":"component","key":"nativeLabel","binding":"label","member":0,"on":{},"props":{"text":"Retained marker","appearance":values.get("brand").unwrap()[0]["label"]}},{"kind":"component","key":"editor","binding":"editor","member":0,"on":{"changed":"changed"},"props":{"appearance":values.get("brand").unwrap()[0]["textarea"],"accessibilityLabel":"Read-only draft","readOnly":true,"disabled":true,"softWrap":true,"tabIndex":-1,"initialText":"Start","command":state["command"]}}]},
              {"kind":"button","key":"parent","label":"Next parent transaction"}
             ]}),
-            Instant::now() + Duration::from_secs(1),
         )?;
         Ok(Frame{revision,state,surface:Some(serde_json::from_value(json!({"kind":"window","binding":"surface","title":"Receipt publication","width":640,"height":400})).unwrap()),view}.output(vec![]))
     }

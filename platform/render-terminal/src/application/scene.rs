@@ -18,9 +18,10 @@
  */
 
 use maka_ui_runtime::{NativeView, PreparedScene};
+use serde::Deserialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
-use std::{rc::Rc, time::Instant};
+use std::rc::Rc;
 
 /// The nominal ABI supplied by this presenter's pure scene compiler.
 pub fn language() -> maka_plugin_core::package::SceneLanguage {
@@ -33,62 +34,52 @@ pub fn language() -> maka_plugin_core::package::SceneLanguage {
 pub use maka_ui_runtime::scene::terminal::{Direction, Layout, Node, ScrollPolicy};
 
 #[cfg(test)]
-pub(super) fn compile(
-    source: &Value,
-    deadline: Instant,
-) -> maka_ui_runtime::Result<NativeView<dyn super::Widget>> {
-    compile_with_inputs(source, deadline, BTreeMap::new())
+pub(super) fn compile(source: &Value) -> maka_ui_runtime::Result<NativeView<dyn super::Widget>> {
+    compile_with_inputs(source, BTreeMap::new())
 }
 pub(super) fn compile_with_inputs(
     source: &Value,
-    deadline: Instant,
     inputs: BTreeMap<String, Value>,
 ) -> maka_ui_runtime::Result<NativeView<dyn super::Widget>> {
-    finish(prepare_with_inputs(source, deadline, inputs)?)
+    finish(prepare_with_inputs(source, inputs)?)
 }
 
-pub fn prepare(source: &Value, deadline: Instant) -> maka_ui_runtime::Result<PreparedScene> {
-    prepare_with_inputs(source, deadline, BTreeMap::new())
+pub fn prepare(source: &Value) -> maka_ui_runtime::Result<PreparedScene> {
+    prepare_with_inputs(source, BTreeMap::new())
 }
 pub fn finish(prepared: PreparedScene) -> maka_ui_runtime::Result<NativeView<dyn super::Widget>> {
     prepared.finish::<Node, dyn super::Widget>(|node| Rc::new(node))
 }
 fn prepare_with_inputs(
     source: &Value,
-    deadline: Instant,
     mut inputs: BTreeMap<String, Value>,
 ) -> maka_ui_runtime::Result<PreparedScene> {
-    if Instant::now() >= deadline {
-        return Err(maka_ui_runtime::Error::Invalid(
-            "terminal scene deadline".into(),
-        ));
-    }
-    fn scan(source: &Value, depth: usize, deadline: Instant) -> maka_ui_runtime::Result<()> {
-        if Instant::now() >= deadline || depth > 32 {
+    fn scan(source: &Value, depth: usize) -> maka_ui_runtime::Result<()> {
+        if depth > 32 {
             return Err(maka_ui_runtime::Error::Invalid(
-                "scene source depth/deadline limit".into(),
+                "scene source depth limit".into(),
             ));
         }
         for field in ["background", "content"] {
             if let Some(child) = source.get(field) {
-                scan(child, depth + 1, deadline)?;
+                scan(child, depth + 1)?;
             }
         }
         if let Some(children) = source.get("children").and_then(Value::as_array) {
             for child in children {
-                scan(child, depth + 1, deadline)?;
+                scan(child, depth + 1)?;
             }
         }
         Ok(())
     }
-    scan(source, 0, deadline)?;
-    let node: Node = serde_json::from_value(source.clone())
-        .map_err(|e| maka_ui_runtime::Error::Invalid(e.to_string()))?;
-    node.validate_root(deadline)
+    scan(source, 0)?;
+    let node: Node =
+        Node::deserialize(source).map_err(|e| maka_ui_runtime::Error::Invalid(e.to_string()))?;
+    node.validate_root()
         .map_err(maka_ui_runtime::Error::Invalid)?;
     let mut slots = vec![];
     let mut hidden_slots = BTreeSet::new();
-    node.metadata(&mut slots, &mut inputs, &mut hidden_slots, true, deadline)
+    node.metadata(&mut slots, &mut inputs, &mut hidden_slots, true)
         .map_err(maka_ui_runtime::Error::Invalid)?;
     node.validate_focus_targets(&slots)
         .map_err(maka_ui_runtime::Error::Invalid)?;

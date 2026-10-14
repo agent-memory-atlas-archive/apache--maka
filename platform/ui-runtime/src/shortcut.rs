@@ -161,7 +161,7 @@ fn validate_chords<'a>(
     Ok(())
 }
 /// Merge command inputs with ordinary buttons, never with a typed native input.
-/// Aggregate scene bytes and the compilation deadline bound the input table.
+/// The input table is derived from the finite scene declaration.
 pub fn inputs(
     shortcuts: &[Shortcut],
     inputs: &mut BTreeMap<String, serde_json::Value>,

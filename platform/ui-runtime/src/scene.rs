@@ -25,7 +25,6 @@ pub mod terminal;
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::time::{Duration, Instant};
     #[test]
     fn responsive_stack_validates_fraction_bounds_and_direct_child_overrides() {
         let base = json!({"kind":"stack","key":"root","direction":"column","gap":0,"padding":0,"background":0,
@@ -34,7 +33,7 @@ mod tests {
         let validate = |value| {
             serde_json::from_value::<terminal::Node>(value)
                 .unwrap()
-                .validate_root(Instant::now() + Duration::from_secs(1))
+                .validate_root()
         };
         validate(base.clone()).unwrap();
         for invalid in [
@@ -75,8 +74,7 @@ mod tests {
     fn wheel_commands_require_a_viewport_and_share_the_original_input_contract() {
         let value = json!({"kind":"stack","key":"list","direction":"column","gap":0,"padding":0,"background":0,"children":[],"scroll":"manual","wheel":{"up":"previous","down":"next"}});
         let node: terminal::Node = serde_json::from_value(value.clone()).unwrap();
-        node.validate_root(Instant::now() + Duration::from_secs(1))
-            .unwrap();
+        node.validate_root().unwrap();
         let mut inputs = std::collections::BTreeMap::new();
         node.shortcut_inputs(&mut inputs, true).unwrap();
         assert_eq!(inputs.len(), 2);
@@ -91,10 +89,7 @@ mod tests {
             let mut invalid = value.clone();
             invalid[field] = replacement;
             let node: terminal::Node = serde_json::from_value(invalid).unwrap();
-            assert!(
-                node.validate_root(Instant::now() + Duration::from_secs(1))
-                    .is_err()
-            );
+            assert!(node.validate_root().is_err());
         }
     }
 
@@ -102,37 +97,35 @@ mod tests {
     fn copy_button_text_has_a_byte_budget_and_no_conflicting_native_default() {
         for text in ["".to_owned(), "界".repeat(24 * 1024)] {
             let value = json!({"kind":"button","key":"copy","label":"Copy","copy_text":text});
-            let deadline = Instant::now() + Duration::from_secs(1);
             assert!(
                 serde_json::from_value::<terminal::Node>(value.clone())
                     .unwrap()
-                    .validate_root(deadline)
+                    .validate_root()
                     .is_err()
             );
             assert!(
                 serde_json::from_value::<desktop::Node>(value)
                     .unwrap()
-                    .validate_root(deadline)
+                    .validate_root()
                     .is_err()
             );
         }
         let value =
             json!({"kind":"button","key":"copy","label":"Copy","copy_text":"x".repeat(64 * 1024)});
-        let deadline = Instant::now() + Duration::from_secs(1);
         serde_json::from_value::<terminal::Node>(value.clone())
             .unwrap()
-            .validate_root(deadline)
+            .validate_root()
             .unwrap();
         serde_json::from_value::<desktop::Node>(value.clone())
             .unwrap()
-            .validate_root(deadline)
+            .validate_root()
             .unwrap();
         let mut conflict = value;
         conflict["focus_child"] = json!("editor");
         assert!(
             serde_json::from_value::<terminal::Node>(conflict)
                 .unwrap()
-                .validate_root(deadline)
+                .validate_root()
                 .is_err()
         );
     }

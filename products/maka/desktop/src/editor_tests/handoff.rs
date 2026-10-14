@@ -165,7 +165,7 @@ fn replacement_waits_for_original_native_editor_release_and_opens_fresh_window(
         assert!(owner.failure().is_none());
         fresh.close(cx);
         await_action(cx, &app, |app| app.can_shutdown());
-        app.borrow_mut().shutdown().unwrap();
+        await_shutdown(cx, &app);
         drop(fresh);
         drop(old);
         drop(owner);
@@ -482,5 +482,5 @@ fn recovery_root_waits_for_original_editor_release_and_keeps_independent_input(
     cx.run_until_parked();
     await_action(cx, &app, |app| app.can_shutdown());
     assert!(app.borrow().can_shutdown());
-    app.borrow_mut().shutdown().unwrap();
+    await_shutdown(cx, &app);
 }

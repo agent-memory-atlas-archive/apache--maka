@@ -31,12 +31,7 @@ use maka_ui_runtime::{
     reading::*,
 };
 use serde_json::json;
-use std::{
-    any::Any,
-    collections::BTreeMap,
-    rc::Rc,
-    time::{Duration, Instant},
-};
+use std::{any::Any, collections::BTreeMap, rc::Rc};
 pub(super) mod find;
 
 const OBSERVED: &str = "__reading_observation";
@@ -640,7 +635,6 @@ impl NativeComponent<dyn Widget> for Component {
         previous: Option<&NativeView<dyn Widget>>,
         values: &maka_ui_runtime::abi::ValueBindings,
         _: &tokio::runtime::Handle,
-        _: Instant,
     ) -> maka_ui_runtime::backend::Job<ComponentOutput<NativeView<dyn Widget>>> {
         if let ComponentCall::Event {
             state,
@@ -722,7 +716,6 @@ impl NativeComponent<dyn Widget> for Component {
         }
         let mut view = super::scene::compile_with_inputs(
             &props.content,
-            Instant::now() + Duration::from_millis(25),
             BTreeMap::from([(OBSERVED.into(), observation_schema())]),
         )?;
         let node = (view.view.as_ref() as &dyn Any)

@@ -30,7 +30,6 @@ use std::{
     pin::Pin,
     rc::Rc,
     task::{Context, Poll},
-    time::Instant,
 };
 
 /// An admitted execution result. Polling never executes guest code on the owner
@@ -79,8 +78,7 @@ pub trait Component: 'static {
         &self,
         call: ComponentCall<'_>,
         values: &abi::ValueBindings,
-        deadline: Instant,
         prepare: std::sync::Arc<PrepareScene>,
     ) -> Result<Job<ComponentOutput<PreparedScene>>>;
-    fn capture(&self, call: CaptureCall<'_>, deadline: Instant) -> Result<Job<CapturePlan>>;
+    fn capture(&self, call: CaptureCall<'_>) -> Result<Job<CapturePlan>>;
 }

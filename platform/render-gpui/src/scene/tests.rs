@@ -196,9 +196,7 @@ impl Render for Harness {
 }
 impl Harness {
     fn replace(&mut self, source: Value, window: &mut gpui_kit::Window, cx: &mut Context<Self>) {
-        let recipe = compile(&source, Instant::now() + std::time::Duration::from_secs(1))
-            .unwrap()
-            .view;
+        let recipe = compile(&source).unwrap().view;
         recipe.commit(self.state.as_mut(), window, cx);
         self.recipe = recipe;
         cx.notify();
@@ -225,12 +223,7 @@ fn harness(cx: &mut TestAppContext) -> (Entity<Harness>, AnyWindowHandle, Rc<Cel
         Ok(())
     }));
     let (entity, _) = cx.add_window_view(move |window, cx| {
-        let recipe = compile(
-            &source(false, false, false),
-            Instant::now() + std::time::Duration::from_secs(1),
-        )
-        .unwrap()
-        .view;
+        let recipe = compile(&source(false, false, false)).unwrap().view;
         let live = LiveInput::new(
             Rc::new(RefCell::new(Some(input.clone()))),
             crate::NativeBudget::default(),
@@ -677,7 +670,7 @@ fn scene_disabled_and_removed_nodes_reject_old_pointer_keyboard_and_ax_focus(
 #[gpui::test]
 fn scene_slot_render_errors_are_returned_before_publication(cx: &mut TestAppContext) {
     let (_, window, _) = harness(cx);
-    let recipe=compile(&json!({"kind":"component","key":"missing","binding":"child","member":0,"props":{},"on":{}}),Instant::now()+std::time::Duration::from_secs(1)).unwrap().view;
+    let recipe=compile(&json!({"kind":"component","key":"missing","binding":"child","member":0,"props":{},"on":{}})).unwrap().view;
     cx.update_window(window, |_, w, cx| {
         let input = Input::testing(Rc::new(|_, _, _, _| Ok(())));
         let mut state = recipe.create(
@@ -706,21 +699,19 @@ fn scene_slot_render_errors_are_returned_before_publication(cx: &mut TestAppCont
     .unwrap();
 }
 #[test]
-fn scene_compilation_rejects_unsupported_shapes_expansion_deadline_and_style() {
-    let deadline = || Instant::now() + std::time::Duration::from_secs(1);
-    assert!(compile(&source(false, false, false), deadline()).is_ok());
-    assert!(compile(&source(false, false, false), Instant::now()).is_err());
+fn scene_compilation_rejects_unsupported_shapes_expansion_and_style() {
+    assert!(compile(&source(false, false, false)).is_ok());
     let mut bad = source(false, false, false);
     bad["style"]["width"] = json!({"unit":"pixels","value":-1});
-    assert!(compile(&bad, deadline()).is_err());
+    assert!(compile(&bad).is_err());
     let mut bad = source(false, false, false);
     bad["children"][0]["children"][0]["kind"] = json!("execute_service");
-    assert!(compile(&bad, deadline()).is_err());
+    assert!(compile(&bad).is_err());
     let mut deep = json!({"kind":"text","key":"text","text":"x","color":0});
     for i in 0..33 {
         deep = json!({"kind":"stack","key":format!("s{i}"),"direction":"column","gap":0,"padding":0,"background":0,"children":[deep]});
     }
-    assert!(compile(&deep, deadline()).is_err());
+    assert!(compile(&deep).is_err());
 }
 
 #[gpui::test]
@@ -775,13 +766,13 @@ fn native_scene_deactivation_blurs_only_its_focus_with_old_listeners_retained(
 #[test]
 fn desktop_styles_reject_source_overflow_and_native_nonfinite_values() {
     let hidden = json!({"kind":"stack","key":"root","direction":"column","padding":0,"gap":0,"background":0,"visible":false,"children":(0..257).map(|n| json!({"kind":"button","key":format!("button-{n}"),"label":"Hidden"})).collect::<Vec<_>>()});
-    let compiled = compile(&hidden, Instant::now() + std::time::Duration::from_secs(1)).unwrap();
+    let compiled = compile(&hidden).unwrap();
     assert!(!compiled.root_visible());
     assert!(!compiled.declares_input("button-256"));
     for value in [1e300, -1e300, 16000.0001] {
         let mut scene = source(false, false, false);
         scene["style"]["minWidth"] = json!(value);
-        assert!(compile(&scene, Instant::now() + std::time::Duration::from_secs(1)).is_err());
+        assert!(compile(&scene).is_err());
     }
     for value in [f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
         assert!(
@@ -938,12 +929,7 @@ fn popup_harness(
         Ok(())
     }));
     let (entity, _) = cx.add_window_view(move |window, cx| {
-        let recipe = compile(
-            &scene.borrow(),
-            Instant::now() + std::time::Duration::from_secs(1),
-        )
-        .unwrap()
-        .view;
+        let recipe = compile(&scene.borrow()).unwrap().view;
         let mut state = recipe.create(
             LiveInput::new(
                 Rc::new(RefCell::new(Some(input.clone()))),
@@ -1238,14 +1224,14 @@ fn popup_compiler_preserves_hidden_slots_and_bounds_all_branches_and_deferred_de
     let mut source = popup_source(false);
     let content = &mut source["children"][0]["children"][0]["content"];
     *content = json!({"kind":"component","key":"native-editor","binding":"editor","member":0,"props":{},"on":{}});
-    let compiled = compile(&source, Instant::now() + std::time::Duration::from_secs(1)).unwrap();
+    let compiled = compile(&source).unwrap();
     assert_eq!(compiled.slots().len(), 1);
     assert_eq!(compiled.visible_slots().count(), 0);
     for level in 0..11 {
         source = json!({"kind":"popup","key":format!("popup-{level}"),"label":"Nested","open":true,"trigger":{"kind":"text","key":format!("trigger-{level}"),"text":"Open","color":0},"content":source});
     }
     assert!(
-        compile(&source, Instant::now() + std::time::Duration::from_secs(1))
+        compile(&source)
             .err()
             .unwrap()
             .to_string()
@@ -1253,12 +1239,12 @@ fn popup_compiler_preserves_hidden_slots_and_bounds_all_branches_and_deferred_de
     );
     source["open"] = json!(false);
     assert!(
-        compile(&source, Instant::now() + std::time::Duration::from_secs(1)).is_ok(),
+        compile(&source).is_ok(),
         "closed content is retained without native deferred work"
     );
     source["trigger"]["style"] = json!({"maxWidth":1e300});
     assert!(
-        compile(&source, Instant::now() + std::time::Duration::from_secs(1)).is_err(),
+        compile(&source).is_err(),
         "even hidden/trigger branches retain source validation"
     );
 }

@@ -26,7 +26,7 @@ use maka_ui_runtime::{NativeView, PreparedScene};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
-use std::{rc::Rc, time::Instant};
+use std::rc::Rc;
 
 /// The nominal ABI supplied by this presenter's pure scene compiler.
 pub fn language() -> maka_plugin_core::package::SceneLanguage {
@@ -40,91 +40,71 @@ pub use maka_ui_runtime::scene::desktop::{
     Align, Dimension, Direction, Justify, Node, Scroll, Style,
 };
 
-pub fn compile(
-    source: &Value,
-    deadline: Instant,
-) -> maka_ui_runtime::Result<NativeView<dyn super::Widget>> {
-    compile_with_inputs(source, deadline, BTreeMap::new())
+pub fn compile(source: &Value) -> maka_ui_runtime::Result<NativeView<dyn super::Widget>> {
+    compile_with_inputs(source, BTreeMap::new())
 }
 
 pub(crate) fn compile_with_inputs(
     source: &Value,
-    deadline: Instant,
     additional_inputs: BTreeMap<String, Value>,
 ) -> maka_ui_runtime::Result<NativeView<dyn super::Widget>> {
-    finish(prepare_with_inputs(source, deadline, additional_inputs)?)
+    finish(prepare_with_inputs(source, additional_inputs)?)
 }
 
-pub fn prepare(source: &Value, deadline: Instant) -> maka_ui_runtime::Result<PreparedScene> {
-    prepare_with_inputs(source, deadline, BTreeMap::new())
+pub fn prepare(source: &Value) -> maka_ui_runtime::Result<PreparedScene> {
+    prepare_with_inputs(source, BTreeMap::new())
 }
 pub fn finish(prepared: PreparedScene) -> maka_ui_runtime::Result<NativeView<dyn super::Widget>> {
     prepared.finish::<Node, dyn super::Widget>(|node| Rc::new(node))
 }
 fn prepare_with_inputs(
     source: &Value,
-    deadline: Instant,
     additional_inputs: BTreeMap<String, Value>,
 ) -> maka_ui_runtime::Result<PreparedScene> {
-    if Instant::now() >= deadline {
-        return Err(maka_ui_runtime::Error::Invalid(
-            "desktop scene deadline".into(),
-        ));
-    }
-    fn scan(
-        source: &Value,
-        depth: usize,
-        count: &mut usize,
-        deadline: Instant,
-    ) -> maka_ui_runtime::Result<()> {
+    fn scan(source: &Value, depth: usize, count: &mut usize) -> maka_ui_runtime::Result<()> {
         *count += 1;
-        if Instant::now() >= deadline || depth > 32 {
+        if depth > 32 {
             return Err(maka_ui_runtime::Error::Invalid(
-                "scene source depth/deadline limit".into(),
+                "scene source depth limit".into(),
             ));
         }
         for field in ["style", "hover", "active", "focus"] {
             if let Some(value) = source.get(field) {
                 Style::validate_source(value).map_err(maka_ui_runtime::Error::Invalid)?;
             }
-            if Instant::now() >= deadline {
-                return Err(maka_ui_runtime::Error::Invalid(
-                    "scene compilation deadline".into(),
-                ));
-            }
         }
         if source.get("kind").and_then(Value::as_str) == Some("canvas")
             && let Some(contents) = source.get("contents")
         {
-            canvas::Contents::preflight(contents, count, deadline)
+            canvas::Contents::preflight(contents, count)
                 .map_err(maka_ui_runtime::Error::Invalid)?;
         }
         if let Some(children) = source.get("children").and_then(Value::as_array) {
             for child in children {
-                scan(child, depth + 1, count, deadline)?;
+                scan(child, depth + 1, count)?;
             }
         }
         if source.get("kind").and_then(Value::as_str) == Some("dialog")
             && let Some(background) = source.get("background")
         {
-            scan(background, depth + 1, count, deadline)?;
+            scan(background, depth + 1, count)?;
         }
         for field in ["trigger", "content"] {
             if let Some(child) = source.get(field) {
-                scan(child, depth + 1, count, deadline)?;
+                scan(child, depth + 1, count)?;
             }
         }
         Ok(())
     }
-    scan(source, 0, &mut 0, deadline)?;
+    scan(source, 0, &mut 0)?;
     let node =
         Node::deserialize(source).map_err(|e| maka_ui_runtime::Error::Invalid(e.to_string()))?;
-    node.validate_root(deadline)
+    node.validate_root()
         .map_err(maka_ui_runtime::Error::Invalid)?;
     let mut slots = vec![];
     let mut inputs = BTreeMap::new();
     let mut hidden_slots = BTreeSet::new();
-    node.metadata(&mut slots, &mut inputs, &mut hidden_slots, true, deadline)
+    node.metadata(&mut slots, &mut inputs, &mut hidden_slots, true)
         .map_err(maka_ui_runtime::Error::Invalid)?;
     node.shortcut_inputs(&mut inputs, true)
         .map_err(maka_ui_runtime::Error::Invalid)?;

@@ -227,18 +227,6 @@ impl Foreground {
         method: &str,
         args: &[Value],
     ) -> Result<Value> {
-        self.call_bound_until(callbacks, method, args, Instant::now() + self.budget.slice)
-    }
-
-    /// The embedding can bound a whole composed update by one deadline. This
-    /// cannot extend the realm's configured per-call slice.
-    pub fn call_bound_until(
-        &mut self,
-        callbacks: &ForegroundCallbacks,
-        method: &str,
-        args: &[Value],
-        deadline: Instant,
-    ) -> Result<Value> {
         self.ready()?;
         if !Rc::ptr_eq(&callbacks.domain, &self.domain)
             || !self.modules.contains_key(&callbacks.module)
@@ -251,7 +239,7 @@ impl Foreground {
                 "foreground callbacks are retired or from another realm",
             ));
         }
-        self.budget.enter_until(deadline);
+        self.budget.enter();
         let _entered = self.scheduler.enter();
         let outcome = entered(&mut self.runtime, |runtime| {
             engine::call_bound_synchronous(runtime, &self.callbacks[&callbacks.id].1, method, args)
@@ -374,11 +362,7 @@ impl Budget {
     }
 
     fn enter(&self) {
-        self.enter_until(Instant::now() + self.slice);
-    }
-
-    fn enter_until(&self, deadline: Instant) {
-        self.clock.0.lock().unwrap().deadline = Some(deadline.min(Instant::now() + self.slice));
+        self.clock.0.lock().unwrap().deadline = Some(Instant::now() + self.slice);
         self.clock.1.notify_one();
     }
 

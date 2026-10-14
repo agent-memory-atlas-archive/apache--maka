@@ -400,7 +400,7 @@ fn failed_original_native_drop_never_creates_replacement_root() {
     let native = NativeRegistry::with_surface(PresentationTarget::Tui)
         .with_scene_compiler(
             scene::language(),
-            move |_, _| {
+            move |_| {
                 maka_ui_runtime::PreparedScene::new(View(count.clone()), BTreeMap::new(), vec![])
             },
             |prepared| prepared.finish::<View, dyn Widget>(|recipe| Rc::new(recipe)),

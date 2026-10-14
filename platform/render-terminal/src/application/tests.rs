@@ -898,11 +898,7 @@ fn native_terminal_slots_measure_and_paint_js_children_with_original_input_mount
 #[test]
 fn native_terminal_hidden_slots_override_custom_parent_measurement_and_paint() {
     let hidden = json!({"kind":"stack","key":"root","direction":"column","padding":0,"gap":0,"background":0,"visible":false,"children":(0..257).map(|n| json!({"kind":"button","key":format!("button-{n}"),"label":"Hidden"})).collect::<Vec<_>>()});
-    let compiled = super::scene::compile(
-        &hidden,
-        std::time::Instant::now() + std::time::Duration::from_secs(1),
-    )
-    .unwrap();
+    let compiled = super::scene::compile(&hidden).unwrap();
     assert!(!compiled.root_visible());
     assert!(!compiled.declares_input("button-256"));
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -1093,7 +1089,7 @@ fn pure_native_paint_panics_drain_original_state_and_failed_drop_keeps_root() {
         let native = NativeRegistry::with_surface(PresentationTarget::Tui)
             .with_scene_compiler(
                 scene::language(),
-                move |_, _| {
+                move |_| {
                     maka_ui_runtime::PreparedScene::new(
                         Panic {
                             drops: watched.clone(),
@@ -1283,7 +1279,7 @@ fn held_native_work_waits_through_kind_handoff_and_original_surface_close() {
         let native = NativeRegistry::with_surface(PresentationTarget::Tui)
             .with_scene_compiler(
                 scene::language(),
-                |view, _| {
+                |view| {
                     maka_ui_runtime::PreparedScene::new(
                         view["children"][0]["text"] == "1",
                         BTreeMap::from([("inc".into(), json!({"type":"object"}))]),

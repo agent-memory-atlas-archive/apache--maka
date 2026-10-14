@@ -601,7 +601,7 @@ fn restarted_process_rejects_the_original_editor_capture_and_command(cx: &mut Te
     if let Ok(original) = std::env::var(ORIGINAL) {
         let original: maka_ui_runtime::editor::EditorTextRef =
             serde_json::from_str(&original).unwrap();
-        assert_eq!(reference.revision, original.revision);
+        assert_ne!(reference.owner, original.owner);
         assert_eq!(reference.bytes, original.bytes);
         let owner = scene.owner();
         cx.update_window(scene.window, |_, window, cx| {
@@ -610,6 +610,12 @@ fn restarted_process_rejects_the_original_editor_capture_and_command(cx: &mut Te
                     editor.read_text(&original, 0..5, window, cx),
                     Err(EditorReadError::Owner)
                 ));
+                // Revision counters are local to each process. Even matching
+                // the new counter cannot revive an old owner's reference.
+                let mut matching_revision = original.clone();
+                matching_revision.revision = reference.revision;
+                assert!(matches!(editor.read_text(&matching_revision, 0..5, window, cx),
+                    Err(EditorReadError::Owner)));
             });
             let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
             scene.app.borrow_mut().dispatch(

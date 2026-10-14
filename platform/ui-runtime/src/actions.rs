@@ -619,16 +619,13 @@ impl<V: ?Sized + 'static> Application<V> {
                 .validate(&source.input)
                 .map_err(|e| Error::Invalid(e.to_string()))?;
             match implementation {
-                Component::JavaScript { callbacks, .. } => callbacks.capture(
-                    CaptureCall {
-                        values: &values,
-                        state: &state,
-                        props: &props,
-                        method: &source.method,
-                        input: &source.input,
-                    },
-                    std::time::Instant::now() + self.slice,
-                ),
+                Component::JavaScript { callbacks, .. } => callbacks.capture(CaptureCall {
+                    values: &values,
+                    state: &state,
+                    props: &props,
+                    method: &source.method,
+                    input: &source.input,
+                }),
                 Component::Native(component) => {
                     Ok(backend::Job::ready(component.capture(CaptureCall {
                         values: &values,

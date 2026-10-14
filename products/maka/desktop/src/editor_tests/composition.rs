@@ -219,16 +219,13 @@ impl NativeComponent<dyn widgets::Widget> for Parent {
                 slots,
             )?
         } else {
-            widgets::scene::compile(
-                &json!({
-                    "kind":"stack", "key":"layout", "direction":"column", "gap":0, "padding":0, "background":0,
-                    "children": slots.into_iter().map(|slot| {
-                        let mut value = serde_json::to_value(slot).unwrap();
-                        value["kind"] = json!("component"); value
-                    }).chain(std::iter::once(json!({"kind":"button","key":"tree","label":"Native"}))).collect::<Vec<_>>()
-                }),
-                std::time::Instant::now() + std::time::Duration::from_secs(1),
-            )?
+            widgets::scene::compile(&json!({
+                "kind":"stack", "key":"layout", "direction":"column", "gap":0, "padding":0, "background":0,
+                "children": slots.into_iter().map(|slot| {
+                    let mut value = serde_json::to_value(slot).unwrap();
+                    value["kind"] = json!("component"); value
+                }).chain(std::iter::once(json!({"kind":"button","key":"tree","label":"Native"}))).collect::<Vec<_>>()
+            }))?
         };
         Ok(Frame {
             revision: state["revision"].as_u64().unwrap(),

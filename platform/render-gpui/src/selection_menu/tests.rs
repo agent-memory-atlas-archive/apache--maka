@@ -26,11 +26,7 @@ use gpui_kit::{
 };
 use maka_ui_runtime::{appearance::*, source::SourceTextProps};
 use serde_json::Value;
-use std::{
-    cell::RefCell,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{cell::RefCell, sync::Arc};
 const BACKGROUND: &str = "  background\n中文🙂  ";
 const FOREGROUND: &str = "  foreground\n选中🙂  ";
 fn input() -> LiveInput {
@@ -100,9 +96,7 @@ fn node(open: bool, moved: bool) -> Value {
             "children":[slot("fg-source"),slot(if moved {"bg-menu"} else {"fg-menu"})]}})
 }
 fn compile(source: &Value) -> Rc<dyn Widget> {
-    scene::compile(source, Instant::now() + Duration::from_secs(1))
-        .unwrap()
-        .view
+    scene::compile(source).unwrap().view
 }
 struct Root {
     recipe: Rc<dyn Widget>,

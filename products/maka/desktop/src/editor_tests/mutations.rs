@@ -67,7 +67,9 @@ enum Mode {
     FailedClose,
 }
 #[gpui::test]
-fn each_queued_receipt_checks_the_latest_state_at_actual_delivery(cx: &mut TestAppContext) {
+fn queued_large_receipts_preserve_original_journals_without_a_combined_size_cap(
+    cx: &mut TestAppContext,
+) {
     let timer = timer();
     let h = Harness::new(cx, &timer, Mode::Queued);
     for _ in 0..2 {
@@ -132,10 +134,10 @@ fn each_queued_receipt_checks_the_latest_state_at_actual_delivery(cx: &mut TestA
                 .is_none()
         );
     }
-    // Only one logical receipt transaction may run. Commit its 800 KiB state
-    // before admitting the next raw receipt, which must now be downgraded using
-    // this exact latest state while preserving the original host journal.
-    for _ in 0..2 {
+    // Deliver each original receipt in its own transaction. The first 800 KiB
+    // state and the next 800 KiB receipt remain valid together: the UI callback
+    // adds no combined byte cap to the already bounded Host result.
+    for original in &originals {
         assert_eq!(
             h.scene
                 .app
@@ -148,10 +150,12 @@ fn each_queued_receipt_checks_the_latest_state_at_actual_delivery(cx: &mut TestA
             h.scene.commit_in(window, cx).unwrap()
         })
         .unwrap();
+        let reply: OperationReply = serde_json::from_value(h.outcome()["reply"].clone()).unwrap();
+        assert_eq!(&reply.reference, original);
+        assert!(matches!(reply.receipt, Receipt::Recorded {
+            outcome: OperationOutcome::Returned { value }, ..
+        } if value.as_str().unwrap().len() == 800 * 1024));
     }
-    let reply: OperationReply = serde_json::from_value(h.outcome()["reply"].clone()).unwrap();
-    assert_eq!(reply.reference, originals[1]);
-    assert!(matches!(reply.receipt, Receipt::Unavailable { .. }));
     for original in originals {
         let saved = timer
             .block_on(h.host_store.operation_observation(&original))
@@ -717,6 +721,16 @@ fn returned_scene(cx: &mut TestAppContext, mode: Mode) {
         Mode::Normal => assert!(
             matches!(reply.receipt, Receipt::Recorded { outcome: OperationOutcome::Returned { value }, .. } if value == json!("saved"))
         ),
+        Mode::Envelope => {
+            assert!(serde_json::to_vec(&outcome).unwrap().len() > 1024 * 1024);
+            assert!(matches!(
+                reply.receipt,
+                Receipt::Recorded {
+                    outcome: OperationOutcome::Returned { .. },
+                    ..
+                }
+            ));
+        }
         Mode::Unknown => assert!(matches!(
             reply.receipt,
             Receipt::Recorded {
@@ -763,7 +777,7 @@ fn actual_host_inexact_integer_preserves_journal_and_delivers_original_unavailab
     returned_scene(cx, Mode::Inexact);
 }
 #[gpui::test]
-fn actual_host_receipt_wrapper_overflow_delivers_original_unavailable(cx: &mut TestAppContext) {
+fn actual_host_receipt_near_its_limit_survives_the_ui_wrapper(cx: &mut TestAppContext) {
     returned_scene(cx, Mode::Envelope);
 }
 #[gpui::test]

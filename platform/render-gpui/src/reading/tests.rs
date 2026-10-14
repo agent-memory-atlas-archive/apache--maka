@@ -151,9 +151,7 @@ fn logical_identity_markers_preserve_original_scene_geometry(cx: &mut TestAppCon
         json!({"kind":"stack","key":"row","direction":"column","gap":3,"padding":5,"background":0,"style":{"width":{"unit":"fraction","value":0.8},"grow":1,"shrink":2,"minHeight":120},"children":[{"kind":"text","key":"nested","text":"Nested", "color":0}]}),
     ] {
         let source = scene_source(json!([child]));
-        let baseline = scene::compile(&source, Instant::now() + Duration::from_secs(1))
-            .unwrap()
-            .view;
+        let baseline = scene::compile(&source).unwrap().view;
         let reading = compile_recipe(&source, None);
         let mut shapes = vec![];
         for (reading, recipe) in [(false, baseline), (true, reading)] {

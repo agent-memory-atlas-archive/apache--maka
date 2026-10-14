@@ -71,6 +71,21 @@ export function handleEvent<N extends Node>(
   const state = previous;
   state.embedding = props;
   if (target === 'tui') {
+    observeBookmark(
+      state.recoveryCheckpoint,
+      input,
+      'recovery-checkpoint',
+      { through: state.restoreThrough, scope: state.historyScope },
+      (value) => {
+        const saved = value as { through?: number; scope?: string | null } | null;
+        return saved &&
+          Number.isSafeInteger(saved.through) &&
+          saved.through! >= 0 &&
+          (saved.scope === null || (typeof saved.scope === 'string' && saved.scope.length <= 4096))
+          ? { through: saved.through!, scope: saved.scope }
+          : null;
+      },
+    );
     if (input.kind === 'raw' && input.key === 'navigation-checkpoint-retry')
       retryBookmark(state.bookmark);
     const restored = observeBookmark(
