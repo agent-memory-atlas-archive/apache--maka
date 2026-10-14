@@ -238,6 +238,7 @@ fn actual_reading_tail_checks_wheel_and_completed_selection_before_whole_scene_p
             let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
             scene.app.borrow_mut().dispatch(&scene.root, revision, "tail", Value::Null).unwrap();
             cx.update_window(scene.window, |_, window, cx| {
+                scene.commit_in(window, cx).unwrap();
                 scene.app.borrow_mut().capture_actions(&scene.root, |target| scene.resources.borrow_mut().capture(target, window, cx)).unwrap();
             }).unwrap();
             let task = scene.app.borrow_mut().start_task(&scene.root).unwrap().unwrap();
@@ -268,6 +269,7 @@ fn actual_reading_tail_checks_wheel_and_completed_selection_before_whole_scene_p
                 assert_eq!(scene.app.borrow().frame(&scene.root).unwrap().state["observation"]["viewport"]["atEnd"], true);
                 assert_eq!(scene.surface.update(cx, |surface, cx| surface.deliver_action_results(window, cx)).unwrap(), 1);
             }).unwrap();
+            scene.settle(cx);
             let state = scene.app.borrow().frame(&scene.root).unwrap().state.clone();
             assert_eq!(state["outcome"]["status"], if change == "none" { "succeeded" } else { "stale" });
             assert_eq!(state["source"], if change == "none" { "Replacement source" } else { "Original selection 中文" });

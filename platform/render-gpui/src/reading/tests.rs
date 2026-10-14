@@ -109,11 +109,12 @@ impl Render for Harness {
 }
 fn input() -> LiveInput {
     LiveInput::new(
-        Rc::new(RefCell::new(Some(Input(Rc::new(|_, _, _, _| {
-            Ok(Default::default())
+        Rc::new(RefCell::new(Some(Input::testing(Rc::new(|_, _, _, _| {
+            Ok(())
         }))))),
         crate::NativeBudget::default(),
         std::sync::Arc::new(maka_capabilities::call::Resources::default()),
+        || {},
     )
 }
 fn scene_source(children: Value) -> Value {
@@ -137,7 +138,7 @@ fn compile_recipe(source: &Value, command: Option<ReadingCommand>) -> Rc<dyn Wid
 fn empty_slots() -> Slots {
     Slots::new(
         vec![],
-        Input(Rc::new(|_, _, _, _| Ok(Default::default()))),
+        Input::testing(Rc::new(|_, _, _, _| Ok(()))),
         |_, _, _| unreachable!(),
     )
 }
@@ -237,6 +238,8 @@ fn original_markdown_completed_selection_and_owner_gap_stay_in_reading_scope(
         selectable: true,
         disabled: false,
         focus_on_pointer: true,
+                    open_web_links: true,
+                    bubble_links: true,
     };
     let source = scene_source(
         json!([{"kind":"component","key":"document","binding":"markdown","member":0,"props":serde_json::to_value(&props).unwrap(),"on":{}}]),
@@ -260,7 +263,7 @@ fn original_markdown_completed_selection_and_owner_gap_stay_in_reading_scope(
         recipe.commit(state.as_mut(), window, cx);
         let slots = Slots::new(
             vec!["document".into()],
-            Input(Rc::new(|_, _, _, _| Ok(Default::default()))),
+            Input::testing(Rc::new(|_, _, _, _| Ok(()))),
             move |_, window, cx| {
                 markdown.render(markdown_state.as_ref(), &empty_slots(), window, cx)
             },
@@ -271,7 +274,7 @@ fn original_markdown_completed_selection_and_owner_gap_stay_in_reading_scope(
         let mut outer_state = outer.create(input(), window, cx);
         outer.presentation(outer_state.as_mut(), true, window, cx);
         outer.commit(outer_state.as_mut(), window, cx);
-        let outer_slots = Slots::new(vec!["nested".into()], Input(Rc::new(|_, _, _, _| Ok(Default::default()))),
+        let outer_slots = Slots::new(vec!["nested".into()], Input::testing(Rc::new(|_, _, _, _| Ok(()))),
             move |_, window, cx| recipe.render(state.as_ref(), &slots, window, cx));
         Harness {
             recipe: outer,
@@ -500,7 +503,9 @@ fn model_button_viewport_reveals_every_choice_in_both_directions(cx: &mut TestAp
 }
 
 #[gpui::test]
-fn native_commands_settle_only_on_paint_and_observations_do_not_poll(cx: &mut TestAppContext) {
+fn native_commands_settle_only_on_paint_and_unchanged_paint_does_not_republish(
+    cx: &mut TestAppContext,
+) {
     cx.with_paused_automatic_drawing(|cx| {
         let mut source = scene_source(json!([
             {"kind":"text","key":"first","text":"First","color":0,"style":{"height":{"unit":"pixels","value":160},"shrink":0}},
@@ -509,11 +514,12 @@ fn native_commands_settle_only_on_paint_and_observations_do_not_poll(cx: &mut Te
         ]));
         let observations = Rc::new(RefCell::new(Vec::new()));
         let out = observations.clone();
-        let live = LiveInput::new(Rc::new(RefCell::new(Some(Input(Rc::new(move |key, value, _, _| {
+        let live = LiveInput::new(Rc::new(RefCell::new(Some(Input::testing(Rc::new(move |key, value, _, _| {
             assert_eq!(key, OBSERVED);
             out.borrow_mut().push(serde_json::from_value::<ReadingObservation>(value).unwrap());
-            Ok(Default::default())
-        }))))), crate::NativeBudget::default(), std::sync::Arc::new(maka_capabilities::call::Resources::default()));
+            Ok(())
+        }))))), crate::NativeBudget::default(), std::sync::Arc::new(maka_capabilities::call::Resources::default()),
+|| {},);
         let initial = compile_recipe(&source, None);
         let (view, window_cx) = cx.add_window_view(move |window, cx| {
             let mut state = initial.create(live, window, cx);
@@ -522,7 +528,9 @@ fn native_commands_settle_only_on_paint_and_observations_do_not_poll(cx: &mut Te
             Harness { recipe: initial, state, slots: empty_slots(), renders: Default::default(), block_long_press: Default::default(), foreground: None }
         });
         window_cx.update(|window, cx| window.draw(cx).clear(cx));
-        assert!(observations.borrow().is_empty(), "paint must not call a plugin");
+        // The callback acknowledges transfer to the Rust publication owner;
+        // guest execution is covered with the actual background backend.
+        assert!(observations.borrow().last().is_some_and(|value| value.viewport.is_some()));
         window_cx.update(|window, cx| { window.simulate_next_frame(cx); });
         assert!(observations.borrow().last().unwrap().viewport.as_ref().unwrap().at_end);
         let state = window_cx.update(|_, cx| owner(view.read(cx).state.as_ref()).clone());

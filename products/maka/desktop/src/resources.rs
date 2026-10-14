@@ -26,7 +26,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     rc::Rc,
 };
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::Sender;
 
 /// Actual outstanding renderer resources, not a frame-count or logical-close
 /// heuristic. A lease must be held by every retained native object/callback.
@@ -34,7 +34,7 @@ struct Scope {
     mount: Mount,
     leases: Cell<usize>,
     detached: Cell<bool>,
-    wake: UnboundedSender<()>,
+    wake: Sender<()>,
     workers: std::sync::Arc<maka_capabilities::call::Resources>,
 }
 impl Scope {
@@ -54,7 +54,7 @@ impl Scope {
     fn detach(&self) {
         let _ = self.workers.seal();
         if !self.detached.replace(true) && self.leases.get() == 0 {
-            let _ = self.wake.send(());
+            let _ = self.wake.try_send(());
         }
     }
     fn ready(&self) -> bool {
@@ -74,7 +74,7 @@ impl Drop for Resource {
         if self.0.ready() {
             // The owner thread processes the receipt later, after the native
             // destructor returns. No Application/GPUI mutation from Drop.
-            let _ = self.0.wake.send(());
+            let _ = self.0.wake.try_send(());
         }
     }
 }
@@ -107,14 +107,15 @@ struct OwnerWitness {
 }
 impl NativeInstance {
     pub fn deactivate(&mut self, window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
-        if self.input.0.borrow_mut().take().is_some() {
+        self.input.observations.close();
+        if self.input.current.borrow_mut().take().is_some() {
             self.recipe.deactivate(self.state.as_mut(), window, cx);
         }
     }
 }
 impl Drop for NativeInstance {
     fn drop(&mut self) {
-        self.input.0.borrow_mut().take();
+        self.input.current.borrow_mut().take();
     }
 }
 
@@ -124,11 +125,16 @@ pub(super) struct NativeResources {
     // The root also owns a platform window. Renderer-resource release alone
     // cannot confirm its cleanup; retain that fence pending a platform receipt.
     surface: Mount,
+    binding: Option<(
+        gpui_kit::AnyWindowHandle,
+        gpui_kit::WeakEntity<super::Surface>,
+    )>,
     removed: bool,
     platform_confirmed: bool,
     pub surface_closed: bool,
     scopes: BTreeMap<String, Rc<Scope>>,
-    wake: UnboundedSender<()>,
+    preparation_failed: BTreeMap<String, String>,
+    wake: Sender<()>,
 }
 impl NativeResources {
     #[cfg(test)]
@@ -153,7 +159,7 @@ impl NativeResources {
         let owner = self
             .owners
             .get_mut(&target.mount().id().to_string())
-            .filter(|owner| owner.input.0.borrow().is_some() && !self.removed)
+            .filter(|owner| owner.input.current.borrow().is_some() && !self.removed)
             .ok_or_else(|| Error::Invalid("native capture owner unavailable".into()))?;
         match target.output() {
             maka_plugin_core::contract::CaptureOutput::Resource { .. } => owner
@@ -198,7 +204,7 @@ impl NativeResources {
             .get(&target.mount().id().to_string())
             .filter(|owner| {
                 !self.removed
-                    && owner.input.0.borrow().is_some()
+                    && owner.input.current.borrow().is_some()
                     && Rc::ptr_eq(&owner.identity, &identity)
                     && owner.kind == recipe.type_id()
             })
@@ -207,15 +213,49 @@ impl NativeResources {
         };
         recipe.validate_continuation(owner.state.as_ref(), target, &witness.value, window, cx)
     }
-    pub fn new(surface: Mount, wake: UnboundedSender<()>) -> Self {
+    pub fn bind_surface(
+        &mut self,
+        window: gpui_kit::AnyWindowHandle,
+        surface: gpui_kit::WeakEntity<super::Surface>,
+    ) -> Result<(), Error> {
+        if self.removed {
+            return Err(Error::Invalid("original native surface removed".into()));
+        }
+        match &self.binding {
+            Some((original, entity))
+                if original.window_id() != window.window_id()
+                    || entity.entity_id() != surface.entity_id() =>
+            {
+                Err(Error::Invalid(
+                    "native surface binding owner mismatch".into(),
+                ))
+            }
+            Some(_) => Ok(()),
+            None => {
+                self.binding = Some((window, surface));
+                Ok(())
+            }
+        }
+    }
+    pub fn surface_binding(
+        &self,
+    ) -> Option<(
+        gpui_kit::AnyWindowHandle,
+        gpui_kit::WeakEntity<super::Surface>,
+    )> {
+        self.binding.clone()
+    }
+    pub fn new(surface: Mount, wake: Sender<()>) -> Self {
         Self {
             budget: super::widgets::NativeBudget::default(),
             surface,
+            binding: None,
             removed: false,
             platform_confirmed: false,
             surface_closed: false,
             owners: BTreeMap::new(),
             scopes: BTreeMap::new(),
+            preparation_failed: BTreeMap::new(),
             wake,
         }
     }
@@ -232,12 +272,16 @@ impl NativeResources {
                         let wake = self.wake.clone();
                         std::sync::Arc::new(maka_capabilities::call::Resources::with_wake(
                             move || {
-                                let _ = wake.send(());
+                                let _ = wake.try_send(());
                             },
                         ))
                     },
                 })
             })
+    }
+    pub fn preparation_failed(&mut self, mount: &Mount, reason: String) {
+        self.preparation_failed
+            .insert(mount.id().to_string(), reason);
     }
     pub fn prepare_scope(&mut self, mount: &Mount) {
         self.scope(mount);
@@ -258,7 +302,14 @@ impl NativeResources {
         cx: &mut gpui_kit::App,
     ) -> Result<(), Error> {
         let visible: BTreeSet<_> = application
-            .mounted_subtree(&self.surface)?
+            .mounted_subtree(&self.surface)
+            .or_else(|error| {
+                if application.is_retiring(&self.surface) {
+                    Ok(vec![])
+                } else {
+                    Err(error)
+                }
+            })?
             .into_iter()
             .map(|mount| mount.id().to_string())
             .collect();
@@ -288,12 +339,13 @@ impl NativeResources {
         application: &mut Application<V>,
     ) -> Result<(), Error> {
         let result = application.retire(&self.surface);
+        self.binding = None;
         self.removed = true;
         self.owners.clear();
         for scope in self.scopes.values() {
             scope.detach();
         }
-        let _ = self.wake.send(());
+        let _ = self.wake.try_send(());
         result
     }
     pub fn confirm_platform_cleanup(&mut self) {
@@ -331,6 +383,10 @@ impl NativeResources {
         // The common adapter orders leaves before parents. Parents with still
         // outstanding children remain fenced even if their own leases released.
         for mount in retired {
+            if let Some(reason) = self.preparation_failed.get(&mount.id().to_string()) {
+                application.close(&mount, Err(reason.clone()))?;
+                continue;
+            }
             if (mount == self.surface && !(self.removed && self.platform_confirmed))
                 || visible.contains(&mount.id().to_string())
                 || application.mount_root(&mount)? != self.surface

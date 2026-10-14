@@ -68,6 +68,9 @@ pub(super) struct Paste {
     clipboard: Option<String>,
 }
 impl Paste {
+    pub fn will_accept(&self, request: Option<&str>) -> bool {
+        self.selection.will_accept(request)
+    }
     pub fn pending(&self) -> bool {
         self.batch.is_some() || self.read.is_some()
     }
@@ -139,6 +142,7 @@ impl Paste {
             _memory: memory,
         });
         Some(NativeInput {
+            replaceable: false,
             key: "file_choose".into(),
             value: serde_json::to_value(choose).unwrap(),
         })
@@ -336,6 +340,7 @@ impl Paste {
             self.batch = None;
         }
         Some(NativeInput {
+            replaceable: false,
             key: "file_observe".into(),
             value: serde_json::to_value(observation).unwrap(),
         })

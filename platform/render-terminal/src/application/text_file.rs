@@ -28,11 +28,24 @@ use std::{any::Any, collections::BTreeMap, rc::Rc};
 struct Recipe(TextFileProps, Option<std::path::PathBuf>);
 fn observation(owner: &mut TextFile) -> Option<NativeInput> {
     owner.observe().map(|value| NativeInput {
+        replaceable: false,
         key: "changed".into(),
         value: serde_json::to_value(value).unwrap(),
     })
 }
 impl Widget for Recipe {
+    fn publication_capacity(&self, state: &dyn Any) -> Vec<(&'static str, usize)> {
+        if state
+            .downcast_ref::<TextFile>()
+            .unwrap()
+            .will_update(&self.0)
+        {
+            vec![("changed", 128 * 1024); 2]
+        } else {
+            Vec::new()
+        }
+    }
+
     fn create(&self, context: NativeContext) -> Box<dyn Any> {
         Box::new(TextFile::new(
             self.1.clone(),

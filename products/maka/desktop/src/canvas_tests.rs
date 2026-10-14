@@ -56,6 +56,7 @@ impl Scene {
         ),
         registry: maka_ui_runtime::NativeRegistry<dyn widgets::Widget>,
     ) -> Self {
+        cx.executor().allow_parking();
         let mut application = Application::new(
             &input,
             packages,
@@ -65,9 +66,12 @@ impl Scene {
             Default::default(),
         )
         .unwrap();
-        let root = application.mount_launch(json!({"mode":mode})).unwrap();
+        application.defer_native_commit();
+        let root = timer
+            .block_on(application.mount_bootstrap_prepared(json!({"mode":mode})))
+            .unwrap();
         let app = Rc::new(RefCell::new(application));
-        let (wake, receipts) = tokio::sync::mpsc::unbounded_channel();
+        let (wake, receipts) = tokio::sync::mpsc::channel(1);
         let resources = Rc::new(RefCell::new(resources::NativeResources::new(
             root.clone(),
             wake,
@@ -116,6 +120,7 @@ impl Scene {
         scene
     }
     fn draw(&self, cx: &mut TestAppContext) {
+        self.settle(cx);
         cx.update_window(self.window, |_, w, cx| {
             self.surface
                 .update(cx, |s, cx| s.sync_native(w, cx).unwrap());
@@ -124,6 +129,27 @@ impl Scene {
         })
         .unwrap();
         cx.run_until_parked();
+    }
+    fn settle(&self, cx: &mut TestAppContext) {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            cx.run_until_parked();
+            cx.update_window(self.window, |_, window, cx| {
+                let result = self.surface.update(cx, |s, cx| s.sync_native(window, cx));
+                if let Err(error) = result {
+                    eprintln!("original Canvas candidate rejected: {error}");
+                }
+            })
+            .unwrap();
+            if !self.app.borrow().ui_pending() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < until,
+                "original Canvas job did not finish"
+            );
+            std::thread::park_timeout(std::time::Duration::from_millis(1));
+        }
     }
     fn state(&self) -> Value {
         self.app.borrow().frame(&self.root).unwrap().state.clone()
@@ -142,6 +168,7 @@ impl Scene {
             );
         })
         .unwrap();
+        self.settle(cx);
     }
     fn move_to(&self, cx: &mut TestAppContext, x: f32, y: f32) {
         cx.update_window(self.window, |_, w, cx| {
@@ -169,11 +196,23 @@ impl Scene {
             );
         })
         .unwrap();
+        self.settle(cx);
     }
     fn close(self, cx: &mut TestAppContext) {
+        let app = self.app.clone();
         cx.update_window(self.window, |_, w, _| w.remove_window())
             .unwrap();
-        cx.run_until_parked();
+        drop(self);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while cx.update(|cx| cx.try_global::<actions::Owner>().is_some()) {
+            cx.run_until_parked();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "original application owner did not finish actual cleanup"
+            );
+            std::thread::park_timeout(std::time::Duration::from_millis(1));
+        }
+        app.borrow_mut().shutdown().unwrap();
     }
 }
 fn timer() -> tokio::runtime::Runtime {
@@ -222,6 +261,7 @@ fn ordinary_dynamic_canvas_rules_commit_real_native_drag_keyboard_and_accessibil
     .unwrap();
     scene.draw(cx);
     cx.simulate_keystrokes(scene.window, "left");
+    scene.settle(cx);
     assert_eq!(scene.state()["x"], 340);
     scene.draw(cx);
     scene.down(cx, 350., 200.);
@@ -255,6 +295,7 @@ fn ordinary_dynamic_canvas_rules_commit_real_native_drag_keyboard_and_accessibil
             data: None,
         },
     );
+    scene.settle(cx);
     assert_eq!(scene.state()["last"]["kind"], "activate");
     drop(original);
     scene.close(cx);
@@ -270,12 +311,12 @@ fn canvas_callback_can_reconcile_original_owner_and_revoke_pending_defaults(
         assert_eq!(
             scene.state()["calls"],
             1,
-            "rule commits while original native callback is active"
+            "the original asynchronous rule commits against its captured input"
         );
         cx.update_window(scene.window, |_, w, cx| {
             assert!(
                 w.focused(cx).is_none(),
-                "postcommit revocation prevents pending native focus"
+                "committed revocation clears the original native focus"
             )
         })
         .unwrap();
@@ -284,7 +325,7 @@ fn canvas_callback_can_reconcile_original_owner_and_revoke_pending_defaults(
         assert_eq!(
             scene.state()["calls"],
             1,
-            "pending gesture was never admitted"
+            "a revoked gesture cannot publish a later business drop"
         );
         scene.close(cx);
     }
@@ -300,7 +341,10 @@ fn canvas_failure_preserves_paint_and_only_retirement_closes_native_admission(
             .update_window(scene.window, |_, w, _| {
                 w.painted_quads()
                     .into_iter()
-                    .filter(|q| q.bounds.size.width > gpui_kit::ScaledPixels(200.))
+                    .filter(|q| {
+                        q.bounds.size.width > gpui_kit::ScaledPixels(200.)
+                            && !q.background.is_transparent()
+                    })
                     .map(|q| (q.bounds, q.background))
                     .collect::<Vec<_>>()
             })
@@ -313,19 +357,24 @@ fn canvas_failure_preserves_paint_and_only_retirement_closes_native_admission(
         assert_eq!(
             scene.resources.borrow().owners[&scene.root.id().to_string()]
                 .input
-                .0
+                .current
                 .borrow()
                 .is_none(),
             retiring
         );
-        cx.update_window(scene.window, |_, w, cx| assert!(w.focused(cx).is_none()))
-            .unwrap();
+        cx.update_window(scene.window, |_, w, cx| {
+            assert_eq!(w.focused(cx).is_none(), retiring)
+        })
+        .unwrap();
         scene.draw(cx);
         let after = cx
             .update_window(scene.window, |_, w, _| {
                 w.painted_quads()
                     .into_iter()
-                    .filter(|q| q.bounds.size.width > gpui_kit::ScaledPixels(200.))
+                    .filter(|q| {
+                        q.bounds.size.width > gpui_kit::ScaledPixels(200.)
+                            && !q.background.is_transparent()
+                    })
                     .map(|q| (q.bounds, q.background))
                     .collect::<Vec<_>>()
             })
@@ -338,7 +387,7 @@ fn canvas_failure_preserves_paint_and_only_retirement_closes_native_admission(
         assert_eq!(
             scene.resources.borrow().owners[&scene.root.id().to_string()]
                 .input
-                .0
+                .current
                 .borrow()
                 .is_none(),
             retiring,
@@ -346,7 +395,11 @@ fn canvas_failure_preserves_paint_and_only_retirement_closes_native_admission(
         );
         scene.move_to(cx, 380., 200.);
         scene.up(cx, 380., 200.);
-        assert_eq!(scene.state()["revision"], 0);
+        assert_eq!(scene.state()["revision"], if retiring { 0 } else { 1 });
+        if !retiring {
+            assert_eq!(scene.state()["last"]["kind"], "drop");
+            assert_eq!(scene.state()["last"]["target"], "review");
+        }
         scene.close(cx);
     }
 }
@@ -366,9 +419,16 @@ fn canvas_tab_and_copy_defaults_obey_committed_plugin_veto(cx: &mut TestAppConte
             .position(|p| p.manifest().id == "dynamic.canvas")
             .unwrap();
         let old = packages.remove(index);
-        let mut source = std::str::from_utf8(old.file("index.mjs").unwrap()).unwrap()
-            .replace("label: 'Review lane', tabIndex: -1", "label: 'Review lane', tabIndex: 0")
-            .replace("const decision = {};", "const decision = {};if(event.kind==='key_down'&&((event.key==='tab'&&state.mode==='tab-veto')||event.key==='c'))decision.preventDefault=true;");
+        let mut source = std::str::from_utf8(old.file("index.mjs").unwrap())
+            .unwrap()
+            .replace(
+                "label: 'Review lane', tabIndex: -1",
+                "label: 'Review lane', tabIndex: 0",
+            )
+            .replace(
+                "draggable: true,",
+                "draggable: true, tabNavigation: state.mode !== 'tab-veto', nativeCopy: false,",
+            );
         let mut declaration = old.manifest().application.clone().unwrap();
         if reading {
             use maka_plugin_core::{
@@ -440,10 +500,11 @@ app.event = (state, input) => {
             .unwrap();
         let before = scene.state()["calls"].as_u64().unwrap();
         cx.simulate_keystrokes(scene.window, "tab");
+        scene.settle(cx);
         assert_eq!(
             scene.state()["calls"],
             before + 1,
-            "the actual plugin admits the key first"
+            "the plugin receives the original accepted key after the native default decision"
         );
         assert_eq!(scene.state()["last"]["key"], "tab");
         assert_eq!(scene.state()["mode"], mode);
@@ -467,6 +528,7 @@ app.event = (state, input) => {
         });
         let before = scene.state()["calls"].as_u64().unwrap();
         cx.simulate_keystrokes(scene.window, "cmd-c");
+        scene.settle(cx);
         assert_eq!(scene.state()["calls"], before + 1);
         assert_eq!(scene.state()["last"]["key"], "c");
         assert_eq!(

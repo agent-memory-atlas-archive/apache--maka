@@ -20,13 +20,14 @@
 #[path = "reconciliation.rs"]
 mod reconciliation;
 
+use super::Application;
 use super::{support, timer};
 use maka_event_log::{
     EventLog,
     root::{RootNamespaces, RootOwner},
 };
 use maka_plugin_core::composition::PresentationTarget;
-use maka_ui_runtime::{Application, NativeCapability, NativeExport, NativeRegistry};
+use maka_ui_runtime::{NativeCapability, NativeExport, NativeRegistry};
 use serde_json::json;
 use std::{cell::Cell, collections::BTreeMap, rc::Rc, sync::Arc, time::Duration};
 use uuid::Uuid;
@@ -178,7 +179,8 @@ fn missing_or_wrong_selected_presentation_never_activates_native_code() {
         let mut native = NativeRegistry::<()>::default()
             .with_scene_compiler(
                 support::scene::language(PresentationTarget::Desktop),
-                support::scene::compile::<()>,
+                support::scene::prepare,
+                support::scene::finish::<()>,
             )
             .unwrap();
         native
@@ -253,7 +255,8 @@ fn unavailable_native_implementation_is_rejected_before_an_earlier_factory_execu
     let mut native = NativeRegistry::<()>::default()
         .with_scene_compiler(
             support::scene::language(PresentationTarget::Desktop),
-            support::scene::compile::<()>,
+            support::scene::prepare,
+            support::scene::finish::<()>,
         )
         .unwrap();
     native

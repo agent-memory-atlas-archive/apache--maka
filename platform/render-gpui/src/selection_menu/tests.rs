@@ -35,11 +35,12 @@ const BACKGROUND: &str = "  background\n中文🙂  ";
 const FOREGROUND: &str = "  foreground\n选中🙂  ";
 fn input() -> LiveInput {
     LiveInput::new(
-        Rc::new(RefCell::new(Some(Input(Rc::new(|_, _, _, _| {
-            Ok(Default::default())
+        Rc::new(RefCell::new(Some(Input::testing(Rc::new(|_, _, _, _| {
+            Ok(())
         }))))),
         crate::NativeBudget::default(),
         Arc::new(maka_capabilities::call::Resources::default()),
+        || {},
     )
 }
 fn text() -> TextAppearance {
@@ -193,11 +194,11 @@ fn fixture_with_ax(
                 "bg-menu".into(),
                 "fg-menu".into(),
             ],
-            Input(Rc::new(|_, _, _, _| Ok(Default::default()))),
+            Input::testing(Rc::new(|_, _, _, _| Ok(()))),
             move |key, window, cx| {
                 let empty = Slots::new(
                     vec![],
-                    Input(Rc::new(|_, _, _, _| Ok(Default::default()))),
+                    Input::testing(Rc::new(|_, _, _, _| Ok(()))),
                     |_, _, _| unreachable!(),
                 );
                 match key {
@@ -530,7 +531,7 @@ impl Render for Carrier {
                         self.state.as_ref(),
                         &Slots::new(
                             vec![],
-                            Input(Rc::new(|_, _, _, _| Ok(Default::default()))),
+                            Input::testing(Rc::new(|_, _, _, _| Ok(()))),
                             |_, _, _| unreachable!(),
                         ),
                         window,

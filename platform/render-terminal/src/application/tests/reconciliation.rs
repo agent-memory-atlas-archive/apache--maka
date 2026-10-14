@@ -165,8 +165,8 @@ fn root_handoff_keeps_original_job_and_requires_exact_restoration_receipt() {
             ))
             .unwrap();
         draw(&mut tui, 30, 12);
-        tui.input(key(KeyCode::Enter)).unwrap();
-        tui.pump().unwrap();
+        tui.input_settled(key(KeyCode::Enter)).unwrap();
+        tui.pump_settled().unwrap();
         runtime.block_on(async {
             tokio::time::timeout(Duration::from_secs(5), started.acquire())
                 .await
@@ -194,7 +194,7 @@ fn root_handoff_keeps_original_job_and_requires_exact_restoration_receipt() {
         tui.adopt_update(update, vec![]).unwrap();
         assert!(tui.requires_surface_replacement());
         assert!(tui.try_replace_surface(json!({})).is_err());
-        tui.pump().unwrap();
+        tui.pump_settled().unwrap();
         assert!(tui.application.frame(&old).is_ok());
         assert_eq!(tui.jobs.len(), 1);
         // Low-level owner receipt seam: this seam alone does not prove actual Guard/PTY restoration.
@@ -202,7 +202,13 @@ fn root_handoff_keeps_original_job_and_requires_exact_restoration_receipt() {
         assert!(tui.application.frame(&old).is_err());
         assert_eq!(tui.jobs.len(), 1);
         assert_eq!(settled.load(Ordering::SeqCst), 0);
-        let resumed = tui.try_replace_surface(json!({})).unwrap();
+        let resumed = if replace_provider {
+            // This original provider still holds accepted work; waiting for a
+            // replacement here would hide the boundary the fixture must prove.
+            tui.try_replace_surface(json!({})).unwrap()
+        } else {
+            tui.replace_surface_settled(json!({})).unwrap()
+        };
         assert_eq!(resumed, !replace_provider);
         if replace_provider {
             // Only the provider actually holding accepted work gates its replacement.
@@ -215,7 +221,7 @@ fn root_handoff_keeps_original_job_and_requires_exact_restoration_receipt() {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             assert!(Instant::now() < deadline);
-            tui.pump().unwrap();
+            tui.pump_settled().unwrap();
             if resumed {
                 if tui.jobs.is_empty() {
                     break;
@@ -239,7 +245,7 @@ fn root_handoff_keeps_original_job_and_requires_exact_restoration_receipt() {
         assert!(!tui.application.is_retiring(&fresh));
         draw(&mut tui, 30, 12);
         tui.surface_closed(&fresh, Ok(())).unwrap();
-        tui.shutdown().unwrap();
+        tui.shutdown_settled().unwrap();
         drop(tui);
         runtime
             .block_on(Arc::try_unwrap(store).ok().unwrap().close())
@@ -277,7 +283,7 @@ fn unrelated_adoption_then_original_realm_fault_is_exit_not_handoff() {
         let old = tui.surface();
         if fault_first {
             draw(&mut tui, 30, 12);
-            assert!(tui.input(key(KeyCode::Enter)).is_err());
+            assert!(tui.input_settled(key(KeyCode::Enter)).is_err());
         }
         let mut extra = input.instances["surface"].clone();
         extra.key = Uuid::new_v4();
@@ -289,16 +295,16 @@ fn unrelated_adoption_then_original_realm_fault_is_exit_not_handoff() {
             .block_on(tui.load_committed_update(next).unwrap())
             .unwrap();
         tui.adopt_update(update, vec![]).unwrap();
-        tui.pump().unwrap();
+        tui.pump_settled().unwrap();
         if !fault_first {
             draw(&mut tui, 30, 12);
-            assert!(tui.input(key(KeyCode::Enter)).is_err());
+            assert!(tui.input_settled(key(KeyCode::Enter)).is_err());
         }
         assert!(tui.application.is_retiring(&old));
         assert!(!tui.requires_surface_replacement());
         tui.surface_closed(&old, Ok(())).unwrap();
         assert!(tui.try_replace_surface(json!({})).is_err());
-        tui.shutdown().unwrap();
+        tui.shutdown_settled().unwrap();
         drop(tui);
         runtime
             .block_on(Arc::try_unwrap(store).ok().unwrap().close())
@@ -346,9 +352,9 @@ fn failed_original_restore_blocks_handoff_and_duplicate_receipt_cannot_clear_it(
     assert!(!tui.can_shutdown());
     // Only an explicit successful original Guard restoration retry may recover it.
     tui.surface_recovered(&old).unwrap();
-    assert!(tui.try_replace_surface(json!({})).unwrap());
+    assert!(tui.replace_surface_settled(json!({})).unwrap());
     tui.surface_closed(&tui.surface(), Ok(())).unwrap();
-    tui.shutdown().unwrap();
+    tui.shutdown_settled().unwrap();
     drop(tui);
     runtime
         .block_on(Arc::try_unwrap(store).ok().unwrap().close())
@@ -392,13 +398,13 @@ fn failed_original_native_drop_never_creates_replacement_root() {
     let creates = Arc::new(AtomicUsize::new(0));
     let count = creates.clone();
     let native = NativeRegistry::with_surface(PresentationTarget::Tui)
-        .with_scene_compiler(scene::language(), move |_, _| {
-            maka_ui_runtime::NativeView::<dyn Widget>::new(
-                Rc::new(View(count.clone())),
-                BTreeMap::new(),
-                vec![],
-            )
-        })
+        .with_scene_compiler(
+            scene::language(),
+            move |_, _| {
+                maka_ui_runtime::PreparedScene::new(View(count.clone()), BTreeMap::new(), vec![])
+            },
+            |prepared| prepared.finish::<View, dyn Widget>(|recipe| Rc::new(recipe)),
+        )
         .unwrap();
     let mut tui = runtime
         .block_on(Presenter::start_from_store(
@@ -423,7 +429,7 @@ fn failed_original_native_drop_never_creates_replacement_root() {
     tui.adopt_update(update, vec![]).unwrap();
     assert!(tui.surface_closed(&old, Ok(())).is_err());
     for _ in 0..3 {
-        assert!(tui.pump().is_err());
+        assert!(tui.pump_settled().is_err());
         assert!(tui.try_replace_surface(json!({})).is_err());
     }
     assert_eq!(creates.load(Ordering::SeqCst), 1);
@@ -503,7 +509,7 @@ fn actual_guard_restores_original_tty_before_reentering_for_fresh_root() {
     assert!(receipt.is_ok());
     assert_eq!(flags(), initial);
     tui.surface_closed(&old, receipt).unwrap();
-    assert!(tui.try_replace_surface(json!({})).unwrap());
+    assert!(tui.replace_surface_settled(json!({})).unwrap());
     let fresh = tui.surface();
     assert_ne!(fresh, old);
     let mut screen = guard.setup("test needs a PTY").unwrap();
@@ -517,7 +523,7 @@ fn actual_guard_restores_original_tty_before_reentering_for_fresh_root() {
     assert!(receipt.is_ok());
     assert_eq!(flags(), initial);
     tui.surface_closed(&fresh, receipt).unwrap();
-    tui.shutdown().unwrap();
+    tui.shutdown_settled().unwrap();
     drop(tui);
     runtime
         .block_on(Arc::try_unwrap(store).ok().unwrap().close())
@@ -546,13 +552,13 @@ fn committed_repair_returns_from_recovery_only_after_its_original_surface_closes
         ))
         .unwrap();
     draw(&mut tui, 30, 12);
-    tui.input(key(KeyCode::Enter)).unwrap();
+    tui.input_settled(key(KeyCode::Enter)).unwrap();
     assert!(tui.requires_surface_replacement());
     tui.surface_closed(&tui.surface(), Ok(())).unwrap();
-    assert!(tui.try_replace_surface(json!({})).unwrap());
+    assert!(tui.replace_surface_settled(json!({})).unwrap());
     let recovery = tui.surface();
     draw(&mut tui, 30, 12);
-    tui.input(key(KeyCode::Enter)).unwrap();
+    tui.input_settled(key(KeyCode::Enter)).unwrap();
     assert_eq!(tui.application.frame(&recovery).unwrap().state["count"], 1);
     let index = packages
         .iter()
@@ -587,22 +593,22 @@ fn committed_repair_returns_from_recovery_only_after_its_original_surface_closes
         !tui.requires_surface_replacement(),
         "unchanged recovery must survive the input commit"
     );
-    tui.pump().unwrap();
+    tui.pump_settled().unwrap();
     assert_eq!(tui.deployment_status().effective, Some(repaired));
     assert!(tui.requires_surface_replacement());
     assert!(tui.try_replace_surface(json!({})).is_err());
     tui.surface_closed(&recovery, Ok(())).unwrap();
-    assert!(tui.try_replace_surface(json!({})).unwrap());
+    assert!(tui.replace_surface_settled(json!({})).unwrap());
     assert_eq!(
         tui.application.root_kind(&tui.surface()).unwrap(),
         RootKind::Launch
     );
     assert_ne!(tui.surface(), recovery);
     draw(&mut tui, 30, 12);
-    tui.input(key(KeyCode::Enter)).unwrap();
+    tui.input_settled(key(KeyCode::Enter)).unwrap();
     assert_eq!(tui.application.frame(&tui.root).unwrap().state["count"], 1);
     tui.surface_closed(&tui.surface(), Ok(())).unwrap();
-    tui.shutdown().unwrap();
+    tui.shutdown_settled().unwrap();
     drop(tui);
     runtime
         .block_on(Arc::try_unwrap(store).ok().unwrap().close())
@@ -672,7 +678,7 @@ fn failed_committed_launch_replacement_can_mount_ordinary_recovery() {
         assert!(tui.requires_surface_replacement());
         assert!(tui.try_replace_surface(json!({})).is_err());
         tui.surface_closed(&old, Ok(())).unwrap();
-        assert!(tui.try_replace_surface(json!({})).unwrap());
+        assert!(tui.replace_surface_settled(json!({})).unwrap());
         assert_eq!(
             tui.application.root_kind(&tui.surface()).unwrap(),
             RootKind::Recovery
@@ -688,10 +694,10 @@ fn failed_committed_launch_replacement_can_mount_ordinary_recovery() {
         );
         assert!(tui.deployment_status().error.is_some());
         draw(&mut tui, 30, 12);
-        tui.input(key(KeyCode::Enter)).unwrap();
+        tui.input_settled(key(KeyCode::Enter)).unwrap();
         assert_eq!(tui.application.frame(&tui.root).unwrap().state["count"], 1);
         tui.surface_closed(&tui.surface(), Ok(())).unwrap();
-        tui.shutdown().unwrap();
+        tui.shutdown_settled().unwrap();
         drop(tui);
         runtime
             .block_on(Arc::try_unwrap(store).ok().unwrap().close())
@@ -740,7 +746,7 @@ fn actual_guard_restores_failed_launch_before_entering_ordinary_recovery() {
     assert_eq!(flags() & libc::ICANON, 0);
     paint(&mut tui, &mut screen);
     let original = tui.surface();
-    tui.input(key(KeyCode::Enter)).unwrap();
+    tui.input_settled(key(KeyCode::Enter)).unwrap();
     assert!(tui.requires_surface_replacement());
     assert!(tui.try_replace_surface(json!({})).is_err());
     drop(screen);
@@ -748,7 +754,7 @@ fn actual_guard_restores_failed_launch_before_entering_ordinary_recovery() {
     assert!(receipt.is_ok());
     assert_eq!(flags(), initial);
     tui.surface_closed(&original, receipt).unwrap();
-    assert!(tui.try_replace_surface(json!({})).unwrap());
+    assert!(tui.replace_surface_settled(json!({})).unwrap());
     assert_eq!(
         tui.application.root_kind(&tui.surface()).unwrap(),
         RootKind::Recovery
@@ -757,7 +763,7 @@ fn actual_guard_restores_failed_launch_before_entering_ordinary_recovery() {
     let mut screen = guard.setup("actual recovery PTY required").unwrap();
     assert_eq!(flags() & libc::ICANON, 0);
     paint(&mut tui, &mut screen);
-    tui.input(key(KeyCode::Enter)).unwrap();
+    tui.input_settled(key(KeyCode::Enter)).unwrap();
     paint(&mut tui, &mut screen);
     assert_eq!(tui.application.frame(&tui.root).unwrap().state["count"], 1);
     drop(screen);
@@ -765,5 +771,5 @@ fn actual_guard_restores_failed_launch_before_entering_ordinary_recovery() {
     assert!(receipt.is_ok());
     assert_eq!(flags(), initial);
     tui.surface_closed(&tui.surface(), receipt).unwrap();
-    tui.shutdown().unwrap();
+    tui.shutdown_settled().unwrap();
 }

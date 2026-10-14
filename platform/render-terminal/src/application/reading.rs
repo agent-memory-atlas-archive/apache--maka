@@ -168,12 +168,31 @@ impl ReadingState {
         if self.published.as_ref() == Some(&observation) {
             return None;
         }
+        let replaceable = self.published.as_ref().is_some_and(|old| {
+            old.receipt == observation.receipt && old.pending_command == observation.pending_command
+        });
         self.published = Some(observation.clone());
         Some(NativeInput {
+            replaceable,
             key: OBSERVED.into(),
             value: serde_json::to_value(observation).expect("reading observation"),
         })
     }
+}
+#[cfg(test)]
+pub(super) fn current_observation(state: &dyn Any) -> serde_json::Value {
+    serde_json::to_value(
+        state
+            .downcast_ref::<SceneState>()
+            .unwrap()
+            .reading
+            .as_ref()
+            .unwrap()
+            .published
+            .as_ref()
+            .unwrap(),
+    )
+    .unwrap()
 }
 struct Reading {
     node: Node,
@@ -212,6 +231,20 @@ fn state_mut(state: &mut dyn Any) -> &mut SceneState {
         .expect("reading scene owner")
 }
 impl Widget for Reading {
+    fn publication_capacity(&self, state: &dyn Any) -> Vec<(&'static str, usize)> {
+        let state = state.downcast_ref::<SceneState>().unwrap();
+        let reading = state.reading.as_ref().unwrap();
+        if self
+            .command
+            .as_ref()
+            .is_some_and(|command| reading.last_command.as_ref() != Some(command))
+        {
+            vec![(OBSERVED, 1024 * 1024); 2]
+        } else {
+            Vec::new()
+        }
+    }
+
     fn cancel_pointer(&self, state: &mut dyn Any) {
         self.node.cancel_pointer(state);
     }
@@ -833,10 +866,11 @@ impl super::Presenter {
                     self.resources.observe(
                         &target.mount,
                         NativeInput {
+                            replaceable: false,
                             key: target.key.clone(),
                             value: json!({"kind":"activate"}),
                         },
-                    );
+                    )?;
                 }
             }
         }

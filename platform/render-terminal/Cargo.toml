@@ -32,13 +32,14 @@ uuid.workspace = true
 maka-event-log.workspace = true
 maka-transport.workspace = true
 ratatui.workspace = true
+ratatui-crossterm = { version = "0.1.2", default-features = false, features = ["unstable-backend-writer"] }
 pulldown-cmark.workspace = true
 apply-patch.workspace = true
 similar = "3.2.0"
 syntect = { version = "5.3.0", default-features = false, features = ["default-syntaxes", "regex-fancy"] }
 # Level-triggered Unix input retains unread keys when SIGWINCH is also ready.
 # The default mio source can return a resize while dropping the other readiness.
-crossterm = { workspace = true, features = ["use-dev-tty"] }
+crossterm = { workspace = true, features = ["use-dev-tty", "event-stream"] }
 futures-util.workspace = true
 tokio.workspace = true
 serde_json.workspace = true

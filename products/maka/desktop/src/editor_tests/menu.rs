@@ -599,9 +599,7 @@ fn retired_textarea_menu_rejects_old_painted_paste_callback_before_next_paint(
             .borrow_mut()
             .dispatch(&scene.root, revision, "toggle", serde_json::Value::Null)
             .unwrap();
-        scene
-            .surface
-            .update(cx, |surface, cx| surface.sync_native(window, cx).unwrap());
+        scene.settle_in(window, cx).unwrap();
         assert!(
             scene
                 .app
@@ -704,9 +702,7 @@ fn retired_textarea_menu_does_not_blur_focus_that_has_moved_to_another_editor(
             .borrow_mut()
             .dispatch(&scene.root, revision, "toggle", serde_json::Value::Null)
             .unwrap();
-        scene
-            .surface
-            .update(cx, |surface, cx| surface.sync_native(window, cx).unwrap());
+        scene.settle_in(window, cx).unwrap();
         assert!(external.is_focused(window));
         owner.update(cx, |owner, cx| {
             assert!(!owner.accepts_text_input(window, cx));

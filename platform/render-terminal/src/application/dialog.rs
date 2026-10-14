@@ -595,20 +595,20 @@ impl Presenter {
                         height,
                     );
 
-                    if appearance.anchor_to_background {
-                        if let Some(anchor) = deferred.anchor.map(|anchor| anchor.visible()) {
-                            body.x = anchor.x.clamp(full.x, full.right().saturating_sub(width));
-                            body.y = if anchor.y.saturating_sub(full.y) >= height {
-                                anchor.y - height
-                            } else if full.bottom().saturating_sub(anchor.bottom()) >= height {
-                                anchor.bottom()
-                            } else {
-                                anchor
-                                    .y
-                                    .saturating_sub(height)
-                                    .clamp(full.y, full.bottom().saturating_sub(height))
-                            };
-                        }
+                    if appearance.anchor_to_background
+                        && let Some(anchor) = deferred.anchor.map(|anchor| anchor.visible())
+                    {
+                        body.x = anchor.x.clamp(full.x, full.right().saturating_sub(width));
+                        body.y = if anchor.y.saturating_sub(full.y) >= height {
+                            anchor.y - height
+                        } else if full.bottom().saturating_sub(anchor.bottom()) >= height {
+                            anchor.bottom()
+                        } else {
+                            anchor
+                                .y
+                                .saturating_sub(height)
+                                .clamp(full.y, full.bottom().saturating_sub(height))
+                        };
                     }
                     if let Some(anchor) = deferred
                         .opening

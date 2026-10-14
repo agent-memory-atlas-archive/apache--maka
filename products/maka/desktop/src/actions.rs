@@ -32,6 +32,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     rc::Rc,
     sync::Arc,
+    task::{Wake, Waker},
 };
 type Connections = Arc<tokio::sync::Mutex<maka_transport::Connections>>;
 type Observer = Shared<LocalBoxFuture<'static, ()>>;
@@ -57,8 +58,14 @@ struct State {
 #[derive(Clone)]
 pub(super) struct Owner(Rc<State>);
 impl gpui_kit::Global for Owner {}
-fn application_scheduler(owner: &Owner) -> tokio::runtime::Handle {
-    owner.0.application.borrow().scheduler().clone()
+struct UiWake(tokio::sync::mpsc::Sender<()>);
+impl Wake for UiWake {
+    fn wake(self: Arc<Self>) {
+        let _ = self.0.try_send(());
+    }
+    fn wake_by_ref(self: &Arc<Self>) {
+        let _ = self.0.try_send(());
+    }
 }
 impl Owner {
     pub(super) fn retain_native(&self, resources: Rc<RefCell<super::resources::NativeResources>>) {
@@ -203,7 +210,7 @@ pub(super) fn own(
         }
         return Ok(owner.clone());
     }
-    let updates = match (
+    let mut updates = match (
         &connections,
         &caller,
         application.borrow().deployment_status().desired,
@@ -219,6 +226,12 @@ pub(super) fn own(
         ),
         _ => None,
     };
+    let (wake, mut wakes) = tokio::sync::mpsc::channel(1);
+    let waker = Waker::from(Arc::new(UiWake(wake)));
+    application.borrow_mut().set_waker(waker.clone());
+    if let Some(updates) = updates.as_mut() {
+        updates.set_waker(waker);
+    }
     let owner = Owner(Rc::new(State {
         application,
         jobs: RefCell::new(BTreeMap::new()),
@@ -233,43 +246,65 @@ pub(super) fn own(
         update_errors: RefCell::new(BTreeSet::new()),
     }));
     cx.set_global(owner.clone());
-    if owner.0.updates.borrow().is_some() {
-        let watched = Rc::downgrade(&owner.0);
-        let scheduler = application_scheduler(&owner);
-        cx.spawn(async move |cx| {
-            loop {
-                if scheduler
-                    .spawn(async { tokio::time::sleep(std::time::Duration::from_millis(30)).await })
-                    .await
-                    .is_err()
-                {
-                    break;
+    let watched = Rc::downgrade(&owner.0);
+    let executor = cx.background_executor().clone();
+    cx.spawn(async move |cx| {
+        loop {
+            let continuing = cx.update(|cx| {
+                let state = watched.upgrade()?;
+                if !cx.has_global::<Owner>() || state.draining.get() {
+                    return None;
                 }
-                let continuing = cx.update(|cx| {
-                    let Some(state) = watched.upgrade() else {
-                        return false;
-                    };
-                    let watched = Owner(state);
-                    if watched.0.quitting.get()
-                        || watched.0.draining.get()
-                        || !cx.has_global::<Owner>()
-                    {
-                        return false;
-                    }
-                    if cx.windows().is_empty() && !watched.replacing() {
-                        quit_when_drained(&watched.0.application, cx);
-                        return false;
-                    }
-                    watched.poll_updates(cx);
-                    true
-                });
-                if !continuing {
-                    break;
+                let watched = Owner(state);
+                if let Err(error) = watched.advance_ui() {
+                    eprintln!("UI candidate rejected: {error}");
                 }
+                watched.poll_updates(cx);
+                let live: Vec<_> = watched
+                    .0
+                    .native
+                    .borrow()
+                    .values()
+                    .filter_map(|resources| resources.borrow().surface_binding())
+                    .collect();
+                for (window, surface) in live {
+                    let _ = window.update(cx, |_, window, cx| {
+                        let _ = surface.update(cx, |surface, cx| {
+                            if let Err(error) = surface.sync_native(window, cx) {
+                                eprintln!("native UI wake failed: {error}");
+                            }
+                            cx.notify();
+                        });
+                    });
+                }
+                quit_when_drained(&watched.0.application, cx);
+                Some(
+                    watched
+                        .0
+                        .updates
+                        .borrow()
+                        .as_ref()
+                        .and_then(maka_transport::Updates::next_deadline),
+                )
+            });
+            let Some(at) = continuing else { break };
+            let timer = match at {
+                Some(at) => executor
+                    .timer(at.saturating_duration_since(std::time::Instant::now()))
+                    .boxed_local(),
+                None => std::future::pending::<()>().boxed_local(),
+            };
+            tokio::select! {
+                wake = wakes.recv() => { if wake.is_none() { break; } },
+                _ = timer => {},
             }
-        })
-        .detach();
-    }
+            // One foreground turn per poll. Native publication may wake this
+            // owner immediately; its producer ACK and physical input must run
+            // before another turn instead of being starved by a ready channel.
+            tokio::task::yield_now().await;
+        }
+    })
+    .detach();
     // Installed once per App. The callback captures no application/Root lease.
     if !cx.has_global::<QuitGate>() {
         cx.on_request_quit(request_quit)

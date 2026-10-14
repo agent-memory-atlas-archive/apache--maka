@@ -215,7 +215,11 @@ fn original_stream(cx: &mut TestAppContext, inexact: bool, capture: bool) {
             .update(cx, |surface, cx| surface.sync_native(window, cx).unwrap());
     })
     .unwrap();
-    await_action(cx, &scene.app, |_| state.waiting.available_permits() == 1);
+    await_action(cx, &scene.app, |app| {
+        state.waiting.available_permits() == 1
+            && !app.ui_pending()
+            && app.frame(&scene.root).unwrap().state["outcome"].is_object()
+    });
     let feedback = scene.app.borrow().frame(&scene.root).unwrap().state["outcome"].clone();
     if inexact {
         assert_eq!(feedback["status"], "failed");

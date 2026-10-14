@@ -48,8 +48,8 @@ fn color(c: maka_ui_runtime::appearance::Color) -> Color {
 impl Owner {
     fn observation(&mut self) -> Option<NativeInput> {
         let value = self.core.pending_observation()?;
-        self.core.published(value.revision); // custody moves to the original Resources.pending
         Some(NativeInput {
+            replaceable: false,
             key: "observe".into(),
             value: serde_json::to_value(value).expect("terminal observation"),
         })
@@ -71,6 +71,15 @@ impl Widget for Recipe {
         let owner = state.downcast_mut::<Owner>().unwrap();
         owner.core.apply(&self.0);
         Ok(owner.observation())
+    }
+    fn published(&self, state: &mut dyn Any, key: &str, value: &serde_json::Value) {
+        if key == "observe" {
+            state.downcast_mut::<Owner>().unwrap().core.published(
+                value["revision"]
+                    .as_u64()
+                    .expect("original terminal observation"),
+            );
+        }
     }
     fn observe(&self, state: &mut dyn Any) -> Option<NativeInput> {
         state.downcast_mut::<Owner>().unwrap().observation()

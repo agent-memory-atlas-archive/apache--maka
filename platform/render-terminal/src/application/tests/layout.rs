@@ -246,6 +246,7 @@ impl Widget for Flush {
         }
         *seen = Some(width);
         Some(NativeInput {
+            replaceable: true,
             key: "flushed".into(),
             value: json!(width),
         })
@@ -629,7 +630,7 @@ fn single_line_elision_preserves_graphemes_and_the_adjacent_control_row() {
         );
     }
     tui.surface_closed(&tui.surface(), Ok(())).unwrap();
-    tui.shutdown().unwrap();
+    tui.shutdown_settled().unwrap();
 }
 
 #[test]
@@ -652,7 +653,7 @@ fn actual_long_scene_keeps_footer_painted_and_native_click_bound_to_flush() {
     let last = presenter.scene.last().unwrap().area.visible();
     assert_eq!(last.y, 9);
     presenter
-        .input(Event::Mouse(MouseEvent {
+        .input_settled(Event::Mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: last.x,
             row: last.y,
@@ -666,7 +667,7 @@ fn actual_long_scene_keeps_footer_painted_and_native_click_bound_to_flush() {
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
-    presenter.shutdown().unwrap();
+    presenter.shutdown_settled().unwrap();
 }
 #[test]
 fn narrow_wrapped_footer_is_measured_before_the_body_viewport() {
@@ -683,7 +684,7 @@ fn narrow_wrapped_footer_is_measured_before_the_body_viewport() {
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
-    presenter.shutdown().unwrap();
+    presenter.shutdown_settled().unwrap();
 }
 #[test]
 fn post_flush_native_observation_coalesces_and_retries_without_guest_paint() {
@@ -706,9 +707,9 @@ fn post_flush_native_observation_coalesces_and_retries_without_guest_paint() {
         presenter.application.frame(&presenter.root).unwrap().state["count"],
         0
     );
-    draw(&mut presenter, 20, 3); // A newer successful flush replaces that one pending observation.
     accept.set(true);
-    presenter.sync_native().unwrap();
+    draw(&mut presenter, 20, 3); // New physical evidence wakes the retained publisher.
+    presenter.settle().unwrap();
     assert_eq!(
         presenter.application.frame(&presenter.root).unwrap().state["count"],
         20
@@ -730,7 +731,7 @@ fn post_flush_native_observation_coalesces_and_retries_without_guest_paint() {
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
-    presenter.shutdown().unwrap();
+    presenter.shutdown_settled().unwrap();
 }
 
 #[test]
@@ -761,7 +762,7 @@ fn allocated_row_width_remeasures_wrapped_body_before_footer_placement() {
         presenter
             .surface_closed(&presenter.surface(), Ok(()))
             .unwrap();
-        presenter.shutdown().unwrap();
+        presenter.shutdown_settled().unwrap();
     }
 }
 
@@ -801,7 +802,7 @@ fn deep_legal_rows_share_one_measurement_pass_instead_of_expanding_recursively()
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
-    presenter.shutdown().unwrap();
+    presenter.shutdown_settled().unwrap();
 }
 
 fn scroll_scene(policy: &str, text: &str) -> Value {
@@ -811,6 +812,7 @@ fn scroll_scene(policy: &str, text: &str) -> Value {
         {"kind":"button","key":"back","label":"Back"}]})
 }
 fn flushed(presenter: &mut Presenter, width: u16, height: u16) -> Buffer {
+    presenter.settle().unwrap();
     presenter.sync_native().unwrap();
     let area = Rect::new(0, 0, width, height);
     let mut buffer = Buffer::empty(area);
@@ -820,7 +822,7 @@ fn flushed(presenter: &mut Presenter, width: u16, height: u16) -> Buffer {
 }
 fn wheel(presenter: &mut Presenter, down: bool, column: u16, row: u16) {
     presenter
-        .input(Event::Mouse(MouseEvent {
+        .input_settled(Event::Mouse(MouseEvent {
             kind: if down {
                 MouseEventKind::ScrollDown
             } else {
@@ -865,7 +867,7 @@ fn native_scroll_has_real_clipped_cells_and_does_not_ack_unflushed_or_superseded
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
-    presenter.shutdown().unwrap();
+    presenter.shutdown_settled().unwrap();
 }
 #[test]
 fn wheel_and_page_keys_bubble_from_the_original_button_target() {
@@ -881,7 +883,7 @@ fn wheel_and_page_keys_bubble_from_the_original_button_target() {
     assert_eq!(scroll_state(&presenter, "body").0, 3);
     flushed(&mut presenter, 20, 7);
     presenter
-        .input(Event::Key(KeyEvent::new(
+        .input_settled(Event::Key(KeyEvent::new(
             KeyCode::PageDown,
             KeyModifiers::NONE,
         )))
@@ -894,7 +896,7 @@ fn wheel_and_page_keys_bubble_from_the_original_button_target() {
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
-    presenter.shutdown().unwrap();
+    presenter.shutdown_settled().unwrap();
 }
 #[test]
 fn follow_end_uses_actual_flush_and_manual_interaction_survives_recipe_updates() {
@@ -938,7 +940,7 @@ fn follow_end_uses_actual_flush_and_manual_interaction_survives_recipe_updates()
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
-    presenter.shutdown().unwrap();
+    presenter.shutdown_settled().unwrap();
 }
 #[test]
 fn anchor_keeps_gap_offset_and_original_child_after_hide_and_prepend() {
@@ -976,7 +978,7 @@ fn anchor_keeps_gap_offset_and_original_child_after_hide_and_prepend() {
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
-    presenter.shutdown().unwrap();
+    presenter.shutdown_settled().unwrap();
 }
 
 fn refresh(presenter: &mut Presenter) {
@@ -989,7 +991,7 @@ fn refresh(presenter: &mut Presenter) {
         .application
         .dispatch(&presenter.root, revision, "back", json!({"kind":"click"}))
         .unwrap();
-    presenter.sync_native().unwrap();
+    presenter.settle().unwrap();
 }
 
 #[test]
@@ -1027,8 +1029,8 @@ fn disabled_buttons_retain_layout_but_revoke_click_dispatch_and_tab_targets() {
             .is_err()
     );
     assert!(
-        presenter.input(key(KeyCode::Enter)).is_err(),
-        "old flushed target cannot invoke a newly disabled action"
+        presenter.input_settled(key(KeyCode::Enter)).is_ok(),
+        "stale physical input is ignored without terminating the host"
     );
     let disabled = flushed(&mut presenter, 20, 3);
     for y in 0..3 {
@@ -1047,14 +1049,14 @@ fn disabled_buttons_retain_layout_but_revoke_click_dispatch_and_tab_targets() {
     assert_eq!(presenter.scene.len(), 1);
     assert_eq!(presenter.focus.as_ref().unwrap().key, "back");
     presenter
-        .input(Event::Mouse(MouseEvent {
+        .input_settled(Event::Mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 0,
             row: 0,
             modifiers: KeyModifiers::NONE,
         }))
         .unwrap();
-    presenter.input(key(KeyCode::Tab)).unwrap();
+    presenter.input_settled(key(KeyCode::Tab)).unwrap();
     assert_eq!(presenter.focus.as_ref().unwrap().key, "back");
     assert_eq!(
         presenter.application.frame(&presenter.root).unwrap().state["count"],
@@ -1067,12 +1069,12 @@ fn disabled_buttons_retain_layout_but_revoke_click_dispatch_and_tab_targets() {
         &owner,
         &presenter.resources.owners[&presenter.root.id()].identity
     ));
-    presenter.input(key(KeyCode::Tab)).unwrap();
+    presenter.input_settled(key(KeyCode::Tab)).unwrap();
     assert_eq!(presenter.focus.as_ref().unwrap().key, "save");
     let before = presenter.application.frame(&presenter.root).unwrap().state["count"]
         .as_u64()
         .unwrap();
-    presenter.input(key(KeyCode::Enter)).unwrap();
+    presenter.input_settled(key(KeyCode::Enter)).unwrap();
     assert_eq!(
         presenter.application.frame(&presenter.root).unwrap().state["count"],
         before + 1
@@ -1087,7 +1089,7 @@ fn disabled_buttons_retain_layout_but_revoke_click_dispatch_and_tab_targets() {
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
-    presenter.shutdown().unwrap();
+    presenter.shutdown_settled().unwrap();
 }
 
 #[test]
@@ -1097,7 +1099,7 @@ fn native_scroll_reaches_content_beyond_u16_terminal_height() {
     let (_runtime, mut presenter) = native(View::Scene(source), Rc::new(Cell::new(true)));
     flushed(&mut presenter, 10, 6);
     presenter
-        .input(Event::Mouse(MouseEvent {
+        .input_settled(Event::Mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 1,
             row: 1,
@@ -1105,7 +1107,7 @@ fn native_scroll_reaches_content_beyond_u16_terminal_height() {
         }))
         .unwrap();
     presenter
-        .input(Event::Key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE)))
+        .input_settled(Event::Key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE)))
         .unwrap();
     let end = flushed(&mut presenter, 10, 6);
     assert_eq!(scroll_state(&presenter, "body"), (79999, 79999));
@@ -1114,7 +1116,7 @@ fn native_scroll_reaches_content_beyond_u16_terminal_height() {
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
-    presenter.shutdown().unwrap();
+    presenter.shutdown_settled().unwrap();
 }
 #[test]
 fn nested_scroll_consumes_innermost_wheel_then_bubbles_at_its_boundary() {
@@ -1138,7 +1140,7 @@ fn nested_scroll_consumes_innermost_wheel_then_bubbles_at_its_boundary() {
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
-    presenter.shutdown().unwrap();
+    presenter.shutdown_settled().unwrap();
 }
 
 #[test]
@@ -1186,7 +1188,7 @@ fn delayed_hidden_metadata_cannot_replace_same_native_recipe_foreground() {
         .as_u64()
         .unwrap();
     presenter.present(hidden);
-    presenter.input(key(KeyCode::Enter)).unwrap();
+    presenter.input_settled(key(KeyCode::Enter)).unwrap();
     assert_eq!(
         presenter.application.frame(&root).unwrap().state["count"],
         count + 1
@@ -1194,7 +1196,7 @@ fn delayed_hidden_metadata_cannot_replace_same_native_recipe_foreground() {
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
-    presenter.shutdown().unwrap();
+    presenter.shutdown_settled().unwrap();
 }
 
 /// A genuine native parent omits an ordinary live declared child from placement.
@@ -1286,7 +1288,7 @@ fn dialog_wrapping_original_reading_slot_keeps_grow_basis_and_footer_geometry() 
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
-    presenter.shutdown().unwrap();
+    presenter.shutdown_settled().unwrap();
 }
 
 struct PanicLayout(Rc<Cell<usize>>);
@@ -1349,7 +1351,7 @@ fn dialog_deferred_native_layout_panic_returns_error_and_releases_original_owner
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
-    presenter.shutdown().unwrap();
+    presenter.shutdown_settled().unwrap();
     assert_eq!(drops.get(), 1);
 }
 
@@ -1388,9 +1390,9 @@ fn revealed_container_focus_waits_for_flush_and_preserves_user_navigation() {
     let twin = presenter.paint(area, &mut buffer).unwrap();
     presenter.present(first);
     assert_eq!(presenter.focus.as_ref().unwrap().key, "body");
-    presenter.input(key(KeyCode::PageDown)).unwrap();
+    presenter.input_settled(key(KeyCode::PageDown)).unwrap();
     assert!(scroll_state(&presenter, "body").0 > 0);
-    presenter.input(key(KeyCode::Tab)).unwrap();
+    presenter.input_settled(key(KeyCode::Tab)).unwrap();
     let chosen = presenter.focus.as_ref().unwrap().key.clone();
     assert_ne!(chosen, "body");
     presenter.present(twin);
@@ -1414,7 +1416,7 @@ fn revealed_container_focus_waits_for_flush_and_preserves_user_navigation() {
     let before = presenter.application.frame(&presenter.root).unwrap().state["count"]
         .as_u64()
         .unwrap();
-    presenter.input(key(KeyCode::Enter)).unwrap();
+    presenter.input_settled(key(KeyCode::Enter)).unwrap();
     assert_eq!(
         presenter.application.frame(&presenter.root).unwrap().state["count"],
         before + 1
@@ -1422,7 +1424,7 @@ fn revealed_container_focus_waits_for_flush_and_preserves_user_navigation() {
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
-    presenter.shutdown().unwrap();
+    presenter.shutdown_settled().unwrap();
 }
 
 #[test]
@@ -1461,5 +1463,5 @@ fn anchored_model_dialog_follows_its_trigger_across_viewport_sizes() {
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
-    presenter.shutdown().unwrap();
+    presenter.shutdown_settled().unwrap();
 }

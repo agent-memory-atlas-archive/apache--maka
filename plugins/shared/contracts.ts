@@ -820,7 +820,7 @@ export const timelineContract = component(
     browse: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
     timings: {
       type: 'array',
-      maxItems: 8,
+      maxItems: 16,
       items: object({
         turnId: string,
         afterMessageId: string,

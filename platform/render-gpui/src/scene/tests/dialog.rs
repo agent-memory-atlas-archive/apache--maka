@@ -65,9 +65,9 @@ fn controlled_dialog_preserves_background_geometry_and_requests_closure(cx: &mut
     let seen = events.clone();
     cx.update_window(window, |_, _, cx| {
         entity.update(cx, |h, _| {
-            h.slots.input = Input(Rc::new(move |key, value, _, _| {
+            h.slots.input = Input::testing(Rc::new(move |key, value, _, _| {
                 seen.borrow_mut().push((key.to_owned(), value));
-                Ok(Default::default())
+                Ok(())
             }));
         })
     })

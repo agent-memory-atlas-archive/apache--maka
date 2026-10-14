@@ -101,6 +101,10 @@ function reference(value, values, prefix) {
   );
   return match ? `${prefix}.${match[0]}` : encoded;
 }
+function referenceType(value, values, prefix) {
+  const source = reference(value, values, prefix);
+  return source.startsWith(`${prefix}.`) ? `typeof ${source}` : source;
+}
 const definitions = Object.entries(catalog.native).map(
   ([name, definition]) =>
     `${JSON.stringify(name)}: { implementation: ${JSON.stringify(definition.implementation)}, ` +
@@ -112,11 +116,24 @@ const definitions = Object.entries(catalog.native).map(
       )
       .join(', ')} } }`,
 );
+const definitionTypes = Object.entries(catalog.native).map(
+  ([name, definition]) =>
+    `${JSON.stringify(name)}: { implementation: string; ` +
+    `configuration: ${referenceType(definition.configuration, catalog.configurations, 'configurations')}; ` +
+    `exports: { ${Object.entries(definition.exports)
+      .map(
+        ([name, contract]) =>
+          `${JSON.stringify(name)}: ${referenceType(contract, catalog.contracts, 'contracts')}`,
+      )
+      .join('; ')} } }`,
+);
 outputs.set(
   new URL('../src/native.ts', import.meta.url),
   banner +
     "import { contracts } from './contracts.js';\nimport { configurations } from './configurations.js';\n\n" +
-    'export const nativeImplementations = /* @__PURE__ */ (() => ({\n' +
+    'export const nativeImplementations = /* @__PURE__ */ ((): {\n' +
+    definitionTypes.join(';\n') +
+    '\n} => ({\n' +
     definitions.join(',\n') +
     '\n}))();\n',
 );

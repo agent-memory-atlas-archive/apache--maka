@@ -29,6 +29,7 @@ maka-ui-runtime.workspace = true
 maka-js-runtime.workspace = true
 maka-plugin-core.workspace = true
 serde_json.workspace = true
+serde.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]

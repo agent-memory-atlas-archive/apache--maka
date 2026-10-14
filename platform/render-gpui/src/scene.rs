@@ -22,7 +22,7 @@ mod dialog;
 mod popup;
 
 use gpui_kit::AppContext;
-use maka_ui_runtime::NativeView;
+use maka_ui_runtime::{NativeView, PreparedScene};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -52,6 +52,20 @@ pub(crate) fn compile_with_inputs(
     deadline: Instant,
     additional_inputs: BTreeMap<String, Value>,
 ) -> maka_ui_runtime::Result<NativeView<dyn super::Widget>> {
+    finish(prepare_with_inputs(source, deadline, additional_inputs)?)
+}
+
+pub fn prepare(source: &Value, deadline: Instant) -> maka_ui_runtime::Result<PreparedScene> {
+    prepare_with_inputs(source, deadline, BTreeMap::new())
+}
+pub fn finish(prepared: PreparedScene) -> maka_ui_runtime::Result<NativeView<dyn super::Widget>> {
+    prepared.finish::<Node, dyn super::Widget>(|node| Rc::new(node))
+}
+fn prepare_with_inputs(
+    source: &Value,
+    deadline: Instant,
+    additional_inputs: BTreeMap<String, Value>,
+) -> maka_ui_runtime::Result<PreparedScene> {
     if Instant::now() >= deadline {
         return Err(maka_ui_runtime::Error::Invalid(
             "desktop scene deadline".into(),
@@ -137,7 +151,7 @@ pub(crate) fn compile_with_inputs(
         ));
     }
     let visible = !matches!(&node, Node::Stack { visible: false, .. });
-    NativeView::new(Rc::new(node) as Rc<dyn super::Widget>, inputs, slots)?
+    PreparedScene::new(node, inputs, slots)?
         .with_hidden_slots(hidden_slots)?
         .with_root_visibility(visible)
         .with_render_depth(depth, slot_depth)
@@ -649,6 +663,7 @@ impl NodePresentation for Node {
                 key,
                 label,
                 copy_text,
+                bubble_activation,
                 style,
                 hover,
                 active,
@@ -676,7 +691,8 @@ impl NodePresentation for Node {
                 let click_input = slots.input.clone();
                 let click_key = key.clone();
                 let copy_text = copy_text.clone();
-                let enabled = button.admitted.get() && alive.0.borrow().is_some();
+                let bubble_activation = *bubble_activation;
+                let enabled = button.admitted.get() && alive.current.borrow().is_some();
                 let handle = button.focus.clone();
                 let focus_action = handle.clone();
                 let hover = hover.clone();
@@ -691,22 +707,22 @@ impl NodePresentation for Node {
                     .tab_index(handle.tab_index)
                     .tab_stop(handle.tab_stop)
                     .capture_any_mouse_down(move |_, _, cx| {
-                        if !down.get() || down_alive.0.borrow().is_none() {
+                        if !down.get() || down_alive.current.borrow().is_none() {
                             cx.stop_propagation();
                         }
                     })
                     .capture_any_mouse_up(move |_, _, cx| {
-                        if !up.get() || up_alive.0.borrow().is_none() {
+                        if !up.get() || up_alive.current.borrow().is_none() {
                             cx.stop_propagation();
                         }
                     })
                     .capture_key_down(move |_, _, cx| {
-                        if !key_down.get() || key_down_alive.0.borrow().is_none() {
+                        if !key_down.get() || key_down_alive.current.borrow().is_none() {
                             cx.stop_propagation();
                         }
                     })
                     .capture_key_up(move |_, _, cx| {
-                        if !key_up.get() || key_up_alive.0.borrow().is_none() {
+                        if !key_up.get() || key_up_alive.current.borrow().is_none() {
                             cx.stop_propagation();
                         }
                     })
@@ -714,7 +730,7 @@ impl NodePresentation for Node {
                         this.on_a11y_action(
                             gpui_kit::AccessibleAction::Focus,
                             move |_, window, cx| {
-                                if a11y.get() && a11y_alive.0.borrow().is_some() {
+                                if a11y.get() && a11y_alive.current.borrow().is_some() {
                                     focus_action.focus(window, cx);
                                 }
                             },
@@ -725,33 +741,35 @@ impl NodePresentation for Node {
                     .focus_visible(move |s| focus.apply(s))
                     .child(SharedString::from(label.clone()))
                     .on_click(move |_, window, cx| {
-                        if click_admission.get() && click_alive.0.borrow().is_some() {
-                            let decision = match (click_input.0)(
-                                &click_key,
-                                json!({"kind":"click"}),
-                                window,
-                                cx,
-                            ) {
-                                Ok(decision) => decision,
-                                Err(error) => {
-                                    eprintln!("component input rejected: {error}");
-                                    window.prevent_default();
-                                    cx.stop_propagation();
-                                    return;
-                                }
+                        if click_admission.get() && click_alive.current.borrow().is_some() {
+                            let accepted = if let Some(text) = &copy_text {
+                                click_alive.capture_input(&click_key, json!({"kind":"click"}), window, cx).map(|receipt| {
+                                    let alive = click_alive.clone();
+                                    let text = text.clone();
+                                    window.spawn(cx, async move |cx| {
+                                        if let Err(error) = receipt.await {
+                                            eprintln!("component input rejected: {error}");
+                                            return;
+                                        }
+                                        let _ = cx.update(move |_, cx| {
+                                            // Hiding a menu does not retire its original
+                                            // owner; actual close revokes this default.
+                                            if alive.current.borrow().is_some() {
+                                                cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(text));
+                                            }
+                                        });
+                                    }).detach();
+                                })
+                            } else {
+                                (click_input.dispatch)(&click_key,json!({"kind":"click"}),window,cx)
                             };
-                            if decision.prevent_default {
+                            if let Err(error) = accepted {
+                                eprintln!("component input rejected: {error}");
                                 window.prevent_default();
-                            } else if let Some(text) = &copy_text
-                                // Closing a menu settles this admitted default;
-                                // it only revokes admission for later events.
-                                && click_alive.0.borrow().is_some()
-                            {
-                                cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(
-                                    text.clone(),
-                                ));
+                                cx.stop_propagation();
+                                return;
                             }
-                            if decision.stop_propagation {
+                            if !bubble_activation {
                                 cx.stop_propagation();
                             }
                         }

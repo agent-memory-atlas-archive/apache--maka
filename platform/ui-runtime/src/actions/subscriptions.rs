@@ -78,7 +78,7 @@ impl<V: ?Sized + 'static> Application<V> {
             }
         }
     }
-    pub(super) fn acknowledge_update(&mut self, id: Uuid) {
+    pub(crate) fn acknowledge_update(&mut self, id: Uuid) {
         if let Some(flow) = self.actions.running.get_mut(&id).and_then(|r| {
             r.stream
                 .as_mut()
@@ -90,7 +90,7 @@ impl<V: ?Sized + 'static> Application<V> {
             flow.ack.add_permits(1);
         }
     }
-    pub(super) fn fail_update(&mut self, id: Uuid, reason: String) {
+    pub(crate) fn fail_update(&mut self, id: Uuid, reason: String) {
         if let Some(flow) = self.actions.running.get_mut(&id).and_then(|r| {
             r.stream
                 .as_mut()

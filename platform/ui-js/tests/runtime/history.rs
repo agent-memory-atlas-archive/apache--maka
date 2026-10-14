@@ -17,6 +17,7 @@
  * under the License.
  */
 
+use super::Application;
 use super::{support, timer};
 use maka_event_log::{
     EventLog,
@@ -36,7 +37,6 @@ use maka_plugin_core::{
     package::{Declaration, EntryDeclaration, EntryTarget, Implementation},
 };
 use maka_ui_runtime::{
-    Application,
     operations::{CALLER_HISTORY, caller_history_contract},
     surface_contract,
 };

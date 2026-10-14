@@ -75,7 +75,6 @@ struct Route {
 struct Notification {
     route: Route,
     event: Emission,
-    input_admission: bool,
 }
 
 pub(super) struct Mounted<V: ?Sized> {
@@ -85,6 +84,47 @@ pub(super) struct Mounted<V: ?Sized> {
     pub children: BTreeMap<String, Child>,
     pub(super) bytes: usize,
     pub(super) subscriptions: BTreeMap<String, actions::subscriptions::Demand>,
+}
+
+pub(super) struct QueuedInput {
+    mount: Mount,
+    event: abi::ComponentInput,
+    bytes: usize,
+    publication: Option<tokio::sync::oneshot::Sender<Result<()>>>,
+}
+pub(super) struct Feedback {
+    pub consumer: Mount,
+    pub request: Option<Uuid>,
+    pub item: bool,
+}
+struct Call {
+    mount: Mount,
+    method: &'static str,
+    args: Vec<Value>,
+    props: Value,
+    subscription: Option<Subscription>,
+    depth: usize,
+    basis: Option<(u64, Option<Surface>)>,
+    root: bool,
+}
+struct FinishStage<V: ?Sized> {
+    mount: Mount,
+    actions: VecDeque<actions::Action>,
+    declarations: VecDeque<actions::Action>,
+    preparing: Option<actions::PreparingAction<V>>,
+    demand: Option<actions::Action>,
+    demands: BTreeMap<String, actions::subscriptions::Demand>,
+    previous_subscriptions: BTreeMap<String, actions::subscriptions::Demand>,
+}
+/// Read-only original candidate. This borrows the pending batch; it is not a
+/// second committed tree and cannot dispatch input, actions or native commands.
+pub struct Candidate<'a, V: ?Sized> {
+    changed: &'a BTreeMap<Uuid, Mounted<V>>,
+}
+impl<'a, V: ?Sized> Candidate<'a, V> {
+    pub fn changed(&self) -> impl Iterator<Item = (&Mount, &Frame<NativeView<V>>)> {
+        self.changed.values().map(|view| (&view.mount, &view.frame))
+    }
 }
 
 /// A composed input is one transaction, not a sequence of published child
@@ -99,7 +139,13 @@ pub(super) struct Update<V: ?Sized> {
     bytes: usize,
     actions: Vec<actions::Prepared<V>>,
     cancellations: Vec<(Mount, String)>,
-    decision: InputDecision,
+    calls: VecDeque<Call>,
+    finishes: VecDeque<FinishStage<V>>,
+    pending: Option<(Call, PendingInvocation<V>)>,
+    feedback: Option<Feedback>,
+    ready: bool,
+    native_prepared: bool,
+    publication: Option<tokio::sync::oneshot::Sender<Result<()>>>,
 }
 impl<V: ?Sized> Update<V> {
     fn new(slice: std::time::Duration) -> Self {
@@ -113,7 +159,13 @@ impl<V: ?Sized> Update<V> {
             bytes: 0,
             actions: Vec::new(),
             cancellations: Vec::new(),
-            decision: InputDecision::default(),
+            calls: VecDeque::new(),
+            finishes: VecDeque::new(),
+            pending: None,
+            feedback: None,
+            ready: false,
+            native_prepared: false,
+            publication: None,
         }
     }
     // Global presentation changes can visit every retained component. Bound
@@ -181,7 +233,6 @@ impl<V: ?Sized> Update<V> {
         mount: &Mount,
         subscription: Option<Subscription>,
         events: Vec<Emission>,
-        input_admission: bool,
     ) -> Result<()> {
         self.emitted += events.len();
         if self.emitted > 64 {
@@ -198,12 +249,18 @@ impl<V: ?Sized> Update<V> {
                             handler: handler.clone(),
                         },
                         event,
-                        input_admission,
                     });
                 }
             }
         }
         Ok(())
+    }
+}
+impl<V: ?Sized> Drop for Update<V> {
+    fn drop(&mut self) {
+        if let Some(publication) = self.publication.take() {
+            let _ = publication.send(Err(maka_plugin_core::Error::Retired.into()));
+        }
     }
 }
 
@@ -238,6 +295,25 @@ impl<V: ?Sized + 'static> Application<V> {
             Err(error) if self.runtime.desired().recovery().is_some() => {
                 self.deployment_error.get_or_insert(error.to_string());
                 self.mount_selected_root(maka_plugin_core::composition::RootKind::Recovery, props)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub async fn mount_bootstrap_ready(&mut self, props: Value) -> Result<Mount> {
+        self.wait_ready().await?;
+        let root = self.mount_bootstrap(props.clone())?;
+        let launch = self.root_kind(&root)? == maka_plugin_core::composition::RootKind::Launch;
+        match self.wait_frame(&root).await {
+            Ok(()) => Ok(root),
+            Err(error) if launch && self.runtime.desired().recovery().is_some() => {
+                self.deployment_error.get_or_insert(error.to_string());
+                let recovery = self.mount_selected_root(
+                    maka_plugin_core::composition::RootKind::Recovery,
+                    props,
+                )?;
+                self.wait_frame(&recovery).await?;
+                Ok(recovery)
             }
             Err(error) => Err(error),
         }
@@ -298,26 +374,21 @@ impl<V: ?Sized + 'static> Application<V> {
         let mount = self.runtime.mount_root(kind)?;
         let mut update = Update::new(self.slice);
         update.created.push(mount.clone());
-        let result = (|| {
-            self.check_props(&mount, &props)?;
-            update.step(0)?;
-            let invocation = self.invoke(
-                &mount,
-                "mount",
-                std::slice::from_ref(&props),
-                update.deadline,
-                false,
-            )?;
-            Self::check_initial(&invocation.output.frame)?;
-            self.validate_surface(&mount, &invocation.output.frame)?;
-            self.stage(&mount, props, invocation, None, 0, &mut update)?;
-            self.deliver(&mut update)?;
-            self.commit(&mut update)
-        })();
-        if let Err(error) = result {
+        if let Err(error) = self.check_props(&mount, &props) {
             self.rollback(&update)?;
             return Err(error);
         }
+        update.calls.push_back(Call {
+            mount: mount.clone(),
+            method: "mount",
+            args: vec![props.clone()],
+            props,
+            subscription: None,
+            depth: 0,
+            basis: None,
+            root: true,
+        });
+        self.install_update(update)?;
         Ok(mount)
     }
 
@@ -329,7 +400,10 @@ impl<V: ?Sized + 'static> Application<V> {
         revision: u64,
         key: &str,
         event: Value,
-    ) -> Result<InputDecision> {
+    ) -> Result<()> {
+        if self.is_retiring(mount) {
+            return Err(maka_plugin_core::Error::Retired.into());
+        }
         let current = self
             .views
             .get(&mount.id())
@@ -339,19 +413,79 @@ impl<V: ?Sized + 'static> Application<V> {
         }
         check_call_bytes(&(&current.frame.state, &current.props, key, &event))?;
         current.frame.view.validate_input(key, &event)?;
-        self.dispatch_origin(
+        self.enqueue_input(
             mount,
-            super::abi::ComponentInput::Raw {
+            abi::ComponentInput::Raw {
                 key: key.into(),
                 event,
             },
-        )
+            None,
+        )?;
+        Ok(())
     }
+
+    /// Native evidence remains in its original renderer's custody until this
+    /// whole component transaction commits. Admission alone is not publication.
+    pub fn dispatch_observation(
+        &mut self,
+        mount: &Mount,
+        revision: u64,
+        key: &str,
+        event: Value,
+    ) -> Result<super::backend::Job<()>> {
+        if self.is_retiring(mount) {
+            return Err(maka_plugin_core::Error::Retired.into());
+        }
+        let current = self
+            .views
+            .get(&mount.id())
+            .ok_or_else(|| Error::Invalid("mount has no committed frame".into()))?;
+        if current.frame.revision != revision {
+            return Err(Error::Invalid("stale native observation".into()));
+        }
+        current.frame.view.validate_input(key, &event)?;
+        let (publication, receipt) = tokio::sync::oneshot::channel();
+        self.enqueue_input(
+            mount,
+            abi::ComponentInput::Raw {
+                key: key.into(),
+                event,
+            },
+            Some(publication),
+        )?;
+        Ok(super::backend::Job::new(async move {
+            receipt
+                .await
+                .map_err(|_| Error::Invalid("original UI publication owner stopped".into()))?
+        }))
+    }
+
+    fn enqueue_input(
+        &mut self,
+        mount: &Mount,
+        event: abi::ComponentInput,
+        publication: Option<tokio::sync::oneshot::Sender<Result<()>>>,
+    ) -> Result<()> {
+        let bytes = call_bytes(&event)?;
+        if self.ui_inputs.len() >= 128 || self.ui_input_bytes + bytes > 1024 * 1024 {
+            return Err(Error::Invalid("UI input queue limit".into()));
+        }
+        self.ui_inputs.push_back(QueuedInput {
+            mount: mount.clone(),
+            event,
+            bytes,
+            publication,
+        });
+        self.ui_input_bytes += bytes;
+        self.advance_ui().map(|_| ())
+    }
+
     pub(super) fn dispatch_action_result(
         &mut self,
         mount: &Mount,
         key: &str,
         event: Value,
+        feedback: Feedback,
     ) -> Result<()> {
         self.dispatch_origin(
             mount,
@@ -359,6 +493,8 @@ impl<V: ?Sized + 'static> Application<V> {
                 key: key.into(),
                 event,
             },
+            Some(feedback),
+            None,
         )
         .map(|_| ())
     }
@@ -366,10 +502,14 @@ impl<V: ?Sized + 'static> Application<V> {
         &mut self,
         mount: &Mount,
         event: super::abi::ComponentInput,
-    ) -> Result<InputDecision> {
+        feedback: Option<Feedback>,
+        publication: Option<tokio::sync::oneshot::Sender<Result<()>>>,
+    ) -> Result<()> {
         let event =
             serde_json::to_value(event).map_err(|error| Error::Invalid(error.to_string()))?;
         let mut update = Update::new(self.slice);
+        update.feedback = feedback;
+        update.publication = publication;
         let current = self
             .views
             .get(&mount.id())
@@ -381,22 +521,293 @@ impl<V: ?Sized + 'static> Application<V> {
         let surface = current.frame.surface.clone();
         let depth = self.mount_depth(mount)?;
         let subscription = self.subscription(mount, &update)?;
+        update.calls.push_back(Call {
+            mount: mount.clone(),
+            method: "event",
+            args: args.into(),
+            props,
+            subscription,
+            depth,
+            basis: Some((revision, surface)),
+            root: false,
+        });
+        self.install_update(update)?;
+        // Physical input policy is declared by the native binding before enqueue.
+        Ok(())
+    }
+
+    fn install_update(&mut self, update: Update<V>) -> Result<()> {
+        if self.ui_update.is_some() {
+            self.rollback(&update)?;
+            return Err(Error::Invalid(
+                "UI logical transaction is already pending".into(),
+            ));
+        }
+        self.ui_update = Some(update);
+        self.advance_ui()?;
+        if self.ui_update.as_ref().is_some_and(|update| update.ready) {
+            self.waker().wake_by_ref();
+        }
+        Ok(())
+    }
+
+    /// Run only ready work. The committed tree remains available to native input
+    /// while this single logical transaction waits for its original worker.
+    pub fn advance_ui(&mut self) -> Result<bool> {
+        let Some(mut update) = self.ui_update.take() else {
+            while let Some(input) = self.ui_inputs.pop_front() {
+                self.ui_input_bytes -= input.bytes;
+                if self.is_retiring(&input.mount) {
+                    if let Some(publication) = input.publication {
+                        let _ = publication.send(Err(maka_plugin_core::Error::Retired.into()));
+                    }
+                    continue;
+                }
+                self.dispatch_origin(&input.mount, input.event, None, input.publication)?;
+                return Ok(true);
+            }
+            return Ok(false);
+        };
+        if update.ready {
+            self.ui_update = Some(update);
+            return Ok(false);
+        }
+        let wake = self.waker();
+        let mut cx = Context::from_waker(&wake);
         let result = (|| {
-            update.step(depth)?;
-            let next = self.invoke(mount, "event", &args, update.deadline, false)?;
-            Self::check_next(revision, &surface, &next.output.frame)?;
-            self.stage(mount, props, next, subscription, depth, &mut update)?;
-            self.deliver(&mut update)?;
-            self.commit(&mut update)?;
-            Ok(update.decision)
+            loop {
+                if let Some((call, mut pending)) = update.pending.take() {
+                    let invocation = match self.poll_invocation(&mut pending, &mut cx) {
+                        Poll::Pending => {
+                            update.pending = Some((call, pending));
+                            return Ok(false);
+                        }
+                        Poll::Ready(result) => result?,
+                    };
+                    if let Some((revision, surface)) = &call.basis {
+                        Self::check_next(*revision, surface, &invocation.output.frame)?;
+                    } else {
+                        Self::check_initial(&invocation.output.frame)?;
+                        if call.root {
+                            self.validate_surface(&call.mount, &invocation.output.frame)?;
+                        } else if invocation.output.frame.surface.is_some() {
+                            return Err(Error::Invalid(
+                                "embedded component cannot create a surface".into(),
+                            ));
+                        }
+                    }
+                    self.stage(
+                        &call.mount,
+                        call.props,
+                        invocation,
+                        call.subscription,
+                        call.depth,
+                        &mut update,
+                    )?;
+                    continue;
+                }
+                if let Some(call) = update.calls.pop_front() {
+                    update.step(call.depth)?;
+                    let pending =
+                        self.begin_invoke(&call.mount, call.method, &call.args, update.deadline)?;
+                    update.pending = Some((call, pending));
+                    continue;
+                }
+                if let Some(finish) = update.finishes.pop_front() {
+                    if !self.finish_stage(finish, &mut update, &mut cx)? {
+                        return Ok(false);
+                    }
+                    continue;
+                }
+                if self.deliver_one(&mut update)? {
+                    continue;
+                }
+                self.preflight(&mut update)?;
+                if self.native_commit {
+                    update.ready = true;
+                    return Ok(false);
+                }
+                self.commit(&mut update)?;
+                return Ok(true);
+            }
         })();
         match result {
-            Ok(decision) => Ok(decision),
-            Err(error) => {
-                self.rollback(&update)?;
-                Err(error)
+            Ok(false) => {
+                self.ui_update = Some(update);
+                Ok(false)
+            }
+            Ok(true) => {
+                if let Some(publication) = update.publication.take() {
+                    let _ = publication.send(Ok(()));
+                }
+                if let Some(feedback) = update.feedback.take()
+                    && feedback.item
+                    && let Some(id) = feedback.request
+                {
+                    self.acknowledge_update(id);
+                }
+                if !self.ui_inputs.is_empty() {
+                    self.waker().wake_by_ref();
+                }
+                Ok(true)
+            }
+            Err(error) => self.reject_update(update, error),
+        }
+    }
+
+    /// The embedding runs fallible native preparation on the original owner,
+    /// then publishes the whole pending batch in this same bounded owner turn.
+    pub fn commit_ui(
+        &mut self,
+        surface: &Mount,
+        prepare: impl FnOnce(&Self, Candidate<'_, V>) -> Result<()>,
+    ) -> Result<bool> {
+        if let Some(update) = self.ui_update.as_ref().filter(|update| update.ready)
+            && let Some(changed) = update.changed.values().next()
+            && self.mount_root(&changed.mount)? != *surface
+        {
+            // Another physical owner cannot prepare or reject this batch.
+            return Ok(false);
+        }
+        let Some(mut update) = self.ui_update.take() else {
+            return Ok(false);
+        };
+        if !update.ready {
+            self.ui_update = Some(update);
+            return Ok(false);
+        }
+        update.native_prepared = true;
+        let result = (|| {
+            self.validate_commit_fence(&update)?;
+            for changed in update.changed.values() {
+                if self.mount_root(&changed.mount)? != *surface {
+                    return Err(Error::Invalid(
+                        "UI candidate crosses native surfaces".into(),
+                    ));
+                }
+            }
+            prepare(
+                self,
+                Candidate {
+                    changed: &update.changed,
+                },
+            )?;
+            self.commit(&mut update)
+        })();
+        match result {
+            Ok(()) => {
+                if let Some(publication) = update.publication.take() {
+                    let _ = publication.send(Ok(()));
+                }
+                if let Some(feedback) = update.feedback.take()
+                    && feedback.item
+                    && let Some(id) = feedback.request
+                {
+                    self.acknowledge_update(id);
+                }
+                self.waker().wake_by_ref();
+                Ok(true)
+            }
+            Err(error) => self.reject_update(update, error),
+        }
+    }
+    fn reject_update(&mut self, mut update: Update<V>, error: Error) -> Result<bool> {
+        self.rollback(&update)?;
+        let retired_feedback = matches!(error, Error::Core(maka_plugin_core::Error::Retired))
+            && update
+                .feedback
+                .as_ref()
+                .is_some_and(|feedback| self.is_retiring(&feedback.consumer));
+        if let Some(feedback) = update.feedback.take() {
+            if feedback.item
+                && let Some(id) = feedback.request
+            {
+                self.fail_update(id, "progress delivery failed".into());
+            }
+            // Actual mount close may precede its already accepted callback.
+            // Reject this original feedback without re-retiring a closed mount.
+            if !self.is_retiring(&feedback.consumer) {
+                self.runtime.retire_mount(&feedback.consumer)?;
+                self.sync_subscription_demand();
             }
         }
+        if !self.ui_inputs.is_empty() {
+            self.waker().wake_by_ref();
+        }
+        if let Some(publication) = update.publication.take() {
+            let _ = publication.send(Err(error));
+            Ok(false)
+        } else if retired_feedback {
+            Ok(false)
+        } else {
+            Err(error)
+        }
+    }
+
+    /// Startup may read only its original prepared declaration to create the
+    /// platform surface. No input or painting can use it before commit_ui.
+    pub fn prepared_frame(&self, mount: &Mount) -> Result<&Frame<NativeView<V>>> {
+        self.ui_update
+            .as_ref()
+            .filter(|update| update.ready)
+            .and_then(|update| update.changed.get(&mount.id()))
+            .filter(|view| view.mount == *mount)
+            .map(|view| &view.frame)
+            .ok_or_else(|| Error::Invalid("mount has no prepared UI frame".into()))
+    }
+    pub async fn wait_prepared(&mut self, mount: &Mount) -> Result<()> {
+        std::future::poll_fn(|cx| {
+            self.set_waker(cx.waker().clone());
+            if let Err(error) = self.advance_ui() {
+                return Poll::Ready(Err(error));
+            }
+            if self.prepared_frame(mount).is_ok()
+                || (self.ui_update.is_none() && self.frame(mount).is_ok())
+            {
+                Poll::Ready(Ok(()))
+            } else if self.ui_update.is_some() {
+                Poll::Pending
+            } else {
+                Poll::Ready(Err(Error::Invalid(
+                    "initial UI frame was not prepared".into(),
+                )))
+            }
+        })
+        .await
+    }
+    pub async fn mount_bootstrap_prepared(&mut self, props: Value) -> Result<Mount> {
+        self.wait_ready().await?;
+        let mount = self.mount_bootstrap(props.clone())?;
+        let launch = self
+            .root_kind(&mount)
+            .is_ok_and(|kind| kind == maka_plugin_core::composition::RootKind::Launch);
+        match self.wait_prepared(&mount).await {
+            Ok(()) => Ok(mount),
+            Err(error) if launch && self.runtime.desired().recovery().is_some() => {
+                self.deployment_error.get_or_insert(error.to_string());
+                let recovery = self.mount_selected_root(
+                    maka_plugin_core::composition::RootKind::Recovery,
+                    props,
+                )?;
+                self.wait_prepared(&recovery).await.map_err(|second| {
+                    Error::Invalid(format!(
+                        "initial mount failed: {error}; recovery failed: {second}"
+                    ))
+                })?;
+                Ok(recovery)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub fn logical_pending(&self) -> bool {
+        self.ui_update.is_some()
+    }
+
+    /// Whether admitted UI input or its original logical transaction is pending.
+    /// This does not include independent service executions or native interaction.
+    pub fn ui_pending(&self) -> bool {
+        self.logical_pending() || !self.ui_inputs.is_empty()
     }
 
     fn check_initial(frame: &Frame<NativeView<V>>) -> Result<()> {
@@ -560,16 +971,7 @@ impl<V: ?Sized + 'static> Application<V> {
         depth: usize,
         update: &mut Update<V>,
     ) -> Result<()> {
-        let Invocation {
-            output,
-            input_admission,
-        } = invocation;
-        if let Some(decision) = output.decision {
-            // All validated synchronous observers can veto; no observer can
-            // undo an earlier veto. This result escapes only after full commit.
-            update.decision.prevent_default |= decision.prevent_default;
-            update.decision.stop_propagation |= decision.stop_propagation;
-        }
+        let Invocation { output } = invocation;
         let bytes = update.charge(&output.frame, &props, &output.events, &output.subscriptions)?;
         let previous_subscriptions = self
             .current(mount, update)
@@ -584,7 +986,6 @@ impl<V: ?Sized + 'static> Application<V> {
             }
             update.cancellations.push((mount.clone(), key));
         }
-        update.charge_intent(&output.decision)?;
         let actions = output.actions;
         // No one-shot feedback can be confused with a second request or a
         // subscription. Distinct keys permit independent concurrent requests.
@@ -607,7 +1008,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 return Err(Error::Invalid("action feedback key already in use".into()));
             }
         }
-        update.emit(mount, subscription, output.events, input_admission)?;
+        update.emit(mount, subscription, output.events)?;
         let frame = output.frame;
         let mut previous = update
             .changed
@@ -640,16 +1041,16 @@ impl<V: ?Sized + 'static> Application<V> {
                     let args = [child.frame.state.clone(), reference.props.clone()];
                     self.check_props(&old.mount, reference.props)?;
                     update.step(depth + 1)?;
-                    let next = self.invoke(&old.mount, "update", &args, update.deadline, false)?;
-                    Self::check_next(revision, &surface, &next.output.frame)?;
-                    self.stage(
-                        &old.mount,
-                        reference.props.clone(),
-                        next,
+                    update.calls.push_back(Call {
+                        mount: old.mount.clone(),
+                        method: "update",
+                        args: args.into(),
+                        props: reference.props.clone(),
                         subscription,
-                        depth + 1,
-                        update,
-                    )?;
+                        depth: depth + 1,
+                        basis: Some((revision, surface)),
+                        root: false,
+                    });
                 }
                 old.mount.clone()
             } else {
@@ -666,27 +1067,16 @@ impl<V: ?Sized + 'static> Application<V> {
                 self.check_subscription(&child, reference.on)?;
                 self.check_props(&child, reference.props)?;
                 update.step(depth + 1)?;
-                let next = self.invoke(
-                    &child,
-                    "mount",
-                    std::slice::from_ref(reference.props),
-                    update.deadline,
-                    false,
-                )?;
-                Self::check_initial(&next.output.frame)?;
-                if next.output.frame.surface.is_some() {
-                    return Err(Error::Invalid(
-                        "embedded component cannot create a surface".into(),
-                    ));
-                }
-                self.stage(
-                    &child,
-                    reference.props.clone(),
-                    next,
+                update.calls.push_back(Call {
+                    mount: child.clone(),
+                    method: "mount",
+                    args: vec![reference.props.clone()],
+                    props: reference.props.clone(),
                     subscription,
-                    depth + 1,
-                    update,
-                )?;
+                    depth: depth + 1,
+                    basis: None,
+                    root: false,
+                });
                 child
             };
             children.insert(
@@ -734,53 +1124,93 @@ impl<V: ?Sized + 'static> Application<V> {
                 subscriptions: BTreeMap::new(),
             },
         );
-        for action in actions {
-            if self.actions.len() + update.actions.len() >= 64 {
-                return Err(Error::Invalid("pending action limit".into()));
+        update.finishes.push_back(FinishStage {
+            mount: mount.clone(),
+            actions: actions.into(),
+            declarations: declarations.into(),
+            previous_subscriptions,
+            preparing: None,
+            demand: None,
+            demands: BTreeMap::new(),
+        });
+        Ok(())
+    }
+    fn finish_stage(
+        &mut self,
+        mut finish: FinishStage<V>,
+        update: &mut Update<V>,
+        cx: &mut Context<'_>,
+    ) -> Result<bool> {
+        loop {
+            if let Some(mut preparing) = finish.preparing.take() {
+                let prepared = match self.poll_prepare_action(&mut preparing, update, cx) {
+                    Poll::Pending => {
+                        finish.preparing = Some(preparing);
+                        update.finishes.push_front(finish);
+                        return Ok(false);
+                    }
+                    Poll::Ready(result) => result?,
+                };
+                if let Some(action) = finish.demand.take() {
+                    finish.demands.insert(
+                        action.key.clone(),
+                        actions::subscriptions::Demand {
+                            action,
+                            request: prepared.id,
+                        },
+                    );
+                }
+                update.actions.push(prepared);
+                continue;
             }
-            let prepared = self.prepare_action(mount, action, update, false)?;
-            update.actions.push(prepared);
-        }
-        let mut demands = BTreeMap::new();
-        for action in declarations {
-            if demands.contains_key(&action.key) {
-                return Err(Error::Invalid("duplicate subscription key".into()));
+            if let Some(action) = finish.actions.pop_front() {
+                if self.actions.len() + update.actions.len() >= 64 {
+                    return Err(Error::Invalid("pending action limit".into()));
+                }
+                finish.preparing =
+                    Some(self.begin_prepare_action(&finish.mount, action, update, false)?);
+                continue;
             }
-            let demand = match self
-                .views
-                .get(&mount.id())
-                .and_then(|view| view.subscriptions.get(&action.key))
-                .filter(|old| old.action == action)
-                .or_else(|| {
-                    previous_subscriptions
-                        .get(&action.key)
-                        .filter(|old| old.action == action)
-                }) {
-                Some(old) => old.clone(),
-                None => {
+            if let Some(action) = finish.declarations.pop_front() {
+                if finish.demands.contains_key(&action.key) {
+                    return Err(Error::Invalid("duplicate subscription key".into()));
+                }
+                let old = self
+                    .views
+                    .get(&finish.mount.id())
+                    .and_then(|view| view.subscriptions.get(&action.key))
+                    .filter(|old| old.action == action)
+                    .or_else(|| {
+                        finish
+                            .previous_subscriptions
+                            .get(&action.key)
+                            .filter(|old| old.action == action)
+                    });
+                if let Some(old) = old {
+                    finish.demands.insert(action.key.clone(), old.clone());
+                } else {
                     if self.actions.len() + update.actions.len() >= 64 {
                         return Err(Error::Invalid("pending action limit".into()));
                     }
-                    let prepared = self.prepare_action(mount, action.clone(), update, true)?;
-                    let demand = actions::subscriptions::Demand {
-                        action: action.clone(),
-                        request: prepared.id,
-                    };
-                    update.actions.push(prepared);
-                    demand
+                    finish.preparing = Some(self.begin_prepare_action(
+                        &finish.mount,
+                        action.clone(),
+                        update,
+                        true,
+                    )?);
+                    finish.demand = Some(action);
                 }
-            };
-            demands.insert(action.key.clone(), demand);
+                continue;
+            }
+            update
+                .changed
+                .get_mut(&finish.mount.id())
+                .expect("staged owner")
+                .subscriptions = finish.demands;
+            return Ok(true);
         }
-        update
-            .changed
-            .get_mut(&mount.id())
-            .expect("staged owner")
-            .subscriptions = demands;
-
-        Ok(())
     }
-    fn deliver(&mut self, update: &mut Update<V>) -> Result<()> {
+    fn deliver_one(&mut self, update: &mut Update<V>) -> Result<bool> {
         while let Some(notification) = update.events.pop_front() {
             let route = notification.route;
             let current = self.current(&route.parent, update)?;
@@ -807,24 +1237,19 @@ impl<V: ?Sized + 'static> Application<V> {
             let depth = self.mount_depth(&route.parent)?;
             let subscription = self.subscription(&route.parent, update)?;
             update.step(depth)?;
-            let invocation = self.invoke(
-                &route.parent,
-                "event",
-                &args,
-                update.deadline,
-                notification.input_admission,
-            )?;
-            Self::check_next(revision, &surface, &invocation.output.frame)?;
-            self.stage(
-                &route.parent,
+            update.calls.push_back(Call {
+                mount: route.parent,
+                method: "event",
+                args: args.into(),
                 props,
-                invocation,
                 subscription,
                 depth,
-                update,
-            )?;
+                basis: Some((revision, surface)),
+                root: false,
+            });
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
     }
     fn discard_private(&mut self, update: &mut Update<V>) -> Result<()> {
         let private: Vec<_> = update
@@ -894,7 +1319,7 @@ impl<V: ?Sized + 'static> Application<V> {
         }
         Ok(())
     }
-    fn commit(&mut self, update: &mut Update<V>) -> Result<()> {
+    fn preflight(&mut self, update: &mut Update<V>) -> Result<()> {
         self.validate_render_depth(update)?;
         self.discard_private(update)?;
         if Instant::now() >= update.deadline {
@@ -917,19 +1342,27 @@ impl<V: ?Sized + 'static> Application<V> {
                 "UI state limit reached; confirm retired mount cleanup".into(),
             ));
         }
-        // No async/native execution may interleave with this owner-thread commit.
-        // Check every changed owner before changing phases or visible state.
-        for view in update.changed.values() {
-            let execution = self.runtime.admit_mount(&view.mount)?;
-            self.runtime.settle(&execution, Ok(()))?;
-        }
-        // This is the commit decision, after every potentially costly precheck.
-        // No expired composed update may change the visible tree or lifetimes.
+        self.validate_commit_fence(update)
+    }
+    fn validate_commit_fence(&mut self, update: &Update<V>) -> Result<()> {
         if Instant::now() >= update.deadline {
             return Err(Error::Invalid(
                 "composed UI update deadline exceeded".into(),
             ));
         }
+        for view in update.changed.values() {
+            let execution = self.runtime.admit_mount(&view.mount)?;
+            self.runtime.settle(&execution, Ok(()))?;
+        }
+        if Instant::now() >= update.deadline {
+            return Err(Error::Invalid(
+                "composed UI update deadline exceeded".into(),
+            ));
+        }
+        Ok(())
+    }
+    fn commit(&mut self, update: &mut Update<V>) -> Result<()> {
+        self.validate_commit_fence(update)?;
         for mount in &update.created {
             self.runtime.publish_mount(mount)?;
         }
@@ -960,9 +1393,12 @@ impl<V: ?Sized + 'static> Application<V> {
     fn rollback(&mut self, update: &Update<V>) -> Result<()> {
         for mount in update.created.iter().rev() {
             self.runtime.retire_mount(mount)?;
-            // These never entered committed UI state, dispatched native effects,
-            // or escaped to a renderer. There are no native resources to close.
-            self.runtime.complete_mount(mount, Ok(()))?;
+            // A pure failed candidate has no native resources. Once the
+            // original renderer attempted preparation, its actual cleanup
+            // receipt must settle even provisional mounts.
+            if !update.native_prepared {
+                self.runtime.complete_mount(mount, Ok(()))?;
+            }
         }
         Ok(())
     }

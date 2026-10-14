@@ -95,56 +95,174 @@ impl Surface {
     fn input(
         &self,
         lease: &resources::Lease,
-        revision: u64,
+        basis: (u64, u64),
         window_id: gpui_kit::WindowId,
         cx: &Context<Self>,
     ) -> widgets::Input {
+        let (_, revision) = basis;
+        let observer_lease = lease.clone();
+        let observer_view = cx.weak_entity();
+        let observer_application = Rc::downgrade(&self.application);
+        let observe = Rc::new(
+            move |key: &str, event, window: &mut gpui_kit::Window, cx: &mut gpui_kit::App| {
+                if window.window_handle().window_id() != window_id || !observer_lease.is_attached()
+                {
+                    return Err(maka_ui_runtime::Error::Invalid(
+                        "original native observation owner closed".into(),
+                    ));
+                }
+                let application = observer_application.upgrade().ok_or_else(|| {
+                    maka_ui_runtime::Error::Invalid(
+                        "original observation application closed".into(),
+                    )
+                })?;
+                // Publication also advances inside Surface::sync_native. It
+                // reaches the existing commit owner without reentering Surface.
+                let job = application.borrow_mut().dispatch_observation(
+                    observer_lease.mount(),
+                    revision,
+                    key,
+                    event,
+                )?;
+                cx.notify(observer_view.entity_id());
+                Ok(job)
+            },
+        );
         let lease = lease.clone();
         let view = cx.weak_entity();
-        widgets::Input(Rc::new(move |key, event, window, cx| {
-            if window.window_handle().window_id() != window_id {
+        widgets::Input::new(
+            basis,
+            Rc::new(move |key, event, window, cx| {
+                if window.window_handle().window_id() != window_id {
+                    return Err(maka_ui_runtime::Error::Invalid(
+                        "window owner mismatch".into(),
+                    ));
+                }
+                let result = view.update(cx, |view, cx| {
+                    let result =
+                        view.application
+                            .borrow_mut()
+                            .dispatch(lease.mount(), revision, key, event);
+                    match result {
+                        Ok(()) => (),
+                        Err(error) => {
+                            // Faulted realms can retain their last display pending
+                            // recovery. Revoke their native input without replaying
+                            // commands from that already committed frame.
+                            if let Err(cleanup) = view.resources.borrow_mut().deactivate_unmounted(
+                                &view.application.borrow(),
+                                window,
+                                cx,
+                            ) {
+                                eprintln!("component input deactivation failed: {cleanup}");
+                            }
+                            if let Some(owner) = cx.try_global::<actions::Owner>().cloned()
+                                && let Err(cleanup) = owner.recover_launch(&view.mount, window)
+                            {
+                                eprintln!("recovery surface transition failed: {cleanup}");
+                            }
+                            cx.notify();
+                            return Err(error);
+                        }
+                    };
+                    // Admission is complete. Native defaults do not wait for the
+                    // worker; the original owner publishes prepared candidates.
+                    if let Err(error) = view.sync_native(window, cx) {
+                        eprintln!("component native synchronization failed: {error}");
+                    }
+                    cx.notify();
+                    maka_ui_runtime::Result::Ok(())
+                });
+                result.map_err(|error| maka_ui_runtime::Error::Invalid(error.to_string()))?
+            }),
+            observe,
+        )
+    }
+    fn prepare_candidate(
+        &self,
+        application: &DesktopApplication,
+        candidate: maka_ui_runtime::Candidate<'_, dyn widgets::Widget>,
+        window: &mut gpui_kit::Window,
+        cx: &mut Context<Self>,
+    ) -> maka_ui_runtime::Result<Vec<(String, maka_ui_runtime::publication::Capacity)>> {
+        for (mount, frame) in candidate.changed() {
+            let resources = self.resources.borrow();
+            if resources
+                .owners
+                .get(&mount.id().to_string())
+                .is_some_and(|owner| owner.kind != frame.view.view.as_ref().type_id())
+            {
                 return Err(maka_ui_runtime::Error::Invalid(
-                    "window owner mismatch".into(),
+                    "native recipe type changed on original mount; remount the component".into(),
                 ));
             }
-            let result = view.update(cx, |view, cx| {
-                let result =
-                    view.application
-                        .borrow_mut()
-                        .dispatch(lease.mount(), revision, key, event);
-                let decision = match result {
-                    Ok(decision) => decision,
-                    Err(error) => {
-                        // Faulted realms can retain their last display pending
-                        // recovery. Revoke their native input without replaying
-                        // commands from that already committed frame.
-                        if let Err(cleanup) = view.resources.borrow_mut().deactivate_unmounted(
-                            &view.application.borrow(),
-                            window,
+        }
+        for (mount, frame) in candidate.changed() {
+            let mut resources = self.resources.borrow_mut();
+            resources.prepare_scope(mount);
+            let id = mount.id().to_string();
+            if !resources.owners.contains_key(&id) {
+                let lease = resources.acquire(mount);
+                let input = widgets::LiveInput::new(
+                    Rc::new(RefCell::new(Some(
+                        self.input(
+                            &lease,
+                            (
+                                application
+                                    .frame(&self.mount)
+                                    .map_or(0, |frame| frame.revision),
+                                frame.revision,
+                            ),
+                            window.window_handle().window_id(),
                             cx,
-                        ) {
-                            eprintln!("component input deactivation failed: {cleanup}");
-                        }
-                        if let Some(owner) = cx.try_global::<actions::Owner>().cloned()
-                            && let Err(cleanup) = owner.recover_launch(&view.mount, window)
-                        {
-                            eprintln!("recovery surface transition failed: {cleanup}");
-                        }
-                        cx.notify();
-                        return Err(error);
+                        ),
+                    ))),
+                    resources.budget.clone(),
+                    lease.resources(),
+                    application.wake_callback(),
+                )
+                .with_checkpoint(application.checkpoint_scope(mount)?);
+                let recipe = frame.view.view.clone();
+                let state = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    recipe.create(input.clone(), window, cx)
+                })) {
+                    Ok(state) => state,
+                    Err(_) => {
+                        let reason = "desktop native creation cleanup unconfirmed".to_owned();
+                        resources.preparation_failed(mount, reason.clone());
+                        return Err(maka_ui_runtime::Error::Invalid(reason));
                     }
                 };
-                // The plugin transaction has committed. Native effects have
-                // their own receipts; failure cannot undo its input decision.
-                if let Err(error) = view.sync_native(window, cx) {
-                    eprintln!("component native synchronization failed: {error}");
-                }
-                cx.notify();
-                maka_ui_runtime::Result::Ok(decision)
-            });
-            result.map_err(|error| maka_ui_runtime::Error::Invalid(error.to_string()))?
-        }))
+                resources.owners.insert(
+                    id,
+                    resources::NativeInstance {
+                        kind: recipe.as_ref().type_id(),
+                        identity: Rc::new(()),
+                        recipe,
+                        revision: None,
+                        visible: false,
+                        state,
+                        input,
+                    },
+                );
+            }
+        }
+        let resources = self.resources.borrow();
+        let mut reservations = Vec::new();
+        for (mount, frame) in candidate.changed() {
+            let id = mount.id().to_string();
+            let owner = &resources.owners[&id];
+            let capacity = owner.input.observations.prepare(
+                frame
+                    .view
+                    .view
+                    .publication_capacity(owner.state.as_ref(), cx),
+            )?;
+            reservations.push((id, capacity));
+        }
+        Ok(reservations)
     }
+
     /// Native creation/commands run after the whole declarative transaction,
     /// never during layout/paint. The store owns resources, not component state.
     fn prepare_native(
@@ -170,7 +288,7 @@ impl Surface {
             let lease = self.resources.borrow().acquire(&mount);
             let input = self.input(
                 &lease,
-                frame.revision,
+                (application.frame(&self.mount)?.revision, frame.revision),
                 window.window_handle().window_id(),
                 cx,
             );
@@ -181,10 +299,9 @@ impl Surface {
                 .get(&id)
                 .is_some_and(|owner| owner.kind != kind)
             {
-                if let Some(owner) = resources.owners.get_mut(&id) {
-                    owner.deactivate(window, cx);
-                }
-                resources.owners.remove(&id);
+                return Err(maka_ui_runtime::Error::Invalid(
+                    "native recipe type changed on original mount; remount the component".into(),
+                ));
             }
             let budget = resources.budget.clone();
             let checkpoint = application.checkpoint_scope(&mount)?;
@@ -193,6 +310,7 @@ impl Surface {
                     Rc::new(RefCell::new(Some(input.clone()))),
                     budget,
                     lease.resources(),
+                    application.wake_callback(),
                 )
                 .with_checkpoint(checkpoint);
                 resources::NativeInstance {
@@ -205,7 +323,7 @@ impl Surface {
                     input,
                 }
             });
-            *owner.input.0.borrow_mut() = Some(input);
+            *owner.input.current.borrow_mut() = Some(input);
             owner.recipe = native.view.clone();
         }
         Ok(())
@@ -224,11 +342,60 @@ impl Surface {
             },
         )
     }
+    fn commit_candidate(
+        &self,
+        window: &mut gpui_kit::Window,
+        cx: &mut Context<Self>,
+    ) -> maka_ui_runtime::Result<bool> {
+        if self.resources.borrow().is_removed() {
+            return Ok(false);
+        }
+        self.resources
+            .borrow_mut()
+            .bind_surface(window.window_handle(), cx.weak_entity())?;
+        self.application.borrow_mut().advance_ui()?;
+        {
+            let application = self.application.borrow();
+            let mut resources = self.resources.borrow_mut();
+            // Completed original native work enters custody before the next
+            // candidate can reserve capacity or execute a new native command.
+            if application.frame(&self.mount).is_ok() {
+                for mount in application.mounted_subtree(&self.mount)? {
+                    if !application.is_retiring(&mount)
+                        && let Some(owner) = resources.owners.get_mut(&mount.id().to_string())
+                        && owner.input.current.borrow().is_some()
+                    {
+                        owner
+                            .recipe
+                            .publish_pending(owner.state.as_mut(), window, cx);
+                    }
+                }
+            }
+        }
+        let mut reservations = Vec::new();
+        let committed =
+            self.application
+                .borrow_mut()
+                .commit_ui(&self.mount, |application, candidate| {
+                    reservations = self.prepare_candidate(application, candidate, window, cx)?;
+                    Ok(())
+                })?;
+        if committed {
+            let resources = self.resources.borrow();
+            for (mount, capacity) in reservations {
+                if let Some(owner) = resources.owners.get(&mount) {
+                    owner.input.observations.adopt(capacity);
+                }
+            }
+        }
+        Ok(committed)
+    }
     fn sync_native(
         &self,
         window: &mut gpui_kit::Window,
         cx: &mut Context<Self>,
     ) -> maka_ui_runtime::Result<()> {
+        self.commit_candidate(window, cx)?;
         if self.resources.borrow().is_removed() {
             return Ok(());
         }
@@ -286,7 +453,38 @@ impl Surface {
                 .view
                 .publish_pending(owner.state.as_mut(), window, cx);
         }
+        let observations: Vec<_> = application
+            .mounted_subtree(&self.mount)?
+            .into_iter()
+            .filter(|mount| !application.is_retiring(mount))
+            .filter_map(|mount| {
+                self.resources
+                    .borrow()
+                    .owners
+                    .get(&mount.id().to_string())
+                    .map(|owner| {
+                        (
+                            mount,
+                            owner.input.clone(),
+                            owner.input.current.borrow().clone(),
+                        )
+                    })
+            })
+            .collect();
         drop(application);
+        for (mount, live, input) in observations {
+            live.observations.retain(|key| {
+                self.application
+                    .borrow()
+                    .frame(&mount)
+                    .is_ok_and(|frame| frame.view.declares_input(key))
+            });
+            if let Some(input) = input {
+                for error in live.advance(&input, window, cx) {
+                    eprintln!("native observation candidate rejected: {error}");
+                }
+            }
+        }
         self.resources
             .borrow_mut()
             .collect(&mut self.application.borrow_mut())?;
@@ -336,7 +534,7 @@ impl Surface {
             let lease = resources.acquire(&mount);
             let input = self.input(
                 &lease,
-                frame.revision,
+                (application.frame(&self.mount)?.revision, frame.revision),
                 window.window_handle().window_id(),
                 cx,
             );
@@ -468,7 +666,7 @@ impl RenderScene {
                     "slot parent detached".into(),
                 ));
             }
-            // Changing the widget kind can keep the core Mount but replace its owner.
+            // Retained slots also require this original native owner and frame.
             if let Some(token) = &entry.identity
                 && !scene
                     .resources
@@ -627,17 +825,19 @@ impl Launcher {
                 return Err(error.into());
             }
         };
-        let mount = match application.mount_bootstrap(serde_json::json!({})) {
-            Ok(mount) => mount,
-            Err(error) => {
-                drain_ui(&mut application, &timer, true);
-                timer.block_on(async {
-                    connections.drain().await;
-                    store.drain().await;
-                });
-                return Err(error.into());
-            }
-        };
+        application.defer_native_commit();
+        let mount =
+            match timer.block_on(application.mount_bootstrap_prepared(serde_json::json!({}))) {
+                Ok(mount) => mount,
+                Err(error) => {
+                    drain_ui(&mut application, &timer, true);
+                    timer.block_on(async {
+                        connections.drain().await;
+                        store.drain().await;
+                    });
+                    return Err(error.into());
+                }
+            };
         Ok(Self {
             timer,
             store,
@@ -823,19 +1023,35 @@ mod tests {
         .unwrap()
     }
 
+    fn settle_logic(app: &Rc<RefCell<DesktopApplication>>) {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while app.borrow().ui_pending() {
+            app.borrow_mut().advance_ui().unwrap();
+            assert!(
+                std::time::Instant::now() < until,
+                "original UI worker did not finish"
+            );
+            std::thread::park_timeout(std::time::Duration::from_millis(1));
+        }
+    }
     #[test]
     fn never_presented_child_can_close_but_visible_retired_mounts_stay_fenced() {
         let timer = timer();
         let mut app = application(&timer);
-        let root = app.mount_launch(serde_json::json!({})).unwrap();
+        let root = timer
+            .block_on(app.mount_bootstrap_ready(serde_json::json!({})))
+            .unwrap();
         let right = app.child_mount(&root, "right").unwrap().clone();
-        let other_root = app.mount_launch(serde_json::json!({})).unwrap();
+        let other_root = timer
+            .block_on(app.mount_bootstrap_ready(serde_json::json!({})))
+            .unwrap();
         let other_child = app.child_mount(&other_root, "right").unwrap().clone();
         app.retire(&other_root).unwrap();
-        let (wake, _) = tokio::sync::mpsc::unbounded_channel();
+        let (wake, _) = tokio::sync::mpsc::channel(1);
         let mut resources = resources::NativeResources::new(root.clone(), wake);
         app.dispatch(&root, 0, "toggle", serde_json::Value::Null)
             .unwrap();
+        timer.block_on(app.wait_idle()).unwrap();
         assert_eq!(resources.collect(&mut app).unwrap(), 2);
         assert!(app.frame(&right).is_err());
         assert!(app.frame(&other_root).is_ok());
@@ -850,6 +1066,7 @@ mod tests {
     fn unavailable_platform_receipt_does_not_create_resources_during_initial_window_draw(
         cx: &mut TestAppContext,
     ) {
+        cx.executor().allow_parking();
         let timer = timer();
         let dir = tempfile::tempdir().unwrap();
         let ns = maka_event_log::root::RootNamespaces {
@@ -879,9 +1096,11 @@ mod tests {
                 vec![],
             ))
             .unwrap();
-        let root = application.mount_launch(serde_json::json!({})).unwrap();
+        let root = timer
+            .block_on(application.mount_bootstrap_ready(serde_json::json!({})))
+            .unwrap();
         let app = Rc::new(RefCell::new(application));
-        let (wake, wakes) = tokio::sync::mpsc::unbounded_channel();
+        let (wake, wakes) = tokio::sync::mpsc::channel(1);
         let resources = Rc::new(RefCell::new(resources::NativeResources::new(
             root.clone(),
             wake,
@@ -943,14 +1162,19 @@ mod tests {
 
     #[gpui::test]
     fn closing_one_window_does_not_retire_or_collect_another_surface(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
         let timer = timer();
         let mut application = application(&timer);
-        let first = application.mount_launch(serde_json::json!({})).unwrap();
-        let second = application.mount_launch(serde_json::json!({})).unwrap();
+        let first = timer
+            .block_on(application.mount_bootstrap_ready(serde_json::json!({})))
+            .unwrap();
+        let second = timer
+            .block_on(application.mount_bootstrap_ready(serde_json::json!({})))
+            .unwrap();
         let app = Rc::new(RefCell::new(application));
         let finished = Rc::new(std::cell::Cell::new(0));
         let open = |mount: &Mount| {
-            let (wake, wakes) = tokio::sync::mpsc::unbounded_channel();
+            let (wake, wakes) = tokio::sync::mpsc::channel(1);
             let resources = Rc::new(RefCell::new(resources::NativeResources::new(
                 mount.clone(),
                 wake,
@@ -997,6 +1221,7 @@ mod tests {
         app.borrow_mut()
             .dispatch(&second, 0, "parent", serde_json::Value::Null)
             .unwrap();
+        settle_logic(&app);
         cx.update_window(second_window, |_, window, cx| {
             second_surface.update(cx, |s, cx| s.sync_native(window, cx).unwrap());
             window.refresh();
@@ -1022,12 +1247,15 @@ mod tests {
     fn window_closing_owner_survives_surface_drop_and_waits_for_real_leases(
         cx: &mut TestAppContext,
     ) {
+        cx.executor().allow_parking();
         let timer = timer();
         let mut application = application(&timer);
-        let root = application.mount_launch(serde_json::json!({})).unwrap();
+        let root = timer
+            .block_on(application.mount_bootstrap_ready(serde_json::json!({})))
+            .unwrap();
         let child = application.child_mount(&root, "right").unwrap().clone();
         let application = Rc::new(RefCell::new(application));
-        let (wake, wakes) = tokio::sync::mpsc::unbounded_channel();
+        let (wake, wakes) = tokio::sync::mpsc::channel(1);
         let resources = Rc::new(RefCell::new(resources::NativeResources::new(
             root.clone(),
             wake,
@@ -1096,14 +1324,17 @@ mod tests {
     fn native_state_and_callback_release_drive_cleanup_without_mount_churn_leaks(
         cx: &mut TestAppContext,
     ) {
+        cx.executor().allow_parking();
         let timer = timer();
         let mut app = application(&timer);
-        let root = app.mount_launch(serde_json::json!({})).unwrap();
+        let root = timer
+            .block_on(app.mount_bootstrap_ready(serde_json::json!({})))
+            .unwrap();
         let right = app.child_mount(&root, "right").unwrap().clone();
         let native = app.child_mount(&root, "nativeLabel").unwrap().clone();
         assert!(app.frame(&native).unwrap().view.slots().is_empty());
         let app = Rc::new(RefCell::new(app));
-        let (wake, receipts) = tokio::sync::mpsc::unbounded_channel();
+        let (wake, receipts) = tokio::sync::mpsc::channel(1);
         let resources = Rc::new(RefCell::new(resources::NativeResources::new(
             root.clone(),
             wake,
@@ -1158,6 +1389,7 @@ mod tests {
         app.borrow_mut()
             .dispatch(&root, 0, "toggle", serde_json::Value::Null)
             .unwrap();
+        settle_logic(&app);
         assert_eq!(
             resources
                 .borrow_mut()
@@ -1175,6 +1407,7 @@ mod tests {
         app.borrow_mut()
             .dispatch(&root, 1, "toggle", serde_json::Value::Null)
             .unwrap();
+        settle_logic(&app);
         draw(cx);
         let right = app.borrow().child_mount(&root, "right").unwrap().clone();
         let native = app
@@ -1187,6 +1420,7 @@ mod tests {
         app.borrow_mut()
             .dispatch(&root, 2, "toggle", serde_json::Value::Null)
             .unwrap();
+        settle_logic(&app);
         assert_eq!(
             resources
                 .borrow_mut()
@@ -1217,6 +1451,7 @@ mod tests {
             app.borrow_mut()
                 .dispatch(&root, revision, "toggle", serde_json::Value::Null)
                 .unwrap();
+            settle_logic(&app);
             resources
                 .borrow_mut()
                 .collect(&mut app.borrow_mut())
@@ -1271,16 +1506,26 @@ fn javascript_scene_style_overflow_rejects_batch_and_preserves_original_frame() 
             Default::default(),
         )
         .unwrap();
-        let mount = app.mount_launch(serde_json::json!({"count":4})).unwrap();
-        assert!(
-            app.dispatch(&mount, 0, "inc", serde_json::Value::Null)
-                .is_err()
-        );
+        let mount = timer
+            .block_on(app.mount_bootstrap_ready(serde_json::json!({"count":4})))
+            .unwrap();
+        app.dispatch(&mount, 0, "inc", serde_json::Value::Null)
+            .unwrap();
+        assert!(timer.block_on(app.wait_idle()).is_err());
         assert_eq!(app.frame(&mount).unwrap().revision, 0);
         assert_eq!(app.frame(&mount).unwrap().state["count"], 4);
         assert!(!app.is_retiring(&mount));
         app.close(&mount, Ok(())).unwrap();
-        app.shutdown().unwrap();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            match app.shutdown() {
+                Ok(()) => break,
+                Err(maka_ui_runtime::Error::Core(maka_plugin_core::Error::CleanupPending)) => {}
+                Err(error) => panic!("original cleanup failed: {error}"),
+            }
+            assert!(std::time::Instant::now() < until);
+            std::thread::park_timeout(std::time::Duration::from_millis(1));
+        }
     }
 }
 

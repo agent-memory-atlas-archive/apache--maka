@@ -99,6 +99,9 @@ struct PaintedRegion {
     radius: f64,
     listen: BTreeSet<EventKind>,
     draggable: bool,
+    focus_on_pointer: bool,
+    drag_preview: bool,
+    bubble_input: bool,
     source_admitted: bool,
 }
 impl PaintedRegion {
@@ -162,40 +165,32 @@ impl Shared {
         self.alive.get()
             && self.visible.get()
             && self.window == window.window_handle().window_id()
-            && self.live.0.borrow().is_some()
+            && self.live.current.borrow().is_some()
     }
     fn current_input(&self) -> Option<Input> {
-        self.live.0.borrow().clone()
+        self.live.current.borrow().clone()
     }
-    fn decision(
+    fn dispatch(
         &self,
         input: &Input,
         event: CanvasInput,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<maka_ui_runtime::InputDecision> {
-        match (input.0)(
+    ) -> bool {
+        match (input.dispatch)(
             &self.key,
             serde_json::to_value(event).expect("finite canvas input"),
             window,
             cx,
         ) {
-            Ok(decision) => {
-                if decision.prevent_default {
-                    window.prevent_default();
-                }
-                if decision.stop_propagation {
-                    cx.stop_propagation();
-                }
-                Some(decision)
-            }
+            Ok(()) => true,
             Err(error) => {
                 eprintln!("canvas input rejected: {error}");
                 self.gesture.borrow_mut().take();
                 window.prevent_default();
                 cx.stop_propagation();
                 window.refresh();
-                None
+                false
             }
         }
     }
@@ -209,8 +204,7 @@ impl Shared {
         let Some(position) = painted.position(event.position) else {
             return;
         };
-        // Div's automatic focus is a later bubble default. Replace that default
-        // only after the synchronous transaction and original admission survive.
+        // Replace Div's automatic focus with the committed region's native default.
         window.prevent_default();
         self.gesture.borrow_mut().take();
         let gesture = region
@@ -221,8 +215,8 @@ impl Shared {
             self.sequence.set(id);
         }
         let interruption = window.input_interruption();
-        let decision = if region.listen.contains(&EventKind::PointerDown) {
-            self.decision(
+        let admitted = if region.listen.contains(&EventKind::PointerDown) {
+            self.dispatch(
                 &painted.input,
                 CanvasInput::PointerDown {
                     region: region.owner.key.clone(),
@@ -233,15 +227,20 @@ impl Shared {
                 cx,
             )
         } else {
-            Some(maka_ui_runtime::InputDecision::default())
+            true
         };
-        if decision.is_some_and(|d| !d.prevent_default)
+        if admitted
             && self.enabled(window)
             && region.admitted()
             && interruption == window.input_interruption()
             && window.input_focus_is_admitted(&region.owner.focus)
         {
-            region.owner.focus.focus(window, cx);
+            if region.focus_on_pointer {
+                region.owner.focus.focus(window, cx);
+            }
+            if !region.bubble_input {
+                cx.stop_propagation();
+            }
             if let Some(id) = gesture {
                 *self.gesture.borrow_mut() = Some(Gesture {
                     id,
@@ -283,11 +282,11 @@ impl Shared {
         let Some(delta) = Point::from_native(event.position - gesture.start_window) else {
             return;
         };
-        let decision = if gesture.region.listen.contains(&EventKind::DragMove) {
+        let admitted = if gesture.region.listen.contains(&EventKind::DragMove) {
             let Some(input) = self.current_input() else {
                 return;
             };
-            self.decision(
+            self.dispatch(
                 &input,
                 CanvasInput::DragMove {
                     region: gesture.region.owner.key.clone(),
@@ -300,9 +299,9 @@ impl Shared {
                 cx,
             )
         } else {
-            Some(maka_ui_runtime::InputDecision::default())
+            true
         };
-        if decision.is_some_and(|d| !d.prevent_default)
+        if admitted
             && self.enabled(window)
             && gesture.region.admitted()
             && gesture.interruption == window.input_interruption()
@@ -310,9 +309,14 @@ impl Shared {
                 g.id == gesture.id && Rc::ptr_eq(&g.region.owner, &gesture.region.owner)
             })
         {
-            current.position = position;
-            current.delta = delta;
-            window.refresh();
+            if current.region.drag_preview {
+                current.position = position;
+                current.delta = delta;
+                window.refresh();
+            }
+            if !current.region.bubble_input {
+                cx.stop_propagation();
+            }
         }
     }
     fn up(&self, event: &MouseUpEvent, window: &mut Window, cx: &mut App) {
@@ -345,7 +349,7 @@ impl Shared {
         let Some(input) = self.current_input() else {
             return;
         };
-        self.decision(
+        self.dispatch(
             &input,
             CanvasInput::Drop {
                 region: gesture.region.owner.key.clone(),
@@ -421,7 +425,41 @@ impl State {
                 cx.stop_propagation();
                 return;
             }
-            shared.decision(
+            let config = region.config.borrow().clone();
+            let physical = event.keystroke.modifiers;
+            let tab = event.keystroke.key == "tab"
+                && !physical.control
+                && !physical.alt
+                && !physical.platform
+                && !physical.function;
+            let copy = event.keystroke.key == "c"
+                && !physical.alt
+                && !physical.shift
+                && !physical.function
+                && if cfg!(target_os = "macos") {
+                    physical.platform && !physical.control
+                } else {
+                    physical.control && !physical.platform
+                };
+            if tab {
+                window.prevent_default();
+                if config.tab_navigation {
+                    if physical.shift {
+                        window.focus_prev(cx);
+                    } else {
+                        window.focus_next(cx);
+                    }
+                }
+            } else if copy {
+                window.prevent_default();
+                if config.native_copy {
+                    window.dispatch_action(Box::new(gpui_kit::base::input::Copy), cx);
+                }
+            }
+            if !config.bubble_input {
+                cx.stop_propagation();
+            }
+            shared.dispatch(
                 &input,
                 CanvasInput::KeyDown {
                     region: region.key.clone(),
@@ -498,6 +536,11 @@ impl State {
                 old.disabled != region.disabled
                     || old.draggable != region.draggable
                     || old.listen != region.listen
+                    || old.focus_on_pointer != region.focus_on_pointer
+                    || old.drag_preview != region.drag_preview
+                    || old.tab_navigation != region.tab_navigation
+                    || old.native_copy != region.native_copy
+                    || old.bubble_input != region.bubble_input
             };
             if changed {
                 owner.route.set(owner.route.get() + 1);
@@ -603,12 +646,20 @@ impl State {
                         radius: region.radius,
                         listen: region.listen.clone(),
                         draggable: region.draggable,
+                        focus_on_pointer: region.focus_on_pointer,
+                        drag_preview: region.drag_preview,
+                        bubble_input: region.bubble_input,
                         source_admitted: {
                             let current = owner.config.borrow();
                             !region.disabled
                                 && current.disabled == region.disabled
                                 && current.draggable == region.draggable
                                 && current.listen == region.listen
+                                && current.focus_on_pointer == region.focus_on_pointer
+                                && current.drag_preview == region.drag_preview
+                                && current.tab_navigation == region.tab_navigation
+                                && current.native_copy == region.native_copy
+                                && current.bubble_input == region.bubble_input
                         },
                     })
             })
@@ -655,6 +706,7 @@ impl State {
                                 gesture.interruption == window.input_interruption()
                             }),
                         ) && gesture.region.admitted()
+                            && gesture.region.drag_preview
                         {
                             let delta = gesture.delta.native();
                             window.paint_quad(gesture.region.outline(
@@ -693,8 +745,9 @@ impl State {
         );
         for region in regions {
             let owner = region.owner.clone();
-            let enabled =
-                owner.admitted.get() && shared.alive.get() && shared.live.0.borrow().is_some();
+            let enabled = owner.admitted.get()
+                && shared.alive.get()
+                && shared.live.current.borrow().is_some();
             let current = owner.config.borrow().clone();
             let focus = owner
                 .focus
@@ -743,7 +796,7 @@ impl State {
                         {
                             // AX is not the foreground mouse/key event. Never set
                             // cancellation flags on an unrelated native dispatch.
-                            if let Err(error) = (activate_input.0)(
+                            if let Err(error) = (activate_input.dispatch)(
                                 &activate_alive.key,
                                 serde_json::to_value(CanvasInput::Activate {
                                     region: activate_owner.key.clone(),

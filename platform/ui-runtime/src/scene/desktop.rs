@@ -108,6 +108,9 @@ pub enum Node {
         /// click whose default action was not prevented.
         #[serde(default)]
         copy_text: Option<String>,
+        /// Propagate physical activation beyond this committed button.
+        #[serde(default = "visible")]
+        bubble_activation: bool,
         #[serde(default)]
         style: Style,
         #[serde(default)]

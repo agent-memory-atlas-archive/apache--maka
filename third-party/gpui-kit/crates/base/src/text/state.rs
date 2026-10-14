@@ -1,11 +1,8 @@
-use futures::Stream as _;
 #[cfg(not(target_family = "wasm"))]
 use std::time::Instant;
 use std::{
     ops::{Range, RangeInclusive},
-    pin::Pin,
-    sync::{Arc, OnceLock},
-    task::Poll,
+    sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
 #[cfg(target_family = "wasm")]
@@ -19,7 +16,7 @@ use gpui::{
 
 use crate::{
     AutoScroll,
-    async_util::{Receiver, Sender, unbounded},
+    async_util::{Receiver, Sender, bounded},
     input::{self, SelectAll},
     text::{
         CodeBlockActionsFn, CodeBlockHighlighterFn, LinkActivationFn, MarkdownExtensions,
@@ -37,8 +34,6 @@ use crate::{
 };
 
 const CONTEXT: &'static str = "TextView";
-// Keep coalescing bounded so sustained streams still render intermediate updates.
-const MAX_COALESCED_UPDATES_PER_PARSE: usize = 64;
 // Preserve exact first-layout height for small documents while bounding the
 // amount of source parsed synchronously on the UI thread.
 const MAX_SYNC_FULL_REPLACE_BYTES: usize = 4 * 1024;
@@ -143,7 +138,7 @@ pub struct TextViewState {
     pub(super) links: super::link::Links,
     pub(super) interaction_enabled: bool,
     interaction_admission: Option<Arc<()>>,
-    tx: Sender<UpdateOptions>,
+    tx: ParseInput,
     _parse_task: Task<()>,
     _receive_task: Task<()>,
 }
@@ -164,8 +159,8 @@ impl TextViewState {
         let focus_handle = cx.focus_handle();
         let selection_adapter = TextViewSelectionAdapter::new(cx.entity().downgrade(), cx);
 
-        let (tx, rx) = unbounded::<UpdateOptions>();
-        let (tx_result, rx_result) = unbounded::<ParsedUpdate>();
+        let (tx, rx) = ParseInput::new();
+        let (tx_result, rx_result) = bounded::<ParsedUpdate>(1);
         let _receive_task = cx.spawn({
             async move |weak_self, cx| {
                 while let Ok(parsed_update) = rx_result.recv().await {
@@ -188,7 +183,7 @@ impl TextViewState {
             }
         });
 
-        let _parse_task = cx.background_spawn(UpdateFuture::new(format, rx, tx_result));
+        let _parse_task = cx.background_spawn(parse_updates(format, rx, tx_result));
 
         let mut this = Self {
             entity_id: cx.entity_id(),
@@ -547,12 +542,12 @@ impl TextViewState {
             // Keep the background parser's accumulated document in sync so a
             // later append extends this baseline instead of parsing the delta
             // as a standalone document.
-            _ = self.tx.try_send(update_options);
+            self.tx.publish(update_options);
             cx.notify();
             return;
         }
 
-        _ = self.tx.try_send(update_options);
+        self.tx.publish(update_options);
     }
 
     /// Whether [`Self::commit_parsed_update`] commits `parsed_update`: it is
@@ -1215,79 +1210,79 @@ pub(crate) struct ParsedContent {
     pub(crate) node_cx: node::NodeContext,
 }
 
-struct UpdateFuture {
-    format: TextViewFormat,
-    content: ParsedContent,
-    /// Consumed input that has not yet produced a successful parse.
-    pending: Option<UpdateOptions>,
-    rx: Pin<Box<Receiver<UpdateOptions>>>,
-    tx_result: Sender<ParsedUpdate>,
+/// One ordered pending batch. Replacements supersede pending source; appends
+/// merge in order. The channel carries only a wakeup, never another source copy.
+struct ParseInput {
+    pending: Arc<Mutex<Option<UpdateOptions>>>,
+    wake: Sender<()>,
 }
-
-impl UpdateFuture {
-    fn new(
-        format: TextViewFormat,
-        rx: Receiver<UpdateOptions>,
-        tx_result: Sender<ParsedUpdate>,
-    ) -> Self {
-        Self {
-            format,
-            content: Default::default(),
-            pending: None,
-            rx: Box::pin(rx),
-            tx_result,
+struct ParseReceiver {
+    pending: Arc<Mutex<Option<UpdateOptions>>>,
+    wake: Receiver<()>,
+}
+impl ParseInput {
+    fn new() -> (Self, ParseReceiver) {
+        let pending = Arc::new(Mutex::new(None));
+        let (wake, receive) = bounded(1);
+        (
+            Self {
+                pending: pending.clone(),
+                wake,
+            },
+            ParseReceiver {
+                pending,
+                wake: receive,
+            },
+        )
+    }
+    fn publish(&self, update: UpdateOptions) {
+        let mut pending = self.pending.lock().unwrap();
+        if let Some(current) = pending.as_mut() {
+            current.merge(update);
+        } else {
+            *pending = Some(update);
         }
+        drop(pending);
+        // Full means the sole pending batch already has a wakeup.
+        let _ = self.wake.try_send(());
     }
 }
-
-impl Future for UpdateFuture {
-    type Output = ();
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        loop {
-            match self.rx.as_mut().poll_next(cx) {
-                Poll::Ready(Some(mut options)) => {
-                    if let Some(mut pending) = self.pending.take() {
-                        pending.merge(options);
-                        options = pending;
-                    }
-                    let hit_coalesce_budget =
-                        merge_pending_options(&mut options, self.rx.as_ref().get_ref());
-
-                    let previous_references = &self.content.node_cx.link_refs;
-                    let res = parse_content(self.format, self.content.clone(), &options);
-                    let reference_parse = self.format == TextViewFormat::Markdown
-                        && res.as_ref().is_ok_and(|content| {
-                            !previous_references.is_empty() || !content.node_cx.link_refs.is_empty()
-                        });
-                    let update = ParsedUpdate {
-                        revision: options.revision,
-                        appended: options.append,
-                        full_parse: !options.append
-                            || self.format == TextViewFormat::Html
-                            || reference_parse,
-                        selection_compatible: options.mode == ParseMode::Compatible
-                            && self.format == TextViewFormat::Markdown,
-                        baseline_ack: options.mode == ParseMode::BaselineAck,
-                        result: res,
-                    };
-                    if let Ok(content) = &update.result {
-                        self.content = content.clone();
-                    } else {
-                        // Wait for real new input. A replacement supersedes this
-                        // message; an append must include every failed chunk.
-                        self.pending = Some(options);
-                    }
-                    _ = self.tx_result.try_send(update);
-                    if hit_coalesce_budget {
-                        cx.waker().wake_by_ref();
-                        return Poll::Pending;
-                    }
-                    continue;
-                }
-                Poll::Ready(None) => return Poll::Ready(()),
-                Poll::Pending => return Poll::Pending,
-            }
+async fn parse_updates(format: TextViewFormat, rx: ParseReceiver, tx_result: Sender<ParsedUpdate>) {
+    let mut content = ParsedContent::default();
+    let mut failed: Option<UpdateOptions> = None;
+    while rx.wake.recv().await.is_ok() {
+        let Some(mut options) = rx.pending.lock().unwrap().take() else {
+            continue;
+        };
+        if let Some(mut previous) = failed.take() {
+            previous.merge(options);
+            options = previous;
+        }
+        let previous_references = &content.node_cx.link_refs;
+        let result = parse_content(format, content.clone(), &options);
+        let reference_parse = format == TextViewFormat::Markdown
+            && result.as_ref().is_ok_and(|next| {
+                !previous_references.is_empty() || !next.node_cx.link_refs.is_empty()
+            });
+        let update = ParsedUpdate {
+            revision: options.revision,
+            appended: options.append,
+            full_parse: !options.append || format == TextViewFormat::Html || reference_parse,
+            selection_compatible: options.mode == ParseMode::Compatible
+                && format == TextViewFormat::Markdown,
+            baseline_ack: options.mode == ParseMode::BaselineAck,
+            result,
+        };
+        if let Ok(parsed) = &update.result {
+            content = parsed.clone();
+        } else {
+            // Retry only on real new source, retaining every failed append.
+            failed = Some(options);
+        }
+        // One result at a time. While the foreground is busy, new source merges
+        // in the original pending batch and the parser sleeps here.
+        if tx_result.send(update).await.is_err() {
+            break;
         }
     }
 }
@@ -1330,22 +1325,6 @@ enum ParseMode {
     BaselineAck,
     Replace,
     Compatible,
-}
-
-fn merge_pending_options(options: &mut UpdateOptions, rx: &Receiver<UpdateOptions>) -> bool {
-    let mut update_count = 1;
-
-    while update_count < MAX_COALESCED_UPDATES_PER_PARSE {
-        match rx.try_recv() {
-            Ok(next_options) => {
-                options.merge(next_options);
-                update_count += 1;
-            }
-            Err(_) => return false,
-        }
-    }
-
-    true
 }
 
 fn parse_content(
@@ -2225,48 +2204,52 @@ mod tests {
     }
 
     #[test]
-    fn update_future_yields_before_coalescing_all_queued_updates() {
-        let (tx, rx) = unbounded::<UpdateOptions>();
-        let (tx_result, rx_result) = unbounded::<ParsedUpdate>();
-        let total_updates = 128;
-
-        for revision in 1..=total_updates {
-            tx.try_send(UpdateOptions {
+    fn parse_queue_merges_ordered_source_and_backpressures_results() {
+        use std::{future::Future, task::Poll};
+        let (tx, rx) = ParseInput::new();
+        let (tx_result, rx_result) = bounded(1);
+        let mut expected = String::new();
+        for revision in 1..=128 {
+            let text = format!("{revision}\n");
+            expected.push_str(&text);
+            tx.publish(UpdateOptions {
                 revision,
-                pending_text: format!("{revision}\n"),
+                pending_text: text,
                 append: revision != 1,
                 mode: if revision == 1 {
-                    ParseMode::BaselineAck
+                    ParseMode::Replace
                 } else {
                     ParseMode::Compatible
                 },
                 markdown_extensions: Arc::default(),
-            })
-            .unwrap();
+            });
         }
-
-        let mut future = Box::pin(UpdateFuture::new(TextViewFormat::Markdown, rx, tx_result));
-        let waker = futures::task::noop_waker();
-        let mut task_cx = std::task::Context::from_waker(&waker);
-
-        assert!(matches!(
-            std::future::Future::poll(future.as_mut(), &mut task_cx),
-            Poll::Pending
-        ));
-        let parsed_update = rx_result.try_recv().expect("parse result");
-
-        assert!(
-            parsed_update.revision < total_updates,
-            "single poll coalesced every queued update through revision {}",
-            parsed_update.revision
+        assert_eq!(
+            tx.pending.lock().unwrap().as_ref().unwrap().pending_text,
+            expected
         );
-
-        assert!(matches!(
-            std::future::Future::poll(future.as_mut(), &mut task_cx),
-            Poll::Pending
-        ));
-        let parsed_update = rx_result.try_recv().expect("next parse result");
-        assert_eq!(parsed_update.revision, total_updates);
+        assert_eq!(tx.wake.len(), 1);
+        let mut parser = Box::pin(parse_updates(TextViewFormat::Markdown, rx, tx_result));
+        let waker = futures::task::noop_waker();
+        let mut cx = std::task::Context::from_waker(&waker);
+        assert!(matches!(parser.as_mut().poll(&mut cx), Poll::Pending));
+        tx.publish(UpdateOptions {
+            revision: 129,
+            pending_text: "tail".into(),
+            append: true,
+            mode: ParseMode::Compatible,
+            markdown_extensions: Arc::default(),
+        });
+        assert!(matches!(parser.as_mut().poll(&mut cx), Poll::Pending));
+        assert_eq!(rx_result.len(), 1, "result queue must remain bounded");
+        let first = rx_result.try_recv().unwrap();
+        assert_eq!(first.revision, 128);
+        assert_eq!(first.result.unwrap().document.source.as_ref(), expected);
+        assert!(matches!(parser.as_mut().poll(&mut cx), Poll::Pending));
+        let next = rx_result.try_recv().unwrap();
+        assert_eq!(next.revision, 129);
+        expected.push_str("tail");
+        assert_eq!(next.result.unwrap().document.source.as_ref(), expected);
     }
 
     #[gpui::test]

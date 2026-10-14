@@ -62,7 +62,7 @@ fn refresh(p: &mut Presenter) {
     p.application
         .dispatch(&p.root, revision, "back", json!({}))
         .unwrap();
-    p.sync_native().unwrap();
+    p.settle().unwrap();
 }
 fn command(p: &mut Presenter, value: &RefCell<Value>, sequence: u64, op: &str) {
     value.borrow_mut()["command"] = json!({"sequence":sequence,"op":op});
@@ -87,7 +87,7 @@ fn pending(p: &Presenter, width: u16) -> PaintedScene {
 }
 fn close(p: &mut Presenter) {
     p.surface_closed(&p.surface(), Ok(())).unwrap();
-    p.shutdown().unwrap();
+    p.shutdown_settled().unwrap();
 }
 #[test]
 fn adaptive_original_thresholds_keep_manual_preference_and_independent_drawer() {
@@ -182,10 +182,10 @@ fn adaptive_editor_undo_and_directory_scroll_survive_inline_and_modal_layouts() 
         .unwrap()
         .clone();
     let original_owner = p.resources.owners[&editor_mount.id()].identity.clone();
-    p.input(Event::Paste("Draft 中🙂".into())).unwrap();
+    p.input_settled(Event::Paste("Draft 中🙂".into())).unwrap();
     draw(&mut p, 100, 20);
     let editor_focus = p.focus.clone().unwrap();
-    p.input(Event::Mouse(MouseEvent {
+    p.input_settled(Event::Mouse(MouseEvent {
         kind: MouseEventKind::ScrollDown,
         column: 1,
         row: 3,
@@ -201,7 +201,7 @@ fn adaptive_editor_undo_and_directory_scroll_survive_inline_and_modal_layouts() 
     command(&mut p, &value, 1, "toggle");
     draw(&mut p, 40, 20);
     assert!(!p.physical_path.is_empty());
-    p.input(key(KeyCode::Esc)).unwrap();
+    p.input_settled(key(KeyCode::Esc)).unwrap();
     draw(&mut p, 100, 20);
     assert!(p.physical_path.is_empty());
     assert_eq!(inline(&p), 32);
@@ -223,13 +223,13 @@ fn adaptive_editor_undo_and_directory_scroll_survive_inline_and_modal_layouts() 
             .to_owned()
     };
     assert_eq!(text(&p), "Draft 中🙂");
-    p.input(Event::Key(KeyEvent::new(
+    p.input_settled(Event::Key(KeyEvent::new(
         KeyCode::Char('z'),
         KeyModifiers::CONTROL,
     )))
     .unwrap();
     assert_eq!(text(&p), "");
-    p.input(Event::Key(KeyEvent::new(
+    p.input_settled(Event::Key(KeyEvent::new(
         KeyCode::Char('y'),
         KeyModifiers::CONTROL,
     )))
@@ -270,14 +270,14 @@ fn adaptive_divider_drag_and_keyboard_resize_preserve_the_editor_and_clamp_width
     let (_runtime, mut p, _) = fixture();
     draw(&mut p, 120, 20);
     let editor = p.focus.clone().unwrap();
-    p.input(Event::Paste("Draft 中🙂".into())).unwrap();
+    p.input_settled(Event::Paste("Draft 中🙂".into())).unwrap();
     draw(&mut p, 120, 20);
     for (kind, column) in [
         (MouseEventKind::Down(MouseButton::Left), 31),
         (MouseEventKind::Drag(MouseButton::Left), 43),
         (MouseEventKind::Up(MouseButton::Left), 43),
     ] {
-        p.input(Event::Mouse(MouseEvent {
+        p.input_settled(Event::Mouse(MouseEvent {
             kind,
             column,
             row: 5,
@@ -296,20 +296,20 @@ fn adaptive_divider_drag_and_keyboard_resize_preserve_the_editor_and_clamp_width
     assert_eq!(inline(&p), 37, "keep enough space for the main content");
     draw(&mut p, 120, 20);
     assert_eq!(inline(&p), 44, "widening restores the chosen size");
-    p.input(Event::Key(KeyEvent::new(
+    p.input_settled(Event::Key(KeyEvent::new(
         KeyCode::BackTab,
         KeyModifiers::SHIFT,
     )))
     .unwrap();
     draw(&mut p, 120, 20);
     assert_eq!(p.focus.as_ref().unwrap().key, "pane");
-    p.input(key(KeyCode::Left)).unwrap();
+    p.input_settled(key(KeyCode::Left)).unwrap();
     draw(&mut p, 120, 20);
     assert_eq!(inline(&p), 43);
-    p.input(key(KeyCode::Home)).unwrap();
+    p.input_settled(key(KeyCode::Home)).unwrap();
     draw(&mut p, 120, 20);
     assert_eq!(inline(&p), 32);
-    p.input(key(KeyCode::Tab)).unwrap();
+    p.input_settled(key(KeyCode::Tab)).unwrap();
     draw(&mut p, 120, 20);
     assert!(p.focus.as_ref().unwrap().same(&editor));
     let mount = p.application.child_mount(&p.root, "editor").unwrap();

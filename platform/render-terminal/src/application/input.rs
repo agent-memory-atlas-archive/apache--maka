@@ -41,6 +41,21 @@ struct Recipe {
     secret: bool,
 }
 impl Widget for Recipe {
+    fn publication_capacity(&self, state: &dyn Any) -> Vec<(&'static str, usize)> {
+        let owner = state.downcast_ref::<Owner>().unwrap();
+        if !owner.announced
+            || self
+                .props
+                .command
+                .as_ref()
+                .is_some_and(|command| owner.last_request.as_ref() != Some(command))
+        {
+            vec![("observe", 4096)]
+        } else {
+            Vec::new()
+        }
+    }
+
     fn cancel_pointer(&self, state: &mut dyn Any) {
         state
             .downcast_mut::<Owner>()
@@ -111,13 +126,14 @@ impl Widget for Recipe {
                 }
                 if key.code == KeyCode::Enter && key.modifiers.is_empty() && !self.props.read_only {
                     let input = NativeInput {
+                        replaceable: false,
                         key: "submit".into(),
                         value: serde_json::json!({}),
                     };
                     owner.refresh();
                     return Ok(match &self.props.submit_copy {
                         Some(copy) if owner.snapshot().text == copy.basis => {
-                            WidgetInput::SubmitCopy(input, copy.text.clone())
+                            WidgetInput::SubmitCopy(input, copy.clone())
                         }
                         Some(_) => WidgetInput::Consumed(Some(owner.observation())),
                         None => WidgetInput::Emitted(input),

@@ -653,8 +653,6 @@ export function executionPicker<N extends Node>(
       }
       const out = frame(presentation, state, props, actions, events);
       out.cancel = cancel;
-      if (input.kind === 'raw' && input.key === 'backend-popup')
-        out.decision = { preventDefault: true, stopPropagation: true };
       return out;
     },
   };

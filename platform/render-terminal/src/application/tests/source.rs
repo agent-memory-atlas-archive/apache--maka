@@ -36,7 +36,7 @@ fn native(source: &str) -> (tokio::runtime::Runtime, Presenter, Rc<RefCell<Value
 }
 fn select_all(presenter: &mut Presenter) {
     presenter
-        .input(Event::Key(KeyEvent::new(
+        .input_settled(Event::Key(KeyEvent::new(
             KeyCode::Char('a'),
             KeyModifiers::CONTROL,
         )))
@@ -61,17 +61,17 @@ fn refresh(presenter: &mut Presenter) {
         .application
         .dispatch(&presenter.root, revision, "back", json!({"kind":"click"}))
         .unwrap();
-    presenter.sync_native().unwrap();
+    presenter.settle().unwrap();
 }
 fn close(presenter: &mut Presenter) {
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
-    presenter.shutdown().unwrap();
+    presenter.shutdown_settled().unwrap();
 }
 fn mouse(presenter: &mut Presenter, kind: MouseEventKind, x: u16, y: u16) {
     presenter
-        .input(Event::Mouse(MouseEvent {
+        .input_settled(Event::Mouse(MouseEvent {
             kind,
             column: x,
             row: y,
@@ -92,9 +92,48 @@ fn literal_source_displays_safely_and_copies_every_original_control_and_utf8_byt
             .any(|cell| cell.symbol().chars().any(char::is_control))
     );
     assert_eq!(buffer[(4, 1)].symbol(), "中");
+    let geometry = |presenter: &Presenter| {
+        let owner = presenter.resources.owners[&presenter.root.id()]
+            .state
+            .downcast_ref::<super::super::source::Owner>()
+            .unwrap();
+        owner
+            .document
+            .borrow()
+            .glyphs
+            .as_ref()
+            .unwrap()
+            .layout
+            .clone()
+    };
+    let original = geometry(&presenter);
+    let budget = presenter.resources.budget.clone();
+    let retained = budget.usage();
+    draw(&mut presenter, 40, 8);
+    let repeated = geometry(&presenter);
+    let super::super::selection::Layout::Literal(first, _) = &original else {
+        panic!("literal geometry")
+    };
+    let super::super::selection::Layout::Literal(second, _) = &repeated else {
+        panic!("literal geometry")
+    };
+    assert!(std::sync::Arc::ptr_eq(first, second));
+    assert_eq!(budget.usage(), retained);
+    draw(&mut presenter, 20, 8);
+    let resized = geometry(&presenter);
+    let super::super::selection::Layout::Literal(next, _) = &resized else {
+        panic!("literal geometry")
+    };
+    assert!(!std::sync::Arc::ptr_eq(first, next));
     select_all(&mut presenter);
     assert_eq!(copied(&mut presenter).unwrap(), source.as_bytes());
     close(&mut presenter);
+    assert!(
+        budget.usage().0 > 0,
+        "original shared geometry still owns its bytes"
+    );
+    drop((original, repeated, resized));
+    assert_eq!(budget.usage(), (0, 0, 0));
 }
 #[test]
 fn append_preserves_literal_byte_endpoints_even_when_graphemes_or_crlf_merge() {
@@ -250,7 +289,7 @@ fn first_shift_click_extends_the_original_caret_without_editing_literal_source()
     let (_runtime, mut presenter, _) = native("中文😀 raw");
     draw(&mut presenter, 20, 4);
     presenter
-        .input(Event::Mouse(MouseEvent {
+        .input_settled(Event::Mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 4,
             row: 0,

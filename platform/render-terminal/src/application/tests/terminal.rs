@@ -77,7 +77,7 @@ fn terminal_resize_uses_allocated_rows_below_controls_in_a_short_surface() {
     assert_eq!(target.area.visible().height, 3);
     assert_eq!(observed(&p)["batch"]["size"], json!({"cols":40,"rows":3}));
     p.surface_closed(&p.surface(), Ok(())).unwrap();
-    p.shutdown().unwrap();
+    p.shutdown_settled().unwrap();
 }
 #[test]
 fn copy_button_requires_original_physical_activation_and_successful_dispatch() {
@@ -95,7 +95,7 @@ fn copy_button_requires_original_physical_activation_and_successful_dispatch() {
     let mut copied = Vec::new();
     assert!(!p.flush_clipboard(&mut copied).unwrap());
     draw(&mut p, 40, 4);
-    p.input(key(KeyCode::Enter)).unwrap();
+    p.input_settled(key(KeyCode::Enter)).unwrap();
     assert!(p.flush_clipboard(&mut copied).unwrap());
     let mut expected = Vec::new();
     crate::terminal::copy(&mut expected, "原文\nexact").unwrap();
@@ -103,7 +103,7 @@ fn copy_button_requires_original_physical_activation_and_successful_dispatch() {
     assert!(!p.flush_clipboard(&mut copied).unwrap());
     draw(&mut p, 40, 4);
     accept.set(false);
-    assert!(p.input(key(KeyCode::Enter)).is_err());
+    assert!(p.input_settled(key(KeyCode::Enter)).is_err());
     assert!(!p.flush_clipboard(&mut copied).unwrap());
     accept.set(true);
     scene.borrow_mut()["disabled"] = json!(true);
@@ -112,11 +112,11 @@ fn copy_button_requires_original_physical_activation_and_successful_dispatch() {
         .dispatch(&p.root, revision, "copy", json!({"kind":"click"}))
         .unwrap();
     draw(&mut p, 40, 4);
-    p.input(key(KeyCode::Enter)).unwrap();
+    p.input_settled(key(KeyCode::Enter)).unwrap();
     assert!(!p.flush_clipboard(&mut copied).unwrap());
     assert_eq!(copied, expected);
     p.surface_closed(&p.surface(), Ok(())).unwrap();
-    p.shutdown().unwrap();
+    p.shutdown_settled().unwrap();
 }
 #[test]
 fn terminal_native_focus_owns_control_c_tab_escape_and_returns_with_original_release_key() {
@@ -124,10 +124,10 @@ fn terminal_native_focus_owns_control_c_tab_escape_and_returns_with_original_rel
     settle(&mut p);
     assert_eq!(p.focus.as_ref().unwrap().key, "back");
     assert!(!p.captures_keyboard().unwrap());
-    p.input(key(KeyCode::Tab)).unwrap();
+    p.input_settled(key(KeyCode::Tab)).unwrap();
     settle(&mut p);
     assert!(p.captures_keyboard().unwrap());
-    p.input(Event::Key(KeyEvent::new(
+    p.input_settled(Event::Key(KeyEvent::new(
         KeyCode::Char('c'),
         KeyModifiers::CONTROL,
     )))
@@ -138,11 +138,11 @@ fn terminal_native_focus_owns_control_c_tab_escape_and_returns_with_original_rel
     );
     ack(&mut p, &scene);
     for (key_code, name) in [(KeyCode::Tab, "tab"), (KeyCode::Esc, "escape")] {
-        p.input(key(key_code)).unwrap();
+        p.input_settled(key(key_code)).unwrap();
         assert_eq!(observed(&p)["batch"]["actions"][0]["key"], name);
         ack(&mut p, &scene);
     }
-    p.input(Event::Key(KeyEvent::new(
+    p.input_settled(Event::Key(KeyEvent::new(
         KeyCode::Char('5'),
         KeyModifiers::CONTROL,
     )))
@@ -150,13 +150,13 @@ fn terminal_native_focus_owns_control_c_tab_escape_and_returns_with_original_rel
     assert_eq!(p.focus.as_ref().unwrap().key, "back");
     assert!(!p.captures_keyboard().unwrap());
     p.surface_closed(&p.surface(), Ok(())).unwrap();
-    p.shutdown().unwrap();
+    p.shutdown_settled().unwrap();
 }
 #[test]
 fn terminal_native_all_mouse_buttons_motion_and_shift_history_use_flushed_cell_coordinates() {
     let (_runtime, mut p, scene) = fixture();
     settle(&mut p);
-    p.input(key(KeyCode::Tab)).unwrap();
+    p.input_settled(key(KeyCode::Tab)).unwrap();
     settle(&mut p);
     let target = p
         .scene
@@ -188,7 +188,7 @@ fn terminal_native_all_mouse_buttons_motion_and_shift_history_use_flushed_cell_c
         ),
         (MouseEventKind::Moved, "move", None),
     ] {
-        p.input(mouse(kind, target.x + 2, target.y + 1, KeyModifiers::NONE))
+        p.input_settled(mouse(kind, target.x + 2, target.y + 1, KeyModifiers::NONE))
             .unwrap();
         let action = observed(&p)["batch"]["actions"][0].clone();
         assert_eq!(action["type"], "mouse");
@@ -198,7 +198,7 @@ fn terminal_native_all_mouse_buttons_motion_and_shift_history_use_flushed_cell_c
         assert_eq!(action.get("button").and_then(Value::as_str), button);
         ack(&mut p, &scene);
     }
-    p.input(mouse(
+    p.input_settled(mouse(
         MouseEventKind::ScrollUp,
         target.x + 2,
         target.y + 1,
@@ -216,7 +216,7 @@ fn terminal_native_all_mouse_buttons_motion_and_shift_history_use_flushed_cell_c
     );
     assert!(observed(&p)["batch"].is_null());
     p.surface_closed(&p.surface(), Ok(())).unwrap();
-    p.shutdown().unwrap();
+    p.shutdown_settled().unwrap();
 }
 
 #[test]
@@ -228,7 +228,7 @@ fn terminal_readonly_canonical_screen_remains_keyboard_reachable_and_copyable() 
         .dispatch(&p.root, revision, "back", json!({"kind":"click"}))
         .unwrap();
     settle(&mut p);
-    p.input(key(KeyCode::Tab)).unwrap();
+    p.input_settled(key(KeyCode::Tab)).unwrap();
     settle(&mut p);
     assert_eq!(p.focus.as_ref().unwrap().key, "observe");
     assert!(!p.captures_keyboard().unwrap());
@@ -237,5 +237,5 @@ fn terminal_readonly_canonical_screen_remains_keyboard_reachable_and_copyable() 
     assert!(String::from_utf8(bytes).unwrap().contains("U0hFTEw="));
     assert!(observed(&p)["batch"].is_null());
     p.surface_closed(&p.surface(), Ok(())).unwrap();
-    p.shutdown().unwrap();
+    p.shutdown_settled().unwrap();
 }

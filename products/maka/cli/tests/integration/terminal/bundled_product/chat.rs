@@ -31,6 +31,7 @@ mod computer;
 mod goal;
 mod graph;
 mod health;
+mod performance;
 mod plan;
 mod recap;
 mod title;
@@ -260,7 +261,7 @@ fn bundled_chat_sends_follows_renders_markdown_and_scrolls_original_history() {
     ]);
     tui.wait_until_with_timeout(|s| s.contains("Settings"), Duration::from_secs(60));
     tui.send(b"\x0b");
-    tui.wait_for("Commands");
+    tui.wait_for("Close commands");
     tui.send(b"New conversation");
     tui.wait_for("› New conversation");
     tui.send(b"\r");

@@ -26,7 +26,7 @@ use maka_event_log::{
 
 fn open(tui: &mut Pty) {
     tui.send(b"\x0b");
-    tui.wait_for("Commands");
+    tui.wait_for("Close commands");
     // The palette retains its previous search while the editor is hidden.
     tui.send(b"\x1b[F");
     tui.send(&[0x7f; 16]);
@@ -63,7 +63,7 @@ fn default_product_recap_reads_original_result_without_charging_on_refresh_or_re
     ]);
     tui.wait_until_with_timeout(|s| s.contains("Settings"), Duration::from_secs(60));
     tui.send(b"\x0b");
-    tui.wait_for("Commands");
+    tui.wait_for("Close commands");
     tui.send(b"New conversation");
     tui.wait_for("› New conversation");
     tui.send(b"\r");

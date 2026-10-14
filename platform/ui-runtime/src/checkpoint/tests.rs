@@ -409,3 +409,103 @@ async fn concurrent_preference_reads_are_not_rejected_by_a_worker_count() {
     .unwrap();
     assert_eq!(budget.usage(), (0, 0, 0));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn preference_busy_keeps_the_original_write_result_and_retirement_drains_it() {
+    use super::value::{
+        ValueCheckpoint, ValueCheckpointCommand, ValueCheckpointProps, ValueCheckpointState,
+    };
+    let (dir, store) = store().await;
+    let source = source(&store, Uuid::new_v4(), 0).await;
+    let scope = scope(&store, &source).await;
+    let resources = Arc::new(Resources::default());
+    let budget = NativeBudget::default();
+    let mut props = ValueCheckpointProps {
+        key: "preferences".into(),
+        format: "test@1".into(),
+        command: None,
+    };
+    let mut preferences =
+        ValueCheckpoint::new(Some(scope.clone()), &props, &resources, budget.clone());
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if preferences
+                .observe()
+                .is_some_and(|value| matches!(value.state, ValueCheckpointState::Ready { .. }))
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let blocker = rusqlite::Connection::open(dir.path().join("root").join(ROOT_DATABASE)).unwrap();
+    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    props.command = Some(ValueCheckpointCommand::Write {
+        sequence: 1,
+        expected_revision: None,
+        value: json!({"original": true}),
+    });
+    preferences.update(&props);
+    let saving = preferences.observe().unwrap();
+    assert_eq!(saving.sequence, 1);
+    assert!(matches!(saving.state, ValueCheckpointState::Saving));
+    props.command = Some(ValueCheckpointCommand::Write {
+        sequence: 2,
+        expected_revision: None,
+        value: json!({"replacement": true}),
+    });
+    preferences.update(&props);
+    blocker.execute_batch("COMMIT").unwrap();
+    let busy = preferences.observe().unwrap();
+    assert_eq!(busy.sequence, 2);
+    assert!(
+        matches!(busy.state, ValueCheckpointState::Failed { diagnostic } if diagnostic.contains("busy"))
+    );
+    let original = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(value) = preferences.observe() {
+                break value;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(original.sequence, 1);
+    let ValueCheckpointState::Ready {
+        revision: Some(revision),
+        value,
+    } = original.state
+    else {
+        panic!("the original accepted write must finish");
+    };
+    assert_eq!(value, Some(json!({"original": true})));
+    let checkpoints = scope.open(&store).unwrap();
+    let saved = checkpoints.read(&props.key).await.unwrap().unwrap();
+    assert_eq!(saved.revision, revision);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&saved.content).unwrap(),
+        json!({"original": true})
+    );
+
+    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    props.command = Some(ValueCheckpointCommand::Write {
+        sequence: 3,
+        expected_revision: Some(revision),
+        value: json!({"retired": true}),
+    });
+    preferences.update(&props);
+    preferences.close();
+    assert!(!resources.seal().unwrap());
+    drop(preferences);
+    blocker.execute_batch("COMMIT").unwrap();
+    resources.finish().await.unwrap();
+    assert_eq!(budget.usage(), (0, 0, 0));
+    let saved = checkpoints.read(&props.key).await.unwrap().unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&saved.content).unwrap(),
+        json!({"retired": true})
+    );
+}

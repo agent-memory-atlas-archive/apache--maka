@@ -19,9 +19,10 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import Ajv from 'ajv/dist/2020.js';
 const { activate } = await import('../dist/packages/appearance/tui.js');
 const theme = activate({ scheme: 'dark' }).Appearance.value;
-const { component } = await import('../dist/packages/timeline/tui.js');
+const { component, activate: timelineExports } = await import('../dist/packages/timeline/tui.js');
 
 test('history fragments keep distinct controls and navigate the original tool evidence', () => {
   const tool = {
@@ -54,7 +55,13 @@ test('history fragments keep distinct controls and navigate the original tool ev
     latest: false,
     landing: { sequence: 0, edge: 'end' },
     live: false,
-    messages: ['call', 'call-offset-64', 'answer', 'answer-offset-64'].map((id, index) => ({
+    messages: [
+      'call',
+      'call-offset-64',
+      'answer',
+      'answer-offset-64',
+      ...Array.from({ length: 5 }, (_, index) => 'later-answer-' + index),
+    ].map((id, index) => ({
       id,
       contentKey: id,
       role: index < 2 ? 'tool_call' : 'assistant',
@@ -66,6 +73,18 @@ test('history fragments keep distinct controls and navigate the original tool ev
       tool: index < 2 ? tool : null,
     })),
   };
+  props.timings = props.messages.map((message, index) => ({
+    turnId: 'turn-' + index,
+    afterMessageId: message.id,
+    startedAt: index,
+    finished: { at: index + 1, outcome: 'completed' },
+  }));
+  const schema = timelineExports().Timeline.contract.interface.props;
+  const validTimings = new Ajv({ strict: false }).compile({
+    ...schema.properties.timings,
+    $defs: schema.$defs,
+  });
+  assert.equal(validTimings(props.timings), true, JSON.stringify(validTimings.errors));
   let out = component.mount(props, {});
   const raw = (key) => {
     out = component.event(
@@ -87,6 +106,7 @@ test('history fragments keep distinct controls and navigate the original tool ev
     }
   };
   visit(out.frame.view);
+  assert.equal(keys.filter((key) => key.startsWith('time-')).length, 9);
   assert.equal(
     new Set(keys).size,
     keys.length,

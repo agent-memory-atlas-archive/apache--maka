@@ -23,6 +23,8 @@
 
 Renders committed UI frames with GPUI. `Widget` and `Slots` let native components supply elements and child mounts; `scene` compiles the desktop scene language. The adapter also owns native editors and input bindings.
 
-Layout and paint read committed data. Component callbacks run outside paint, and editor buffers remain with their native owners. A retired mount closes only after its entities, subscriptions and retained frame resources are released. Window startup belongs to the product desktop crate.
+Layout and paint read committed data. JavaScript component callbacks run on the background worker; editor buffers, focus and selection remain with their native owners. The original window owner publishes ready candidates on wakeups, including when no paint occurs. Required fallible native preparation precedes atomic publication; native commands execute only after it.
+
+Each native mount owns its `LiveInput` and publication queue. Raw receipts keep their exact values until the original logical commit acknowledges them. A mount fixes its recipe implementation type; changing it requires a new child key/remount. Rejected preparation preserves the committed owner and geometry. A retired mount closes only after its entities, subscriptions and retained frame resources are released. Window startup belongs to the product desktop crate.
 
 [Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

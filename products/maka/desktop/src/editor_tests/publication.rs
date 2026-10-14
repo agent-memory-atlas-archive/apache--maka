@@ -36,9 +36,10 @@ impl NativeComponent<dyn widgets::Widget> for Parent {
         values: &maka_ui_runtime::abi::ValueBindings,
     ) -> maka_ui_runtime::Result<ComponentOutput<NativeView<dyn widgets::Widget>>> {
         let (mut state, revision) = match call {
-            ComponentCall::Mount { .. } => {
-                (json!({"command":null,"observation":null,"visible":true}), 0)
-            }
+            ComponentCall::Mount { .. } => (
+                json!({"command":null,"observation":null,"receipts":[],"visible":true}),
+                0,
+            ),
             ComponentCall::Update { state, .. } => {
                 (state.clone(), state["revision"].as_u64().unwrap() + 1)
             }
@@ -53,6 +54,13 @@ impl NativeComponent<dyn widgets::Widget> for Parent {
                         ));
                     }
                     next["observation"] = input.clone();
+                    if let Some(receipt) = input.get("receipt").filter(|receipt| !receipt.is_null())
+                    {
+                        next["receipts"]
+                            .as_array_mut()
+                            .unwrap()
+                            .push(receipt.clone());
+                    }
                 } else {
                     if let Some(command) = input.get("command") {
                         next["command"] = command.clone();
@@ -333,4 +341,73 @@ fn retained_presentation_blocks_old_child_slots_but_settles_hidden_editor_receip
             .any(|(_, node)| node.label() == Some("Read-only draft"))
     );
     scene.close(cx);
+}
+
+#[gpui::test]
+fn consecutive_original_editor_receipts_survive_candidate_rejection_and_release_custody(
+    cx: &mut TestAppContext,
+) {
+    let timer = timer();
+    let reject = Rc::new(Cell::new(false));
+    let scene = scene(cx, &timer, reject.clone());
+    scene.draw(cx);
+    let owner = scene.owner();
+    let budget = scene.resources.borrow().budget.clone();
+    let mut originals = Vec::new();
+    reject.set(true);
+    cx.update_window(scene.window, |_, window, cx| {
+        let based_on = owner.read(cx).revision;
+        for (sequence, text) in [(1, "A"), (2, "B")] {
+            scene.command(EditorCommand {
+                owner: scene.editor_owner(cx), sequence, based_on,
+                edit: EditorEdit::Append { text: text.into() },
+            }, window, cx).unwrap();
+            originals.push(serde_json::to_value(owner.read(cx).receipt.as_ref().unwrap()).unwrap());
+        }
+        assert_eq!(owner.read(cx).state.read(cx).value().as_ref(), "StartA");
+        assert_eq!(originals[0]["outcome"]["status"], "applied");
+        assert_eq!(originals[1]["outcome"], json!({"status":"conflict","reason":"revision"}));
+        assert!(scene.app.borrow().frame(&scene.root).unwrap().state["receipts"].as_array().unwrap().is_empty());
+        let occupied = budget.reserve(maka_ui_runtime::budget::Kind::Encoded, 64 * 1024 * 1024 - budget.usage().0).unwrap();
+        let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
+        scene.app.borrow_mut().dispatch(&scene.root, revision, "parent", json!({"command":{
+            "owner":scene.editor_owner(cx),"sequence":3,"basedOn":based_on+1,"edit":{"kind":"append","text":"C"}
+        }})).unwrap();
+        assert!(scene.commit_in(window, cx).is_err(), "new native effect requires precommit custody");
+        assert_eq!(scene.app.borrow().frame(&scene.root).unwrap().revision, revision);
+        assert_eq!(owner.read(cx).state.read(cx).value().as_ref(), "StartA");
+        assert_eq!(serde_json::to_value(owner.read(cx).receipt.as_ref().unwrap()).unwrap(), originals[1]);
+        drop(occupied);
+    }).unwrap();
+    reject.set(false);
+    cx.update_window(scene.window, |_, window, cx| {
+        let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
+        scene
+            .app
+            .borrow_mut()
+            .dispatch(&scene.root, revision, "parent", json!({}))
+            .unwrap();
+        scene.settle_in(window, cx).unwrap();
+    })
+    .unwrap();
+    await_action(cx, &scene.app, |app| {
+        app.frame(&scene.root).unwrap().state["receipts"]
+            .as_array()
+            .unwrap()
+            .len()
+            >= 2
+            && !app.ui_pending()
+    });
+    assert_eq!(
+        scene.app.borrow().frame(&scene.root).unwrap().state["receipts"],
+        json!(originals)
+    );
+    drop(owner);
+    scene.close(cx);
+    await_shutdown(cx, &scene.app);
+    assert_eq!(
+        budget.usage(),
+        (0, 0, 0),
+        "retirement returns every publication permit and original ACK"
+    );
 }

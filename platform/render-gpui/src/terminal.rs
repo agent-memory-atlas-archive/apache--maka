@@ -50,7 +50,6 @@ struct Owner {
     epoch: u64,
     visible: bool,
     alive: bool,
-    publishing: bool,
     marked: String,
     selected: std::ops::Range<usize>,
 }
@@ -61,13 +60,14 @@ impl Owner {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
+        let publisher = input.clone();
         let keep = input
-            .0
+            .current
             .borrow()
             .as_ref()
             .expect("live terminal mount")
             .clone();
-        cx.new(|cx| {
+        let owner = cx.new(|cx| {
             let focus = cx
                 .focus_handle()
                 .tab_index(props.tab_index as isize)
@@ -88,7 +88,7 @@ impl Owner {
             })
             .detach();
             Self {
-                core: state::State::new(&input.1),
+                core: state::State::new(&input.budget),
                 input,
                 focus,
                 props: props.clone(),
@@ -96,14 +96,30 @@ impl Owner {
                 epoch: 0,
                 visible: false,
                 alive: true,
-                publishing: false,
                 marked: String::new(),
                 selected: 0..0,
             }
-        })
+        });
+        let original = owner.downgrade();
+        publisher.bind_publisher(move |key, value, _, cx| {
+            if key != "observe" {
+                return;
+            }
+            let _ = original.update(cx, |owner, _| {
+                if owner.input.current.borrow().is_none() {
+                    return;
+                }
+                owner.core.published(
+                    value["revision"]
+                        .as_u64()
+                        .expect("original terminal publication"),
+                );
+            });
+        });
+        owner
     }
     fn enabled(&self) -> bool {
-        self.alive && self.visible && self.input.0.borrow().is_some()
+        self.alive && self.visible && self.input.current.borrow().is_some()
     }
     fn focused(&self, window: &Window) -> bool {
         self.enabled()
@@ -158,35 +174,20 @@ impl Owner {
         cx.notify();
     }
     fn schedule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.publishing
-            || self.core.pending_observation().is_none()
-            || self.input.0.borrow().is_none()
-        {
+        let Some(value) = self.core.pending_observation() else {
             return;
+        };
+        match self.input.capture(
+            "observe",
+            serde_json::to_value(&value).expect("terminal observation"),
+            false,
+            window,
+            cx,
+        ) {
+            Ok(Some(_)) => {}
+            Ok(None) => {}
+            Err(error) => eprintln!("terminal observation admission rejected: {error}"),
         }
-        self.publishing = true;
-        let weak = cx.weak_entity();
-        window.defer(cx, move |window, cx| {
-            let Ok(Some((input, value))) = weak.update(cx, |owner, _| {
-                owner.publishing = false;
-                Some((
-                    owner.input.0.borrow().clone()?,
-                    owner.core.pending_observation()?,
-                ))
-            }) else {
-                return;
-            };
-            if (input.0)(
-                "observe",
-                serde_json::to_value(&value).expect("terminal observation"),
-                window,
-                cx,
-            )
-            .is_ok()
-            {
-                let _ = weak.update(cx, |owner, _| owner.core.published(value.revision));
-            }
-        });
     }
     fn present(&mut self, geometry: Geometry, window: &mut Window, cx: &mut Context<Self>) {
         if !self.enabled() || geometry.epoch != self.epoch {

@@ -17,6 +17,7 @@
  * under the License.
  */
 
+use super::Application;
 use super::{support, timer};
 use maka_capabilities::call::ReadResource;
 use maka_plugin_core::{
@@ -26,8 +27,8 @@ use maka_plugin_core::{
 };
 use maka_ui_runtime::actions::*;
 use maka_ui_runtime::{
-    Application, ComponentCall, ComponentOutput, Frame, NativeCapability, NativeComponent,
-    NativeExport, NativeRegistry, NativeView,
+    ComponentCall, ComponentOutput, Frame, NativeCapability, NativeComponent, NativeExport,
+    NativeRegistry, NativeView,
 };
 use serde_json::{Value, json};
 use std::{cell::Cell, collections::BTreeMap, rc::Rc, sync::Arc};

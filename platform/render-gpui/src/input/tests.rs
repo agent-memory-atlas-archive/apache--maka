@@ -63,14 +63,15 @@ fn configured_harness(
     let events = Rc::new(RefCell::new(Vec::new()));
     let seen = events.clone();
     let live = LiveInput::new(
-        Rc::new(RefCell::new(Some(Input(Rc::new(
+        Rc::new(RefCell::new(Some(Input::testing(Rc::new(
             move |key, value, _, _| {
                 seen.borrow_mut().push((key.to_owned(), value));
-                Ok(Default::default())
+                Ok(())
             },
         ))))),
         crate::NativeBudget::default(),
         std::sync::Arc::new(maka_capabilities::call::Resources::default()),
+        || {},
     );
     let bound = live.clone();
     let bubble = Rc::new(Cell::new(0));
@@ -141,9 +142,9 @@ fn submit_copy_requires_original_revision_and_honors_callback_veto_and_retiremen
     let clipboard =
         |cx: &mut TestAppContext| cx.update(|cx| cx.read_from_clipboard().unwrap().text().unwrap());
     configure(cx);
-    let input = live.0.borrow().clone().unwrap();
+    let input = live.current.borrow().clone().unwrap();
     cx.update_window(window, |_, window, cx| {
-        (input.0)("submit", json!({}), window, cx).unwrap();
+        (input.dispatch)("submit", json!({}), window, cx).unwrap();
     })
     .unwrap();
     assert_eq!(clipboard(cx), "sentinel");
@@ -158,21 +159,63 @@ fn submit_copy_requires_original_revision_and_honors_callback_veto_and_retiremen
         "a newer native query cannot copy an older choice"
     );
     configure(cx);
-    *live.0.borrow_mut() = Some(Input(Rc::new(|_, _, _, _| {
-        Ok(maka_ui_runtime::InputDecision {
-            prevent_default: true,
-            stop_propagation: true,
-        })
-    })));
+    // Omitting the committed copy choice vetoes native copying; no guest
+    // return value is involved in the physical Enter default.
+    cx.update_window(window, |_, window, cx| {
+        owner.update(cx, |owner, cx| {
+            let configured = props();
+            owner.apply(&configured, window, cx);
+        });
+    })
+    .unwrap();
+    *live.current.borrow_mut() = Some(Input::testing(Rc::new(|_, _, _, _| Ok(()))));
     cx.simulate_keystrokes(window, "enter");
     assert_eq!(clipboard(cx), "sentinel");
-    *live.0.borrow_mut() = Some(Input(Rc::new(|_, _, _, _| {
+    configure(cx);
+    let original = live.current.borrow().clone().unwrap();
+    let (complete, result) = tokio::sync::oneshot::channel();
+    let result = Rc::new(RefCell::new(Some(result)));
+    let observed = original.observe.clone();
+    let pending = Input::new(
+        original.revision,
+        original.dispatch,
+        Rc::new(move |key, value, window, cx| {
+            if key == "submit" {
+                let result = result.borrow_mut().take().expect("one physical submit");
+                Ok(maka_ui_runtime::backend::Job::new(async move {
+                    result.await.expect("original callback completion")
+                }))
+            } else {
+                observed(key, value, window, cx)
+            }
+        }),
+    );
+    *live.current.borrow_mut() = Some(pending.clone());
+    cx.simulate_keystrokes(window, "enter");
+    cx.run_until_parked();
+    assert_eq!(
+        clipboard(cx),
+        "sentinel",
+        "enqueue is not callback acceptance"
+    );
+    complete
+        .send(Err(maka_ui_runtime::Error::Invalid(
+            "late rejection".into(),
+        )))
+        .unwrap();
+    cx.update_window(window, |_, window, cx| {
+        live.advance(&pending, window, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(clipboard(cx), "sentinel", "a rejected callback cannot copy");
+    *live.current.borrow_mut() = Some(Input::testing(Rc::new(|_, _, _, _| {
         Err(maka_ui_runtime::Error::Invalid("rejected".into()))
     })));
     cx.simulate_keystrokes(window, "enter");
     assert_eq!(clipboard(cx), "sentinel");
     let weak = owner.downgrade();
-    *live.0.borrow_mut() = Some(Input(Rc::new(move |key, _, _, cx| {
+    *live.current.borrow_mut() = Some(Input::testing(Rc::new(move |key, _, _, cx| {
         if key == "submit" {
             weak.update(cx, |owner, cx| {
                 owner.visible = false;
@@ -182,7 +225,7 @@ fn submit_copy_requires_original_revision_and_honors_callback_veto_and_retiremen
             })
             .unwrap();
         }
-        Ok(Default::default())
+        Ok(())
     })));
     cx.simulate_keystrokes(window, "enter");
     assert_eq!(
@@ -208,12 +251,12 @@ fn submit_copy_requires_original_revision_and_honors_callback_veto_and_retiremen
     })
     .unwrap();
     draw(cx, window);
-    let retiring = live.0.clone();
-    *live.0.borrow_mut() = Some(Input(Rc::new(move |key, _, _, _| {
+    let retiring = live.current.clone();
+    *live.current.borrow_mut() = Some(Input::testing(Rc::new(move |key, _, _, _| {
         if key == "submit" {
             retiring.borrow_mut().take();
         }
-        Ok(Default::default())
+        Ok(())
     })));
     cx.simulate_keystrokes(window, "enter");
     assert_eq!(
@@ -429,7 +472,7 @@ fn initial_prefill_receipts_invalid_reset_and_retirement_keep_original_owner(
     })
     .unwrap();
     draw(cx, window);
-    live.0.borrow_mut().take();
+    live.current.borrow_mut().take();
     let before = events.borrow().len();
     cx.simulate_input(window, "retired");
     cx.simulate_keystrokes(window, "enter");
@@ -482,7 +525,7 @@ fn retained_secret_presentation_preserves_custody_and_settles_hidden_reset(
                     .focus_handle()
                     .is_focused(window)
             );
-            assert!(live.0.borrow().is_some());
+            assert!(live.current.borrow().is_some());
             owner.update(cx, |owner, cx| {
                 owner.replace_text_in_range(
                     Some(0.."Retained密钥🙂".encode_utf16().count()),
@@ -606,11 +649,12 @@ impl Render for RevealHarness {
 }
 fn empty_live() -> LiveInput {
     LiveInput::new(
-        Rc::new(RefCell::new(Some(Input(Rc::new(|_, _, _, _| {
-            Ok(Default::default())
+        Rc::new(RefCell::new(Some(Input::testing(Rc::new(|_, _, _, _| {
+            Ok(())
         }))))),
         crate::NativeBudget::default(),
         std::sync::Arc::new(maka_capabilities::call::Resources::default()),
+        || {},
     )
 }
 #[gpui::test]

@@ -51,7 +51,7 @@ struct Owner {
 }
 impl Owner {
     fn enabled(&self) -> bool {
-        self.visible && !self.props.disabled && self.input.0.borrow().is_some()
+        self.visible && !self.props.disabled && self.input.current.borrow().is_some()
     }
     fn bind(&mut self, group: Option<TextSelectionGroup>, cx: &mut Context<Self>) {
         let unchanged = match (&self.group, &group) {
@@ -351,7 +351,7 @@ impl Widget for Recipe {
     fn create(&self, input: LiveInput, _: &mut Window, cx: &mut App) -> Box<dyn Any> {
         let props = self.0.clone();
         let keep = input
-            .0
+            .current
             .borrow()
             .as_ref()
             .expect("live selection menu mount")

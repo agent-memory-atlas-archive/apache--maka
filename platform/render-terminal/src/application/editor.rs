@@ -33,6 +33,7 @@ pub(super) struct Owner {
     pub last_request: Option<EditorCommand>,
     sequence: u64,
     receipt: Option<EditorReceipt>,
+    observed_receipt: Option<EditorReceipt>,
     pub announced: bool,
 }
 impl Owner {
@@ -56,6 +57,7 @@ impl Owner {
             last_request: None,
             sequence: 0,
             receipt: None,
+            observed_receipt: None,
             announced: false,
         }
     }
@@ -89,13 +91,16 @@ impl Owner {
             marked: None,
         }
     }
-    pub fn observation(&self) -> NativeInput {
+    pub fn observation(&mut self) -> NativeInput {
         let observation = EditorObservation {
             revision: self.revision,
             snapshot: self.snapshot(),
             receipt: self.receipt.clone(),
         };
+        let replaceable = self.receipt == self.observed_receipt;
+        self.observed_receipt.clone_from(&self.receipt);
         NativeInput {
+            replaceable,
             key: "observe".into(),
             value: serde_json::to_value(observation).expect("native editor observation"),
         }

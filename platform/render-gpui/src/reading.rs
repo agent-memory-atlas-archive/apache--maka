@@ -176,8 +176,7 @@ struct Owner {
     last_command: Option<ReadingCommand>,
     pending: Option<Pending>,
     receipt: Option<ReadingReceipt>,
-    published: Option<ReadingObservation>,
-    scheduled: bool,
+    observed: Option<ReadingObservation>,
 }
 impl Owner {
     fn poll(&mut self) {
@@ -223,52 +222,35 @@ impl Owner {
         }
     }
     fn schedule(owner: &Entity<Self>, window: &mut Window, cx: &mut App) {
-        let schedule = owner.query(cx, |state, _| {
-            if !state.alive || state.scheduled || state.input.0.borrow().is_none() {
-                return false;
+        let capture = owner.query(cx, |state, _| {
+            if !state.alive || state.input.current.borrow().is_none() {
+                return None;
             }
             let observation = state.observation();
-            if state.published.as_ref() == Some(&observation) {
-                return false;
+            if state.observed.as_ref() == Some(&observation) {
+                return None;
             }
-            state.scheduled = true;
-            true
-        });
-        if !schedule {
-            return;
-        }
-        let weak = owner.downgrade();
-        window.on_next_frame(move |window, cx| {
-            let Some(owner) = weak.upgrade() else {
-                return;
-            };
-            let pending = owner.query(cx, |state, _| {
-                state.scheduled = false;
-                if !state.alive {
-                    return None;
-                }
-                let observation = state.observation();
-                if state.published.as_ref() == Some(&observation) {
-                    return None;
-                }
-                let input = state.input.0.borrow().clone()?;
-                Some((input, observation))
+            let replaceable = state.observed.as_ref().is_some_and(|old| {
+                old.receipt == observation.receipt
+                    && old.pending_command == observation.pending_command
             });
-            let Some((input, observation)) = pending else {
-                return;
-            };
-            // Plugin work is outside paint and the original native owner lease.
-            let result = (input.0)(
-                OBSERVED,
-                serde_json::to_value(&observation).expect("reading observation"),
-                window,
-                cx,
-            );
-            if result.is_ok() {
-                owner.query(cx, |state, _| state.published = Some(observation));
-            }
+            Some((state.input.clone(), observation, replaceable))
         });
+        let Some((input, observation, replaceable)) = capture else {
+            return;
+        };
+        match input.capture(
+            OBSERVED,
+            serde_json::to_value(&observation).expect("reading observation"),
+            replaceable,
+            window,
+            cx,
+        ) {
+            Ok(_) => owner.update(cx, |owner, _| owner.observed = Some(observation)),
+            Err(error) => eprintln!("reading observation admission rejected: {error}"),
+        }
     }
+
     fn cancel(&mut self) {
         if self.pending.is_some() {
             self.handle.set_offset(self.handle.offset());
@@ -301,6 +283,19 @@ fn owner(state: &dyn Any) -> &Entity<Owner> {
         .expect("reading native owner")
 }
 impl Widget for Reading {
+    fn publication_capacity(&self, state: &dyn Any, cx: &App) -> Vec<(&'static str, usize)> {
+        let state = owner(state).read(cx);
+        if self
+            .command
+            .as_ref()
+            .is_some_and(|command| state.last_command.as_ref() != Some(command))
+        {
+            vec![(OBSERVED, 1024 * 1024); 2]
+        } else {
+            Vec::new()
+        }
+    }
+
     fn create(&self, input: LiveInput, window: &mut Window, cx: &mut App) -> Box<dyn Any> {
         let scene = self.node.create(input.clone(), window, cx);
         let handle = self.node.reading_handle(scene.as_ref());
@@ -315,8 +310,7 @@ impl Widget for Reading {
             last_command: None,
             pending: None,
             receipt: None,
-            published: None,
-            scheduled: false,
+            observed: None,
         }))
     }
     fn commit(&self, state: &mut dyn Any, window: &mut Window, cx: &mut App) {

@@ -17,6 +17,7 @@
  * under the License.
  */
 
+use super::Application;
 use super::{support, timer};
 use maka_plugin_core::{
     composition::{PresentationTarget, Target},
@@ -28,8 +29,8 @@ use maka_plugin_core::{
     runtime::Mount,
 };
 use maka_ui_runtime::{
-    Application, ComponentCall, ComponentOutput, ComponentSlot, Emission, EventOrigin, Frame,
-    NativeCapability, NativeComponent, NativeExport, NativeView, Surface, actions::*,
+    ComponentCall, ComponentOutput, ComponentSlot, Emission, EventOrigin, Frame, NativeCapability,
+    NativeComponent, NativeExport, NativeView, Surface, actions::*,
 };
 use serde_json::{Value, json};
 use std::{

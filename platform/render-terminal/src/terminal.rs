@@ -19,16 +19,15 @@
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use crossterm::{
-    SynchronizedUpdate,
     cursor::Show,
     event::{
         DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
         EnableFocusChange, EnableMouseCapture,
     },
-    execute,
+    execute, queue,
     terminal::{
-        EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
-        enable_raw_mode,
+        BeginSynchronizedUpdate, EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen,
+        disable_raw_mode, enable_raw_mode,
     },
 };
 // Native Windows already reports modifiers and key event kinds through WinAPI.
@@ -37,8 +36,12 @@ use crossterm::{
 use crossterm::event::{
     KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
-use ratatui::{Terminal, backend::CrosstermBackend};
-use std::io::{self, IsTerminal, Stdout};
+use ratatui::Terminal;
+use ratatui_crossterm::CrosstermBackend;
+use std::{
+    io::{self, IsTerminal, Write},
+    sync::mpsc,
+};
 
 pub const MAX_CLIPBOARD_BYTES: usize = 64 * 1024;
 
@@ -55,13 +58,109 @@ pub fn copy(writer: &mut impl io::Write, text: &str) -> io::Result<()> {
     writer.flush()
 }
 
-pub type Screen = Terminal<CrosstermBackend<Stdout>>;
-
-/// Publish a whole frame together on terminals with synchronized-output support.
-/// Others ignore the mode and retain the usual incremental rendering. End the
-/// update even when drawing fails; the terminal guard also ends it after panic.
-pub fn draw(screen: &mut Screen, render: impl FnOnce(&mut ratatui::Frame<'_>)) -> io::Result<()> {
-    io::stdout().sync_update(|_| screen.draw(render).map(|_| ()))?
+const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
+#[derive(Default)]
+struct FrameWriter(Vec<u8>);
+impl Write for FrameWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if self
+            .0
+            .len()
+            .checked_add(bytes.len())
+            .is_none_or(|size| size > MAX_OUTPUT_BYTES)
+        {
+            return Err(io::Error::other("terminal output buffer byte limit"));
+        }
+        self.0.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+pub struct Screen {
+    terminal: Terminal<CrosstermBackend<FrameWriter>>,
+    pub(crate) generation: uuid::Uuid,
+}
+/// Encode one complete diff. The caller must finish writing it before encoding
+/// another: ratatui's baseline advances here, while hit geometry advances only
+/// at the original output completion receipt. No partial ANSI can be replaced.
+pub(crate) fn render(
+    screen: &mut Screen,
+    render: impl FnOnce(&mut ratatui::Frame<'_>),
+) -> io::Result<Vec<u8>> {
+    queue!(
+        screen.terminal.backend_mut().writer_mut(),
+        BeginSynchronizedUpdate
+    )?;
+    let result = screen.terminal.draw(render).map(|_| ());
+    let end = queue!(
+        screen.terminal.backend_mut().writer_mut(),
+        EndSynchronizedUpdate
+    );
+    result?;
+    end?;
+    Ok(std::mem::take(
+        &mut screen.terminal.backend_mut().writer_mut().0,
+    ))
+}
+/// Startup and controlled synchronous callers have no interactive owner yet.
+pub fn draw(screen: &mut Screen, paint: impl FnOnce(&mut ratatui::Frame<'_>)) -> io::Result<()> {
+    let bytes = render(screen, paint)?;
+    let mut output = io::stdout().lock();
+    output.write_all(&bytes)?;
+    output.flush()
+}
+struct WriteRequest {
+    bytes: Vec<u8>,
+    receipt: tokio::sync::oneshot::Sender<io::Result<()>>,
+}
+/// Sole interactive stdout owner. The foreground retains one original receipt
+/// and never awaits blocking stdout. Dropping observation never interrupts an
+/// already-started buffer or fabricates its completion.
+pub(crate) struct Output(mpsc::SyncSender<WriteRequest>);
+impl Output {
+    pub fn new() -> io::Result<Self> {
+        Self::with_writer(io::stdout())
+    }
+    pub(crate) fn with_writer(mut writer: impl Write + Send + 'static) -> io::Result<Self> {
+        let (send, receive) = mpsc::sync_channel::<WriteRequest>(1);
+        std::thread::Builder::new()
+            .name("maka-terminal-output".into())
+            .spawn(move || {
+                while let Ok(request) = receive.recv() {
+                    let result = writer
+                        .write_all(&request.bytes)
+                        .and_then(|_| writer.flush());
+                    let failed = result.is_err();
+                    let _ = request.receipt.send(result);
+                    if failed {
+                        break;
+                    }
+                }
+            })?;
+        Ok(Self(send))
+    }
+    pub fn submit(
+        &self,
+        bytes: Vec<u8>,
+    ) -> io::Result<tokio::sync::oneshot::Receiver<io::Result<()>>> {
+        if bytes.len() > MAX_OUTPUT_BYTES {
+            return Err(io::Error::other("terminal output buffer byte limit"));
+        }
+        let (receipt, completion) = tokio::sync::oneshot::channel();
+        self.0
+            .try_send(WriteRequest { bytes, receipt })
+            .map_err(|error| match error {
+                mpsc::TrySendError::Full(_) => {
+                    io::Error::other("terminal output owner already occupied")
+                }
+                mpsc::TrySendError::Disconnected(_) => {
+                    io::Error::other("terminal output owner stopped")
+                }
+            })?;
+        Ok(completion)
+    }
 }
 
 /// Installed before the first terminal mutation, including partial setup errors.
@@ -111,7 +210,11 @@ impl Guard {
         {
             self.key_releases = true;
         }
-        Terminal::new(CrosstermBackend::new(io::stdout()))
+        let terminal = Terminal::new(CrosstermBackend::new(FrameWriter::default()))?;
+        Ok(Screen {
+            terminal,
+            generation: uuid::Uuid::new_v4(),
+        })
     }
     /// Restore every independent native effect, even if a prior write failed.
     /// Only complete success acknowledges actual terminal cleanup.
@@ -166,8 +269,79 @@ fn restore_checked(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use std::sync::{Arc, Condvar, Mutex};
+
+    #[derive(Default)]
+    struct WriteState {
+        bytes: Vec<u8>,
+        blocked: bool,
+        prefix: bool,
+    }
+    #[derive(Clone, Default)]
+    pub(crate) struct SlowWriter(Arc<(Mutex<WriteState>, Condvar)>);
+    impl SlowWriter {
+        pub fn block(&self) {
+            let mut state = self.0.0.lock().unwrap();
+            state.blocked = true;
+            state.prefix = false;
+        }
+        pub fn wait_for_prefix(&self) {
+            let state = self.0.0.lock().unwrap();
+            let (state, timeout) = self
+                .0
+                .1
+                .wait_timeout_while(state, std::time::Duration::from_secs(5), |state| {
+                    !state.prefix
+                })
+                .unwrap();
+            assert!(
+                state.prefix && !timeout.timed_out(),
+                "original write did not begin"
+            );
+        }
+        pub fn release(&self) {
+            self.0.0.lock().unwrap().blocked = false;
+            self.0.1.notify_all();
+        }
+        pub fn bytes(&self) -> Vec<u8> {
+            self.0.0.lock().unwrap().bytes.clone()
+        }
+    }
+    impl Write for SlowWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            let mut state = self.0.0.lock().unwrap();
+            if state.blocked && !state.prefix {
+                let count = bytes.len().min(2);
+                state.bytes.extend_from_slice(&bytes[..count]);
+                state.prefix = true;
+                self.0.1.notify_all();
+                return Ok(count);
+            }
+            while state.blocked {
+                state = self.0.1.wait(state).unwrap();
+            }
+            state.bytes.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    pub(crate) fn screen(area: ratatui::layout::Rect) -> Screen {
+        let terminal = Terminal::with_options(
+            CrosstermBackend::new(FrameWriter::default()),
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Fixed(area),
+            },
+        )
+        .unwrap();
+        Screen {
+            terminal,
+            generation: uuid::Uuid::new_v4(),
+        }
+    }
     #[test]
     fn restoration_attempts_raw_cleanup_after_writer_failure_and_checks_both_receipts() {
         let mut raw_attempted = false;

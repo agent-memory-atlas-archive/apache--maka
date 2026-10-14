@@ -1544,7 +1544,6 @@ export function components<N extends Node>(
               // on an asynchronous reply. The next arrow enters the added rows.
               const out = timelineFrame(next, props, messageCopyObservation(state));
               out.events.push({ name: forward ? 'newer' : 'older', value: {} });
-              out.decision = { preventDefault: true, stopPropagation: true };
               return out;
             }
             const row = rows[Math.max(0, Math.min(rows.length - 1, at + (forward ? 1 : -1)))];
@@ -1567,7 +1566,6 @@ export function components<N extends Node>(
             const request = next.browse.request;
             const out = timelineFrame(next, props, messageCopyObservation(state));
             out.events.push({ name: 'browseClosed', value: { request } });
-            out.decision = { preventDefault: true, stopPropagation: true };
             return out;
           }
         }
@@ -1582,7 +1580,6 @@ export function components<N extends Node>(
           const out = timelineFrame(next, props, messageCopyObservation(state));
           out.actions.push(...actions);
           if (handled === 'closed') out.events.push({ name: 'searchClosed', value: {} });
-          if (input.kind === 'raw') out.decision = { preventDefault: true, stopPropagation: true };
           return out;
         }
         if (

@@ -43,11 +43,12 @@ fn draw(cx: &mut TestAppContext, window: AnyWindowHandle) {
 }
 fn harness(cx: &mut TestAppContext) -> (Entity<Owner>, AnyWindowHandle, LiveInput) {
     let live = LiveInput::new(
-        Rc::new(RefCell::new(Some(Input(Rc::new(|_, _, _, _| {
-            Ok(Default::default())
+        Rc::new(RefCell::new(Some(Input::testing(Rc::new(|_, _, _, _| {
+            Ok(())
         }))))),
         crate::NativeBudget::default(),
         std::sync::Arc::new(maka_capabilities::call::Resources::default()),
+        || {},
     );
     let bound = live.clone();
     let (root, _) = cx.add_window_view(move |window, cx| {
@@ -153,7 +154,7 @@ fn terminal_desktop_keyboard_ime_and_retirement_follow_native_focus(cx: &mut Tes
     })
     .unwrap();
     draw(cx, window);
-    live.0.borrow_mut().take();
+    live.current.borrow_mut().take();
     cx.simulate_input(window, "retired");
     draw(cx, window);
     assert!(batch(cx, &owner).is_none());

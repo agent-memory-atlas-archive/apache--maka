@@ -55,12 +55,104 @@ fn press(scene: &Scene, cx: &mut TestAppContext, key: &str) {
         );
     })
     .unwrap();
-    cx.run_until_parked();
+    scene.settle(cx);
 }
 fn submissions(scene: &Scene) -> u64 {
     scene.app.borrow().frame(&scene.root).unwrap().state["submissions"]
         .as_u64()
         .unwrap_or(0)
+}
+
+#[gpui::test]
+fn original_desktop_paste_and_submit_stay_immediate_during_a_slow_js_transaction(
+    cx: &mut TestAppContext,
+) {
+    let timer = timer();
+    let (mut input, packages) = fixture();
+    let packages = packages.into_iter().map(|original| {
+        if original.manifest().id != "dynamic.app" { return original; }
+        let declaration = original.manifest().application.clone().unwrap();
+        let source = std::str::from_utf8(original.file("index.mjs").unwrap()).unwrap().replace(
+            "const next={...state,revision:state.revision+1};",
+            "if(event.kind==='raw'&&event.key==='slow'){const until=Date.now()+100;while(Date.now()<until){}}const next={...state,revision:state.revision+1};",
+        ).replace("{kind:'button',key:'read',label:'Capture draft'}", "{kind:'button',key:'slow',label:'Slow business update'},{kind:'button',key:'read',label:'Capture draft'}");
+        let package = support::package("dynamic.app", declaration, Some(source));
+        input.instances.get_mut("app").unwrap().package = package.application_ref().into();
+        package
+    }).collect();
+    let scene = Scene::from_packages(cx, &timer, false, (input, packages));
+    scene.draw(cx);
+    let owner = scene.owner();
+    cx.update_window(scene.window, |_, window, cx| {
+        owner
+            .read(cx)
+            .state
+            .read(cx)
+            .presentation()
+            .focus_handle()
+            .focus(window, cx);
+    })
+    .unwrap();
+    let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
+    let at = std::time::Instant::now();
+    scene
+        .app
+        .borrow_mut()
+        .dispatch(&scene.root, revision, "slow", serde_json::Value::Null)
+        .unwrap();
+    assert!(at.elapsed() < std::time::Duration::from_millis(30));
+    assert!(scene.app.borrow().ui_pending());
+    let at = std::time::Instant::now();
+    cx.update_window(scene.window, |_, window, cx| {
+        // Production IME/text input and key delivery, without a fixture await.
+        owner.update(cx, |owner, cx| {
+            owner.replace_text_in_range(Some(0..5), "fast🙂", window, cx)
+        });
+        window.dispatch_event(
+            PlatformInput::KeyDown(KeyDownEvent {
+                keystroke: Keystroke::parse(if cfg!(target_os = "macos") {
+                    "cmd-enter"
+                } else {
+                    "ctrl-enter"
+                })
+                .unwrap(),
+                is_held: false,
+                prefer_character_input: false,
+            }),
+            cx,
+        );
+        assert_eq!(owner.read(cx).state.read(cx).value().as_ref(), "fast🙂");
+    })
+    .unwrap();
+    assert!(
+        at.elapsed() < std::time::Duration::from_millis(30),
+        "native input waited for JS: {:?}",
+        at.elapsed()
+    );
+    assert_eq!(
+        scene.app.borrow().frame(&scene.root).unwrap().revision,
+        revision
+    );
+    assert_eq!(submissions(&scene), 0);
+    scene.settle(cx);
+    assert_eq!(submissions(&scene), 1);
+    assert_eq!(
+        scene.app.borrow().frame(&scene.root).unwrap().state["observation"]["snapshot"]["text"]["bytes"],
+        "fast🙂".len()
+    );
+    drop(owner);
+    scene.close(cx);
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while cx.update(|cx| cx.has_global::<actions::Owner>()) {
+        cx.run_until_parked();
+        assert!(
+            std::time::Instant::now() < until,
+            "original desktop cleanup did not finish"
+        );
+        std::thread::park_timeout(std::time::Duration::from_millis(1));
+    }
+    assert!(scene.app.borrow().can_shutdown());
+    assert_eq!(scene.resources.borrow().budget.usage(), (0, 0, 0));
 }
 #[gpui::test]
 fn textarea_submit_observes_latest_native_draft_without_leaving_focus_or_inserting_newline(
@@ -102,7 +194,7 @@ fn textarea_submit_observes_latest_native_draft_without_leaving_focus_or_inserti
         );
     })
     .unwrap();
-    cx.run_until_parked();
+    scene.settle(cx);
     assert_eq!(submissions(&scene), 1);
     let observation: EditorObservation = serde_json::from_value(
         scene.app.borrow().frame(&scene.root).unwrap().state["observation"].clone(),

@@ -53,7 +53,7 @@ impl Owner {
         let handle = TextSelectionHandle::new(props.source.clone(), cx);
         handle.preserve_byte_offsets(cx);
         let keep = input
-            .0
+            .current
             .borrow()
             .as_ref()
             .expect("live source mount")
@@ -323,11 +323,12 @@ mod tests {
         let scope = TextSelectionScopeId::new();
         let (root, window_cx) = cx.add_window_view(|window, cx| {
             let input = LiveInput::new(
-                Rc::new(std::cell::RefCell::new(Some(crate::Input(Rc::new(
-                    |_, _, _, _| Ok(Default::default()),
-                ))))),
+                Rc::new(std::cell::RefCell::new(Some(crate::Input::testing(
+                    Rc::new(|_, _, _, _| Ok(())),
+                )))),
                 crate::NativeBudget::default(),
                 std::sync::Arc::new(maka_capabilities::call::Resources::default()),
+                || {},
             );
             Root {
                 owner: Owner::new(&props, input, window, cx),
@@ -432,11 +433,12 @@ mod tests {
         let scope = TextSelectionScopeId::new();
         let (root, w) = cx.add_window_view(|window, cx| {
             let input = LiveInput::new(
-                Rc::new(std::cell::RefCell::new(Some(crate::Input(Rc::new(
-                    |_, _, _, _| Ok(Default::default()),
-                ))))),
+                Rc::new(std::cell::RefCell::new(Some(crate::Input::testing(
+                    Rc::new(|_, _, _, _| Ok(())),
+                )))),
                 crate::NativeBudget::default(),
                 std::sync::Arc::new(maka_capabilities::call::Resources::default()),
+                || {},
             );
             Root {
                 owner: Owner::new(&props, input, window, cx),
@@ -517,11 +519,12 @@ mod tests {
                 ("other", TextSelectionScopeId::new()),
             ] {
                 let input = LiveInput::new(
-                    Rc::new(std::cell::RefCell::new(Some(crate::Input(Rc::new(
-                        |_, _, _, _| Ok(Default::default()),
-                    ))))),
+                    Rc::new(std::cell::RefCell::new(Some(crate::Input::testing(
+                        Rc::new(|_, _, _, _| Ok(())),
+                    )))),
                     crate::NativeBudget::default(),
                     std::sync::Arc::new(maka_capabilities::call::Resources::default()),
+                    || {},
                 );
                 owners.push((Owner::new(&make(source), input, window, cx), scope));
             }
@@ -575,11 +578,12 @@ mod tests {
             "appearance":{"font":{"family":"Helvetica","fallbacks":[],"size":16,"lineHeight":1.5,"weight":400},"foreground":0x242724ffu32},"selection":0x4466ff55u32,"disabled":false})).unwrap();
         let (root, w) = cx.add_window_view(|window, cx| {
             let input = LiveInput::new(
-                Rc::new(std::cell::RefCell::new(Some(crate::Input(Rc::new(
-                    |_, _, _, _| Ok(Default::default()),
-                ))))),
+                Rc::new(std::cell::RefCell::new(Some(crate::Input::testing(
+                    Rc::new(|_, _, _, _| Ok(())),
+                )))),
                 crate::NativeBudget::default(),
                 std::sync::Arc::new(maka_capabilities::call::Resources::default()),
+                || {},
             );
             Peers {
                 owners: vec![(
@@ -654,7 +658,7 @@ mod tests {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             let slots = Slots::new(
                 vec![],
-                crate::Input(Rc::new(|_, _, _, _| Ok(Default::default()))),
+                crate::Input::testing(Rc::new(|_, _, _, _| Ok(()))),
                 |_, _, _| unreachable!(),
             );
             div()
@@ -683,11 +687,12 @@ mod tests {
         let (root, w) = cx.add_window_view(|window, cx| {
             let input = || {
                 LiveInput::new(
-                    Rc::new(std::cell::RefCell::new(Some(crate::Input(Rc::new(
-                        |_, _, _, _| Ok(Default::default()),
-                    ))))),
+                    Rc::new(std::cell::RefCell::new(Some(crate::Input::testing(
+                        Rc::new(|_, _, _, _| Ok(())),
+                    )))),
                     crate::NativeBudget::default(),
                     std::sync::Arc::new(maka_capabilities::call::Resources::default()),
+                    || {},
                 )
             };
             Mixed {

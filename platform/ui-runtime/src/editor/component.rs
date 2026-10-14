@@ -77,11 +77,6 @@ pub fn reduce<P: Props>(call: ComponentCall<'_>) -> crate::Result<ComponentOutpu
     if let Some(command) = typed.command()
         && request.as_ref() != Some(command)
     {
-        if pending {
-            return Err(crate::Error::Invalid(
-                "editor prior command has not settled".into(),
-            ));
-        }
         if request
             .as_ref()
             .is_some_and(|prior| command.owner == prior.owner && command.sequence <= prior.sequence)
@@ -105,8 +100,9 @@ fn frame<P: Props>(
 ) -> crate::Result<ComponentOutput<P>> {
     let mut typed: P =
         serde_json::from_value(props).map_err(|e| crate::Error::Invalid(e.to_string()))?;
-    // Props propose new commands; the accepted request remains authoritative
-    // until its receipt commits. None does not cancel a staged request.
+    // Props propose monotonically advancing commands. Each native outcome stays
+    // in its original publication FIFO; a delayed receipt does not block the
+    // next command. None does not cancel the latest accepted request.
     typed.set_command(request.clone().filter(|_| pending));
     Ok(Frame {
             revision,

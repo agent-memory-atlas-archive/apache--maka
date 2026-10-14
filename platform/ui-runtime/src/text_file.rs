@@ -257,8 +257,14 @@ impl TextFile {
             closed: false,
         }
     }
+    pub fn will_update(&self, props: &TextFileProps) -> bool {
+        !self.closed
+            && self.path.is_some()
+            && props.command.as_ref().is_some_and(|command| {
+                command.owner == self.current.owner && command.sequence > self.current.sequence
+            })
+    }
     pub fn update(&mut self, props: &TextFileProps) {
-        self.poll();
         let Some(command) = &props.command else {
             return;
         };

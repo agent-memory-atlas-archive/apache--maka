@@ -56,6 +56,7 @@ struct Owner {
 impl Owner {
     fn observation(&self) -> NativeInput {
         NativeInput {
+            replaceable: false,
             key: "observe".into(),
             value: serde_json::to_value(self.selection.observation()).expect("file observation"),
         }
@@ -66,6 +67,7 @@ impl Owner {
             Some(choose) => {
                 self.path = Some(browser::Request { path, directory });
                 WidgetInput::Emitted(NativeInput {
+                    replaceable: false,
                     key: "choose".into(),
                     value: serde_json::to_value(choose).unwrap(),
                 })
@@ -133,6 +135,19 @@ impl Owner {
 }
 struct Recipe(FileView);
 impl Widget for Recipe {
+    fn publication_capacity(&self, state: &dyn Any) -> Vec<(&'static str, usize)> {
+        if state
+            .downcast_ref::<Owner>()
+            .unwrap()
+            .selection
+            .will_accept(self.0.request.as_deref())
+        {
+            vec![("observe", 65536); 2]
+        } else {
+            Vec::new()
+        }
+    }
+
     fn create(&self, context: NativeContext) -> Box<dyn Any> {
         Box::new(Owner {
             context,
@@ -648,19 +663,23 @@ mod tests {
         let p = props();
         let native =
             NativeRegistry::with_surface(maka_plugin_core::composition::PresentationTarget::Tui)
-                .with_scene_compiler(super::super::scene::language(), move |_, _| {
-                    NativeView::<dyn Widget>::new(
-                        Rc::new(Recipe(FileView {
-                            props: p.clone(),
-                            request: None,
-                        })),
-                        BTreeMap::from([
-                            ("choose".into(), choose_schema()),
-                            ("observe".into(), observation_schema()),
-                        ]),
-                        vec![],
-                    )
-                })
+                .with_scene_compiler(
+                    super::super::scene::language(),
+                    move |_, _| {
+                        maka_ui_runtime::PreparedScene::new(
+                            Recipe(FileView {
+                                props: p.clone(),
+                                request: None,
+                            }),
+                            BTreeMap::from([
+                                ("choose".into(), choose_schema()),
+                                ("observe".into(), observation_schema()),
+                            ]),
+                            vec![],
+                        )
+                    },
+                    |prepared| prepared.finish::<Recipe, dyn Widget>(|recipe| Rc::new(recipe)),
+                )
                 .unwrap();
         let mut tui = Presenter::new(
             &input,
@@ -677,7 +696,7 @@ mod tests {
             tui.present(scene);
         };
         draw(&mut tui);
-        tui.input(Event::Paste("abcdef".into())).unwrap();
+        tui.input_settled(Event::Paste("abcdef".into())).unwrap();
         draw(&mut tui);
         let mouse = |kind, x| {
             Event::Mouse(MouseEvent {
@@ -687,12 +706,12 @@ mod tests {
                 modifiers: KeyModifiers::NONE,
             })
         };
-        tui.input(mouse(MouseEventKind::Down(MouseButton::Left), 2))
+        tui.input_settled(mouse(MouseEventKind::Down(MouseButton::Left), 2))
             .unwrap();
         assert!(tui.drag.is_some());
-        tui.input(mouse(MouseEventKind::Drag(MouseButton::Left), 5))
+        tui.input_settled(mouse(MouseEventKind::Drag(MouseButton::Left), 5))
             .unwrap();
-        tui.input(mouse(MouseEventKind::Up(MouseButton::Left), 5))
+        tui.input_settled(mouse(MouseEventKind::Up(MouseButton::Left), 5))
             .unwrap();
         assert!(tui.drag.is_none());
         let owner = tui.resources.owners[&tui.root.id()]
@@ -702,9 +721,9 @@ mod tests {
         assert_eq!(owner.editor.selected_text(), "bcd");
         assert!(!owner.editor.dragging());
         draw(&mut tui);
-        tui.input(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)))
+        tui.input_settled(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)))
             .unwrap();
-        tui.input(Event::Key(KeyEvent::new(
+        tui.input_settled(Event::Key(KeyEvent::new(
             KeyCode::Char(' '),
             KeyModifiers::NONE,
         )))
@@ -754,6 +773,6 @@ mod tests {
         }
         let root = tui.root.clone();
         tui.surface_closed(&root, Ok(())).unwrap();
-        tui.shutdown().unwrap();
+        tui.shutdown_settled().unwrap();
     }
 }

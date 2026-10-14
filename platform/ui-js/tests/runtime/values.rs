@@ -17,6 +17,7 @@
  * under the License.
  */
 
+use super::Application;
 use super::{support, timer};
 use maka_packages::Package;
 use maka_plugin_core::{
@@ -24,7 +25,7 @@ use maka_plugin_core::{
     contract::{Availability, Cardinality, Contract, Export, Import, Interface, Transport},
     package::{Declaration, EntryDeclaration, EntryTarget, Implementation},
 };
-use maka_ui_runtime::{Application, NativeCapability, NativeExport, NativeRegistry};
+use maka_ui_runtime::{NativeCapability, NativeExport, NativeRegistry};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, time::Duration};
 

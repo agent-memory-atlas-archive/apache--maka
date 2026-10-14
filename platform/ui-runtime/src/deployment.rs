@@ -162,7 +162,7 @@ impl<V: ?Sized + 'static> Application<V> {
         self.closing
     }
 
-    fn deployment_converging(&self) -> bool {
+    pub(crate) fn deployment_converging(&self) -> bool {
         !self.plan_active()
             || !self.pending.is_empty()
             || !self.pending_remotes.is_empty()
@@ -401,7 +401,21 @@ impl<V: ?Sized + 'static> Application<V> {
         Ok(())
     }
 
-    pub(super) fn dependencies_ready(&self, instance: &Instance) -> bool {
+    pub(super) fn activation_ready(&self, instance: &Instance) -> bool {
+        // Keep not-yet-loaded source in the original bounded deployment plan.
+        // Its predecessor's load/activate Job wakes this owner after settlement;
+        // worker speed must not turn a valid plan into an admission failure.
+        if instance
+            .entry
+            .as_ref()
+            .is_some_and(|entry| matches!(entry.implementation, Implementation::JavaScript { .. }))
+            && self
+                .modules
+                .values()
+                .any(|loaded| loaded.activation.is_some())
+        {
+            return false;
+        }
         let active = |id: &InstanceId| {
             self.activations.get(id).is_some_and(|a| {
                 self.runtime
@@ -444,7 +458,15 @@ impl<V: ?Sized + 'static> Application<V> {
         self.sync_subscription_demand();
         let mut failure = None;
         loop {
-            let mut progressed = false;
+            let mut progressed = match self.poll_script_activations() {
+                Ok(progressed) => progressed,
+                Err(error) => {
+                    // Process every completed result and continue healthy
+                    // dependency activation before reporting the original failure.
+                    failure.get_or_insert(error);
+                    true
+                }
+            };
             for id in self.modules.keys().cloned().collect::<Vec<_>>() {
                 let activation = &self.activations[&id];
                 if self.runtime.status(activation).is_ok_and(|s| {
@@ -455,19 +477,13 @@ impl<V: ?Sized + 'static> Application<V> {
                     .iter()
                     .any(|m| m.provider == *activation)
                 {
-                    let loaded = &self.modules[&id];
-                    let result = loaded.module.close();
-                    self.runtime.complete_resource(
-                        &loaded.resource,
-                        result.as_ref().map(|_| ()).map_err(|e| e.to_string()),
-                    )?;
-                    if let Err(error) = result {
-                        self.deployment_error.get_or_insert(error.to_string());
-                        failure.get_or_insert(error);
-                        continue;
+                    match self.close_module(&id) {
+                        Ok(closed) => progressed |= closed,
+                        Err(error) => {
+                            self.deployment_error.get_or_insert(error.to_string());
+                            failure.get_or_insert(error);
+                        }
                     }
-                    self.modules.remove(&id);
-                    progressed = true;
                 }
             }
             for activation in self.runtime.activations().cloned().collect::<Vec<_>>() {
@@ -519,7 +535,7 @@ impl<V: ?Sized + 'static> Application<V> {
             }
             for instance in std::mem::take(&mut self.pending) {
                 if self.activations.contains_key(&instance.identity)
-                    || !self.dependencies_ready(&instance)
+                    || !self.activation_ready(&instance)
                 {
                     self.pending.push(instance);
                     continue;

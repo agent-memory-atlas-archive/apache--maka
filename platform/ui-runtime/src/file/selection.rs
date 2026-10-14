@@ -270,6 +270,9 @@ impl FileSelection {
     pub fn cancel_intent(&mut self) {
         self.intent = None;
     }
+    pub fn will_accept(&self, request: Option<&str>) -> bool {
+        request.is_some() && self.intent.as_deref() == request
+    }
     pub fn accept(&mut self, request: Option<&str>) -> bool {
         if request.is_none() || self.intent.as_deref() != request {
             return false;

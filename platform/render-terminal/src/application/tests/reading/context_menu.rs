@@ -37,7 +37,7 @@ fn context_menu_physical_open_copy_close_and_focus_return() {
     mouse(&mut p, MouseEventKind::Down(MouseButton::Right), 1, 0);
     let before = root_count(&p);
     assert!(!p.physical_admitted());
-    p.input(key(KeyCode::Enter)).unwrap();
+    p.input_settled(key(KeyCode::Enter)).unwrap();
     assert_eq!(root_count(&p), before);
     draw(&mut p, 40, 12);
     assert_eq!(p.physical_path.len(), 1);
@@ -102,12 +102,12 @@ fn context_menu_visible_trigger_keyboard_escape_and_narrow_bounds() {
         })
         .unwrap();
     assert!(menu.right() <= 15 && menu.bottom() <= 6);
-    p.input(key(KeyCode::Esc)).unwrap();
+    p.input_settled(key(KeyCode::Esc)).unwrap();
     draw(&mut p, 15, 6);
     assert!(p.physical_path.is_empty());
     mouse(&mut p, MouseEventKind::Down(MouseButton::Left), 1, 0);
     draw(&mut p, 15, 6);
-    p.input(Event::Key(KeyEvent::new(
+    p.input_settled(Event::Key(KeyEvent::new(
         KeyCode::F(10),
         KeyModifiers::SHIFT,
     )))
@@ -135,12 +135,12 @@ fn context_menu_copies_original_selection_without_business_event() {
         p.focus.as_ref().unwrap().kind,
         super::super::super::paint::TargetKind::SelectionCopy { .. }
     ));
-    p.input(key(KeyCode::Down)).unwrap();
+    p.input_settled(key(KeyCode::Down)).unwrap();
     assert_eq!(p.focus.as_ref().unwrap().key, "copy-message");
-    p.input(key(KeyCode::Up)).unwrap();
+    p.input_settled(key(KeyCode::Up)).unwrap();
     // Repainting must retain the copy action, not the same node's backdrop.
     draw(&mut p, 40, 12);
-    p.input(key(KeyCode::Enter)).unwrap();
+    p.input_settled(key(KeyCode::Enter)).unwrap();
     let mut bytes = Vec::new();
     assert!(p.flush_clipboard(&mut bytes).unwrap());
     assert_eq!(
@@ -169,11 +169,11 @@ fn context_action_replacing_menu_with_dialog_keeps_original_focus_return() {
     let original = p.focus.clone().unwrap();
     mouse(&mut p, MouseEventKind::Down(MouseButton::Right), 1, 1);
     draw(&mut p, 40, 12);
-    p.input(key(KeyCode::Down)).unwrap();
+    p.input_settled(key(KeyCode::Down)).unwrap();
     draw(&mut p, 40, 12);
     assert_eq!(p.focus.as_ref().unwrap().key, "details");
     props.borrow_mut()["content"]["children"][1]["open"] = json!(true);
-    p.input(key(KeyCode::Enter)).unwrap();
+    p.input_settled(key(KeyCode::Enter)).unwrap();
     draw(&mut p, 40, 12);
     assert_eq!(p.physical_path.len(), 1);
     assert_eq!(p.focus.as_ref().unwrap().key, "cancel");

@@ -134,7 +134,7 @@ fn intrinsic_dialog_editor_grows_shrinks_and_keeps_the_real_caret_and_controls_v
     assert_eq!(geometry(&tui).height, 5); // Original minimum three rows plus inset.
     let focus = tui.focus.clone().unwrap();
     assert_eq!(focus.mount, mount);
-    tui.input(Event::Paste(
+    tui.input_settled(Event::Paste(
         (0..20)
             .map(|n| format!("line-{n:02}"))
             .collect::<Vec<_>>()
@@ -164,47 +164,47 @@ fn intrinsic_dialog_editor_grows_shrinks_and_keeps_the_real_caret_and_controls_v
                 .any(|target| target.key == "back" && !target.area.is_empty())
         );
         assert!(tui.focus.as_ref().unwrap().same(&focus));
-        tui.input(Event::Mouse(MouseEvent {
+        tui.input_settled(Event::Mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: caret.x,
             row: caret.y,
             modifiers: KeyModifiers::NONE,
         }))
         .unwrap();
-        tui.input(Event::Mouse(MouseEvent {
+        tui.input_settled(Event::Mouse(MouseEvent {
             kind: MouseEventKind::Up(MouseButton::Left),
             column: caret.x,
             row: caret.y,
             modifiers: KeyModifiers::NONE,
         }))
         .unwrap();
-        tui.input(Event::Paste("!".into())).unwrap();
+        tui.input_settled(Event::Paste("!".into())).unwrap();
         assert!(editor(&tui).0.ends_with('!'));
     }
     // Width changes use the original soft-wrap algorithm, including wide glyphs.
-    tui.input(Event::Key(KeyEvent::new(
+    tui.input_settled(Event::Key(KeyEvent::new(
         KeyCode::Char('a'),
         KeyModifiers::CONTROL,
     )))
     .unwrap();
-    tui.input(Event::Paste("中".repeat(100))).unwrap();
+    tui.input_settled(Event::Paste("中".repeat(100))).unwrap();
     draw(&mut tui, 80, 30);
     assert_eq!(geometry(&tui).height, 6);
     draw(&mut tui, 30, 30);
     assert_eq!(geometry(&tui).height, 12);
     assert!(editor(&tui).1.is_some());
-    tui.input(Event::Key(KeyEvent::new(
+    tui.input_settled(Event::Key(KeyEvent::new(
         KeyCode::Char('a'),
         KeyModifiers::CONTROL,
     )))
     .unwrap();
-    tui.input(Event::Paste("short".into())).unwrap();
+    tui.input_settled(Event::Paste("short".into())).unwrap();
     draw(&mut tui, 80, 30);
     assert_eq!(geometry(&tui).height, 5);
     assert_eq!(editor(&tui).0, "short");
-    tui.input(key(KeyCode::Tab)).unwrap();
+    tui.input_settled(key(KeyCode::Tab)).unwrap();
     assert_eq!(tui.focus.as_ref().unwrap().key, "back");
-    tui.input(key(KeyCode::Enter)).unwrap();
+    tui.input_settled(key(KeyCode::Enter)).unwrap();
     assert_eq!(tui.application.frame(&tui.root).unwrap().state["count"], 1);
     close(&mut tui);
 }
@@ -240,7 +240,7 @@ fn viewport_row_cap_uses_each_paint_without_replacing_the_native_draft_or_focus(
             .height
     };
     assert_eq!(height(&tui), 3);
-    tui.input(Event::Paste(
+    tui.input_settled(Event::Paste(
         (0..20)
             .map(|n| format!("line-{n:02}"))
             .collect::<Vec<_>>()
@@ -265,21 +265,21 @@ fn viewport_row_cap_uses_each_paint_without_replacing_the_native_draft_or_focus(
             .editor
             .cursor_position()
             .unwrap();
-        tui.input(Event::Mouse(MouseEvent {
+        tui.input_settled(Event::Mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: caret.x,
             row: caret.y,
             modifiers: KeyModifiers::NONE,
         }))
         .unwrap();
-        tui.input(Event::Mouse(MouseEvent {
+        tui.input_settled(Event::Mouse(MouseEvent {
             kind: MouseEventKind::Up(MouseButton::Left),
             column: caret.x,
             row: caret.y,
             modifiers: KeyModifiers::NONE,
         }))
         .unwrap();
-        tui.input(Event::Paste("!".into())).unwrap();
+        tui.input_settled(Event::Paste("!".into())).unwrap();
         assert!(
             editor_owner(&*tui.resources.owners[&mount.id()].state)
                 .editor
@@ -287,12 +287,12 @@ fn viewport_row_cap_uses_each_paint_without_replacing_the_native_draft_or_focus(
                 .ends_with('!')
         );
     }
-    tui.input(Event::Key(KeyEvent::new(
+    tui.input_settled(Event::Key(KeyEvent::new(
         KeyCode::Char('a'),
         KeyModifiers::CONTROL,
     )))
     .unwrap();
-    tui.input(Event::Paste("short".into())).unwrap();
+    tui.input_settled(Event::Paste("short".into())).unwrap();
     draw(&mut tui, 40, 12);
     assert_eq!(height(&tui), 3);
     close(&mut tui);
@@ -358,7 +358,7 @@ fn composer_boundary_shares_focus_and_keeps_the_borderless_editor_at_its_actual_
             MouseEventKind::Down(MouseButton::Left),
             MouseEventKind::Up(MouseButton::Left),
         ] {
-            tui.input(Event::Mouse(MouseEvent {
+            tui.input_settled(Event::Mouse(MouseEvent {
                 kind,
                 column: target.x,
                 row: target.y,
@@ -373,7 +373,7 @@ fn composer_boundary_shares_focus_and_keeps_the_borderless_editor_at_its_actual_
         MouseEventKind::Down(MouseButton::Left),
         MouseEventKind::Up(MouseButton::Left),
     ] {
-        tui.input(Event::Mouse(MouseEvent {
+        tui.input_settled(Event::Mouse(MouseEvent {
             kind,
             column: target.x,
             row: target.y,
@@ -381,7 +381,7 @@ fn composer_boundary_shares_focus_and_keeps_the_borderless_editor_at_its_actual_
         }))
         .unwrap();
     }
-    tui.input(Event::Paste(
+    tui.input_settled(Event::Paste(
         (0..20)
             .map(|n| format!("line-{n:02}"))
             .collect::<Vec<_>>()
@@ -409,7 +409,7 @@ fn composer_boundary_shares_focus_and_keeps_the_borderless_editor_at_its_actual_
             MouseEventKind::Down(MouseButton::Left),
             MouseEventKind::Up(MouseButton::Left),
         ] {
-            tui.input(Event::Mouse(MouseEvent {
+            tui.input_settled(Event::Mouse(MouseEvent {
                 kind,
                 column: caret.x,
                 row: caret.y,
@@ -417,7 +417,7 @@ fn composer_boundary_shares_focus_and_keeps_the_borderless_editor_at_its_actual_
             }))
             .unwrap();
         }
-        tui.input(Event::Paste("!".into())).unwrap();
+        tui.input_settled(Event::Paste("!".into())).unwrap();
         assert!(
             editor_owner(&*tui.resources.owners[&focus.mount.id()].state)
                 .editor
@@ -540,7 +540,7 @@ fn session_viewport_uses_remaining_body_without_leaking_to_siblings_or_cached_me
         (2, 2),
         "contained descendants cannot inflate the body's intrinsic size"
     );
-    tui.input(Event::Paste("!".into())).unwrap();
+    tui.input_settled(Event::Paste("!".into())).unwrap();
     assert!(
         editor_owner(&*tui.resources.owners[&focus.mount.id()].state)
             .editor
@@ -554,7 +554,8 @@ fn session_viewport_uses_remaining_body_without_leaking_to_siblings_or_cached_me
 fn terminal_row_limits_resize_the_original_editor_and_reject_inverted_ranges() {
     let (_runtime, mut tui) = presenter();
     draw(&mut tui, 50, 40);
-    tui.input(Event::Paste("\nline".repeat(20))).unwrap();
+    tui.input_settled(Event::Paste("\nline".repeat(20)))
+        .unwrap();
     draw(&mut tui, 50, 40);
     let mount = draft(&tui);
     let height = |tui: &Presenter| {
@@ -585,8 +586,10 @@ fn terminal_row_limits_resize_the_original_editor_and_reject_inverted_ranges() {
                     "configure",
                     json!({"terminalRows":{"min":1,"max":8,"maxViewportFraction":fraction}})
                 )
-                .is_err()
+                .is_ok()
         );
+        assert!(tui.settle().is_err());
+        assert_eq!(tui.application.frame(&tui.root).unwrap().revision, revision);
     }
     let revision = tui.application.frame(&tui.root).unwrap().revision;
     assert!(
@@ -597,8 +600,10 @@ fn terminal_row_limits_resize_the_original_editor_and_reject_inverted_ranges() {
                 "configure",
                 json!({"terminalRows":{"min":4,"max":3}})
             )
-            .is_err()
+            .is_ok()
     );
+    assert!(tui.settle().is_err());
+    assert_eq!(tui.application.frame(&tui.root).unwrap().revision, revision);
     draw(&mut tui, 50, 40);
     assert_eq!(height(&tui), 4);
     assert_eq!(observation(&tui), original);
@@ -633,7 +638,7 @@ fn full_capacity_reset_captures_every_byte_and_oversize_reset_preserves_original
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while tui.application.frame(&tui.root).unwrap().state["outcome"].is_null() {
         assert!(std::time::Instant::now() < deadline);
-        tui.pump().unwrap();
+        tui.pump_settled().unwrap();
         std::thread::yield_now();
     }
     assert_eq!(
@@ -668,7 +673,7 @@ fn observation(tui: &Presenter) -> Value {
     tui.application.frame(&tui.root).unwrap().state["observation"].clone()
 }
 fn click(tui: &mut Presenter, kind: MouseEventKind, x: u16, y: u16) {
-    tui.input(Event::Mouse(MouseEvent {
+    tui.input_settled(Event::Mouse(MouseEvent {
         kind,
         column: x,
         row: y,
@@ -681,12 +686,12 @@ fn dispatch(tui: &mut Presenter, key: &str, value: Value) {
     tui.application
         .dispatch(&tui.root, revision, key, value)
         .unwrap();
-    tui.pump().unwrap();
+    tui.pump_settled().unwrap();
 }
 fn close(tui: &mut Presenter) {
     tui.surface_closed(&tui.surface(), Ok(())).unwrap();
     assert!(tui.can_shutdown());
-    tui.shutdown().unwrap();
+    tui.shutdown_settled().unwrap();
 }
 
 #[test]
@@ -694,14 +699,15 @@ fn native_unicode_selection_and_undo_survive_component_updates_and_stale_owner_c
     let (_runtime, mut tui) = presenter();
     draw(&mut tui, 50, 20);
     let original = observation(&tui)["snapshot"]["text"]["owner"].clone();
-    tui.input(Event::Paste("中文👩🏽‍💻e\u{301}".into())).unwrap();
+    tui.input_settled(Event::Paste("中文👩🏽‍💻e\u{301}".into()))
+        .unwrap();
     let observed = observation(&tui);
     assert_eq!(observed["snapshot"]["text"]["owner"], original);
     assert_eq!(
         observed["snapshot"]["selection"]["end"],
         "Start中文👩🏽‍💻e\u{301}".encode_utf16().count()
     );
-    tui.input(Event::Key(KeyEvent::new(
+    tui.input_settled(Event::Key(KeyEvent::new(
         KeyCode::Char('z'),
         KeyModifiers::CONTROL,
     )))
@@ -710,9 +716,9 @@ fn native_unicode_selection_and_undo_survive_component_updates_and_stale_owner_c
     let mount = draft(&tui);
     // A captured target cannot gain authority over a replacement physical owner.
     tui.resources.close(&mount).unwrap();
-    tui.sync_native().unwrap();
+    tui.settle().unwrap();
     assert_ne!(observation(&tui)["snapshot"]["text"]["owner"], original);
-    tui.input(Event::Paste("foreign".into())).unwrap();
+    tui.input_settled(Event::Paste("foreign".into())).unwrap();
     assert_eq!(observation(&tui)["snapshot"]["text"]["bytes"], 5);
     close(&mut tui);
 }
@@ -736,7 +742,7 @@ fn failed_flush_keeps_previous_geometry_and_new_document_rejects_old_pointer_map
         json!({"start":0,"end":3})
     );
     click(&mut tui, MouseEventKind::Up(MouseButton::Left), x + 3, y);
-    tui.input(Event::Paste("中".into())).unwrap();
+    tui.input_settled(Event::Paste("中".into())).unwrap();
     let after_edit = observation(&tui);
     click(&mut tui, MouseEventKind::Down(MouseButton::Left), x, y);
     assert_eq!(observation(&tui), after_edit);
@@ -761,14 +767,14 @@ fn forwarding_capture_precedes_same_frame_reset_and_stale_reset_preserves_later_
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while tui.application.frame(&tui.root).unwrap().state["outcome"].is_null() {
         assert!(std::time::Instant::now() < deadline);
-        tui.pump().unwrap();
+        tui.pump_settled().unwrap();
         std::thread::yield_now();
     }
     assert_eq!(
         tui.application.frame(&tui.root).unwrap().state["outcome"]["value"]["text"],
         "Start"
     );
-    tui.input(Event::Paste("新草稿".into())).unwrap();
+    tui.input_settled(Event::Paste("新草稿".into())).unwrap();
     let current = observation(&tui)["revision"].as_u64().unwrap();
     // Capture against the accepted current revision, but clear against an old
     // revision: immutable read succeeds and the later native draft remains.
@@ -788,7 +794,7 @@ fn forwarding_capture_precedes_same_frame_reset_and_stale_reset_preserves_later_
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while !tui.jobs.is_empty() {
         assert!(std::time::Instant::now() < deadline);
-        tui.pump().unwrap();
+        tui.pump_settled().unwrap();
         std::thread::yield_now();
     }
     assert_eq!(
@@ -816,21 +822,21 @@ fn non_tab_stop_keeps_mouse_editing_and_readonly_disabled_gate_before_edit() {
         target.area.visible().x + 1,
         target.area.visible().y + 1,
     );
-    tui.input(Event::Paste("中".into())).unwrap();
+    tui.input_settled(Event::Paste("中".into())).unwrap();
     assert_eq!(observation(&tui)["snapshot"]["text"]["bytes"], 8);
-    tui.input(key(KeyCode::Tab)).unwrap();
+    tui.input_settled(key(KeyCode::Tab)).unwrap();
     assert_ne!(tui.focus.as_ref().unwrap().key, "observe");
     dispatch(&mut tui, "configure", json!({"tabIndex":2,"readOnly":true}));
     draw(&mut tui, 50, 24);
-    tui.input(key(KeyCode::BackTab)).unwrap();
+    tui.input_settled(key(KeyCode::BackTab)).unwrap();
     assert_eq!(tui.focus.as_ref().unwrap().key, "observe");
     let before = observation(&tui);
-    tui.input(Event::Paste("blocked".into())).unwrap();
+    tui.input_settled(Event::Paste("blocked".into())).unwrap();
     assert_eq!(observation(&tui), before);
     dispatch(&mut tui, "configure", json!({"tabIndex":0,"disabled":true}));
     // Old successfully presented geometry is still visible, but current native
     // props must reject editing before touching the original buffer.
-    tui.input(Event::Paste("blocked".into())).unwrap();
+    tui.input_settled(Event::Paste("blocked".into())).unwrap();
     assert_eq!(observation(&tui), before);
     close(&mut tui);
 }
@@ -849,19 +855,19 @@ fn failed_observation_preserves_edits_and_original_command_receipt_until_publica
     );
     assert!(tui.surface.is_live());
     assert!(observation(&tui).is_null());
-    tui.input(Event::Paste("Later".into())).unwrap();
+    tui.input_settled(Event::Paste("Later".into())).unwrap();
     assert!(tui.surface.is_live());
     dispatch(&mut tui, "reject", json!({"reject":false}));
     let observed = observation(&tui);
     assert_eq!(observed["receipt"]["sequence"], 1);
     assert_eq!(observed["receipt"]["outcome"]["status"], "applied");
     assert_eq!(observed["snapshot"]["text"]["bytes"], 5);
-    tui.pump().unwrap();
+    tui.pump_settled().unwrap();
     assert_eq!(observation(&tui), observed);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while !tui.jobs.is_empty() {
         assert!(std::time::Instant::now() < deadline);
-        tui.pump().unwrap();
+        tui.pump_settled().unwrap();
         std::thread::yield_now();
     }
     close(&mut tui);
@@ -872,9 +878,9 @@ fn wheel_hits_visible_editor_without_stealing_button_focus_or_snapping_back() {
     let (_runtime, mut tui) = presenter();
     draw(&mut tui, 50, 30);
     let text = (0..20).map(|i| format!("\nrow {i:02}")).collect::<String>();
-    tui.input(Event::Paste(text)).unwrap();
+    tui.input_settled(Event::Paste(text)).unwrap();
     draw(&mut tui, 50, 30);
-    tui.input(key(KeyCode::Tab)).unwrap();
+    tui.input_settled(key(KeyCode::Tab)).unwrap();
     assert_eq!(tui.focus.as_ref().unwrap().key, "read");
     let before = draw(&mut tui, 50, 30);
     let editor = tui
@@ -933,7 +939,7 @@ fn a_different_editor_with_equal_revision_cannot_capture_or_clear_the_original_d
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while b.application.frame(&b.root).unwrap().state["outcome"].is_null() {
         assert!(std::time::Instant::now() < deadline);
-        b.pump().unwrap();
+        b.pump_settled().unwrap();
         std::thread::yield_now();
     }
     assert_eq!(
@@ -973,7 +979,8 @@ fn completely_clipped_editor_cannot_receive_focus_or_physical_input() {
             .is_none_or(|target| target.mount != mount)
     );
     let before = observation(&tui);
-    tui.input(Event::Paste("invisible edit".into())).unwrap();
+    tui.input_settled(Event::Paste("invisible edit".into()))
+        .unwrap();
     assert_eq!(observation(&tui), before);
     close(&mut tui);
 }
@@ -991,7 +998,7 @@ fn unhandled_editor_page_key_reaches_its_original_scene_scroll_ancestor() {
         .clone();
     tui.focus = Some(target);
     let before = observation(&tui);
-    tui.input(Event::Key(KeyEvent::new(
+    tui.input_settled(Event::Key(KeyEvent::new(
         KeyCode::PageDown,
         KeyModifiers::NONE,
     )))
@@ -1028,7 +1035,7 @@ fn pointer_capture_survives_tab_focus_change_and_release_keeps_the_new_focus() {
             .as_ref()
             .is_some_and(|captured| captured.same(&target))
     );
-    tui.input(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)))
+    tui.input_settled(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)))
         .unwrap();
     let next = tui.focus.clone().unwrap();
     assert!(!next.same(&target));
@@ -1060,9 +1067,9 @@ fn terminal_textarea_submit_keeps_native_draft_and_obeys_current_editor_policy()
     draw(&mut tui, 50, 20);
     dispatch(&mut tui, "configure", json!({"submit":"control_enter"}));
     draw(&mut tui, 50, 20);
-    tui.input(Event::Paste("中文🙂".into())).unwrap();
+    tui.input_settled(Event::Paste("中文🙂".into())).unwrap();
     let original = observation(&tui);
-    tui.input(Event::Key(KeyEvent::new(
+    tui.input_settled(Event::Key(KeyEvent::new(
         KeyCode::Enter,
         KeyModifiers::CONTROL,
     )))
@@ -1072,7 +1079,7 @@ fn terminal_textarea_submit_keeps_native_draft_and_obeys_current_editor_policy()
         1
     );
     assert_eq!(observation(&tui), original);
-    tui.input(key(KeyCode::Enter)).unwrap();
+    tui.input_settled(key(KeyCode::Enter)).unwrap();
     assert_eq!(
         tui.application.frame(&tui.root).unwrap().state["submissions"],
         1
@@ -1088,7 +1095,7 @@ fn terminal_textarea_submit_keeps_native_draft_and_obeys_current_editor_policy()
     ] {
         dispatch(&mut tui, "configure", options);
         draw(&mut tui, 50, 20);
-        tui.input(Event::Key(KeyEvent::new(
+        tui.input_settled(Event::Key(KeyEvent::new(
             KeyCode::Enter,
             KeyModifiers::CONTROL,
         )))
@@ -1107,7 +1114,8 @@ fn terminal_enter_submit_keeps_shift_enter_control_j_and_paste_in_the_original_d
     draw(&mut tui, 50, 20);
     dispatch(&mut tui, "configure", json!({"submit":"enter"}));
     draw(&mut tui, 50, 20);
-    tui.input(Event::Paste("first\n第二行".into())).unwrap();
+    tui.input_settled(Event::Paste("first\n第二行".into()))
+        .unwrap();
     for event in [
         KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT),
         KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL),
@@ -1115,7 +1123,7 @@ fn terminal_enter_submit_keeps_shift_enter_control_j_and_paste_in_the_original_d
         let before = observation(&tui)["snapshot"]["text"]["bytes"]
             .as_u64()
             .unwrap();
-        tui.input(Event::Key(event)).unwrap();
+        tui.input_settled(Event::Key(event)).unwrap();
         assert_eq!(observation(&tui)["snapshot"]["text"]["bytes"], before + 1);
         assert_eq!(
             tui.application.frame(&tui.root).unwrap().state["submissions"]
@@ -1125,13 +1133,13 @@ fn terminal_enter_submit_keeps_shift_enter_control_j_and_paste_in_the_original_d
         );
     }
     let draft = observation(&tui);
-    tui.input(key(KeyCode::Enter)).unwrap();
+    tui.input_settled(key(KeyCode::Enter)).unwrap();
     assert_eq!(
         tui.application.frame(&tui.root).unwrap().state["submissions"],
         1
     );
     assert_eq!(observation(&tui), draft);
-    tui.input(Event::Key(KeyEvent::new_with_kind(
+    tui.input_settled(Event::Key(KeyEvent::new_with_kind(
         KeyCode::Enter,
         KeyModifiers::NONE,
         crossterm::event::KeyEventKind::Repeat,
@@ -1148,11 +1156,11 @@ fn terminal_enter_submit_keeps_shift_enter_control_j_and_paste_in_the_original_d
         json!({"submit":"enter","filePaste":{"context":"original-session","maxFiles":2}}),
     );
     draw(&mut tui, 50, 20);
-    tui.input(Event::Paste("/missing-maka-paste-test.txt".into()))
+    tui.input_settled(Event::Paste("/missing-maka-paste-test.txt".into()))
         .unwrap();
     // A physical file paste blocks even an immediate submit, before another
     // paint or a parent files observation can disable the product's Send.
-    tui.input(key(KeyCode::Enter)).unwrap();
+    tui.input_settled(key(KeyCode::Enter)).unwrap();
     assert_eq!(observation(&tui), draft);
     assert_eq!(
         tui.application.frame(&tui.root).unwrap().state["submissions"],
@@ -1181,7 +1189,7 @@ fn failed_submit_is_not_replayed_and_preserves_unpublished_command_receipt() {
         true
     );
     assert!(
-        tui.input(Event::Key(KeyEvent::new(
+        tui.input_settled(Event::Key(KeyEvent::new(
             KeyCode::Enter,
             KeyModifiers::CONTROL,
         )))
@@ -1192,7 +1200,7 @@ fn failed_submit_is_not_replayed_and_preserves_unpublished_command_receipt() {
         tui.application.frame(&editor).unwrap().state["pending"],
         true
     );
-    tui.pump().unwrap();
+    tui.pump_settled().unwrap();
     dispatch(&mut tui, "reject", json!({"reject":false}));
     let published = observation(&tui);
     assert_eq!(published["receipt"]["sequence"], 1);
@@ -1203,10 +1211,10 @@ fn failed_submit_is_not_replayed_and_preserves_unpublished_command_receipt() {
         false
     );
     for _ in 0..3 {
-        tui.pump().unwrap();
+        tui.pump_settled().unwrap();
         assert!(tui.application.frame(&tui.root).unwrap().state["submissions"].is_null());
     }
-    tui.input(Event::Key(KeyEvent::new(
+    tui.input_settled(Event::Key(KeyEvent::new(
         KeyCode::Enter,
         KeyModifiers::CONTROL,
     )))
@@ -1254,9 +1262,10 @@ fn committed_addition_preserves_native_draft_selection_focus_and_undo() {
         ))
         .unwrap();
     draw(&mut tui, 50, 20);
-    tui.input(Event::Paste("中文👩🏽‍💻e\u{301}".into())).unwrap();
+    tui.input_settled(Event::Paste("中文👩🏽‍💻e\u{301}".into()))
+        .unwrap();
     draw(&mut tui, 50, 20);
-    tui.input(Event::Key(KeyEvent::new(
+    tui.input_settled(Event::Key(KeyEvent::new(
         KeyCode::Left,
         KeyModifiers::SHIFT,
     )))
@@ -1276,7 +1285,7 @@ fn committed_addition_preserves_native_draft_selection_focus_and_undo() {
     draw(&mut tui, 50, 20);
     let update = runtime.block_on(load).unwrap();
     tui.adopt_update(update, vec![]).unwrap();
-    tui.pump().unwrap();
+    tui.pump_settled().unwrap();
     draw(&mut tui, 50, 20);
     assert_eq!(tui.deployment_status().effective, Some(next));
     assert_eq!(draft(&tui), mount);
@@ -1319,8 +1328,8 @@ fn committed_addition_preserves_native_draft_selection_focus_and_undo() {
         .unwrap();
     tui.adopt_update(update, vec![]).unwrap();
     // A failed, independent candidate must not turn into terminal shutdown.
-    tui.pump().unwrap();
-    tui.pump().unwrap();
+    tui.pump_settled().unwrap();
+    tui.pump_settled().unwrap();
     draw(&mut tui, 50, 20);
     let status = tui.deployment_status();
     assert_eq!(status.desired, Some(failed));
@@ -1333,7 +1342,7 @@ fn committed_addition_preserves_native_draft_selection_focus_and_undo() {
         &tui.resources.owners[&mount.id()].identity
     ));
     assert_eq!(tui.focus.as_ref().unwrap().mount, focused);
-    tui.input(Event::Key(KeyEvent::new(
+    tui.input_settled(Event::Key(KeyEvent::new(
         KeyCode::Char('z'),
         KeyModifiers::CONTROL,
     )))
@@ -1358,25 +1367,25 @@ fn native_clipboard_gesture_uses_the_original_textarea_commit_and_observation() 
         json!({"submit":"enter", "filePaste":{"context":"original", "maxFiles":8}}),
     );
     draw(&mut tui, 50, 20);
-    tui.input(Event::Key(KeyEvent::new(
+    tui.input_settled(Event::Key(KeyEvent::new(
         KeyCode::Char('a'),
         KeyModifiers::CONTROL,
     )))
     .unwrap();
-    tui.input(Event::Paste("before".into())).unwrap();
+    tui.input_settled(Event::Paste("before".into())).unwrap();
     let mount = draft(&tui);
     super::super::textarea::clipboard_text(
         &mut *tui.resources.owners.get_mut(&mount.id()).unwrap().state,
         "中文\nnext".into(),
     );
-    tui.input(Event::Key(KeyEvent::new(
+    tui.input_settled(Event::Key(KeyEvent::new(
         KeyCode::Char('v'),
         KeyModifiers::CONTROL,
     )))
     .unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        tui.pump().unwrap();
+        tui.pump_settled().unwrap();
         draw(&mut tui, 50, 20);
         if editor_owner(&*tui.resources.owners[&mount.id()].state)
             .editor
@@ -1396,24 +1405,26 @@ fn native_clipboard_gesture_uses_the_original_textarea_commit_and_observation() 
         "before中文\nnext".len()
     );
     assert!(tui.application.frame(&tui.root).unwrap().state["submissions"].is_null());
-    let observed = editor_owner(&*tui.resources.owners[&mount.id()].state).observation();
+    let observed = super::super::textarea::editor_owner_mut(
+        tui.resources
+            .owners
+            .get_mut(&mount.id())
+            .unwrap()
+            .state
+            .as_mut(),
+    )
+    .observation();
     let files = NativeInput {
+        replaceable: false,
         key: "file_observe".into(),
         value: json!({"context":"original","selection":{"owner":"native-file","revision":2,"phase":"empty","file":null,"error":null},"remaining":0,"retryable":false}),
     };
-    tui.resources.observe(&mount, files.clone());
-    tui.resources.observe(&mount, observed.clone());
-    let pending = tui.resources.commit(&tui.application, &tui.root).unwrap();
-    assert!(
-        pending
-            .iter()
-            .any(|(owner, input)| owner == &mount && input == &files)
-    );
-    assert!(
-        pending
-            .iter()
-            .any(|(owner, input)| owner == &mount && input == &observed)
-    );
+    tui.resources.observe(&mount, files.clone()).unwrap();
+    tui.resources.observe(&mount, observed.clone()).unwrap();
+    tui.resources.commit(&tui.application, &tui.root).unwrap();
+    assert!(tui.resources.owners[&mount.id()].pending.pending());
+    tui.settle().unwrap();
+    assert!(!tui.resources.owners[&mount.id()].pending.pending());
     close(&mut tui);
 }
 
@@ -1448,6 +1459,7 @@ frame=(state)=>{
         maka_ui_js::execution(Default::default()),
     )
     .unwrap();
+    tui.settle().unwrap();
     assert!(tui.application.frame(&tui.root).unwrap().state["observation"].is_object());
     let owner = &tui.resources.owners[&tui.root.id()];
     assert!(
@@ -1466,5 +1478,330 @@ frame=(state)=>{
     let scene = tui.paint(area, &mut buffer).unwrap();
     tui.present(scene);
     assert!(buffer.content.iter().any(|cell| cell.symbol() == "r"));
-    tui.input(key(KeyCode::Down)).unwrap();
+    tui.input_settled(key(KeyCode::Down)).unwrap();
+}
+
+#[test]
+fn paste_then_enter_is_immediate_and_ordered_while_the_original_js_job_is_slow() {
+    let (runtime, mut input, packages) = editor_fixture();
+    let packages = packages.into_iter().map(|original| {
+        if !matches!(original.manifest().id.as_str(), "dynamic.app" | "dynamic.composer") { return original; }
+        let id = original.manifest().id.clone();
+        let declaration = original.manifest().application.clone().unwrap();
+        let Implementation::JavaScript { module, .. } = &declaration.entries[&EntryTarget::Tui].implementation else { unreachable!() };
+        let mut source = std::str::from_utf8(original.file(module).unwrap()).unwrap()
+            .replace("on:{changed:'changed',submitted:'submitted'}", "on:{changed:'changed',submitted:'submitted',checkpoint:'checkpoint'}");
+        if original.manifest().id == "dynamic.app" {
+            source = source.replace(
+                "if(event.key==='reject'){", "if(event.key==='reject'){const until=Date.now()+100;while(Date.now()<until){};",
+            ).replace(
+                "next.observation=event.event;if(event.name==='submitted')next.submissions=(state.submissions??0)+1;",
+                "if(event.name==='checkpoint'){next.nativeReady=event.event.state.initialized;}else{next.observation=event.event;if(event.name==='submitted'){if(!state.nativeReady)throw new Error('submission preceded its original checkpoint');next.submissions=(state.submissions??0)+1;}}",
+            );
+        }
+        let package = support::package(&id, declaration, Some(source));
+        for node in input.instances.values_mut().filter(|node| matches!(&node.package, maka_plugin_core::package::PackageSelection::Pinned { package } if package.id == id)) {
+            node.package = package.application_ref().into();
+        }
+        package
+    }).collect();
+    let mut tui = Presenter::new(
+        &input,
+        packages,
+        runtime.handle().clone(),
+        registry(),
+        json!({}),
+        maka_ui_js::execution(Default::default()),
+    )
+    .unwrap();
+    dispatch(
+        &mut tui,
+        "configure",
+        json!({"submit":"enter","autoFocus":true}),
+    );
+    draw(&mut tui, 80, 24);
+    let mount = draft(&tui);
+    let revision = tui.application.frame(&tui.root).unwrap().revision;
+    let at = std::time::Instant::now();
+    tui.application
+        .dispatch(
+            &tui.root.clone(),
+            revision,
+            "reject",
+            json!({"reject":false}),
+        )
+        .unwrap();
+    assert!(at.elapsed() < std::time::Duration::from_millis(30));
+    assert!(tui.application.ui_pending());
+    // Initialization is captured by the original native producer while JS still
+    // owns an earlier transaction. Its initial and completed facts cross another
+    // observation key; Enter must wait for their actual logical publication.
+    let owner = observation(&tui)["snapshot"]["text"]["owner"].clone();
+    let queue = tui.resources.owners[&mount.id()].pending.clone();
+    drop(
+        queue
+            .capture(
+                "checkpoint",
+                json!({"owner":owner,"state":{"kind":"ready","saved":false,"initialized":false}}),
+                false,
+            )
+            .unwrap(),
+    );
+    drop(queue.capture("observe", observation(&tui), true).unwrap());
+    drop(
+        queue
+            .capture(
+                "checkpoint",
+                json!({"owner":owner,"state":{"kind":"ready","saved":true,"initialized":true}}),
+                false,
+            )
+            .unwrap(),
+    );
+    let at = std::time::Instant::now();
+    // These are the production admission methods, with no fixture await between
+    // paste and Enter. Rust keeps the buffer current before any guest result.
+    tui.input(Event::Paste("fast🙂".into())).unwrap();
+    tui.input(key(KeyCode::Enter)).unwrap();
+    assert!(
+        at.elapsed() < std::time::Duration::from_millis(30),
+        "native input waited for JS: {:?}",
+        at.elapsed()
+    );
+    assert_eq!(
+        editor_owner(&*tui.resources.owners[&mount.id()].state)
+            .editor
+            .text(),
+        "Startfast🙂"
+    );
+    assert_eq!(tui.application.frame(&tui.root).unwrap().revision, revision);
+    assert!(tui.application.frame(&tui.root).unwrap().state["submissions"].is_null());
+    tui.settle().unwrap();
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["submissions"],
+        1
+    );
+    assert_eq!(
+        observation(&tui)["snapshot"]["text"]["bytes"],
+        "Startfast🙂".len()
+    );
+    close(&mut tui);
+}
+
+#[test]
+fn consecutive_native_command_receipts_keep_original_values_through_candidate_rejection() {
+    let (runtime, mut input, packages) = editor_fixture();
+    let packages = packages.into_iter().map(|original| {
+        if original.manifest().id != "dynamic.app" { return original; }
+        let declaration = original.manifest().application.clone().unwrap();
+        let Implementation::JavaScript { module, .. } = &declaration.entries[&EntryTarget::Tui].implementation else { unreachable!() };
+        let source = std::str::from_utf8(original.file(module).unwrap()).unwrap().replace(
+            "next.observation=event.event;", "next.observation=event.event;if(event.event.receipt)next.receipts=[...(state.receipts??[]),event.event.receipt];",
+        );
+        let package = support::package("dynamic.app", declaration, Some(source));
+        for node in input.instances.values_mut().filter(|node| matches!(&node.package, maka_plugin_core::package::PackageSelection::Pinned { package } if package.id == "dynamic.app")) {
+            node.package = package.application_ref().into();
+        }
+        package
+    }).collect();
+    let mut tui = Presenter::new(
+        &input,
+        packages,
+        runtime.handle().clone(),
+        registry(),
+        json!({}),
+        maka_ui_js::execution(Default::default()),
+    )
+    .unwrap();
+    draw(&mut tui, 80, 24);
+    let mount = draft(&tui);
+    let owner = observation(&tui)["snapshot"]["text"]["owner"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let based_on = observation(&tui)["revision"].as_u64().unwrap();
+    dispatch(&mut tui, "reject", json!({"reject":true}));
+    for (sequence, text) in [(1, "A"), (2, "B")] {
+        dispatch(
+            &mut tui,
+            "configure",
+            json!({"command":{
+                "owner":owner,"sequence":sequence,"basedOn":based_on,"edit":{"kind":"append","text":text}
+            }}),
+        );
+    }
+    assert_eq!(
+        editor_owner(&*tui.resources.owners[&mount.id()].state)
+            .editor
+            .text(),
+        "StartA"
+    );
+    assert!(
+        observation(&tui).is_null(),
+        "failed candidate cannot publish either receipt"
+    );
+    assert!(tui.resources.owners[&mount.id()].pending.pending());
+    assert!(!tui.application.is_retiring(&mount));
+    // Exhaust the same original byte budget. The next candidate must fail
+    // before native command 3 can append or replace the retained receipt.
+    let budget = tui.resources.budget.clone();
+    let occupied = budget
+        .reserve(
+            maka_ui_runtime::budget::Kind::Encoded,
+            64 * 1024 * 1024 - budget.usage().0,
+        )
+        .unwrap();
+    let revision = tui.application.frame(&tui.root).unwrap().revision;
+    tui.application
+        .dispatch(
+            &tui.root.clone(),
+            revision,
+            "configure",
+            json!({"command":{
+                "owner":owner,"sequence":3,"basedOn":based_on+1,"edit":{"kind":"append","text":"C"}
+            }}),
+        )
+        .unwrap();
+    assert!(tui.settle().is_err());
+    assert_eq!(tui.application.frame(&tui.root).unwrap().revision, revision);
+    assert_eq!(
+        editor_owner(&*tui.resources.owners[&mount.id()].state)
+            .editor
+            .text(),
+        "StartA"
+    );
+    drop(occupied);
+    dispatch(&mut tui, "reject", json!({"reject":false}));
+    tui.settle().unwrap();
+    let receipts = tui.application.frame(&tui.root).unwrap().state["receipts"].clone();
+    assert_eq!(
+        receipts,
+        json!([
+            {"owner":owner,"sequence":1,"revision":based_on+1,"outcome":{"status":"applied"}},
+            {"owner":owner,"sequence":2,"revision":based_on+1,"outcome":{"status":"conflict","reason":"revision"}}
+        ])
+    );
+    assert!(!tui.resources.owners[&mount.id()].pending.pending());
+    close(&mut tui);
+}
+
+#[test]
+fn blocked_partial_output_keeps_written_geometry_and_native_input_until_the_next_frame() {
+    let (runtime, mut tui) = presenter();
+    dispatch(
+        &mut tui,
+        "configure",
+        json!({"submit":"enter","autoFocus":true}),
+    );
+    draw(&mut tui, 80, 24);
+    let mount = draft(&tui);
+    let writer = crate::terminal::tests::SlowWriter::default();
+    let output = crate::terminal::Output::with_writer(writer.clone()).unwrap();
+    let mut screen = crate::terminal::tests::screen(Rect::new(0, 0, 80, 24));
+    let mut encode = |tui: &mut Presenter| {
+        let mut scene = None;
+        let bytes = crate::terminal::render(&mut screen, |frame| {
+            scene = Some(tui.paint(frame.area(), frame.buffer_mut()).unwrap());
+        })
+        .unwrap();
+        (bytes, scene.unwrap())
+    };
+    let (a, scene) = encode(&mut tui);
+    runtime
+        .block_on(output.submit(a.clone()).unwrap())
+        .unwrap()
+        .unwrap();
+    tui.present_written(scene);
+    tui.settle().unwrap();
+    let old = tui
+        .scene
+        .iter()
+        .find(|target| target.key == "read")
+        .unwrap()
+        .clone();
+    dispatch(
+        &mut tui,
+        "configure",
+        json!({"submit":"enter","autoFocus":true,"prefix":"B\n"}),
+    );
+    let (b, scene_b) = encode(&mut tui);
+    writer.block();
+    let mut receipt_b = output.submit(b.clone()).unwrap();
+    writer.wait_for_prefix();
+    assert_eq!(writer.bytes(), [&a[..], &b[..2]].concat());
+    assert!(matches!(
+        receipt_b.try_recv(),
+        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+    ));
+    // C commits while B is partially written. It cannot reinterpret B's hit
+    // geometry, clear C's dirty state, or restore old callback authority.
+    dispatch(
+        &mut tui,
+        "configure",
+        json!({"submit":"enter","autoFocus":true,"prefix":"C\nC\n"}),
+    );
+    let c_revision = tui.application.frame(&tui.root).unwrap().revision;
+    let at = std::time::Instant::now();
+    tui.input(Event::Paste("while blocked".into())).unwrap();
+    assert!(at.elapsed() < std::time::Duration::from_millis(30));
+    assert!(
+        editor_owner(&*tui.resources.owners[&mount.id()].state)
+            .editor
+            .text()
+            .ends_with("while blocked")
+    );
+    assert!(tui.focus.as_ref().unwrap().key == "observe");
+    let current_focus = tui.focus.clone().unwrap();
+    writer.release();
+    runtime.block_on(receipt_b).unwrap().unwrap();
+    assert_eq!(
+        writer.bytes(),
+        [&a[..], &b[..]].concat(),
+        "partial ANSI was preserved and fully drained"
+    );
+    tui.present_written(scene_b);
+    assert!(tui.resources.redraw);
+    assert!(tui.focus.as_ref().unwrap().same(&current_focus));
+    assert!(
+        tui.scene
+            .iter()
+            .find(|target| target.key == "read")
+            .unwrap()
+            .area
+            .y
+            > old.area.y
+    );
+    let stale = tui
+        .scene
+        .iter()
+        .find(|target| target.key == "read")
+        .unwrap()
+        .clone();
+    tui.input(Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: stale.area.visible().x,
+        row: stale.area.visible().y,
+        modifiers: KeyModifiers::NONE,
+    }))
+    .unwrap();
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().revision,
+        c_revision
+    );
+    assert!(tui.surface.is_live());
+    tui.settle().unwrap();
+    let (c, scene_c) = encode(&mut tui);
+    runtime
+        .block_on(output.submit(c.clone()).unwrap())
+        .unwrap()
+        .unwrap();
+    tui.present_written(scene_c);
+    tui.settle().unwrap();
+    assert_eq!(writer.bytes(), [&a[..], &b[..], &c[..]].concat());
+    // The freshly written editor is usable, and Enter is delivered once.
+    tui.input_settled(key(KeyCode::Enter)).unwrap();
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["submissions"],
+        1
+    );
+    close(&mut tui);
 }

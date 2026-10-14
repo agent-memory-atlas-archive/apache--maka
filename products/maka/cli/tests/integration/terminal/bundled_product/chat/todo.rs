@@ -53,7 +53,7 @@ fn default_product_checklist_tracks_model_progress_and_survives_restart() {
     ]);
     tui.wait_until_with_timeout(|s| s.contains("Settings"), Duration::from_secs(60));
     tui.send(b"\x0b");
-    tui.wait_for("Commands");
+    tui.wait_for("Close commands");
     tui.send(b"New conversation");
     tui.wait_for("› New conversation");
     tui.send(b"\r");
@@ -101,7 +101,7 @@ fn default_product_checklist_tracks_model_progress_and_survives_restart() {
     evidence(&restored, "checklist-restarted");
     click(&mut restored, "Close");
     restored.send(b"\x0b");
-    restored.wait_for("Commands");
+    restored.wait_for("Close commands");
     restored.send(b"New conversation");
     restored.wait_for("› New conversation");
     restored.send(b"\r");

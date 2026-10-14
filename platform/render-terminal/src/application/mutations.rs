@@ -186,8 +186,8 @@ fn terminal_restoration_during_preparation_runs_close_successor_before_root_rele
         ))
         .unwrap();
     draw(&mut tui, 30, 12);
-    tui.input(key(KeyCode::Enter)).unwrap();
-    tui.pump().unwrap();
+    tui.input_settled(key(KeyCode::Enter)).unwrap();
+    tui.pump_settled().unwrap();
     let payload = rx.recv_timeout(Duration::from_secs(3)).unwrap();
     assert_eq!(tui.application.accepted_action_count(), 0);
     tui.surface_closed(&tui.surface(), Ok(())).unwrap();
@@ -197,7 +197,7 @@ fn terminal_restoration_during_preparation_runs_close_successor_before_root_rele
     prepare.add_permits(1);
     let deadline = Instant::now() + Duration::from_secs(5);
     while closing.available_permits() == 0 {
-        tui.pump().unwrap();
+        tui.pump_settled().unwrap();
         assert!(Instant::now() < deadline);
         std::thread::yield_now();
     }
@@ -219,13 +219,13 @@ fn terminal_restoration_during_preparation_runs_close_successor_before_root_rele
     drop(caller);
     close.add_permits(1);
     while !tui.jobs.is_empty() {
-        tui.pump().unwrap();
+        tui.pump_settled().unwrap();
         assert!(Instant::now() < deadline);
         std::thread::yield_now();
     }
     assert!(payload.upgrade().is_none());
     assert!(tui.can_shutdown());
-    tui.shutdown().unwrap();
+    tui.shutdown_settled().unwrap();
     assert!(weak_store.upgrade().is_none());
     assert!(RootOwner::open(&root, &ns).is_ok());
 }

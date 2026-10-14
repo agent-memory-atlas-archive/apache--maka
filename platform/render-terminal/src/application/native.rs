@@ -106,7 +106,11 @@ impl NativeComponent<dyn Widget> for LabelComponent {
 pub fn registry() -> NativeRegistry<dyn Widget> {
     let mut registry =
         NativeRegistry::with_surface(maka_plugin_core::composition::PresentationTarget::Tui)
-            .with_scene_compiler(super::scene::language(), super::scene::compile)
+            .with_scene_compiler(
+                super::scene::language(),
+                super::scene::prepare,
+                super::scene::finish,
+            )
             .expect("valid terminal scene language");
     registry
         .register(maka_ui_runtime::LABEL_IMPLEMENTATION, |_, _values| {

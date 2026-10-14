@@ -50,6 +50,45 @@ struct Pty {
     keyboard_queries: usize,
 }
 
+// A cloned descriptor controls only the PTY created by this fixture. Failure
+// unwinding resumes the same output before Pty tears down its child.
+struct PausedOutput(File);
+impl PausedOutput {
+    fn wait_until_blocked(&self) -> usize {
+        let until = Instant::now() + Duration::from_secs(10);
+        loop {
+            let mut queued: libc::c_int = 0;
+            assert_eq!(
+                unsafe { libc::ioctl(self.0.as_raw_fd(), libc::TIOCOUTQ, &mut queued) },
+                0
+            );
+            let mut poll = libc::pollfd {
+                fd: self.0.as_raw_fd(),
+                events: libc::POLLOUT,
+                revents: 0,
+            };
+            assert!(unsafe { libc::poll(&mut poll, 1, 0) } >= 0);
+            if queued > 0 && poll.revents & libc::POLLOUT == 0 {
+                return queued as usize;
+            }
+            assert!(
+                Instant::now() < until,
+                "stdout did not reach PTY backpressure; queued={queued}"
+            );
+            std::thread::park_timeout(Duration::from_millis(2));
+        }
+    }
+}
+impl Drop for PausedOutput {
+    fn drop(&mut self) {
+        // Also runs on a failed assertion or a model-request timeout.
+        let restored = unsafe { libc::tcflow(self.0.as_raw_fd(), libc::TCOON) };
+        if !std::thread::panicking() {
+            assert_eq!(restored, 0);
+        }
+    }
+}
+
 impl Pty {
     fn spawn(args: &[&str]) -> Self {
         Self::spawn_with_keyboard(args, false)
@@ -122,6 +161,33 @@ impl Pty {
             enhanced_keyboard,
             keyboard_queries: 0,
         }
+    }
+    fn pause_output(&self) -> PausedOutput {
+        let slave = self.slave.as_ref().unwrap().try_clone().unwrap();
+        assert_eq!(unsafe { libc::tcflow(slave.as_raw_fd(), libc::TCOOFF) }, 0);
+        PausedOutput(slave)
+    }
+    fn resize(&mut self, cols: u16, rows: u16) {
+        let size = libc::winsize {
+            ws_row: rows,
+            ws_col: cols,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        assert_eq!(
+            unsafe {
+                libc::ioctl(
+                    self.master.as_ref().unwrap().as_raw_fd(),
+                    libc::TIOCSWINSZ,
+                    &size,
+                )
+            },
+            0
+        );
+        self.screen
+            .resize(TerminalSize::new(cols, rows).unwrap())
+            .unwrap();
+        self.frames.resize();
     }
     fn send(&mut self, bytes: &[u8]) {
         self.master.as_mut().unwrap().write_all(bytes).unwrap();

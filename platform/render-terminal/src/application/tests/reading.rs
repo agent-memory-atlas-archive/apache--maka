@@ -40,7 +40,7 @@ fn native(children: Vec<Value>) -> (tokio::runtime::Runtime, Presenter, Rc<RefCe
 }
 fn mouse(presenter: &mut Presenter, kind: MouseEventKind, x: u16, y: u16) {
     presenter
-        .input(Event::Mouse(MouseEvent {
+        .input_settled(Event::Mouse(MouseEvent {
             kind,
             column: x,
             row: y,
@@ -50,7 +50,7 @@ fn mouse(presenter: &mut Presenter, kind: MouseEventKind, x: u16, y: u16) {
 }
 fn all(presenter: &mut Presenter) {
     presenter
-        .input(Event::Key(KeyEvent::new(
+        .input_settled(Event::Key(KeyEvent::new(
             KeyCode::Char('a'),
             KeyModifiers::CONTROL,
         )))
@@ -73,24 +73,23 @@ fn observation(presenter: &Presenter) -> Value {
     presenter.application.frame(&presenter.root).unwrap().state["observation"].clone()
 }
 fn refresh(presenter: &mut Presenter) {
+    presenter.settle().unwrap();
+    let value = super::super::reading::current_observation(
+        &*presenter.resources.owners[&presenter.root.id()].state,
+    );
     let mount = presenter.root.clone();
     let revision = presenter.application.frame(&mount).unwrap().revision;
     presenter
         .application
-        .dispatch(
-            &mount,
-            revision,
-            "__reading_observation",
-            observation(presenter),
-        )
+        .dispatch(&mount, revision, "__reading_observation", value)
         .unwrap();
-    presenter.sync_native().unwrap();
+    presenter.settle().unwrap();
 }
 fn close(presenter: &mut Presenter) {
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
-    presenter.shutdown().unwrap();
+    presenter.shutdown_settled().unwrap();
 }
 #[test]
 fn wheel_above_a_short_page_reports_the_original_reading_boundary() {
@@ -553,7 +552,7 @@ fn late_flush_of_cancelled_command_reports_actual_viewport_without_replacing_des
     all(&mut presenter);
     presenter.present(candidate);
     accept.set(true);
-    presenter.sync_native().unwrap();
+    refresh(&mut presenter);
     assert_eq!(
         observation(&presenter)["receipt"],
         json!({"sequence":1,"status":"cancelled"})
@@ -664,7 +663,7 @@ fn horizontal_extension_moves_original_graphemes_across_clipped_participants() {
     all(&mut presenter);
     for expected in ["one\n中", "one\n", "one", "on"] {
         presenter
-            .input(Event::Key(KeyEvent::new(
+            .input_settled(Event::Key(KeyEvent::new(
                 KeyCode::Left,
                 KeyModifiers::SHIFT,
             )))
@@ -694,7 +693,7 @@ fn aggregate_copy_rejects_separator_overflow_without_writing_or_losing_selection
             .has_selection()
     );
     presenter
-        .input(Event::Key(KeyEvent::new(
+        .input_settled(Event::Key(KeyEvent::new(
             KeyCode::Left,
             KeyModifiers::SHIFT,
         )))

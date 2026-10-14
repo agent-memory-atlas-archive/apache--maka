@@ -44,15 +44,20 @@ struct Owner {
     selection: FileSelection,
     visible: bool,
     active: bool,
-    pending: bool,
     needs_publication: bool,
     #[cfg(test)]
     read_failure: bool,
 }
 impl Owner {
     fn new(props: &FilePickerProps, input: LiveInput, cx: &mut App) -> Entity<Self> {
-        let keep = input.0.borrow().as_ref().expect("live file picker").clone();
-        cx.new(|cx| {
+        let publisher = input.clone();
+        let keep = input
+            .current
+            .borrow()
+            .as_ref()
+            .expect("live file picker")
+            .clone();
+        let owner = cx.new(|cx| {
             cx.on_release(move |_, _| drop(keep)).detach();
             Self {
                 input,
@@ -62,19 +67,36 @@ impl Owner {
                 selection: FileSelection::default(),
                 visible: true,
                 active: true,
-                pending: false,
                 needs_publication: true,
                 #[cfg(test)]
                 read_failure: false,
             }
-        })
+        });
+        let original = owner.downgrade();
+        publisher.bind_publisher(move |key, value, _, cx| {
+            if key != "observe" {
+                return;
+            }
+            let _ = original.update(cx, |owner, _| {
+                if owner.input.current.borrow().is_none() {
+                    return;
+                }
+                if serde_json::to_value(owner.selection.observation())
+                    .expect("original file publication")
+                    == *value
+                {
+                    owner.needs_publication = false;
+                }
+            });
+        });
+        owner
     }
     fn enabled(&self) -> bool {
         self.active
             && self.visible
             && !self.props.disabled
             && !self.selection.busy()
-            && self.input.0.borrow().is_some()
+            && self.input.current.borrow().is_some()
     }
     fn presentation(&mut self, visible: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.visible = visible;
@@ -109,7 +131,7 @@ impl Owner {
         self.schedule(window, cx);
     }
     fn start(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let budget = self.input.1.clone();
+        let budget = self.input.budget.clone();
         let job = match budget.reserve(Kind::Job, 1) {
             Ok(job) => job,
             Err(error) => {
@@ -118,7 +140,7 @@ impl Owner {
                 return;
             }
         };
-        let mut ticket = match self.input.2.reserve() {
+        let mut ticket = match self.input.resources.reserve() {
             Ok(ticket) => ticket,
             Err(_) => {
                 self.selection.settle(Err(FileError::WorkerFailed));
@@ -128,7 +150,7 @@ impl Owner {
         };
         let keep = self
             .input
-            .0
+            .current
             .borrow()
             .as_ref()
             .expect("admitted file picker")
@@ -185,7 +207,7 @@ impl Owner {
                 }
                 let _ = cx.update(move |window, cx| {
                     let _ = weak.update(cx, |owner, cx| {
-                        if !owner.active || owner.input.0.borrow().is_none() {
+                        if !owner.active || owner.input.current.borrow().is_none() {
                             return;
                         }
                         owner.selection.settle(result);
@@ -200,44 +222,21 @@ impl Owner {
             .detach();
     }
     fn schedule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.pending
-            || !self.needs_publication
-            || !self.active
-            || self.input.0.borrow().is_none()
-        {
+        if !self.needs_publication || !self.active || self.input.current.borrow().is_none() {
             return;
         }
-        self.pending = true;
-        let weak = cx.weak_entity();
-        window.defer(cx, move |window, cx| {
-            let Ok(Some((input, value))) = weak.update(cx, |owner, _| {
-                owner.pending = false;
-                if !owner.active || !owner.needs_publication {
-                    return None;
-                }
-                Some((
-                    owner.input.0.borrow().clone()?,
-                    owner.selection.observation(),
-                ))
-            }) else {
-                return;
-            };
-            match (input.0)(
-                "observe",
-                serde_json::to_value(&value).expect("file observation"),
-                window,
-                cx,
-            ) {
-                Ok(_) => {
-                    let _ = weak.update(cx, |owner, _| {
-                        if owner.selection.observation() == value {
-                            owner.needs_publication = false;
-                        }
-                    });
-                }
-                Err(error) => eprintln!("file observation rejected: {error}"),
-            }
-        });
+        let value = self.selection.observation();
+        match self.input.capture(
+            "observe",
+            serde_json::to_value(&value).expect("file observation"),
+            false,
+            window,
+            cx,
+        ) {
+            Ok(Some(_)) => {}
+            Ok(None) => {}
+            Err(error) => eprintln!("file observation admission rejected: {error}"),
+        }
     }
 }
 impl Render for Owner {
@@ -327,11 +326,16 @@ impl Render for Owner {
                         return None;
                     }
                     owner.selection.cancel_intent();
-                    Some((owner.input.0.borrow().clone()?, owner.selection.stage()?))
+                    Some((
+                        owner.input.current.borrow().clone()?,
+                        owner.selection.stage()?,
+                    ))
                 }) else {
                     return;
                 };
-                if (input.0)("choose", serde_json::to_value(choose).unwrap(), window, cx).is_err() {
+                if (input.dispatch)("choose", serde_json::to_value(choose).unwrap(), window, cx)
+                    .is_err()
+                {
                     let _ = weak.update(cx, |owner, _| owner.selection.cancel_intent());
                 }
             });
@@ -343,6 +347,20 @@ impl Render for Owner {
 }
 struct Recipe(FileView);
 impl Widget for Recipe {
+    fn publication_capacity(&self, state: &dyn Any, cx: &App) -> Vec<(&'static str, usize)> {
+        if state
+            .downcast_ref::<Entity<Owner>>()
+            .unwrap()
+            .read(cx)
+            .selection
+            .will_accept(self.0.request.as_deref())
+        {
+            vec![("observe", 65536); 2]
+        } else {
+            Vec::new()
+        }
+    }
+
     fn create(&self, input: LiveInput, _: &mut Window, cx: &mut App) -> Box<dyn Any> {
         Box::new(Owner::new(&self.0.props, input, cx))
     }
@@ -381,7 +399,7 @@ impl Widget for Recipe {
         cx: &mut App,
     ) -> maka_ui_runtime::Result<Arc<dyn maka_capabilities::call::ReadResource>> {
         let owner = state.downcast_ref::<Entity<Owner>>().unwrap().read(cx);
-        if !owner.active || owner.input.0.borrow().is_none() {
+        if !owner.active || owner.input.current.borrow().is_none() {
             return Err(maka_ui_runtime::Error::Invalid(
                 "file picker retired".into(),
             ));

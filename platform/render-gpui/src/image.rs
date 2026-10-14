@@ -54,14 +54,19 @@ struct Owner {
     decode_gate: Option<tokio::sync::oneshot::Receiver<()>>,
     source_revision: u64,
     last_packet: Option<(u64, u64, [u8; 32])>,
-    pending: bool,
     needs_publication: bool,
 }
 impl Owner {
     fn new(props: &ImageProps, input: LiveInput, cx: &mut App) -> Entity<Self> {
-        let keep = input.0.borrow().as_ref().expect("live image mount").clone();
+        let publisher = input.clone();
+        let keep = input
+            .current
+            .borrow()
+            .as_ref()
+            .expect("live image mount")
+            .clone();
         let id = uuid::Uuid::new_v4().to_string();
-        cx.new(|cx| {
+        let owner = cx.new(|cx| {
             cx.on_release(move |owner: &mut Owner, cx| {
                 if let Some(pixels) = owner.pixels.take() {
                     cx.drop_image(pixels.image.clone(), None);
@@ -93,10 +98,26 @@ impl Owner {
                 decode_gate: None,
                 source_revision: 0,
                 last_packet: None,
-                pending: false,
                 needs_publication: true,
             }
-        })
+        });
+        let original = owner.downgrade();
+        publisher.bind_publisher(move |key, value, _, cx| {
+            if key != "observe" {
+                return;
+            }
+            let _ = original.update(cx, |owner, _| {
+                if owner.input.current.borrow().is_none() {
+                    return;
+                }
+                if serde_json::to_value(&owner.observation).expect("original image publication")
+                    == *value
+                {
+                    owner.needs_publication = false;
+                }
+            });
+        });
+        owner
     }
     fn changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.observation.revision = self
@@ -109,36 +130,21 @@ impl Owner {
         cx.notify();
     }
     fn schedule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.pending || !self.needs_publication || self.input.0.borrow().is_none() {
+        if !self.needs_publication || self.input.current.borrow().is_none() {
             return;
         }
-        self.pending = true;
-        let weak = cx.weak_entity();
-        window.defer(cx, move |window, cx| {
-            let Ok(Some((input, value))) = weak.update(cx, |owner, _| {
-                owner.pending = false;
-                if !owner.needs_publication {
-                    return None;
-                }
-                Some((owner.input.0.borrow().clone()?, owner.observation.clone()))
-            }) else {
-                return;
-            };
-            if (input.0)(
-                "observe",
-                serde_json::to_value(&value).expect("image observation"),
-                window,
-                cx,
-            )
-            .is_ok()
-            {
-                let _ = weak.update(cx, |owner, _| {
-                    if owner.observation == value {
-                        owner.needs_publication = false;
-                    }
-                });
-            }
-        });
+        let value = self.observation.clone();
+        match self.input.capture(
+            "observe",
+            serde_json::to_value(&value).expect("image observation"),
+            false,
+            window,
+            cx,
+        ) {
+            Ok(Some(_)) => {}
+            Ok(None) => {}
+            Err(error) => eprintln!("image observation admission rejected: {error}"),
+        }
     }
     fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.buffer = None;
@@ -152,7 +158,7 @@ impl Owner {
         self.observation.receipt = None;
     }
     fn apply(&mut self, props: &ImageProps, window: &mut Window, cx: &mut Context<Self>) {
-        if self.input.0.borrow().is_none() {
+        if self.input.current.borrow().is_none() {
             return;
         }
         if self.props.source != props.source {
@@ -178,7 +184,7 @@ impl Owner {
                         .filter(|n| *n > 0 && *n <= decode::MAX_BYTES)
                         .ok_or(ImageError::LimitExceeded)
                         .and_then(|bytes| {
-                            let permit = self.input.1.reserve(Kind::Encoded, bytes)?;
+                            let permit = self.input.budget.reserve(Kind::Encoded, bytes)?;
                             Ok(Encoded {
                                 bytes: Vec::with_capacity(bytes),
                                 _permit: permit,
@@ -284,7 +290,7 @@ impl Owner {
         self.changed(window, cx);
     }
     fn start_decode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let budget = self.input.1.clone();
+        let budget = self.input.budget.clone();
         let job = match budget.reserve(Kind::Job, 1) {
             Ok(job) => job,
             Err(error) => {
@@ -314,7 +320,7 @@ impl Owner {
         // widget disappears or source changes while the worker is decoding.
         let keep = self
             .input
-            .0
+            .current
             .borrow()
             .as_ref()
             .expect("admitted image owner")
@@ -324,7 +330,7 @@ impl Owner {
                 let result = task.await;
                 let _ = cx.update(move |window, cx| {
                     let _ = weak.update(cx, |owner, cx| {
-                        if owner.input.0.borrow().is_none()
+                        if owner.input.current.borrow().is_none()
                             || owner.source_revision != source_revision
                             || owner.props.source.as_ref() != Some(&expected)
                         {
@@ -386,6 +392,22 @@ impl Render for Owner {
 }
 struct Recipe(ImageProps);
 impl Widget for Recipe {
+    fn publication_capacity(&self, state: &dyn Any, cx: &App) -> Vec<(&'static str, usize)> {
+        let owner = state.downcast_ref::<Entity<Owner>>().unwrap().read(cx);
+        if owner.props.source != self.0.source
+            || self.0.packet.as_ref().is_some_and(|packet| {
+                owner
+                    .last_packet
+                    .as_ref()
+                    .is_none_or(|last| last.0 != packet.sequence)
+            })
+        {
+            vec![("observe", 16384); 2]
+        } else {
+            Vec::new()
+        }
+    }
+
     fn create(&self, input: LiveInput, _: &mut Window, cx: &mut App) -> Box<dyn Any> {
         Box::new(Owner::new(&self.0, input, cx))
     }

@@ -60,16 +60,16 @@ fn choice_plain_and_reading_commit_stable_key_after_native_navigation() {
         focus_choice(&mut p);
         let trigger = p.focus.clone().unwrap();
         let before = revision(&p);
-        p.input(key(KeyCode::Enter)).unwrap();
+        p.input_settled(key(KeyCode::Enter)).unwrap();
         assert!(!p.physical_admitted());
-        p.input(key(KeyCode::Down)).unwrap();
-        p.input(key(KeyCode::Enter)).unwrap();
+        p.input_settled(key(KeyCode::Down)).unwrap();
+        p.input_settled(key(KeyCode::Enter)).unwrap();
         assert_eq!(revision(&p), before);
         draw(&mut p, 30, 6);
         assert_eq!(p.physical_path.len(), 1);
-        p.input(key(KeyCode::Down)).unwrap();
-        p.input(key(KeyCode::Down)).unwrap();
-        p.input(key(KeyCode::Down)).unwrap();
+        p.input_settled(key(KeyCode::Down)).unwrap();
+        p.input_settled(key(KeyCode::Down)).unwrap();
+        p.input_settled(key(KeyCode::Down)).unwrap();
         let buffer = draw(&mut p, 30, 6);
         assert_eq!(revision(&p), before);
         let rect = menu(&p);
@@ -123,10 +123,10 @@ fn nested_choice_cancel_returns_trigger_without_dismissing_parent() {
         focus_choice(&mut p);
         let trigger = p.focus.clone().unwrap();
         let before = root_count(&p);
-        p.input(key(KeyCode::Char(' '))).unwrap();
+        p.input_settled(key(KeyCode::Char(' '))).unwrap();
         draw(&mut p, 40, 12);
         assert_eq!(p.physical_path.len(), 2);
-        p.input(key(cancel)).unwrap();
+        p.input_settled(key(cancel)).unwrap();
         assert_eq!(root_count(&p), before);
         assert!(state(&p).dialogs.contains_key("modal"));
         assert!(!state(&p).dialogs.contains_key("thinking"));
@@ -142,13 +142,13 @@ fn choice_changed_options_require_flush_and_hidden_reopen_rejects_old_batch() {
     let (_runtime, mut p, props) = native(vec![choice()]);
     draw(&mut p, 30, 6);
     focus_choice(&mut p);
-    p.input(key(KeyCode::Enter)).unwrap();
+    p.input_settled(key(KeyCode::Enter)).unwrap();
     draw(&mut p, 30, 6);
     props.borrow_mut()["content"]["children"][0]["options"][8]["key"] = json!("replacement");
     props.borrow_mut()["content"]["children"][0]["current"] = json!("replacement");
     refresh(&mut p);
     let before = root_count(&p);
-    p.input(key(KeyCode::Enter)).unwrap();
+    p.input_settled(key(KeyCode::Enter)).unwrap();
     assert_eq!(root_count(&p), before);
     draw(&mut p, 30, 6);
     let held = pending(&p, 30, 6);
@@ -160,11 +160,11 @@ fn choice_changed_options_require_flush_and_hidden_reopen_rejects_old_batch() {
     refresh(&mut p);
     draw(&mut p, 30, 6);
     focus_choice(&mut p);
-    p.input(key(KeyCode::Enter)).unwrap();
+    p.input_settled(key(KeyCode::Enter)).unwrap();
     p.present(held);
     assert!(!p.physical_admitted());
     draw(&mut p, 30, 6);
-    p.input(key(KeyCode::Enter)).unwrap();
+    p.input_settled(key(KeyCode::Enter)).unwrap();
     assert_eq!(
         observation(&p),
         json!({"kind":"selected","key":"replacement"})
@@ -182,7 +182,7 @@ fn choice_outside_and_right_click_cancel_without_background_activation() {
         draw(&mut p, 40, 12);
         draw(&mut p, 40, 12);
         focus_choice(&mut p);
-        p.input(key(KeyCode::Enter)).unwrap();
+        p.input_settled(key(KeyCode::Enter)).unwrap();
         draw(&mut p, 40, 12);
         let before = root_count(&p);
         mouse(&mut p, MouseEventKind::Down(button), 0, 11);
@@ -200,7 +200,7 @@ fn choice_unplaceable_or_disabled_closes_without_resurrection() {
         let (_runtime, mut p, props) = native(vec![choice()]);
         draw(&mut p, 30, 6);
         focus_choice(&mut p);
-        p.input(key(KeyCode::Enter)).unwrap();
+        p.input_settled(key(KeyCode::Enter)).unwrap();
         draw(&mut p, 30, 6);
         if disabled {
             props.borrow_mut()["content"]["children"][0]["disabled"] = json!(true);
@@ -226,7 +226,7 @@ fn focus_choice(p: &mut Presenter) {
         {
             return;
         }
-        p.input(key(KeyCode::Tab)).unwrap();
+        p.input_settled(key(KeyCode::Tab)).unwrap();
     }
     panic!("choice must be keyboard reachable");
 }
