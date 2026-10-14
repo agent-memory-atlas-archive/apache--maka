@@ -335,7 +335,7 @@ impl<V: ?Sized + 'static> Application<V> {
         while !app.pending.is_empty() {
             let before = app.pending.len();
             for instance in std::mem::take(&mut app.pending) {
-                if !app.dependencies_ready(&instance) {
+                if !app.activation_ready(&instance) {
                     app.pending.push(instance);
                     continue;
                 }

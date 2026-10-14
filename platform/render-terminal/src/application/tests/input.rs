@@ -966,10 +966,12 @@ fn submit_copy_requires_physical_enter_current_query_and_accepted_original_callb
     );
     assert!(!tui.flush_clipboard(&mut clipboard).unwrap());
     assert_eq!(clipboard, expected);
+    let rejected_copy =
+        json!({"basis":observation(&tui)["snapshot"]["text"],"text":"/remote/rejected copy"});
     dispatch(
         &mut tui,
         "configure",
-        json!({"submitCopy":null,"submitReject":true,"autoFocus":true}),
+        json!({"submitCopy":rejected_copy,"submitReject":true,"autoFocus":true}),
     );
     draw(&mut tui, 80, 24);
     assert!(tui.input_settled(key(KeyCode::Enter)).is_err());

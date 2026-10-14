@@ -39,20 +39,18 @@ use tokio::sync::oneshot;
 const MAX_PENDING: usize = 128;
 const MAX_VALUE_BYTES: usize = 1024 * 1024;
 struct Observation {
+    key: String,
     value: Value,
     replaceable: bool,
-    _bytes: Permit,
-    acknowledgement: oneshot::Sender<Result<()>>,
-}
-#[derive(Default)]
-struct Channel {
-    pending: VecDeque<Observation>,
-    reserved: VecDeque<Permit>,
-    publishing: Option<((u64, u64), Job<()>)>,
+    input: bool,
     rejected: Option<(u64, u64)>,
+    _bytes: Permit,
+    acknowledgement: oneshot::Sender<Job<()>>,
 }
 struct State {
-    channels: BTreeMap<String, Channel>,
+    reserved: BTreeMap<String, VecDeque<Permit>>,
+    pending: VecDeque<Observation>,
+    publishing: Option<(usize, (u64, u64), Job<()>)>,
     closed: bool,
 }
 /// Capacity prepared by a trusted immutable recipe before its native commands.
@@ -80,7 +78,9 @@ impl Observations {
         ))));
         Self {
             state: Rc::new(RefCell::new(State {
-                channels: BTreeMap::new(),
+                reserved: BTreeMap::new(),
+                pending: VecDeque::new(),
+                publishing: None,
                 closed: false,
             })),
             budget,
@@ -109,16 +109,17 @@ impl Observations {
             capacity.1 = capacity.1.max(bytes);
         }
         let mut reserved = Vec::new();
+        let mut retained_total: usize = state.reserved.values().map(VecDeque::len).sum();
         for (key, (slots, bytes)) in required {
-            let channel = state.channels.get(key);
-            let queued = channel.map_or(0, |channel| channel.pending.len());
-            let retained = channel.map_or(0, |channel| channel.reserved.len());
-            if queued + slots.max(retained) > MAX_PENDING {
+            let retained = state.reserved.get(key).map_or(0, VecDeque::len);
+            let extra = slots.saturating_sub(retained);
+            retained_total += extra;
+            if state.pending.len() + retained_total > MAX_PENDING {
                 return Err(Error::Invalid(
                     "native publication capacity exhausted before command".into(),
                 ));
             }
-            for _ in retained..slots {
+            for _ in 0..extra {
                 reserved.push((
                     key.to_owned(),
                     self.budget
@@ -133,28 +134,42 @@ impl Observations {
         let mut state = self.state.borrow_mut();
         assert!(!state.closed, "original native publication owner");
         for (key, permit) in capacity.0 {
-            state
-                .channels
-                .entry(key)
-                .or_default()
-                .reserved
-                .push_back(permit);
+            state.reserved.entry(key).or_default().push_back(permit);
         }
     }
     /// Capture at the native effect boundary, before a later command can change
     /// its receipt. Identical evidence already in custody needs no second ACK.
     pub fn capture(&self, key: &str, value: Value, replaceable: bool) -> Result<Option<Job<()>>> {
+        self.enqueue(key, value, replaceable, false)
+    }
+    /// Independent user intents keep their original order and ACK even when
+    /// payloads match. They follow observations already captured by this owner.
+    pub fn capture_input(&self, key: &str, value: Value) -> Result<Job<()>> {
+        self.enqueue(key, value, false, true)?
+            .ok_or_else(|| Error::Invalid("original native input owner retired".into()))
+    }
+    fn enqueue(
+        &self,
+        key: &str,
+        value: Value,
+        replaceable: bool,
+        input: bool,
+    ) -> Result<Option<Job<()>>> {
         let mut state = self.state.borrow_mut();
         if state.closed {
             return Err(Error::Invalid(
                 "original native publication owner closed".into(),
             ));
         }
-        let channel = state.channels.entry(key.to_owned()).or_default();
-        if channel
-            .pending
-            .back()
-            .is_some_and(|entry| entry.value == value)
+        // Repeated producer polls do not add a second copy while other keys
+        // interleave. User intents are never evidence deduplication candidates.
+        if !input
+            && state
+                .pending
+                .iter()
+                .rev()
+                .find(|entry| entry.key == key && !entry.input)
+                .is_some_and(|entry| entry.value == value)
         {
             return Ok(None);
         }
@@ -166,8 +181,14 @@ impl Observations {
                 "native publication exceeds wire capacity".into(),
             ));
         }
-        let mut permit = if !replaceable && !channel.reserved.is_empty() {
-            channel.reserved.pop_front().unwrap()
+        let mut permit = if !input
+            && !replaceable
+            && state
+                .reserved
+                .get(key)
+                .is_some_and(|slots| !slots.is_empty())
+        {
+            state.reserved.get_mut(key).unwrap().pop_front().unwrap()
         } else {
             self.budget
                 .reserve(Kind::Encoded, bytes)
@@ -175,42 +196,49 @@ impl Observations {
         };
         permit.shrink_to(bytes);
         if replaceable
-            && channel
+            && state
                 .pending
                 .back()
-                .is_some_and(|entry| entry.replaceable)
-            && (channel.publishing.is_none() || channel.pending.len() > 1)
+                .is_some_and(|entry| entry.key == key && entry.replaceable && !entry.input)
+            && state
+                .publishing
+                .as_ref()
+                .is_none_or(|(index, _, _)| *index + 1 != state.pending.len())
         {
-            if let Some(entry) = channel.pending.pop_back() {
-                let _ = entry.acknowledgement.send(Err(Error::Invalid(
+            if let Some(entry) = state.pending.pop_back() {
+                let _ = entry.acknowledgement.send(Job::ready(Err(Error::Invalid(
                     "replaceable native observation superseded".into(),
-                )));
+                ))));
             }
-        } else if channel.pending.len() + channel.reserved.len() >= MAX_PENDING {
+        } else if state.pending.len() + state.reserved.values().map(VecDeque::len).sum::<usize>()
+            >= MAX_PENDING
+        {
             return Err(Error::Invalid(
                 "native publication capacity exhausted".into(),
             ));
         }
         let (acknowledgement, result) = oneshot::channel();
-        channel.pending.push_back(Observation {
+        state.pending.push_back(Observation {
+            key: key.to_owned(),
             value,
             replaceable,
+            input,
+            rejected: None,
             _bytes: permit,
             acknowledgement,
         });
-        channel.rejected = None;
         drop(state);
         self.wake.wake_by_ref();
         Ok(Some(Job::new(async move {
-            result.await.unwrap_or_else(|_| {
-                Err(Error::Invalid(
-                    "original native publication owner retired".into(),
-                ))
-            })
+            result
+                .await
+                .map_err(|_| Error::Invalid("original native publication owner stopped".into()))?
+                .await
         })))
     }
-    /// Poll one original publication per channel. A failed candidate stays at
-    /// the head and retries only after a real business/source revision changes.
+    /// This original owner publishes one ordered item at a time. A rejected
+    /// observation remains in custody until a real business/source basis changes;
+    /// rejected user intents finish with their original error and never replay.
     pub fn advance<C>(
         &self,
         revision: (u64, u64),
@@ -224,80 +252,168 @@ impl Observations {
         }
         let mut cx = Context::from_waker(&self.wake);
         let mut errors = Vec::new();
-        for (key, channel) in &mut state.channels {
-            if let Some((basis, mut job)) = channel.publishing.take() {
-                match Pin::new(&mut job).poll(&mut cx) {
-                    Poll::Pending => channel.publishing = Some((basis, job)),
-                    Poll::Ready(Ok(())) => {
-                        let entry = channel
-                            .pending
-                            .pop_front()
-                            .expect("original publishing observation");
-                        committed(key, &entry.value, context);
-                        let _ = entry.acknowledgement.send(Ok(()));
-                        channel.rejected = None;
-                    }
-                    Poll::Ready(Err(error)) => {
-                        channel.rejected = Some(basis);
-                        errors.push(error);
-                    }
+        if let Some((index, basis, mut job)) = state.publishing.take() {
+            match Pin::new(&mut job).poll(&mut cx) {
+                Poll::Pending => state.publishing = Some((index, basis, job)),
+                Poll::Ready(Ok(())) => {
+                    let entry = state
+                        .pending
+                        .remove(index)
+                        .expect("original publishing observation");
+                    committed(&entry.key, &entry.value, context);
+                    let _ = entry.acknowledgement.send(Job::ready(Ok(())));
                 }
-            }
-            if channel.publishing.is_none()
-                && channel.rejected != Some(revision)
-                && let Some(entry) = channel.pending.front()
-            {
-                match send(key, entry.value.clone(), context) {
-                    Ok(mut job) => match Pin::new(&mut job).poll(&mut cx) {
-                        Poll::Pending => channel.publishing = Some((revision, job)),
-                        Poll::Ready(Ok(())) => {
-                            let entry = channel
-                                .pending
-                                .pop_front()
-                                .expect("original publishing observation");
-                            committed(key, &entry.value, context);
-                            let _ = entry.acknowledgement.send(Ok(()));
-                            channel.rejected = None;
-                        }
-                        Poll::Ready(Err(error)) => {
-                            channel.rejected = Some(revision);
-                            errors.push(error);
-                        }
-                    },
-                    Err(error) => {
-                        channel.rejected = Some(revision);
-                        errors.push(error);
-                    }
+                Poll::Ready(Err(error)) => {
+                    Self::reject(&mut state, index, basis, &error);
+                    errors.push(error);
                 }
             }
         }
+        if state.publishing.is_none()
+            && let Some(index) = Self::eligible(&state, revision)
+        {
+            let entry = &state.pending[index];
+            match send(&entry.key, entry.value.clone(), context) {
+                Ok(mut job) => match Pin::new(&mut job).poll(&mut cx) {
+                    Poll::Pending => state.publishing = Some((index, revision, job)),
+                    Poll::Ready(Ok(())) => {
+                        let entry = state
+                            .pending
+                            .remove(index)
+                            .expect("original publishing observation");
+                        committed(&entry.key, &entry.value, context);
+                        let _ = entry.acknowledgement.send(Job::ready(Ok(())));
+                    }
+                    Poll::Ready(Err(error)) => {
+                        Self::reject(&mut state, index, revision, &error);
+                        errors.push(error);
+                    }
+                },
+                Err(error) => {
+                    Self::reject(&mut state, index, revision, &error);
+                    errors.push(error);
+                }
+            }
+        }
+        if state.publishing.is_none() && Self::eligible(&state, revision).is_some() {
+            self.wake.wake_by_ref();
+        }
         errors
+    }
+    fn eligible(state: &State, revision: (u64, u64)) -> Option<usize> {
+        state.pending.iter().enumerate().position(|(index, entry)| {
+            entry.rejected != Some(revision)
+                && (entry.input
+                    || !state
+                        .pending
+                        .iter()
+                        .take(index)
+                        .any(|prior| !prior.input && prior.key == entry.key))
+        })
+    }
+    fn reject(state: &mut State, index: usize, basis: (u64, u64), error: &Error) {
+        if state.pending[index].input {
+            let entry = state
+                .pending
+                .remove(index)
+                .expect("original rejected input");
+            let _ = entry
+                .acknowledgement
+                .send(Job::ready(Self::rejection(error)));
+            return;
+        }
+        // A first attempt fences the inputs already captured behind its
+        // unpublished evidence. Later independent inputs may run while this
+        // exact rejected observation remains retained for a changed basis.
+        let first_attempt = state.pending[index].rejected.is_none();
+        state.pending[index].rejected = Some(basis);
+        if !first_attempt {
+            return;
+        }
+        let mut retained = VecDeque::new();
+        let mut position = 0;
+        while let Some(entry) = state.pending.pop_front() {
+            if position > index && entry.input {
+                let _ = entry
+                    .acknowledgement
+                    .send(Job::ready(Self::rejection(error)));
+            } else {
+                retained.push_back(entry);
+            }
+            position += 1;
+        }
+        state.pending = retained;
+    }
+    fn rejection(error: &Error) -> Result<()> {
+        Err(
+            if matches!(error, Error::Core(maka_plugin_core::Error::Retired)) {
+                maka_plugin_core::Error::Retired.into()
+            } else {
+                Error::Invalid(error.to_string())
+            },
+        )
     }
     /// A removed declaration cannot reinterpret the accepted input on a new
     /// control. Resolve its original custody with retirement, never fake success.
     pub fn retain(&self, mut declared: impl FnMut(&str) -> bool) {
-        self.state
-            .borrow_mut()
-            .channels
-            .retain(|key, _| declared(key));
+        let mut state = self.state.borrow_mut();
+        let mut publishing = state.publishing.take();
+        let mut next_publishing = None;
+        let mut retained = VecDeque::new();
+        for (index, entry) in state.pending.drain(..).enumerate() {
+            if declared(&entry.key) {
+                if publishing
+                    .as_ref()
+                    .is_some_and(|(current, _, _)| *current == index)
+                {
+                    next_publishing = Some(retained.len());
+                }
+                retained.push_back(entry);
+            } else {
+                Self::acknowledge_removed(entry, index, &mut publishing);
+            }
+        }
+        state.pending = retained;
+        if let (Some((_, basis, job)), Some(index)) = (publishing, next_publishing) {
+            state.publishing = Some((index, basis, job));
+        }
+        state.reserved.retain(|key, _| declared(key));
     }
     pub fn close(&self) {
         let mut state = self.state.borrow_mut();
         state.closed = true;
-        state.channels.clear();
+        let mut publishing = state.publishing.take();
+        for (index, entry) in state.pending.drain(..).enumerate() {
+            Self::acknowledge_removed(entry, index, &mut publishing);
+        }
+        state.reserved.clear();
+    }
+    fn acknowledge_removed(
+        entry: Observation,
+        index: usize,
+        publishing: &mut Option<(usize, (u64, u64), Job<()>)>,
+    ) {
+        let job = if publishing
+            .as_ref()
+            .is_some_and(|(current, _, _)| *current == index)
+        {
+            // Native ownership can close before the already accepted logical
+            // transaction settles. Its original ACK waiter takes custody of the
+            // same job; no retired native resource is published or reactivated.
+            publishing.take().expect("original removed publisher").2
+        } else {
+            Job::ready(Err(maka_plugin_core::Error::Retired.into()))
+        };
+        let _ = entry.acknowledgement.send(job);
     }
     pub fn contains(&self, key: &str) -> bool {
         self.state
             .borrow()
-            .channels
-            .get(key)
-            .is_some_and(|channel| !channel.pending.is_empty())
+            .pending
+            .iter()
+            .any(|entry| entry.key == key)
     }
     pub fn pending(&self) -> bool {
-        self.state
-            .borrow()
-            .channels
-            .values()
-            .any(|channel| !channel.pending.is_empty())
+        !self.state.borrow().pending.is_empty()
     }
 }

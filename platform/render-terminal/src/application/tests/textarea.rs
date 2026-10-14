@@ -1485,14 +1485,22 @@ frame=(state)=>{
 fn paste_then_enter_is_immediate_and_ordered_while_the_original_js_job_is_slow() {
     let (runtime, mut input, packages) = editor_fixture();
     let packages = packages.into_iter().map(|original| {
-        if original.manifest().id != "dynamic.app" { return original; }
+        if !matches!(original.manifest().id.as_str(), "dynamic.app" | "dynamic.composer") { return original; }
+        let id = original.manifest().id.clone();
         let declaration = original.manifest().application.clone().unwrap();
         let Implementation::JavaScript { module, .. } = &declaration.entries[&EntryTarget::Tui].implementation else { unreachable!() };
-        let source = std::str::from_utf8(original.file(module).unwrap()).unwrap().replace(
-            "if(event.key==='reject'){", "if(event.key==='reject'){const until=Date.now()+100;while(Date.now()<until){};",
-        );
-        let package = support::package("dynamic.app", declaration, Some(source));
-        for node in input.instances.values_mut().filter(|node| matches!(&node.package, maka_plugin_core::package::PackageSelection::Pinned { package } if package.id == "dynamic.app")) {
+        let mut source = std::str::from_utf8(original.file(module).unwrap()).unwrap()
+            .replace("on:{changed:'changed',submitted:'submitted'}", "on:{changed:'changed',submitted:'submitted',checkpoint:'checkpoint'}");
+        if original.manifest().id == "dynamic.app" {
+            source = source.replace(
+                "if(event.key==='reject'){", "if(event.key==='reject'){const until=Date.now()+100;while(Date.now()<until){};",
+            ).replace(
+                "next.observation=event.event;if(event.name==='submitted')next.submissions=(state.submissions??0)+1;",
+                "if(event.name==='checkpoint'){next.nativeReady=event.event.state.initialized;}else{next.observation=event.event;if(event.name==='submitted'){if(!state.nativeReady)throw new Error('submission preceded its original checkpoint');next.submissions=(state.submissions??0)+1;}}",
+            );
+        }
+        let package = support::package(&id, declaration, Some(source));
+        for node in input.instances.values_mut().filter(|node| matches!(&node.package, maka_plugin_core::package::PackageSelection::Pinned { package } if package.id == id)) {
             node.package = package.application_ref().into();
         }
         package
@@ -1525,6 +1533,30 @@ fn paste_then_enter_is_immediate_and_ordered_while_the_original_js_job_is_slow()
         .unwrap();
     assert!(at.elapsed() < std::time::Duration::from_millis(30));
     assert!(tui.application.ui_pending());
+    // Initialization is captured by the original native producer while JS still
+    // owns an earlier transaction. Its initial and completed facts cross another
+    // observation key; Enter must wait for their actual logical publication.
+    let owner = observation(&tui)["snapshot"]["text"]["owner"].clone();
+    let queue = tui.resources.owners[&mount.id()].pending.clone();
+    drop(
+        queue
+            .capture(
+                "checkpoint",
+                json!({"owner":owner,"state":{"kind":"ready","saved":false,"initialized":false}}),
+                false,
+            )
+            .unwrap(),
+    );
+    drop(queue.capture("observe", observation(&tui), true).unwrap());
+    drop(
+        queue
+            .capture(
+                "checkpoint",
+                json!({"owner":owner,"state":{"kind":"ready","saved":true,"initialized":true}}),
+                false,
+            )
+            .unwrap(),
+    );
     let at = std::time::Instant::now();
     // These are the production admission methods, with no fixture await between
     // paste and Enter. Rust keeps the buffer current before any guest result.

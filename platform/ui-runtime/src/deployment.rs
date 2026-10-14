@@ -401,7 +401,21 @@ impl<V: ?Sized + 'static> Application<V> {
         Ok(())
     }
 
-    pub(super) fn dependencies_ready(&self, instance: &Instance) -> bool {
+    pub(super) fn activation_ready(&self, instance: &Instance) -> bool {
+        // Keep not-yet-loaded source in the original bounded deployment plan.
+        // Its predecessor's load/activate Job wakes this owner after settlement;
+        // worker speed must not turn a valid plan into an admission failure.
+        if instance
+            .entry
+            .as_ref()
+            .is_some_and(|entry| matches!(entry.implementation, Implementation::JavaScript { .. }))
+            && self
+                .modules
+                .values()
+                .any(|loaded| loaded.activation.is_some())
+        {
+            return false;
+        }
         let active = |id: &InstanceId| {
             self.activations.get(id).is_some_and(|a| {
                 self.runtime
@@ -521,7 +535,7 @@ impl<V: ?Sized + 'static> Application<V> {
             }
             for instance in std::mem::take(&mut self.pending) {
                 if self.activations.contains_key(&instance.identity)
-                    || !self.dependencies_ready(&instance)
+                    || !self.activation_ready(&instance)
                 {
                     self.pending.push(instance);
                     continue;

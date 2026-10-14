@@ -973,6 +973,10 @@ export type DesktopScene =
        * click whose default action was not prevented.
        */
       copy_text?: string | null;
+      /**
+       * Propagate physical activation beyond this committed button.
+       */
+      bubble_activation?: boolean;
       style?: DesktopStyle;
       hover?: DesktopStyle;
       active?: DesktopStyle;
@@ -5713,11 +5717,6 @@ export interface ComponentOutput {
    * Complete current subscription demand. Empty removes previous demand.
    */
   subscriptions?: Action[];
-  /**
-   * Applies to the original native input after its synchronous event route commits.
-   * It is never retained in a frame or replayed by a renderer.
-   */
-  decision?: InputDecision | null;
 }
 export interface Frame {
   revision: number;
@@ -5748,10 +5747,6 @@ export interface CaptureSource {
   child: string;
   method: string;
   input: unknown;
-}
-export interface InputDecision {
-  preventDefault?: boolean;
-  stopPropagation?: boolean;
 }
 /**
  * One child of a committed component, owned by a committed native presentation.
@@ -5980,6 +5975,14 @@ export interface DesktopCanvasRegion {
   disabled?: boolean;
   tabIndex?: number;
   listen?: DesktopCanvasEventKind[];
+  /**
+   * These defaults are decided from the committed region before guest input.
+   */
+  focusOnPointer?: boolean;
+  dragPreview?: boolean;
+  tabNavigation?: boolean;
+  nativeCopy?: boolean;
+  bubbleInput?: boolean;
 }
 export interface DesktopCanvasModifiers {
   control: boolean;
@@ -6248,6 +6251,11 @@ export interface MarkdownProps {
    * Whether pointer selection also moves keyboard focus to this document.
    */
   focusOnPointer?: boolean;
+  /**
+   * The committed document decides native URL opening before guest work.
+   */
+  openWebLinks?: boolean;
+  bubbleLinks?: boolean;
 }
 export interface MarkdownAppearance {
   terminal?: TerminalPalette | null;

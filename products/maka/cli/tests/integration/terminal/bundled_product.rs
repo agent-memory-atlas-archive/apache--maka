@@ -93,7 +93,7 @@ fn bundled_product_launch_initializes_and_reopens_original_roots_without_node() 
             started.elapsed()
         );
         tui.send(b"\x0b");
-        tui.wait_for("Commands");
+        tui.wait_for("Close commands");
         tui.send(b"Skills");
         tui.wait_for("› Skills");
         tui.send(b"\r");
@@ -639,7 +639,7 @@ fn bundled_connections_search_scroll_click_and_chatgpt_credentials() {
     ]);
     tui.wait_until_with_timeout(|s| s.contains("Settings"), Duration::from_secs(60));
     tui.send(b"\x0b");
-    tui.wait_for("Commands");
+    tui.wait_for("Close commands");
     tui.send(b"Settings");
     tui.wait_for("› Settings");
     tui.send(b"\r");
@@ -742,7 +742,7 @@ fn bundled_language_switch_updates_and_remains_responsive() {
     ]);
     tui.wait_until_with_timeout(|s| s.contains("Settings"), Duration::from_secs(60));
     tui.send(b"\x0b");
-    tui.wait_for("Commands");
+    tui.wait_for("Close commands");
     tui.send(b"Settings");
     tui.wait_for("› Settings");
     tui.send(b"\r");

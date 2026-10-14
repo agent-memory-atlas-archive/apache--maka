@@ -182,32 +182,49 @@ impl InputOwner {
                 }) {
                     return None;
                 }
-                owner.input.current.borrow().clone().map(|input| {
-                    (
-                        input,
-                        owner.submit_copy.as_ref().map(|copy| copy.text.clone()),
-                    )
-                })
+                owner.input.current.borrow().as_ref()?;
+                Some((owner.input.clone(), owner.submit_copy.clone()))
             }) else {
                 return;
             };
             window.prevent_default();
             cx.stop_propagation();
-            match (input.dispatch)("submit", serde_json::json!({}), window, cx) {
-                Ok(()) => {
-                    if let Some(text) = copy
-                        && weak
-                            // A successful callback may close its own dialog.
-                            // Complete this admitted event while its original
-                            // owner lives; admission still gates the next event.
-                            .update(cx, |owner, _| owner.input.current.borrow().is_some())
-                            .unwrap_or(false)
-                    {
-                        cx.write_to_clipboard(ClipboardItem::new_string(text));
-                    }
+            let receipt = match input.capture_input("submit", serde_json::json!({}), window, cx) {
+                Ok(receipt) => receipt,
+                Err(_) => {
+                    eprintln!("input submit rejected");
+                    return;
                 }
-                Err(_) => eprintln!("input submit rejected"),
-            }
+            };
+            let Some(copy) = copy else {
+                return;
+            };
+            let weak = weak.clone();
+            window
+                .spawn(cx, async move |cx| {
+                    if receipt.await.is_err() {
+                        eprintln!("input submit rejected");
+                        return;
+                    }
+                    let _ = cx.update(move |window, cx| {
+                        // A successful callback may hide its own dialog. The
+                        // admitted default belongs to the same live owner and
+                        // editor basis, rather than the next physical event.
+                        if weak
+                            .update(cx, |owner, cx| {
+                                owner.refresh(false, window, cx);
+                                owner.input.current.borrow().is_some()
+                                    && owner.id == copy.basis.owner
+                                    && owner.revision == copy.basis.revision
+                                    && owner.snapshot.text.len() == copy.basis.bytes
+                            })
+                            .unwrap_or(false)
+                        {
+                            cx.write_to_clipboard(ClipboardItem::new_string(copy.text));
+                        }
+                    });
+                })
+                .detach();
         });
         owner.update(cx, |owner, _| owner._keyboard = Some(subscription));
         owner.update(cx, |owner, cx| owner.schedule(window, cx));

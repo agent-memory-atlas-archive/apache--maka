@@ -30,7 +30,7 @@ use ratatui::{
     style::{Color, Modifier, Style},
 };
 use serde_json::json;
-use std::{any::Any, collections::BTreeMap, rc::Rc, sync::Arc};
+use std::{any::Any, cell::RefCell, collections::BTreeMap, rc::Rc, sync::Arc};
 use unicode_width::UnicodeWidthStr;
 
 use super::selection::{Document, DocumentRef, Glyphs, SelectionScope};
@@ -91,10 +91,12 @@ impl Owner {
         doc.markdown = recipe.1.clone();
     }
 }
+type CachedLayout = (u16, super::selection::Layout, (u16, u32));
 struct Recipe(
     SourceTextProps,
     Option<Arc<crate::markdown::prepared::Document>>,
     bool,
+    RefCell<Option<CachedLayout>>,
 );
 fn color(rgba: u32) -> Color {
     Color::Rgb((rgba >> 24) as u8, (rgba >> 16) as u8, (rgba >> 8) as u8)
@@ -201,34 +203,8 @@ impl Widget for Recipe {
         doc.glyphs = None;
         doc.standalone = None;
     }
-    fn measure(&self, _: &Slots<'_>, width: u16) -> maka_ui_runtime::Result<(u16, u32)> {
-        if let Some(document) = &self.1 {
-            let super::selection::Layout::Markdown { lines, .. } =
-                super::selection::Layout::markdown(document, width)?
-            else {
-                unreachable!()
-            };
-            return Ok((
-                lines
-                    .iter()
-                    .map(|line| line.line.width())
-                    .max()
-                    .unwrap_or(0)
-                    .min(usize::from(width)) as u16,
-                lines.len() as u32,
-            ));
-        }
-        let layout = Layout::literal(&self.0.source, width);
-        Ok((
-            layout
-                .rows
-                .iter()
-                .map(|row| row.cells.last().map_or(0, |cell| cell.column + cell.width))
-                .max()
-                .unwrap_or(0)
-                .min(usize::from(width)) as u16,
-            layout.rows.len() as u32,
-        ))
+    fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui_runtime::Result<(u16, u32)> {
+        Ok(self.layout(width, &slots.presenter.resources.budget)?.1)
     }
     fn paint(
         &self,
@@ -236,8 +212,8 @@ impl Widget for Recipe {
         area: Placement,
         buffer: &mut Buffer,
     ) -> maka_ui_runtime::Result<()> {
-        if let Some(markdown) = &self.1 {
-            return self.paint_markdown(markdown, slots, area, buffer);
+        if self.1.is_some() {
+            return self.paint_markdown(slots, area, buffer);
         }
         let document = slots.native_state::<Owner>()?.document.clone();
         let parent = if self.2 && !self.0.disabled {
@@ -256,7 +232,10 @@ impl Widget for Recipe {
         }
         let doc = document.borrow();
         let scope = parent.clone().or_else(|| SelectionScope::active(&document));
-        let layout = Layout::literal(&doc.source, area.width);
+        let (layout, _) = self.layout(area.width, &slots.presenter.resources.budget)?;
+        let super::selection::Layout::Literal(literal_layout, _) = &layout else {
+            unreachable!()
+        };
         if let Some(offset) = reveal.map(|reveal| reveal.offset) {
             let row = area.y + layout.cursor(offset, false).0 as i64;
             let visible = area.visible();
@@ -302,7 +281,7 @@ impl Widget for Recipe {
         );
         let visible = area.visible();
         let first = (i64::from(visible.y) - area.y).max(0) as usize;
-        for (row_index, row) in layout
+        for (row_index, row) in literal_layout
             .rows
             .iter()
             .enumerate()
@@ -368,7 +347,7 @@ impl Widget for Recipe {
                     buffer.set_stringn(point.x, point.y, symbol, cell.width, style);
                 }
             }
-            let break_end = layout
+            let break_end = literal_layout
                 .rows
                 .get(row_index + 1)
                 .map_or(row.end, |next| next.start);
@@ -394,7 +373,7 @@ impl Widget for Recipe {
         let geometry = Geometry {
             glyphs: Glyphs {
                 source: doc.source.clone(),
-                layout: layout.into(),
+                layout,
                 area,
             },
             parent,
@@ -426,9 +405,56 @@ impl Widget for Recipe {
     }
 }
 impl Recipe {
+    fn layout(
+        &self,
+        width: u16,
+        budget: &maka_ui_runtime::budget::NativeBudget,
+    ) -> maka_ui_runtime::Result<(super::selection::Layout, (u16, u32))> {
+        if let Some((old_width, layout, size)) = &*self.3.borrow()
+            && *old_width == width
+        {
+            return Ok((layout.clone(), *size));
+        }
+        // One width belongs to this immutable recipe. Source/style replacement
+        // creates another recipe; scrolling and selection share these same rows.
+        self.3.borrow_mut().take();
+        let mut layout = match &self.1 {
+            Some(document) => super::selection::Layout::markdown(document, width)?,
+            None => Layout::literal(&self.0.source, width).into(),
+        };
+        let size = Self::measured(&layout, width);
+        if layout.retain(budget) {
+            *self.3.borrow_mut() = Some((width, layout.clone(), size));
+        }
+        Ok((layout, size))
+    }
+
+    fn measured(layout: &super::selection::Layout, width: u16) -> (u16, u32) {
+        match layout {
+            super::selection::Layout::Markdown { lines, .. } => (
+                lines
+                    .iter()
+                    .map(|line| line.line.width())
+                    .max()
+                    .unwrap_or(0)
+                    .min(usize::from(width)) as u16,
+                lines.len() as u32,
+            ),
+            super::selection::Layout::Literal(layout, _) => (
+                layout
+                    .rows
+                    .iter()
+                    .map(|row| row.cells.last().map_or(0, |cell| cell.column + cell.width))
+                    .max()
+                    .unwrap_or(0)
+                    .min(usize::from(width)) as u16,
+                layout.rows.len() as u32,
+            ),
+        }
+    }
+
     fn paint_markdown(
         &self,
-        markdown: &crate::markdown::prepared::Document,
         slots: &mut Slots<'_>,
         area: Placement,
         buffer: &mut Buffer,
@@ -453,7 +479,7 @@ impl Recipe {
         if area.width == 0 || area.is_empty() && reveal.is_none() {
             return Ok(());
         }
-        let layout = super::selection::Layout::markdown(markdown, area.width)?;
+        let (layout, _) = self.layout(area.width, &slots.presenter.resources.budget)?;
         if let Some(offset) = reveal {
             let row = area.y + layout.cursor(offset, false).0 as i64;
             let visible = area.visible();
@@ -699,7 +725,7 @@ fn prepare_markdown(
         focus_on_pointer: props.focus_on_pointer,
     };
     maka_ui_runtime::PreparedScene::new(
-        Recipe(source, Some(document), props.selectable),
+        Recipe(source, Some(document), props.selectable, RefCell::new(None)),
         BTreeMap::new(),
         vec![],
     )?
@@ -749,7 +775,7 @@ fn prepare_diff(
         focus_on_pointer: props.focus_on_pointer,
     };
     maka_ui_runtime::PreparedScene::new(
-        Recipe(source, Some(document), true),
+        Recipe(source, Some(document), true, RefCell::new(None)),
         BTreeMap::new(),
         vec![],
     )?
@@ -851,8 +877,12 @@ fn prepare_source(
     if props.source.len() > 65536 {
         return Err(maka_ui_runtime::Error::Invalid("source byte budget".into()));
     }
-    maka_ui_runtime::PreparedScene::new(Recipe(props, None, true), BTreeMap::new(), vec![])?
-        .with_declaration(declaration)
+    maka_ui_runtime::PreparedScene::new(
+        Recipe(props, None, true, RefCell::new(None)),
+        BTreeMap::new(),
+        vec![],
+    )?
+    .with_declaration(declaration)
 }
 #[cfg(test)]
 pub(super) fn compile(

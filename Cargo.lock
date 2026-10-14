@@ -9119,6 +9119,7 @@ dependencies = [
  "maka-ui-runtime",
  "pulldown-cmark",
  "ratatui",
+ "ratatui-crossterm",
  "schemars 1.2.2",
  "serde",
  "serde_json",

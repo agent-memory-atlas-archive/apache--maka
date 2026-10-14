@@ -53,7 +53,7 @@ fn default_product_title_updates_once_and_preserves_manual_name_after_restart() 
     ]);
     tui.wait_until_with_timeout(|s| s.contains("Settings"), Duration::from_secs(60));
     tui.send(b"\x0b");
-    tui.wait_for("Commands");
+    tui.wait_for("Close commands");
     tui.send(b"New conversation");
     tui.wait_for("› New conversation");
     tui.send(b"\r");
@@ -77,7 +77,7 @@ fn default_product_title_updates_once_and_preserves_manual_name_after_restart() 
         Duration::from_secs(60),
     );
     restored.send(b"\x0b");
-    restored.wait_for("Commands");
+    restored.wait_for("Close commands");
     restored.send(b"Conversation details");
     restored.wait_for("› Conversation details");
     restored.send(b"\r");

@@ -209,6 +209,34 @@ impl LiveInput {
         Ok(acknowledgement)
     }
 }
+impl LiveInput {
+    /// Reliable native intent follows this owner's captured observations. Equal
+    /// payloads remain distinct inputs; the original commit resolves its ACK.
+    pub fn capture_input(
+        &self,
+        key: &str,
+        value: Value,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> maka_ui_runtime::Result<maka_ui_runtime::backend::Job<()>> {
+        if self.current.borrow().is_none() {
+            return Err(maka_ui_runtime::Error::Invalid(
+                "original native input owner retired".into(),
+            ));
+        }
+        let acknowledgement = self.observations.capture_input(key, value)?;
+        let live = self.clone();
+        window.defer(cx, move |window, cx| {
+            let Some(input) = live.current.borrow().clone() else {
+                return;
+            };
+            for error in live.advance(&input, window, cx) {
+                eprintln!("native input candidate rejected: {error}");
+            }
+        });
+        Ok(acknowledgement)
+    }
+}
 type Dispatch = dyn Fn(&str, Value, &mut Window, &mut App) -> maka_ui_runtime::Result<()>;
 type Observe = dyn Fn(
     &str,

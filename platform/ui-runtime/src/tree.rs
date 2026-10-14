@@ -90,7 +90,7 @@ pub(super) struct QueuedInput {
     mount: Mount,
     event: abi::ComponentInput,
     bytes: usize,
-    publication: Option<tokio::sync::oneshot::Sender<std::result::Result<(), String>>>,
+    publication: Option<tokio::sync::oneshot::Sender<Result<()>>>,
 }
 pub(super) struct Feedback {
     pub consumer: Mount,
@@ -145,7 +145,7 @@ pub(super) struct Update<V: ?Sized> {
     feedback: Option<Feedback>,
     ready: bool,
     native_prepared: bool,
-    publication: Option<tokio::sync::oneshot::Sender<std::result::Result<(), String>>>,
+    publication: Option<tokio::sync::oneshot::Sender<Result<()>>>,
 }
 impl<V: ?Sized> Update<V> {
     fn new(slice: std::time::Duration) -> Self {
@@ -259,7 +259,7 @@ impl<V: ?Sized> Update<V> {
 impl<V: ?Sized> Drop for Update<V> {
     fn drop(&mut self) {
         if let Some(publication) = self.publication.take() {
-            let _ = publication.send(Err("original UI candidate closed before publication".into()));
+            let _ = publication.send(Err(maka_plugin_core::Error::Retired.into()));
         }
     }
 }
@@ -457,7 +457,6 @@ impl<V: ?Sized + 'static> Application<V> {
             receipt
                 .await
                 .map_err(|_| Error::Invalid("original UI publication owner stopped".into()))?
-                .map_err(Error::Invalid)
         }))
     }
 
@@ -465,7 +464,7 @@ impl<V: ?Sized + 'static> Application<V> {
         &mut self,
         mount: &Mount,
         event: abi::ComponentInput,
-        publication: Option<tokio::sync::oneshot::Sender<std::result::Result<(), String>>>,
+        publication: Option<tokio::sync::oneshot::Sender<Result<()>>>,
     ) -> Result<()> {
         let bytes = call_bytes(&event)?;
         if self.ui_inputs.len() >= 128 || self.ui_input_bytes + bytes > 1024 * 1024 {
@@ -504,7 +503,7 @@ impl<V: ?Sized + 'static> Application<V> {
         mount: &Mount,
         event: super::abi::ComponentInput,
         feedback: Option<Feedback>,
-        publication: Option<tokio::sync::oneshot::Sender<std::result::Result<(), String>>>,
+        publication: Option<tokio::sync::oneshot::Sender<Result<()>>>,
     ) -> Result<()> {
         let event =
             serde_json::to_value(event).map_err(|error| Error::Invalid(error.to_string()))?;
@@ -560,7 +559,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 self.ui_input_bytes -= input.bytes;
                 if self.is_retiring(&input.mount) {
                     if let Some(publication) = input.publication {
-                        let _ = publication.send(Err("original UI mount retired".into()));
+                        let _ = publication.send(Err(maka_plugin_core::Error::Retired.into()));
                     }
                     continue;
                 }
@@ -652,23 +651,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 }
                 Ok(true)
             }
-            Err(error) => {
-                self.rollback(&update)?;
-                let observation = update.publication.is_some();
-                if let Some(publication) = update.publication.take() {
-                    let _ = publication.send(Err(error.to_string()));
-                }
-                if let Some(feedback) = update.feedback.take() {
-                    if feedback.item
-                        && let Some(id) = feedback.request
-                    {
-                        self.fail_update(id, "progress delivery failed".into());
-                    }
-                    self.runtime.retire_mount(&feedback.consumer)?;
-                    self.sync_subscription_demand();
-                }
-                if observation { Ok(false) } else { Err(error) }
-            }
+            Err(error) => self.reject_update(update, error),
         }
     }
 
@@ -725,25 +708,42 @@ impl<V: ?Sized + 'static> Application<V> {
                 self.waker().wake_by_ref();
                 Ok(true)
             }
-            Err(error) => {
-                self.rollback(&update)?;
-                let observation = update.publication.is_some();
-                if let Some(publication) = update.publication.take() {
-                    let _ = publication.send(Err(error.to_string()));
-                }
-                if let Some(feedback) = update.feedback.take() {
-                    if feedback.item
-                        && let Some(id) = feedback.request
-                    {
-                        self.fail_update(id, "progress delivery failed".into());
-                    }
-                    self.runtime.retire_mount(&feedback.consumer)?;
-                    self.sync_subscription_demand();
-                }
-                if observation { Ok(false) } else { Err(error) }
-            }
+            Err(error) => self.reject_update(update, error),
         }
     }
+    fn reject_update(&mut self, mut update: Update<V>, error: Error) -> Result<bool> {
+        self.rollback(&update)?;
+        let retired_feedback = matches!(error, Error::Core(maka_plugin_core::Error::Retired))
+            && update
+                .feedback
+                .as_ref()
+                .is_some_and(|feedback| self.is_retiring(&feedback.consumer));
+        if let Some(feedback) = update.feedback.take() {
+            if feedback.item
+                && let Some(id) = feedback.request
+            {
+                self.fail_update(id, "progress delivery failed".into());
+            }
+            // Actual mount close may precede its already accepted callback.
+            // Reject this original feedback without re-retiring a closed mount.
+            if !self.is_retiring(&feedback.consumer) {
+                self.runtime.retire_mount(&feedback.consumer)?;
+                self.sync_subscription_demand();
+            }
+        }
+        if !self.ui_inputs.is_empty() {
+            self.waker().wake_by_ref();
+        }
+        if let Some(publication) = update.publication.take() {
+            let _ = publication.send(Err(error));
+            Ok(false)
+        } else if retired_feedback {
+            Ok(false)
+        } else {
+            Err(error)
+        }
+    }
+
     /// Startup may read only its original prepared declaration to create the
     /// platform surface. No input or painting can use it before commit_ui.
     pub fn prepared_frame(&self, mount: &Mount) -> Result<&Frame<NativeView<V>>> {

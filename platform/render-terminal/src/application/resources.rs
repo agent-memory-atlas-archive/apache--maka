@@ -247,26 +247,37 @@ impl Resources {
         let Some(owner) = self.owners.get_mut(&id).filter(|owner| owner.live) else {
             return Ok(());
         };
-        match catch_unwind(AssertUnwindSafe(|| {
-            owner.recipe.observe(owner.state.as_mut())
-        })) {
-            Ok(Some(observed)) => self.redraw |= owner.observe(observed)?,
-            Ok(None) => {}
-            Err(_) => {
-                owner.live = false;
-                let error = "terminal native observation cleanup unconfirmed".to_owned();
-                self.failed.insert(id, error.clone());
-                return Err(Error::Invalid(error));
+        // Drain the original producer before accepting a causally later input.
+        // Stable pending evidence stops immediately; the publication bound also
+        // limits a producer that continually returns new values.
+        for _ in 0..128 {
+            match catch_unwind(AssertUnwindSafe(|| {
+                owner.recipe.observe(owner.state.as_mut())
+            })) {
+                Ok(Some(observed)) => {
+                    let captured = owner.observe(observed)?;
+                    self.redraw |= captured;
+                    if !captured {
+                        return Ok(());
+                    }
+                }
+                Ok(None) => return Ok(()),
+                Err(_) => {
+                    owner.live = false;
+                    let error = "terminal native observation cleanup unconfirmed".to_owned();
+                    self.failed.insert(id, error.clone());
+                    return Err(Error::Invalid(error));
+                }
             }
         }
-        Ok(())
+        Err(Error::Invalid("native observation capture bound".into()))
     }
     fn collect_observations(
         &mut self,
         app: &Application<dyn Widget>,
         root: &Mount,
     ) -> maka_ui_runtime::Result<()> {
-        if app.frame(root).is_err() {
+        if app.is_retiring(root) || app.frame(root).is_err() {
             return Ok(());
         }
         for mount in app.mounted_subtree(root)? {
@@ -374,6 +385,18 @@ impl Resources {
         }
         Ok(())
     }
+    pub fn capture_input(
+        &mut self,
+        mount: &Mount,
+        input: NativeInput,
+    ) -> maka_ui_runtime::Result<maka_ui_runtime::backend::Job<()>> {
+        let owner = self
+            .owners
+            .get_mut(&mount.id())
+            .filter(|owner| owner.live)
+            .ok_or_else(|| Error::Invalid("original native input owner retired".into()))?;
+        owner.pending.capture_input(&input.key, input.value)
+    }
     /// Identity for an original published logical keyboard target. Pixel/native
     /// resource admission remains `admits`; offscreen keyboard navigation only
     /// needs the live owner frozen in the successfully flushed target list.
@@ -392,9 +415,17 @@ impl Resources {
         target: &paint::TargetIdentity,
         event: &Event,
     ) -> maka_ui_runtime::Result<Option<WidgetInput>> {
-        self.interact(target, |recipe, state| {
+        self.poll_observation(target.mount.id())?;
+        let input = self.interact(target, |recipe, state| {
             recipe.input(state, &target.key, event)
-        })
+        })?;
+        if matches!(
+            &input,
+            Some(WidgetInput::Emitted(_) | WidgetInput::SubmitCopy(..))
+        ) {
+            self.poll_observation(target.mount.id())?;
+        }
+        Ok(input)
     }
     pub(super) fn enter_focus(
         &mut self,

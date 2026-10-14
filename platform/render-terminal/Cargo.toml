@@ -32,6 +32,7 @@ uuid.workspace = true
 maka-event-log.workspace = true
 maka-transport.workspace = true
 ratatui.workspace = true
+ratatui-crossterm = { version = "0.1.2", default-features = false, features = ["unstable-backend-writer"] }
 pulldown-cmark.workspace = true
 apply-patch.workspace = true
 similar = "3.2.0"

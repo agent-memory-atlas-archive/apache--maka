@@ -742,28 +742,32 @@ impl NodePresentation for Node {
                     .child(SharedString::from(label.clone()))
                     .on_click(move |_, window, cx| {
                         if click_admission.get() && click_alive.current.borrow().is_some() {
-                            match (click_input.dispatch)(
-                                &click_key,
-                                json!({"kind":"click"}),
-                                window,
-                                cx,
-                            ) {
-                                Ok(()) => (),
-                                Err(error) => {
-                                    eprintln!("component input rejected: {error}");
-                                    window.prevent_default();
-                                    cx.stop_propagation();
-                                    return;
-                                }
+                            let accepted = if let Some(text) = &copy_text {
+                                click_alive.capture_input(&click_key, json!({"kind":"click"}), window, cx).map(|receipt| {
+                                    let alive = click_alive.clone();
+                                    let text = text.clone();
+                                    window.spawn(cx, async move |cx| {
+                                        if let Err(error) = receipt.await {
+                                            eprintln!("component input rejected: {error}");
+                                            return;
+                                        }
+                                        let _ = cx.update(move |_, cx| {
+                                            // Hiding a menu does not retire its original
+                                            // owner; actual close revokes this default.
+                                            if alive.current.borrow().is_some() {
+                                                cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(text));
+                                            }
+                                        });
+                                    }).detach();
+                                })
+                            } else {
+                                (click_input.dispatch)(&click_key,json!({"kind":"click"}),window,cx)
                             };
-                            if let Some(text) = &copy_text
-                                // Closing a menu settles this admitted default;
-                                // it only revokes admission for later events.
-                                && click_alive.current.borrow().is_some()
-                            {
-                                cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(
-                                    text.clone(),
-                                ));
+                            if let Err(error) = accepted {
+                                eprintln!("component input rejected: {error}");
+                                window.prevent_default();
+                                cx.stop_propagation();
+                                return;
                             }
                             if !bubble_activation {
                                 cx.stop_propagation();

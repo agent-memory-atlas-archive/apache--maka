@@ -218,26 +218,11 @@ struct Realm {
 impl backend::Realm for Realm {
     fn load(&self, name: &str, source: &str) -> Result<Rc<dyn backend::Module>> {
         let id = self.worker.identity();
-        let realm = self.id;
-        let name = name.to_owned();
-        let source = source.to_owned();
-        self.worker.submit(source.len(), move |state| {
-            state.with_vm(realm, |vm| {
-                let module = vm.vm.load(&name, &source).map_err(script)?;
-                vm.modules.insert(
-                    id,
-                    OwnedModule {
-                        module,
-                        callbacks: BTreeMap::new(),
-                    },
-                );
-                Ok(())
-            })
-        })?;
         Ok(Rc::new(Module {
-            realm,
+            realm: self.id,
             id,
             worker: self.worker.clone(),
+            source: RefCell::new(Some((name.to_owned(), source.to_owned()))),
         }))
     }
     fn failure(&self) -> Option<String> {
@@ -259,6 +244,7 @@ struct Module {
     realm: u64,
     id: u64,
     worker: Worker,
+    source: RefCell<Option<(String, String)>>,
 }
 impl backend::Module for Module {
     fn activate(
@@ -271,9 +257,27 @@ impl backend::Module for Module {
             serde_json::to_value(values).map_err(invalid)?,
         ];
         let bytes = delivery(&args)?;
+        let (name, source) = self
+            .source
+            .borrow_mut()
+            .take()
+            .ok_or_else(|| invalid("UI module activation already admitted"))?;
+        let bytes = bytes
+            .checked_add(source.len())
+            .ok_or_else(|| invalid("UI module activation byte overflow"))?;
         let (realm, id) = (self.realm, self.id);
         self.worker.submit(bytes, move |state| {
             state.with_vm(realm, |vm| {
+                // Loading and activation share one original completion receipt.
+                // A syntax/load failure cannot disappear in a discarded Job.
+                let module = vm.vm.load(&name, &source).map_err(script)?;
+                vm.modules.insert(
+                    id,
+                    OwnedModule {
+                        module,
+                        callbacks: BTreeMap::new(),
+                    },
+                );
                 let owned = vm
                     .modules
                     .get_mut(&id)
@@ -323,10 +327,11 @@ impl backend::Module for Module {
         let (realm, id) = (self.realm, self.id);
         self.worker.submit(0, move |state| {
             state.with_vm(realm, |vm| {
-                let owned = vm
-                    .modules
-                    .remove(&id)
-                    .ok_or_else(|| script("UI module is unavailable"))?;
+                // Rejected admission or a failed load has no VM module handle.
+                // The original realm Job still confirms this exact absence.
+                let Some(owned) = vm.modules.remove(&id) else {
+                    return Ok(());
+                };
                 vm.vm.close(&owned.module).map_err(script)
             })
         })

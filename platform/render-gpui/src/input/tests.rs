@@ -172,6 +172,43 @@ fn submit_copy_requires_original_revision_and_honors_callback_veto_and_retiremen
     cx.simulate_keystrokes(window, "enter");
     assert_eq!(clipboard(cx), "sentinel");
     configure(cx);
+    let original = live.current.borrow().clone().unwrap();
+    let (complete, result) = tokio::sync::oneshot::channel();
+    let result = Rc::new(RefCell::new(Some(result)));
+    let observed = original.observe.clone();
+    let pending = Input::new(
+        original.revision,
+        original.dispatch,
+        Rc::new(move |key, value, window, cx| {
+            if key == "submit" {
+                let result = result.borrow_mut().take().expect("one physical submit");
+                Ok(maka_ui_runtime::backend::Job::new(async move {
+                    result.await.expect("original callback completion")
+                }))
+            } else {
+                observed(key, value, window, cx)
+            }
+        }),
+    );
+    *live.current.borrow_mut() = Some(pending.clone());
+    cx.simulate_keystrokes(window, "enter");
+    cx.run_until_parked();
+    assert_eq!(
+        clipboard(cx),
+        "sentinel",
+        "enqueue is not callback acceptance"
+    );
+    complete
+        .send(Err(maka_ui_runtime::Error::Invalid(
+            "late rejection".into(),
+        )))
+        .unwrap();
+    cx.update_window(window, |_, window, cx| {
+        live.advance(&pending, window, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(clipboard(cx), "sentinel", "a rejected callback cannot copy");
     *live.current.borrow_mut() = Some(Input::testing(Rc::new(|_, _, _, _| {
         Err(maka_ui_runtime::Error::Invalid("rejected".into()))
     })));

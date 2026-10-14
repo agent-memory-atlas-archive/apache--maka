@@ -55,6 +55,40 @@ struct PendingOutput {
     receipt: tokio::sync::oneshot::Receiver<std::io::Result<()>>,
     scene: Option<PaintedScene>,
 }
+// Input readiness can win the same select as a completed write. Publish that
+// original receipt before resolving coordinates or keyboard focus, including
+// the first visible frame. Pending writes never make the foreground wait.
+fn poll_output(
+    pending: &mut Option<PendingOutput>,
+    written_sequence: &mut u64,
+    screen: Option<&terminal::Screen>,
+    presenter: &mut Presenter,
+) -> Result<(), String> {
+    let Some(output) = pending.as_mut() else {
+        return Ok(());
+    };
+    let destination = presenter.application.waker();
+    let mut cx = Context::from_waker(&destination);
+    let Poll::Ready(result) = Pin::new(&mut output.receipt).poll(&mut cx) else {
+        return Ok(());
+    };
+    let output = pending.take().expect("original output receipt");
+    result
+        .map_err(|error| sanitize(&error.to_string()))?
+        .map_err(|error| sanitize(&error.to_string()))?;
+    if output.sequence != *written_sequence + 1 {
+        return Err("terminal output receipt sequence mismatch".into());
+    }
+    *written_sequence = output.sequence;
+    if screen.is_some_and(|screen| screen.generation == output.generation)
+        && presenter.surface() == output.surface
+        && let Some(scene) = output.scene
+    {
+        presenter.present_written(scene);
+    }
+    Ok(())
+}
+
 fn retain_clipboard(queue: &mut VecDeque<Vec<u8>>, bytes: Vec<u8>) -> Result<(), String> {
     if bytes.is_empty() {
         return Ok(());
@@ -133,30 +167,13 @@ pub fn run(
     let mut exit_key = ExitKey::default();
     let mut queued_input = None;
     loop {
-        if let Some(pending) = pending_output.as_mut() {
-            let destination = presenter.application.waker();
-            let mut cx = Context::from_waker(&destination);
-            if let Poll::Ready(result) = Pin::new(&mut pending.receipt).poll(&mut cx) {
-                let pending = pending_output.take().expect("original output receipt");
-                let result = result
-                    .map_err(|e| std::io::Error::other(e.to_string()))
-                    .and_then(|result| result);
-                if let Err(error) = result {
-                    failure.get_or_insert(sanitize(&error.to_string()));
-                } else if pending.sequence != written_sequence + 1 {
-                    failure.get_or_insert("terminal output receipt sequence mismatch".into());
-                } else {
-                    written_sequence = pending.sequence;
-                    if screen
-                        .as_ref()
-                        .is_some_and(|screen| screen.generation == pending.generation)
-                        && presenter.surface() == pending.surface
-                        && let Some(scene) = pending.scene
-                    {
-                        presenter.present_written(scene);
-                    }
-                }
-            }
+        if let Err(error) = poll_output(
+            &mut pending_output,
+            &mut written_sequence,
+            screen.as_ref(),
+            &mut presenter,
+        ) {
+            failure.get_or_insert(error);
         }
         if pending_output.is_none()
             && let Some(bytes) = clipboard_output.pop_front()
@@ -202,6 +219,16 @@ pub fn run(
             let error = sanitize(&error.to_string());
             presenter.report(&error);
             failure.get_or_insert(error);
+        }
+        let mut bytes = Vec::new();
+        if let Err(error) = presenter.flush_clipboard(&mut bytes) {
+            presenter.report(&error);
+        }
+        if let Err(error) = retain_clipboard(&mut clipboard_output, bytes) {
+            presenter.report(&error);
+        }
+        if !clipboard_output.is_empty() {
+            wake.0.notify_one();
         }
         if failure.is_some()
             || !presenter.surface.is_live()
@@ -313,6 +340,12 @@ pub fn run(
                 }
             };
             if let Some(input) = input {
+                poll_output(
+                    &mut pending_output,
+                    &mut written_sequence,
+                    Some(screen),
+                    &mut presenter,
+                )?;
                 if exit_key.ready(Some(&input), Instant::now()) {
                     return Ok(true);
                 }
@@ -357,6 +390,12 @@ pub fn run(
                         queued_input = Some(input);
                         break;
                     }
+                    poll_output(
+                        &mut pending_output,
+                        &mut written_sequence,
+                        Some(screen),
+                        &mut presenter,
+                    )?;
                     presenter.input(input).map_err(|e| e.to_string())?;
                 }
                 let mut bytes = Vec::new();

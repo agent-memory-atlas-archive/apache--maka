@@ -230,9 +230,21 @@ pub enum WidgetInput {
     /// An immediate business event; never replaces retryable native observations.
     Emitted(NativeInput),
     /// A physical native submission with an original, revision-checked default.
-    SubmitCopy(NativeInput, String),
+    SubmitCopy(NativeInput, maka_ui_runtime::input::SubmitCopy),
 }
-type Job = Pin<Box<dyn Future<Output = (Uuid, TaskCompletion)> + Send>>;
+enum Completion {
+    Action(Uuid, Box<TaskCompletion>),
+    Input {
+        mount: Mount,
+        result: maka_ui_runtime::Result<()>,
+        copy: Option<(paint::TargetIdentity, ClipboardCopy)>,
+    },
+}
+enum ClipboardCopy {
+    Button(Box<str>),
+    Submit(maka_ui_runtime::input::SubmitCopy),
+}
+type Job = Pin<Box<dyn Future<Output = Completion>>>;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Retirement {
     Exit,
@@ -736,20 +748,11 @@ impl Presenter {
                     return Ok(());
                 }
                 WidgetInput::Emitted(emitted) => {
-                    let revision = self.application.frame(&target.mount)?.revision;
-                    self.application.dispatch(
+                    self.accept_native_input(
                         &target.mount,
-                        revision,
-                        &emitted.key,
-                        emitted.value,
+                        emitted,
+                        submit_copy.map(|copy| (target.identity.clone(), ClipboardCopy::Submit(copy))),
                     )?;
-                    if !self.application.is_retiring(&target.mount)
-                        && self.resources.admits(&target)
-                        && self.target_admitted(&target)
-                        && let Some(text) = submit_copy
-                    {
-                        self.clipboard = Some(text.into());
-                    }
                     if !matches!(event, Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown))
                     {
                         self.focus = Some(target);
@@ -805,13 +808,7 @@ impl Presenter {
                 }
                 let observed = match self.resources.input(ancestor, &event)? {
                     Some(WidgetInput::Emitted(emitted)) => {
-                        let revision = self.application.frame(&ancestor.mount)?.revision;
-                        self.application.dispatch(
-                            &ancestor.mount,
-                            revision,
-                            &emitted.key,
-                            emitted.value,
-                        )?;
+                        self.accept_native_input(&ancestor.mount, emitted, None)?;
                         self.sync_native()?;
                         return Ok(());
                     }
@@ -884,20 +881,22 @@ impl Presenter {
                 paint::TargetKind::Item { .. } => "activate",
                 _ => "click",
             };
-            self.application.dispatch(
-                &target.mount,
-                target.revision,
-                &target.key,
-                json!({"kind":kind}),
-            )?;
             if let paint::TargetKind::Action {
                 copy_text: Some(text),
             } = &target.kind
-                && !self.application.is_retiring(&target.mount)
-                && self.resources.admits(&target)
-                && self.target_admitted(&target)
             {
-                self.clipboard = Some(text.clone());
+                self.accept_native_input(
+                    &target.mount,
+                    NativeInput { key: target.key.clone(), value: json!({"kind":kind}) },
+                    Some((target.identity.clone(), ClipboardCopy::Button(text.clone()))),
+                )?;
+            } else {
+                self.application.dispatch(
+                    &target.mount,
+                    target.revision,
+                    &target.key,
+                    json!({"kind":kind}),
+                )?;
             }
             self.close_context_action(target.scope.as_ref());
             self.focus = Some(target);
@@ -1106,15 +1105,7 @@ impl Presenter {
         }
         self.sync_native()?;
         // Each join observer stays with the actual owner, independently of UI.
-        let wake = self.application.waker();
-        let mut cx = std::task::Context::from_waker(&wake);
-        while let std::task::Poll::Ready(Some((id, completion))) =
-            Pin::new(&mut self.jobs).poll_next(&mut cx)
-        {
-            if let Some(task) = self.application.finish_task(id, completion)? {
-                self.execute(task);
-            }
-        }
+        self.finish_jobs()?;
         if self.surface.is_live() && !self.application.is_retiring(&self.root) {
             while let Some(action) = self.application.start_task(&self.root)? {
                 self.execute(action);
@@ -1197,7 +1188,51 @@ impl Presenter {
             }
             self.sync_native()?;
         }
+        self.finish_jobs()?;
         failure.map_or(Ok(()), Err)
+    }
+    fn finish_jobs(&mut self) -> maka_ui_runtime::Result<()> {
+        let wake = self.application.waker();
+        let mut cx = std::task::Context::from_waker(&wake);
+        while let std::task::Poll::Ready(Some(completion)) =
+            Pin::new(&mut self.jobs).poll_next(&mut cx)
+        {
+            match completion {
+                Completion::Action(id, completion) => {
+                    if let Some(task) = self.application.finish_task(id, *completion)? {
+                        self.execute(task);
+                    }
+                }
+                Completion::Input {
+                    mount,
+                    result,
+                    copy,
+                } => {
+                    if let Err(error) = result {
+                        if !matches!(error, Error::Core(maka_plugin_core::Error::Retired))
+                            || !self.application.is_retiring(&mount)
+                        {
+                            return Err(error);
+                        }
+                    } else if let Some((target, copy)) = copy
+                        && !self.application.is_retiring(&mount)
+                        && self.resources.owns(&target)
+                    {
+                        match copy {
+                            ClipboardCopy::Button(text) => self.clipboard = Some(text),
+                            ClipboardCopy::Submit(copy) => {
+                                if self.resources.owners.get(&mount.id()).is_some_and(|owner| {
+                                    owner.state.downcast_ref::<editor::Owner>().is_some_and(|owner| owner.snapshot().text == copy.basis)
+                                }) {
+                                    self.clipboard = Some(copy.text.into());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
     pub fn retire(&mut self) -> maka_ui_runtime::Result<()> {
         self.retire_surface(Retirement::Exit)
@@ -1238,9 +1273,27 @@ impl Presenter {
             let completion = task
                 .await
                 .unwrap_or_else(|error| TaskCompletion::Interrupted(error.to_string()));
-            (id, completion)
+            Completion::Action(id, Box::new(completion))
         }));
         self.application.waker().wake_by_ref();
+    }
+    fn accept_native_input(
+        &mut self,
+        mount: &Mount,
+        input: NativeInput,
+        copy: Option<(paint::TargetIdentity, ClipboardCopy)>,
+    ) -> maka_ui_runtime::Result<()> {
+        let receipt = self.resources.capture_input(mount, input)?;
+        let mount = mount.clone();
+        self.jobs.push(Box::pin(async move {
+            Completion::Input {
+                mount,
+                result: receipt.await,
+                copy,
+            }
+        }));
+        self.application.waker().wake_by_ref();
+        Ok(())
     }
     /// Actual terminal restoration acknowledgement, not logical retirement.
     /// 接收实际终端恢复回执，不以逻辑退休冒充恢复完成。

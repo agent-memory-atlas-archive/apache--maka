@@ -21,7 +21,7 @@ use super::*;
 
 fn open(tui: &mut Pty) {
     tui.send(b"\x0b");
-    tui.wait_for("Commands");
+    tui.wait_for("Close commands");
     tui.send(b"\x1b[F");
     tui.send(&[0x7f; 24]);
     tui.send(b"Goal");
@@ -85,7 +85,7 @@ fn default_product_goal_preserves_approval_and_resumes_original_objective_after_
     ]);
     tui.wait_until_with_timeout(|s| s.contains("Settings"), Duration::from_secs(60));
     tui.send(b"\x0b");
-    tui.wait_for("Commands");
+    tui.wait_for("Close commands");
     tui.send(b"New conversation");
     tui.wait_for("› New conversation");
     tui.send(b"\r");

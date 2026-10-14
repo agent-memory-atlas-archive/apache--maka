@@ -92,9 +92,48 @@ fn literal_source_displays_safely_and_copies_every_original_control_and_utf8_byt
             .any(|cell| cell.symbol().chars().any(char::is_control))
     );
     assert_eq!(buffer[(4, 1)].symbol(), "中");
+    let geometry = |presenter: &Presenter| {
+        let owner = presenter.resources.owners[&presenter.root.id()]
+            .state
+            .downcast_ref::<super::super::source::Owner>()
+            .unwrap();
+        owner
+            .document
+            .borrow()
+            .glyphs
+            .as_ref()
+            .unwrap()
+            .layout
+            .clone()
+    };
+    let original = geometry(&presenter);
+    let budget = presenter.resources.budget.clone();
+    let retained = budget.usage();
+    draw(&mut presenter, 40, 8);
+    let repeated = geometry(&presenter);
+    let super::super::selection::Layout::Literal(first, _) = &original else {
+        panic!("literal geometry")
+    };
+    let super::super::selection::Layout::Literal(second, _) = &repeated else {
+        panic!("literal geometry")
+    };
+    assert!(std::sync::Arc::ptr_eq(first, second));
+    assert_eq!(budget.usage(), retained);
+    draw(&mut presenter, 20, 8);
+    let resized = geometry(&presenter);
+    let super::super::selection::Layout::Literal(next, _) = &resized else {
+        panic!("literal geometry")
+    };
+    assert!(!std::sync::Arc::ptr_eq(first, next));
     select_all(&mut presenter);
     assert_eq!(copied(&mut presenter).unwrap(), source.as_bytes());
     close(&mut presenter);
+    assert!(
+        budget.usage().0 > 0,
+        "original shared geometry still owns its bytes"
+    );
+    drop((original, repeated, resized));
+    assert_eq!(budget.usage(), (0, 0, 0));
 }
 #[test]
 fn append_preserves_literal_byte_endpoints_even_when_graphemes_or_crlf_merge() {

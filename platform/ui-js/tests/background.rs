@@ -196,12 +196,88 @@ fn original_receipts_survive_rejected_candidate_and_drain_in_order_before_retire
     assert!(advance(&mut app).is_empty());
     app.retire(&mount).unwrap();
     queue.close();
-    assert!(scheduler.block_on(late).is_err());
     assert_eq!(budget.usage(), (0, 0, 0));
     app.close(&mount, Ok(())).unwrap();
     assert!(!app.can_shutdown());
     scheduler.block_on(app.wait_idle()).unwrap();
+    assert!(matches!(
+        scheduler.block_on(late),
+        Err(maka_ui_runtime::Error::Core(
+            maka_plugin_core::Error::Retired
+        ))
+    ));
     assert!(app.frame(&mount).is_err());
+    scheduler
+        .block_on(std::future::poll_fn(|cx| {
+            app.set_waker(cx.waker().clone());
+            match app.shutdown() {
+                Err(maka_ui_runtime::Error::Core(maka_plugin_core::Error::CleanupPending)) => {
+                    Poll::Pending
+                }
+                result => Poll::Ready(result),
+            }
+        }))
+        .unwrap();
+}
+
+#[test]
+fn a_slow_deployment_loads_more_than_the_worker_byte_capacity_without_overflow() {
+    use maka_plugin_core::package::{EntryTarget, Implementation, Realm};
+    use std::task::Poll;
+    let scheduler = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_time()
+        .build()
+        .unwrap();
+    let (mut input, mut packages) = support::fixture("");
+    let original = packages.pop().unwrap();
+    let mut declaration = original.manifest().application.clone().unwrap();
+    declaration
+        .entries
+        .get_mut(&EntryTarget::Desktop)
+        .unwrap()
+        .implementation = Implementation::JavaScript {
+        module: "index.mjs".into(),
+        realm: Realm::Shared,
+    };
+    // Each source fits the existing capacity; the accepted plan exceeds it.
+    // Slow original loads make eager enqueueing fail deterministically.
+    let source = format!(
+        "/*{}*/\nconst until=Date.now()+100;while(Date.now()<until){{}};\n{}",
+        "x".repeat(800_000),
+        std::str::from_utf8(original.file("index.mjs").unwrap()).unwrap()
+    );
+    assert!(source.len() * 12 > 8 * 1024 * 1024);
+    let app = support::package("dynamic.app", declaration, Some(source));
+    input.instances.get_mut("app").unwrap().package = app.application_ref().into();
+    for index in 1..12 {
+        let mut node = support::node(&app, index + 2);
+        node.bindings = input.instances["app"].bindings.clone();
+        input
+            .instances
+            .insert(format!("additional{index:02}"), node);
+    }
+    packages.push(app);
+    let mut app = Application::new(
+        &input,
+        packages,
+        scheduler.handle().clone(),
+        maka_ui_js::execution(maka_js_runtime::plugin::Limits {
+            synchronous_slice: Duration::from_millis(500),
+            ..Default::default()
+        }),
+        support::scene::registry::<()>(PresentationTarget::Desktop),
+        Default::default(),
+    )
+    .unwrap();
+    scheduler.block_on(app.wait_ready()).unwrap();
+    let status = app.deployment_status();
+    assert!(!status.converging);
+    assert!(status.error.is_none());
+    let mount = app.mount_launch(json!({"count":3})).unwrap();
+    scheduler.block_on(app.wait_idle()).unwrap();
+    assert_eq!(app.frame(&mount).unwrap().state["count"], 3);
+    app.close(&mount, Ok(())).unwrap();
     scheduler
         .block_on(std::future::poll_fn(|cx| {
             app.set_waker(cx.waker().clone());

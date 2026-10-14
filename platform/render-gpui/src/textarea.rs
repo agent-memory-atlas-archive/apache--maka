@@ -224,9 +224,9 @@ impl TextareaOwner {
                 if owner.snapshot.marked.is_some() {
                     return None;
                 }
-                let input = owner.input.current.borrow().clone()?;
+                owner.input.current.borrow().as_ref()?;
                 Some((
-                    input,
+                    owner.input.clone(),
                     EditorObservation {
                         revision: owner.revision,
                         snapshot: owner.observation_snapshot(),
@@ -239,13 +239,14 @@ impl TextareaOwner {
             window.prevent_default();
             cx.stop_propagation();
             // Leave the entity borrow before the original component dispatch.
-            if (input.dispatch)(
-                "submit",
-                serde_json::to_value(observation).expect("native submit observation"),
-                window,
-                cx,
-            )
-            .is_err()
+            if input
+                .capture_input(
+                    "submit",
+                    serde_json::to_value(observation).expect("native submit observation"),
+                    window,
+                    cx,
+                )
+                .is_err()
             {
                 eprintln!("editor submit rejected");
             }

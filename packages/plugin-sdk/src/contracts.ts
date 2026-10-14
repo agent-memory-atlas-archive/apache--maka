@@ -58,6 +58,15 @@ export const contracts = {
             type: 'boolean',
             default: true,
           },
+          openWebLinks: {
+            description: 'The committed document decides native URL opening before guest work.',
+            type: 'boolean',
+            default: true,
+          },
+          bubbleLinks: {
+            type: 'boolean',
+            default: true,
+          },
         },
         additionalProperties: false,
         required: ['source', 'appearance', 'selectable', 'disabled'],

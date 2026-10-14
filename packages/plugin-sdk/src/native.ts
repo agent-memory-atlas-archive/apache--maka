@@ -21,7 +21,393 @@
 import { contracts } from './contracts.js';
 import { configurations } from './configurations.js';
 
-export const nativeImplementations = /* @__PURE__ */ (() => ({
+export const nativeImplementations = /* @__PURE__ */ ((): {
+  label: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { Label: typeof contracts.label };
+  };
+  locale: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { Locale: typeof contracts.locale };
+  };
+  textReader: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { Reader: typeof contracts.textReader };
+  };
+  textarea: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { Textarea: typeof contracts.textarea };
+  };
+  markdown: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { Markdown: typeof contracts.markdown };
+  };
+  markdownText: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { MarkdownText: typeof contracts.markdownText };
+  };
+  diff: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { Diff: typeof contracts.diff };
+  };
+  sourceText: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { SourceText: typeof contracts.sourceText };
+  };
+  filePicker: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { FilePicker: typeof contracts.filePicker };
+  };
+  image: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { Image: typeof contracts.image };
+  };
+  terminalView: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { TerminalView: typeof contracts.terminalView };
+  };
+  readingArea: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { ReadingArea: typeof contracts.readingArea };
+  };
+  rows: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { Rows: typeof contracts.rows };
+  };
+  valueCheckpoint: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { Checkpoint: typeof contracts.valueCheckpoint };
+  };
+  textFile: {
+    implementation: string;
+    configuration: {
+      type: 'object';
+      additionalProperties: false;
+      properties: { path: { type: ['string', 'null']; minLength: 1; maxLength: 4096 } };
+      title: 'TextFileConfiguration';
+      $schema: 'https://json-schema.org/draft/2020-12/schema';
+    };
+    exports: { TextFile: typeof contracts.textFile };
+  };
+  morphMark: {
+    implementation: string;
+    configuration: {
+      type: 'object';
+      additionalProperties: false;
+      properties: {
+        shapes: { type: 'array'; items: { $ref: '#/$defs/MorphShape' }; minItems: 2; maxItems: 2 };
+        color: { $ref: '#/$defs/TerminalColor' };
+        period: { type: 'integer'; format: 'uint32'; minimum: 1000; maximum: 60000 };
+      };
+      required: ['shapes', 'color', 'period'];
+      title: 'MorphMarkConfiguration';
+      $schema: 'https://json-schema.org/draft/2020-12/schema';
+      $defs: {
+        MorphShape: {
+          type: 'object';
+          additionalProperties: false;
+          properties: {
+            paths: {
+              type: 'array';
+              items: {
+                type: 'array';
+                items: {
+                  type: 'array';
+                  items: { type: 'number'; format: 'float' };
+                  minItems: 2;
+                  maxItems: 2;
+                };
+              };
+              minItems: 1;
+              maxItems: 32;
+            };
+            radius: { type: 'number'; format: 'float'; minimum: 0.01; maximum: 0.2 };
+            miters: {
+              type: 'array';
+              items: { type: 'integer'; format: 'uint'; minimum: 0 };
+              maxItems: 32;
+            };
+            columns: { type: 'integer'; format: 'uint'; minimum: 32; maximum: 256 };
+          };
+          required: ['paths', 'radius', 'miters', 'columns'];
+        };
+        TerminalColor: {
+          anyOf: [
+            { type: 'integer'; format: 'uint32'; minimum: 0; maximum: 16777215 },
+            { $ref: '#/$defs/TerminalNamedColor' },
+          ];
+          description: "Terminal colors retain the user's ANSI palette and default background.\nNumeric values are RGB; named values are emitted as terminal attributes.";
+        };
+        TerminalNamedColor: {
+          type: 'string';
+          enum: [
+            'reset',
+            'black',
+            'red',
+            'green',
+            'yellow',
+            'blue',
+            'magenta',
+            'cyan',
+            'gray',
+            'dark_gray',
+            'light_red',
+            'light_green',
+            'light_yellow',
+            'light_blue',
+            'light_magenta',
+            'light_cyan',
+            'white',
+          ];
+        };
+      };
+    };
+    exports: { MorphMark: typeof contracts.morphMark };
+  };
+  selectionMenu: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { SelectionMenu: typeof contracts.selectionMenu };
+  };
+  input: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { SecretInput: typeof contracts.secretInput; TextInput: typeof contracts.textInput };
+  };
+  desktopSurface: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { Surface: typeof contracts.desktopSurface };
+  };
+  terminalSurface: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { Surface: typeof contracts.terminalSurface };
+  };
+  callerHistory: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: {
+      DeploymentHistory: typeof contracts.callerHistory;
+      History: typeof contracts.callerHistory;
+    };
+  };
+  receiptReader: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { Receipts: typeof contracts.receiptReader };
+  };
+  deploymentManager: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { Management: typeof contracts.deploymentManager };
+  };
+  gateway: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: {};
+  };
+  uiDeploymentManager: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { Management: typeof contracts.deploymentManager };
+  };
+  agent: {
+    implementation: string;
+    configuration: typeof configurations.agent;
+    exports: { agent: typeof contracts.agent };
+  };
+  acpExecutor: {
+    implementation: string;
+    configuration: {
+      type: 'object';
+      additionalProperties: false;
+      properties: {
+        agent: { $ref: '#/$defs/AcpAgent' };
+        permissions: {
+          anyOf: [{ $ref: '#/$defs/Permissions' }, { type: 'null' }];
+          description: 'Requested launch access, still subject to installation limits and consent.';
+        };
+      };
+      required: ['agent'];
+      title: 'AcpExecutorConfiguration';
+      $schema: 'https://json-schema.org/draft/2020-12/schema';
+      $defs: {
+        AcpAgent: {
+          type: 'object';
+          additionalProperties: false;
+          properties: {
+            id: { type: 'string' };
+            displayName: { type: 'string' };
+            executable: { type: 'string' };
+            args: { type: 'array'; items: { type: 'string' }; default: [] };
+            env: {
+              type: 'object';
+              additionalProperties: { type: 'string' };
+              description: "Ordinary launch settings only. Credentials belong to the agent's login store.";
+              default: {};
+            };
+          };
+          required: ['id', 'displayName', 'executable'];
+        };
+        Permissions: {
+          type: 'object';
+          additionalProperties: false;
+          properties: {
+            filesystem: { type: 'array'; items: { $ref: '#/$defs/Rule' }; maxItems: 32 };
+            network: { $ref: '#/$defs/Network' };
+          };
+          required: ['filesystem', 'network'];
+        };
+        Rule: {
+          type: 'object';
+          additionalProperties: false;
+          properties: {
+            path: { type: 'string' };
+            scope: { $ref: '#/$defs/Scope' };
+            access: { $ref: '#/$defs/Access' };
+          };
+          required: ['path', 'scope', 'access'];
+          description: 'Paths have executor-native meaning. Validate and materialize them on the\nexecution host, never on a remote Desktop. This document alone grants nothing.';
+        };
+        Scope: { type: 'string'; enum: ['subtree', 'exact'] };
+        Access: {
+          type: 'string';
+          enum: ['read', 'write', 'deny'];
+          description: 'Equal-path conflict priority is different from authority breadth: deny wins.';
+        };
+        Network: {
+          oneOf: [
+            { type: 'string'; enum: ['denied', 'allowed'] },
+            {
+              type: 'object';
+              properties: {
+                restricted: {
+                  type: 'object';
+                  properties: {
+                    destinations: {
+                      type: 'array';
+                      uniqueItems: true;
+                      items: { $ref: '#/$defs/Destination' };
+                      maxItems: 128;
+                    };
+                  };
+                  additionalProperties: false;
+                  required: ['destinations'];
+                };
+              };
+              required: ['restricted'];
+              additionalProperties: false;
+            },
+          ];
+        };
+        Destination: {
+          type: 'object';
+          additionalProperties: false;
+          properties: {
+            host: { type: 'string'; minLength: 1; maxLength: 253 };
+            port: { type: 'integer'; format: 'uint16'; minimum: 1; maximum: 65535 };
+          };
+          required: ['host', 'port'];
+          description: 'Destination authority, independent of the upstream proxy used to reach it.\nA domain grant does not authorize its subdomains or other ports.';
+        };
+      };
+    };
+    exports: { executor: typeof contracts.executor; setup: typeof contracts.executorSetup };
+  };
+  workhub: {
+    implementation: string;
+    configuration: typeof configurations.workhub;
+    exports: { agent: typeof contracts.agent; workhub: typeof contracts.workhubCoordinator };
+  };
+  workspaceComputer: {
+    implementation: string;
+    configuration: typeof configurations.workspaceComputer;
+    exports: { computer: typeof contracts.workspaceComputer };
+  };
+  workspaceFiles: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { files: typeof contracts.workspaceFiles };
+  };
+  workspaceProcesses: {
+    implementation: string;
+    configuration: typeof configurations.workspaceProcesses;
+    exports: {
+      processes: typeof contracts.workspaceProcesses;
+      terminal: typeof contracts.terminal;
+    };
+  };
+  protocolProcesses: {
+    implementation: string;
+    configuration: typeof configurations.workspaceProcesses;
+    exports: { protocol: typeof contracts.protocolProcesses };
+  };
+  uiAuthoring: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { Authoring: typeof contracts.uiAuthoring };
+  };
+  workspaceWeb: {
+    implementation: string;
+    configuration: typeof configurations.workspaceWeb;
+    exports: { web: typeof contracts.workspaceWeb };
+  };
+  workspaceJev: {
+    implementation: string;
+    configuration: typeof configurations.workspaceJev;
+    exports: { jev: typeof contracts.workspaceJev };
+  };
+  skillLibrary: {
+    implementation: string;
+    configuration: typeof configurations.skillLibrary;
+    exports: { skills: typeof contracts.skillLibrary };
+  };
+  skillOutcomes: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { Outcomes: typeof contracts.skillOutcomes };
+  };
+  questions: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { questions: typeof contracts.questions };
+  };
+  forms: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { forms: typeof contracts.forms };
+  };
+  settings: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { Settings: typeof contracts.settings };
+  };
+  settingsAuthentication: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { Authentication: typeof contracts.settingsAuthentication };
+  };
+  settingsSetup: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { Setup: typeof contracts.settingsSetup };
+  };
+} => ({
   label: {
     implementation: 'maka.ui.label',
     configuration: { type: 'object', properties: {}, required: [], additionalProperties: false },

@@ -555,6 +555,7 @@ async fn ui_action(
         serde_json::Value::Null,
     )
     .unwrap();
+    ui.wait_idle().await.unwrap();
     ui.capture_actions(root, |_| panic!("resource-free action"))
         .unwrap();
     let mut task = ui.start_task(root).unwrap().unwrap();
@@ -567,12 +568,24 @@ async fn ui_action(
     }
     ui.deliver_action_results(root, |_, _, _| Ok(false))
         .unwrap();
+    ui.wait_idle().await.unwrap();
     ui.frame(root).unwrap().state["outcome"].clone()
 }
-fn stop_ui(mut ui: maka_ui_runtime::Application, root: &maka_plugin_core::runtime::Mount) {
+async fn stop_ui(mut ui: maka_ui_runtime::Application, root: &maka_plugin_core::runtime::Mount) {
     ui.retire(root).unwrap();
     ui.close(root, Ok(())).unwrap();
-    ui.shutdown().unwrap();
+    std::future::poll_fn(|cx| {
+        ui.set_waker(cx.waker().clone());
+        match ui.shutdown() {
+            Err(maka_ui_runtime::Error::Core(maka_plugin_core::Error::CleanupPending)) => {
+                std::task::Poll::Pending
+            }
+            result => std::task::Poll::Ready(result),
+        }
+    })
+    .await
+    .unwrap();
+    assert!(ui.can_shutdown());
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn native_adapter_runs_checked_ui_actions_actual_caller_sql_and_original_recovery() {
@@ -609,6 +622,7 @@ async fn native_adapter_runs_checked_ui_actions_actual_caller_sql_and_original_r
     )
     .await;
     let root = ui.mount_launch(serde_json::json!({})).unwrap();
+    ui.wait_idle().await.unwrap();
     assert_eq!(
         ui_action(&mut ui, &root, "read").await["value"]["effects"],
         0
@@ -632,7 +646,7 @@ async fn native_adapter_runs_checked_ui_actions_actual_caller_sql_and_original_r
             .len(),
         1
     );
-    stop_ui(ui, &root);
+    stop_ui(ui, &root).await;
     connection.close().await.unwrap();
     drop(connection);
     stop.cancel();
@@ -653,6 +667,7 @@ async fn concurrent_native_dispatch_and_close_cancel_the_original_host_without_a
     )
     .await;
     let root = ui.mount_launch(serde_json::json!({})).unwrap();
+    ui.wait_idle().await.unwrap();
     ui_action(&mut ui, &root, "read").await;
     let source = source.lock().unwrap().take().unwrap();
     let inert = service
@@ -728,7 +743,7 @@ async fn concurrent_native_dispatch_and_close_cancel_the_original_host_without_a
     );
     drop(session);
     drop(service);
-    stop_ui(ui, &root);
+    stop_ui(ui, &root).await;
     connection.close().await.unwrap();
     drop(connection);
     f.server.close().await.unwrap();
@@ -870,6 +885,7 @@ async fn connection_close_cancels_the_same_pending_native_connector_before_any_h
     )
     .await;
     let root = ui.mount_launch(serde_json::json!({})).unwrap();
+    ui.wait_idle().await.unwrap();
     ui.dispatch(
         &root,
         ui.frame(&root).unwrap().revision,
@@ -877,6 +893,7 @@ async fn connection_close_cancels_the_same_pending_native_connector_before_any_h
         serde_json::Value::Null,
     )
     .unwrap();
+    ui.wait_idle().await.unwrap();
     ui.capture_actions(&root, |_| panic!("resource-free action"))
         .unwrap();
     let task = ui.start_task(&root).unwrap().unwrap();
@@ -893,7 +910,7 @@ async fn connection_close_cancels_the_same_pending_native_connector_before_any_h
     .unwrap();
     cleanup.unwrap();
     ui.finish_task(id, completion.unwrap()).unwrap();
-    stop_ui(ui, &root);
+    stop_ui(ui, &root).await;
     drop(service);
     drop(connection);
     f.server.close().await.unwrap();
@@ -980,6 +997,7 @@ async fn inert_native_cleanup_drops_real_inputs_before_releasing_the_connection_
         )
         .await;
         let root = ui.mount_launch(serde_json::json!({})).unwrap();
+        ui.wait_idle().await.unwrap();
         ui_action(&mut ui, &root, "read").await;
         let entered = Arc::new(tokio::sync::Notify::new());
         let release = Arc::new(std::sync::Barrier::new(2));
@@ -1030,7 +1048,7 @@ async fn inert_native_cleanup_drops_real_inputs_before_releasing_the_connection_
         drop(session);
         connection_close.await.unwrap();
         drop(service);
-        stop_ui(ui, &root);
+        stop_ui(ui, &root).await;
         drop(connection);
         f.server.close().await.unwrap();
         f.cleanup().await;
@@ -1095,6 +1113,7 @@ async fn panicked_original_opening_keeps_the_connection_fenced_without_a_publish
         )
         .await;
         let root = ui.mount_launch(serde_json::json!({})).unwrap();
+        ui.wait_idle().await.unwrap();
         ui.dispatch(
             &root,
             ui.frame(&root).unwrap().revision,
@@ -1102,6 +1121,7 @@ async fn panicked_original_opening_keeps_the_connection_fenced_without_a_publish
             serde_json::Value::Null,
         )
         .unwrap();
+        ui.wait_idle().await.unwrap();
         ui.capture_actions(&root, |_| panic!("resource-free action"))
             .unwrap();
         let task = ui.start_task(&root).unwrap().unwrap();
@@ -1257,6 +1277,7 @@ async fn opening_poll_future_drop_and_returned_channel_drop_are_independently_is
         )
         .await;
         let root = ui.mount_launch(serde_json::json!({})).unwrap();
+        ui.wait_idle().await.unwrap();
         ui.dispatch(
             &root,
             ui.frame(&root).unwrap().revision,
@@ -1264,6 +1285,7 @@ async fn opening_poll_future_drop_and_returned_channel_drop_are_independently_is
             serde_json::Value::Null,
         )
         .unwrap();
+        ui.wait_idle().await.unwrap();
         ui.capture_actions(&root, |_| panic!("resource-free action"))
             .unwrap();
         let task = ui.start_task(&root).unwrap().unwrap();
@@ -1331,6 +1353,7 @@ async fn lost_close_before_dispatch_poll_keeps_the_actual_confirmed_sql_token() 
     )
     .await;
     let root = ui.mount_launch(serde_json::json!({})).unwrap();
+    ui.wait_idle().await.unwrap();
     ui_action(&mut ui, &root, "read").await;
     let session = service
         .mutation(maka_ui_runtime::actions::ServiceRequest {
@@ -1365,7 +1388,7 @@ async fn lost_close_before_dispatch_poll_keeps_the_actual_confirmed_sql_token() 
         maka_plugin_core::operation::Receipt::Unavailable { .. }
     ));
     drop(session);
-    stop_ui(ui, &root);
+    stop_ui(ui, &root).await;
     let Fixture {
         _directory,
         namespaces,
@@ -1649,6 +1672,7 @@ async fn revocation_during_actual_opening_sends_no_wire_and_closes_original_chan
     )
     .await;
     let root = ui.mount_launch(serde_json::json!({})).unwrap();
+    ui.wait_idle().await.unwrap();
     ui.dispatch(
         &root,
         ui.frame(&root).unwrap().revision,
@@ -1656,6 +1680,7 @@ async fn revocation_during_actual_opening_sends_no_wire_and_closes_original_chan
         serde_json::Value::Null,
     )
     .unwrap();
+    ui.wait_idle().await.unwrap();
     ui.capture_actions(&root, |_| panic!("resource-free action"))
         .unwrap();
     let task = ui.start_task(&root).unwrap().unwrap();
@@ -1680,13 +1705,14 @@ async fn revocation_during_actual_opening_sends_no_wire_and_closes_original_chan
     assert!(ui.finish_task(id, completion).unwrap().is_none());
     ui.deliver_action_results(&root, |_, _, _| Ok(false))
         .unwrap();
+    ui.wait_idle().await.unwrap();
     assert_eq!(
         ui.frame(&root).unwrap().state["outcome"]["status"],
         "failed"
     );
     assert_eq!(written.load(Ordering::SeqCst), 0);
     assert_eq!(dropped.load(Ordering::SeqCst), 1);
-    stop_ui(ui, &root);
+    stop_ui(ui, &root).await;
     connection.close().await.unwrap();
     drop(connection);
     f.server.close().await.unwrap();
@@ -1707,6 +1733,7 @@ async fn native_caller_preserves_original_mount_across_requests_and_rejects_reop
     )
     .await;
     let root = ui.mount_launch(serde_json::json!({})).unwrap();
+    ui.wait_idle().await.unwrap();
     for _ in 0..2 {
         assert_eq!(
             ui_action(&mut ui, &root, "read").await["value"]["effects"],
@@ -1723,6 +1750,7 @@ async fn native_caller_preserves_original_mount_across_requests_and_rejects_reop
     ui.retire(&root).unwrap();
     ui.close(&root, Ok(())).unwrap();
     let reopened = ui.mount_launch(serde_json::json!({})).unwrap();
+    ui.wait_idle().await.unwrap();
     assert_ne!(root, reopened);
     assert_eq!(
         ui_action(&mut ui, &reopened, "read").await["value"]["effects"],
@@ -1735,7 +1763,7 @@ async fn native_caller_preserves_original_mount_across_requests_and_rejects_reop
         assert_eq!(callers[0], callers[1]);
         assert_ne!(callers[0], callers[2]);
     }
-    stop_ui(ui, &reopened);
+    stop_ui(ui, &reopened).await;
     connection.close().await.unwrap();
     drop(service);
     drop(connection);
@@ -1842,6 +1870,7 @@ async fn checked_ui_mutation_progress_cancel_waits_for_original_completion_and_r
         )
         .await;
         let root = ui.mount_launch(serde_json::json!({})).unwrap();
+        ui.wait_idle().await.unwrap();
         ui.dispatch(
             &root,
             ui.frame(&root).unwrap().revision,
@@ -1849,6 +1878,7 @@ async fn checked_ui_mutation_progress_cancel_waits_for_original_completion_and_r
             serde_json::Value::Null,
         )
         .unwrap();
+        ui.wait_idle().await.unwrap();
         ui.capture_actions(&root, |_| unreachable!()).unwrap();
         let mut task = ui.start_task(&root).unwrap().unwrap();
         loop {
@@ -1859,6 +1889,7 @@ async fn checked_ui_mutation_progress_cancel_waits_for_original_completion_and_r
                 .expect("operation still running");
             ui.deliver_action_results(&root, |_, _, _| Ok(false))
                 .unwrap();
+            ui.wait_idle().await.unwrap();
             if ui.frame(&root).unwrap().state["outcome"]["status"] == "updated" {
                 break;
             }
@@ -1877,6 +1908,7 @@ async fn checked_ui_mutation_progress_cancel_waits_for_original_completion_and_r
             serde_json::Value::Null,
         )
         .unwrap();
+        ui.wait_idle().await.unwrap();
         gate.cancelled.notified().await;
         assert!(
             !running.is_finished(),
@@ -1891,6 +1923,7 @@ async fn checked_ui_mutation_progress_cancel_waits_for_original_completion_and_r
         );
         ui.deliver_action_results(&root, |_, _, _| Ok(false))
             .unwrap();
+        ui.wait_idle().await.unwrap();
         let original = ui.frame(&root).unwrap().state["outcome"].clone();
         assert_eq!(original["status"], "operation");
         assert_eq!(
@@ -1910,7 +1943,7 @@ async fn checked_ui_mutation_progress_cancel_waits_for_original_completion_and_r
                 .len(),
             1
         );
-        stop_ui(ui, &root);
+        stop_ui(ui, &root).await;
         connection.close().await.unwrap();
         f.server.close().await.unwrap();
         f.cleanup().await;

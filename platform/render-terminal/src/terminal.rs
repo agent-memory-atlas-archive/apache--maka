@@ -36,11 +36,10 @@ use crossterm::{
 use crossterm::event::{
     KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
-use ratatui::{Terminal, backend::CrosstermBackend};
+use ratatui::Terminal;
+use ratatui_crossterm::CrosstermBackend;
 use std::{
-    cell::RefCell,
     io::{self, IsTerminal, Write},
-    rc::Rc,
     sync::mpsc,
 };
 
@@ -60,19 +59,19 @@ pub fn copy(writer: &mut impl io::Write, text: &str) -> io::Result<()> {
 }
 
 const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
-#[derive(Clone, Default)]
-struct FrameWriter(Rc<RefCell<Vec<u8>>>);
+#[derive(Default)]
+struct FrameWriter(Vec<u8>);
 impl Write for FrameWriter {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        let mut output = self.0.borrow_mut();
-        if output
+        if self
+            .0
             .len()
             .checked_add(bytes.len())
             .is_none_or(|size| size > MAX_OUTPUT_BYTES)
         {
             return Err(io::Error::other("terminal output buffer byte limit"));
         }
-        output.extend_from_slice(bytes);
+        self.0.extend_from_slice(bytes);
         Ok(bytes.len())
     }
     fn flush(&mut self) -> io::Result<()> {
@@ -81,7 +80,6 @@ impl Write for FrameWriter {
 }
 pub struct Screen {
     terminal: Terminal<CrosstermBackend<FrameWriter>>,
-    output: FrameWriter,
     pub(crate) generation: uuid::Uuid,
 }
 /// Encode one complete diff. The caller must finish writing it before encoding
@@ -91,12 +89,20 @@ pub(crate) fn render(
     screen: &mut Screen,
     render: impl FnOnce(&mut ratatui::Frame<'_>),
 ) -> io::Result<Vec<u8>> {
-    queue!(&mut screen.output, BeginSynchronizedUpdate)?;
+    queue!(
+        screen.terminal.backend_mut().writer_mut(),
+        BeginSynchronizedUpdate
+    )?;
     let result = screen.terminal.draw(render).map(|_| ());
-    let end = queue!(&mut screen.output, EndSynchronizedUpdate);
+    let end = queue!(
+        screen.terminal.backend_mut().writer_mut(),
+        EndSynchronizedUpdate
+    );
     result?;
     end?;
-    Ok(std::mem::take(&mut *screen.output.0.borrow_mut()))
+    Ok(std::mem::take(
+        &mut screen.terminal.backend_mut().writer_mut().0,
+    ))
 }
 /// Startup and controlled synchronous callers have no interactive owner yet.
 pub fn draw(screen: &mut Screen, paint: impl FnOnce(&mut ratatui::Frame<'_>)) -> io::Result<()> {
@@ -204,11 +210,9 @@ impl Guard {
         {
             self.key_releases = true;
         }
-        let output = FrameWriter::default();
-        let terminal = Terminal::new(CrosstermBackend::new(output.clone()))?;
+        let terminal = Terminal::new(CrosstermBackend::new(FrameWriter::default()))?;
         Ok(Screen {
             terminal,
-            output,
             generation: uuid::Uuid::new_v4(),
         })
     }
@@ -326,9 +330,8 @@ pub(crate) mod tests {
         }
     }
     pub(crate) fn screen(area: ratatui::layout::Rect) -> Screen {
-        let output = FrameWriter::default();
         let terminal = Terminal::with_options(
-            CrosstermBackend::new(output.clone()),
+            CrosstermBackend::new(FrameWriter::default()),
             ratatui::TerminalOptions {
                 viewport: ratatui::Viewport::Fixed(area),
             },
@@ -336,7 +339,6 @@ pub(crate) mod tests {
         .unwrap();
         Screen {
             terminal,
-            output,
             generation: uuid::Uuid::new_v4(),
         }
     }
