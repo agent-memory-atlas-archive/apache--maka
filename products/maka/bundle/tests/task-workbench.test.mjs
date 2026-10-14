@@ -216,31 +216,6 @@ test('switching tasks preserves the native reading owner, page, search basis and
   );
 });
 
-test('ended turns describe completion of execution without asserting successful delivery', () => {
-  const c = client()
-    .observe(20)
-    .history(
-      page(20, [
-        chunk(10, 'Result', {
-          timing: { startedAt: 1, finished: { at: 2, outcome: 'completed' } },
-        }),
-      ]),
-    );
-  assert.equal(c.find('task-state').text, '');
-  assert.equal(c.find('task-face'), undefined);
-  c.select('Task B')
-    .observe(30)
-    .history(
-      page(30, [
-        chunk(20, 'Provider failed', {
-          timing: { startedAt: 1, finished: { at: 2, outcome: 'failed' } },
-        }),
-      ]),
-    );
-  assert.equal(c.find('task-state').text, 'Run failed');
-  assert.equal(c.find('task-continue').focus_child, 'composer');
-});
-
 test('a restored empty task loads new failure facts without requiring a tail receipt', () => {
   const c = client().observe(0).history(page(0, []));
   c.select('Task B')
@@ -277,8 +252,6 @@ test('a restored empty task loads new failure facts without requiring a tail rec
       }),
     ]),
   );
-  assert.equal(c.find('task-state').text, 'Run failed');
-  assert.equal(c.find('task-continue').focus_child, 'composer');
   assert.equal(c.find('task-introduction').visible, false);
 });
 
@@ -316,7 +289,6 @@ test('failure arriving during the initial empty history read is not stranded beh
       }),
     ]),
   );
-  assert.equal(c.find('task-state').text, 'Run failed');
   assert.equal(c.find('task-introduction').visible, false);
 });
 
@@ -341,8 +313,6 @@ test('a failure with no assistant reply traverses empty state pages and retains 
       { after: { sequence: 25, offset: 0, field: 'body' } },
     ),
   );
-  assert.equal(c.find('task-state').text, 'Run failed');
-  assert.equal(c.find('task-continue').focus_child, 'composer');
   assert.equal(c.state.window.latest, true);
 });
 
@@ -445,7 +415,6 @@ test('returning to a running task buffers every delta while preserving the readi
       },
     },
   });
-  assert.equal(c.find('task-state').text, '');
   assert.equal(c.find(reader).props.live, false, 'new text does not re-enable following');
   assert.deepEqual(c.state.landing, landing);
   assert.equal(c.action('history'), undefined);
@@ -601,6 +570,12 @@ test('reading prompt context belongs to the retained page and ignores late repli
   c.raw('task-latest').history(page(20, [chunk(8, 'Earlier question', { role: 'user' })]));
   c.reply(pending, { source: 16, text: 'New question' });
   assert.equal(c.find(reader).props.leadingPrompt.text, 'Earlier question');
+  c.child(reader, 'prompt', { sequence: 8 });
+  assert.deepEqual(c.action('history').input.position, {
+    kind: 'after',
+    cursor: { sequence: 8, offset: 0, field: 'body' },
+  });
+  assert.equal(c.action('history').input.through, 20);
   assert.equal(c.find('task-goal'), undefined);
 });
 
@@ -650,7 +625,6 @@ test('a settled stop observation clears the stopping notice and shows the canoni
     ]),
   );
   assert.equal(c.state.notice, null);
-  assert.equal(c.find('task-state').text, 'Stopped');
 });
 
 test('the checklist follows its session, pages live progress, and rejects stale observations', () => {
@@ -680,7 +654,7 @@ test('the checklist follows its session, pages live progress, and rejects stale 
     nextOffset: 20,
   };
   update(firstWatch, first);
-  assert.match(JSON.stringify(c.find('checklist-open')), /1\/25.*Step 2 中文🙂/u);
+  assert.match(JSON.stringify(c.find('checklist-open')), /1\/25/u);
   c.raw('checklist-open');
   assert.equal(c.state.inspector, 'checklist');
   assert.match(JSON.stringify(c.find('checklist-items')), /\[x\] Step 1 中文🙂/u);
@@ -986,4 +960,69 @@ test('a cold long conversation queries its preceding prompt without paging the r
   assert.deepEqual(c.state.window, window);
   assert.deepEqual(c.state.landing, landing);
   assert.equal(c.action('historyPrompt'), undefined);
+});
+
+test('footer sandbox changes use the current revision and settle the original receipt before another change', () => {
+  const c = client().observe(0).history(page(0, []));
+  assert.match(c.find('sandbox-open').label, /^Workspace write$/u);
+  c.raw('sandbox-open').raw('sandbox-danger_full_access');
+  const original = c.action('metadata');
+  assert.deepEqual(original.input, {
+    sessionId: 'Task A',
+    expectedRevision: 1,
+    title: 'Task A',
+    labels: [],
+    permissions: {
+      settings: { access: 'danger_full_access', requestPermissions: true },
+      revokeGrants: true,
+    },
+  });
+  assert.equal(c.state.selected.permissions.access, 'workspace_write');
+  c.raw('sandbox-read_only');
+  assert.equal(c.action('metadata'), undefined);
+  const reference = { ...recapReference, method: 'metadata' };
+  c.event({
+    kind: 'action',
+    key: original.key,
+    event: {
+      status: 'operation',
+      reply: {
+        reference,
+        receipt: {
+          kind: 'recorded',
+          outcome: { kind: 'unknown', diagnostic: 'lost reply' },
+          cleanup: { kind: 'confirmed' },
+        },
+      },
+    },
+  });
+  c.raw('sandbox-danger_full_access');
+  assert.equal(c.action('metadata'), undefined);
+  c.raw('sandbox-check');
+  assert.equal(c.action('read').binding, 'receipts');
+  c.reply(c.action('read'), {
+    reference,
+    receipt: {
+      kind: 'recorded',
+      outcome: {
+        kind: 'returned',
+        value: {
+          kind: 'committed',
+          session: {
+            ...c.state.selected,
+            revision: 2,
+            boundaryRevision: 1,
+            permissions: { access: 'danger_full_access', requestPermissions: true },
+          },
+        },
+      },
+      cleanup: { kind: 'confirmed' },
+    },
+  });
+  assert.equal(c.state.dialog, null);
+  assert.equal(c.state.uncertain, null);
+  assert.match(c.find('sandbox-open').label, /Sandbox off/u);
+  c.raw('sandbox-open').raw('sandbox-read_only');
+  assert.equal(c.action('metadata').input.expectedRevision, 2);
+  assert.equal(c.action('metadata').input.permissions.settings.access, 'read_only');
 });

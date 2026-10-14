@@ -35,6 +35,7 @@ import type {
   HistoryPosition,
   AgentPart,
   AgentRun,
+  AgentSessionMetrics,
   AgentSession,
   AgentDataSource,
   AgentSessionPage,
@@ -78,6 +79,7 @@ export type Backend =
   | { kind: 'executor'; selection: AgentExecutorSelection };
 
 export type Request =
+  | { kind: 'sandboxChange'; epoch: number; sessionId: string }
   | GoalRequest
   | PlanRequest
   | GraphRequest
@@ -157,6 +159,7 @@ export type Mutation =
         kind:
           | 'changeSession'
           | 'selectBackend'
+          | 'sandboxChange'
           | 'create'
           | 'send'
           | 'stop'
@@ -242,11 +245,6 @@ export interface Visit {
   outputFocus: ReadingCommand | null;
   session: AgentSession;
   epoch: number;
-  progress: {
-    turnId: string | null;
-    through: number;
-    outcome: 'completed' | 'failed' | 'aborted' | null;
-  } | null;
 }
 
 export function readingKey(state: State): string {
@@ -326,6 +324,7 @@ export interface State {
   place: string;
   sessionChange: AgentSession | null;
   dialog:
+    | 'sandbox'
     | 'session-change'
     | 'attachments'
     | 'terminal'
@@ -374,6 +373,7 @@ export interface State {
   } | null;
   parts: DisplayPart[];
   run: AgentRun | null;
+  metrics: AgentSessionMetrics | null;
   queue: AgentQueue | null;
   queueEdit: QueueEdit | null;
   queueDraft: EditorObservation | null;

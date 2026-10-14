@@ -313,7 +313,7 @@ function frame<N extends Node>(
   const chosen = state.staleSelection ? null : props.selection?.choice;
   const effort = props.selection?.thinkingLevel;
   const label = chosen
-    ? chosen.label + (effort ? ` · ${text.thinking} ${text[thinkingCopy[effort]]}` : '')
+    ? chosen.label + (effort ? ` · ${text[thinkingCopy[effort]]}` : '')
     : state.resolving
       ? text.loadingModels
       : state.preferenceUnavailable
@@ -648,8 +648,8 @@ function frame<N extends Node>(
         anchor: 'top_right',
         offset: 8,
         style: {
-          width: pixels(360),
-          maxHeight: 440,
+          width: pixels(state.defaultsOpen ? 480 : 360),
+          maxHeight: state.defaultsOpen ? 640 : 440,
           minWidth: 0,
           background: props.theme.menu.background,
           border: props.theme.menu.border,
@@ -659,6 +659,7 @@ function frame<N extends Node>(
       })
     : ui.dialog('model-popup', text.models, trigger, content, state.open, undefined, {
         width: 64,
+        height: state.defaultsOpen ? 32 : 20,
         anchorToBackground: true,
       });
   const out = output(state, view, events);

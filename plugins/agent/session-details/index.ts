@@ -372,6 +372,11 @@ function frame<N extends Node>(
                 state.permissions?.access === 'read_only',
               ),
               choice(
+                'access-danger_full_access',
+                text.permissionFullAccess,
+                state.permissions?.access === 'danger_full_access',
+              ),
+              choice(
                 'access-workspace_write',
                 text.permissionWorkspaceWrite,
                 state.permissions?.access === 'workspace_write',
@@ -492,7 +497,9 @@ function frame<N extends Node>(
                       'review-permissions',
                       reviewed.permissions.access === 'read_only'
                         ? text.permissionReadOnly
-                        : text.permissionWorkspaceWrite,
+                        : reviewed.permissions.access === 'danger_full_access'
+                          ? text.permissionFullAccess
+                          : text.permissionWorkspaceWrite,
                       13,
                     ),
                     ui.text(
@@ -842,6 +849,7 @@ export function sessionDetails<N extends Node>(
           [
             'access-read_only',
             'access-workspace_write',
+            'access-danger_full_access',
             'permissions-ask',
             'permissions-no-ask',
             'permissions-revoke',
@@ -862,7 +870,11 @@ export function sessionDetails<N extends Node>(
             if (input.key === 'permissions-revoke') state.revokeGrants = !state.revokeGrants;
             else if (input.key.startsWith('access-'))
               state.permissions.access =
-                input.key === 'access-read_only' ? 'read_only' : 'workspace_write';
+                input.key === 'access-read_only'
+                  ? 'read_only'
+                  : input.key === 'access-danger_full_access'
+                    ? 'danger_full_access'
+                    : 'workspace_write';
             else state.permissions.requestPermissions = input.key === 'permissions-ask';
           }
         } else if (input.key === 'save') save(state, props, actions);

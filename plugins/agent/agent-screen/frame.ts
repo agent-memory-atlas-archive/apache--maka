@@ -23,6 +23,7 @@ import type {
   Emission,
   Shortcut,
 } from '../../../packages/plugin-sdk/src/index.js';
+import { sandboxView } from './sandbox.js';
 import {
   appearanceEvent,
   appearanceView,
@@ -49,7 +50,7 @@ import {
 } from '../../shared/view.js';
 
 import { checklistView } from './checklist-view.js';
-import { goalView, goalTerminal } from './goal.js';
+import { goalView } from './goal.js';
 import { planView } from './plan.js';
 import { graphView } from './graph.js';
 import { recapView } from './recap-view.js';
@@ -68,7 +69,6 @@ import {
   select,
   uploadPastedFile,
 } from './actions.js';
-import { taskProgress } from './task-overview.js';
 import { outputsView } from './outputs-view.js';
 import { conversationView } from './conversation-view.js';
 import { navigationView } from './navigation-view.js';
@@ -143,7 +143,6 @@ export function frame<N extends Node>(
     busy = mutationPending(state);
   const catalogBusy = busy || catalogPending(state);
   const commands = rootCommands(state, locale, target);
-  if (target === 'tui') taskProgress(state);
   const navigation = navigationView(presentation, state, theme, locale);
   const { main, header, attached } = conversationView(
     presentation,
@@ -388,72 +387,6 @@ export function frame<N extends Node>(
             ),
           ]
         : []),
-      ...(conversationRoute(state) &&
-      state.selected &&
-      state.checklist.page?.enabled &&
-      state.checklist.page.total > 0
-        ? [
-            ui.button(
-              'checklist-open',
-              `${text.checklistTitle} ${state.checklist.page.completed}/${state.checklist.page.total}${state.checklist.page.current ? ': ' + compactLabel(state.checklist.page.current.content, 80) : ''}`,
-              !!state.dialog,
-              false,
-              { align: 'start', width: fill },
-            ),
-          ]
-        : []),
-      ...(conversationRoute(state) &&
-      state.selected &&
-      state.goal.page?.current &&
-      state.inspector !== 'goal' &&
-      state.dialog !== 'goal' &&
-      !goalTerminal(state.goal.page.current.status)
-        ? [
-            ui.button(
-              'goal-open',
-              `${text.goalTitle}: ${text[`goalStatus_${state.goal.page.current.status}`]} · ${state.goal.page.current.iterations}/${state.goal.page.current.maxIterations} · ${compactLabel(state.goal.page.current.objective, 80)}`,
-              !!state.dialog,
-              false,
-              { align: 'start', width: fill },
-            ),
-          ]
-        : []),
-      ...(conversationRoute(state) &&
-      state.selected &&
-      state.inspector !== 'plan' &&
-      state.dialog !== 'plan' &&
-      (state.selected.collaborationMode === 'plan' ||
-        state.plan.page?.current.proposal?.status === 'pending_approval' ||
-        state.plan.page?.current.execution?.phase === 'active')
-        ? [
-            ui.button(
-              'plan-open',
-              state.plan.page?.current.proposal?.status === 'pending_approval'
-                ? text.planProposal_pending_approval
-                : state.plan.page?.current.execution?.phase === 'active'
-                  ? text.planExecution_active
-                  : text.planPlanning,
-              !!state.dialog,
-              false,
-              { align: 'start', width: fill },
-            ),
-          ]
-        : []),
-      ...(conversationRoute(state) &&
-      state.selected &&
-      state.graph.enabled &&
-      state.inspector !== 'graph' &&
-      state.dialog !== 'graph'
-        ? [
-            ui.button(
-              'graph-open',
-              `${text.graphTitle}${state.graph.page?.selectedMode ? ` · ${state.graph.page.selectedMode}` : ''}`,
-              !!state.dialog,
-              false,
-              { align: 'start', width: fill },
-            ),
-          ]
-        : []),
       conversation,
       ...(target === 'tui' && (!state.embedding.fixed || state.embedding.session)
         ? [
@@ -530,49 +463,52 @@ export function frame<N extends Node>(
     state,
     ui.dialog(
       'agent-screen-dialog',
-      state.dialog === 'session-change'
-        ? text.deleteSessionTitle
-        : state.dialog === 'attachments'
-          ? target === 'tui' && state.attachments.selection?.browse
-            ? tuiText(locale, 'attachments-local-files')
-            : text.attachmentTitle
-          : state.dialog === 'skills'
-            ? text.skillsTitle
-            : state.dialog === 'terminal'
-              ? text.terminalTitle
-              : state.dialog === 'question'
-                ? state.interaction?.record?.request.kind === 'form'
-                  ? text.formTitle
-                  : text.questionsTitle
-                : state.dialog === 'approval'
-                  ? state.interaction?.record?.request.kind === 'permissions'
-                    ? text.permissionApprovalTitle
-                    : state.interaction?.record?.request.kind === 'client_capability'
-                      ? text.computerApprovalTitle
-                      : text.approvalTitle
-                  : state.dialog === 'directories'
-                    ? text.directoryTitle
-                    : state.dialog === 'graph'
-                      ? text.graphTitle
-                      : state.dialog === 'plan'
-                        ? text.planTitle
-                        : state.dialog === 'goal'
-                          ? text.goalTitle
-                          : state.dialog === 'recap'
-                            ? text.recapTitle
-                            : state.dialog === 'checklist'
-                              ? text.checklistTitle
-                              : state.dialog === 'details'
-                                ? text.detailsTitle
-                                : state.dialog === 'queue'
-                                  ? text.queueEdit
-                                  : state.dialog === 'help'
-                                    ? text.helpTitle
-                                    : text.paletteTitle,
+      state.dialog === 'sandbox'
+        ? text.sandboxTitle
+        : state.dialog === 'session-change'
+          ? text.deleteSessionTitle
+          : state.dialog === 'attachments'
+            ? target === 'tui' && state.attachments.selection?.browse
+              ? tuiText(locale, 'attachments-local-files')
+              : text.attachmentTitle
+            : state.dialog === 'skills'
+              ? text.skillsTitle
+              : state.dialog === 'terminal'
+                ? text.terminalTitle
+                : state.dialog === 'question'
+                  ? state.interaction?.record?.request.kind === 'form'
+                    ? text.formTitle
+                    : text.questionsTitle
+                  : state.dialog === 'approval'
+                    ? state.interaction?.record?.request.kind === 'permissions'
+                      ? text.permissionApprovalTitle
+                      : state.interaction?.record?.request.kind === 'client_capability'
+                        ? text.computerApprovalTitle
+                        : text.approvalTitle
+                    : state.dialog === 'directories'
+                      ? text.directoryTitle
+                      : state.dialog === 'graph'
+                        ? text.graphTitle
+                        : state.dialog === 'plan'
+                          ? text.planTitle
+                          : state.dialog === 'goal'
+                            ? text.goalTitle
+                            : state.dialog === 'recap'
+                              ? text.recapTitle
+                              : state.dialog === 'checklist'
+                                ? text.checklistTitle
+                                : state.dialog === 'details'
+                                  ? text.detailsTitle
+                                  : state.dialog === 'queue'
+                                    ? text.queueEdit
+                                    : state.dialog === 'help'
+                                      ? text.helpTitle
+                                      : text.paletteTitle,
       background,
       ui.box(
         'dialog-content',
         [
+          ...(state.dialog === 'sandbox' ? [sandboxView(presentation, state, theme, locale)] : []),
           ...(state.dialog === 'session-change' && state.sessionChange
             ? [
                 ui.text('session-change-name', state.sessionChange.title, 17, theme.text, 600),
@@ -702,14 +638,16 @@ export function frame<N extends Node>(
       ),
       state.dialog !== null && !inlineInteraction,
       state.dialog === 'terminal' ? { width: pixels(900) } : {},
-      state.dialog === 'attachments'
-        ? {
-            width: state.attachments.selection?.browse ? 80 : 64,
-            height: state.attachments.selection?.browse
-              ? 28
-              : Math.min(20, attached.length * 3 + 7),
-          }
-        : {},
+      state.dialog === 'sandbox'
+        ? { width: 56, height: 16 }
+        : state.dialog === 'attachments'
+          ? {
+              width: state.attachments.selection?.browse ? 80 : 64,
+              height: state.attachments.selection?.browse
+                ? 28
+                : Math.min(20, attached.length * 3 + 7),
+            }
+          : {},
     ),
   );
   if (target === 'tui')

@@ -344,9 +344,9 @@ export const configurations = {
       },
       AgentWorkspaceAccess: {
         description:
-          'Access inside the original selected directory; never an ambient filesystem grant.',
+          'Session sandbox policy. Full access explicitly disables filesystem and process isolation.',
         type: 'string',
-        enum: ['read_only', 'workspace_write'],
+        enum: ['read_only', 'workspace_write', 'danger_full_access'],
       },
       DirectoryRootSpec: {
         type: 'object',
@@ -844,9 +844,9 @@ export const configurations = {
       },
       AgentWorkspaceAccess: {
         type: 'string',
-        enum: ['read_only', 'workspace_write'],
+        enum: ['read_only', 'workspace_write', 'danger_full_access'],
         description:
-          'Access inside the original selected directory; never an ambient filesystem grant.',
+          'Session sandbox policy. Full access explicitly disables filesystem and process isolation.',
       },
       DirectoryRootSpec: {
         type: 'object',

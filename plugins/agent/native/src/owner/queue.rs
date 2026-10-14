@@ -300,11 +300,12 @@ impl Owner {
             _ => return Err("agent_message_basis_invalid".into()),
         };
         Ok((
-            self.input(invocation, backend, basis.clone(), entry.source.clone())?,
+            self.input(invocation, backend, basis.clone(), entry.source.clone())
+                .await?,
             basis,
         ))
     }
-    pub(super) fn input(
+    pub(super) async fn input(
         &self,
         invocation: Invocation,
         backend: PreparedBackend,
@@ -326,15 +327,30 @@ impl Owner {
         if let Some(prompt) = &system_prompt {
             prompt.validate().map_err(|_| "agent_prompt_invalid")?;
         }
+        let session = self
+            .store
+            .get_session::<SessionConfiguration>(&invocation.session_id)
+            .await
+            .map_err(|_| "agent_store_unavailable")?
+            .ok_or("agent_session_unavailable")?;
+        let permissions = &session.configuration.permissions;
         let mut configuration = InvocationConfiguration {
             editing_tools: None,
             tool_discovery: basis.tool_discovery,
             cwd: basis.workspace.path.clone(),
             workspace_identity: Some(basis.workspace.identity.clone()),
             workspace_origin: WorkspaceOrigin::Selected,
-            sandbox_mode: SandboxMode::WorkspaceWrite,
-            approval_policy: ApprovalPolicy::OnRequest,
-            boundary_revision: 0,
+            sandbox_mode: match permissions.access {
+                WorkspaceAccess::ReadOnly => SandboxMode::ReadOnly,
+                WorkspaceAccess::WorkspaceWrite => SandboxMode::WorkspaceWrite,
+                WorkspaceAccess::DangerFullAccess => SandboxMode::DangerFullAccess,
+            },
+            approval_policy: if permissions.request_permissions {
+                ApprovalPolicy::OnRequest
+            } else {
+                ApprovalPolicy::Never
+            },
+            boundary_revision: session.configuration.boundary_revision,
             collaboration_mode: basis.collaboration_mode,
             orchestration_mode: if let Some(epoch) = &basis.graph {
                 graph::behavior(epoch)

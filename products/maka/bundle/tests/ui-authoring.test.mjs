@@ -133,7 +133,7 @@ for (const target of ['tui', 'desktop']) {
   });
 }
 
-test('TUI AgentScreen mounts a one-row footer with session context and keeps one authoring worker', async () => {
+test('TUI AgentScreen mounts metrics with session context and keeps one authoring worker', async () => {
   const agentScreen = await import('../dist/packages/agent-screen/tui.js');
   const appearance = await import('../dist/packages/appearance/tui.js');
   agentScreen.activate({ locale: 'en' });
@@ -146,9 +146,7 @@ test('TUI AgentScreen mounts a one-row footer with session context and keeps one
         ]
       : [];
   const view = agentScreen.component.mount({}, values).frame.view;
-  const footer = nodes(view).find((node) => node.key === 'composer-footer');
-  assert.deepEqual(footer.layout, { basis: 1, shrink: false });
-  const slot = footer.children[0];
+  const slot = nodes(view).find((node) => node.kind === 'component' && node.binding === 'footer');
   assert.equal(slot.binding, 'footer');
   assert.equal(slot.props.sessionId, null);
   assert.equal(slot.props.running, false);

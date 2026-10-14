@@ -421,7 +421,6 @@ export function select(state: State, actions: Action[], session: AgentSession | 
       outputFocus: null,
       session,
       epoch: state.epoch + 1,
-      progress: null,
     };
   }
   if (visit)
@@ -466,6 +465,7 @@ export function select(state: State, actions: Action[], session: AgentSession | 
   state.navigation++;
   state.parts = [];
   state.run = null;
+  state.metrics = null;
   state.queue = null;
   state.interactions = null;
   state.watch = null;
@@ -558,6 +558,7 @@ export function mutationPending(state: State) {
         'uploadAttachment',
         'changeSession',
         'selectBackend',
+        'sandboxChange',
         'create',
         'createDirectory',
         'send',

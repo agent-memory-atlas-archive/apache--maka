@@ -188,7 +188,7 @@ fn reveal_rejects_folded_missing_and_non_boundary_bytes_and_user_scroll_cancels(
         observation(&presenter)["receipt"],
         json!({"sequence":4,"status":"cancelled"})
     );
-    assert_eq!(state(&presenter).scrolls["reading"].offset, 3);
+    assert_eq!(state(&presenter).scrolls["reading"].offset, 1);
     close(&mut presenter);
 }
 #[test]

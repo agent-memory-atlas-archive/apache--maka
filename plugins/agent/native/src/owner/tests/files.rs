@@ -454,3 +454,52 @@ async fn replacing_selected_path_while_approval_waits_never_redirects_the_held_d
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn sandbox_off_allows_external_files_and_restoring_it_restricts_access() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        for method in ["write", "readText"] {
+            let (listener, f, session) = fixture(method).await;
+            let outside = f.workspace.parent().unwrap().join("outside.txt");
+            std::fs::write(&outside, "external").unwrap();
+            let input = if method == "write" {
+                json!({"path":outside,"content":"updated"})
+            } else {
+                json!({"path":outside})
+            };
+            for (mode, allowed) in [
+                ("workspace_write", false),
+                ("danger_full_access", true),
+                ("read_only", false),
+            ] {
+                let changed = change(&f, &session, mode, false, true).await;
+                assert_eq!(changed["kind"], "committed", "{changed}");
+                call(&listener, &f, &session, input.clone()).await;
+                let result = finish(&listener, &f).await;
+                assert_eq!(
+                    result["kind"],
+                    if allowed { "completed" } else { "failed" },
+                    "{mode}: {result}"
+                );
+                assert!(
+                    f.store
+                        .pending_interactions(&session)
+                        .await
+                        .unwrap()
+                        .is_empty()
+                );
+            }
+            assert_eq!(
+                std::fs::read_to_string(&outside).unwrap(),
+                if method == "write" {
+                    "updated"
+                } else {
+                    "external"
+                }
+            );
+            close(&f).await;
+        }
+    })
+    .await
+    .unwrap();
+}

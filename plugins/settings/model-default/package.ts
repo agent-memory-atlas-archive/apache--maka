@@ -27,6 +27,8 @@ const entries = uiEntries({
   imports: {
     reading: one(sdk.contracts.readingArea),
     settings: one(sdk.contracts.settings),
+    input: one(sdk.contracts.textInput),
+    reader: one(sdk.contracts.textReader),
     receipts: one(sdk.contracts.receiptReader),
     history: one(sdk.contracts.callerHistory),
   },

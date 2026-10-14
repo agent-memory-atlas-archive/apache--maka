@@ -852,18 +852,18 @@ fn native_scroll_has_real_clipped_cells_and_does_not_ack_unflushed_or_superseded
     let first = flushed(&mut presenter, 12, 6);
     assert_eq!(first[(4, 0)].symbol(), "0");
     wheel(&mut presenter, true, 1, 1);
-    assert_eq!(scroll_state(&presenter, "body"), (3, 0));
+    assert_eq!(scroll_state(&presenter, "body"), (1, 0));
     let area = Rect::new(0, 0, 12, 6);
     let mut discarded = Buffer::empty(area);
     let stale = presenter.paint(area, &mut discarded).unwrap();
-    assert_eq!(discarded[(5, 0)].symbol(), "3");
+    assert_eq!(discarded[(5, 0)].symbol(), "1");
     assert_eq!(discarded[(4, 5)].symbol(), "B");
     wheel(&mut presenter, true, 1, 1);
     presenter.present(stale);
-    assert_eq!(scroll_state(&presenter, "body"), (6, 0));
+    assert_eq!(scroll_state(&presenter, "body"), (2, 0));
     let next = flushed(&mut presenter, 12, 6);
-    assert_eq!(next[(5, 0)].symbol(), "6");
-    assert_eq!(scroll_state(&presenter, "body"), (6, 6));
+    assert_eq!(next[(5, 0)].symbol(), "2");
+    assert_eq!(scroll_state(&presenter, "body"), (2, 2));
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
@@ -880,7 +880,7 @@ fn wheel_and_page_keys_bubble_from_the_original_button_target() {
     let (_runtime, mut presenter) = native(View::Scene(source), Rc::new(Cell::new(true)));
     flushed(&mut presenter, 20, 7);
     wheel(&mut presenter, true, 2, 0);
-    assert_eq!(scroll_state(&presenter, "body").0, 3);
+    assert_eq!(scroll_state(&presenter, "body").0, 1);
     flushed(&mut presenter, 20, 7);
     presenter
         .input_settled(Event::Key(KeyEvent::new(
@@ -888,7 +888,7 @@ fn wheel_and_page_keys_bubble_from_the_original_button_target() {
             KeyModifiers::NONE,
         )))
         .unwrap();
-    assert_eq!(scroll_state(&presenter, "body").0, 9);
+    assert_eq!(scroll_state(&presenter, "body").0, 7);
     assert_eq!(
         presenter.application.frame(&presenter.root).unwrap().state["count"],
         0
@@ -923,7 +923,7 @@ fn follow_end_uses_actual_flush_and_manual_interaction_survives_recipe_updates()
         json!("0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11");
     refresh(&mut presenter);
     flushed(&mut presenter, 10, 5);
-    assert_eq!(scroll_state(&presenter, "body"), (3, 3));
+    assert_eq!(scroll_state(&presenter, "body"), (5, 5));
     // One queued gesture is applied against the same presented frame, then
     // streaming extends the content before its next paint.
     wheel(&mut presenter, false, 1, 1);
@@ -932,7 +932,7 @@ fn follow_end_uses_actual_flush_and_manual_interaction_survives_recipe_updates()
         json!("0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13");
     refresh(&mut presenter);
     flushed(&mut presenter, 10, 5);
-    assert_eq!(scroll_state(&presenter, "body"), (0, 0));
+    assert_eq!(scroll_state(&presenter, "body"), (3, 3));
     assert!(Rc::ptr_eq(
         &owner,
         &presenter.resources.owners[&presenter.root.id()].identity
@@ -959,11 +959,11 @@ fn anchor_keeps_gap_offset_and_original_child_after_hide_and_prepend() {
     wheel(&mut presenter, true, 1, 1);
     flushed(&mut presenter, 10, 5);
     flushed(&mut presenter, 10, 5);
-    assert_eq!(scroll_state(&presenter, "body"), (3, 3));
+    assert_eq!(scroll_state(&presenter, "body"), (1, 1));
     source.borrow_mut()["children"][0]["visible"] = json!(false);
     refresh(&mut presenter);
     flushed(&mut presenter, 10, 5);
-    assert_eq!(scroll_state(&presenter, "body"), (3, 3));
+    assert_eq!(scroll_state(&presenter, "body"), (1, 1));
     source.borrow_mut()["children"][0]["children"]
         .as_array_mut()
         .unwrap()
@@ -974,7 +974,7 @@ fn anchor_keeps_gap_offset_and_original_child_after_hide_and_prepend() {
     source.borrow_mut()["children"][0]["visible"] = json!(true);
     refresh(&mut presenter);
     flushed(&mut presenter, 10, 5);
-    assert_eq!(scroll_state(&presenter, "body"), (114, 114));
+    assert_eq!(scroll_state(&presenter, "body"), (112, 112));
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
@@ -1127,7 +1127,7 @@ fn nested_scroll_consumes_innermost_wheel_then_bubbles_at_its_boundary() {
         {"kind":"text","key":"outer-text","text":"tail\n".repeat(30),"color":0xffffff}]);
     let (_runtime, mut presenter) = native(View::Scene(source), Rc::new(Cell::new(true)));
     flushed(&mut presenter, 10, 6);
-    for _ in 0..3 {
+    for _ in 0..7 {
         wheel(&mut presenter, true, 1, 1);
         flushed(&mut presenter, 10, 6);
     }
@@ -1135,7 +1135,7 @@ fn nested_scroll_consumes_innermost_wheel_then_bubbles_at_its_boundary() {
     assert_eq!(scroll_state(&presenter, "body"), (0, 0));
     wheel(&mut presenter, true, 1, 1);
     flushed(&mut presenter, 10, 6);
-    assert_eq!(scroll_state(&presenter, "body"), (3, 3));
+    assert_eq!(scroll_state(&presenter, "body"), (1, 1));
     assert_eq!(scroll_state(&presenter, "inner"), (7, 7));
     presenter
         .surface_closed(&presenter.surface(), Ok(()))

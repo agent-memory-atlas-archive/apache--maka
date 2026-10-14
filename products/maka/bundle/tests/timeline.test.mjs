@@ -149,6 +149,19 @@ test('history fragments keep distinct controls and navigate the original tool ev
     assert.equal(marker.color, theme.terminal[tone]);
     assert.equal(find(out.frame.view, 'tool-status-call'), undefined);
   }
+  const title = {
+    fallback: 'Read skill · demo',
+    translations: { 'zh-CN': '读取技能 · demo', 'zh-TW': '讀取技能 · demo' },
+  };
+  props.messages[0].tool.call.title = title;
+  for (const locale of ['en', 'zh-CN', 'zh-TW']) {
+    props.locale = locale;
+    out = component.update(out.frame.state, props, {});
+    assert.equal(
+      find(out.frame.view, 'toggle-call').label,
+      title.translations[locale] ?? title.fallback,
+    );
+  }
 });
 
 test('history prefetches before an edge without treating stale or commanded viewports as scrolling', () => {
@@ -369,18 +382,29 @@ test('prompt header follows the visible answer, yields to user rows, and never f
       {},
     );
   };
+  const events = timelineExports().Timeline.contract.interface.events;
+  const ajv = new Ajv({ strict: false });
+  const validateEvents = () => {
+    for (const event of out.events) {
+      const valid = ajv.compile(events[event.name]);
+      assert.ok(valid(event.value), JSON.stringify(valid.errors));
+    }
+  };
   assert.equal(find('prompt-bar'), undefined);
   observe(1, '2');
-  assert.equal(find('prompt-text').text, 'First question');
-  assert.equal(find('prompt-text').truncate, true);
+  assert.equal(find('prompt-text').label, '❯ First question');
+  out = component.event(out.frame.state, { kind: 'raw', key: 'prompt-text', event: {} }, props, {});
+  assert.deepEqual(out.frame.state.command.target, { kind: 'reveal_child', key: 'message-1' });
+  assert.ok(out.events.some((event) => event.name === 'detached'));
+  validateEvents();
   observe(2, '3');
   assert.equal(find('prompt-bar'), undefined);
   observe(2, '2');
   assert.equal(find('prompt-bar'), undefined, 'layout feedback cannot reinsert the canceled row');
   observe(3, '4');
   assert.equal(
-    find('prompt-text').text,
-    '?',
+    find('prompt-text').label,
+    '❯ ?',
     'short prompts remain valid context for their own answer',
   );
   observe(4, '1');
@@ -389,7 +413,10 @@ test('prompt header follows the visible answer, yields to user rows, and never f
   props.leadingPrompt = { source: 3, text: 'A question outside the retained page' };
   out = component.update(out.frame.state, props, {});
   observe(5, '4');
-  assert.equal(find('prompt-text').text, 'A question outside the retained page');
+  assert.equal(find('prompt-text').label, '❯ A question outside the retained page');
+  out = component.event(out.frame.state, { kind: 'raw', key: 'prompt-text', event: {} }, props, {});
+  assert.ok(out.events.some((event) => event.name === 'prompt' && event.value.sequence === 3));
+  validateEvents();
   assert.deepEqual(
     find('reading').props.content.children.map((n) => n.key),
     ['message-4'],

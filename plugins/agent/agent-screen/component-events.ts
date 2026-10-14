@@ -68,6 +68,7 @@ import {
   follow,
   refreshActivity,
   history,
+  promptAnchor,
   initializeQueueEdit,
   intent,
   loadQueueEdit,
@@ -762,6 +763,23 @@ export function handleComponent<N extends Node>(
             messageId: chunk.messageId,
           },
         );
+    } else if (input.name === 'prompt') {
+      const sequence = (input.event as { sequence: number }).sequence;
+      const visit = state.visits.find((entry) => entry.id === state.selected?.id);
+      const prompt = visit?.prompt;
+      if (
+        page.chunks.some((chunk) => chunk.sequence === sequence && chunk.role === 'user') ||
+        (prompt?.anchor === promptAnchor(page) && prompt.value?.source === sequence)
+      ) {
+        if (visit) visit.following = false;
+        history(
+          state,
+          actions,
+          { kind: 'after', cursor: { sequence, offset: 0, field: 'body' } },
+          page.through,
+          false,
+        );
+      }
     } else if (input.name === 'source') {
       const chunk = page.chunks.find(
         (chunk) =>

@@ -287,3 +287,85 @@ fn a_slow_deployment_loads_modules_sequentially() {
         }))
         .unwrap();
 }
+
+#[test]
+fn shutdown_drains_a_large_composition_behind_its_original_busy_worker() {
+    use maka_plugin_core::package::{EntryTarget, Implementation, Realm};
+    let scheduler = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_time()
+        .build()
+        .unwrap();
+    let (mut input, mut packages) = support::fixture(
+        "const until=Date.now()+200;while(Date.now()<until){};return frame({...state,revision:state.revision+1});",
+    );
+    let original = packages.pop().unwrap();
+    let mut declaration = original.manifest().application.clone().unwrap();
+    declaration
+        .entries
+        .get_mut(&EntryTarget::Desktop)
+        .unwrap()
+        .implementation = Implementation::JavaScript {
+        module: "index.mjs".into(),
+        realm: Realm::Shared,
+    };
+    let package = support::package(
+        "dynamic.app",
+        declaration,
+        Some(
+            std::str::from_utf8(original.file("index.mjs").unwrap())
+                .unwrap()
+                .to_owned(),
+        ),
+    );
+    let mut root = input.instances["app"].clone();
+    root.package = package.application_ref().into();
+    input.instances.insert("app".into(), root.clone());
+    for index in 0..96 {
+        let mut instance = root.clone();
+        instance.key = uuid::Uuid::from_u128(100 + index);
+        input.instances.insert(format!("module-{index}"), instance);
+    }
+    packages.push(package);
+    let mut app = Application::new(
+        &input,
+        packages,
+        scheduler.handle().clone(),
+        maka_ui_js::execution(maka_js_runtime::plugin::Limits {
+            synchronous_slice: Duration::from_secs(2),
+            ..Default::default()
+        }),
+        support::scene::registry::<()>(PresentationTarget::Desktop),
+        Default::default(),
+    )
+    .unwrap();
+    scheduler.block_on(app.wait_ready()).unwrap();
+    let mount = app.mount_launch(json!({})).unwrap();
+    scheduler.block_on(app.wait_idle()).unwrap();
+    app.dispatch(&mount, 0, "inc", json!({})).unwrap();
+    app.close(&mount, Ok(())).unwrap();
+    assert!(matches!(
+        app.shutdown(),
+        Err(maka_ui_runtime::Error::Core(
+            maka_plugin_core::Error::CleanupPending
+        ))
+    ));
+    // Native release cannot acknowledge accepted JavaScript or module teardown.
+    assert!(!app.can_shutdown());
+    assert!(scheduler.block_on(app.wait_idle()).is_err());
+    scheduler.block_on(async {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match app.shutdown() {
+                    Ok(()) => break,
+                    Err(maka_ui_runtime::Error::Core(maka_plugin_core::Error::CleanupPending)) => {
+                        tokio::task::yield_now().await
+                    }
+                    Err(error) => panic!("{error}"),
+                }
+            }
+        })
+        .await
+        .unwrap();
+    });
+}

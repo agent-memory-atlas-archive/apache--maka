@@ -39,8 +39,6 @@ use std::{
 };
 use tokio::sync::oneshot;
 
-const QUEUE_ITEMS: usize = 64;
-
 pub fn execution(limits: Limits) -> ExecutionOptions {
     ExecutionOptions {
         synchronous_slice: limits.synchronous_slice,
@@ -97,10 +95,10 @@ impl backend::Factory for Factory {
 }
 
 /// One sleeping worker multiplexes realms without sharing their V8 failure
-/// domains. Queue admission is nonblocking and bounds concurrent pending work.
+/// domains. Submitting work never blocks the UI owner.
 #[derive(Clone)]
 struct Worker {
-    queue: mpsc::SyncSender<Command>,
+    queue: mpsc::Sender<Command>,
     ids: Arc<AtomicU64>,
 }
 struct Command {
@@ -108,7 +106,7 @@ struct Command {
 }
 impl Worker {
     fn new() -> Result<Self> {
-        let (queue, receive) = mpsc::sync_channel::<Command>(QUEUE_ITEMS);
+        let (queue, receive) = mpsc::channel::<Command>();
         std::thread::Builder::new()
             .name("maka-ui-js".into())
             .spawn(move || {
@@ -117,10 +115,6 @@ impl Worker {
                 };
                 while let Ok(command) = receive.recv() {
                     (command.run)(&mut state);
-                    // Realm disposal may encounter a full bounded queue. The
-                    // original frontend health owner is then gone; an already
-                    // queued turn performs its destruction on this VM thread.
-                    state.realms.retain(|_, vm| vm.health.strong_count() != 0);
                 }
                 // All VM and captured callback destruction happens on this thread.
             })
@@ -139,19 +133,12 @@ impl Worker {
     ) -> Result<backend::Job<T>> {
         let (send, receive) = oneshot::channel();
         self.queue
-            .try_send(Command {
+            .send(Command {
                 run: Box::new(move |state| {
                     let _ = send.send(action(state));
                 }),
             })
-            .map_err(|error| match error {
-                mpsc::TrySendError::Full(_) => {
-                    Error::Invalid("UI execution queue item limit".into())
-                }
-                mpsc::TrySendError::Disconnected(_) => {
-                    script("UI worker stopped without cleanup acknowledgement")
-                }
-            })?;
+            .map_err(|_| script("UI worker stopped without cleanup acknowledgement"))?;
         Ok(backend::Job::new(async move {
             receive
                 .await

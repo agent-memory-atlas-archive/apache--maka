@@ -38,7 +38,6 @@ export function headerView<N extends Node>(
   locale: string,
   title: N,
   models: N,
-  status: string | null,
 ): N {
   const target = presentation.target;
   const ui = presentation.paint(theme),
@@ -150,7 +149,9 @@ export function headerView<N extends Node>(
             ui.box(
               'header-task',
               [
-                ui.box('header-title', [title], { terminal: { shrink: true } }),
+                ...(!conversationRoute(state)
+                  ? [ui.box('header-title', [title], { terminal: { shrink: true } })]
+                  : []),
                 ui.box('header-title-trailing', [], { terminal: { grow: 1 } }),
               ],
               { row: true, gap: 1, terminal: { grow: 1, shrink: true } },
@@ -159,19 +160,19 @@ export function headerView<N extends Node>(
               'toolbar',
               [
                 ...[
-                  ['outputs-open', tuiText(locale, 'task-outputs')],
-                  ['details-open', text.detailsOpen],
-                  ['terminal-open', text.terminalTitle],
-                  ['palette-open', text.paletteTitle],
+                  ['outputs-open', tuiText(locale, 'task-outputs'), theme.ascii ? '[o]' : '▧'],
+                  ['details-open', text.detailsOpen, theme.ascii ? '(i)' : 'ⓘ'],
+                  ['terminal-open', text.terminalTitle, '>_'],
+                  ['palette-open', text.paletteTitle, theme.ascii ? ':' : '⌘'],
                 ]
                   .filter(([key]) => key === 'palette-open' || conversationRoute(state))
-                  .map(([key, label]) =>
+                  .map(([key, label, icon]) =>
                     ui.box(
                       `${key}-cell`,
                       [
                         ui.button(
                           key!,
-                          label!,
+                          icon!,
                           key !== 'palette-open' && !state.selected,
                           false,
                           { background: 0 },
@@ -179,26 +180,32 @@ export function headerView<N extends Node>(
                           label + (key === 'palette-open' ? ' · Ctrl+K' : ''),
                         ),
                       ],
-                      { terminal: { shrink: false } },
+                      { terminal: { basis: 4, shrink: false } },
                     ),
                   ),
               ],
               { row: true, gap: 1, terminal: { shrink: true, wrap: true } },
             ),
           ]),
-      ...((target === 'desktop' ? state.interactions?.entries : [])
-        ?.filter((entry) =>
-          ['question', 'form', 'service_approval', 'permissions', 'client_capability'].includes(
-            entry.kind,
-          ),
-        )
-        .map((entry, index) =>
-          ui.button(
-            `${entry.kind === 'question' || entry.kind === 'form' ? 'question' : 'approval'}-open-${entry.requestId}`,
-            `${entry.kind === 'form' ? text.formTitle : entry.kind === 'question' ? text.questionsTitle : entry.kind === 'permissions' ? text.permissionApprovalTitle : text.approvalTitle} ${index + 1}`,
-            !state.selected || state.selected.archived || mutationPending(state),
-          ),
-        ) ?? []),
+      ...(!conversationRoute(state) || !state.selected
+        ? [
+            ...(state.notice && !['completed', 'failed', 'stopping'].includes(state.notice)
+              ? [ui.text('page-notice', text[state.notice], 13, theme.muted)]
+              : []),
+            ...(state.uncertain
+              ? [
+                  ui.button(
+                    'check',
+                    text.check,
+                    Object.values(state.pending).some((request) => request.kind === 'receipt'),
+                  ),
+                ]
+              : []),
+            ...(state.notice === 'unavailable'
+              ? [ui.button('reload', text.reloadView, state.loading || busy)]
+              : []),
+          ]
+        : []),
       ...(target === 'desktop' && !canExecute(state)
         ? [
             ui.text(
@@ -226,17 +233,6 @@ export function headerView<N extends Node>(
               : []),
           ]
         : []),
-      ...(target === 'desktop' && status ? [ui.text('status', status, 13, theme.muted)] : []),
-      ...(state.uncertain
-        ? [
-            ui.button(
-              'check',
-              text.check,
-              Object.values(state.pending).some((request) => request.kind === 'receipt'),
-            ),
-          ]
-        : []),
-      ...(state.notice === 'unavailable' ? [ui.button('reload', text.loading, state.loading)] : []),
     ],
     {
       row: target === 'tui',

@@ -26,7 +26,9 @@ use maka_agent_facts::tools::ToolCallContext;
 use maka_agent_facts::tools::ToolError;
 use maka_agent_facts::tools::ToolExecutor;
 use maka_event_log::EventLog;
-use maka_fs_tools::{MutationExecutor, ReadExecutor, ReadLimits, ReadOutput, WriteCoordinator};
+use maka_fs_tools::{
+    MutationExecutor, ReadExecutor, ReadLimits, ReadOutput, ReadScope, WriteCoordinator, WriteScope,
+};
 use maka_host_runtime::application::{
     Context, Handler, NativeActivation, NativeOwner, NativeRegistry,
 };
@@ -224,9 +226,18 @@ fn capture(
     {
         return Err(failed("Workspace marker identity changed"));
     }
+    if access == WorkspaceAccess::DangerFullAccess {
+        return Ok(Captured {
+            path,
+            directory,
+            sandbox: Sandbox::Disabled,
+            ceiling: Sandbox::Disabled,
+        });
+    }
     let mode = match access {
         WorkspaceAccess::ReadOnly => maka_sandbox::Mode::ReadOnly,
         WorkspaceAccess::WorkspaceWrite => maka_sandbox::Mode::WorkspaceWrite,
+        WorkspaceAccess::DangerFullAccess => unreachable!("handled above"),
     };
     let (base, metadata) =
         maka_fs_tools::workspace::permissions::resolve(mode, &path).map_err(failed)?;
@@ -338,10 +349,13 @@ async fn execute(
         )
         .await?;
     }
-    let Sandbox::Managed { filesystem, .. } = &captured.sandbox else {
-        return Err(failed("Workspace filesystem policy unavailable"));
+    let policy = match &captured.sandbox {
+        Sandbox::Managed { filesystem, .. } => {
+            Some(Arc::new(filesystem.compile().map_err(failed)?))
+        }
+        Sandbox::Disabled => None,
+        _ => return Err(failed("Workspace filesystem policy unavailable")),
     };
-    let policy = Arc::new(filesystem.compile().map_err(failed)?);
     // This original SQL snapshot is the filesystem admission point, ordered
     // against permission CAS and invocation closure in the same Root worker.
     let current = maka_agent_authority::permissions::live(store, &tool_context.invocation).await?;
@@ -357,23 +371,35 @@ async fn execute(
         tool,
         maka_fs_tools::WRITE_NAME | maka_fs_tools::EDIT_NAME | maka_fs_tools::PATCH_NAME
     ) {
-        let executor = MutationExecutor::from_directory(
-            captured.path,
-            captured.directory,
-            writes,
-            Some(policy),
-        )?;
+        let executor = if let Some(policy) = policy {
+            MutationExecutor::from_directory(
+                captured.path,
+                captured.directory,
+                writes,
+                Some(policy),
+            )?
+        } else {
+            MutationExecutor::new(captured.path, WriteScope::Unrestricted, writes)?
+        };
         executor
             .invoke(tool.into(), input, cancellation.clone())
             .await
             .map(Output::Json)
     } else {
-        let executor = ReadExecutor::from_directory(
-            captured.path,
-            captured.directory,
-            ReadLimits::default(),
-            Some(policy),
-        )?;
+        let executor = if let Some(policy) = policy {
+            ReadExecutor::from_directory(
+                captured.path,
+                captured.directory,
+                ReadLimits::default(),
+                Some(policy),
+            )?
+        } else {
+            ReadExecutor::new(
+                captured.path,
+                ReadScope::Unrestricted,
+                ReadLimits::default(),
+            )?
+        };
         if tool == maka_fs_tools::READ_NAME {
             let input: maka_agent_facts::read::ReadInput =
                 serde_json::from_value(input).map_err(failed)?;

@@ -35,7 +35,8 @@ import {
   executionPending,
   mutationPending,
 } from './actions.js';
-import { taskOverview } from './task-overview.js';
+import { sandboxLabel } from './sandbox.js';
+import { composerStatus } from './composer-status.js';
 import { headerView } from './header-view.js';
 import { messages, turnTimings, utf8Bytes, activeOutput } from './messages.js';
 import { promptAnchor } from './actions.js';
@@ -163,6 +164,7 @@ export function conversationView<N extends Node>(
     older: 'older',
     newer: 'newer',
     fill: 'fill',
+    prompt: 'prompt',
     latest: 'latest',
     markRead: 'mark-read',
     source: 'source',
@@ -376,15 +378,6 @@ export function conversationView<N extends Node>(
       trackColor: theme.border,
     },
   };
-  const status = state.notice
-    ? text[state.notice]
-    : state.run
-      ? state.run.state === 'waiting_for_user'
-        ? text.waiting
-        : text.working
-      : state.selected?.archived
-        ? text.archivedConversation
-        : '';
   const title = ui.text(
     'title',
     (currentPage && state.pageChrome[currentPage]?.title) ||
@@ -452,7 +445,35 @@ export function conversationView<N extends Node>(
     },
   );
 
-  const header = headerView(presentation, state, theme, locale, title, models, status);
+  const header = headerView(presentation, state, theme, locale, title, models);
+  const metrics =
+    state.metrics &&
+    !state.executor &&
+    state.model &&
+    state.metrics.modelId === state.model.choice.selection.modelId &&
+    state.metrics.connectionId === state.model.choice.selection.connectionId
+      ? state.metrics
+      : null;
+  const footer = presentation.slot(
+    'footer',
+    'footer',
+    {
+      sessionId: state.selected?.id ?? null,
+      dataSource: state.selected?.dataSource ?? null,
+      running: !!state.run,
+      metrics,
+      theme,
+      locale,
+    },
+    {},
+  );
+  const sandbox = ui.button(
+    'sandbox-open',
+    state.selected ? sandboxLabel(state.selected.permissions.access, locale) : text.sandboxTitle,
+    busy || !state.selected || !!state.selected.archived,
+    false,
+    { background: 0 },
+  );
   const welcome =
     !!state.selected &&
     !state.selected.archived &&
@@ -579,7 +600,13 @@ export function conversationView<N extends Node>(
             ),
             ui.box(
               'input-area',
-              [...(!state.selected?.archived ? [attachmentsButton] : []), composer],
+              [
+                composerStatus(presentation, state, theme, locale),
+                ...(!state.selected?.archived ? [attachmentsButton] : []),
+                composer,
+                sandbox,
+                footer,
+              ],
               {
                 visible: !state.image && !state.selected?.archived,
                 padding: 24,
@@ -591,7 +618,6 @@ export function conversationView<N extends Node>(
             ui.box(
               'session-body',
               [
-                taskOverview(presentation, state, theme, locale),
                 ui.box(
                   'conversation',
                   [
@@ -655,42 +681,19 @@ export function conversationView<N extends Node>(
                           ),
                         ]
                       : []),
-                    ui.box(
-                      'composer-navigation',
-                      [
-                        composer,
-                        ui.box(
-                          'composer-footer',
-                          [
-                            presentation.slot(
-                              'footer',
-                              'footer',
-                              {
-                                sessionId: state.selected?.id ?? null,
-                                dataSource: state.selected?.dataSource ?? null,
-                                running: !!state.run,
-                                theme,
-                                locale,
-                              },
-                              {},
-                            ),
-                          ],
-                          { terminal: { basis: 1, shrink: false }, scroll: 'none' },
-                        ),
+                    composerStatus(presentation, state, theme, locale),
+                    ui.box('composer-navigation', [composer], {
+                      gap: 0,
+                      terminal: { shrink: true },
+                      focusShortcuts: [
+                        {
+                          key: 'up',
+                          modifiers: [],
+                          child: 'queue',
+                          enabled: queueProps.rows.length > 0,
+                        },
                       ],
-                      {
-                        gap: 0,
-                        terminal: { shrink: true },
-                        focusShortcuts: [
-                          {
-                            key: 'up',
-                            modifiers: [],
-                            child: 'queue',
-                            enabled: queueProps.rows.length > 0,
-                          },
-                        ],
-                      },
-                    ),
+                    }),
                   ],
                   {
                     gap: 0,
@@ -709,11 +712,36 @@ export function conversationView<N extends Node>(
             ui.box(
               'session-metadata',
               [
-                ui.box('model-metadata', [models], {
-                  terminal: { grow: 1, shrink: true },
-                }),
+                ui.box(
+                  'session-controls',
+                  [ui.box('model-metadata', [models], { terminal: { shrink: true } }), sandbox],
+                  { row: true, gap: 0, terminal: { wrap: true, shrink: true } },
+                ),
+                ui.box('session-metrics', [footer], { terminal: { grow: 1, shrink: true } }),
               ],
-              { row: true, gap: 1 },
+              {
+                gap: 0,
+                wide: {
+                  min_width: 76,
+                  direction: 'row',
+                  children: {
+                    'session-controls': {
+                      grow: 0,
+                      basis: null,
+                      basis_fraction: null,
+                      shrink: true,
+                      wrap: false,
+                    },
+                    'session-metrics': {
+                      grow: 1,
+                      basis: null,
+                      basis_fraction: null,
+                      shrink: true,
+                      wrap: false,
+                    },
+                  },
+                },
+              },
             ),
           ]),
     ],

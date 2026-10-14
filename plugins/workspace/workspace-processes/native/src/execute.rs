@@ -55,6 +55,17 @@ pub(super) fn capture(
     {
         return Err(failed("Workspace marker identity changed"));
     }
+    if configuration.permissions.access == WorkspaceAccess::DangerFullAccess {
+        let executor = maka_process::ShellExecutor::from_directory(
+            path,
+            directory.into_std_file(),
+            Sandbox::Disabled,
+        )?;
+        return Ok(Captured {
+            executor: platform(executor, settings, state_root),
+            ceiling: Sandbox::Disabled,
+        });
+    }
     let (_, metadata) =
         maka_fs_tools::workspace::permissions::resolve(maka_sandbox::Mode::ReadOnly, &path)
             .map_err(failed)?;

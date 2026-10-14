@@ -57,6 +57,8 @@ pub struct ModelCursor {
 pub struct ModelChoice {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<ModelToolPreferences>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<ModelLimitSettings>,
     pub selection: ModelSelection,
     #[schemars(length(max = 256))]
     pub connection_name: String,
@@ -78,12 +80,38 @@ pub struct ModelToolPreferences {
     #[schemars(with = "maka_plugin_core::wire_schema::RequiredNullable<bool>")]
     pub apply_patch: Option<bool>,
 }
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "SettingsModelLimits")]
+pub struct ModelLimits {
+    #[schemars(with = "maka_plugin_core::wire_schema::RequiredNullable<u64>")]
+    pub context_window: Option<u64>,
+    #[schemars(with = "maka_plugin_core::wire_schema::RequiredNullable<u64>")]
+    pub input_limit: Option<u64>,
+    #[schemars(with = "maka_plugin_core::wire_schema::RequiredNullable<u64>")]
+    pub max_output_tokens: Option<u64>,
+    #[schemars(with = "maka_plugin_core::wire_schema::RequiredNullable<u64>")]
+    pub compaction_threshold: Option<u64>,
+}
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "SettingsModelLimitSettings")]
+pub struct ModelLimitSettings {
+    pub overrides: ModelLimits,
+    #[schemars(with = "maka_plugin_core::wire_schema::RequiredNullable<u64>")]
+    pub context_window: Option<u64>,
+    #[schemars(with = "maka_plugin_core::wire_schema::RequiredNullable<u64>")]
+    pub input_limit: Option<u64>,
+    #[schemars(with = "maka_plugin_core::wire_schema::RequiredNullable<u64>")]
+    pub max_output_tokens: Option<u64>,
+}
 #[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[schemars(rename = "SettingsUpdateModelTools")]
-pub struct UpdateModelTools {
+#[schemars(rename = "SettingsUpdateModelSettings")]
+pub struct UpdateModelSettings {
     pub selection: ModelSelection,
     pub tools: ModelToolPreferences,
+    pub limits: ModelLimits,
 }
 #[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -461,8 +489,8 @@ pub fn contract() -> Contract {
                     method::<ModelsRead, ModelsPage>(MethodMode::Query),
                 ),
                 (
-                    "updateModelTools".into(),
-                    method::<UpdateModelTools, CatalogMutationResult>(MethodMode::Mutation),
+                    "updateModelSettings".into(),
+                    method::<UpdateModelSettings, CatalogMutationResult>(MethodMode::Mutation),
                 ),
                 (
                     "resolveModel".into(),

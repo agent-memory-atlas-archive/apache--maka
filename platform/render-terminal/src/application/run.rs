@@ -459,6 +459,7 @@ pub fn run(
                     }
                     return failure.map_or(Ok(()), Err);
                 }
+                Err(maka_ui_runtime::Error::Core(maka_plugin_core::Error::CleanupPending)) => {}
                 Err(error) => presenter.report(&error),
             }
         }

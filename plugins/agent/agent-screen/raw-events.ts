@@ -36,6 +36,7 @@ import {
 } from '../../shared/attachments.js';
 
 import { goalAction } from './goal.js';
+import { sandboxAction } from './sandbox.js';
 import { planAction } from './plan.js';
 import { graphAction } from './graph.js';
 import { draftReady } from '../../shared/drafts.js';
@@ -270,6 +271,7 @@ export function handleRaw<N extends Node>(
   } else if (input.key === 'catalog-refresh') {
     if (!mutationPending(state) && !catalogPending(state)) catalog(state);
   } else if (
+    sandboxAction(state, actions, input.key) ||
     graphAction(state, actions, input.key) ||
     planAction(state, actions, input.key) ||
     goalAction(state, actions, input.key)

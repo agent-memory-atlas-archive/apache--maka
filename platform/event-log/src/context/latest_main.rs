@@ -92,6 +92,7 @@ pub(super) async fn read_selected_at(
          json_extract(o.event_json, '$.fact.input.kind') AS opening_kind,
          json_extract(r.event_json, '$.fact.purpose') AS purpose,
          json_extract(c.event_json, '$.recorded_at') AS recorded_at,
+         json_extract(r.event_json, '$.recorded_at') AS requested_at,
          json_extract(c.event_json, '$.fact.output.usage') AS usage,
          json_extract(r.event_json, '$.fact.model_id') AS model_id,
          json_extract(r.event_json, '$.fact.route_identity') AS route_identity,
@@ -169,6 +170,11 @@ pub(super) async fn read_selected_at(
                     projection_current: row.try_get("projection_current").ok()?,
                     sequence: sequence_number(sequence).ok()?,
                     recorded_at,
+                    requested_at: row
+                        .try_get::<Option<&str>, _>("requested_at")
+                        .ok()
+                        .flatten()
+                        .and_then(|value| serde_json::from_str(value).ok()),
                     model_id,
                     route_identity: row.try_get("route_identity").ok()?,
                     connection_id: row.try_get("connection_id").ok()?,

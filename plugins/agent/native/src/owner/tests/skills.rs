@@ -127,6 +127,20 @@ async fn selected_skill_tools_use_actual_agent_context_and_original_grants_over_
             }
             response(&mut socket).await;
             f.drained().await;
+            if granted {
+                let prefix = f.store.prefix(1024, 4 * 1024 * 1024).await.unwrap();
+                let titles: Vec<_> = prefix.events.iter().filter_map(|row| match &row.event.fact {
+                    maka_agent_facts::event::Fact::ToolDispatched { title, .. } => title.as_ref(),
+                    _ => None,
+                }).collect();
+                for (locale, expected) in [
+                    ("en", ["Search skills · Review", "Read skill · source:fixture:review", "Read skill resource · source:fixture:review / references/guide.txt"]),
+                    ("zh-CN", ["搜索技能 · Review", "读取技能 · source:fixture:review", "读取技能资源 · source:fixture:review / references/guide.txt"]),
+                    ("zh-TW", ["搜尋技能 · Review", "讀取技能 · source:fixture:review", "讀取技能資源 · source:fixture:review / references/guide.txt"]),
+                ] {
+                    for expected in expected { assert!(titles.iter().any(|title| title.resolve(locale) == expected), "{titles:?}"); }
+                }
+            }
             f.app.shutdown().await.unwrap();
             f.config.shutdown().await.unwrap();
         }

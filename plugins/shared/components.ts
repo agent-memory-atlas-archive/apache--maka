@@ -21,6 +21,7 @@ import { scrollBoundary } from './scroll.js';
 import { tuiText } from './tui-locale.js';
 import type {
   Component,
+  Emission,
   AgentSession,
   EditorObservation,
   TextareaProps,
@@ -125,6 +126,7 @@ interface Draft extends Revision {
 }
 interface Reading extends Revision {
   promptShown?: boolean;
+  promptTarget?: { id: string | null; source: number | null };
   promptSuppressed?: string;
   copy: MessageCopy | null;
   browse: { request: number; id: string } | null;
@@ -724,6 +726,12 @@ export function components<N extends Node>(
             .trim()
         : '';
     state.promptShown = !!promptText;
+    state.promptTarget = promptText
+      ? {
+          id: preceding && !preceding.continued ? preceding.id : null,
+          source: preceding ? preceding.source : (props.leadingPrompt?.source ?? null),
+        }
+      : undefined;
     const detached = (props.latest && !props.live) || state.observation?.viewport?.atEnd === false;
     const active = !props.source && !search?.history && detached ? props.activeOutput : null;
     const activity = active?.tool
@@ -1129,31 +1137,17 @@ export function components<N extends Node>(
                 ui.box(
                   'prompt-bar',
                   [
-                    ui.box(
-                      'prompt-gutter',
-                      [
-                        ui.text(
-                          'prompt-marker',
-                          props.theme.ascii ? '>' : '❯',
-                          13,
-                          props.theme.subtle,
-                        ),
-                      ],
-                      { terminal: { basis: 2, shrink: false } },
+                    ui.button(
+                      'prompt-text',
+                      `${props.theme.ascii ? '>' : '❯'} ${promptText}`,
+                      props.loading,
+                      false,
+                      { align: 'start', background: props.theme.surface },
+                      undefined,
+                      tuiText(props.locale, 'chat-prompt-jump'),
                     ),
-                    ui.box(
-                      'prompt-body',
-                      [
-                        ui.text('prompt-text', promptText, 13, props.theme.text, 400, {
-                          truncate: true,
-                        }),
-                      ],
-                      { terminal: { grow: 1, shrink: true }, style: { width: fill, minWidth: 0 } },
-                    ),
-                    ui.box('prompt-inset', [], { terminal: { basis: 1, shrink: false } }),
                   ],
                   {
-                    row: true,
                     gap: 0,
                     surface: true,
                     terminal: { basis: 1, shrink: false },
@@ -1781,6 +1775,28 @@ export function components<N extends Node>(
           next.observation.pendingCommand == null
         )
           next.command = { sequence: (next.command?.sequence ?? 0) + 1, target: { kind: 'end' } };
+        if (
+          input.kind === 'raw' &&
+          input.key === 'prompt-text' &&
+          state.promptShown &&
+          state.promptTarget &&
+          !props.loading
+        ) {
+          const prompt = state.promptTarget;
+          const events: Emission[] = [
+            { name: 'detached', value: { landing: props.landing.sequence, value: true } },
+          ];
+          if (prompt.id)
+            next.command = {
+              sequence: (state.command?.sequence ?? 0) + 1,
+              target: { kind: 'reveal_child', key: 'message-' + prompt.id },
+            };
+          else if (prompt.source !== null)
+            events.push({ name: 'prompt', value: { sequence: prompt.source } });
+          const out = timelineFrame(next, props);
+          out.events.push(...events);
+          return out;
+        }
         if (input.kind === 'raw' && !props.source) {
           const tool = toolCards(props.messages)
             .map(({ message }) => message)

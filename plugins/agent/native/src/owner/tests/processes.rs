@@ -342,3 +342,60 @@ async fn native_process_revocation_or_stop_withdraws_permission_without_launch()
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn sandbox_off_removes_process_filesystem_and_network_isolation() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let (listener, f, session) = fixture().await;
+        let outside = f.workspace.parent().unwrap().join("outside-process.txt");
+        let command = format!("printf external > '{}'", outside.display());
+        for (mode, allowed) in [
+            ("workspace_write", false),
+            ("danger_full_access", true),
+            ("read_only", false),
+        ] {
+            files::change(&f, &session, mode, false, true).await;
+            let result = roundtrip(&listener, &f, &session, "Execute", execute(&command)).await;
+            assert_eq!(
+                result["value"]["status"],
+                if allowed { "completed" } else { "failed" },
+                "{mode}: {result}"
+            );
+            if allowed {
+                assert_eq!(std::fs::read_to_string(&outside).unwrap(), "external");
+                std::fs::remove_file(&outside).unwrap();
+            } else {
+                assert!(!outside.exists());
+            }
+        }
+        files::change(&f, &session, "danger_full_access", false, true).await;
+        let network = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", network.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = network.accept().await.unwrap();
+            let mut buffer = [0; 4096];
+            socket.read(&mut buffer).await.unwrap();
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\nnetwork",
+                )
+                .await
+                .unwrap();
+        });
+        let result = roundtrip(
+            &listener,
+            &f,
+            &session,
+            "Execute",
+            execute(&format!(
+                "/usr/bin/curl --noproxy '*' -fsS --max-time 3 '{url}'"
+            )),
+        )
+        .await;
+        assert_eq!(result["value"]["output"]["stdout"], "network", "{result}");
+        server.await.unwrap();
+        close(&f).await;
+    })
+    .await
+    .unwrap();
+}

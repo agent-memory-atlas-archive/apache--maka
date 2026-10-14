@@ -463,6 +463,8 @@ function settingsComposition(
         'model-default',
         {},
         {
+          input: [local('input', 'TextInput')],
+          reader: [local('reader', 'Reader')],
           reading: [local('recovery-reading', 'ReadingArea')],
           settings: [remote('settings', 'Settings')],
           receipts: [remote('receipts', 'Receipts')],

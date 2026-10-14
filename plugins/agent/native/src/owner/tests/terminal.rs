@@ -185,6 +185,7 @@ async fn terminal_original_receipts_scope_isolation_boundary_revoke_and_read_sto
         let replayed = mutation(&f, &owner, "start", input, operation).await;
         assert_eq!(replayed, started);
         wait_file(&f, "once.txt", "once").await;
+        files::change(&f, &session, "danger_full_access", false, true).await;
         let target = start(&f, &owner, &session).await;
         let record = f.store.read_shell_run(&session, maka_host_runtime::shell::request::parse_ref(target["ref"].as_str().unwrap()).unwrap()).await.unwrap().unwrap();
         assert!(record.source_run_id.is_none());

@@ -199,7 +199,7 @@ pub fn catalog() -> Value {
         root::<maka_settings_native::preferences::Update>(&mut g),
         root::<maka_settings_native::preferences::Updated>(&mut g),
         root::<maka_settings_native::contract::ModelsPage>(&mut g),
-        root::<maka_settings_native::contract::UpdateModelTools>(&mut g),
+        root::<maka_settings_native::contract::UpdateModelSettings>(&mut g),
         root::<maka_settings_native::contract::ConnectionsRead>(&mut g),
         root::<maka_settings_native::contract::ConnectionsPage>(&mut g),
         root::<maka_settings_native::contract::ConnectionDetail>(&mut g),

@@ -7257,9 +7257,9 @@ export const contracts = {
               },
               AgentWorkspaceAccess: {
                 description:
-                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                  'Session sandbox policy. Full access explicitly disables filesystem and process isolation.',
                 type: 'string',
-                enum: ['read_only', 'workspace_write'],
+                enum: ['read_only', 'workspace_write', 'danger_full_access'],
               },
               AgentWorkspace: {
                 type: 'object',
@@ -7552,9 +7552,9 @@ export const contracts = {
               },
               AgentWorkspaceAccess: {
                 description:
-                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                  'Session sandbox policy. Full access explicitly disables filesystem and process isolation.',
                 type: 'string',
-                enum: ['read_only', 'workspace_write'],
+                enum: ['read_only', 'workspace_write', 'danger_full_access'],
               },
               ModelSelection: {
                 description:
@@ -7891,9 +7891,9 @@ export const contracts = {
               },
               AgentWorkspaceAccess: {
                 description:
-                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                  'Session sandbox policy. Full access explicitly disables filesystem and process isolation.',
                 type: 'string',
-                enum: ['read_only', 'workspace_write'],
+                enum: ['read_only', 'workspace_write', 'danger_full_access'],
               },
               ModelSelection: {
                 description:
@@ -8300,9 +8300,9 @@ export const contracts = {
               },
               AgentWorkspaceAccess: {
                 description:
-                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                  'Session sandbox policy. Full access explicitly disables filesystem and process isolation.',
                 type: 'string',
-                enum: ['read_only', 'workspace_write'],
+                enum: ['read_only', 'workspace_write', 'danger_full_access'],
               },
               AgentWorkspace: {
                 type: 'object',
@@ -8895,9 +8895,9 @@ export const contracts = {
               },
               AgentWorkspaceAccess: {
                 description:
-                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                  'Session sandbox policy. Full access explicitly disables filesystem and process isolation.',
                 type: 'string',
-                enum: ['read_only', 'workspace_write'],
+                enum: ['read_only', 'workspace_write', 'danger_full_access'],
               },
               AgentWorkspace: {
                 type: 'object',
@@ -11831,9 +11831,9 @@ export const contracts = {
               },
               AgentWorkspaceAccess: {
                 description:
-                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                  'Session sandbox policy. Full access explicitly disables filesystem and process isolation.',
                 type: 'string',
-                enum: ['read_only', 'workspace_write'],
+                enum: ['read_only', 'workspace_write', 'danger_full_access'],
               },
               AgentWorkspace: {
                 type: 'object',
@@ -12811,9 +12811,9 @@ export const contracts = {
               },
               AgentWorkspaceAccess: {
                 description:
-                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                  'Session sandbox policy. Full access explicitly disables filesystem and process isolation.',
                 type: 'string',
-                enum: ['read_only', 'workspace_write'],
+                enum: ['read_only', 'workspace_write', 'danger_full_access'],
               },
               AgentWorkspace: {
                 type: 'object',
@@ -14117,9 +14117,9 @@ export const contracts = {
               },
               AgentWorkspaceAccess: {
                 description:
-                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                  'Session sandbox policy. Full access explicitly disables filesystem and process isolation.',
                 type: 'string',
-                enum: ['read_only', 'workspace_write'],
+                enum: ['read_only', 'workspace_write', 'danger_full_access'],
               },
               AgentWorkspace: {
                 type: 'object',
@@ -14478,9 +14478,9 @@ export const contracts = {
               },
               AgentWorkspaceAccess: {
                 description:
-                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                  'Session sandbox policy. Full access explicitly disables filesystem and process isolation.',
                 type: 'string',
-                enum: ['read_only', 'workspace_write'],
+                enum: ['read_only', 'workspace_write', 'danger_full_access'],
               },
               AgentWorkspace: {
                 type: 'object',
@@ -14664,9 +14664,9 @@ export const contracts = {
               },
               AgentWorkspaceAccess: {
                 description:
-                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                  'Session sandbox policy. Full access explicitly disables filesystem and process isolation.',
                 type: 'string',
-                enum: ['read_only', 'workspace_write'],
+                enum: ['read_only', 'workspace_write', 'danger_full_access'],
               },
             },
           },
@@ -14948,9 +14948,9 @@ export const contracts = {
               },
               AgentWorkspaceAccess: {
                 description:
-                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                  'Session sandbox policy. Full access explicitly disables filesystem and process isolation.',
                 type: 'string',
-                enum: ['read_only', 'workspace_write'],
+                enum: ['read_only', 'workspace_write', 'danger_full_access'],
               },
               AgentWorkspace: {
                 type: 'object',
@@ -15071,6 +15071,16 @@ export const contracts = {
                 anyOf: [
                   {
                     $ref: '#/$defs/AgentBackendPreference',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+              metrics: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/AgentSessionMetrics',
                   },
                   {
                     type: 'null',
@@ -15325,9 +15335,9 @@ export const contracts = {
               },
               AgentWorkspaceAccess: {
                 description:
-                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                  'Session sandbox policy. Full access explicitly disables filesystem and process isolation.',
                 type: 'string',
-                enum: ['read_only', 'workspace_write'],
+                enum: ['read_only', 'workspace_write', 'danger_full_access'],
               },
               AgentWorkspace: {
                 type: 'object',
@@ -15403,6 +15413,39 @@ export const contracts = {
               AgentSessionActivity: {
                 type: 'string',
                 enum: ['idle', 'working', 'waiting'],
+              },
+              AgentSessionMetrics: {
+                description: 'Display-only readings from the latest completed main-model request.',
+                type: 'object',
+                properties: {
+                  modelId: {
+                    type: 'string',
+                  },
+                  connectionId: {
+                    type: ['string', 'null'],
+                  },
+                  contextTokens: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  contextWindow: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  approximate: {
+                    type: 'boolean',
+                  },
+                  outputTokensPerSecond: {
+                    description:
+                      "Provider output tokens divided by the model request's wall time.\nIncludes reasoning and time to first token; excludes tool/user waits.",
+                    type: ['number', 'null'],
+                    format: 'double',
+                  },
+                },
+                additionalProperties: false,
+                required: ['modelId', 'approximate'],
               },
               AgentRun: {
                 type: 'object',
@@ -17563,9 +17606,9 @@ export const contracts = {
               },
               AgentWorkspaceAccess: {
                 description:
-                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                  'Session sandbox policy. Full access explicitly disables filesystem and process isolation.',
                 type: 'string',
-                enum: ['read_only', 'workspace_write'],
+                enum: ['read_only', 'workspace_write', 'danger_full_access'],
               },
               AgentWorkspace: {
                 type: 'object',
@@ -19655,9 +19698,9 @@ export const contracts = {
               },
               AgentWorkspaceAccess: {
                 description:
-                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                  'Session sandbox policy. Full access explicitly disables filesystem and process isolation.',
                 type: 'string',
-                enum: ['read_only', 'workspace_write'],
+                enum: ['read_only', 'workspace_write', 'danger_full_access'],
               },
               ModelSelection: {
                 description:
@@ -20640,9 +20683,9 @@ export const contracts = {
               },
               AgentWorkspaceAccess: {
                 description:
-                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                  'Session sandbox policy. Full access explicitly disables filesystem and process isolation.',
                 type: 'string',
-                enum: ['read_only', 'workspace_write'],
+                enum: ['read_only', 'workspace_write', 'danger_full_access'],
               },
               ModelSelection: {
                 description:
@@ -21364,9 +21407,9 @@ export const contracts = {
               },
               AgentWorkspaceAccess: {
                 description:
-                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                  'Session sandbox policy. Full access explicitly disables filesystem and process isolation.',
                 type: 'string',
-                enum: ['read_only', 'workspace_write'],
+                enum: ['read_only', 'workspace_write', 'danger_full_access'],
               },
               AgentWorkspace: {
                 type: 'object',
@@ -24367,9 +24410,9 @@ export const contracts = {
               },
               AgentWorkspaceAccess: {
                 description:
-                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                  'Session sandbox policy. Full access explicitly disables filesystem and process isolation.',
                 type: 'string',
-                enum: ['read_only', 'workspace_write'],
+                enum: ['read_only', 'workspace_write', 'danger_full_access'],
               },
               ModelSelection: {
                 description:
@@ -26035,9 +26078,9 @@ export const contracts = {
               },
               AgentWorkspaceAccess: {
                 type: 'string',
-                enum: ['read_only', 'workspace_write'],
+                enum: ['read_only', 'workspace_write', 'danger_full_access'],
                 description:
-                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                  'Session sandbox policy. Full access explicitly disables filesystem and process isolation.',
               },
               AgentWorkspace: {
                 type: 'object',
@@ -27672,9 +27715,9 @@ export const contracts = {
               },
               AgentWorkspaceAccess: {
                 type: 'string',
-                enum: ['read_only', 'workspace_write'],
+                enum: ['read_only', 'workspace_write', 'danger_full_access'],
                 description:
-                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                  'Session sandbox policy. Full access explicitly disables filesystem and process isolation.',
               },
               AgentWorkspace: {
                 type: 'object',
@@ -39219,6 +39262,16 @@ export const contracts = {
                       },
                     ],
                   },
+                  limits: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/SettingsModelLimitSettings',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   selection: {
                     $ref: '#/$defs/ModelSelection',
                   },
@@ -39269,6 +39322,58 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['codeMode', 'applyPatch'],
+              },
+              SettingsModelLimitSettings: {
+                type: 'object',
+                properties: {
+                  overrides: {
+                    $ref: '#/$defs/SettingsModelLimits',
+                  },
+                  contextWindow: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  inputLimit: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  maxOutputTokens: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['overrides', 'contextWindow', 'inputLimit', 'maxOutputTokens'],
+              },
+              SettingsModelLimits: {
+                type: 'object',
+                properties: {
+                  contextWindow: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  inputLimit: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  maxOutputTokens: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  compactionThreshold: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['contextWindow', 'inputLimit', 'maxOutputTokens', 'compactionThreshold'],
               },
               ModelSelection: {
                 description:
@@ -40121,6 +40226,16 @@ export const contracts = {
                       },
                     ],
                   },
+                  limits: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/SettingsModelLimitSettings',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   selection: {
                     $ref: '#/$defs/ModelSelection',
                   },
@@ -40171,6 +40286,58 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['codeMode', 'applyPatch'],
+              },
+              SettingsModelLimitSettings: {
+                type: 'object',
+                properties: {
+                  overrides: {
+                    $ref: '#/$defs/SettingsModelLimits',
+                  },
+                  contextWindow: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  inputLimit: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  maxOutputTokens: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['overrides', 'contextWindow', 'inputLimit', 'maxOutputTokens'],
+              },
+              SettingsModelLimits: {
+                type: 'object',
+                properties: {
+                  contextWindow: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  inputLimit: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  maxOutputTokens: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  compactionThreshold: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['contextWindow', 'inputLimit', 'maxOutputTokens', 'compactionThreshold'],
               },
               ModelSelection: {
                 description:
@@ -41129,11 +41296,11 @@ export const contracts = {
           },
           resources: {},
         },
-        updateModelTools: {
+        updateModelSettings: {
           mode: 'mutation',
           input: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
-            title: 'SettingsUpdateModelTools',
+            title: 'SettingsUpdateModelSettings',
             type: 'object',
             properties: {
               selection: {
@@ -41142,9 +41309,12 @@ export const contracts = {
               tools: {
                 $ref: '#/$defs/SettingsModelToolPreferences',
               },
+              limits: {
+                $ref: '#/$defs/SettingsModelLimits',
+              },
             },
             additionalProperties: false,
-            required: ['selection', 'tools'],
+            required: ['selection', 'tools', 'limits'],
             $defs: {
               ModelSelection: {
                 description:
@@ -41183,6 +41353,33 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['codeMode', 'applyPatch'],
+              },
+              SettingsModelLimits: {
+                type: 'object',
+                properties: {
+                  contextWindow: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  inputLimit: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  maxOutputTokens: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  compactionThreshold: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['contextWindow', 'inputLimit', 'maxOutputTokens', 'compactionThreshold'],
               },
             },
           },

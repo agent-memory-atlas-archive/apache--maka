@@ -111,6 +111,17 @@ async fn model_choice(row: &ConnectionCatalogEntry, model: &str) -> Option<Model
     let info = metadata.info;
     let overrides = row.model_overrides.as_ref().and_then(|all| all.get(model));
     Some(ModelChoice {
+        limits: Some(ModelLimitSettings {
+            overrides: ModelLimits {
+                context_window: overrides.and_then(|value| value.context_window),
+                input_limit: overrides.and_then(|value| value.input_limit),
+                max_output_tokens: overrides.and_then(|value| value.max_output_tokens),
+                compaction_threshold: overrides.and_then(|value| value.compaction_threshold),
+            },
+            context_window: info.context_window,
+            input_limit: info.input_limit,
+            max_output_tokens: info.max_output_tokens,
+        }),
         tools: Some(ModelToolPreferences {
             code_mode: overrides.and_then(|value| value.code_mode),
             apply_patch: overrides.and_then(|value| value.apply_patch),
@@ -265,9 +276,9 @@ impl Handler for Settings {
                     credential_result(store.delete_credential(input).await)
                 }
                 "saveCredential" => super::credential::save(&store, input, context).await,
-                "updateModelTools" => {
+                "updateModelSettings" => {
                     context.operation().ok_or("settings_mutation_required")?;
-                    let input: UpdateModelTools =
+                    let input: UpdateModelSettings =
                         serde_json::from_value(input).map_err(|_| "settings_input_invalid")?;
                     let catalog = store
                         .catalog()
@@ -299,6 +310,11 @@ impl Handler for Settings {
                         .or_default();
                     model.code_mode = input.tools.code_mode;
                     model.apply_patch = input.tools.apply_patch;
+                    model.context_window = input.limits.context_window;
+                    model.input_limit = input.limits.input_limit;
+                    model.max_output_tokens = input.limits.max_output_tokens;
+                    model.compaction_threshold = input.limits.compaction_threshold;
+
                     if *model == ModelOverride::default() {
                         overrides.remove(&input.selection.model_id);
                     }

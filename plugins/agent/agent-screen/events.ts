@@ -249,6 +249,7 @@ export function handleEvent<N extends Node>(
           outcome.status === 'operation' &&
           (request.kind === 'changeSession' ||
             request.kind === 'selectBackend' ||
+            request.kind === 'sandboxChange' ||
             request.kind === 'create' ||
             request.kind === 'send' ||
             request.kind === 'stop' ||

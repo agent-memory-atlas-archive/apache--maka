@@ -744,9 +744,25 @@ pub struct Observation {
     pub session: Session,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remembered_backend: Option<BackendPreference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<SessionMetrics>,
     pub through: u64,
     pub run: Option<Run>,
     pub parts: Vec<Part>,
+}
+/// Display-only readings from the latest completed main-model request.
+#[derive(Serialize, JsonSchema, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentSessionMetrics")]
+pub struct SessionMetrics {
+    pub model_id: String,
+    pub connection_id: Option<String>,
+    pub context_tokens: Option<u64>,
+    pub context_window: Option<u64>,
+    pub approximate: bool,
+    /// Provider output tokens divided by the model request's wall time.
+    /// Includes reasoning and time to first token; excludes tool/user waits.
+    pub output_tokens_per_second: Option<f64>,
 }
 #[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

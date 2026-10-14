@@ -108,7 +108,7 @@ fn wheel_batch_scrolls_immediately_and_publishes_only_its_final_observation() {
             }))
             .unwrap();
     }
-    assert_eq!(state(&presenter).scrolls["reading"].offset, 30);
+    assert_eq!(state(&presenter).scrolls["reading"].offset, 10);
     assert_eq!(
         observation(&presenter),
         before,

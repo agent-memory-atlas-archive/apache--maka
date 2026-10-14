@@ -44,7 +44,10 @@ interface State extends PageState {
   revision: number;
   serial: number;
   source: DeploymentRef | null;
-  saved: { access: 'read_only' | 'workspace_write'; requestPermissions: boolean } | null;
+  saved: {
+    access: 'read_only' | 'workspace_write' | 'danger_full_access';
+    requestPermissions: boolean;
+  } | null;
   pending: { key: string; request: Request } | null;
   current: { input: InstanceConfigure; reference: RecoveryRef | null } | null;
   restoring: boolean;
@@ -132,7 +135,7 @@ export function sessionDefaults<N extends Node>(
                 14,
                 props.theme.text,
               ),
-              ...(['read_only', 'workspace_write'] as const).map((access) =>
+              ...(['read_only', 'workspace_write', 'danger_full_access'] as const).map((access) =>
                 ui.button(
                   'access-' + access,
                   t('sessions-' + access),
@@ -274,11 +277,11 @@ export function sessionDefaults<N extends Node>(
               access?.editable &&
               requests?.editable &&
               access.value?.kind === 'text' &&
-              ['read_only', 'workspace_write'].includes(access.value.text) &&
+              ['read_only', 'workspace_write', 'danger_full_access'].includes(access.value.text) &&
               requests.value?.kind === 'boolean'
             ) {
               state.saved = {
-                access: access.value.text as 'read_only' | 'workspace_write',
+                access: access.value.text as 'read_only' | 'workspace_write' | 'danger_full_access',
                 requestPermissions: requests.value.value,
               };
             } else {
@@ -324,7 +327,7 @@ export function sessionDefaults<N extends Node>(
                       value: { kind: 'boolean', value: !state.saved.requestPermissions },
                     }
                   : input.key.startsWith('access-') &&
-                      ['read_only', 'workspace_write'].includes(access) &&
+                      ['read_only', 'workspace_write', 'danger_full_access'].includes(access) &&
                       access !== state.saved.access
                     ? { path: ['permissions', 'access'], value: { kind: 'text', text: access } }
                     : null;

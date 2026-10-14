@@ -1220,7 +1220,7 @@ fn retired_target_cleanup_preserves_the_original_nested_scroll_ancestor_identity
         .state
         .downcast_ref::<super::scroll::SceneState>()
         .unwrap();
-    assert_eq!(state.scrolls["inner"].offset, 3);
+    assert_eq!(state.scrolls["inner"].offset, 1);
     assert_eq!(state.scrolls["outer"].offset, 0);
     presenter
         .surface_closed(&presenter.surface(), Ok(()))

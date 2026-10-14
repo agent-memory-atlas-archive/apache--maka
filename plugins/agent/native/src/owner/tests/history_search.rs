@@ -242,7 +242,8 @@ async fn search_hits_read_the_exact_field_when_history_body_is_absent_or_differe
                     // Exact source must retain the row even when history advances.
                     assert_ne!(page["chunks"][0]["sequence"], sequence);
                 } else {
-                    for field in ["sequence", "timestamp", "offset", "totalBytes", "text", "tool"] {
+                    assert!(page["chunks"][0]["text"].as_str().unwrap().starts_with(body["source"]["text"].as_str().unwrap()), "history and source have independent page sizes but the same text prefix");
+                    for field in ["sequence", "timestamp", "offset", "totalBytes", "tool"] {
                         assert_eq!(body["source"][field], page["chunks"][0][field], "tool body {field}");
                     }
                 }

@@ -343,6 +343,7 @@ const defs = {
   ...native.secretInput.interface.props.$defs,
   ...session.$defs,
   ...native.agent.interface.methods.history.output.$defs,
+  ...native.agent.interface.methods.observe.output.$defs,
   ...native.agent.interface.methods.source.output.$defs,
   ...native.agent.interface.methods.respond.output.$defs,
 };
@@ -922,6 +923,7 @@ export const timelineContract = component(
     older: object({}),
     newer: object({}),
     fill: object({}),
+    prompt: object({ sequence: { type: 'integer', minimum: 1 } }),
     latest: object({}),
     source: object({
       sequence: { type: 'integer', minimum: 1 },
@@ -1113,6 +1115,7 @@ export const composerFooterContract = component(
     sessionId: { anyOf: [string, { type: 'null' }] },
     dataSource: { anyOf: [{ $ref: '#/$defs/AgentDataSource' }, { type: 'null' }] },
     running: { type: 'boolean' },
+    metrics: { anyOf: [{ $ref: '#/$defs/AgentSessionMetrics' }, { type: 'null' }] },
     theme: { $ref: '#/$defs/Theme' },
     locale,
   }),

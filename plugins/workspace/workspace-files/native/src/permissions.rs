@@ -30,6 +30,9 @@ pub(super) async fn authorize(
     context: &ToolCallContext,
     cancellation: &CancellationToken,
 ) -> Result<Captured, ToolError> {
+    if matches!(captured.sandbox, Sandbox::Disabled) {
+        return Ok(captured);
+    }
     let grants = store
         .permission_grants(
             &context.invocation,

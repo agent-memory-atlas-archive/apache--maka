@@ -874,10 +874,10 @@ async fn canonical_history_is_bounded_utf8_and_keeps_its_original_fence() {
             if page["kind"] == "preparing" { continue; }
             let chunks = page["chunks"].as_array().unwrap();
             assert!(chunks.len() <= 2);
-            assert!(chunks.iter().map(|chunk| chunk["text"].as_str().unwrap().len()).sum::<usize>() <= 8192);
+            assert!(chunks.iter().map(|chunk| chunk["text"].as_str().unwrap().len()).sum::<usize>() <= 32 * 1024);
             for chunk in chunks {
                 let text = chunk["text"].as_str().unwrap();
-                assert!(text.len() <= 8192);
+                assert!(text.len() <= 32 * 1024);
                 match chunk["role"].as_str().unwrap() {
                     "user" => user.push_str(text),
                     "assistant" => assistant.push_str(text),
@@ -1005,6 +1005,13 @@ async fn actual_http_runs_are_bounded_and_observer_loss_does_not_release_capacit
         release.add_permits(2); server.await.unwrap(); fixture.drained().await;
         assert!(fixture.owner.runs.lock().await.controls.is_empty()); assert_eq!(fixture.owner.permits.available_permits(),2);
         let completed = fixture.query("observe", json!({"sessionId":first})).await.unwrap();
+        let metrics = &completed["metrics"];
+        assert_eq!(metrics["modelId"], "fixture-model");
+        assert_eq!(metrics["contextTokens"], 3);
+        let (basis, _) = fixture.store.context_usage(&first).await.unwrap();
+        let maka_event_log::context::LatestMainContext::Selected(basis) = basis else { panic!("missing accepted main request") };
+        let seconds = basis.recorded_at.duration_since(basis.requested_at.unwrap()).unwrap().as_secs_f64();
+        assert_eq!(metrics["outputTokensPerSecond"].as_f64().unwrap(), 2.0 / seconds);
         assert!(completed["run"].is_null());
         assert_eq!(completed["session"]["activity"], "idle");
         assert_eq!(completed["parts"], json!([]));

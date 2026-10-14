@@ -688,8 +688,10 @@ impl Owner {
         }
         let permissions = input.permissions.is_some() || mode_changed;
         let update = move |configuration: &mut SessionConfiguration| {
-            // Changing collaboration mode does not rename the conversation.
-            if input.collaboration_mode.is_none() || configuration.title != input.title {
+            // Policy changes do not turn an automatic title into a manual title.
+            if (input.collaboration_mode.is_none() && input.permissions.is_none())
+                || configuration.title != input.title
+            {
                 configuration.title_is_manual = true;
             }
             configuration.title = input.title;
@@ -1038,7 +1040,9 @@ impl Owner {
             }
         }
         let permit = permit.expect("new worker owns capacity");
-        let input = self.input(invocation.clone(), backend, basis.clone(), delivered)?;
+        let input = self
+            .input(invocation.clone(), backend, basis.clone(), delivered)
+            .await?;
         self.store
             .admit_message(admission)
             .await

@@ -456,9 +456,14 @@ impl Presenter {
                             for mount in application.retiring_mounts() {
                                 let _ = application.close(&mount, Ok(()));
                             }
-                            let failure = sanitize(&failure.to_string());
-                            if reported.insert(failure.clone()) {
-                                eprintln!("{failure}");
+                            if !matches!(
+                                failure,
+                                Error::Core(maka_plugin_core::Error::CleanupPending)
+                            ) {
+                                let failure = sanitize(&failure.to_string());
+                                if reported.insert(failure.clone()) {
+                                    eprintln!("{failure}");
+                                }
                             }
                         }
                     }
@@ -509,6 +514,7 @@ impl Presenter {
                 if presenter.can_shutdown() {
                     match presenter.shutdown() {
                         Ok(()) => break,
+                        Err(Error::Core(maka_plugin_core::Error::CleanupPending)) => {}
                         Err(failure) => {
                             let failure = sanitize(&failure.to_string());
                             if reported.insert(failure.clone()) {

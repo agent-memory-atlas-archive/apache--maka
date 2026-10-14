@@ -777,7 +777,9 @@ fn reading_header_shift_pending_focus_is_cancelled_by_tab() {
 fn reading_header_shift_starts_at_the_first_visible_body_row() {
     let (_runtime, mut p, _) = native(vec![message(0, "one\ntwo\nthree\nfour\nfive")]);
     draw(&mut p, 24, 3);
-    mouse(&mut p, MouseEventKind::ScrollDown, 1, 1);
+    for _ in 0..3 {
+        mouse(&mut p, MouseEventKind::ScrollDown, 1, 1);
+    }
     draw(&mut p, 24, 3);
     assert_eq!(state(&p).scrolls["reading"].offset, 3);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-0");
@@ -830,7 +832,7 @@ fn list_scrollbar_paints_tracks_clicks_and_captures_drag_outside() {
     assert_eq!(first[(23, 7)].symbol(), "│");
     mouse(&mut p, MouseEventKind::ScrollDown, 2, 2);
     draw(&mut p, 24, 8);
-    assert_eq!(state(&p).scrolls["reading"].offset, 3);
+    assert_eq!(state(&p).scrolls["reading"].offset, 1);
     mouse(&mut p, MouseEventKind::Down(MouseButton::Left), 23, 7);
     let end = draw(&mut p, 24, 8);
     let viewport = state(&p).scrolls["reading"].presented.as_ref().unwrap();

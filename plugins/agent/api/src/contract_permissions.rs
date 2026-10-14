@@ -20,13 +20,14 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Access inside the original selected directory; never an ambient filesystem grant.
+/// Session sandbox policy. Full access explicitly disables filesystem and process isolation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[schemars(rename = "AgentWorkspaceAccess")]
 pub enum WorkspaceAccess {
     ReadOnly,
     WorkspaceWrite,
+    DangerFullAccess,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

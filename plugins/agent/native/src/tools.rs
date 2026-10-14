@@ -333,8 +333,12 @@ impl ToolPreparer for Service {
             }
             // No request or effect is admitted until the existing ToolJournal T1.
             let title = selection.title.clone().or_else(|| {
-                (selection.result == ToolResult::Computer)
-                    .then(|| computer::title(&selection.method, &input))
+                if selection.input == ToolInput::Skill {
+                    maka_skills_api::model_title(&selection.method, &input)
+                } else {
+                    (selection.result == ToolResult::Computer)
+                        .then(|| computer::title(&selection.method, &input))
+                }
             });
             let presentation = selection.presentation.clone();
             let prepared = PreparedEffect::new(move |cancellation| {

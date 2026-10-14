@@ -686,3 +686,77 @@ for (const platform of ['tui', 'desktop']) {
     );
   });
 }
+
+for (const platform of ['tui', 'desktop']) {
+  test(`${platform} model settings capture token overrides and retain an uncertain save`, async () => {
+    const selection = { connectionId: 'connection-a', revision: 7, modelId: 'model' };
+    const c = await client('model-default', platform, {
+      busy: false,
+      defaultModel: { kind: 'none' },
+      selection: {
+        selection,
+        label: 'Model',
+        connectionName: 'Provider',
+        tools: { codeMode: null, applyPatch: null },
+      },
+    });
+    const values = {
+      contextWindow: '272000',
+      inputLimit: '',
+      maxOutputTokens: '4096',
+      compactionThreshold: '',
+    };
+    for (const [name, text] of Object.entries(values)) {
+      const child = 'limit-' + name;
+      c.query(child, 1, '');
+      const command = c.state.limits[name].command;
+      c.event({
+        kind: 'component',
+        child,
+        name: 'changed',
+        event: {
+          revision: 2,
+          snapshot: { text: { owner: child, revision: 2, bytes: 0 }, marked: null },
+          receipt: {
+            owner: command.owner,
+            sequence: command.sequence,
+            outcome: { status: 'applied' },
+          },
+        },
+      });
+      c.query(child, 3, text);
+    }
+    c.raw('tools-save');
+    const reads = [...c.out.actions];
+    assert.equal(reads.length, 4);
+    for (const action of reads) {
+      const name = action.resources.text.child.slice(6);
+      assert.equal(action.resources.text.input.revision, 3);
+      c.reply(action, {
+        metadata: c.state.limits[name].observation.snapshot.text,
+        text: values[name],
+        offset: 0,
+        next: null,
+      });
+    }
+    const save = c.action('updateModelSettings');
+    assert.deepEqual(save.input, {
+      selection,
+      tools: { codeMode: null, applyPatch: null },
+      limits: {
+        contextWindow: 272000,
+        inputLimit: null,
+        maxOutputTokens: 4096,
+        compactionThreshold: null,
+      },
+    });
+    c.event({
+      kind: 'action',
+      key: save.key,
+      event: { status: 'failed', diagnostic: 'connection lost' },
+    });
+    c.raw('tools-save');
+    assert.equal(c.out.actions.length, 0, 'an uncertain write cannot be repeated');
+    assert.ok(c.state.current);
+  });
+}

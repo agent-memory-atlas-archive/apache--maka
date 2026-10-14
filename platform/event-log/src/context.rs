@@ -79,6 +79,7 @@ pub struct AcceptedMainContext {
     pub projection_current: bool,
     pub sequence: u64,
     pub recorded_at: std::time::SystemTime,
+    pub requested_at: Option<std::time::SystemTime>,
     pub model_id: String,
     pub route_identity: String,
     pub connection_id: Option<String>,

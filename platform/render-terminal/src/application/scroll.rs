@@ -382,8 +382,8 @@ impl SceneState {
         }
         let delta = match event {
             Event::Mouse(mouse) => match mouse.kind {
-                MouseEventKind::ScrollUp => -3,
-                MouseEventKind::ScrollDown => 3,
+                MouseEventKind::ScrollUp => -1,
+                MouseEventKind::ScrollDown => 1,
                 _ => return false,
             },
             Event::Key(key)

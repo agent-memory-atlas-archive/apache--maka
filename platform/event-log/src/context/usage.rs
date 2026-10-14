@@ -296,6 +296,7 @@ mod tests {
         let basis = AcceptedMainContext {
             projection_current: true,
             sequence: 3,
+            requested_at: None,
             recorded_at: SystemTime::UNIX_EPOCH,
             model_id: "model".into(),
             route_identity: "route".into(),

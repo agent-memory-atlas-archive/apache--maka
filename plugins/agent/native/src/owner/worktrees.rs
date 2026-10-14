@@ -65,7 +65,7 @@ impl Owner {
         scope: &Scope,
     ) -> Result<Option<Workspace>, String> {
         if !self.settings.isolated_workspaces
-            || self.settings.permissions.access != WorkspaceAccess::WorkspaceWrite
+            || self.settings.permissions.access == WorkspaceAccess::ReadOnly
         {
             return Ok(None);
         }

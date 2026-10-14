@@ -297,8 +297,38 @@ impl Handler for Agent {
                     } else {
                         None
                     };
+                    let metrics = match owner.store.context_usage(&input.session_id).await {
+                        Ok((
+                            maka_event_log::context::LatestMainContext::Selected(basis),
+                            usage,
+                        )) => {
+                            let seconds = basis
+                                .requested_at
+                                .and_then(|at| basis.recorded_at.duration_since(at).ok())
+                                .map(|elapsed| elapsed.as_secs_f64())
+                                .filter(|seconds| *seconds > 0.0);
+                            Some(SessionMetrics {
+                                model_id: basis.model_id,
+                                connection_id: basis.connection_id,
+                                context_tokens: usage.as_ref().map(|usage| usage.tokens),
+                                context_window: basis
+                                    .context
+                                    .as_ref()
+                                    .and_then(|context| context.model_context_window),
+                                approximate: usage.as_ref().is_some_and(|usage| usage.approximate),
+                                output_tokens_per_second: basis
+                                    .usage
+                                    .output_tokens
+                                    .zip(seconds)
+                                    .map(|(tokens, seconds)| tokens as f64 / seconds)
+                                    .filter(|rate| rate.is_finite()),
+                            })
+                        }
+                        _ => None,
+                    };
                     let result = encode(Observation {
                         session,
+                        metrics,
                         remembered_backend,
                         through: observed.through_sequence,
                         run,

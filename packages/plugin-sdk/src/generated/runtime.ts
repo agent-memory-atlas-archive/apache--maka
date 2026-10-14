@@ -178,7 +178,7 @@ export type RuntimeProtocol =
   | SettingsPreferencesUpdate
   | SettingsPreferencesUpdated
   | SettingsModelsPage
-  | SettingsUpdateModelTools
+  | SettingsUpdateModelSettings
   | SettingsConnectionsRead
   | SettingsConnectionsPage
   | SettingsConnectionDetail
@@ -1450,9 +1450,9 @@ export type EditorCapture =
       kind: 'at_revision';
     };
 /**
- * Access inside the original selected directory; never an ambient filesystem grant.
+ * Session sandbox policy. Full access explicitly disables filesystem and process isolation.
  */
-export type AgentWorkspaceAccess = 'read_only' | 'workspace_write';
+export type AgentWorkspaceAccess = 'read_only' | 'workspace_write' | 'danger_full_access';
 export type AgentToolInput = 'json' | 'skill' | 'web';
 export type AgentToolResult = ('json' | 'image') | 'computer';
 export type AgentToolConfirmation = 'required' | 'preapproved';
@@ -8227,6 +8227,7 @@ export interface SettingsPreferencesUpdate {
 }
 export interface SettingsModelChoice {
   tools?: SettingsModelToolPreferences | null;
+  limits?: SettingsModelLimitSettings | null;
   selection: ModelSelection;
   connectionName: string;
   label: string;
@@ -8266,13 +8267,26 @@ export interface SettingsModelToolPreferences {
   codeMode: boolean | null;
   applyPatch: boolean | null;
 }
+export interface SettingsModelLimitSettings {
+  overrides: SettingsModelLimits;
+  contextWindow: number | null;
+  inputLimit: number | null;
+  maxOutputTokens: number | null;
+}
+export interface SettingsModelLimits {
+  contextWindow: number | null;
+  inputLimit: number | null;
+  maxOutputTokens: number | null;
+  compactionThreshold: number | null;
+}
 export interface ConnectionTarget {
   connectionId: string;
   modelId: string;
 }
-export interface SettingsUpdateModelTools {
+export interface SettingsUpdateModelSettings {
   selection: ModelSelection;
   tools: SettingsModelToolPreferences;
+  limits: SettingsModelLimits;
 }
 export interface SettingsConnectionSummary {
   /**
@@ -9818,9 +9832,25 @@ export interface AgentDelivery {
 export interface AgentObservation {
   session: AgentSession;
   rememberedBackend?: AgentBackendPreference | null;
+  metrics?: AgentSessionMetrics | null;
   through: number;
   run?: AgentRun | null;
   parts: AgentPart[];
+}
+/**
+ * Display-only readings from the latest completed main-model request.
+ */
+export interface AgentSessionMetrics {
+  modelId: string;
+  connectionId?: string | null;
+  contextTokens?: number | null;
+  contextWindow?: number | null;
+  approximate: boolean;
+  /**
+   * Provider output tokens divided by the model request's wall time.
+   * Includes reasoning and time to first token; excludes tool/user waits.
+   */
+  outputTokensPerSecond?: number | null;
 }
 export interface AgentRun {
   invocationId: string;

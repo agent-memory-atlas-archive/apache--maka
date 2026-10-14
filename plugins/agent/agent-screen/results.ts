@@ -129,6 +129,18 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
       catalog(state);
       if (state.selected?.id === request.sessionId) observe(state, actions);
     }
+  } else if (request.kind === 'sandboxChange') {
+    if (request.epoch === state.epoch && state.selected?.id === request.sessionId) {
+      const result = value as AgentMetadataResult;
+      if (result.kind === 'committed') {
+        if (result.session.revision >= state.selected.revision) state.selected = result.session;
+        if (state.dialog === 'sandbox') state.dialog = null;
+        state.notice = null;
+      } else {
+        state.notice = 'sandboxSaveFailed';
+        observe(state, actions);
+      }
+    }
   } else if (request.kind === 'selectBackend') {
     const result = value as AgentMetadataResult;
     if (state.selected?.id === request.sessionId) {
@@ -396,6 +408,10 @@ export function queryFailed(state: State, request: Request) {
     state.notice = 'sessionChangeFailed';
     return;
   }
+  if (request.kind === 'sandboxChange') {
+    if (request.epoch === state.epoch) state.notice = 'sandboxSaveFailed';
+    return;
+  }
   if (request.kind === 'selectBackend') {
     if (request.sessionId === state.selected?.id) state.notice = 'modelSaveFailed';
     return;
@@ -554,6 +570,7 @@ export function querySucceeded(state: State, actions: Action[], request: Request
         observation.session.revision >= state.selected!.revision
       ) {
         state.run = observation.run ?? null;
+        state.metrics = observation.metrics ?? null;
         state.runThrough = observation.through;
         if (!state.run && state.notice === 'stopping') state.notice = null;
       }
@@ -1126,6 +1143,13 @@ export function delivery(state: State, page: AgentDeliveryPage, actions: Action[
       }
     }
   }
+  if (
+    page.events.some(
+      (event) =>
+        event.sequence > watch.last && ['opened', 'step_ended', 'ended'].includes(event.fact.kind),
+    )
+  )
+    observe(state, actions);
   watch.last = Math.max(watch.last, page.nextAfter);
   if (canonicalChanged) {
     follow(state, actions);

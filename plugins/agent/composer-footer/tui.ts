@@ -17,26 +17,7 @@
  * under the License.
  */
 
-import { ui } from '../../../packages/plugin-sdk/src/index.js';
-import { composerFooterContract } from '../../shared/contracts.js';
-const frame = (revision: number) => ({
-  frame: {
-    revision,
-    state: { revision },
-    surface: null,
-    view: ui.terminal.text({ key: 'empty-footer', text: '', color: 0 }),
-  },
-  events: [],
-  actions: [],
-  subscriptions: [],
-});
-export const component = {
-  mount: () => frame(0),
-  update: (state: { revision: number }) => frame(state.revision + 1),
-  event: (state: { revision: number }) => frame(state.revision + 1),
-};
-export function activate() {
-  return {
-    Footer: { kind: 'component', contract: composerFooterContract, component: ['component'] },
-  };
-}
+import { presentations } from '../../shared/view.js';
+import { footer } from './index.js';
+export { activate } from './index.js';
+export const component = footer(presentations.tui);

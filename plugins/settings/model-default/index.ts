@@ -29,6 +29,13 @@ import type {
   CallerIntent,
   CatalogMutationResult,
   SettingsModelToolPreferences,
+  SettingsModelLimits,
+  ModelSelection,
+  EditorCommand,
+  EditorObservation,
+  EditorTextRef,
+  TextChunk,
+  InputProps,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { modelDefaultContract, type ModelDefaultProps } from '../../shared/contracts.js';
 import { scrollRows, visibleRows, resetScroll } from '../../shared/scroll.js';
@@ -43,7 +50,48 @@ import {
   type Node,
 } from '../../shared/view.js';
 
+const limitNames = [
+  'contextWindow',
+  'maxOutputTokens',
+  'inputLimit',
+  'compactionThreshold',
+] as const;
+type LimitName = (typeof limitNames)[number];
+interface LimitField {
+  observation: EditorObservation | null;
+  command: EditorCommand | null;
+  initial: EditorTextRef | null;
+  reset: string | null;
+  sequence: number;
+}
+const limitLabels = {
+  contextWindow: 'modelContextWindow',
+  inputLimit: 'modelInputLimit',
+  maxOutputTokens: 'modelMaxOutput',
+  compactionThreshold: 'modelCompactionThreshold',
+} as const;
+function initializeLimit(field: LimitField) {
+  if (field.reset !== null && field.observation && !field.command)
+    field.command = {
+      owner: field.observation.snapshot.text.owner,
+      sequence: ++field.sequence,
+      basedOn: field.observation.revision,
+      edit: { kind: 'reset', text: field.reset },
+    };
+}
+function limitsChanged(state: State) {
+  return limitNames.some((name) => {
+    const f = state.limits[name];
+    return f.initial && f.observation && !sameValue(f.initial, f.observation.snapshot.text);
+  });
+}
+function limitsReady(state: State) {
+  return limitNames.every(
+    (name) => state.limits[name].initial && state.limits[name].reset === null,
+  );
+}
 type Request =
+  | { kind: 'limit'; name: LimitName; basis: EditorTextRef; attempt: number }
   | { kind: 'mutate' }
   | { kind: 'receipt'; reference: RecoveryRef }
   | { kind: 'history'; after: number }
@@ -56,6 +104,14 @@ interface Intent {
 interface State {
   toolsIdentity: string;
   tools: SettingsModelToolPreferences;
+  limits: Record<LimitName, LimitField>;
+  capture: {
+    attempt: number;
+    selection: ModelSelection;
+    tools: SettingsModelToolPreferences;
+    values: Partial<SettingsModelLimits>;
+    remaining: LimitName[];
+  } | null;
   revision: number;
   serial: number;
   confirmation: Intent | null;
@@ -80,15 +136,23 @@ function request(
   binding: string,
   method: string,
   input: unknown,
+  resources: Action['resources'] = {},
 ) {
   const key = 'model-default-' + ++state.serial;
   state.pending[key] = r;
-  actions.push({ key, binding, member: 0, method, input, resources: {} });
+  actions.push({ key, binding, member: 0, method, input, resources });
 }
 function syncTools(state: State, props: ModelDefaultProps) {
   const identity = JSON.stringify(props.selection?.selection ?? null);
   if (state.toolsIdentity === identity) return;
   state.toolsIdentity = identity;
+  for (const name of limitNames) {
+    const field = state.limits[name];
+    const value = props.selection?.limits?.overrides[name];
+    field.reset = value == null ? '' : String(value);
+    field.initial = null;
+    initializeLimit(field);
+  }
   state.tools = {
     codeMode: props.selection?.tools?.codeMode ?? null,
     applyPatch: props.selection?.tools?.applyPatch ?? null,
@@ -96,6 +160,7 @@ function syncTools(state: State, props: ModelDefaultProps) {
 }
 function toolsChanged(state: State, props: ModelDefaultProps) {
   return (
+    limitsChanged(state) ||
     state.tools.codeMode !== (props.selection?.tools?.codeMode ?? null) ||
     state.tools.applyPatch !== (props.selection?.tools?.applyPatch ?? null)
   );
@@ -192,6 +257,42 @@ function frame<N extends Node>(
               12,
               props.theme.muted,
             ),
+            ui.text('model-limits-help', text.modelLimitsHelp, 12, props.theme.muted),
+            ...limitNames.map((name) => {
+              const field = state.limits[name];
+              const known = name === 'compactionThreshold' ? null : props.selection?.limits?.[name];
+              return ui.box(
+                'limit-row-' + name,
+                [
+                  ui.text('limit-label-' + name, text[limitLabels[name]], 13, props.theme.text),
+                  presentation.slot(
+                    'limit-' + name,
+                    'input',
+                    {
+                      appearance: props.theme.input,
+                      accessibilityLabel: text[limitLabels[name]],
+                      placeholder: text.modelToolsAuto,
+                      command: field.command,
+                      readOnly: !canStart(state, props) || field.reset !== null,
+                      disabled: false,
+                      tabIndex: 0,
+                    } satisfies InputProps,
+                    { changed: 'limit-changed' },
+                  ),
+                  ...(known == null
+                    ? []
+                    : [
+                        ui.text(
+                          'limit-known-' + name,
+                          `${text[name === 'maxOutputTokens' ? 'modelOutputCapacity' : 'modelCurrentLimit']}: ${known.toLocaleString('en-US')}`,
+                          12,
+                          props.theme.muted,
+                        ),
+                      ]),
+                ],
+                { gap: 0 },
+              );
+            }),
             ...(['codeMode', 'applyPatch'] as const).map((field) =>
               ui.box(
                 'tools-' + field,
@@ -239,7 +340,7 @@ function frame<N extends Node>(
                 ui.button(
                   'tools-save',
                   text.modelToolsSave,
-                  !canStart(state, props) || !toolsChanged(state, props),
+                  !canStart(state, props) || !limitsReady(state) || !toolsChanged(state, props),
                   true,
                 ),
                 ui.button(
@@ -290,8 +391,9 @@ function frame<N extends Node>(
     ],
     {
       visible: !state.confirmation && !state.historyOpen,
-      gap: target === 'desktop' ? 8 : 1,
-      scroll: target === 'tui' ? 'manual' : 'none',
+      gap: target === 'desktop' ? 8 : 0,
+      scroll: target === 'tui' ? 'manual' : 'anchor',
+      style: { width: fill, minHeight: 0, maxHeight: 520 },
       terminal: { grow: 1 },
     },
   );
@@ -477,6 +579,19 @@ export function modelDefault<N extends Node>(
       const state: State = {
         toolsIdentity: '',
         tools: { codeMode: null, applyPatch: null },
+        limits: Object.fromEntries(
+          limitNames.map((name) => [
+            name,
+            {
+              observation: null,
+              command: null,
+              initial: null,
+              reset: null,
+              sequence: 0,
+            },
+          ]),
+        ) as Record<LimitName, LimitField>,
+        capture: null,
         revision: 0,
         serial: 0,
         confirmation: null,
@@ -514,12 +629,66 @@ export function modelDefault<N extends Node>(
       state.revision++;
       const actions: Action[] = [],
         events: Emission[] = [];
-      if (input.kind === 'action') {
+      if (input.kind === 'component' && input.child.startsWith('limit-')) {
+        const field = state.limits[input.child.slice(6) as LimitName];
+        if (field && input.name === 'changed') {
+          field.observation = input.event as EditorObservation;
+          const receipt = field.observation.receipt;
+          if (
+            field.command &&
+            receipt?.owner === field.command.owner &&
+            receipt.sequence === field.command.sequence
+          ) {
+            if (
+              receipt.outcome.status === 'applied' &&
+              field.command.edit.kind === 'reset' &&
+              field.command.edit.text === field.reset
+            ) {
+              field.initial = field.observation.snapshot.text;
+              field.reset = null;
+            } else if (receipt.outcome.status !== 'applied') {
+              state.notice = 'modelLimitsInvalid';
+              field.reset = null;
+            }
+            field.command = null;
+            initializeLimit(field);
+          } else initializeLimit(field);
+        }
+      } else if (input.kind === 'action') {
         const r = state.pending[input.key];
         if (!r) return frame(presentation, state, props);
         delete state.pending[input.key];
         const outcome = input.event as ActionOutcome;
-        if (r.kind === 'mutate') {
+        if (r.kind === 'limit') {
+          const capture = state.capture;
+          if (!capture || capture.attempt !== r.attempt) return frame(presentation, state, props);
+          const chunk = outcome.status === 'succeeded' ? (outcome.value as TextChunk) : null;
+          const value = chunk?.text.trim() ?? '';
+          const parsed = value === '' ? null : Number(value);
+          if (
+            !sameValue(capture.selection, props.selection?.selection) ||
+            !chunk ||
+            !sameValue(chunk.metadata, r.basis) ||
+            new TextEncoder().encode(chunk.text).length !== r.basis.bytes ||
+            (value !== '' &&
+              (!/^[0-9]+$/.test(value) || !Number.isSafeInteger(parsed) || parsed! <= 0))
+          ) {
+            state.capture = null;
+            state.current = null;
+            state.notice = 'modelLimitsInvalid';
+          } else {
+            capture.values[r.name] = parsed;
+            capture.remaining = capture.remaining.filter((name) => name !== r.name);
+            if (!capture.remaining.length) {
+              state.capture = null;
+              request(state, actions, { kind: 'mutate' }, 'settings', 'updateModelSettings', {
+                selection: capture.selection,
+                tools: capture.tools,
+                limits: capture.values,
+              });
+            }
+          }
+        } else if (r.kind === 'mutate') {
           if (outcome.status === 'operation') settle(state, outcome.reply, events);
           else if (outcome.status === 'not_accepted') {
             state.notice =
@@ -544,7 +713,7 @@ export function modelDefault<N extends Node>(
                 .filter(
                   (entry) =>
                     entry.reference.contract.name === 'maka.settings.Settings' &&
-                    ['setDefault', 'updateModelTools'].includes(entry.reference.method),
+                    ['setDefault', 'updateModelSettings'].includes(entry.reference.method),
                 )
                 .map((entry) => ({
                   cursor: entry.cursor,
@@ -622,7 +791,7 @@ export function modelDefault<N extends Node>(
             if (key === 'tools-reset') {
               state.toolsIdentity = '';
               syncTools(state, props);
-            } else if (key === 'tools-save' && toolsChanged(state, props)) {
+            } else if (key === 'tools-save' && limitsReady(state) && toolsChanged(state, props)) {
               state.current = {
                 kind: 'tools',
                 revision: props.catalogRevision!,
@@ -633,10 +802,31 @@ export function modelDefault<N extends Node>(
                 reference: null,
               };
               state.notice = null;
-              request(state, actions, { kind: 'mutate' }, 'settings', 'updateModelTools', {
+              state.capture = {
+                attempt: ++state.serial,
                 selection: selected.selection,
                 tools: { ...state.tools },
-              });
+                values: {},
+                remaining: [...limitNames],
+              };
+              for (const name of limitNames) {
+                const basis = state.limits[name].observation!.snapshot.text;
+                request(
+                  state,
+                  actions,
+                  { kind: 'limit', name, basis, attempt: state.capture.attempt },
+                  'reader',
+                  'read',
+                  { start: 0, end: basis.bytes },
+                  {
+                    text: {
+                      child: 'limit-' + name,
+                      method: 'snapshot',
+                      input: { kind: 'at_revision', owner: basis.owner, revision: basis.revision },
+                    },
+                  },
+                );
+              }
             } else {
               const match = /^tools-(codeMode|applyPatch)-(auto|on|off)$/.exec(key);
               if (match)

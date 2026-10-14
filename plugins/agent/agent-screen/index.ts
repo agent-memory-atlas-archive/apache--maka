@@ -112,6 +112,7 @@ export function agentScreen<N extends Node>(
         followAttempt: null,
         parts: [],
         run: null,
+        metrics: null,
         queue: null,
         queueEdit: null,
         queueDraft: null,

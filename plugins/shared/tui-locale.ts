@@ -393,6 +393,13 @@ const catalogs: Record<string, Record<string, string>> = {
     'sandbox-default-conflict':
       'Host settings changed elsewhere. Reopen to review the current default.',
     'chat-context-last': 'Last input { $input } / { $window }',
+    'chat-prompt-jump': 'Jump to this message',
+    'chat-approval-needed': 'Approval needed · Review',
+    'chat-reply-needed': 'Reply needed · Open',
+    'chat-context': 'Context',
+    'chat-metrics-hint':
+      'Context includes provider usage plus estimated additions (≈). Speed is the last main request’s output tokens / request time, including reasoning and first-token latency; tool and approval waits are excluded.',
+
     'composer-too-large': 'Drafts are limited to 256 KiB. This edit was not applied.',
     'composer-control': 'Paste contains terminal control characters. Nothing was inserted.',
     'composer-draft-limit': 'This client already holds 32 drafts. Existing drafts have been kept.',
@@ -1248,6 +1255,7 @@ const catalogs: Record<string, Record<string, string>> = {
     'sessions-access': 'Default workspace access',
     'sessions-read_only': 'Read only',
     'sessions-workspace_write': 'Read and write workspace',
+    'sessions-danger_full_access': 'Sandbox off',
     'sessions-requests': 'Allow permission requests',
     'sessions-saved':
       'Defaults saved. New sessions use them after services finish applying the change.',
@@ -2108,6 +2116,13 @@ const catalogs: Record<string, Record<string, string>> = {
     'sandbox-default-failed': '无法读取或更新默认值。请关闭后重新打开，核对当前设置。',
     'sandbox-default-conflict': 'Host 设置已在别处修改。请重新打开，核对当前默认值。',
     'chat-context-last': '上次输入 { $input } / { $window }',
+    'chat-prompt-jump': '跳转到这条消息',
+    'chat-approval-needed': '需要审批 · 查看请求',
+    'chat-reply-needed': '等待回复 · 查看问题',
+    'chat-context': '上下文',
+    'chat-metrics-hint':
+      '上下文基于供应商用量与后续内容估算，≈ 表示估算值。速度为最近一次主模型请求的输出 token 数 ÷ 请求耗时，包含思考与首字等待，不含工具执行和审批等待。',
+
     'composer-too-large': '草稿上限为 256 KiB，本次修改未应用。',
     'composer-control': '粘贴内容包含终端控制字符，未插入任何内容。',
     'composer-draft-limit': '本次运行已保留 32 份草稿，已有草稿不会被丢弃。',
@@ -2894,6 +2909,7 @@ const catalogs: Record<string, Record<string, string>> = {
     'sessions-access': '默认工作区访问权限',
     'sessions-read_only': '只读',
     'sessions-workspace_write': '读写工作区',
+    'sessions-danger_full_access': '关闭沙箱',
     'sessions-requests': '允许请求额外权限',
     'sessions-saved': '默认值已保存。服务应用变更后，新会话将使用此设置。',
     'sessions-conflict': '设置已在别处更改，已重新读取当前默认值。',
@@ -3692,6 +3708,13 @@ const catalogs: Record<string, Record<string, string>> = {
     'sandbox-default-failed': '無法讀取或更新預設值。請關閉後重新開啟，核對目前設定。',
     'sandbox-default-conflict': 'Host 設定已在其他地方修改。請重新開啟，核對目前預設值。',
     'chat-context-last': '上次輸入 { $input } / { $window }',
+    'chat-prompt-jump': '跳至這則訊息',
+    'chat-approval-needed': '需要審批 · 檢視請求',
+    'chat-reply-needed': '等待回覆 · 檢視問題',
+    'chat-context': '上下文',
+    'chat-metrics-hint':
+      '上下文依據供應商用量與後續內容估算，≈ 表示估算值。速度為最近一次主模型請求的輸出 token 數 ÷ 請求耗時，包含思考與首字等待，不含工具執行和審批等待。',
+
     'composer-too-large': '草稿上限為 256 KiB，本次修改未套用。',
     'composer-control': '貼上內容包含終端控制字元，未插入任何內容。',
     'composer-draft-limit': '本次執行已保留 32 份草稿，既有草稿不會被捨棄。',
@@ -4479,6 +4502,7 @@ const catalogs: Record<string, Record<string, string>> = {
     'sessions-access': '預設工作區存取權限',
     'sessions-read_only': '唯讀',
     'sessions-workspace_write': '讀寫工作區',
+    'sessions-danger_full_access': '關閉沙箱',
     'sessions-requests': '允許請求額外權限',
     'sessions-saved': '預設值已儲存。服務套用變更後，新工作階段將使用此設定。',
     'sessions-conflict': '設定已在別處變更，已重新讀取目前預設值。',

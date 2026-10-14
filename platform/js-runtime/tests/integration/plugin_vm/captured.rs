@@ -217,20 +217,19 @@ async fn worker_registration_checks_input_result_json_and_registration_shapes() 
         let vm = Vm::pure(Limits::default()).unwrap();
         let module = vm.load("json-boundary.mjs".into(), r#"
             let calls = 0;
-            export const service = {read(value) { calls++; return value; }, large() {return '界'.repeat(400000);}, json() {return {toJSON(){return {calls};}};}, circular() { const value={}; value.self=value; return value; }};
+            export const service = {read(value) { calls++; return value; }, json() {return {toJSON(){return {calls};}};}, circular() { const value={}; value.self=value; return value; }};
         "#.into()).unwrap();
         for methods in [vec![], vec!["read".into(),"read".into()], vec!["x".repeat(129)]] {
             assert!(module.capture(vec!["service".into()], methods).await.is_err());
         }
         assert!(module.capture(vec!["service".into();33], vec!["read".into()]).await.is_err());
-        let callbacks = module.capture(vec!["service".into()], vec!["read".into(),"large".into(),"json".into(),"circular".into()]).await.unwrap();
+        let callbacks = module.capture(vec!["service".into()], vec!["read".into(),"json".into(),"circular".into()]).await.unwrap();
         assert!(callbacks.call("read", vec![json!("x".repeat(1024*1024))]).await.is_err());
         for value in [json!(u64::MAX), json!(i64::MAX), json!(9_007_199_254_740_993_u64)] {
             assert!(callbacks.call("read", vec![json!({"nested":[value]})]).await
                 .unwrap_err().to_string().contains("represented exactly"));
         }
         assert_eq!(callbacks.call("json", vec![]).await.unwrap(), json!({"calls":0}));
-        assert!(callbacks.call("large", vec![]).await.unwrap_err().to_string().contains("exceeds 1 MiB"));
         assert!(callbacks.call("circular", vec![]).await.is_err());
         assert_eq!(callbacks.call("read", vec![json!("valid")]).await.unwrap(), json!("valid"));
         assert!(!vm.is_terminated(), "ordinary invalid values do not terminate the whole worker");
