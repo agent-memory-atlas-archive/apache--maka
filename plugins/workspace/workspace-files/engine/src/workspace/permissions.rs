@@ -32,14 +32,20 @@ pub fn resolve(mode: Mode, cwd: &Path) -> Result<(Sandbox, Sandbox), Error> {
     let mut filesystem = Policy::uniform(Access::Read);
     if mode == Mode::WorkspaceWrite {
         filesystem.rules.push(Rule::subtree(cwd, Access::Write));
-        let temporary = std::env::temp_dir().canonicalize()?;
-        let temporary = PathBuf::from(
-            super::project::host_path(&temporary)
-                .map_err(|error| Error::Invalid(error.to_string()))?,
-        );
-        filesystem
-            .rules
-            .push(Rule::subtree(temporary, Access::Write));
+        let mut temporary = vec![std::env::temp_dir()];
+        #[cfg(unix)]
+        temporary.push(PathBuf::from("/tmp"));
+        for path in temporary {
+            let path = path.canonicalize()?;
+            let path = PathBuf::from(
+                super::project::host_path(&path)
+                    .map_err(|error| Error::Invalid(error.to_string()))?,
+            );
+            let rule = Rule::subtree(path, Access::Write);
+            if !filesystem.rules.contains(&rule) {
+                filesystem.rules.push(rule);
+            }
+        }
     }
     let base = Sandbox::Managed {
         filesystem,

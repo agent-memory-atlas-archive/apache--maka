@@ -34,7 +34,7 @@ use maka_host_runtime::application::{
 };
 use maka_sandbox::{
     Network, Sandbox,
-    filesystem::{Access, Policy, Rule},
+    filesystem::{Access, Rule},
     grant::Permissions,
 };
 use serde_json::Value;
@@ -234,36 +234,8 @@ fn capture(
             ceiling: Sandbox::Disabled,
         });
     }
-    let mode = match access {
-        WorkspaceAccess::ReadOnly => maka_sandbox::Mode::ReadOnly,
-        WorkspaceAccess::WorkspaceWrite => maka_sandbox::Mode::WorkspaceWrite,
-        WorkspaceAccess::DangerFullAccess => unreachable!("handled above"),
-    };
-    let (base, metadata) =
-        maka_fs_tools::workspace::permissions::resolve(mode, &path).map_err(failed)?;
-    // Both restrictions intersect independently: a nested selected path cannot
-    // reopen private Host state by being more specific than a deny rule.
-    let directory_ceiling = Sandbox::Managed {
-        filesystem: Policy {
-            default: Access::Deny,
-            rules: vec![Rule::subtree(&path, Access::Write)],
-            deny_globs: vec![],
-        },
-        network: Network::Denied,
-    };
-    let host_ceiling = Sandbox::Managed {
-        filesystem: Policy {
-            default: Access::Write,
-            rules: maka_workspace_support::private_rules(workspace, state_root).map_err(failed)?,
-            deny_globs: vec![],
-        },
-        network: Network::Denied,
-    };
-    let ceiling = metadata
-        .intersect(&directory_ceiling)
-        .and_then(|s| s.intersect(&host_ceiling))
-        .map_err(failed)?;
-    let sandbox = base.intersect(&ceiling).map_err(failed)?;
+    let (sandbox, ceiling) =
+        maka_workspace_support::sandbox(workspace, access, state_root).map_err(failed)?;
     // Policy resolution may inspect workspace metadata; never accept replacement
     // of the original directory during those reads.
     maka_fs_tools::directory::open(&path, &workspace.directory_identity).map_err(failed)?;

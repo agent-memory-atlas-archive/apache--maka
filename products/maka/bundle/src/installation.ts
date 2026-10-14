@@ -133,11 +133,13 @@ export function installation(
   const processes: NonNullable<CompositionConfiguration['processes']> = {
     isolatedWorkspaces: true,
     filesystem: {
-      default: 'read',
-      rules: [{ path: options.workspace, scope: 'subtree', access: 'write' }],
+      default: 'write',
+      rules: [],
       denyGlobs: [],
     },
-    network: 'denied',
+    // Installation ceilings allow approval requests. The session preset still
+    // limits writes to workspace/temp and denies networking until approved.
+    network: 'allowed',
     helper: options.helper,
   };
   return {

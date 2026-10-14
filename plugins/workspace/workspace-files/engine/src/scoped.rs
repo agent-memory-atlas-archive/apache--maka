@@ -60,6 +60,7 @@ pub(crate) struct Route {
 
 enum CapturedScope {
     Restricted(Vec<Root>),
+    Workspace(Root),
     Unrestricted,
 }
 
@@ -72,14 +73,20 @@ impl Authority {
         if !path.is_absolute() {
             return Err(failed("Captured directory location must be absolute"));
         }
+        let root = Root {
+            aliases: vec![path.clone()],
+            path: path.clone(),
+            dir,
+        };
+        let scope = if policy.is_some() {
+            CapturedScope::Workspace(root)
+        } else {
+            CapturedScope::Restricted(vec![root])
+        };
         Ok(Self {
             cwd: path.clone(),
             policy,
-            scope: CapturedScope::Restricted(vec![Root {
-                aliases: vec![path.clone()],
-                path,
-                dir,
-            }]),
+            scope,
         })
     }
     pub(crate) fn cwd(&self) -> &Path {
@@ -96,9 +103,85 @@ impl Authority {
     }
 
     pub(crate) fn routes(&self, path: &Path) -> Result<Vec<Route>, ToolError> {
-        let absolute = path::resolve(&self.cwd, path)?;
+        self.routes_for(path, false)
+    }
+
+    pub(crate) fn read_routes(&self, path: &Path) -> Result<Vec<Route>, ToolError> {
+        self.routes_for(path, true)
+    }
+
+    fn routes_for(&self, path: &Path, read: bool) -> Result<Vec<Route>, ToolError> {
+        let mut absolute = path::resolve(&self.cwd, path)?;
+        if let CapturedScope::Workspace(root) = &self.scope {
+            // Ordinary workspace operations retain the selected directory even
+            // across a rename. External paths are admitted by the same policy.
+            if let Ok(relative) = absolute.strip_prefix(&root.path) {
+                let parent = relative
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or(Path::new("."));
+                if root.dir.canonicalize(relative).is_ok()
+                    || (root
+                        .dir
+                        .symlink_metadata(relative)
+                        .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+                        && root.dir.canonicalize(parent).is_ok())
+                {
+                    return Ok(vec![Route {
+                        root: Directory::new(
+                            root.dir.try_clone().map_err(io_error)?,
+                            root.path.clone(),
+                            self.policy.clone(),
+                        ),
+                        relative: relative.to_owned(),
+                        root_path: root.path.clone(),
+                    }]);
+                }
+            }
+            // A fallback through the host namespace must never follow a
+            // replacement of the selected workspace after an approval wait.
+            use cap_fs_ext::MetadataExt;
+            let observed = Dir::open_ambient_dir(&root.path, ambient_authority())
+                .and_then(|dir| dir.dir_metadata())
+                .map_err(io_error)?;
+            let held = root.dir.dir_metadata().map_err(io_error)?;
+            if (observed.dev(), observed.ino()) != (held.dev(), held.ino()) {
+                return Err(failed(
+                    "Selected workspace changed during file authorization",
+                ));
+            }
+        }
         match &self.scope {
-            CapturedScope::Unrestricted => {
+            CapturedScope::Unrestricted | CapturedScope::Workspace(_) => {
+                if let Some(policy) = &self.policy {
+                    if read {
+                        let normalized: PathBuf = absolute.components().collect();
+                        if !absolute.components().any(|c| c == Component::ParentDir)
+                            && !policy.access(dunce::simplified(&normalized)).can_read()
+                        {
+                            return Err(failed("filesystem policy denies Read access"));
+                        }
+                        // Host-root capabilities reject absolute symlinks too.
+                        // Resolve the spelling, then authorize and open the
+                        // resolved path without following links again.
+                        absolute = absolute.canonicalize().map_err(io_error)?;
+                    } else if matches!(self.scope, CapturedScope::Workspace(_)) {
+                        if absolute.components().any(|c| c == Component::ParentDir) {
+                            return Err(failed(
+                                "Write does not support parent (..) path components",
+                            ));
+                        }
+                        let name = absolute
+                            .file_name()
+                            .ok_or_else(|| failed("Write requires a file name"))?;
+                        absolute = absolute
+                            .parent()
+                            .ok_or_else(|| failed("Write requires a parent directory"))?
+                            .canonicalize()
+                            .map_err(io_error)?
+                            .join(name);
+                    }
+                }
                 let root = absolute
                     .ancestors()
                     .last()
@@ -198,7 +281,7 @@ impl Authority {
             #[cfg(unix)]
             options.custom_flags(libc::O_NONBLOCK);
             let mut error = failed("path is outside the admitted Read roots");
-            for route in self.routes(absolute)? {
+            for route in self.read_routes(absolute)? {
                 match route.root.open_with(&route.relative, &options) {
                     Ok(file) => return Ok(file),
                     Err(reason) => error = io_error(reason),
@@ -208,6 +291,7 @@ impl Authority {
         }
         let roots = match &self.scope {
             CapturedScope::Restricted(roots) => roots,
+            CapturedScope::Workspace(_) => unreachable!("workspace always has a policy"),
             CapturedScope::Unrestricted => {
                 let mut options = std::fs::OpenOptions::new();
                 options.read(true);

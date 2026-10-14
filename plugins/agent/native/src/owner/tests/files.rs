@@ -373,7 +373,6 @@ async fn native_files_never_grant_metadata_private_root_symlink_or_parent_escape
             ".maka/secret".into(),
             "../outside.txt".into(),
             "escape".into(),
-            outside.to_str().unwrap().to_owned(),
             f.root.join("secret").to_str().unwrap().to_owned(),
         ] {
             call(
@@ -460,7 +459,8 @@ async fn sandbox_off_allows_external_files_and_restoring_it_restricts_access() {
     tokio::time::timeout(Duration::from_secs(60), async {
         for method in ["write", "readText"] {
             let (listener, f, session) = fixture(method).await;
-            let outside = f.workspace.parent().unwrap().join("outside.txt");
+            let external = external_directory();
+            let outside = external.path().canonicalize().unwrap().join("outside.txt");
             std::fs::write(&outside, "external").unwrap();
             let input = if method == "write" {
                 json!({"path":outside,"content":"updated"})
@@ -468,9 +468,9 @@ async fn sandbox_off_allows_external_files_and_restoring_it_restricts_access() {
                 json!({"path":outside})
             };
             for (mode, allowed) in [
-                ("workspace_write", false),
+                ("workspace_write", method == "readText"),
                 ("danger_full_access", true),
-                ("read_only", false),
+                ("read_only", method == "readText"),
             ] {
                 let changed = change(&f, &session, mode, false, true).await;
                 assert_eq!(changed["kind"], "committed", "{changed}");
@@ -499,6 +499,109 @@ async fn sandbox_off_allows_external_files_and_restoring_it_restricts_access() {
             );
             close(&f).await;
         }
+    })
+    .await
+    .unwrap();
+}
+
+// External-write tests must live outside the newly writable system temp roots.
+pub(super) fn external_directory() -> tempfile::TempDir {
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).unwrap();
+    tempfile::Builder::new()
+        .prefix(".maka-permission-test-")
+        .tempdir_in(home)
+        .unwrap()
+}
+
+#[tokio::test]
+async fn native_files_external_write_requires_approval_and_once_grants_expire() {
+    tokio::time::timeout(Duration::from_secs(90), async {
+        let (listener, f, session) = fixture("write").await;
+        let external = external_directory();
+        let outside = external.path().canonicalize().unwrap().join("approved.txt");
+        let input = json!({"path":outside,"content":"approved"});
+        for scope in [None, Some("once"), None] {
+            call(&listener, &f, &session, input.clone()).await;
+            let record = pending(&f, &session).await;
+            let InteractionRequest::Permissions { request, .. } = &record.request else {
+                unreachable!()
+            };
+            assert_eq!(request.permissions.filesystem[0].path, outside);
+            assert!(!outside.exists());
+            answer(&f, &record, scope).await;
+            let result = finish(&listener, &f).await;
+            assert_eq!(
+                result["kind"],
+                if scope.is_some() {
+                    "completed"
+                } else {
+                    "failed"
+                },
+                "{result}"
+            );
+            if scope.is_some() {
+                assert_eq!(std::fs::read_to_string(&outside).unwrap(), "approved");
+                std::fs::remove_file(&outside).unwrap();
+            } else {
+                assert!(!outside.exists());
+            }
+        }
+        let temporary = f.workspace.parent().unwrap().join("temporary.txt");
+        call(
+            &listener,
+            &f,
+            &session,
+            json!({"path":temporary,"content":"temporary"}),
+        )
+        .await;
+        assert_eq!(finish(&listener, &f).await["kind"], "completed");
+        assert_eq!(std::fs::read_to_string(&temporary).unwrap(), "temporary");
+        assert!(
+            f.store
+                .pending_interactions(&session)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        close(&f).await;
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn native_files_external_reads_allow_parent_paths_and_aliases_but_deny_private_state() {
+    tokio::time::timeout(Duration::from_secs(90), async {
+        let (listener, f, session) = fixture("readText").await;
+        let outside = f.workspace.parent().unwrap().join("external-read.txt");
+        std::fs::write(&outside, "public-external-file").unwrap();
+        std::fs::write(f.root.join("private.txt"), "host-private-secret").unwrap();
+        let mut paths = vec![
+            outside.to_string_lossy().into_owned(),
+            "../external-read.txt".into(),
+        ];
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&outside, f.workspace.join("external-alias")).unwrap();
+            paths.push("external-alias".into());
+        }
+        for path in paths {
+            call(&listener, &f, &session, json!({"path":path})).await;
+            let result = finish(&listener, &f).await;
+            assert_eq!(result["kind"], "completed", "{path}: {result}");
+            assert!(result.to_string().contains("public-external-file"));
+        }
+        call(
+            &listener,
+            &f,
+            &session,
+            json!({"path":f.root.join("private.txt")}),
+        )
+        .await;
+        let result = finish(&listener, &f).await;
+        assert_eq!(result["kind"], "failed", "{result}");
+        assert!(!result.to_string().contains("host-private-secret"));
+        close(&f).await;
     })
     .await
     .unwrap();

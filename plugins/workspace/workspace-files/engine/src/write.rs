@@ -90,8 +90,8 @@ pub fn mutation_paths(name: &str, input: Value, cwd: &Path) -> Result<Vec<PathBu
 }
 
 impl MutationExecutor {
-    /// Write permission is supplied by the caller; the directory cannot be
-    /// replaced between the embedding's identity check and capture.
+    /// Retain the selected directory. A supplied policy also governs external
+    /// paths; without one, the directory is the entire write grant.
     pub fn from_directory(
         path: std::path::PathBuf,
         directory: cap_std::fs::Dir,

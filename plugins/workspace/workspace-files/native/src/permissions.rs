@@ -53,9 +53,36 @@ pub(super) async fn authorize(
         let paths = maka_fs_tools::mutation_paths(tool, input, &captured.path)?;
         let mut requested = Vec::new();
         for path in paths {
-            let relative = path
-                .strip_prefix(&captured.path)
-                .map_err(|_| failed("File is outside the captured workspace"))?;
+            let lexical = Permissions {
+                filesystem: vec![Rule::exact(&path, Access::Write)],
+                network: Network::Denied,
+            };
+            if !captured.ceiling.permits(&lexical).map_err(failed)? {
+                return Err(failed(
+                    "Workspace metadata or Host-private files cannot be granted",
+                ));
+            }
+            let (root, directory, relative) = match path.strip_prefix(&captured.path) {
+                Ok(relative) => (
+                    captured.path.clone(),
+                    captured.directory.try_clone().map_err(failed)?,
+                    relative.to_owned(),
+                ),
+                Err(_) => {
+                    let root = path
+                        .ancestors()
+                        .last()
+                        .ok_or_else(|| failed("Absolute file path required"))?;
+                    let directory =
+                        cap_std::fs::Dir::open_ambient_dir(root, cap_std::ambient_authority())
+                            .map_err(failed)?;
+                    (
+                        root.to_owned(),
+                        directory,
+                        path.strip_prefix(root).map_err(failed)?.to_owned(),
+                    )
+                }
+            };
             if relative
                 .components()
                 .any(|part| !matches!(part, Component::Normal(_) | Component::CurDir))
@@ -66,11 +93,11 @@ pub(super) async fn authorize(
                 .components()
                 .filter(|part| *part != Component::CurDir)
                 .collect();
-            let resolved = match captured.directory.canonicalize(&relative) {
+            let resolved = match directory.canonicalize(&relative) {
                 Ok(path) => path,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                     // A missing leaf is allowed; dangling links and absent parents are not.
-                    match captured.directory.symlink_metadata(&relative) {
+                    match directory.symlink_metadata(&relative) {
                         Ok(_) => return Err(failed("Write target is a dangling link")),
                         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                         Err(error) => return Err(failed(error)),
@@ -82,11 +109,7 @@ pub(super) async fn authorize(
                         .parent()
                         .filter(|path| !path.as_os_str().is_empty())
                         .unwrap_or(Path::new("."));
-                    captured
-                        .directory
-                        .canonicalize(parent)
-                        .map_err(failed)?
-                        .join(name)
+                    directory.canonicalize(parent).map_err(failed)?.join(name)
                 }
                 Err(error) => return Err(failed(error)),
             };
@@ -94,11 +117,15 @@ pub(super) async fn authorize(
                 .components()
                 .filter(|part| *part != Component::CurDir)
                 .collect();
-            if resolved != relative {
+            if (root == captured.path && resolved != relative)
+                || directory
+                    .symlink_metadata(&relative)
+                    .is_ok_and(|m| m.is_symlink())
+            {
                 return Err(failed("Write does not support symlink targets"));
             }
             let permissions = Permissions {
-                filesystem: vec![Rule::exact(captured.path.join(resolved), Access::Write)],
+                filesystem: vec![Rule::exact(root.join(resolved), Access::Write)],
                 network: Network::Denied,
             };
             if !captured.ceiling.permits(&permissions).map_err(failed)? {
@@ -127,7 +154,7 @@ pub(super) async fn authorize(
         store,
         configuration,
         PermissionRequest {
-            reason: format!("{tool} needs write access to these files in the selected workspace."),
+            reason: format!("{tool} needs write access to these files."),
             command: None,
             permissions: required.clone(),
         },

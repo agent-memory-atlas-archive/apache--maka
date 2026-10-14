@@ -66,17 +66,9 @@ pub(super) fn capture(
             ceiling: Sandbox::Disabled,
         });
     }
-    let (_, metadata) =
-        maka_fs_tools::workspace::permissions::resolve(maka_sandbox::Mode::ReadOnly, &path)
+    let (base, protections) =
+        maka_workspace_support::sandbox(workspace, configuration.permissions.access, state_root)
             .map_err(failed)?;
-    let private = Sandbox::Managed {
-        filesystem: Policy {
-            default: Access::Write,
-            rules: maka_workspace_support::private_rules(workspace, state_root).map_err(failed)?,
-            deny_globs: vec![],
-        },
-        network: Network::Allowed,
-    };
     let mut installed_filesystem = settings.filesystem.clone();
     if workspace.worktree.is_some() {
         installed_filesystem
@@ -87,34 +79,8 @@ pub(super) fn capture(
         filesystem: installed_filesystem,
         network: settings.network.clone(),
     };
-    let installation = if workspace.worktree.is_some() {
-        installation
-            .intersect(&Sandbox::Managed {
-                filesystem: Policy {
-                    default: Access::Read,
-                    rules: vec![Rule::subtree(&path, Access::Write)],
-                    deny_globs: vec![],
-                },
-                network: settings.network.clone(),
-            })
-            .map_err(failed)?
-    } else {
-        installation
-    };
-    let ceiling = installation
-        .intersect(&metadata)
-        .and_then(|s| s.intersect(&private))
-        .map_err(failed)?;
-    let mut filesystem = Policy::uniform(Access::Read);
-    if configuration.permissions.access == WorkspaceAccess::WorkspaceWrite {
-        filesystem.rules.push(Rule::subtree(&path, Access::Write));
-    }
-    let base = Sandbox::Managed {
-        filesystem,
-        network: Network::Denied,
-    }
-    .intersect(&ceiling)
-    .map_err(failed)?;
+    let ceiling = installation.intersect(&protections).map_err(failed)?;
+    let base = base.intersect(&ceiling).map_err(failed)?;
     maka_fs_tools::directory::open(&path, &workspace.directory_identity).map_err(failed)?;
     let executor =
         maka_process::ShellExecutor::from_directory(path, directory.into_std_file(), base)?;

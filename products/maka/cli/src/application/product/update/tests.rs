@@ -55,6 +55,13 @@ async fn old_installation(path: &std::path::Path, standard: bool) -> (EventLog, 
     let host = launch::open(path.join("host"), true, None).await.unwrap();
     let options = json!({"workspace": path, "hostRoot": path.join("host"), "themeFile": path.join("theme.json"), "helper": std::env::current_exe().unwrap(), "locale":"zh-CN"});
     let mut config = super::super::installation(options.clone()).await.unwrap();
+    // Previous ceilings blocked network and external-write approval requests.
+    for processes in ["processes", "coordinatorProcesses"] {
+        config[processes]["network"] = json!("denied");
+        config[processes]["filesystem"] = json!({"default":"read", "rules":[
+            {"path":path,"scope":"subtree","access":"write"}
+        ],"denyGlobs":[]});
+    }
     // Previous defaults had no Computer Use service or model-visible tools.
     config.as_object_mut().unwrap().remove("computer");
     for agent in ["agent", "coordinator"] {
@@ -125,6 +132,20 @@ async fn explicit_installation_keeps_its_selected_tools_when_packages_upgrade() 
     let record = store.application_launch().await.unwrap().unwrap();
     let preparation: launch::Preparation =
         serde_json::from_slice(record.pending.as_ref().unwrap()).unwrap();
+    for processes in ["workspace-processes", "coordinator-workspace-processes"] {
+        assert_eq!(
+            preparation.sources.host.instances[processes]
+                .configuration
+                .values["network"],
+            "denied"
+        );
+        assert_eq!(
+            preparation.sources.host.instances[processes]
+                .configuration
+                .values["filesystem"]["default"],
+            "read"
+        );
+    }
     assert!(
         !preparation
             .sources
@@ -176,6 +197,20 @@ async fn defaults_update_once_and_resume_an_acknowledgement_lost_after_commit() 
         .pending
         .unwrap();
     let preparation: launch::Preparation = serde_json::from_slice(&pending).unwrap();
+    for processes in ["workspace-processes", "coordinator-workspace-processes"] {
+        assert_eq!(
+            preparation.sources.host.instances[processes]
+                .configuration
+                .values["network"],
+            "allowed"
+        );
+        assert_eq!(
+            preparation.sources.host.instances[processes]
+                .configuration
+                .values["filesystem"]["default"],
+            "write"
+        );
+    }
     assert!(
         preparation
             .sources

@@ -77,7 +77,7 @@ impl ReadExecutor {
             search.check()?;
             let mut opened = None;
             let mut error = failed("Glob cwd is outside the admitted Read roots");
-            for route in authority.routes(Path::new(&input.cwd))? {
+            for route in authority.read_routes(Path::new(&input.cwd))? {
                 let root = route.root;
                 let path = route.relative;
                 match root.open_dir(if path.as_os_str().is_empty() {

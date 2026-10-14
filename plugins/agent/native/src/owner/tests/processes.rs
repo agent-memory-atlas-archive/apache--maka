@@ -344,10 +344,77 @@ async fn native_process_revocation_or_stop_withdraws_permission_without_launch()
 }
 
 #[tokio::test]
+async fn native_process_network_stays_denied_until_approval_and_once_grants_expire() {
+    tokio::time::timeout(Duration::from_secs(90), async {
+        let (listener, f, session) = fixture().await;
+        files::change(&f, &session, "workspace_write", true, false).await;
+        let network = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", network.local_addr().unwrap());
+        let input = execute(&format!(
+            "/usr/bin/curl --noproxy '*' -fsS --max-time 3 '{url}'"
+        ));
+        let result = roundtrip(&listener, &f, &session, "Execute", input.clone()).await;
+        assert_eq!(result["value"]["status"], "failed", "{result}");
+
+        let mut requested = input.clone();
+        requested["additional_permissions"] = json!({"filesystem":[],"network":"allowed"});
+        requested["justification"] = json!("Read the local test endpoint.");
+        call(&listener, &f, &session, "Execute", requested.clone()).await;
+        let record = files::pending(&f, &session).await;
+        files::answer(&f, &record, None).await;
+        let result = finish(&listener, &f).await;
+        assert_eq!(result["kind"], "failed", "{result}");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), network.accept())
+                .await
+                .is_err(),
+            "unapproved commands must not reach the endpoint"
+        );
+
+        call(&listener, &f, &session, "Execute", requested).await;
+        let record = files::pending(&f, &session).await;
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = network.accept().await.unwrap();
+            let mut buffer = [0; 4096];
+            socket.read(&mut buffer).await.unwrap();
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\nnetwork",
+                )
+                .await
+                .unwrap();
+            // Keep the same live endpoint available for the next unapproved call.
+            network
+        });
+        files::answer(&f, &record, Some("once")).await;
+        let result = finish(&listener, &f).await;
+        assert_eq!(result["value"]["status"], "completed", "{result}");
+        assert_eq!(result["value"]["output"]["stdout"], "network", "{result}");
+        let network = server.await.unwrap();
+        let result = roundtrip(&listener, &f, &session, "Execute", input).await;
+        assert_eq!(result["value"]["status"], "failed", "{result}");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), network.accept())
+                .await
+                .is_err(),
+            "a once grant must not authorize a later command"
+        );
+        close(&f).await;
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
 async fn sandbox_off_removes_process_filesystem_and_network_isolation() {
     tokio::time::timeout(Duration::from_secs(60), async {
         let (listener, f, session) = fixture().await;
-        let outside = f.workspace.parent().unwrap().join("outside-process.txt");
+        let external = files::external_directory();
+        let outside = external
+            .path()
+            .canonicalize()
+            .unwrap()
+            .join("outside-process.txt");
         let command = format!("printf external > '{}'", outside.display());
         for (mode, allowed) in [
             ("workspace_write", false),
@@ -398,4 +465,47 @@ async fn sandbox_off_removes_process_filesystem_and_network_isolation() {
     })
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn native_process_external_write_requires_approval_and_temp_is_writable() {
+    tokio::time::timeout(Duration::from_secs(90), async {
+        let (listener, f, session) = fixture().await;
+        let external = files::external_directory();
+        let outside = external.path().canonicalize().unwrap().join("approved.txt");
+        let command = format!("printf approved > '{}'", outside.display());
+        let result = roundtrip(&listener, &f, &session, "Execute", execute(&command)).await;
+        assert_eq!(result["value"]["status"], "failed", "{result}");
+        assert!(!outside.exists());
+        let mut input = execute(&command);
+        input["additional_permissions"] = json!({"filesystem":[{"path":outside,"scope":"exact","access":"write"}],"network":"denied"});
+        input["justification"] = json!("Write the external test file.");
+        for scope in [None, Some("once")] {
+            call(&listener, &f, &session, "Execute", input.clone()).await;
+            let record = files::pending(&f, &session).await;
+            assert!(!outside.exists());
+            files::answer(&f, &record, scope).await;
+            let result = finish(&listener, &f).await;
+            if scope.is_some() {
+                assert_eq!(result["value"]["status"], "completed", "{result}");
+                assert_eq!(std::fs::read_to_string(&outside).unwrap(), "approved");
+                std::fs::remove_file(&outside).unwrap();
+            } else {
+                assert_eq!(result["kind"], "failed", "{result}");
+                assert!(!outside.exists());
+            }
+        }
+        let result = roundtrip(&listener, &f, &session, "Execute", execute(&command)).await;
+        assert_eq!(result["value"]["status"], "failed", "{result}");
+        assert!(!outside.exists());
+        for directory in [std::env::temp_dir(), std::path::PathBuf::from("/tmp")] {
+            let temporary = tempfile::tempdir_in(directory).unwrap();
+            let target = temporary.path().join("output");
+            let command = format!("printf temporary > '{}'", target.display());
+            let result = roundtrip(&listener, &f, &session, "Execute", execute(&command)).await;
+            assert_eq!(result["value"]["status"], "completed", "{result}");
+            assert_eq!(std::fs::read_to_string(target).unwrap(), "temporary");
+        }
+        close(&f).await;
+    }).await.unwrap();
 }

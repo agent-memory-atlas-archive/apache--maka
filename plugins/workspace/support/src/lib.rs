@@ -29,6 +29,42 @@ use std::{path::Path, sync::Arc};
 
 pub const PAGE_BYTES: usize = 48 * 1024;
 
+/// Shared file/command preset and immutable Maka protections. Installation
+/// ceilings may further restrict commands, but never supply default authority.
+pub fn sandbox(
+    selected: &Workspace,
+    access: maka_agent_api::contract::WorkspaceAccess,
+    state_root: &Path,
+) -> Result<(maka_sandbox::Sandbox, maka_sandbox::Sandbox), String> {
+    use maka_agent_api::contract::WorkspaceAccess;
+    use maka_sandbox::{
+        Mode, Network, Sandbox,
+        filesystem::{Access, Policy},
+    };
+    let mode = match access {
+        WorkspaceAccess::ReadOnly => Mode::ReadOnly,
+        WorkspaceAccess::WorkspaceWrite => Mode::WorkspaceWrite,
+        WorkspaceAccess::DangerFullAccess => return Ok((Sandbox::Disabled, Sandbox::Disabled)),
+    };
+    let (base, metadata) = workspace::permissions::resolve(mode, Path::new(&selected.path))
+        .map_err(|error| error.to_string())?;
+    let private = Sandbox::Managed {
+        filesystem: Policy {
+            default: Access::Write,
+            rules: private_rules(selected, state_root)?,
+            deny_globs: vec![],
+        },
+        network: Network::Allowed,
+    };
+    let ceiling = metadata
+        .intersect(&private)
+        .map_err(|error| error.to_string())?;
+    let base = base
+        .intersect(&ceiling)
+        .map_err(|error| error.to_string())?;
+    Ok((base, ceiling))
+}
+
 /// The native Session record is the authority for the sole exception inside
 /// private state. A caller-supplied path can never open this exception.
 pub fn private_rules(

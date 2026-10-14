@@ -96,7 +96,7 @@ impl ReadExecutor {
             };
             let mut selected = None;
             let mut error = failed("Grep path is outside the admitted Read roots");
-            for route in authority.routes(Path::new(requested))? {
+            for route in authority.read_routes(Path::new(requested))? {
                 let relative = if route.relative.as_os_str().is_empty() {
                     PathBuf::from(".")
                 } else {

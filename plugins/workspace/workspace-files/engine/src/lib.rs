@@ -95,7 +95,8 @@ pub struct ReadExecutor {
 }
 
 impl ReadExecutor {
-    /// Use the exact directory already validated by an embedding's file grant.
+    /// Retain the selected directory. With a policy, external paths are governed
+    /// by that policy; without one, access stays confined to this directory.
     pub fn from_directory(
         path: PathBuf,
         directory: cap_std::fs::Dir,

@@ -138,14 +138,16 @@ async fn isolated_native_files_and_immutable_patch_survive_successor_and_restart
 }
 #[cfg(target_os = "macos")]
 #[tokio::test]
-async fn isolated_native_shell_writes_only_owned_worktree_and_cannot_read_host_state() {
+async fn isolated_native_shell_preserves_host_protections_and_requires_external_write_approval() {
     tokio::time::timeout(Duration::from_secs(45),async {
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
         let f=Fixture::configured(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None,None,
             Some(service_tools::Setup::isolated_processes()), |settings| settings.isolated_workspaces=true).await;
         let (session,path,_,_)=isolated(&f).await;
         std::fs::write(f.root.join("private-secret"),"host-secret").unwrap();
-        let command=format!("printf child > tracked.txt; cat tracked.txt; if cat '{}'; then exit 77; fi; if printf forbidden > '{}'; then exit 78; fi; if printf forbidden > '{}'; then exit 79; fi; printf isolated-ok",f.root.join("private-secret").display(),f.root.join("must-not-write").display(),f.workspace.join("tracked.txt").display());
+        let external = files::external_directory();
+        let outside = external.path().canonicalize().unwrap().join("outside.txt");
+        let command=format!("printf child > tracked.txt; cat tracked.txt; if cat '{}'; then exit 77; fi; if printf forbidden > '{}'; then exit 78; fi; if printf forbidden > '{}'; then exit 79; fi; printf isolated-ok",f.root.join("private-secret").display(),f.root.join("must-not-write").display(),outside.display());
         let result=processes::roundtrip(&listener,&f,&session,"Execute",json!({"command":command,"login":false,"timeout_ms":5000})).await;
         assert_eq!(result["kind"],"completed","{result}");
         assert!(result.to_string().contains("isolated-ok"),"{result}");
