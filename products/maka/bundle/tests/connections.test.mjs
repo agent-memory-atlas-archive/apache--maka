@@ -102,6 +102,62 @@ async function client(name, platform, extra = {}) {
   };
 }
 for (const platform of ['tui', 'desktop']) {
+  test(`${platform} saved model restoration ignores late sessions and never substitutes the global default`, async () => {
+    const preferred = { connectionId: 'saved', modelId: 'original', thinkingLevel: 'high' };
+    const c = await client('models', platform, {
+      selection: null,
+      selectionKey: 'session-a',
+      preferredModel: preferred,
+      catalogEpoch: 0,
+      openRequest: null,
+      busy: false,
+    });
+    const first = c.action('resolveModel');
+    c.reply(c.action('models'), {
+      kind: 'ready',
+      revision: 1,
+      choices: [],
+      next: null,
+      defaultModel: {
+        kind: 'ready',
+        choice: {
+          selection: { connectionId: 'other', revision: 1, modelId: 'default' },
+          label: 'Default',
+          thinkingLevels: [],
+        },
+      },
+    });
+    assert.equal(
+      c.out.events.some((event) => event.name === 'selected'),
+      false,
+    );
+    c.update({ selectionKey: 'session-b' });
+    const second = c.action('resolveModel');
+    const choice = {
+      selection: { connectionId: 'saved', revision: 2, modelId: 'original' },
+      label: 'Original',
+      thinkingLevels: ['high'],
+    };
+    c.reply(first, { kind: 'ready', choice });
+    assert.equal(
+      c.out.events.some((event) => event.name === 'resolved'),
+      false,
+    );
+    c.reply(second, { kind: 'ready', choice });
+    assert.deepEqual(c.out.events.find((event) => event.name === 'resolved').value, {
+      selectionKey: 'session-b',
+      selection: { choice, thinkingLevel: 'high' },
+    });
+    c.update({ selection: { choice, thinkingLevel: 'high' }, catalogEpoch: 1 });
+    c.reply(c.action('resolveModel'), { kind: 'unavailable', target: preferred });
+    assert.equal(c.out.events.find((event) => event.name === 'resolved').value.selection, null);
+    c.update({ selection: null });
+    assert.match(JSON.stringify(c.out.frame.view), /Saved model unavailable/u);
+    assert.equal(
+      c.out.events.some((event) => event.name === 'selected'),
+      false,
+    );
+  });
   test(`${platform} model and thinking edits stay open and survive navigation until applied`, async () => {
     const choice = (id) => ({
       selection: { connectionId: 'a', revision: 1, modelId: id },

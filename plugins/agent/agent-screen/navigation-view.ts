@@ -126,18 +126,20 @@ export function navigationView<N extends Node>(
       ui.box(
         'catalog-filters',
         [
-          ...(['all', 'needs_you'] as const).map((filter) => {
+          ...(['all', 'needs_you', 'archived'] as const).map((filter) => {
             const label =
-              filter === 'all'
-                ? target === 'tui'
-                  ? tuiText(locale, 'sidebar-all')
-                  : text.allSessions
-                : target === 'tui'
-                  ? tuiText(locale, 'sidebar-needs-you') +
-                    (state.catalog?.needsYouCount ? ` · ${state.catalog.needsYouCount}` : '')
-                  : state.catalog
-                    ? `${text.needsYou} (${state.catalog.needsYouCount})`
-                    : text.needsYou;
+              filter === 'archived'
+                ? text.archivedSessions
+                : filter === 'all'
+                  ? target === 'tui'
+                    ? tuiText(locale, 'sidebar-all')
+                    : text.allSessions
+                  : target === 'tui'
+                    ? tuiText(locale, 'sidebar-needs-you') +
+                      (state.catalog?.needsYouCount ? ` · ${state.catalog.needsYouCount}` : '')
+                    : state.catalog
+                      ? `${text.needsYou} (${state.catalog.needsYouCount})`
+                      : text.needsYou;
             const selected = state.catalogFilter === filter;
             return ui.item
               ? ui.item(
@@ -182,9 +184,11 @@ export function navigationView<N extends Node>(
                     ui.text(
                       'catalog-empty',
                       (target === 'tui' ? '   ' : '') +
-                        (state.catalogFilter === 'needs_you'
-                          ? text.noneNeedsYou
-                          : tuiText(locale, 'sidebar-empty')),
+                        (state.catalogFilter === 'archived'
+                          ? text.noArchivedSessions
+                          : state.catalogFilter === 'needs_you'
+                            ? text.noneNeedsYou
+                            : tuiText(locale, 'sidebar-empty')),
                       12,
                       theme.muted,
                     ),
@@ -212,11 +216,6 @@ export function navigationView<N extends Node>(
               theme,
               locale,
               sessions: state.catalog?.sessions ?? [],
-              previews: Object.fromEntries(
-                state.visits
-                  .filter((visit) => visit.progress?.goal)
-                  .map((visit) => [visit.id, visit.progress!.goal]),
-              ),
               selected: state.selected?.id ?? null,
               busy,
               loading: catalogPending(state),

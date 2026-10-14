@@ -628,3 +628,49 @@ async fn host_proxy_settings_route_model_requests_and_keep_atomic_credential_rec
         fixture.config.shutdown().await.unwrap();
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn saved_model_survives_restart_and_resolves_locally_at_the_current_revision() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut f = Fixture::new(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None).await;
+        let session = f.create("Remember my model").await;
+        let model = f.selection().await;
+        let backend = json!({"kind":"model","connectionId":model.connection_id,"modelId":model.model_id,"thinkingLevel":null});
+        let saved = f.mutation(2, "selectBackend", json!({"sessionId":session,"backend":backend}), Uuid::new_v4()).await.unwrap();
+        assert_eq!(saved["kind"], "committed");
+        todo_tests::reopen(&mut f).await;
+        let observed = f.query("observe", json!({"sessionId":session})).await.unwrap();
+        assert_eq!(observed["session"]["backend"], backend);
+        selection::edit(&f, |changes| changes.name = Some("Renamed connection".into())).await;
+        let target = json!({"connectionId":model.connection_id,"modelId":model.model_id});
+        let resolved = query(&f, "resolveModel", target.clone()).await;
+        assert_eq!(resolved["kind"], "ready");
+        assert_eq!(resolved["choice"]["connectionName"], "Renamed connection");
+        assert!(resolved["choice"]["selection"]["revision"].as_u64().unwrap() > model.revision);
+        selection::edit(&f, |changes| changes.model_overrides = Patch::Set(BTreeMap::from([
+            ("fixture-model".into(), ModelOverride { thinking_levels: Some(vec![maka_agent_facts::execution::ThinkingLevel::High]), ..Default::default() }),
+            ("other-model".into(), ModelOverride { code_mode: Some(true), ..Default::default() }),
+        ]))).await;
+        let current = query(&f, "resolveModel", target.clone()).await;
+        let update = json!({"selection":current["choice"]["selection"],"tools":{"codeMode":false,"applyPatch":true}});
+        let (saved, _) = mutate(&f, "updateModelTools", update.clone(), None).await;
+        assert_eq!(saved["kind"], "committed");
+        assert_eq!(mutate(&f, "updateModelTools", update, None).await.0["kind"], "connection_stale");
+        todo_tests::reopen(&mut f).await;
+        let current = query(&f, "resolveModel", target.clone()).await;
+        assert_eq!(current["choice"]["tools"], json!({"codeMode":false,"applyPatch":true}));
+        let overrides = f.config.catalog().await.unwrap().connections.remove(0).model_overrides.unwrap();
+        assert_eq!(overrides["other-model"].code_mode, Some(true));
+        assert_eq!(overrides["fixture-model"].thinking_levels, Some(vec![maka_agent_facts::execution::ThinkingLevel::High]));
+        let (reset, _) = mutate(&f, "updateModelTools", json!({"selection":current["choice"]["selection"],"tools":{"codeMode":null,"applyPatch":null}}), None).await;
+        assert_eq!(reset["kind"], "committed");
+        let current = query(&f, "resolveModel", target.clone()).await;
+        assert_eq!(current["choice"]["tools"], json!({"codeMode":null,"applyPatch":null}));
+        selection::edit(&f, |changes| changes.enabled = Some(false)).await;
+        assert_eq!(query(&f, "resolveModel", target).await["kind"], "unavailable");
+        assert!(tokio::time::timeout(Duration::from_millis(50), listener.accept()).await.is_err(), "restore must not contact the provider");
+        f.app.shutdown().await.unwrap();
+        f.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}

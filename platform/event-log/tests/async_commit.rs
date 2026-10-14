@@ -64,6 +64,7 @@ async fn cancelled_metadata_waiter_still_notifies_and_catalog_reads_do_not_notif
             log.catalog_revision(
                 CatalogScope::Profile,
                 CatalogFilter {
+                    archived_only: false,
                     include_archived: true,
                     pending_only: false,
                 }

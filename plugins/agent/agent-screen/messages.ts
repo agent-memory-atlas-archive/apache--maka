@@ -39,6 +39,29 @@ export function appendLive(
   invocationId: string,
   text: string,
 ) {
+  const visit = state.visits.find((entry) => entry.id === state.selected?.id);
+  if (visit && state.run?.invocationId === invocationId) {
+    const id = (part.textKind === 'thinking' ? 'thinking-' : '') + part.messageId;
+    const previous = visit.activity?.turnId === state.run.turnId ? visit.activity : null;
+    visit.activity = {
+      through: previous?.through ?? 0,
+      sequence,
+      turnId: state.run.turnId,
+      message: {
+        id,
+        contentKey: 'body-' + id,
+        role: part.textKind === 'thinking' ? 'thinking' : 'assistant',
+        text: ((previous?.message?.id === id ? previous.message.text : '') + text)
+          .slice(-4096)
+          .replace(/^[\uDC00-\uDFFF]/u, ''),
+        timestamp: null,
+        tool: null,
+        continued: false,
+        source: null,
+        image: false,
+      },
+    };
+  }
   const messageId = part.messageId;
   const field = part.textKind === 'thinking' ? 'thinking' : 'body';
   if (
@@ -187,4 +210,31 @@ export function turnTimings(state: State, displayed: Message[]): TimelineProps['
     }
   }
   return [...turns.values()];
+}
+
+// A single current output is sufficient; retain no second transcript window.
+export function rememberActivity(state: State, page: NonNullable<State['window']>['page']) {
+  const visit = state.visits.find((entry) => entry.id === state.selected?.id);
+  const turnId = state.run?.turnId;
+  if (!visit || !turnId) return;
+  const previous = visit.activity?.turnId === turnId ? visit.activity : null;
+  const chunk = page.chunks
+    .filter((entry) => entry.turnId === turnId && entry.role !== 'user')
+    .at(-1);
+  const sequence = chunk?.sequence ?? 0;
+  const message = chunk
+    ? messages({ ...state, window: { page: { ...page, chunks: [chunk] }, latest: false } })[0]!
+    : null;
+  visit.activity = {
+    through: Math.max(page.through, previous?.through ?? 0),
+    sequence: Math.max(sequence, previous?.sequence ?? 0),
+    turnId,
+    message: previous && previous.sequence > sequence ? previous.message : message,
+  };
+}
+
+export function activeOutput(state: State): Message | null {
+  if (!state.run) return null;
+  const activity = state.visits.find((entry) => entry.id === state.selected?.id)?.activity;
+  return activity?.turnId === state.run.turnId ? activity.message : null;
 }

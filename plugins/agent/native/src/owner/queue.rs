@@ -39,6 +39,7 @@ pub(super) enum PreparedRun {
 }
 impl Owner {
     pub fn activated(self: &Arc<Self>) {
+        self.recover_removed_sessions();
         self.scheduler.bind(self);
         self.todo.bind(self);
         self.goals.bind(self);

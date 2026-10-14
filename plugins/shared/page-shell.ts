@@ -21,7 +21,7 @@ import type { Component, Emission } from '../../packages/plugin-sdk/src/index.js
 import type { PageChrome, PageShellProps, Theme } from './contracts.js';
 import { copy } from './locale.js';
 import { sameValue } from './value.js';
-import type { Node, Presentation } from './view.js';
+import { fill, type Node, type Presentation } from './view.js';
 
 export interface PageState {
   pageBack?: number;
@@ -87,4 +87,62 @@ export function withPageShell<S extends PageState, P extends Props, N>(
         : component.update(state, props, values);
     },
   };
+}
+
+// Inspector navigation stays outside the scrolling content and action rows.
+export function panelHeader<N extends Node>(
+  presentation: Presentation<N>,
+  props: { theme: Theme; locale: string },
+  key: string,
+  title: string,
+  close: string,
+  back?: string,
+): N {
+  const ui = presentation.paint(props.theme),
+    text = copy(props.locale);
+  return ui.box(
+    key,
+    [
+      ...(back
+        ? [
+            ui.box(
+              key + '-back',
+              [
+                ui.button(
+                  back,
+                  props.theme.ascii ? '<' : '‹',
+                  false,
+                  false,
+                  { background: 0 },
+                  undefined,
+                  text.back,
+                ),
+              ],
+              { terminal: { basis: 3, shrink: false } },
+            ),
+          ]
+        : []),
+      ui.box(
+        key + '-title-cell',
+        [ui.text(key + '-title', title, 15, props.theme.text, 650, { truncate: true })],
+        { terminal: { grow: 1, shrink: true }, style: { width: fill, minWidth: 0 } },
+      ),
+      ui.box(
+        key + '-close',
+        [
+          ui.button(
+            close,
+            props.theme.ascii ? 'x' : '×',
+            false,
+            false,
+            { background: 0 },
+            undefined,
+            text.closeModels,
+          ),
+        ],
+        { terminal: { basis: 3, shrink: false } },
+      ),
+    ],
+    { row: true, gap: 1, terminal: { basis: 1, shrink: false }, style: { width: fill, shrink: 0 } },
+  );
 }

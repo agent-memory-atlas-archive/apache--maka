@@ -66,6 +66,7 @@ import {
   conversationRoute,
   executionPending,
   follow,
+  refreshActivity,
   history,
   initializeQueueEdit,
   intent,
@@ -80,6 +81,8 @@ import {
   rootCommands,
   select,
   selectedBackend,
+  changeSession,
+  saveBackend,
   submitQuestion,
 } from './actions.js';
 import { goalComponent } from './goal.js';
@@ -486,6 +489,13 @@ export function handleComponent<N extends Node>(
     if ((input.event as { request: number }).request === state.browse) state.browse = null;
   } else if (input.child === readingKey(state) && input.name === 'searchClosed') {
     state.searchOpen = false;
+  } else if (input.child === readingKey(state) && input.name === 'detached') {
+    const event = input.event as { landing: number; value: boolean };
+    const visit = state.visits.find((entry) => entry.id === state.selected?.id);
+    if (visit && event.landing === state.landing.sequence) {
+      visit.detached = event.value;
+      refreshActivity(state, actions);
+    }
   } else if (input.child === readingKey(state) && input.name === 'tailReady') {
     const receipt = input.event as NonNullable<State['tailReceipt']>;
     if (receipt.landing === state.landing.sequence) {
@@ -586,6 +596,13 @@ export function handleComponent<N extends Node>(
     !executionPending(state)
   ) {
     state.executor = input.event as AgentExecutorSelection | null;
+    saveBackend(state, actions);
+  } else if (input.child === 'models' && input.name === 'resolved') {
+    const resolved = input.event as { selectionKey: string; selection: SelectedModel | null };
+    if (resolved.selectionKey === String(state.epoch) && !state.executor) {
+      state.model = resolved.selection;
+      state.modelRefreshing = false;
+    }
   } else if (input.child === 'models' && input.name === 'setup') {
     const setup = input.event as ModelSetup;
     if (setup.catalogEpoch === state.catalogEpoch) state.modelSetup = setup.kind;
@@ -606,6 +623,7 @@ export function handleComponent<N extends Node>(
   ) {
     state.model = input.event as SelectedModel;
     state.modelRefreshing = false;
+    saveBackend(state, actions);
   } else if (input.child === 'navigation' && (input.name === 'older' || input.name === 'newer')) {
     const page = state.catalog;
     if (page && !mutationPending(state) && !catalogPending(state)) {
@@ -629,13 +647,25 @@ export function handleComponent<N extends Node>(
     state.dialog === null &&
     !mutationPending(state)
   ) {
-    const { sessionId, details, usage } = input.event as {
+    const { sessionId, details, usage, action } = input.event as {
       sessionId: string;
       details?: boolean;
       usage?: boolean;
+      action?: 'archive' | 'remove' | 'stop';
     };
     const session = state.catalog?.sessions.find((item) => item.id === sessionId);
-    if (session && usage && target === 'tui') openUsage(state, session);
+    if (session && action === 'remove') {
+      if (session.activity !== 'idle') state.notice = 'sessionChangeBusy';
+      else {
+        state.sessionChange = session;
+        state.dialog = 'session-change';
+        state.notice = null;
+      }
+    } else if (session && action === 'archive')
+      changeSession(state, actions, session, session.archived ? 'restore' : 'archive');
+    else if (session && action === 'stop')
+      intent(state, actions, { kind: 'stop', sessionId }, 'agent', 'stop', { sessionId });
+    else if (session && usage && target === 'tui') openUsage(state, session);
     else if (session) {
       state.pages = [];
       if (state.selected?.id !== session.id) select(state, actions, session);

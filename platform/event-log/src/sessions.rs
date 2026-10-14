@@ -90,6 +90,7 @@ pub enum CatalogScope {
 
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct CatalogFilter {
+    pub archived_only: bool,
     pub include_archived: bool,
     pub pending_only: bool,
 }
@@ -243,6 +244,7 @@ impl EventLog {
             cursor.into(),
             limit,
             CatalogFilter {
+                archived_only: false,
                 include_archived: true,
                 pending_only: false,
             },

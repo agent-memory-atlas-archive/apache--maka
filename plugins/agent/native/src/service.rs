@@ -41,6 +41,14 @@ impl Handler for Agent {
         let owner = self.0.clone();
         Box::pin(async move {
             match method.as_str() {
+                "changeSession" => {
+                    context.operation().ok_or("agent_mutation_required")?;
+                    encode(owner.change_session(decode(input)?).await?)
+                }
+                "selectBackend" => {
+                    context.operation().ok_or("agent_mutation_required")?;
+                    encode(owner.select_backend(decode(input)?).await?)
+                }
                 "work" => encode(owner.work(decode(input)?).await?),
                 "list" => encode(catalog_page(&owner, &decode(input)?).await?),
                 "catalog" => {
@@ -283,8 +291,15 @@ impl Handler for Agent {
                             state,
                         })
                     });
+                    let session = summary(&owner, observed.session);
+                    let remembered_backend = if session.backend.is_none() {
+                        owner.remembered_backend(&input.session_id).await?
+                    } else {
+                        None
+                    };
                     let result = encode(Observation {
-                        session: summary(&owner, observed.session),
+                        session,
+                        remembered_backend,
                         through: observed.through_sequence,
                         run,
                         parts: observed
@@ -397,6 +412,23 @@ impl Handler for Agent {
                     maka_plugin_core::json::check_delivery(&result, 64 * 1024)
                         .map_err(|_| "agent_history_unavailable")?;
                     Ok(result)
+                }
+                "historyPrompt" => {
+                    let input: HistoryPromptRead = decode(input)?;
+                    owner.session(&input.session_id).await?;
+                    if input.through > *owner.store.subscribe_commits().borrow() {
+                        return Err("agent_cursor_invalid".into());
+                    }
+                    let result = owner
+                        .store
+                        .history_prompt(&input.session_id, input.through, input.sequence)
+                        .await
+                        .map_err(|_| "agent_history_unavailable")?;
+                    owner.session(&input.session_id).await?;
+                    if context.scope().cancellation.is_cancelled() {
+                        return Err("agent_observation_cancelled".into());
+                    }
+                    encode(result)
                 }
                 "search" => {
                     let input: HistorySearch = decode(input)?;
@@ -714,7 +746,8 @@ impl Handler for Agent {
 }
 fn catalog_filter(input: &List) -> maka_event_log::sessions::CatalogFilter {
     maka_event_log::sessions::CatalogFilter {
-        include_archived: true,
+        archived_only: matches!(input.filter, SessionFilter::Archived),
+        include_archived: matches!(input.filter, SessionFilter::Archived),
         pending_only: matches!(input.filter, SessionFilter::NeedsYou),
     }
 }
@@ -802,6 +835,7 @@ pub(crate) fn summary_for(
         SessionActivity::Idle
     };
     Session {
+        backend: session.configuration.backend,
         collaboration_mode: session.configuration.collaboration_mode,
         tools: session.configuration.tools,
         data_source: Box::new(data_source.clone()),

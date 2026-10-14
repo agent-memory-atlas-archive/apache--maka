@@ -370,6 +370,7 @@ impl Owner {
                             &session_id,
                             &basis.fingerprint,
                             &SessionConfiguration {
+                                backend: None,
                                 collaboration_mode: CollaborationMode::Agent,
                                 tools: basis.allowed_tools.clone(),
                                 title: fire.title.clone(),

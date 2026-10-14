@@ -107,6 +107,12 @@ export interface SelectedModel {
   thinkingLevel: ThinkingLevel | null;
 }
 export interface ModelsProps {
+  selectionKey?: string;
+  preferredModel?: {
+    connectionId: string;
+    modelId: string;
+    thinkingLevel: ThinkingLevel | null;
+  } | null;
   /** Forms can require an explicit choice instead of adopting the chat default. */
   suggestDefault?: boolean;
   catalogEpoch: number;
@@ -230,7 +236,6 @@ export interface ModelDefaultProps {
   busy: boolean;
 }
 export interface NavigationProps {
-  previews?: Record<string, string>;
   theme: Theme;
   locale: string;
   sessions: AgentSession[];
@@ -263,6 +268,8 @@ export interface ToolDetailsProps {
   focusOnPointer: boolean;
 }
 export interface TimelineProps {
+  leadingPrompt?: { source: number; text: string } | null;
+  activeOutput?: Message | null;
   copyRequest: number | null;
   browse: number | null;
   timings: (HistoryTurnTiming & { turnId: string; afterMessageId: string })[];
@@ -746,11 +753,6 @@ export const navigationContract = component(
   'maka.agent.Navigation',
   object(
     {
-      previews: {
-        type: 'object',
-        maxProperties: 32,
-        additionalProperties: { type: 'string', maxLength: 512 },
-      },
       theme: { $ref: '#/$defs/Theme' },
       locale,
       sessions: { type: 'array', maxItems: 32, items: { $ref: '#/$defs/AgentSession' } },
@@ -766,7 +768,12 @@ export const navigationContract = component(
     older: object({}),
     newer: object({}),
     select: object(
-      { sessionId: string, details: { type: 'boolean' }, usage: { type: 'boolean' } },
+      {
+        sessionId: string,
+        details: { type: 'boolean' },
+        usage: { type: 'boolean' },
+        action: { enum: ['archive', 'remove', 'stop'] },
+      },
       ['sessionId'],
     ),
   },
@@ -815,73 +822,102 @@ export const toolDetailsContract = component(
 );
 export const timelineContract = component(
   'maka.agent.Timeline',
-  object({
-    copyRequest: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
-    browse: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
-    timings: {
-      type: 'array',
-      items: object({
-        turnId: string,
-        afterMessageId: string,
-        startedAt: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
-        finished: { anyOf: [{ $ref: '#/$defs/HistoryTurnFinished' }, { type: 'null' }] },
+  object(
+    {
+      leadingPrompt: {
+        anyOf: [
+          object({ source: { type: 'integer', minimum: 1 }, text: string }),
+          { type: 'null' },
+        ],
+      },
+      activeOutput: { anyOf: [{ $ref: '#/$defs/Message' }, { type: 'null' }] },
+      copyRequest: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
+      browse: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
+      timings: {
+        type: 'array',
+        items: object({
+          turnId: string,
+          afterMessageId: string,
+          startedAt: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+          finished: { anyOf: [{ $ref: '#/$defs/HistoryTurnFinished' }, { type: 'null' }] },
+        }),
+      },
+      markReadEnabled: { type: 'boolean' },
+      toolContext: {
+        anyOf: [
+          object({ sessionId: string, through: { type: 'integer', minimum: 1 } }),
+          { type: 'null' },
+        ],
+      },
+      waitingTools: { type: 'array', items: string },
+      liveTools: { type: 'array', uniqueItems: true, items: string },
+      theme: { $ref: '#/$defs/Theme' },
+      locale,
+      messages: { type: 'array', items: { $ref: '#/$defs/Message' } },
+      search: {
+        anyOf: [
+          object({
+            sessionId: string,
+            epoch: { type: 'integer', minimum: 0 },
+            through: { type: 'integer', minimum: 0 },
+          }),
+          { type: 'null' },
+        ],
+      },
+      source: {
+        anyOf: [
+          object({
+            kind: { anyOf: [{ const: 'message' }, { $ref: '#/$defs/SourceField' }] },
+            fields: {
+              type: 'array',
+              uniqueItems: true,
+              items: { $ref: '#/$defs/SourceField' },
+            },
+            format: { $ref: '#/$defs/SourceFormat' },
+            ready: { type: 'boolean' },
+            key: string,
+            text: { type: 'string', maxLength: 8192 },
+            atStart: { type: 'boolean' },
+            atEnd: { type: 'boolean' },
+            loading: { type: 'boolean' },
+            failed: { type: 'boolean' },
+            navigation: { type: 'integer', minimum: 1 },
+            landing: { enum: ['start', 'end'] },
+          }),
+          { type: 'null' },
+        ],
+      },
+      loading: { type: 'boolean' },
+      older: { type: 'boolean' },
+      newer: { type: 'boolean' },
+      latest: { type: 'boolean' },
+      landing: object({
+        sequence: { type: 'integer', minimum: 0 },
+        edge: { enum: ['start', 'end'] },
       }),
+      live: { type: 'boolean' },
     },
-    markReadEnabled: { type: 'boolean' },
-    toolContext: {
-      anyOf: [
-        object({ sessionId: string, through: { type: 'integer', minimum: 1 } }),
-        { type: 'null' },
-      ],
-    },
-    waitingTools: { type: 'array', items: string },
-    liveTools: { type: 'array', uniqueItems: true, items: string },
-    theme: { $ref: '#/$defs/Theme' },
-    locale,
-    messages: { type: 'array', items: { $ref: '#/$defs/Message' } },
-    search: {
-      anyOf: [
-        object({
-          sessionId: string,
-          epoch: { type: 'integer', minimum: 0 },
-          through: { type: 'integer', minimum: 0 },
-        }),
-        { type: 'null' },
-      ],
-    },
-    source: {
-      anyOf: [
-        object({
-          kind: { anyOf: [{ const: 'message' }, { $ref: '#/$defs/SourceField' }] },
-          fields: {
-            type: 'array',
-            uniqueItems: true,
-            items: { $ref: '#/$defs/SourceField' },
-          },
-          format: { $ref: '#/$defs/SourceFormat' },
-          ready: { type: 'boolean' },
-          key: string,
-          text: { type: 'string', maxLength: 8192 },
-          atStart: { type: 'boolean' },
-          atEnd: { type: 'boolean' },
-          loading: { type: 'boolean' },
-          failed: { type: 'boolean' },
-          navigation: { type: 'integer', minimum: 1 },
-          landing: { enum: ['start', 'end'] },
-        }),
-        { type: 'null' },
-      ],
-    },
-    loading: { type: 'boolean' },
-    older: { type: 'boolean' },
-    newer: { type: 'boolean' },
-    latest: { type: 'boolean' },
-    landing: object({
-      sequence: { type: 'integer', minimum: 0 },
-      edge: { enum: ['start', 'end'] },
-    }),
-    live: { type: 'boolean' },
-  }),
+    [
+      'copyRequest',
+      'browse',
+      'timings',
+      'markReadEnabled',
+      'toolContext',
+      'waitingTools',
+      'liveTools',
+      'theme',
+      'locale',
+      'messages',
+      'search',
+      'source',
+      'loading',
+      'older',
+      'newer',
+      'latest',
+      'landing',
+      'live',
+    ],
+  ),
   {
     older: object({}),
     newer: object({}),
@@ -936,6 +972,7 @@ export const timelineContract = component(
         { type: 'null' },
       ],
     },
+    detached: object({ landing: { type: 'integer', minimum: 0 }, value: { type: 'boolean' } }),
     tailReady: object({
       landing: { type: 'integer', minimum: 0 },
       readingRevision: { type: 'integer', minimum: 0 },
@@ -1165,6 +1202,16 @@ export const themeContract: Contract = {
 export type ComposerObservation = EditorObservation;
 
 const modelDefs = native.settings.interface.methods.models.output.$defs;
+const preferredModel = {
+  anyOf: [
+    object({
+      connectionId: string,
+      modelId: string,
+      thinkingLevel: { anyOf: [{ $ref: '#/$defs/ThinkingLevel' }, { type: 'null' }] },
+    }),
+    { type: 'null' },
+  ],
+};
 const selectedModel = object({
   choice: { $ref: '#/$defs/SettingsModelChoice' },
   thinkingLevel: { anyOf: [{ $ref: '#/$defs/ThinkingLevel' }, { type: 'null' }] },
@@ -1180,6 +1227,8 @@ export const modelsContract: Contract = {
         object(
           {
             suggestDefault: { type: 'boolean' },
+            selectionKey: string,
+            preferredModel,
             catalogEpoch: { type: 'integer', minimum: 0 },
             openRequest: { anyOf: [{ type: 'integer', minimum: 0 }, { type: 'null' }] },
             theme: { $ref: '#/$defs/Theme' },
@@ -1194,6 +1243,13 @@ export const modelsContract: Contract = {
     },
     events: {
       selected: { ...selectedModel, $defs: modelDefs },
+      resolved: {
+        ...object({
+          selectionKey: string,
+          selection: { anyOf: [selectedModel, { type: 'null' }] },
+        }),
+        $defs: modelDefs,
+      },
       setup: object({
         catalogEpoch: { type: 'integer', minimum: 0 },
         kind: { enum: ['loading', 'unavailable', 'connect', 'choose'] },
@@ -1212,19 +1268,32 @@ export const executionPickerContract: Contract = {
   interface: {
     kind: 'component',
     props: withDefs(
-      object({
-        catalogEpoch: { type: 'integer', minimum: 0 },
-        openRequest: { anyOf: [{ type: 'integer', minimum: 0 }, { type: 'null' }] },
-        theme: { $ref: '#/$defs/Theme' },
-        locale,
-        selection: { anyOf: [selectedModel, { type: 'null' }] },
-        executor: { anyOf: [{ $ref: '#/$defs/AgentExecutorSelection' }, { type: 'null' }] },
-        busy: { type: 'boolean' },
-      }),
+      object(
+        {
+          selectionKey: string,
+          preferredModel,
+          suggestDefault: { type: 'boolean' },
+          catalogEpoch: { type: 'integer', minimum: 0 },
+          openRequest: { anyOf: [{ type: 'integer', minimum: 0 }, { type: 'null' }] },
+          theme: { $ref: '#/$defs/Theme' },
+          locale,
+          selection: { anyOf: [selectedModel, { type: 'null' }] },
+          executor: { anyOf: [{ $ref: '#/$defs/AgentExecutorSelection' }, { type: 'null' }] },
+          busy: { type: 'boolean' },
+        },
+        ['catalogEpoch', 'openRequest', 'theme', 'locale', 'selection', 'executor', 'busy'],
+      ),
       { ...modelDefs, ...executorDefs },
     ),
     events: {
       selected: { ...selectedModel, $defs: modelDefs },
+      resolved: {
+        ...object({
+          selectionKey: string,
+          selection: { anyOf: [selectedModel, { type: 'null' }] },
+        }),
+        $defs: modelDefs,
+      },
       setup: object({
         catalogEpoch: { type: 'integer', minimum: 0 },
         kind: { enum: ['loading', 'unavailable', 'connect', 'choose'] },
@@ -1276,6 +1345,7 @@ export interface CredentialProps extends ConnectionsProps {
   target: ConnectionCredentialTarget;
 }
 export interface ConnectionFormProps extends ConnectionsProps {
+  removeRequested?: boolean;
   catalogRevision: number;
   existingSlugs?: string[];
   connection: Extract<SettingsConnectionDetail, { kind: 'ready' }> | null;
@@ -1289,6 +1359,7 @@ export const connectionFormContract: Contract = {
     props: {
       ...pageProps(
         {
+          removeRequested: { type: 'boolean' },
           existingSlugs: { type: 'array', items: string },
           theme: { $ref: '#/$defs/Theme' },
           locale,

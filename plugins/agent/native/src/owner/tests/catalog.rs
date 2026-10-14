@@ -96,7 +96,7 @@ async fn catalog_observes_metadata_pending_and_removal_at_its_original_location(
         .await
         .unwrap();
     let archived = next(&mut stream).await;
-    assert_eq!(archived["sessions"][0]["archived"], true);
+    assert_eq!(archived["sessions"][0]["id"], ids[2]);
 
     // Background pending sessions outside this page contribute to the exact count.
     fixture
@@ -106,7 +106,7 @@ async fn catalog_observes_metadata_pending_and_removal_at_its_original_location(
         .unwrap();
     let pending = next(&mut stream).await;
     assert_eq!(pending["needsYouCount"], 1);
-    assert_eq!(pending["sessions"][0]["id"], ids[1]);
+    assert_eq!(pending["sessions"][0]["id"], ids[2]);
     fixture
         .store
         .establish_interaction(&catalog_interaction(&ids[0], "background-second"))
@@ -343,6 +343,110 @@ async fn explicit_read_marker_keeps_original_tail_authority_and_receipt() {
         server.await.unwrap();
         fixture.app.shutdown().await.unwrap();
         fixture.config.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn session_lifecycle_is_revision_checked_reversible_and_scoped() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let f = Fixture::new("http://127.0.0.1:1/v1", 2, None).await;
+        let session = f.create("Remove this conversation").await;
+        let other = f.create("Keep this conversation").await;
+        let file = f.workspace.join("keep.txt");
+        std::fs::write(&file, "user work").unwrap();
+        let mut revision = 1;
+        for action in ["archive", "restore"] {
+            let result = f
+                .mutation(
+                    2,
+                    "changeSession",
+                    json!({"sessionId":session,"expectedRevision":revision,"action":action}),
+                    Uuid::new_v4(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(result["kind"], "changed");
+            assert_eq!(result["session"]["archived"], action == "archive");
+            revision = result["session"]["revision"].as_u64().unwrap();
+        }
+        let stale = f
+            .mutation(
+                2,
+                "changeSession",
+                json!({"sessionId":session,"expectedRevision":1,"action":"remove"}),
+                Uuid::new_v4(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(stale["kind"], "revision_conflict");
+        f.store
+            .establish_interaction(&catalog_interaction(&session, "pending-delete"))
+            .await
+            .unwrap();
+        revision = f
+            .store
+            .get_session::<SessionConfiguration>(&session)
+            .await
+            .unwrap()
+            .unwrap()
+            .revision;
+        let busy = f
+            .mutation(
+                2,
+                "changeSession",
+                json!({"sessionId":session,"expectedRevision":revision,"action":"remove"}),
+                Uuid::new_v4(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(busy["reason"], "busy");
+        f.store
+            .commit_interaction_outcome(
+                "pending-delete",
+                InteractionOutcome::Closure {
+                    reason: ClosureReason::ProducerCancelled,
+                    committed_at: now(),
+                },
+            )
+            .await
+            .unwrap();
+        revision = f
+            .store
+            .get_session::<SessionConfiguration>(&session)
+            .await
+            .unwrap()
+            .unwrap()
+            .revision;
+        let removed = f
+            .mutation(
+                2,
+                "changeSession",
+                json!({"sessionId":session,"expectedRevision":revision,"action":"remove"}),
+                Uuid::new_v4(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(removed["kind"], "removed");
+        f.drained().await;
+        assert!(
+            f.store
+                .get_session::<SessionConfiguration>(&session)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            f.store
+                .get_session::<SessionConfiguration>(&other)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(std::fs::read_to_string(file).unwrap(), "user work");
+        f.app.shutdown().await.unwrap();
+        f.config.shutdown().await.unwrap();
     })
     .await
     .unwrap();

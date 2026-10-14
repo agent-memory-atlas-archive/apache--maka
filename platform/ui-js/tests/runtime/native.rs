@@ -146,15 +146,6 @@ fn opaque_native_children_share_transaction_identity_and_input_admission_with_js
             .is_err()
     );
     assert!(app.dispatch(&left, 0, "inc", json!({"delta":11})).is_err());
-    assert!(
-        app.dispatch(
-            &left,
-            0,
-            "inc",
-            json!({"delta":1,"large":"x".repeat(1024*1024)})
-        )
-        .is_err()
-    );
     assert_eq!(
         calls.get(),
         count,
@@ -374,8 +365,6 @@ impl NativeComponent<String> for SlotParent {
                 "parent" => next["version"] = json!(next["version"].as_u64().unwrap() + 1),
                 "toggle" => next["right"] = json!(!next["right"].as_bool().unwrap()),
                 "tree" => next["native"] = json!(!next["native"].as_bool().unwrap()),
-                "oversized" => next["blob"] = json!("x".repeat(1024 * 1024)),
-                "aggregate" => next["blob"] = json!("x".repeat(600_000)),
                 _ => {}
             }
             next["last"] = json!(key);
@@ -398,7 +387,6 @@ impl NativeComponent<String> for SlotParent {
         }
         match next["last"].as_str() {
             Some("inexact") => slots[0].props["initial"] = json!(9_007_199_254_740_993u64),
-            Some("aggregate") => slots[0].props["label"] = json!("x".repeat(600_000)),
             Some("invalid") => slots[0].binding = "undeclared".into(),
             Some("bad_event") => {
                 slots[0].on.insert("undeclared".into(), "notice".into());
@@ -416,8 +404,6 @@ impl NativeComponent<String> for SlotParent {
                     "invalid",
                     "bad_event",
                     "duplicate",
-                    "oversized",
-                    "aggregate",
                     "inexact",
                     "reject",
                 ]
@@ -436,20 +422,10 @@ impl NativeComponent<String> for SlotParent {
                 children: slots
                     .into_iter()
                     .map(Node::Component)
-                    .chain([
-                        Node::Button {
-                            key: "tree".into(),
-                            label: "Native".into(),
-                        },
-                        Node::Button {
-                            key: "oversized".into(),
-                            label: "Oversized".into(),
-                        },
-                        Node::Button {
-                            key: "aggregate".into(),
-                            label: "Aggregate".into(),
-                        },
-                    ])
+                    .chain([Node::Button {
+                        key: "tree".into(),
+                        label: "Native".into(),
+                    }])
                     .collect(),
             })?
         };
@@ -525,14 +501,7 @@ fn native_parent_slots_share_js_child_events_rollback_identity_and_retirement() 
         app.frame(&root).unwrap().state["seen"],
         json!([["left", "changed", 11]])
     );
-    for key in [
-        "invalid",
-        "bad_event",
-        "duplicate",
-        "oversized",
-        "aggregate",
-        "inexact",
-    ] {
+    for key in ["invalid", "bad_event", "duplicate", "inexact"] {
         assert!(app.dispatch(&root, 1, key, Value::Null).is_err(), "{key}");
         assert_eq!(app.frame(&root).unwrap().revision, 1);
         assert_eq!(app.child_mount(&root, "left").unwrap(), &left);
@@ -555,13 +524,6 @@ fn native_parent_slots_share_js_child_events_rollback_identity_and_retirement() 
     app.dispatch(&root, 3, "tree", Value::Null).unwrap();
     assert_eq!(app.frame(&root).unwrap().view.view.as_str(), "");
     assert_eq!(app.child_mount(&root, "left").unwrap(), &left);
-    assert!(
-        app.dispatch(&root, 4, "oversized", Value::Null).is_err(),
-        "Declarative output of native callback has same complete budget"
-    );
-    assert_eq!(app.frame(&root).unwrap().revision, 4);
-    assert!(app.dispatch(&root, 4, "aggregate", Value::Null).is_err());
-    assert_eq!(app.frame(&root).unwrap().revision, 4);
     app.dispatch(&root, 4, "tree", Value::Null).unwrap();
     assert_eq!(
         app.frame(&root).unwrap().view.view.as_str(),
@@ -590,7 +552,7 @@ fn native_parent_slots_share_js_child_events_rollback_identity_and_retirement() 
 }
 
 #[test]
-fn native_slot_metadata_has_independent_count_key_and_byte_bounds() {
+fn native_slot_metadata_rejects_duplicate_and_empty_keys() {
     let slot = |key: String| maka_ui_runtime::ComponentSlot {
         key,
         binding: "child".into(),
@@ -602,20 +564,9 @@ fn native_slot_metadata_has_independent_count_key_and_byte_bounds() {
         NativeView::new(
             Rc::new(()),
             BTreeMap::new(),
-            (0..65).map(|i| slot(i.to_string())).collect()
-        )
-        .is_err()
-    );
-    assert!(
-        NativeView::new(
-            Rc::new(()),
-            BTreeMap::new(),
             vec![slot("same".into()), slot("same".into())]
         )
         .is_err()
     );
     assert!(NativeView::new(Rc::new(()), BTreeMap::new(), vec![slot(String::new())]).is_err());
-    let mut huge = slot("large".into());
-    huge.props = json!({"text":"x".repeat(1024*1024)});
-    assert!(NativeView::new(Rc::new(()), BTreeMap::new(), vec![huge]).is_err());
 }

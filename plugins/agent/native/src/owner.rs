@@ -31,8 +31,10 @@ mod goal;
 mod graph;
 mod imports;
 mod interactions;
+mod lifecycle;
 mod notifications;
 mod plan;
+mod preferences;
 mod projects;
 pub(crate) use notifications::ReturnRoute;
 mod patches;
@@ -581,6 +583,7 @@ impl Owner {
                 &id,
                 &operation.fingerprint,
                 &SessionConfiguration {
+                    backend: None,
                     collaboration_mode: CollaborationMode::Agent,
                     tools,
                     title: input.title,

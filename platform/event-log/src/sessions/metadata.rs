@@ -38,6 +38,22 @@ impl EventLog {
         archived: bool,
         now: u64,
     ) -> Result<SessionRecord<T>, StoreError> {
+        match self
+            .change_session_archived(id, None, archived, now)
+            .await?
+        {
+            SessionMutation::Committed(record) => Ok(record),
+            SessionMutation::RevisionConflict { .. } => unreachable!("no revision precondition"),
+        }
+    }
+
+    pub async fn change_session_archived<T: DeserializeOwned + Send + 'static>(
+        &self,
+        id: &str,
+        expected: Option<u64>,
+        archived: bool,
+        now: u64,
+    ) -> Result<SessionMutation<T>, StoreError> {
         self.validate_root()?;
         validate_id(id)?;
         validate_time(now)?;
@@ -46,6 +62,9 @@ impl EventLog {
         let mut tx = connection.begin_with("BEGIN IMMEDIATE").await?;
         super::removal::require_mutable(&mut tx, &id).await?;
         let record: SessionRecord<T> = read(&mut tx, &id).await?.ok_or(StoreError::SessionNotFound)?;
+        if let Some(expected) = expected && expected != record.revision {
+            return Ok(SessionMutation::RevisionConflict { expected, actual: record.revision });
+        }
         let active: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM local_runtime_events AS opening
              WHERE opening.kind = 'invocation_opened'
@@ -57,7 +76,7 @@ impl EventLog {
             return Err(StoreError::SessionBusy);
         }
         if record.archived == archived {
-            return Ok(record);
+            return Ok(SessionMutation::Committed(record));
         }
         if !archived {
             sqlx::query("DELETE FROM session_retirements WHERE session_id=? AND remove_session=0 AND completed=1")
@@ -71,7 +90,7 @@ impl EventLog {
         advance_catalog(&mut tx).await?;
         let record = read(&mut tx, &id).await?.ok_or(StoreError::SessionNotFound)?;
         tx.commit().await.map_err(StoreError::CommitUnknown)?;
-        Ok(record)
+        Ok(SessionMutation::Committed(record))
         })).await
     }
 

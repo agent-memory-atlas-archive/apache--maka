@@ -916,3 +916,49 @@ mod keyboard;
 
 #[path = "reading/context_menu.rs"]
 mod context_menu;
+
+#[test]
+fn long_reading_window_keeps_hundreds_of_original_text_owners_without_count_caps() {
+    let children = (0..600)
+        .map(|i| source(&format!("row-{i}"), &format!("message {i}")))
+        .collect();
+    let (_runtime, mut presenter, props) = native(children);
+    draw(&mut presenter, 40, 10);
+    let reading = presenter.root.clone();
+    let first = presenter
+        .application
+        .child_mount(&reading, "row-0")
+        .unwrap()
+        .clone();
+    let last = presenter
+        .application
+        .child_mount(&reading, "row-599")
+        .unwrap()
+        .clone();
+    props.borrow_mut()["command"] = json!({"sequence":1,"target":{"kind":"end"}});
+    refresh(&mut presenter);
+    let buffer = draw(&mut presenter, 40, 10);
+    assert!(
+        buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+            .contains("message 599")
+    );
+    assert_eq!(
+        presenter
+            .application
+            .child_mount(&reading, "row-0")
+            .unwrap(),
+        &first
+    );
+    assert_eq!(
+        presenter
+            .application
+            .child_mount(&reading, "row-599")
+            .unwrap(),
+        &last
+    );
+    close(&mut presenter);
+}

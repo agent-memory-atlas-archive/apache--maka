@@ -253,6 +253,9 @@ export function handleEvent<N extends Node>(
     ) {
       state.confirmation = 'remove';
       state.reviewPage = 0;
+    } else if (key === 'form-cancel' && props.removeRequested && state.confirmation === 'remove') {
+      state.confirmation = null;
+      events.push({ name: 'closed', value: {} });
     } else if (key === 'form-confirm-remove') remove(state, props, actions);
     else if (key === 'form-back') {
       if (

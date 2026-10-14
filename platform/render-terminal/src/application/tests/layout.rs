@@ -1465,3 +1465,64 @@ fn anchored_model_dialog_follows_its_trigger_across_viewport_sizes() {
         .unwrap();
     presenter.shutdown_settled().unwrap();
 }
+
+#[test]
+fn passive_text_hint_hover_never_steals_focus_or_activation() {
+    let source = json!({"kind":"stack","key":"root","direction":"column","gap":0,"padding":0,"background":0,"children":[
+        {"kind":"text","key":"status","text":"•","color":0x00ff00,"hint":"Succeeded"},
+        {"kind":"button","key":"back","label":"Back"}
+    ]});
+    let (_runtime, mut presenter) = native(View::Scene(source), Rc::new(Cell::new(true)));
+    flushed(&mut presenter, 24, 4);
+    assert!(
+        presenter
+            .tab_stops()
+            .iter()
+            .all(|target| target.key != "status")
+    );
+    let focus = presenter.focus.as_ref().map(|target| target.key.clone());
+    let revision = presenter
+        .application
+        .frame(&presenter.root)
+        .unwrap()
+        .revision;
+    let mouse = |kind, column, row| {
+        Event::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+    };
+    presenter
+        .input_settled(mouse(MouseEventKind::Moved, 0, 0))
+        .unwrap();
+    let buffer = flushed(&mut presenter, 24, 4);
+    let row: String = (0..24).map(|x| buffer[(x, 1)].symbol()).collect();
+    assert!(row.contains("Succeeded"), "{row}");
+    presenter
+        .input_settled(mouse(MouseEventKind::Down(MouseButton::Left), 0, 0))
+        .unwrap();
+    assert_eq!(
+        presenter
+            .application
+            .frame(&presenter.root)
+            .unwrap()
+            .revision,
+        revision
+    );
+    assert_eq!(
+        presenter.focus.as_ref().map(|target| target.key.clone()),
+        focus
+    );
+    presenter
+        .input_settled(mouse(MouseEventKind::Moved, 20, 3))
+        .unwrap();
+    let buffer = flushed(&mut presenter, 24, 4);
+    let row: String = (0..24).map(|x| buffer[(x, 1)].symbol()).collect();
+    assert!(!row.contains("Succeeded"));
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
+    presenter.shutdown_settled().unwrap();
+}

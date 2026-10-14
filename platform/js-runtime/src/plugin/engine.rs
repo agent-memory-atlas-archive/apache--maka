@@ -233,7 +233,7 @@ fn invoke(
 }
 
 /// No promise polling or I/O. Serialize under the same script budget: getters
-/// and toJSON can execute user code, and bytes must be bounded before copying.
+/// and toJSON can execute user code.
 pub(super) fn call_synchronous(
     runtime: &mut JsRuntime,
     module: &Module,
@@ -241,7 +241,7 @@ pub(super) fn call_synchronous(
     args: &[Value],
 ) -> Result<Value> {
     let result = invoke(runtime, module, path, args)?;
-    value(runtime, result)
+    value(runtime, result, None)
 }
 
 /// Capture an actual receiver and all required functions before publishing a
@@ -288,7 +288,7 @@ pub(super) fn call_bound_synchronous(
     args: &[Value],
 ) -> Result<Value> {
     let result = invoke_bound(runtime, callbacks, method, args, None)?;
-    value(runtime, result)
+    value(runtime, result, None)
 }
 
 pub(super) fn call_bound(
@@ -356,14 +356,18 @@ fn invoke_bound(
     Ok(value)
 }
 
-pub(super) fn value(runtime: &mut JsRuntime, value: v8::Global<v8::Value>) -> Result<Value> {
+pub(super) fn value(
+    runtime: &mut JsRuntime,
+    value: v8::Global<v8::Value>,
+    limit: Option<usize>,
+) -> Result<Value> {
     deno_core::scope!(scope, runtime);
     v8::tc_scope!(scope, scope);
     let value = v8::Local::new(scope, value);
     if value.is_promise() {
         return Err(failed("foreground callbacks must return synchronously"));
     }
-    super::json::decode(scope, value, 1024 * 1024).map_err(failed)
+    super::json::decode(scope, value, limit).map_err(failed)
 }
 
 /// Drain ready native V8 tasks and local JavaScript jobs, without waiting on

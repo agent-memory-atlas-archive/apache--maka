@@ -6931,7 +6931,7 @@ export const contracts = {
             $defs: {
               AgentSessionFilter: {
                 type: 'string',
-                enum: ['all', 'needs_you'],
+                enum: ['all', 'archived', 'needs_you'],
               },
               AgentSessionPosition: {
                 oneOf: [
@@ -7037,6 +7037,16 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  backend: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentBackendPreference',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   collaborationMode: {
                     $ref: '#/$defs/CollaborationMode',
                     default: 'agent',
@@ -7108,6 +7118,97 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentBackendPreference: {
+                description:
+                  "The next turn's choice, independent of an already admitted execution.\nModel revisions are resolved afresh; preferences never grant execution authority.",
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      connectionId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      modelId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 512,
+                      },
+                      thinkingLevel: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ThinkingLevel',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'model',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'connectionId', 'modelId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      selection: {
+                        $ref: '#/$defs/AgentExecutorSelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'executor',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'selection'],
+                  },
+                ],
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+              AgentExecutorSelection: {
+                type: 'object',
+                properties: {
+                  executor: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  settings: {
+                    $ref: '#/$defs/ExecutorSettings',
+                  },
+                },
+                additionalProperties: false,
+                required: ['executor', 'settings'],
+              },
+              ExecutorSettings: {
+                description:
+                  'Executor-owned model selection, independent of Host model connections.',
+                type: 'object',
+                properties: {
+                  model: {
+                    type: ['string', 'null'],
+                  },
+                  thinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
               },
               CollaborationMode: {
                 type: 'string',
@@ -7879,6 +7980,421 @@ export const contracts = {
           },
           resources: {},
         },
+        changeSession: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentChangeSession',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+              },
+              expectedRevision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              action: {
+                $ref: '#/$defs/AgentSessionAction',
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'expectedRevision', 'action'],
+            $defs: {
+              AgentSessionAction: {
+                type: 'string',
+                enum: ['archive', 'restore', 'remove'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentSessionChanged',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  session: {
+                    $ref: '#/$defs/AgentSession',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'session'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'removed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'sessionId'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  expected: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  actual: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'revision_conflict',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'expected', 'actual'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/AgentRejection',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'reason'],
+              },
+            ],
+            $defs: {
+              AgentSession: {
+                type: 'object',
+                properties: {
+                  backend: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentBackendPreference',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  collaborationMode: {
+                    $ref: '#/$defs/CollaborationMode',
+                    default: 'agent',
+                  },
+                  tools: {
+                    type: ['array', 'null'],
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  dataSource: {
+                    $ref: '#/$defs/AgentDataSource',
+                  },
+                  permissions: {
+                    $ref: '#/$defs/AgentWorkspacePermissions',
+                  },
+                  boundaryRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  id: {
+                    type: 'string',
+                  },
+                  title: {
+                    type: 'string',
+                  },
+                  labels: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  workspace: {
+                    $ref: '#/$defs/AgentWorkspace',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  updatedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  archived: {
+                    type: 'boolean',
+                  },
+                  hasUnread: {
+                    type: 'boolean',
+                  },
+                  activity: {
+                    $ref: '#/$defs/AgentSessionActivity',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'dataSource',
+                  'permissions',
+                  'boundaryRevision',
+                  'id',
+                  'title',
+                  'labels',
+                  'workspace',
+                  'revision',
+                  'updatedAt',
+                  'archived',
+                  'hasUnread',
+                  'activity',
+                ],
+              },
+              AgentBackendPreference: {
+                description:
+                  "The next turn's choice, independent of an already admitted execution.\nModel revisions are resolved afresh; preferences never grant execution authority.",
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      connectionId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      modelId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 512,
+                      },
+                      thinkingLevel: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ThinkingLevel',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'model',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'connectionId', 'modelId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      selection: {
+                        $ref: '#/$defs/AgentExecutorSelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'executor',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'selection'],
+                  },
+                ],
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+              AgentExecutorSelection: {
+                type: 'object',
+                properties: {
+                  executor: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  settings: {
+                    $ref: '#/$defs/ExecutorSettings',
+                  },
+                },
+                additionalProperties: false,
+                required: ['executor', 'settings'],
+              },
+              ExecutorSettings: {
+                description:
+                  'Executor-owned model selection, independent of Host model connections.',
+                type: 'object',
+                properties: {
+                  model: {
+                    type: ['string', 'null'],
+                  },
+                  thinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
+              },
+              CollaborationMode: {
+                type: 'string',
+                enum: ['agent', 'plan'],
+              },
+              AgentDataSource: {
+                description:
+                  'Stable business-data origin, independent of package or activation revisions.',
+                type: 'object',
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  namespace: {
+                    $ref: '#/$defs/InstanceId',
+                  },
+                },
+                additionalProperties: false,
+                required: ['stateDomain', 'deployment', 'namespace'],
+              },
+              InstanceId: {
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
+              },
+              AgentWorkspacePermissions: {
+                type: 'object',
+                properties: {
+                  access: {
+                    $ref: '#/$defs/AgentWorkspaceAccess',
+                  },
+                  requestPermissions: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['access', 'requestPermissions'],
+              },
+              AgentWorkspaceAccess: {
+                description:
+                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                type: 'string',
+                enum: ['read_only', 'workspace_write'],
+              },
+              AgentWorkspace: {
+                type: 'object',
+                properties: {
+                  worktree: {
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  projectId: {
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                  },
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['path', 'directoryIdentity', 'identity'],
+              },
+              Binding: {
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
+              },
+              AgentSessionActivity: {
+                type: 'string',
+                enum: ['idle', 'working', 'waiting'],
+              },
+              AgentRejection: {
+                type: 'string',
+                enum: [
+                  'title_invalid',
+                  'labels_invalid',
+                  'tools_unavailable',
+                  'busy',
+                  'workspace_unavailable',
+                  'session_unavailable',
+                  'closed',
+                ],
+              },
+            },
+          },
+          resources: {},
+        },
         checklist: {
           mode: 'query',
           input: {
@@ -8159,6 +8675,16 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  backend: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentBackendPreference',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   collaborationMode: {
                     $ref: '#/$defs/CollaborationMode',
                     default: 'agent',
@@ -8230,6 +8756,97 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentBackendPreference: {
+                description:
+                  "The next turn's choice, independent of an already admitted execution.\nModel revisions are resolved afresh; preferences never grant execution authority.",
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      connectionId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      modelId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 512,
+                      },
+                      thinkingLevel: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ThinkingLevel',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'model',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'connectionId', 'modelId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      selection: {
+                        $ref: '#/$defs/AgentExecutorSelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'executor',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'selection'],
+                  },
+                ],
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+              AgentExecutorSelection: {
+                type: 'object',
+                properties: {
+                  executor: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  settings: {
+                    $ref: '#/$defs/ExecutorSettings',
+                  },
+                },
+                additionalProperties: false,
+                required: ['executor', 'settings'],
+              },
+              ExecutorSettings: {
+                description:
+                  'Executor-owned model selection, independent of Host model connections.',
+                type: 'object',
+                properties: {
+                  model: {
+                    type: ['string', 'null'],
+                  },
+                  thinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
               },
               CollaborationMode: {
                 type: 'string',
@@ -10526,6 +11143,69 @@ export const contracts = {
           },
           resources: {},
         },
+        historyPrompt: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentHistoryPromptRead',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              through: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 1,
+                maximum: 9007199254740991,
+              },
+              sequence: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 1,
+                maximum: 9007199254740991,
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'through', 'sequence'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'Nullable_AgentHistoryPrompt',
+            anyOf: [
+              {
+                $ref: '#/$defs/AgentHistoryPrompt',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            $defs: {
+              AgentHistoryPrompt: {
+                description:
+                  'A bounded presentation preview; the original message remains in history.',
+                type: 'object',
+                properties: {
+                  source: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  text: {
+                    type: 'string',
+                    maxLength: 4096,
+                  },
+                },
+                additionalProperties: false,
+                required: ['source', 'text'],
+              },
+            },
+          },
+          resources: {},
+        },
         import: {
           mode: 'mutation',
           input: {
@@ -10931,6 +11611,16 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  backend: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentBackendPreference',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   collaborationMode: {
                     $ref: '#/$defs/CollaborationMode',
                     default: 'agent',
@@ -11002,6 +11692,97 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentBackendPreference: {
+                description:
+                  "The next turn's choice, independent of an already admitted execution.\nModel revisions are resolved afresh; preferences never grant execution authority.",
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      connectionId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      modelId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 512,
+                      },
+                      thinkingLevel: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ThinkingLevel',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'model',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'connectionId', 'modelId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      selection: {
+                        $ref: '#/$defs/AgentExecutorSelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'executor',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'selection'],
+                  },
+                ],
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+              AgentExecutorSelection: {
+                type: 'object',
+                properties: {
+                  executor: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  settings: {
+                    $ref: '#/$defs/ExecutorSettings',
+                  },
+                },
+                additionalProperties: false,
+                required: ['executor', 'settings'],
+              },
+              ExecutorSettings: {
+                description:
+                  'Executor-owned model selection, independent of Host model connections.',
+                type: 'object',
+                properties: {
+                  model: {
+                    type: ['string', 'null'],
+                  },
+                  thinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
               },
               CollaborationMode: {
                 type: 'string',
@@ -11810,6 +12591,16 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  backend: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentBackendPreference',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   collaborationMode: {
                     $ref: '#/$defs/CollaborationMode',
                     default: 'agent',
@@ -11881,6 +12672,97 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentBackendPreference: {
+                description:
+                  "The next turn's choice, independent of an already admitted execution.\nModel revisions are resolved afresh; preferences never grant execution authority.",
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      connectionId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      modelId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 512,
+                      },
+                      thinkingLevel: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ThinkingLevel',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'model',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'connectionId', 'modelId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      selection: {
+                        $ref: '#/$defs/AgentExecutorSelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'executor',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'selection'],
+                  },
+                ],
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+              AgentExecutorSelection: {
+                type: 'object',
+                properties: {
+                  executor: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  settings: {
+                    $ref: '#/$defs/ExecutorSettings',
+                  },
+                },
+                additionalProperties: false,
+                required: ['executor', 'settings'],
+              },
+              ExecutorSettings: {
+                description:
+                  'Executor-owned model selection, independent of Host model connections.',
+                type: 'object',
+                properties: {
+                  model: {
+                    type: ['string', 'null'],
+                  },
+                  thinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
               },
               CollaborationMode: {
                 type: 'string',
@@ -12909,7 +13791,7 @@ export const contracts = {
             $defs: {
               AgentSessionFilter: {
                 type: 'string',
-                enum: ['all', 'needs_you'],
+                enum: ['all', 'archived', 'needs_you'],
               },
               AgentSessionPosition: {
                 oneOf: [
@@ -13015,6 +13897,16 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  backend: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentBackendPreference',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   collaborationMode: {
                     $ref: '#/$defs/CollaborationMode',
                     default: 'agent',
@@ -13086,6 +13978,97 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentBackendPreference: {
+                description:
+                  "The next turn's choice, independent of an already admitted execution.\nModel revisions are resolved afresh; preferences never grant execution authority.",
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      connectionId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      modelId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 512,
+                      },
+                      thinkingLevel: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ThinkingLevel',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'model',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'connectionId', 'modelId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      selection: {
+                        $ref: '#/$defs/AgentExecutorSelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'executor',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'selection'],
+                  },
+                ],
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+              AgentExecutorSelection: {
+                type: 'object',
+                properties: {
+                  executor: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  settings: {
+                    $ref: '#/$defs/ExecutorSettings',
+                  },
+                },
+                additionalProperties: false,
+                required: ['executor', 'settings'],
+              },
+              ExecutorSettings: {
+                description:
+                  'Executor-owned model selection, independent of Host model connections.',
+                type: 'object',
+                properties: {
+                  model: {
+                    type: ['string', 'null'],
+                  },
+                  thinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
               },
               CollaborationMode: {
                 type: 'string',
@@ -13275,6 +14258,16 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  backend: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentBackendPreference',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   collaborationMode: {
                     $ref: '#/$defs/CollaborationMode',
                     default: 'agent',
@@ -13346,6 +14339,97 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentBackendPreference: {
+                description:
+                  "The next turn's choice, independent of an already admitted execution.\nModel revisions are resolved afresh; preferences never grant execution authority.",
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      connectionId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      modelId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 512,
+                      },
+                      thinkingLevel: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ThinkingLevel',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'model',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'connectionId', 'modelId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      selection: {
+                        $ref: '#/$defs/AgentExecutorSelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'executor',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'selection'],
+                  },
+                ],
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+              AgentExecutorSelection: {
+                type: 'object',
+                properties: {
+                  executor: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  settings: {
+                    $ref: '#/$defs/ExecutorSettings',
+                  },
+                },
+                additionalProperties: false,
+                required: ['executor', 'settings'],
+              },
+              ExecutorSettings: {
+                description:
+                  'Executor-owned model selection, independent of Host model connections.',
+                type: 'object',
+                properties: {
+                  model: {
+                    type: ['string', 'null'],
+                  },
+                  thinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
               },
               CollaborationMode: {
                 type: 'string',
@@ -13644,6 +14728,16 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  backend: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentBackendPreference',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   collaborationMode: {
                     $ref: '#/$defs/CollaborationMode',
                     default: 'agent',
@@ -13715,6 +14809,97 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentBackendPreference: {
+                description:
+                  "The next turn's choice, independent of an already admitted execution.\nModel revisions are resolved afresh; preferences never grant execution authority.",
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      connectionId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      modelId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 512,
+                      },
+                      thinkingLevel: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ThinkingLevel',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'model',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'connectionId', 'modelId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      selection: {
+                        $ref: '#/$defs/AgentExecutorSelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'executor',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'selection'],
+                  },
+                ],
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+              AgentExecutorSelection: {
+                type: 'object',
+                properties: {
+                  executor: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  settings: {
+                    $ref: '#/$defs/ExecutorSettings',
+                  },
+                },
+                additionalProperties: false,
+                required: ['executor', 'settings'],
+              },
+              ExecutorSettings: {
+                description:
+                  'Executor-owned model selection, independent of Host model connections.',
+                type: 'object',
+                properties: {
+                  model: {
+                    type: ['string', 'null'],
+                  },
+                  thinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
               },
               CollaborationMode: {
                 type: 'string',
@@ -13882,6 +15067,16 @@ export const contracts = {
               session: {
                 $ref: '#/$defs/AgentSession',
               },
+              rememberedBackend: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/AgentBackendPreference',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
               through: {
                 type: 'integer',
                 format: 'uint64',
@@ -13910,6 +15105,16 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  backend: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentBackendPreference',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   collaborationMode: {
                     $ref: '#/$defs/CollaborationMode',
                     default: 'agent',
@@ -13981,6 +15186,97 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentBackendPreference: {
+                description:
+                  "The next turn's choice, independent of an already admitted execution.\nModel revisions are resolved afresh; preferences never grant execution authority.",
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      connectionId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      modelId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 512,
+                      },
+                      thinkingLevel: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ThinkingLevel',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'model',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'connectionId', 'modelId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      selection: {
+                        $ref: '#/$defs/AgentExecutorSelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'executor',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'selection'],
+                  },
+                ],
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+              AgentExecutorSelection: {
+                type: 'object',
+                properties: {
+                  executor: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  settings: {
+                    $ref: '#/$defs/ExecutorSettings',
+                  },
+                },
+                additionalProperties: false,
+                required: ['executor', 'settings'],
+              },
+              ExecutorSettings: {
+                description:
+                  'Executor-owned model selection, independent of Host model connections.',
+                type: 'object',
+                properties: {
+                  model: {
+                    type: ['string', 'null'],
+                  },
+                  thinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
               },
               CollaborationMode: {
                 type: 'string',
@@ -16047,6 +17343,16 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  backend: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentBackendPreference',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   collaborationMode: {
                     $ref: '#/$defs/CollaborationMode',
                     default: 'agent',
@@ -16118,6 +17424,97 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentBackendPreference: {
+                description:
+                  "The next turn's choice, independent of an already admitted execution.\nModel revisions are resolved afresh; preferences never grant execution authority.",
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      connectionId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      modelId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 512,
+                      },
+                      thinkingLevel: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ThinkingLevel',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'model',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'connectionId', 'modelId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      selection: {
+                        $ref: '#/$defs/AgentExecutorSelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'executor',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'selection'],
+                  },
+                ],
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+              AgentExecutorSelection: {
+                type: 'object',
+                properties: {
+                  executor: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  settings: {
+                    $ref: '#/$defs/ExecutorSettings',
+                  },
+                },
+                additionalProperties: false,
+                required: ['executor', 'settings'],
+              },
+              ExecutorSettings: {
+                description:
+                  'Executor-owned model selection, independent of Host model connections.',
+                type: 'object',
+                properties: {
+                  model: {
+                    type: ['string', 'null'],
+                  },
+                  thinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
               },
               CollaborationMode: {
                 type: 'string',
@@ -19574,6 +20971,489 @@ export const contracts = {
                 description: 'A readable field in a conversation window, in presentation order.',
                 type: 'string',
                 enum: ['thinking', 'body'],
+              },
+            },
+          },
+          resources: {},
+        },
+        selectBackend: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentSelectBackend',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+              },
+              backend: {
+                $ref: '#/$defs/AgentBackendPreference',
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'backend'],
+            $defs: {
+              AgentBackendPreference: {
+                description:
+                  "The next turn's choice, independent of an already admitted execution.\nModel revisions are resolved afresh; preferences never grant execution authority.",
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      connectionId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      modelId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 512,
+                      },
+                      thinkingLevel: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ThinkingLevel',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'model',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'connectionId', 'modelId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      selection: {
+                        $ref: '#/$defs/AgentExecutorSelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'executor',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'selection'],
+                  },
+                ],
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+              AgentExecutorSelection: {
+                type: 'object',
+                properties: {
+                  executor: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  settings: {
+                    $ref: '#/$defs/ExecutorSettings',
+                  },
+                },
+                additionalProperties: false,
+                required: ['executor', 'settings'],
+              },
+              ExecutorSettings: {
+                description:
+                  'Executor-owned model selection, independent of Host model connections.',
+                type: 'object',
+                properties: {
+                  model: {
+                    type: ['string', 'null'],
+                  },
+                  thinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentMetadataResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  session: {
+                    $ref: '#/$defs/AgentSession',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'committed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'session'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  expected: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  actual: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'revision_conflict',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'expected', 'actual'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/AgentRejection',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'reason'],
+              },
+            ],
+            $defs: {
+              AgentSession: {
+                type: 'object',
+                properties: {
+                  backend: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentBackendPreference',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  collaborationMode: {
+                    $ref: '#/$defs/CollaborationMode',
+                    default: 'agent',
+                  },
+                  tools: {
+                    type: ['array', 'null'],
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  dataSource: {
+                    $ref: '#/$defs/AgentDataSource',
+                  },
+                  permissions: {
+                    $ref: '#/$defs/AgentWorkspacePermissions',
+                  },
+                  boundaryRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  id: {
+                    type: 'string',
+                  },
+                  title: {
+                    type: 'string',
+                  },
+                  labels: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  workspace: {
+                    $ref: '#/$defs/AgentWorkspace',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  updatedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  archived: {
+                    type: 'boolean',
+                  },
+                  hasUnread: {
+                    type: 'boolean',
+                  },
+                  activity: {
+                    $ref: '#/$defs/AgentSessionActivity',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'dataSource',
+                  'permissions',
+                  'boundaryRevision',
+                  'id',
+                  'title',
+                  'labels',
+                  'workspace',
+                  'revision',
+                  'updatedAt',
+                  'archived',
+                  'hasUnread',
+                  'activity',
+                ],
+              },
+              AgentBackendPreference: {
+                description:
+                  "The next turn's choice, independent of an already admitted execution.\nModel revisions are resolved afresh; preferences never grant execution authority.",
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      connectionId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      modelId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 512,
+                      },
+                      thinkingLevel: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ThinkingLevel',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'model',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'connectionId', 'modelId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      selection: {
+                        $ref: '#/$defs/AgentExecutorSelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'executor',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'selection'],
+                  },
+                ],
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+              AgentExecutorSelection: {
+                type: 'object',
+                properties: {
+                  executor: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  settings: {
+                    $ref: '#/$defs/ExecutorSettings',
+                  },
+                },
+                additionalProperties: false,
+                required: ['executor', 'settings'],
+              },
+              ExecutorSettings: {
+                description:
+                  'Executor-owned model selection, independent of Host model connections.',
+                type: 'object',
+                properties: {
+                  model: {
+                    type: ['string', 'null'],
+                  },
+                  thinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
+              },
+              CollaborationMode: {
+                type: 'string',
+                enum: ['agent', 'plan'],
+              },
+              AgentDataSource: {
+                description:
+                  'Stable business-data origin, independent of package or activation revisions.',
+                type: 'object',
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  namespace: {
+                    $ref: '#/$defs/InstanceId',
+                  },
+                },
+                additionalProperties: false,
+                required: ['stateDomain', 'deployment', 'namespace'],
+              },
+              InstanceId: {
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
+              },
+              AgentWorkspacePermissions: {
+                type: 'object',
+                properties: {
+                  access: {
+                    $ref: '#/$defs/AgentWorkspaceAccess',
+                  },
+                  requestPermissions: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['access', 'requestPermissions'],
+              },
+              AgentWorkspaceAccess: {
+                description:
+                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                type: 'string',
+                enum: ['read_only', 'workspace_write'],
+              },
+              AgentWorkspace: {
+                type: 'object',
+                properties: {
+                  worktree: {
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  projectId: {
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                  },
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['path', 'directoryIdentity', 'identity'],
+              },
+              Binding: {
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
+              },
+              AgentSessionActivity: {
+                type: 'string',
+                enum: ['idle', 'working', 'waiting'],
+              },
+              AgentRejection: {
+                type: 'string',
+                enum: [
+                  'title_invalid',
+                  'labels_invalid',
+                  'tools_unavailable',
+                  'busy',
+                  'workspace_unavailable',
+                  'session_unavailable',
+                  'closed',
+                ],
               },
             },
           },
@@ -23936,6 +25816,16 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  backend: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentBackendPreference',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   collaborationMode: {
                     $ref: '#/$defs/CollaborationMode',
                     default: 'agent',
@@ -24006,6 +25896,97 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentBackendPreference: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      connectionId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      modelId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 512,
+                      },
+                      thinkingLevel: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ThinkingLevel',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'model',
+                      },
+                    },
+                    required: ['kind', 'connectionId', 'modelId'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      selection: {
+                        $ref: '#/$defs/AgentExecutorSelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'executor',
+                      },
+                    },
+                    required: ['kind', 'selection'],
+                  },
+                ],
+                description:
+                  "The next turn's choice, independent of an already admitted execution.\nModel revisions are resolved afresh; preferences never grant execution authority.",
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+              AgentExecutorSelection: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  executor: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  settings: {
+                    $ref: '#/$defs/ExecutorSettings',
+                  },
+                },
+                required: ['executor', 'settings'],
+              },
+              ExecutorSettings: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  model: {
+                    type: ['string', 'null'],
+                  },
+                  thinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                description:
+                  'Executor-owned model selection, independent of Host model connections.',
               },
               CollaborationMode: {
                 type: 'string',
@@ -25472,6 +27453,16 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  backend: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentBackendPreference',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   collaborationMode: {
                     $ref: '#/$defs/CollaborationMode',
                     default: 'agent',
@@ -25542,6 +27533,97 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentBackendPreference: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      connectionId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      modelId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 512,
+                      },
+                      thinkingLevel: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ThinkingLevel',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'model',
+                      },
+                    },
+                    required: ['kind', 'connectionId', 'modelId'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      selection: {
+                        $ref: '#/$defs/AgentExecutorSelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'executor',
+                      },
+                    },
+                    required: ['kind', 'selection'],
+                  },
+                ],
+                description:
+                  "The next turn's choice, independent of an already admitted execution.\nModel revisions are resolved afresh; preferences never grant execution authority.",
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+              AgentExecutorSelection: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  executor: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  settings: {
+                    $ref: '#/$defs/ExecutorSettings',
+                  },
+                },
+                required: ['executor', 'settings'],
+              },
+              ExecutorSettings: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  model: {
+                    type: ['string', 'null'],
+                  },
+                  thinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                description:
+                  'Executor-owned model selection, independent of Host model connections.',
               },
               CollaborationMode: {
                 type: 'string',
@@ -37127,6 +39209,16 @@ export const contracts = {
               SettingsModelChoice: {
                 type: 'object',
                 properties: {
+                  tools: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/SettingsModelToolPreferences',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   selection: {
                     $ref: '#/$defs/ModelSelection',
                   },
@@ -37164,6 +39256,19 @@ export const contracts = {
                   'thinkingLevels',
                   'defaultThinkingLevel',
                 ],
+              },
+              SettingsModelToolPreferences: {
+                type: 'object',
+                properties: {
+                  codeMode: {
+                    type: ['boolean', 'null'],
+                  },
+                  applyPatch: {
+                    type: ['boolean', 'null'],
+                  },
+                },
+                additionalProperties: false,
+                required: ['codeMode', 'applyPatch'],
               },
               ModelSelection: {
                 description:
@@ -37923,6 +40028,178 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['connectionId', 'modelId'],
+              },
+            },
+          },
+          resources: {},
+        },
+        resolveModel: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'ConnectionTarget',
+            type: 'object',
+            properties: {
+              connectionId: {
+                type: 'string',
+              },
+              modelId: {
+                type: 'string',
+              },
+            },
+            additionalProperties: false,
+            required: ['connectionId', 'modelId'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsDefaultModel',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'none',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  target: {
+                    $ref: '#/$defs/ConnectionTarget',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'unavailable',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'target'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  choice: {
+                    $ref: '#/$defs/SettingsModelChoice',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'ready',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'choice'],
+              },
+            ],
+            $defs: {
+              ConnectionTarget: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  modelId: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'modelId'],
+              },
+              SettingsModelChoice: {
+                type: 'object',
+                properties: {
+                  tools: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/SettingsModelToolPreferences',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  selection: {
+                    $ref: '#/$defs/ModelSelection',
+                  },
+                  connectionName: {
+                    type: 'string',
+                    maxLength: 256,
+                  },
+                  label: {
+                    type: 'string',
+                    maxLength: 512,
+                  },
+                  thinkingLevels: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/ThinkingLevel',
+                    },
+                    maxItems: 8,
+                  },
+                  defaultThinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'selection',
+                  'connectionName',
+                  'label',
+                  'thinkingLevels',
+                  'defaultThinkingLevel',
+                ],
+              },
+              SettingsModelToolPreferences: {
+                type: 'object',
+                properties: {
+                  codeMode: {
+                    type: ['boolean', 'null'],
+                  },
+                  applyPatch: {
+                    type: ['boolean', 'null'],
+                  },
+                },
+                additionalProperties: false,
+                required: ['codeMode', 'applyPatch'],
+              },
+              ModelSelection: {
+                description:
+                  'Exact public selection observed by a caller, checked once at run admission.',
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  modelId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 512,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision', 'modelId'],
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
               },
             },
           },
@@ -38849,6 +41126,220 @@ export const contracts = {
                 additionalProperties: false,
               },
             ],
+          },
+          resources: {},
+        },
+        updateModelTools: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsUpdateModelTools',
+            type: 'object',
+            properties: {
+              selection: {
+                $ref: '#/$defs/ModelSelection',
+              },
+              tools: {
+                $ref: '#/$defs/SettingsModelToolPreferences',
+              },
+            },
+            additionalProperties: false,
+            required: ['selection', 'tools'],
+            $defs: {
+              ModelSelection: {
+                description:
+                  'Exact public selection observed by a caller, checked once at run admission.',
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  modelId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 512,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision', 'modelId'],
+              },
+              SettingsModelToolPreferences: {
+                type: 'object',
+                properties: {
+                  codeMode: {
+                    type: ['boolean', 'null'],
+                  },
+                  applyPatch: {
+                    type: ['boolean', 'null'],
+                  },
+                },
+                additionalProperties: false,
+                required: ['codeMode', 'applyPatch'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'CatalogMutationResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/ConfigurationRejection',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'reason'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  catalogRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  connection: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ConnectionVersionBasis',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'committed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'catalogRevision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  expectedRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  actualRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'revision_conflict',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'expectedRevision', 'actualRevision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  slug: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'connection_exists',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'slug'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  expected: {
+                    $ref: '#/$defs/ConnectionVersionBasis',
+                  },
+                  actual: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ConnectionVersionBasis',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'connection_stale',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'expected', 'actual'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  target: {
+                    $ref: '#/$defs/ConnectionTarget',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'invalid_default_target',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'target'],
+              },
+            ],
+            $defs: {
+              ConfigurationRejection: {
+                description:
+                  'A confirmed rejection contains no provider diagnostics or user input.',
+                type: 'string',
+                enum: ['invalid_input', 'invalid_configuration', 'provider_unavailable'],
+              },
+              ConnectionVersionBasis: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision'],
+              },
+              ConnectionTarget: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  modelId: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'modelId'],
+              },
+            },
           },
           resources: {},
         },

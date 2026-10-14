@@ -78,9 +78,9 @@ fn prepare_with_inputs(
         deadline: Instant,
     ) -> maka_ui_runtime::Result<()> {
         *count += 1;
-        if Instant::now() >= deadline || depth > 32 || *count > 4096 {
+        if Instant::now() >= deadline || depth > 32 {
             return Err(maka_ui_runtime::Error::Invalid(
-                "scene source depth/node/deadline limit".into(),
+                "scene source depth/deadline limit".into(),
             ));
         }
         for field in ["style", "hover", "active", "focus"] {
@@ -124,15 +124,8 @@ fn prepare_with_inputs(
     let mut slots = vec![];
     let mut inputs = BTreeMap::new();
     let mut hidden_slots = BTreeSet::new();
-    node.metadata(
-        &mut slots,
-        &mut inputs,
-        &mut hidden_slots,
-        &mut 0,
-        true,
-        deadline,
-    )
-    .map_err(maka_ui_runtime::Error::Invalid)?;
+    node.metadata(&mut slots, &mut inputs, &mut hidden_slots, true, deadline)
+        .map_err(maka_ui_runtime::Error::Invalid)?;
     node.shortcut_inputs(&mut inputs, true)
         .map_err(maka_ui_runtime::Error::Invalid)?;
     for (key, schema) in additional_inputs {
@@ -743,25 +736,38 @@ impl NodePresentation for Node {
                     .on_click(move |_, window, cx| {
                         if click_admission.get() && click_alive.current.borrow().is_some() {
                             let accepted = if let Some(text) = &copy_text {
-                                click_alive.capture_input(&click_key, json!({"kind":"click"}), window, cx).map(|receipt| {
-                                    let alive = click_alive.clone();
-                                    let text = text.clone();
-                                    window.spawn(cx, async move |cx| {
-                                        if let Err(error) = receipt.await {
-                                            eprintln!("component input rejected: {error}");
-                                            return;
-                                        }
-                                        let _ = cx.update(move |_, cx| {
-                                            // Hiding a menu does not retire its original
-                                            // owner; actual close revokes this default.
-                                            if alive.current.borrow().is_some() {
-                                                cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(text));
-                                            }
-                                        });
-                                    }).detach();
-                                })
+                                click_alive
+                                    .capture_input(&click_key, json!({"kind":"click"}), window, cx)
+                                    .map(|receipt| {
+                                        let alive = click_alive.clone();
+                                        let text = text.clone();
+                                        window
+                                            .spawn(cx, async move |cx| {
+                                                if let Err(error) = receipt.await {
+                                                    eprintln!("component input rejected: {error}");
+                                                    return;
+                                                }
+                                                let _ = cx.update(move |_, cx| {
+                                                    // Hiding a menu does not retire its original
+                                                    // owner; actual close revokes this default.
+                                                    if alive.current.borrow().is_some() {
+                                                        cx.write_to_clipboard(
+                                                            gpui_kit::ClipboardItem::new_string(
+                                                                text,
+                                                            ),
+                                                        );
+                                                    }
+                                                });
+                                            })
+                                            .detach();
+                                    })
                             } else {
-                                (click_input.dispatch)(&click_key,json!({"kind":"click"}),window,cx)
+                                (click_input.dispatch)(
+                                    &click_key,
+                                    json!({"kind":"click"}),
+                                    window,
+                                    cx,
+                                )
                             };
                             if let Err(error) = accepted {
                                 eprintln!("component input rejected: {error}");

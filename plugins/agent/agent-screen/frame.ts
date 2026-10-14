@@ -143,7 +143,7 @@ export function frame<N extends Node>(
     busy = mutationPending(state);
   const catalogBusy = busy || catalogPending(state);
   const commands = rootCommands(state, locale, target);
-  if (target === 'tui') taskProgress(state, locale);
+  if (target === 'tui') taskProgress(state);
   const navigation = navigationView(presentation, state, theme, locale);
   const { main, header, attached } = conversationView(
     presentation,
@@ -530,47 +530,71 @@ export function frame<N extends Node>(
     state,
     ui.dialog(
       'agent-screen-dialog',
-      state.dialog === 'attachments'
-        ? target === 'tui' && state.attachments.selection?.browse
-          ? tuiText(locale, 'attachments-local-files')
-          : text.attachmentTitle
-        : state.dialog === 'skills'
-          ? text.skillsTitle
-          : state.dialog === 'terminal'
-            ? text.terminalTitle
-            : state.dialog === 'question'
-              ? state.interaction?.record?.request.kind === 'form'
-                ? text.formTitle
-                : text.questionsTitle
-              : state.dialog === 'approval'
-                ? state.interaction?.record?.request.kind === 'permissions'
-                  ? text.permissionApprovalTitle
-                  : state.interaction?.record?.request.kind === 'client_capability'
-                    ? text.computerApprovalTitle
-                    : text.approvalTitle
-                : state.dialog === 'directories'
-                  ? text.directoryTitle
-                  : state.dialog === 'graph'
-                    ? text.graphTitle
-                    : state.dialog === 'plan'
-                      ? text.planTitle
-                      : state.dialog === 'goal'
-                        ? text.goalTitle
-                        : state.dialog === 'recap'
-                          ? text.recapTitle
-                          : state.dialog === 'checklist'
-                            ? text.checklistTitle
-                            : state.dialog === 'details'
-                              ? text.detailsTitle
-                              : state.dialog === 'queue'
-                                ? text.queueEdit
-                                : state.dialog === 'help'
-                                  ? text.helpTitle
-                                  : text.paletteTitle,
+      state.dialog === 'session-change'
+        ? text.deleteSessionTitle
+        : state.dialog === 'attachments'
+          ? target === 'tui' && state.attachments.selection?.browse
+            ? tuiText(locale, 'attachments-local-files')
+            : text.attachmentTitle
+          : state.dialog === 'skills'
+            ? text.skillsTitle
+            : state.dialog === 'terminal'
+              ? text.terminalTitle
+              : state.dialog === 'question'
+                ? state.interaction?.record?.request.kind === 'form'
+                  ? text.formTitle
+                  : text.questionsTitle
+                : state.dialog === 'approval'
+                  ? state.interaction?.record?.request.kind === 'permissions'
+                    ? text.permissionApprovalTitle
+                    : state.interaction?.record?.request.kind === 'client_capability'
+                      ? text.computerApprovalTitle
+                      : text.approvalTitle
+                  : state.dialog === 'directories'
+                    ? text.directoryTitle
+                    : state.dialog === 'graph'
+                      ? text.graphTitle
+                      : state.dialog === 'plan'
+                        ? text.planTitle
+                        : state.dialog === 'goal'
+                          ? text.goalTitle
+                          : state.dialog === 'recap'
+                            ? text.recapTitle
+                            : state.dialog === 'checklist'
+                              ? text.checklistTitle
+                              : state.dialog === 'details'
+                                ? text.detailsTitle
+                                : state.dialog === 'queue'
+                                  ? text.queueEdit
+                                  : state.dialog === 'help'
+                                    ? text.helpTitle
+                                    : text.paletteTitle,
       background,
       ui.box(
         'dialog-content',
         [
+          ...(state.dialog === 'session-change' && state.sessionChange
+            ? [
+                ui.text('session-change-name', state.sessionChange.title, 17, theme.text, 600),
+                ui.text('session-change-help', text.deleteSessionHelp, 14, theme.muted),
+                ...(state.notice
+                  ? [ui.text('session-change-notice', text[state.notice], 14, theme.warning)]
+                  : []),
+                ui.box(
+                  'session-change-buttons',
+                  [
+                    ui.button('session-change-cancel', text.cancel),
+                    ui.button(
+                      'session-change-confirm',
+                      text.deleteAction,
+                      busy || !!state.uncertain,
+                      false,
+                    ),
+                  ],
+                  { row: true, gap: target === 'tui' ? 2 : 12 },
+                ),
+              ]
+            : []),
           ...(state.dialog === 'attachments' && state.attachments.selection
             ? [
                 attachmentView(

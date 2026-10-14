@@ -37,7 +37,8 @@ import {
 } from './actions.js';
 import { taskOverview } from './task-overview.js';
 import { headerView } from './header-view.js';
-import { messages, turnTimings, utf8Bytes } from './messages.js';
+import { messages, turnTimings, utf8Bytes, activeOutput } from './messages.js';
+import { promptAnchor } from './actions.js';
 import { readingKey, type State } from './state.js';
 
 function readingProps(
@@ -47,10 +48,14 @@ function readingProps(
   target: 'tui' | 'desktop',
 ): TimelineProps {
   const timelineMessages = messages(state);
+  const prompt = state.visits.find((entry) => entry.id === state.selected?.id)?.prompt;
   return {
     theme,
     locale,
     messages: timelineMessages,
+    activeOutput: activeOutput(state),
+    leadingPrompt:
+      state.window && prompt?.anchor === promptAnchor(state.window.page) ? prompt.value : null,
     timings: turnTimings(state, timelineMessages),
     copyRequest: target === 'tui' && !state.image ? state.copyRequest : null,
     browse: state.browse,
@@ -116,17 +121,15 @@ function readingProps(
             ),
           ]
         : [],
-    waitingTools: state.window?.latest
-      ? (state.interactions?.entries ?? [])
-          .filter(
-            (entry) =>
-              !(
-                state.interaction?.record?.requestId === entry.requestId &&
-                state.interaction.record.outcome
-              ),
-          )
-          .flatMap((entry) => (entry.toolUseId === null ? [] : [entry.toolUseId]))
-      : [],
+    waitingTools: (state.interactions?.entries ?? [])
+      .filter(
+        (entry) =>
+          !(
+            state.interaction?.record?.requestId === entry.requestId &&
+            state.interaction.record.outcome
+          ),
+      )
+      .flatMap((entry) => (entry.toolUseId === null ? [] : [entry.toolUseId])),
     live:
       !!state.window?.latest &&
       state.visits.find((visit) => visit.id === state.selected?.id)?.following !== false,
@@ -175,6 +178,7 @@ export function conversationView<N extends Node>(
     sourceRetry: 'source-retry',
     sourceField: 'source-field',
     tailReady: 'tail-ready',
+    detached: 'detached',
     searchClosed: 'search-closed',
     browseClosed: 'browse-closed',
   };
@@ -419,13 +423,28 @@ export function conversationView<N extends Node>(
       theme,
       locale,
       selection: state.model,
+      selectionKey: String(state.epoch),
+      preferredModel:
+        state.backendReady && state.backendPreference?.kind === 'model'
+          ? {
+              connectionId: state.backendPreference.connectionId,
+              modelId: state.backendPreference.modelId,
+              thinkingLevel: state.backendPreference.thinkingLevel ?? null,
+            }
+          : null,
+      suggestDefault: state.backendReady && !state.backendPreference,
       executor: state.executor,
       catalogEpoch: state.catalogEpoch,
       openRequest: state.modelOpenRequest,
-      busy: busy || executionPending(state) || (target === 'tui' && !!state.run && !state.queue),
+      busy:
+        busy ||
+        !state.backendReady ||
+        executionPending(state) ||
+        (target === 'tui' && !!state.run && !state.queue),
     },
     {
       selected: 'model',
+      resolved: 'model-resolved',
       setup: 'model-setup',
       connections: 'model-connections',
       executor: 'executor',
@@ -604,9 +623,6 @@ export function conversationView<N extends Node>(
                 ui.box(
                   'retained-composer',
                   [
-                    ...(state.run
-                      ? [ui.text('queue-help', tuiText(locale, 'task-queue-help'), 12, theme.muted)]
-                      : []),
                     presentation.slot('queue', 'rows', queueProps, {
                       activated: 'queue-action',
                     }),

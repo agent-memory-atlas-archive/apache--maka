@@ -80,25 +80,38 @@ export function toolLabel(
       : message.tool?.call?.name;
   const result = message.tool?.result;
   const settlement = result?.settlement;
-  const status = settlement
-    ? {
-        returned: text.toolReturned,
-        failed: text.toolFailed,
-        unknown: text.toolUnknown,
-        rejected: text.toolRejected,
-      }[settlement]
-    : result
-      ? null
-      : message.live && message.tool?.call?.pending
-        ? message.waiting
-          ? text.waiting
-          : message.tool.call.dispatched
-            ? text.toolDispatched
-            : text.toolPending
-        : message.tool?.call?.dispatched
-          ? text.toolDispatchedMissing
-          : text.toolMissing;
-  return { name, status };
+  const pending = message.live && message.tool?.call?.pending;
+  const status =
+    settlement === 'failed'
+      ? text.toolFailed
+      : settlement === 'rejected'
+        ? text.toolRejected
+        : settlement === 'unknown'
+          ? text.toolUnknown
+          : result?.isError
+            ? text.toolReportedError
+            : result
+              ? text.toolReturned
+              : pending
+                ? message.waiting
+                  ? text.waiting
+                  : message.tool?.call?.dispatched
+                    ? text.toolDispatched
+                    : text.toolPending
+                : message.tool?.call?.dispatched
+                  ? text.toolDispatchedMissing
+                  : text.toolMissing;
+  const tone: 'error' | 'warning' | 'success' | 'accent' =
+    result?.isError || settlement === 'failed' || settlement === 'rejected'
+      ? 'error'
+      : settlement === 'unknown'
+        ? 'warning'
+        : result
+          ? 'success'
+          : !pending || message.waiting
+            ? 'warning'
+            : 'accent';
+  return { name, status, tone };
 }
 
 export function messageView<N extends Node>(
@@ -141,7 +154,9 @@ export function messageView<N extends Node>(
             : message.role === 'failure'
               ? text.findFieldFailure
               : text.toolOutput;
-  const { name, status } = tool ? toolLabel(message, locale) : { name: null, status: null };
+  const { name, status, tone } = tool
+    ? toolLabel(message, locale)
+    : { name: null, status: null, tone: 'subtle' as const };
   const result = message.tool?.result,
     settlement = result?.settlement;
   const time =
@@ -163,15 +178,13 @@ export function messageView<N extends Node>(
           ? '*'
           : '•'
         : ' ';
-    const markerColor = failed
-      ? theme.error
-      : message.waiting
-        ? theme.warning
-        : tool && result
-          ? theme.success
-          : user || message.live
-            ? theme.accent
-            : theme.subtle;
+    const markerColor = tool
+      ? theme[tone]
+      : failed
+        ? theme.error
+        : user || message.live
+          ? theme.accent
+          : theme.subtle;
     const row = (key: string, children: N[], band = false) =>
       ui.box(key, children, {
         row: true,
@@ -197,6 +210,9 @@ export function messageView<N extends Node>(
             rail ? (theme.ascii ? '|' : '│') : marker,
             14,
             rail ? theme.border : markerColor,
+            400,
+            {},
+            !rail && tool ? (status ?? '') : '',
           ),
         ],
         { terminal: { basis: 2 }, surface: user },
@@ -215,7 +231,6 @@ export function messageView<N extends Node>(
                 expanded ? text.collapseTool : text.expandTool,
               )
             : ui.text('role-' + message.id, name ?? caption, 14, theme.text, 600),
-          ...(status ? [ui.text('tool-status-' + message.id, '  ' + status, 13, theme.muted)] : []),
         ])
       : row(
           'message-body-' + message.id,
@@ -306,9 +321,6 @@ export function messageView<N extends Node>(
               ),
             ]
           : []),
-        ...(tool && result?.isError && !settlement
-          ? [ui.text('tool-error-' + message.id, text.toolReportedError, 13, theme.error)]
-          : []),
         ...(tool && !expanded && !message.structured && message.text
           ? [
               ui.text(
@@ -381,9 +393,6 @@ export function messageView<N extends Node>(
       ...(status ? [ui.text('tool-status-' + message.id, status, 13, theme.muted)] : []),
       ...(message.continued
         ? [ui.text('continued-' + message.id, text.partial, 12, theme.muted)]
-        : []),
-      ...(tool && result?.isError && !settlement
-        ? [ui.text('tool-error-' + message.id, text.toolReportedError, 13, theme.muted)]
         : []),
       ...(tool
         ? [

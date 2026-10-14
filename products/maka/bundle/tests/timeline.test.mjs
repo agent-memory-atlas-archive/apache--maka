@@ -122,6 +122,33 @@ test('history fragments keep distinct controls and navigate the original tool ev
   assert.deepEqual(out.events, [
     { name: 'markRead', value: { sessionId: 'session', sequence: 8, field: 'body' } },
   ]);
+  const find = (node, key) => {
+    if (!node || typeof node !== 'object') return undefined;
+    if (node.key === key) return node;
+    for (const value of Object.values(node)) {
+      for (const child of Array.isArray(value) ? value : [value]) {
+        const found = find(child, key);
+        if (found) return found;
+      }
+    }
+  };
+  for (const [settlement, isError, hint, tone] of [
+    ['returned', false, 'Returned', 'success'],
+    ['returned', true, 'Tool reported an error', 'error'],
+    ['failed', false, 'Tool execution failed', 'error'],
+    ['rejected', false, 'Not executed', 'error'],
+    ['unknown', false, 'Tool outcome is unknown', 'warning'],
+  ]) {
+    props.messages[0].tool = {
+      ...tool,
+      result: { sequence: 8, isError, settlement, image: false },
+    };
+    out = component.update(out.frame.state, props, {});
+    const marker = find(out.frame.view, 'marker-call');
+    assert.equal(marker.hint, hint);
+    assert.equal(marker.color, theme.terminal[tone]);
+    assert.equal(find(out.frame.view, 'tool-status-call'), undefined);
+  }
 });
 
 test('history prefetches before an edge without treating stale or commanded viewports as scrolling', () => {
@@ -202,4 +229,170 @@ test('history prefetches before an edge without treating stale or commanded view
   );
   assert.deepEqual(observed(6, 'up', ['message-0']), [{ name: 'older', value: {} }]);
   assert.deepEqual(observed(7, 'down', ['message-0']), []);
+});
+
+test('floating output is one truncated row only away from the live end', () => {
+  const props = {
+    theme,
+    locale: 'en',
+    copyRequest: null,
+    browse: null,
+    timings: [],
+    markReadEnabled: false,
+    toolContext: null,
+    waitingTools: [],
+    liveTools: [],
+    messages: [],
+    source: null,
+    search: null,
+    loading: false,
+    older: false,
+    newer: false,
+    latest: false,
+    landing: { sequence: 0, edge: 'end' },
+    live: true,
+    activeOutput: {
+      id: 'live',
+      contentKey: 'live',
+      role: 'thinking',
+      text: 'First line\nSecond line',
+      timestamp: null,
+      source: null,
+      image: false,
+      continued: false,
+      tool: null,
+    },
+  };
+  let out = component.mount(props, {});
+  const nodes = (n) =>
+    n && typeof n === 'object'
+      ? [n, ...Object.values(n).flatMap((v) => (Array.isArray(v) ? v.flatMap(nodes) : nodes(v)))]
+      : [];
+  const find = (key) => nodes(out.frame.view).find((n) => n.key === key);
+  assert.equal(find('active-output'), undefined);
+  const observe = (revision, atEnd) => {
+    out = component.event(
+      out.frame.state,
+      {
+        kind: 'component',
+        child: 'reading',
+        name: 'observed',
+        event: {
+          readingRevision: revision,
+          pendingCommand: null,
+          viewport: { readingRevision: revision, atStart: false, atEnd, visibleChildKeys: [] },
+        },
+      },
+      props,
+      {},
+    );
+  };
+  observe(1, false);
+  assert.equal(find('active-output-text').text, 'Thinking · First line Second line');
+  assert.equal(find('active-output-text').truncate, true);
+  assert.ok(find('reading-control-space'));
+  assert.ok(find('reading-control-space-end'));
+  assert.deepEqual(out.events.find((e) => e.name === 'detached')?.value, {
+    landing: 0,
+    value: true,
+  });
+  observe(2, true);
+  assert.equal(find('active-output'), undefined);
+  observe(3, false);
+  props.activeOutput = null;
+  out = component.update(out.frame.state, props, {});
+  assert.equal(find('active-output'), undefined);
+});
+
+test('prompt header follows the visible answer, yields to user rows, and never flickers at a boundary', () => {
+  const message = (id, role, text) => ({
+    id,
+    contentKey: id,
+    role,
+    text,
+    source: Number(id),
+    timestamp: 1,
+    tool: null,
+    image: false,
+    continued: false,
+  });
+  const props = {
+    theme,
+    locale: 'en',
+    copyRequest: null,
+    browse: null,
+    timings: [],
+    markReadEnabled: false,
+    toolContext: null,
+    waitingTools: [],
+    liveTools: [],
+    source: null,
+    search: null,
+    loading: false,
+    older: false,
+    newer: false,
+    latest: false,
+    live: false,
+    landing: { sequence: 0, edge: 'start' },
+    messages: [
+      message('1', 'user', 'First question'),
+      message('2', 'assistant', 'First answer'),
+      message('3', 'user', '?'),
+      message('4', 'assistant', 'Latest answer'),
+    ],
+  };
+  let out = component.mount(props, {});
+  const nodes = (n) =>
+    n && typeof n === 'object'
+      ? [n, ...Object.values(n).flatMap((v) => (Array.isArray(v) ? v.flatMap(nodes) : nodes(v)))]
+      : [];
+  const find = (key) => nodes(out.frame.view).find((n) => n.key === key);
+  const observe = (revision, first) => {
+    out = component.event(
+      out.frame.state,
+      {
+        kind: 'component',
+        child: 'reading',
+        name: 'observed',
+        event: {
+          readingRevision: revision,
+          pendingCommand: null,
+          viewport: {
+            readingRevision: revision,
+            atStart: false,
+            atEnd: false,
+            visibleChildKeys: ['message-' + first],
+          },
+        },
+      },
+      props,
+      {},
+    );
+  };
+  assert.equal(find('prompt-bar'), undefined);
+  observe(1, '2');
+  assert.equal(find('prompt-text').text, 'First question');
+  assert.equal(find('prompt-text').truncate, true);
+  observe(2, '3');
+  assert.equal(find('prompt-bar'), undefined);
+  observe(2, '2');
+  assert.equal(find('prompt-bar'), undefined, 'layout feedback cannot reinsert the canceled row');
+  observe(3, '4');
+  assert.equal(
+    find('prompt-text').text,
+    '?',
+    'short prompts remain valid context for their own answer',
+  );
+  observe(4, '1');
+  assert.equal(find('prompt-bar'), undefined);
+  props.messages = [message('4', 'assistant', 'Latest answer')];
+  props.leadingPrompt = { source: 3, text: 'A question outside the retained page' };
+  out = component.update(out.frame.state, props, {});
+  observe(5, '4');
+  assert.equal(find('prompt-text').text, 'A question outside the retained page');
+  assert.deepEqual(
+    find('reading').props.content.children.map((n) => n.key),
+    ['message-4'],
+    'header is never copied or searched as transcript text',
+  );
 });

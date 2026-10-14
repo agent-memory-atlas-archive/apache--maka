@@ -75,6 +75,7 @@ interface Painter<N extends Node> {
     color?: number,
     weight?: number,
     style?: DesktopStyle,
+    hint?: string,
   ): N;
   button(
     key: string,
@@ -361,11 +362,12 @@ function terminalPaint(theme: Theme): Painter<TerminalNode> {
         background: color(theme.surface),
         hover_background: color(theme.border),
       }),
-    text: (key, text, _size = 15, foreground = theme.text, weight = 400, style = {}) =>
+    text: (key, text, _size = 15, foreground = theme.text, weight = 400, style = {}, hint = '') =>
       ui.terminal.text({
         key,
         text,
         color: color(foreground),
+        hint,
         truncate: style.truncate ?? false,
         bold: weight >= 600,
         align: style.align === 'center' ? 'center' : style.align === 'end' ? 'end' : 'start',

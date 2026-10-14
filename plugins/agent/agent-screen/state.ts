@@ -69,6 +69,8 @@ import type { GoalState, GoalRequest } from './goal.js';
 import type { PlanState, PlanRequest } from './plan.js';
 import type { GraphState, GraphRequest } from './graph.js';
 
+type BackendPreference = import('../../../packages/plugin-sdk/src/index.js').AgentBackendPreference;
+
 type Notice = keyof Copy | null;
 
 export type Backend =
@@ -80,6 +82,12 @@ export type Request =
   | PlanRequest
   | GraphRequest
   | DraftStep
+  | { kind: 'activity'; epoch: number; through: number; turnId: string; position: HistoryPosition }
+  | {
+      kind: 'readingPrompt';
+      epoch: number;
+      anchor: string;
+    }
   | { kind: 'observe'; epoch: number }
   | { kind: 'recapRead'; epoch: number; attempt: number }
   | { kind: 'recapGenerate'; epoch: number; sessionId: string }
@@ -114,6 +122,8 @@ export type Request =
   | { kind: 'questionRead'; attempt: number; index: number; draft: EditorObservation }
   | { kind: 'respond'; attempt: number; sessionId: string; requestId: string }
   | { kind: 'openSession'; selection: NonNullable<AgentScreenProps['session']> }
+  | { kind: 'changeSession'; sessionId: string; action: 'archive' | 'restore' | 'remove' }
+  | { kind: 'selectBackend'; sessionId: string; backend: BackendPreference }
   | { kind: 'create' }
   | { kind: 'createDirectory'; title: string }
   | {
@@ -145,6 +155,8 @@ export type Mutation =
       Request,
       {
         kind:
+          | 'changeSession'
+          | 'selectBackend'
           | 'create'
           | 'send'
           | 'stop'
@@ -205,6 +217,15 @@ export function navigationKey(state: State): string {
 // Bounded visited workspaces keep their original native reading owners. These
 // are presentation snapshots only; run, queue and permission facts are refreshed.
 export interface Visit {
+  detached?: boolean;
+  activityWanted?: number;
+  prompt?: { anchor: string; value: { source: number; text: string } | null };
+  activity?: {
+    through: number;
+    sequence: number;
+    turnId: string;
+    message: import('../../shared/contracts.js').Message | null;
+  };
   id: string;
   dataSource: AgentDataSource;
   key: string;
@@ -224,10 +245,7 @@ export interface Visit {
   progress: {
     turnId: string | null;
     through: number;
-    goal: string;
-    action: string;
     outcome: 'completed' | 'failed' | 'aborted' | null;
-    toolIssue: boolean;
   } | null;
 }
 
@@ -253,6 +271,8 @@ export interface State {
   catalogFailed: boolean;
   selected: AgentSession | null;
   model: SelectedModel | null;
+  backendReady: boolean;
+  backendPreference: BackendPreference | null;
   executor: AgentExecutorSelection | null;
   hasBackends: boolean;
   modelSetup: ModelSetup['kind'];
@@ -304,7 +324,9 @@ export interface State {
   terminals: boolean;
   skills: boolean;
   place: string;
+  sessionChange: AgentSession | null;
   dialog:
+    | 'session-change'
     | 'attachments'
     | 'terminal'
     | 'skills'

@@ -17,14 +17,13 @@
  * under the License.
  */
 
-//! Immutable values use the existing actual registration and application budget.
+//! Immutable values use the existing actual registration.
 use super::*;
 use maka_plugin_core::{contract::Import, runtime::Capability};
 
 pub(super) type Imports<V> = BTreeMap<String, Vec<Capability<Export<V>>>>;
 
 pub(super) fn export<V: ?Sized>(value: Value, contract: &Contract) -> Result<Export<V>> {
-    tree::check_call_bytes(&value)?;
     contract.validate()?;
     let Interface::Value { schema } = &contract.interface else {
         return Err(Error::Invalid("value contract required".into()));
@@ -52,64 +51,27 @@ impl<V: ?Sized + 'static> Application<V> {
         Ok(())
     }
 
-    /// First count the complete borrowed envelope; repeated imports charge each
-    /// occurrence. Never build potentially unbounded owned snapshots first.
-    pub(super) fn values_snapshot(
-        &self,
-        activation: &Activation,
-        args: &impl serde::Serialize,
-    ) -> Result<abi::ValueBindings> {
+    pub(super) fn values_snapshot(&self, activation: &Activation) -> Result<abi::ValueBindings> {
         let imports = self
             .values
             .get(&activation.epoch())
             .ok_or_else(|| Error::Invalid("value consumer activation unavailable".into()))?;
-        let mut borrowed = BTreeMap::new();
+        let mut bindings = BTreeMap::new();
         for (name, capabilities) in imports {
             let mut members = Vec::new();
             for capability in capabilities {
                 let Export::Value(value) = self.runtime.inspect(capability)? else {
                     return Err(Error::Invalid("bound value export required".into()));
                 };
-                members.push(value);
+                members.push(value.clone());
             }
-            borrowed.insert(name.as_str(), members);
+            bindings.insert(name.clone(), members);
         }
-        tree::check_call_bytes(&(args, &borrowed))?;
-        Ok(abi::ValueBindings(
-            borrowed
-                .into_iter()
-                .map(|(key, values)| (key.to_owned(), values.into_iter().cloned().collect()))
-                .collect(),
-        ))
+        Ok(abi::ValueBindings(bindings))
     }
 
-    pub(super) fn mount_values(
-        &self,
-        mount: &Mount,
-        args: &impl serde::Serialize,
-    ) -> Result<abi::ValueBindings> {
+    pub(super) fn mount_values(&self, mount: &Mount) -> Result<abi::ValueBindings> {
         let provider = self.provider(mount)?;
-        self.values_snapshot(&provider, args)
-    }
-
-    pub(super) fn charge_values(
-        &mut self,
-        activation: &Activation,
-        batch: &BTreeMap<String, Published<Export<V>>>,
-    ) -> Result<()> {
-        let mut bytes = 0usize;
-        for export in batch.values() {
-            if let Export::Value(value) = &export.value {
-                bytes = bytes
-                    .checked_add(tree::call_bytes(value)?)
-                    .ok_or_else(|| Error::Invalid("value byte overflow".into()))?;
-            }
-        }
-        let frames: usize = self.views.values().map(|v| v.bytes).sum();
-        if bytes + self.value_bytes.values().sum::<usize>() + frames > 32 * 1024 * 1024 {
-            return Err(Error::Invalid("UI values and frames exceed 32 MiB".into()));
-        }
-        self.value_bytes.insert(activation.epoch(), bytes);
-        Ok(())
+        self.values_snapshot(&provider)
     }
 }

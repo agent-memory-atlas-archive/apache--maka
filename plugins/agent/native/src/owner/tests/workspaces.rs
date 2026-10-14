@@ -299,6 +299,7 @@ async fn full_session_projection_budget_preserves_forward_and_reverse_catalog_bo
             None,
             maka_event_log::sessions::SessionPosition::Start,
             maka_event_log::sessions::CatalogFilter {
+                archived_only: false,
                 include_archived: false,
                 pending_only: false,
             },

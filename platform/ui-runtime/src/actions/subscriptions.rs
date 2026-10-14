@@ -138,7 +138,7 @@ impl<V: ?Sized + 'static> Application<V> {
                     ));
                 }
                 let wanted = self.subscription_wanted(&running.consumer, &running.key, id);
-                let valid = tree::call_bytes(&value).and_then(|bytes| {
+                let valid = tree::serialized_bytes(&value).and_then(|bytes| {
                     if bytes > 64 * 1024 {
                         return Err(Error::Invalid("subscription item exceeds 64 KiB".into()));
                     }

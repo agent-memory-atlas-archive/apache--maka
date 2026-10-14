@@ -45,27 +45,17 @@ pub struct NativeView<V: ?Sized> {
     pub(crate) slot_render_depth: Rc<BTreeMap<String, u16>>,
     declaration: Option<Rc<Value>>,
 }
-// A retained page can expose primary controls and per-object menu actions.
-// The aggregate metadata byte limit and compilation deadline still bound work.
-pub(crate) const MAX_INPUTS: usize = 256;
 
 fn input_validators(
     schemas: &BTreeMap<String, Value>,
     slots: &[ComponentSlot],
 ) -> Result<BTreeMap<String, jsonschema::Validator>> {
-    if slots.len() > 64 {
-        return Err(Error::Invalid("native component slot limit".into()));
-    }
     let mut keys = std::collections::BTreeSet::new();
     for slot in slots {
         slot.validate().map_err(Error::Invalid)?;
         if !keys.insert(&slot.key) {
             return Err(Error::Invalid("duplicate native slot key".into()));
         }
-    }
-    super::tree::check_call_bytes(&(&schemas, &slots))?;
-    if schemas.len() > MAX_INPUTS {
-        return Err(Error::Invalid("native component input limit".into()));
     }
     let mut inputs = BTreeMap::new();
     for (key, schema) in schemas {
@@ -141,15 +131,6 @@ impl PreparedScene {
         Ok(self)
     }
     pub fn with_declaration(mut self, source: Value) -> Result<Self> {
-        super::tree::check_call_bytes(&(
-            &self.schemas,
-            &self.slots,
-            &self.hidden,
-            self.visible,
-            &source,
-            self.depth,
-            &self.slot_depth,
-        ))?;
         self.declaration = Some(source);
         Ok(self)
     }
@@ -194,11 +175,9 @@ impl<V: ?Sized> NativeView<V> {
             declaration: None,
         })
     }
-    /// A Rust adapter may also retain declarative data. It receives the same
-    /// quotas as guest scenes, rather than the opaque native recipe exemption.
+    /// Retain declarative data for presentation identity comparisons.
     pub fn with_declaration(mut self, source: Value) -> Result<Self> {
         self.declaration = Some(Rc::new(source));
-        super::tree::check_call_bytes(&self.metadata())?;
         Ok(self)
     }
     pub(crate) fn components<'a>(&'a self, output: &mut Vec<super::frame::ComponentRef<'a>>) {
@@ -217,7 +196,6 @@ impl<V: ?Sized> NativeView<V> {
             return Err(Error::Invalid("hidden slot is not declared".into()));
         }
         self.hidden_slots = Rc::new(hidden);
-        super::tree::check_call_bytes(&self.metadata())?;
         Ok(self)
     }
     /// Renderer-derived nesting cost, independent of business state. `depth`
@@ -232,7 +210,6 @@ impl<V: ?Sized> NativeView<V> {
         }
         self.render_depth = depth;
         self.slot_render_depth = Rc::new(slots);
-        super::tree::check_call_bytes(&self.metadata())?;
         Ok(self)
     }
     /// Mechanical projection of the recipe's declared root visibility, distinct
@@ -259,17 +236,6 @@ impl<V: ?Sized> NativeView<V> {
             && self.declaration == previous.declaration
             && self.render_depth == previous.render_depth
             && self.slot_render_depth == previous.slot_render_depth
-    }
-    pub(crate) fn metadata(&self) -> impl serde::Serialize + '_ {
-        (
-            &*self.schemas,
-            &*self.slots,
-            &*self.hidden_slots,
-            self.root_visible,
-            self.declaration.as_deref(),
-            self.render_depth,
-            &*self.slot_render_depth,
-        )
     }
     /// Whether an input target still belongs to this published recipe.
     pub fn declares_input(&self, key: &str) -> bool {

@@ -63,46 +63,33 @@ fn prepare_with_inputs(
             "terminal scene deadline".into(),
         ));
     }
-    fn scan(
-        source: &Value,
-        depth: usize,
-        count: &mut usize,
-        deadline: Instant,
-    ) -> maka_ui_runtime::Result<()> {
-        *count += 1;
-        if Instant::now() >= deadline || depth > 32 || *count > 4096 {
+    fn scan(source: &Value, depth: usize, deadline: Instant) -> maka_ui_runtime::Result<()> {
+        if Instant::now() >= deadline || depth > 32 {
             return Err(maka_ui_runtime::Error::Invalid(
-                "scene source depth/node/deadline limit".into(),
+                "scene source depth/deadline limit".into(),
             ));
         }
         for field in ["background", "content"] {
             if let Some(child) = source.get(field) {
-                scan(child, depth + 1, count, deadline)?;
+                scan(child, depth + 1, deadline)?;
             }
         }
         if let Some(children) = source.get("children").and_then(Value::as_array) {
             for child in children {
-                scan(child, depth + 1, count, deadline)?;
+                scan(child, depth + 1, deadline)?;
             }
         }
         Ok(())
     }
-    scan(source, 0, &mut 0, deadline)?;
+    scan(source, 0, deadline)?;
     let node: Node = serde_json::from_value(source.clone())
         .map_err(|e| maka_ui_runtime::Error::Invalid(e.to_string()))?;
     node.validate_root(deadline)
         .map_err(maka_ui_runtime::Error::Invalid)?;
     let mut slots = vec![];
     let mut hidden_slots = BTreeSet::new();
-    node.metadata(
-        &mut slots,
-        &mut inputs,
-        &mut hidden_slots,
-        &mut 0,
-        true,
-        deadline,
-    )
-    .map_err(maka_ui_runtime::Error::Invalid)?;
+    node.metadata(&mut slots, &mut inputs, &mut hidden_slots, true, deadline)
+        .map_err(maka_ui_runtime::Error::Invalid)?;
     node.validate_focus_targets(&slots)
         .map_err(maka_ui_runtime::Error::Invalid)?;
     node.shortcut_inputs(&mut inputs, true)

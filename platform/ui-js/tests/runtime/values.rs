@@ -176,30 +176,7 @@ fn native_and_js_value_exports_feed_actual_callbacks_and_empty_optional_members(
         app.shutdown().unwrap();
     }
 }
-#[test]
-fn repeated_value_imports_charge_the_full_envelope_before_js_entry_and_keep_realm_healthy() {
-    let timer = timer();
-    let (input, packages, native) = fixture(json!("x".repeat(300_000)), false, true);
-    let mut app = start(&input, packages, native, &timer).unwrap();
-    let first = app.mount_launch(json!({})).unwrap();
-    assert_eq!(app.frame(&first).unwrap().state["count"], 1);
-    // Each value and props alone fits. Both imports refer to the exact same
-    // published payload, but their two appearances must both be charged.
-    assert!(
-        app.mount_launch(json!({"padding":"y".repeat(500_000)}))
-            .is_err()
-    );
-    assert!(!app.is_retiring(&first));
-    let second = app.mount_launch(json!({})).unwrap();
-    assert_eq!(
-        app.frame(&second).unwrap().state["count"],
-        2,
-        "failed envelope must never enter mount"
-    );
-    app.close(&first, Ok(())).unwrap();
-    app.close(&second, Ok(())).unwrap();
-    app.shutdown().unwrap();
-}
+
 #[test]
 fn value_schema_and_native_to_js_precision_are_checked_before_activation() {
     let timer = timer();
@@ -211,71 +188,6 @@ fn value_schema_and_native_to_js_precision_are_checked_before_activation() {
         let (input, packages, native) = fixture(value, javascript, false);
         assert!(start(&input, packages, native, &timer).is_err());
     }
-}
-#[test]
-fn values_and_committed_frames_share_one_retained_budget() {
-    let timer = timer();
-    let (mut input, mut packages) =
-        support::fixture("return frame({count:state.count+1,revision:state.revision+1});");
-    let exports: BTreeMap<_, _> = (0..33)
-        .map(|i| {
-            (
-                format!("Value{i}"),
-                Export {
-                    contract: contract(),
-                    availability: Availability::Required,
-                },
-            )
-        })
-        .collect();
-    let provider = support::package(
-        "large.values",
-        Declaration {
-            entries: BTreeMap::from([(
-                EntryTarget::Desktop,
-                EntryDeclaration {
-                    scene: None,
-                    implementation: Implementation::Native {
-                        implementation: "test.large-values".into(),
-                    },
-                    configuration: json!({"type":"object"}),
-                    imports: BTreeMap::new(),
-                    exports,
-                },
-            )]),
-            composition: None,
-        },
-        None,
-    );
-    input
-        .instances
-        .insert("large".into(), support::node(&provider, 200));
-    packages.push(provider);
-    let mut native = crate::support::scene::registry(PresentationTarget::Desktop);
-    native
-        .register("test.large-values", |_, _| {
-            Ok((0..33)
-                .map(|i| {
-                    (
-                        format!("Value{i}"),
-                        NativeExport {
-                            contract: contract(),
-                            value: NativeCapability::Value(json!("x".repeat(1_010_000))),
-                        },
-                    )
-                })
-                .collect())
-        })
-        .unwrap();
-    let mut app = start(&input, packages, native, &timer).unwrap();
-    let error = app
-        .mount_launch(json!({"count":3,"padding":"y".repeat(300_000)}))
-        .unwrap_err();
-    assert!(error.to_string().contains("state limit"), "{error}");
-    let small = app.mount_launch(json!({"count":3})).unwrap();
-    assert_eq!(app.frame(&small).unwrap().state["count"], 3);
-    app.close(&small, Ok(())).unwrap();
-    app.shutdown().unwrap();
 }
 
 struct Exact;

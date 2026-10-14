@@ -48,6 +48,7 @@ import {
   catalogPending,
   checkInteraction,
   closeDialog,
+  changeSession,
   controlSidebar,
   conversationRoute,
   focusAttachments,
@@ -84,6 +85,13 @@ export function handleRaw<N extends Node>(
     };
     rootCommand(state, actions, locale, 'scheduler-open', target);
   }
+  if (input.key === 'session-change-cancel') closeDialog(state);
+  if (
+    input.key === 'session-change-confirm' &&
+    state.dialog === 'session-change' &&
+    state.sessionChange
+  )
+    changeSession(state, actions, state.sessionChange, 'remove');
   if (input.key === 'catalog-search') input = { ...input, key: 'palette-open' };
   if (input.key === 'home-projects') rootCommand(state, actions, locale, 'projects-open', target);
   else if (input.key === 'home-imports')
@@ -244,8 +252,12 @@ export function handleRaw<N extends Node>(
     (state.dialog === 'question' || state.dialog === 'approval')
   )
     checkInteraction(state, actions);
-  else if (input.key === 'catalog-filter-all' || input.key === 'catalog-filter-needs_you') {
-    const filter = input.key === 'catalog-filter-all' ? 'all' : 'needs_you';
+  else if (
+    ['catalog-filter-all', 'catalog-filter-needs_you', 'catalog-filter-archived'].includes(
+      input.key,
+    )
+  ) {
+    const filter = input.key.slice('catalog-filter-'.length) as State['catalogFilter'];
     if (!mutationPending(state) && !catalogPending(state) && state.catalogFilter !== filter) {
       state.catalogFilter = filter;
       state.catalog = null;

@@ -33,7 +33,7 @@ use serde_json::Value;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-use super::{Health, Limits, Result, engine, failed, json};
+use super::{Health, Limits, Result, engine, failed};
 
 /// An opaque module reference, valid only in its originating foreground realm.
 #[derive(Clone)]
@@ -152,7 +152,6 @@ impl Foreground {
         {
             return Err(failed("invalid foreground export path"));
         }
-        json::encoded_size(args, 1024 * 1024).map_err(failed)?;
         self.budget.enter();
         let _entered = self.scheduler.enter();
         let outcome = entered(&mut self.runtime, |runtime| {
@@ -252,7 +251,6 @@ impl Foreground {
                 "foreground callbacks are retired or from another realm",
             ));
         }
-        json::encoded_size(args, 1024 * 1024).map_err(failed)?;
         self.budget.enter_until(deadline);
         let _entered = self.scheduler.enter();
         let outcome = entered(&mut self.runtime, |runtime| {

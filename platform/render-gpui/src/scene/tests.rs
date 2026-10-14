@@ -775,10 +775,9 @@ fn native_scene_deactivation_blurs_only_its_focus_with_old_listeners_retained(
 #[test]
 fn desktop_styles_reject_source_overflow_and_native_nonfinite_values() {
     let hidden = json!({"kind":"stack","key":"root","direction":"column","padding":0,"gap":0,"background":0,"visible":false,"children":(0..257).map(|n| json!({"kind":"button","key":format!("button-{n}"),"label":"Hidden"})).collect::<Vec<_>>()});
-    assert!(
-        compile(&hidden, Instant::now() + std::time::Duration::from_secs(1)).is_err(),
-        "hidden controls still count against the original input quota"
-    );
+    let compiled = compile(&hidden, Instant::now() + std::time::Duration::from_secs(1)).unwrap();
+    assert!(!compiled.root_visible());
+    assert!(!compiled.declares_input("button-256"));
     for value in [1e300, -1e300, 16000.0001] {
         let mut scene = source(false, false, false);
         scene["style"]["minWidth"] = json!(value);

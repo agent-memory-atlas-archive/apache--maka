@@ -22,7 +22,7 @@ use sha2::{Digest, Sha256};
 
 const PREDICATE: &str = "
     NOT EXISTS (SELECT 1 FROM session_retirements WHERE session_id=id AND remove_session=1)
-    AND (?1 = 0 OR archived = 0)
+    AND (?1 = 0 OR (?1 = 1 AND archived = 0) OR (?1 = 2 AND archived = 1))
     AND (?2 IS NULL OR id = ?2)
     AND (?3 IS NULL OR json_extract(configuration, '$.workspace.hostCwd') = ?3)
     AND (?4 IS NULL OR substr(id, 1, length(?4)) = ?4)
@@ -78,7 +78,11 @@ impl Selection {
             AND id {comparison} ?6 ORDER BY id {order} LIMIT ?7"
         );
         let mut ids = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql))
-            .bind(!self.filter.include_archived)
+            .bind(if self.filter.archived_only {
+                2
+            } else {
+                i32::from(!self.filter.include_archived)
+            })
             .bind(&self.session)
             .bind(&self.cwd)
             .bind(&self.prefix)
@@ -96,7 +100,11 @@ impl Selection {
     async fn pending_count(&self, connection: &mut SqliteConnection) -> Result<u64, StoreError> {
         let sql = format!("SELECT COUNT(*) FROM session_control WHERE {PREDICATE}");
         let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
-            .bind(!self.filter.include_archived)
+            .bind(if self.filter.archived_only {
+                2
+            } else {
+                i32::from(!self.filter.include_archived)
+            })
             .bind(&self.session)
             .bind(&self.cwd)
             .bind(&self.prefix)

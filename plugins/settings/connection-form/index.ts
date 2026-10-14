@@ -74,7 +74,7 @@ export function connectionForm<N extends Node>(
           reviewed: null,
           reviewedCatalog: null,
           reviewPage: 0,
-          confirmation: null,
+          confirmation: props.removeRequested && props.connection ? 'remove' : null,
           historyOpen: false,
           earlier: [],
           historyNext: null,

@@ -497,7 +497,6 @@ impl<V: ?Sized + 'static> Application<V> {
                         } else {
                             self.activations.remove(activation.instance());
                             self.values.remove(&activation.epoch());
-                            self.value_bytes.remove(&activation.epoch());
                             self.origins.remove(&activation.epoch());
                         }
                         progressed = true;

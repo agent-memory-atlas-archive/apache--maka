@@ -42,6 +42,7 @@ import type {
 import { sessionDetailsContract, type SessionDetailsProps } from '../../shared/contracts.js';
 import { scrollRows, visibleRows, resetScroll } from '../../shared/scroll.js';
 import { copy, type Copy } from '../../shared/locale.js';
+import { panelHeader } from '../../shared/page-shell.js';
 import { sameValue } from '../../shared/value.js';
 import {
   compactLabel,
@@ -293,18 +294,6 @@ function frame<N extends Node>(
       ui.box(
         'details-fields',
         [
-          ui.box(
-            'details-header',
-            [
-              ui.box(
-                'details-heading-cell',
-                [ui.text('details-heading', text.detailsTitle, 17, props.theme.text, 550)],
-                { terminal: { grow: 1 } },
-              ),
-              ui.button('close', text.closeModels),
-            ],
-            { row: true, gap: 1 },
-          ),
           ...(state.target
             ? [
                 ui.text(
@@ -480,7 +469,6 @@ function frame<N extends Node>(
   const review = ui.box(
     'details-review',
     [
-      ui.text('details-review-heading', text.detailsReview, 17, props.theme.text, 550),
       ui.text(
         'details-review-help',
         state.discard ? text.detailsReloadHelp : text.detailsRebaseHelp,
@@ -541,7 +529,6 @@ function frame<N extends Node>(
           ...(!state.discard
             ? [ui.button('reload', text.detailsReload, !active(state, props) || busy(state))]
             : []),
-          ui.button('cancel-review', text.cancel),
         ],
         {
           row: true,
@@ -565,7 +552,6 @@ function frame<N extends Node>(
           content: ui.box(
             'details-earlier',
             [
-              ui.text('details-history-heading', text.detailsHistory, 17, props.theme.text, 550),
               ui.text('details-history-help', text.detailsHistoryHelp, 12, props.theme.muted),
               ...(state.historyFailed
                 ? [
@@ -613,13 +599,6 @@ function frame<N extends Node>(
                 'details-history-actions',
                 [
                   ui.button(
-                    'history-back',
-                    text.back,
-                    false,
-                    false,
-                    target === 'tui' ? { background: 0, align: 'start' } : {},
-                  ),
-                  ui.button(
                     'history-refresh',
                     target === 'tui'
                       ? props.theme.ascii
@@ -651,13 +630,40 @@ function frame<N extends Node>(
 
   const out = output(
     state,
-    ui.box('session-details', [form, review, earlier], {
-      visible: props.open,
-      gap: 0,
-      terminal: { grow: 1 },
-      style: { width: fill, minWidth: 0 },
-      shortcuts: [{ key: 'escape', modifiers: [], input: 'close', enabled: true }],
-    }),
+    ui.box(
+      'session-details',
+      [
+        panelHeader(
+          presentation,
+          props,
+          'details-header',
+          state.historyOpen
+            ? text.detailsHistory
+            : reviewed
+              ? text.detailsReview
+              : text.detailsTitle,
+          'close',
+          state.historyOpen ? 'history-back' : reviewed ? 'cancel-review' : undefined,
+        ),
+        form,
+        review,
+        earlier,
+      ],
+      {
+        visible: props.open,
+        gap: 0,
+        terminal: { grow: 1 },
+        style: { width: fill, minWidth: 0 },
+        shortcuts: [
+          {
+            key: 'escape',
+            modifiers: [],
+            input: state.historyOpen ? 'history-back' : reviewed ? 'cancel-review' : 'close',
+            enabled: true,
+          },
+        ],
+      },
+    ),
     events,
   );
   out.actions = actions;

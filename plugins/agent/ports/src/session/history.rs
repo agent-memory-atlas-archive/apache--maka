@@ -28,6 +28,17 @@ use std::sync::Arc;
 pub use maka_agent_facts::message::EditableMessage;
 pub use maka_agent_facts::session::CopyPurpose;
 
+/// A bounded presentation preview; the original message remains in history.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentHistoryPrompt")]
+pub struct Prompt {
+    #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
+    pub source: u64,
+    #[schemars(length(max = 4096))]
+    pub text: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CopySource {

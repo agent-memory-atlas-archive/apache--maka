@@ -489,6 +489,7 @@ async fn pending_session_pages_use_canonical_outcomes_and_isolate_continuation_s
             None,
             None.into(),
             maka_event_log::sessions::CatalogFilter {
+                archived_only: false,
                 include_archived: true,
                 pending_only: true,
             },
@@ -528,6 +529,7 @@ async fn pending_session_pages_use_canonical_outcomes_and_isolate_continuation_s
             Some(&page.revision),
             cursor.into(),
             maka_event_log::sessions::CatalogFilter {
+                archived_only: false,
                 include_archived: true,
                 pending_only: true,
             },
@@ -556,6 +558,7 @@ async fn pending_session_pages_use_canonical_outcomes_and_isolate_continuation_s
             Some(&page.revision),
             cursor.into(),
             maka_event_log::sessions::CatalogFilter {
+                archived_only: false,
                 include_archived: true,
                 pending_only: true
             }
@@ -583,6 +586,7 @@ async fn pending_session_pages_use_canonical_outcomes_and_isolate_continuation_s
             None,
             None.into(),
             maka_event_log::sessions::CatalogFilter {
+                archived_only: false,
                 include_archived: true,
                 pending_only: true,
             },

@@ -51,78 +51,7 @@ fn fixture(
     packages.push(package);
     (input, packages)
 }
-#[test]
-fn opaque_guest_scenes_cannot_be_laundered_out_of_retained_budget() {
-    let timer = timer();
-    let (input, packages) = fixture(950_000);
-    let native = NativeRegistry::with_surface(PresentationTarget::Desktop)
-        .with_scene_compiler(
-            language(),
-            |source, _| {
-                assert_eq!(source["language"], "private.fixture");
-                // Deliberately tries to give the kernel a smaller declaration. The
-                // original source must still be retained and charged by the kernel.
-                PreparedScene::new((), BTreeMap::from([("inc".into(), json!(true))]), vec![])?
-                    .with_declaration(json!({"tiny":true}))
-            },
-            |prepared| prepared.finish::<(), ()>(Rc::new),
-        )
-        .unwrap();
-    let mut app = Application::new(
-        &input,
-        packages,
-        timer.handle().clone(),
-        maka_ui_js::execution(Default::default()),
-        native,
-        Default::default(),
-    )
-    .unwrap();
-    let mut mounts = vec![];
-    for _ in 0..35 {
-        mounts.push(app.mount_launch(json!({})).unwrap());
-    }
-    for _ in 0..3 {
-        let error = app.mount_launch(json!({})).err().unwrap().to_string();
-        assert!(error.contains("UI state limit"), "{error}");
-    }
-    app.dispatch(&mounts[0], 0, "inc", Value::Null).unwrap();
-    assert_eq!(app.frame(&mounts[0]).unwrap().state["count"], 1);
-    app.close(&mounts.remove(0), Ok(())).unwrap();
-    mounts.push(app.mount_launch(json!({})).unwrap());
-    for mount in mounts {
-        app.close(&mount, Ok(())).unwrap();
-    }
-    app.shutdown().unwrap();
-}
-#[test]
-fn guest_output_admission_precedes_scene_compilation() {
-    let timer = timer();
-    let (input, packages) = fixture(1_100_000);
-    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let observed = calls.clone();
-    let native = NativeRegistry::with_surface(PresentationTarget::Desktop)
-        .with_scene_compiler(
-            language(),
-            move |_, _| {
-                observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                PreparedScene::new((), BTreeMap::new(), vec![])
-            },
-            |prepared| prepared.finish::<(), ()>(Rc::new),
-        )
-        .unwrap();
-    let mut app = Application::new(
-        &input,
-        packages,
-        timer.handle().clone(),
-        maka_ui_js::execution(Default::default()),
-        native,
-        Default::default(),
-    )
-    .unwrap();
-    assert!(app.mount_launch(json!({})).is_err());
-    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
-    app.shutdown().unwrap();
-}
+
 #[test]
 fn missing_scene_compiler_is_rejected_before_native_activation() {
     let timer = timer();

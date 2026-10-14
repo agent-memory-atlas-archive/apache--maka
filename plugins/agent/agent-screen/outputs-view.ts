@@ -19,6 +19,7 @@
 
 import type { Theme } from '../../shared/contracts.js';
 import { copy } from '../../shared/locale.js';
+import { panelHeader } from '../../shared/page-shell.js';
 import { toolLabel } from '../../shared/message-view.js';
 import { toolCards } from '../../shared/tool-cards.js';
 import { tuiText } from '../../shared/tui-locale.js';
@@ -68,27 +69,55 @@ export function outputsView<N extends Node>(
                     : []),
                   ...rows.map(({ message }) => {
                     const tool = message.tool;
-                    const label = tool ? toolLabel(message, locale) : null;
+                    const label = tool
+                      ? toolLabel(
+                          {
+                            tool,
+                            live: active && !!state.run && !!tool.call?.pending,
+                            waiting:
+                              active &&
+                              !!state.interactions?.entries.some(
+                                (entry) => entry.toolUseId === tool.toolUseId,
+                              ),
+                          },
+                          locale,
+                        )
+                      : null;
                     const expanded = visit.output === message.id;
                     return ui.box(
                       'output-' + message.id,
                       [
                         ...(tool
                           ? [
-                              ui.item!(
-                                'output-item-' + message.id,
-                                ui.text(
-                                  'output-label-' + message.id,
-                                  `${expanded ? '−' : '+'} ${label?.name ?? text.toolReturned}`,
-                                  13,
-                                  theme.text,
-                                  550,
-                                ),
-                                expanded,
-                                !active,
-                                { submit: true },
+                              ui.box(
+                                'output-tool-heading-' + message.id,
+                                [
+                                  ui.text(
+                                    'output-tool-marker-' + message.id,
+                                    theme.ascii ? '*' : '•',
+                                    13,
+                                    theme[label!.tone],
+                                    400,
+                                    {},
+                                    label!.status,
+                                  ),
+                                  ui.item!(
+                                    'output-item-' + message.id,
+                                    ui.text(
+                                      'output-label-' + message.id,
+                                      `${expanded ? '−' : '+'} ${label?.name ?? text.toolOutput}`,
+                                      13,
+                                      theme.text,
+                                      550,
+                                    ),
+                                    expanded,
+                                    !active,
+                                    { submit: true },
+                                  ),
+                                ],
+                                { row: true, gap: 1 },
                               ),
-                              ...(label?.status
+                              ...(presentation.target === 'desktop' && label?.status
                                 ? [
                                     ui.text(
                                       'output-state-' + message.id,
@@ -171,14 +200,12 @@ export function outputsView<N extends Node>(
   return ui.box(
     'outputs-panel',
     [
-      ui.box(
+      panelHeader(
+        presentation,
+        { theme, locale },
         'outputs-heading',
-        [
-          ui.text('outputs-title', tuiText(locale, 'task-outputs'), 15, theme.text, 650),
-          ui.box('outputs-spacer', [], { terminal: { grow: 1 } }),
-          ui.button('inspector-close', text.closeModels),
-        ],
-        { row: true, gap: 1 },
+        tuiText(locale, 'task-outputs'),
+        'inspector-close',
       ),
       ui.text('outputs-explainer', tuiText(locale, 'task-evidence-hint'), 12, theme.muted),
       ...readers,

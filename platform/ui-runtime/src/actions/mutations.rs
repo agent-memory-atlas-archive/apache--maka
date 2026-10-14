@@ -182,7 +182,6 @@ impl<V: ?Sized + 'static> Application<V> {
                 let prepared = async {
                     let original = owner.prepare().await?;
                     original.validate().map_err(|e| e.to_string())?;
-                    tree::check_call_bytes(&original).map_err(|e| e.to_string())?;
                     maka_plugin_core::json::check_delivery(
                         &serde_json::to_value(&original).map_err(|e| e.to_string())?,
                         512 * 1024,
@@ -408,7 +407,7 @@ impl<V: ?Sized + 'static> Application<V> {
             .as_ref()
             .filter(|_| !running.completed)
             .ok_or_else(|| Error::Invalid("progress requires an active mutation".into()))?;
-        let valid = tree::call_bytes(&value).and_then(|bytes| {
+        let valid = tree::serialized_bytes(&value).and_then(|bytes| {
             if bytes > 64 * 1024 {
                 return Err(Error::Invalid("mutation progress exceeds 64 KiB".into()));
             }
@@ -515,7 +514,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 Ok(())
             })();
             match valid {
-                Ok(()) => self.action_feedback(&running.consumer, &running.key, candidate),
+                Ok(()) => self.action_feedback(&running.consumer, candidate),
                 Err(error) => session.failure(format!(
                     "operation result delivery failed: {error}; read original receipt"
                 )),

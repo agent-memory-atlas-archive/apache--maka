@@ -168,6 +168,7 @@ fn paint_button(
 }
 #[derive(Clone)]
 pub(super) enum TargetKind {
+    Hint,
     SelectionCopy {
         text: std::rc::Rc<str>,
     },
@@ -1522,6 +1523,8 @@ impl Presenter {
                 }
             }
             Node::Text {
+                key,
+                hint,
                 text: content,
                 color: foreground,
                 truncate,
@@ -1556,6 +1559,27 @@ impl Presenter {
                 let mut style = Style::default().fg(color(*foreground));
                 if *bold {
                     style = style.add_modifier(Modifier::BOLD);
+                }
+                if !hint.is_empty() && !area.is_empty() {
+                    let target = Target {
+                        identity: TargetIdentity {
+                            mount: mount.clone(),
+                            key: key.clone(),
+                            owner: self.resources.owners[&mount.id()].identity.clone(),
+                            scope: scene.input_scope.clone(),
+                        },
+                        revision: self.application.frame(mount)?.revision,
+                        area,
+                        tab_index: -1,
+                        autofocus: false,
+                        kind: TargetKind::Hint,
+                        ancestors: scene.ancestry.clone(),
+                    };
+                    if self.hover.as_ref().is_some_and(|old| old.same(&target)) {
+                        scene.tooltip =
+                            Some((scene.input_scope.clone(), area, hint.clone(), style));
+                    }
+                    scene.targets.push(target);
                 }
                 let rows = if *truncate {
                     vec![truncated_line(content, area.width)]

@@ -42,6 +42,10 @@ type Request =
   | { kind: 'page'; key: string; query: string; first: boolean }
   | { kind: 'text'; key: string; basis: EditorTextRef; choice: SelectedModel | null };
 interface State {
+  preferenceKey: string;
+  preferenceScope: string | null;
+  resolving: { key: string; scope: string; thinkingLevel: ThinkingLevel | null } | null;
+  preferenceUnavailable: boolean;
   catalogEpoch: number;
   openRequest: number | null;
   setup: ModelSetup['kind'];
@@ -80,7 +84,15 @@ function supports(selection: SelectedModel) {
   );
 }
 function candidate(state: State, props: ModelsProps): SelectedModel | null {
-  if (props.busy || state.pending || state.failed || state.queryError || dirty(state)) return null;
+  if (
+    props.preferredModel ||
+    props.busy ||
+    state.pending ||
+    state.failed ||
+    state.queryError ||
+    dirty(state)
+  )
+    return null;
   if (state.staleSelection && props.selection) {
     const original = props.selection;
     const choice = [
@@ -100,6 +112,42 @@ function candidate(state: State, props: ModelsProps): SelectedModel | null {
     state.defaultModel?.kind === 'ready'
     ? { choice: state.defaultModel.choice, thinkingLevel: null }
     : null;
+}
+function resolvePreference(state: State, props: ModelsProps): Action[] {
+  const identity = JSON.stringify([
+    props.selectionKey ?? '',
+    props.preferredModel ?? null,
+    props.catalogEpoch,
+  ]);
+  if (state.preferenceKey === identity) return [];
+  state.preferenceKey = identity;
+  state.resolving = null;
+  state.preferenceUnavailable = false;
+  state.suggestDefault = true;
+  state.staleSelection = false;
+  if (state.preferenceScope !== (props.selectionKey ?? '')) {
+    state.preferenceScope = props.selectionKey ?? '';
+    state.draft = null;
+    close(state);
+  }
+  const preferred = props.preferredModel;
+  if (!preferred) return [];
+  const key = `resolve-model-${++state.serial}`;
+  state.resolving = {
+    key,
+    scope: props.selectionKey ?? '',
+    thinkingLevel: preferred.thinkingLevel,
+  };
+  return [
+    {
+      key,
+      binding: 'settings',
+      member: 0,
+      method: 'resolveModel',
+      input: { connectionId: preferred.connectionId, modelId: preferred.modelId },
+      resources: {},
+    },
+  ];
 }
 function modelKey(state: State, choice: SettingsModelChoice) {
   const identity = JSON.stringify([choice.selection.connectionId, choice.selection.modelId]);
@@ -266,7 +314,11 @@ function frame<N extends Node>(
   const effort = props.selection?.thinkingLevel;
   const label = chosen
     ? chosen.label + (effort ? ` · ${text.thinking} ${text[thinkingCopy[effort]]}` : '')
-    : text.chooseModel;
+    : state.resolving
+      ? text.loadingModels
+      : state.preferenceUnavailable
+        ? `${text.savedModelUnavailable} · ${props.preferredModel?.modelId ?? ''}`
+        : text.chooseModel;
   const trigger = ui.button('toggle', label, props.busy, false, {
     width: fill,
     minWidth: 0,
@@ -286,7 +338,7 @@ function frame<N extends Node>(
           choice.label === choice.selection.modelId
             ? choice.connectionName
             : `${choice.connectionName} · ${choice.selection.modelId}`;
-        return ui.item(
+        const item = ui.item(
           modelKey(state, choice),
           ui.box(
             `model-${at}`,
@@ -309,6 +361,13 @@ function frame<N extends Node>(
           !editableChoices(state, props),
           { followFocus: true, submit: true },
         );
+        return ui.contextMenu!('menu-' + modelKey(state, choice), choice.label, item, [
+          ui.button(
+            'settings-' + modelKey(state, choice),
+            text.modelSettings,
+            !editableChoices(state, props),
+          ),
+        ]);
       }
       const button = ui.button(
         modelKey(state, choice),
@@ -353,7 +412,7 @@ function frame<N extends Node>(
         undefined,
         text.refreshModels,
       ),
-      ui.button('defaults', text.defaultModel),
+      ui.button('defaults', text.modelSettings),
       ui.button(
         'apply',
         text.modelApply,
@@ -551,7 +610,7 @@ function frame<N extends Node>(
                 {
                   theme: props.theme,
                   locale: props.locale,
-                  selection: chosen ?? null,
+                  selection: state.draft?.choice ?? chosen ?? null,
                   defaultModel: state.defaultModel,
                   catalogRevision: state.catalogRevision,
                   busy: props.busy || !!state.pending || state.failed,
@@ -613,6 +672,10 @@ export function models<N extends Node>(
     mount(props) {
       const state: State = {
         revision: 0,
+        preferenceKey: '',
+        preferenceScope: null,
+        resolving: null,
+        preferenceUnavailable: false,
         catalogEpoch: props.catalogEpoch,
         openRequest: props.openRequest,
         setup: 'loading',
@@ -643,9 +706,13 @@ export function models<N extends Node>(
         scrollRevision: 0,
         failed: false,
       };
-      return frame(presentation, state, props, read(state));
+      return frame(presentation, state, props, [
+        ...read(state),
+        ...resolvePreference(state, props),
+      ]);
     },
     update(previous, props) {
+      const resolution = resolvePreference(previous, props);
       const requested = props.openRequest !== previous.openRequest && props.openRequest !== null;
       previous = {
         ...previous,
@@ -671,12 +738,10 @@ export function models<N extends Node>(
           next: null,
           scrollRevision: 0,
         };
-        return frame(
-          presentation,
-          state,
-          props,
-          state.defaultsOpen ? readPage(state) : read(state),
-        );
+        return frame(presentation, state, props, [
+          ...(state.defaultsOpen ? readPage(state) : read(state)),
+          ...resolution,
+        ]);
       }
       if (props.selection && !previous.staleSelection) previous.suggestDefault = false;
       const initial = candidate(previous, props);
@@ -686,9 +751,12 @@ export function models<N extends Node>(
         presentation,
         state,
         props,
-        defaultsInteractive(state, props) && state.catalogRevision === null && !state.failed
-          ? readPage(state)
-          : resume(state, props),
+        [
+          ...resolution,
+          ...(defaultsInteractive(state, props) && state.catalogRevision === null && !state.failed
+            ? readPage(state)
+            : resume(state, props)),
+        ],
         initial ? [{ name: 'selected', value: initial }] : [],
       );
     },
@@ -698,7 +766,23 @@ export function models<N extends Node>(
       const events: Emission[] = [];
       if (input.kind === 'component' && input.child === 'model-rows' && input.name === 'input')
         input = input.event as ComponentInput;
-      if (input.kind === 'action' && input.key === state.pending?.key) {
+      if (input.kind === 'action' && input.key === state.resolving?.key) {
+        const resolving = state.resolving;
+        state.resolving = null;
+        const result = input.event as ActionOutcome;
+        const value = result.status === 'succeeded' ? (result.value as SettingsDefaultModel) : null;
+        const selection =
+          value?.kind === 'ready'
+            ? { choice: value.choice, thinkingLevel: resolving.thinkingLevel }
+            : null;
+        const available = selection && supports(selection) ? selection : null;
+        state.staleSelection = false;
+        state.preferenceUnavailable = !available;
+        events.push({
+          name: 'resolved',
+          value: { selectionKey: resolving.scope, selection: available },
+        });
+      } else if (input.kind === 'action' && input.key === state.pending?.key) {
         const request = state.pending;
         state.pending = null;
         const result = input.event as ActionOutcome;
@@ -712,6 +796,8 @@ export function models<N extends Node>(
             else if (request.choice) {
               if (editableChoices(state, props) && query === state.query) {
                 state.staleSelection = false;
+                state.preferenceUnavailable = false;
+                state.resolving = null;
                 state.suggestDefault = false;
                 close(state);
                 events.push({ name: 'selected', value: request.choice });
@@ -853,6 +939,15 @@ export function models<N extends Node>(
         state.pending = null;
         state.catalogRevision = null;
         state.defaultModel = null;
+        state.staleSelection = true;
+        state.preferenceKey = '';
+        if (props.preferredModel) {
+          events.push({
+            name: 'resolved',
+            value: { selectionKey: props.selectionKey ?? '', selection: null },
+          });
+          actions.push(...resolvePreference(state, props));
+        }
         actions.push(...readPage(state));
       } else if (input.kind === 'raw') {
         if (input.key === 'model-popup' && (input.event as { kind?: string })?.kind === 'dismiss')
@@ -924,6 +1019,14 @@ export function models<N extends Node>(
             const choice = state.choices[state.active];
             if (choice) selectDraft(state, choice);
             reveal(state);
+          } else if (editableChoices(state, props) && input.key.startsWith('settings-choose-')) {
+            const choice = state.choices.find(
+              (choice) => 'settings-' + modelKey(state, choice) === input.key,
+            );
+            if (choice) {
+              selectDraft(state, choice);
+              state.defaultsOpen = true;
+            }
           } else if (editableChoices(state, props) && input.key.startsWith('choose-')) {
             const choice = state.choices.find((choice) => modelKey(state, choice) === input.key);
             if (choice) {

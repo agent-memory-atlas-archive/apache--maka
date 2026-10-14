@@ -898,14 +898,13 @@ fn native_terminal_slots_measure_and_paint_js_children_with_original_input_mount
 #[test]
 fn native_terminal_hidden_slots_override_custom_parent_measurement_and_paint() {
     let hidden = json!({"kind":"stack","key":"root","direction":"column","padding":0,"gap":0,"background":0,"visible":false,"children":(0..257).map(|n| json!({"kind":"button","key":format!("button-{n}"),"label":"Hidden"})).collect::<Vec<_>>()});
-    assert!(
-        super::scene::compile(
-            &hidden,
-            std::time::Instant::now() + std::time::Duration::from_secs(1)
-        )
-        .is_err(),
-        "hidden controls still consume the original input quota"
-    );
+    let compiled = super::scene::compile(
+        &hidden,
+        std::time::Instant::now() + std::time::Duration::from_secs(1),
+    )
+    .unwrap();
+    assert!(!compiled.root_visible());
+    assert!(!compiled.declares_input("button-256"));
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
         .enable_time()

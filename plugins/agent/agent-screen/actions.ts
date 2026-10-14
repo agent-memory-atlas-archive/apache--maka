@@ -83,6 +83,50 @@ export function intent(
   });
 }
 
+export function restoreBackend(
+  state: State,
+  session: AgentSession,
+  remembered?: AgentSession['backend'],
+) {
+  if (
+    Object.values(state.pending).some(
+      (request) => request.kind === 'selectBackend' && request.sessionId === session.id,
+    )
+  )
+    return;
+  const backend = session.backend ?? remembered ?? null;
+  if (sameValue(state.backendPreference, backend) && state.backendReady) return;
+  state.backendPreference = backend;
+  state.model = null;
+  state.executor = backend?.kind === 'executor' ? backend.selection : null;
+  state.modelRefreshing = backend?.kind === 'model';
+  state.backendReady = true;
+}
+
+export function saveBackend(state: State, actions: Action[]) {
+  if (!state.selected || state.selected.archived || !state.backendReady) return;
+  const backend: NonNullable<AgentSession['backend']> | null = state.executor
+    ? { kind: 'executor', selection: state.executor }
+    : state.model
+      ? {
+          kind: 'model',
+          connectionId: state.model.choice.selection.connectionId,
+          modelId: state.model.choice.selection.modelId,
+          thinkingLevel: state.model.thinkingLevel,
+        }
+      : null;
+  if (!backend || sameValue(state.selected.backend, backend)) return;
+  state.backendPreference = backend;
+  intent(
+    state,
+    actions,
+    { kind: 'selectBackend', sessionId: state.selected.id, backend },
+    'agent',
+    'selectBackend',
+    { sessionId: state.selected.id, backend },
+  );
+}
+
 export function canExecute(state: State) {
   return !!state.executor || (!!state.model && !state.modelRefreshing);
 }
@@ -188,6 +232,88 @@ export function history(
     },
     {},
     implicit ? [{ child: readingKey(state), method: 'tail', input: null }] : [],
+  );
+}
+
+// Read one bounded tail only when the user is away from the live transcript.
+// This never changes the reading window or its anchor; deltas do not trigger reads.
+export function refreshActivity(state: State, actions: Action[], through = state.latestKnown) {
+  const visit = state.visits.find((entry) => entry.id === state.selected?.id);
+  if (
+    !visit ||
+    !state.run ||
+    !(visit.detached || !visit.following || state.window?.latest === false)
+  )
+    return;
+  visit.activityWanted = through;
+  if (
+    (visit.activity?.turnId === state.run.turnId && visit.activity.through >= through) ||
+    Object.values(state.pending).some(
+      (request) => request.kind === 'activity' && request.epoch === state.epoch,
+    )
+  )
+    return;
+  const position = { kind: 'tail' as const };
+  intent(
+    state,
+    actions,
+    { kind: 'activity', epoch: state.epoch, through, turnId: state.run.turnId, position },
+    'agent',
+    'history',
+    {
+      sessionId: state.selected!.id,
+      through,
+      position,
+      includeThinking: true,
+      view: 'conversation',
+    },
+  );
+}
+
+// The prompt preceding the retained page is presentation context, never a
+// second reading window. A page anchor makes late replies harmless while paging.
+export function promptAnchor(page: NonNullable<State['window']>['page']): string {
+  const first = page.chunks[0];
+  return first ? `${first.sequence}/${first.field}/${first.offset}` : '';
+}
+
+export function readingPrompt(
+  state: State,
+  actions: Action[],
+  page: NonNullable<State['window']>['page'],
+) {
+  const visit = state.visits.find((entry) => entry.id === state.selected?.id);
+  const first = page.chunks[0];
+  const anchor = promptAnchor(page);
+  if (!visit || !first || visit.prompt?.anchor === anchor) return;
+  if (first.role === 'user' && first.offset === 0) {
+    visit.prompt = { anchor, value: { source: first.sequence, text: first.text.slice(0, 4096) } };
+    return;
+  }
+  if (!page.before && first.role !== 'user') {
+    visit.prompt = { anchor, value: null };
+    return;
+  }
+  if (
+    Object.values(state.pending).some(
+      (request) =>
+        request.kind === 'readingPrompt' &&
+        request.epoch === state.epoch &&
+        request.anchor === anchor,
+    )
+  )
+    return;
+  intent(
+    state,
+    actions,
+    { kind: 'readingPrompt', epoch: state.epoch, anchor },
+    'agent',
+    'historyPrompt',
+    {
+      sessionId: state.selected!.id,
+      through: page.through,
+      sequence: first.sequence,
+    },
   );
 }
 
@@ -308,6 +434,11 @@ export function select(state: State, actions: Action[], session: AgentSession | 
   state.inspector = visit?.inspector ?? null;
   state.recallAnchor = null;
   state.selected = session;
+  state.backendReady = false;
+  state.backendPreference = null;
+  state.model = null;
+  state.executor = null;
+  state.modelRefreshing = false;
   state.epoch++;
   state.graph = newGraphState(state.graph.enabled);
   if (session) watchGraph(state);
@@ -425,6 +556,8 @@ export function mutationPending(state: State) {
         'respond',
         'markRead',
         'uploadAttachment',
+        'changeSession',
+        'selectBackend',
         'create',
         'createDirectory',
         'send',
@@ -1237,7 +1370,33 @@ export function focusAttachments(state: State) {
   };
 }
 
+export function changeSession(
+  state: State,
+  actions: Action[],
+  session: AgentSession,
+  action: 'archive' | 'restore' | 'remove',
+) {
+  if (mutationPending(state)) return;
+  if (session.activity !== 'idle') {
+    state.notice = 'sessionChangeBusy';
+    return;
+  }
+  intent(
+    state,
+    actions,
+    { kind: 'changeSession', sessionId: session.id, action },
+    'agent',
+    'changeSession',
+    {
+      sessionId: session.id,
+      expectedRevision: session.revision,
+      action,
+    },
+  );
+}
+
 export function closeDialog(state: State) {
+  if (state.dialog === 'session-change') state.sessionChange = null;
   // Cancel follows the original queue sheet: discard this edit, not an accepted operation.
   if (state.dialog === 'queue') state.queueEdit = null;
   if (state.dialog === 'question') state.questionSubmission = null;

@@ -265,3 +265,127 @@ async fn search_hits_read_the_exact_field_when_history_body_is_absent_or_differe
         fixture.config.shutdown().await.unwrap();
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn reading_prompt_is_indexed_fenced_and_keeps_original_session_authority() {
+    let fixture = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+    let seed = fixture.create("Reading context").await;
+    let configuration = fixture.owner.session(&seed).await.unwrap().configuration;
+    let session = format!("{}{}", fixture.owner.prefix, Uuid::new_v4().simple());
+    fixture
+        .store
+        .begin_session_import(
+            &PluginSession {
+                session_id: session.clone(),
+                creator: Namespace::new("prompt.fixture", StorageScope::Profile).unwrap(),
+                fingerprint: "prompt-import".into(),
+                managed: false,
+                authority_session_id: None,
+            },
+            &Source {
+                adapter: "fixture".into(),
+                session_id: "source".into(),
+            },
+            &configuration,
+            1,
+        )
+        .await
+        .unwrap();
+    fixture
+        .store
+        .append_session_import(
+            &session,
+            0,
+            vec![
+                Record {
+                    source_message_id: "u1".into(),
+                    source_turn_id: "t1".into(),
+                    timestamp: Some(1),
+                    content: Content::User {
+                        text: "First question".into(),
+                    },
+                },
+                Record {
+                    source_message_id: "a1".into(),
+                    source_turn_id: "t1".into(),
+                    timestamp: Some(2),
+                    content: Content::Assistant {
+                        text: "answer\n".repeat(100_000),
+                        model: None,
+                        thinking: None,
+                    },
+                },
+                Record {
+                    source_message_id: "u2".into(),
+                    source_turn_id: "t2".into(),
+                    timestamp: Some(3),
+                    content: Content::User { text: "?".into() },
+                },
+            ],
+        )
+        .await
+        .unwrap();
+    fixture
+        .store
+        .publish_session_import(&session, 3)
+        .await
+        .unwrap();
+    let through = *fixture.store.subscribe_commits().borrow();
+    let read = json!({"sessionId":session,"through":through,"position":{"kind":"start"},"view":"conversation"});
+    let first = loop {
+        let page = fixture.query("history", read.clone()).await.unwrap();
+        if page["kind"] == "ready" {
+            break page;
+        }
+    };
+    let first_user = first["chunks"][0]["sequence"].as_u64().unwrap();
+    let answer = first["chunks"][1]["sequence"].as_u64().unwrap();
+    assert_eq!(
+        fixture
+            .query(
+                "historyPrompt",
+                json!({"sessionId":session,"through":through,"sequence":answer})
+            )
+            .await
+            .unwrap(),
+        json!({"source":first_user,"text":"First question"})
+    );
+    let last = fixture.query("history", json!({"sessionId":session,"through":through,"position":{"kind":"tail"},"view":"conversation"})).await.unwrap();
+    let last_user = last["chunks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|chunk| chunk["role"] == "user")
+        .unwrap()["sequence"]
+        .as_u64()
+        .unwrap();
+    assert_eq!(
+        fixture
+            .query(
+                "historyPrompt",
+                json!({"sessionId":session,"through":through,"sequence":last_user})
+            )
+            .await
+            .unwrap(),
+        json!({"source":last_user,"text":"?"})
+    );
+    assert!(
+        fixture
+            .query(
+                "historyPrompt",
+                json!({"sessionId":session,"through":first_user / 256,"sequence":last_user})
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        fixture
+            .query(
+                "historyPrompt",
+                json!({"sessionId":"foreign-session","through":through,"sequence":answer})
+            )
+            .await
+            .is_err()
+    );
+}

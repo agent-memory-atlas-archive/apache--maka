@@ -268,12 +268,8 @@ fn module_handles_reject_cross_realm_and_post_close_dispatch_without_harming_sib
 }
 
 #[test]
-fn foreground_bounds_wire_results_and_rejects_non_json_before_copying() {
-    for body in [
-        "return 'x'.repeat(1024*1024+1);",
-        "const x={};x.self=x;return x;",
-        "return 1n;",
-    ] {
+fn foreground_rejects_non_json_results() {
+    for body in ["const x={};x.self=x;return x;", "return 1n;"] {
         let mut realm = realm();
         let module = realm
             .load("wire.mjs", &format!("export function read(){{{body}}}"))
@@ -281,41 +277,6 @@ fn foreground_bounds_wire_results_and_rejects_non_json_before_copying() {
         assert!(call(&mut realm, &module, "read", &[]).is_err());
         assert!(realm.failure().is_some());
     }
-    let mut realm = realm();
-    let module = realm
-        .load(
-            "utf8.mjs",
-            "export function read(){return '界'.repeat(400000);}",
-        )
-        .unwrap();
-    assert!(
-        call(&mut realm, &module, "read", &[])
-            .unwrap_err()
-            .0
-            .contains("1 MiB")
-    );
-}
-
-#[test]
-fn oversized_input_never_dispatches_and_does_not_poison_the_realm() {
-    let mut realm = realm();
-    let module = realm
-        .load(
-            "counter.mjs",
-            "let calls=0; export function read(){return ++calls;}",
-        )
-        .unwrap();
-    assert!(
-        call(
-            &mut realm,
-            &module,
-            "read",
-            &[json!("x".repeat(2 * 1024 * 1024))]
-        )
-        .is_err()
-    );
-    assert!(realm.failure().is_none());
-    assert_eq!(call(&mut realm, &module, "read", &[]).unwrap(), json!(1));
 }
 
 #[test]

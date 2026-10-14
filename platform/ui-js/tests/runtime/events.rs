@@ -238,7 +238,7 @@ fn parent_event_sibling_failure_rolls_back_emitter_and_prior_parent_transitions(
 }
 
 #[test]
-fn child_parent_feedback_shares_step_and_byte_budget_and_rolls_back() {
+fn child_parent_feedback_deadline_rolls_back() {
     let timer = timer();
     let (input, packages, _) = fixture(
         MOUNT,
@@ -254,10 +254,12 @@ fn child_parent_feedback_shares_step_and_byte_budget_and_rolls_back() {
         .dispatch(&left, 0, "inc", Value::Null)
         .unwrap_err()
         .to_string();
-    assert!(error.contains("limit"), "{error}");
+    assert!(
+        error.contains("deadline") || error.contains("synchronous budget exceeded"),
+        "{error}"
+    );
     assert_eq!(app.frame(&root).unwrap().revision, 0);
     assert_eq!(app.frame(&left).unwrap().revision, 0);
-    assert!(app.retiring_mounts().is_empty());
     close_all(&mut app, &root);
 }
 
@@ -446,89 +448,6 @@ fn native_application(
     )
     .unwrap()
 }
-struct PaddedEmitter;
-impl NativeComponent<()> for PaddedEmitter {
-    fn call(
-        &self,
-        call: ComponentCall<'_>,
-        _values: &maka_ui_runtime::abi::ValueBindings,
-    ) -> maka_ui_runtime::Result<ComponentOutput<NativeView<()>>> {
-        let (state, events) = match call {
-            ComponentCall::Mount { props } => (
-                json!({"revision":0,"count":props["initial"],"label":props["label"],"padding":"x".repeat(930_000)}),
-                Vec::new(),
-            ),
-            ComponentCall::Update { state, props } => {
-                let mut next = state.clone();
-                next["revision"] = json!(state["revision"].as_u64().unwrap() + 1);
-                next["label"] = props["label"].clone();
-                (next, Vec::new())
-            }
-            ComponentCall::Event { state, .. } => {
-                let mut next = state.clone();
-                next["revision"] = json!(state["revision"].as_u64().unwrap() + 1);
-                (
-                    next,
-                    (0..3)
-                        .map(|_| Emission {
-                            name: "changed".into(),
-                            value: json!("e".repeat(39_000)),
-                        })
-                        .collect(),
-                )
-            }
-        };
-        Ok(Frame {
-            revision: state["revision"].as_u64().unwrap(),
-            state,
-            surface: None,
-            view: crate::support::scene::view(Node::Button {
-                key: "inc".into(),
-                label: "Native".into(),
-            })?,
-        }
-        .output(events))
-    }
-}
-#[test]
-fn event_payloads_and_intermediate_frames_do_not_occupy_final_retained_scene_quota() {
-    let timer = timer();
-    let (input, packages, mut contract) = fixture(
-        MOUNT,
-        CHILD_EVENT,
-        support::CHILD_UPDATE,
-        "return frame({...state,revision:state.revision+1});",
-        "{changed:'notice'}",
-    );
-    let Interface::Component { events, .. } = &mut contract.interface else {
-        unreachable!()
-    };
-    events.insert(
-        "changed".into(),
-        json!({"type":"string","maxLength":262_144}),
-    );
-    let mut app = native_application(input, packages, contract, Rc::new(PaddedEmitter), &timer);
-    // 36 native states put the actual retained scene just below 32 MiB.
-    // A complete callback (930 kB state + 117 kB events) still fits 1 MiB,
-    // but counting its transient events as retained would exceed 32 MiB.
-    // Three parent transitions must also replace, not accumulate, state.
-    let mut roots = Vec::new();
-    for _ in 0..18 {
-        roots.push(app.mount_launch(json!({})).unwrap());
-    }
-    let left = app.child_mount(&roots[0], "left").unwrap().clone();
-    app.dispatch(&left, 0, "inc", Value::Null).unwrap();
-    assert_eq!(app.frame(&roots[0]).unwrap().revision, 3);
-    assert_eq!(app.frame(&left).unwrap().revision, 1);
-    for root in roots {
-        app.retire(&root).unwrap();
-        for mount in app.retiring_mounts() {
-            app.close(&mount, Ok(())).unwrap();
-        }
-    }
-    app.shutdown().unwrap();
-}
-
 #[test]
 fn raw_input_commits_the_complete_causal_batch() {
     let timer = timer();
@@ -669,7 +588,7 @@ fn presentation_change_updates_a_wide_retained_tree_atomically() {
         const originalFrame=frame;
         frame=state=>{{
             const out=originalFrame(state);
-            out.frame.view.children.push(...Array.from({{length:40}},(_,i)=>({{
+            out.frame.view.children.push(...Array.from({{length:260}},(_,i)=>({{
                 kind:'component',key:'leaf-'+i,binding:'leaf',member:0,on:{{}},props:{{label:state.label,initial:i}}
             }})));
             return out;
@@ -698,7 +617,7 @@ fn presentation_change_updates_a_wide_retained_tree_atomically() {
     let children: Vec<_> = groups
         .iter()
         .flat_map(|group| {
-            (0..40).map(|i| {
+            (0..260).map(|i| {
                 app.child_mount(group, &format!("leaf-{i}"))
                     .unwrap()
                     .clone()
@@ -710,7 +629,7 @@ fn presentation_change_updates_a_wide_retained_tree_atomically() {
             .unwrap();
         for (i, child) in children.iter().enumerate() {
             assert_eq!(
-                app.child_mount(&groups[i / 40], &format!("leaf-{}", i % 40))
+                app.child_mount(&groups[i / 260], &format!("leaf-{}", i % 260))
                     .unwrap(),
                 child
             );
@@ -718,9 +637,9 @@ fn presentation_change_updates_a_wide_retained_tree_atomically() {
             assert_eq!(frame.revision, version);
             assert_eq!(
                 frame.state["label"],
-                format!("{} {version}", if i < 40 { "Left" } else { "Right" })
+                format!("{} {version}", if i < 260 { "Left" } else { "Right" })
             );
-            assert_eq!(frame.state["count"], i % 40);
+            assert_eq!(frame.state["count"], i % 260);
         }
     }
     close_all(&mut app, &root);

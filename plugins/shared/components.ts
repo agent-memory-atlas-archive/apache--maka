@@ -60,7 +60,7 @@ import {
 import { copy } from './locale.js';
 import { toolCards } from './tool-cards.js';
 import { filePresentation, toolPresentation } from '../agent/tool-details/index.js';
-import { messageView, sourceFieldLabel } from './message-view.js';
+import { toolLabel, messageView, sourceFieldLabel } from './message-view.js';
 import { output, fill, pixels, compactLabel, type Presentation, type Node } from './view.js';
 import { sameValue } from './value.js';
 import type {
@@ -71,6 +71,7 @@ interface Revision {
   revision: number;
 }
 interface Navigation extends Revision {
+  menu: string | null;
   toggled: string[];
   scrollRevision: number;
   focused: string | null;
@@ -123,6 +124,8 @@ interface Draft extends Revision {
   entries: DraftEntry[];
 }
 interface Reading extends Revision {
+  promptShown?: boolean;
+  promptSuppressed?: string;
   copy: MessageCopy | null;
   browse: { request: number; id: string } | null;
   search: ConversationSearch | null;
@@ -512,18 +515,6 @@ export function components<N extends Node>(
                                       session.hasUnread ? 650 : 400,
                                       { truncate: true },
                                     ),
-                                    ...(props.previews?.[session.id]
-                                      ? [
-                                          ui.text(
-                                            `session-preview-${index}-${at}`,
-                                            props.previews[session.id]!,
-                                            12,
-                                            props.theme.muted,
-                                            400,
-                                            { truncate: true },
-                                          ),
-                                        ]
-                                      : []),
                                   ],
                                   { terminal: { grow: 1, shrink: true } },
                                 ),
@@ -566,24 +557,74 @@ export function components<N extends Node>(
                               ...(current ? { background: props.theme.selected } : {}),
                             },
                           );
-                      return ui.contextMenu
-                        ? ui.contextMenu('session-menu-' + session.id, session.title, row, [
-                            ui.button(
-                              'details-' + session.id,
-                              copy(props.locale).detailsTitle,
-                              props.busy,
-                            ),
-                            ...(target === 'tui'
-                              ? [
-                                  ui.button(
-                                    'usage-' + session.id,
-                                    tuiText(props.locale, 'insights-this-session'),
-                                    props.busy,
-                                  ),
-                                ]
-                              : []),
-                          ])
-                        : row;
+                      const text = copy(props.locale);
+                      const actions = [
+                        ...(!session.archived
+                          ? [ui.button('rename-' + session.id, text.renameSession, props.busy)]
+                          : []),
+                        ui.button('details-' + session.id, text.detailsTitle, props.busy),
+                        ...(target === 'tui'
+                          ? [
+                              ui.button(
+                                'usage-' + session.id,
+                                tuiText(props.locale, 'insights-this-session'),
+                                props.busy,
+                              ),
+                            ]
+                          : []),
+                        ...(session.activity !== 'idle'
+                          ? [ui.button('stop-' + session.id, text.stop, props.busy)]
+                          : []),
+                        ui.button(
+                          'archive-' + session.id,
+                          session.archived ? text.restoreSession : text.archiveSession,
+                          props.busy || session.activity !== 'idle',
+                        ),
+                        ui.button(
+                          'remove-' + session.id,
+                          text.deleteSession,
+                          props.busy || session.activity !== 'idle',
+                        ),
+                      ];
+                      if (ui.contextMenu)
+                        return ui.contextMenu(
+                          'session-menu-' + session.id,
+                          session.title,
+                          row,
+                          actions,
+                        );
+                      const menu = presentation.popup!({
+                        key: 'session-actions-' + session.id,
+                        label: session.title,
+                        trigger: ui.button(
+                          'menu-' + session.id,
+                          '⋯',
+                          props.busy,
+                          false,
+                          {},
+                          undefined,
+                          text.detailsTitle,
+                        ),
+                        content: ui.box('session-actions-content-' + session.id, actions, {
+                          gap: 4,
+                          padding: 6,
+                        }),
+                        open: state.menu === session.id,
+                        anchor: 'bottom_right',
+                        offset: 4,
+                        style: {
+                          width: pixels(200),
+                          background: props.theme.menu.background,
+                          border: props.theme.menu.border,
+                          borderWidth: props.theme.menu.borderWidth,
+                          radius: props.theme.menu.radius,
+                        },
+                      });
+                      return ui.box('session-row-' + session.id, [row, menu], {
+                        row: true,
+                        gap: 0,
+                        style: { width: fill, minWidth: 0 },
+                      });
                     })
                   : []),
               ];
@@ -647,6 +688,61 @@ export function components<N extends Node>(
     syncBrowse(state, props);
     const rows = toolCards(props.messages);
     const browsing = state.browse;
+    // Match Codex's reading context: pin only the prompt preceding the first
+    // visible answer. Visible user messages already provide their own context.
+    const visible = state.observation?.viewport?.visibleChildKeys ?? [];
+    const first = rows.findIndex(({ message }) => 'message-' + message.id === visible[0]);
+    const preceding =
+      first >= 0
+        ? rows
+            .slice(0, first)
+            .reverse()
+            .find(({ message }) => message.role === 'user')?.message
+        : null;
+    const prompt = preceding
+      ? preceding.continued && props.leadingPrompt?.source === preceding.source
+        ? props.leadingPrompt.text
+        : preceding.text
+      : props.leadingPrompt?.text;
+    const tail = rows.at(-1)?.message;
+    const promptPosition = `${props.landing.sequence}/${state.observation?.readingRevision}/${tail?.contentKey}/${tail?.text.length}`;
+    const userVisible = first >= 0 && rows[first]!.message.role === 'user';
+    if ((userVisible || first < 0) && state.promptShown) state.promptSuppressed = promptPosition;
+    if (state.promptSuppressed !== promptPosition) state.promptSuppressed = undefined;
+    const promptText =
+      target === 'tui' &&
+      !props.source &&
+      !search?.history &&
+      first >= 0 &&
+      !userVisible &&
+      !state.promptSuppressed &&
+      state.observation?.pendingCommand == null
+        ? (prompt ?? '')
+            .replace(/\u001b\[[0-?]*[ -/]*[@-~]/gu, '')
+            .replace(/[\u0000-\u001f\u007f]/gu, ' ')
+            .replace(/\s+/gu, ' ')
+            .trim()
+        : '';
+    state.promptShown = !!promptText;
+    const detached = (props.latest && !props.live) || state.observation?.viewport?.atEnd === false;
+    const active = !props.source && !search?.history && detached ? props.activeOutput : null;
+    const activity = active?.tool
+      ? toolLabel(
+          {
+            tool: active.tool,
+            live: true,
+            waiting: props.waitingTools.includes(active.tool.toolUseId),
+          },
+          props.locale,
+        )
+      : null;
+    const activityText = active
+      ? activity
+        ? (activity.name ?? text.toolActivity)
+        : (active.role === 'thinking' ? text.findFieldThinking + ' · ' : '') +
+          active.text.replace(/\s+/gu, ' ').trim()
+      : '';
+
     const validFile = (id: string, context: ToolFileContext) => {
       const message = rows.find(({ message }) => message.id === id)?.message;
       return (
@@ -853,22 +949,13 @@ export function components<N extends Node>(
         (timing) => timing.afterMessageId === message.id || timing.afterMessageId === result?.id,
       );
       if (!timing) return [messageNode];
-      const mark = timing.finished
-        ? {
-            completed: tuiText(props.locale, 'task-ended'),
-            failed: tuiText(props.locale, 'task-failed'),
-            aborted: tuiText(props.locale, 'task-stopped'),
-          }[timing.finished.outcome]
-        : props.theme.ascii
-          ? '.'
-          : '·';
       return [
         messageNode,
         presentation.slot(
           'time-' + message.contentKey,
           'label',
           {
-            text: mark + ' ',
+            text: '',
             elapsed: { from: timing.startedAt, to: timing.finished?.at ?? null },
             terminalForeground: props.theme.terminal
               ? timing.finished
@@ -942,18 +1029,19 @@ export function components<N extends Node>(
           ...(props.source.failed ? [ui.button('source-retry', text.sourceRetry)] : []),
         ]
       : target === 'tui'
-        ? props.latest || (state.observation?.viewport && !state.observation.viewport.atEnd)
+        ? detached
           ? [
               ui.box('reading-control-space', [], { terminal: { grow: 1 } }),
               ui.button(
                 props.latest ? 'latest' : 'end',
-                props.theme.ascii ? 'v' : '↓',
+                (props.theme.ascii ? 'v ' : '↓ ') + (props.latest ? text.latest : text.toEnd),
                 props.loading,
                 false,
                 { background: 0 },
                 undefined,
                 props.latest ? text.latest : text.toEnd,
               ),
+              ui.box('reading-control-space-end', [], { terminal: { grow: 1 } }),
             ]
           : []
         : [
@@ -1032,6 +1120,44 @@ export function components<N extends Node>(
                     wide: { min_width: 60, direction: 'row', children: { 'find-scope-label': {} } },
                     terminal: { basis: 1, shrink: false },
                     style: { width: fill, shrink: 0 },
+                  },
+                ),
+              ]
+            : []),
+          ...(promptText
+            ? [
+                ui.box(
+                  'prompt-bar',
+                  [
+                    ui.box(
+                      'prompt-gutter',
+                      [
+                        ui.text(
+                          'prompt-marker',
+                          props.theme.ascii ? '>' : '❯',
+                          13,
+                          props.theme.subtle,
+                        ),
+                      ],
+                      { terminal: { basis: 2, shrink: false } },
+                    ),
+                    ui.box(
+                      'prompt-body',
+                      [
+                        ui.text('prompt-text', promptText, 13, props.theme.text, 400, {
+                          truncate: true,
+                        }),
+                      ],
+                      { terminal: { grow: 1, shrink: true }, style: { width: fill, minWidth: 0 } },
+                    ),
+                    ui.box('prompt-inset', [], { terminal: { basis: 1, shrink: false } }),
+                  ],
+                  {
+                    row: true,
+                    gap: 0,
+                    surface: true,
+                    terminal: { basis: 1, shrink: false },
+                    style: { width: fill, shrink: 0, background: props.theme.surface },
                   },
                 ),
               ]
@@ -1142,6 +1268,52 @@ export function components<N extends Node>(
                     },
                   );
                 })(),
+              ]
+            : []),
+          ...(active && activityText
+            ? [
+                ui.box(
+                  'active-output',
+                  [
+                    ui.box(
+                      'active-output-gutter',
+                      [
+                        ui.text(
+                          'active-output-marker',
+                          active.role === 'assistant' ? ' ' : props.theme.ascii ? '*' : '•',
+                          14,
+                          activity ? props.theme[activity.tone] : props.theme.accent,
+                          400,
+                          {},
+                          activity?.status ?? '',
+                        ),
+                      ],
+                      { terminal: { basis: 2, shrink: false } },
+                    ),
+                    ui.box(
+                      'active-output-body',
+                      [
+                        ui.text(
+                          'active-output-text',
+                          activityText,
+                          14,
+                          active.role === 'thinking' ? props.theme.muted : props.theme.text,
+                          400,
+                          { truncate: true },
+                        ),
+                      ],
+                      { terminal: { grow: 1, shrink: true }, style: { width: fill, minWidth: 0 } },
+                    ),
+                    ui.box('active-output-inset', [], { terminal: { basis: 1, shrink: false } }),
+                  ],
+                  {
+                    surface: true,
+                    row: true,
+                    gap: 0,
+                    terminal: { basis: 1, shrink: false },
+                    style: { width: fill, shrink: 0, background: props.theme.surface },
+                  },
+                ),
               ]
             : []),
           ...(browsing ? [ui.text('browse-hint', text.browseHint, 12, props.theme.muted)] : []),
@@ -1350,7 +1522,10 @@ export function components<N extends Node>(
     },
     navigation: {
       mount: (props) =>
-        navigationFrame({ revision: 0, toggled: [], scrollRevision: 0, focused: null }, props),
+        navigationFrame(
+          { revision: 0, menu: null, toggled: [], scrollRevision: 0, focused: null },
+          props,
+        ),
       update: (state, props) => navigationFrame({ ...state, revision: state.revision + 1 }, props),
       event(state, input, props) {
         const next = { ...state, revision: state.revision + 1 };
@@ -1389,7 +1564,13 @@ export function components<N extends Node>(
             }
           }
         }
+        if (input.kind === 'raw' && (input.event as { kind?: string }).kind === 'dismiss')
+          next.menu = null;
         if (input.kind === 'raw' && !props.busy) {
+          if (input.key.startsWith('menu-') && input.key !== 'menu-close') {
+            const id = input.key.slice(5);
+            if (props.sessions.some((session) => session.id === id)) next.menu = id;
+          }
           const groups = sessionGroups(props);
           const group = groups.find((group) => group.key === input.key);
           if (group)
@@ -1404,7 +1585,10 @@ export function components<N extends Node>(
                 (session) =>
                   session.id === input.key ||
                   'details-' + session.id === input.key ||
-                  'usage-' + session.id === input.key,
+                  'usage-' + session.id === input.key ||
+                  ['rename-', 'archive-', 'remove-', 'stop-'].some(
+                    (prefix) => prefix + session.id === input.key,
+                  ),
               );
             if (
               session &&
@@ -1424,12 +1608,19 @@ export function components<N extends Node>(
                 name: 'select',
                 value: {
                   sessionId: session.id,
-                  details: input.key === 'details-' + session.id,
+                  details:
+                    input.key === 'details-' + session.id || input.key === 'rename-' + session.id,
+                  ...(['archive-', 'remove-', 'stop-'].some(
+                    (prefix) => prefix + session.id === input.key,
+                  )
+                    ? { action: input.key.slice(0, input.key.indexOf('-')) }
+                    : {}),
                   ...(input.key === 'usage-' + session.id ? { usage: true } : {}),
                 },
               });
           }
         }
+        if (events.length) next.menu = null;
         const out = navigationFrame(next, props);
         out.events.push(...events);
         return out;
@@ -1662,6 +1853,20 @@ export function components<N extends Node>(
             (!props.live || props.latest)
           )
             out.events.push({ name: 'latest', value: {} });
+        }
+        if (
+          input.kind === 'component' &&
+          input.child === 'reading' &&
+          input.name === 'observed' &&
+          next.observation?.viewport &&
+          next.observation.viewport.readingRevision === next.observation.readingRevision &&
+          next.observation.pendingCommand == null &&
+          state.observation?.viewport?.atEnd !== next.observation.viewport.atEnd
+        ) {
+          out.events.push({
+            name: 'detached',
+            value: { landing: props.landing.sequence, value: !next.observation.viewport.atEnd },
+          });
         }
         if (
           !props.source &&

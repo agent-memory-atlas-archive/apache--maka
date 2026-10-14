@@ -79,7 +79,7 @@ impl<'a> FromV8<'a> for Input {
         scope: &mut v8::PinScope<'a, 'i>,
         value: v8::Local<'a, v8::Value>,
     ) -> std::result::Result<Self, Self::Error> {
-        decode(scope, value, 1024 * 1024).map(Self)
+        decode(scope, value, Some(1024 * 1024)).map(Self)
     }
 }
 

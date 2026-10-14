@@ -28,6 +28,7 @@ import type {
   OperationReply,
   CallerIntent,
   CatalogMutationResult,
+  SettingsModelToolPreferences,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { modelDefaultContract, type ModelDefaultProps } from '../../shared/contracts.js';
 import { scrollRows, visibleRows, resetScroll } from '../../shared/scroll.js';
@@ -53,10 +54,13 @@ interface Intent {
   identity: string[];
 }
 interface State {
+  toolsIdentity: string;
+  tools: SettingsModelToolPreferences;
   revision: number;
   serial: number;
   confirmation: Intent | null;
   current: {
+    kind: 'default' | 'tools';
     revision: number;
     target: ConnectionTarget | null;
     reference: RecoveryRef | null;
@@ -80,6 +84,21 @@ function request(
   const key = 'model-default-' + ++state.serial;
   state.pending[key] = r;
   actions.push({ key, binding, member: 0, method, input, resources: {} });
+}
+function syncTools(state: State, props: ModelDefaultProps) {
+  const identity = JSON.stringify(props.selection?.selection ?? null);
+  if (state.toolsIdentity === identity) return;
+  state.toolsIdentity = identity;
+  state.tools = {
+    codeMode: props.selection?.tools?.codeMode ?? null,
+    applyPatch: props.selection?.tools?.applyPatch ?? null,
+  };
+}
+function toolsChanged(state: State, props: ModelDefaultProps) {
+  return (
+    state.tools.codeMode !== (props.selection?.tools?.codeMode ?? null) ||
+    state.tools.applyPatch !== (props.selection?.tools?.applyPatch ?? null)
+  );
 }
 function canStart(state: State, props: ModelDefaultProps) {
   return (
@@ -109,15 +128,30 @@ function settle(state: State, reply: OperationReply, events: Emission[]) {
     return;
   }
   const value = reply.receipt.outcome.value as CatalogMutationResult;
-  if (value.kind === 'committed' && value.connection === undefined) {
-    state.notice = current.target ? 'defaultSaved' : 'defaultCleared';
+  if (
+    value.kind === 'committed' &&
+    (current.kind === 'tools'
+      ? value.connection?.connectionId === current.target?.connectionId
+      : value.connection === undefined)
+  ) {
+    state.notice =
+      current.kind === 'tools'
+        ? 'modelToolsSaved'
+        : current.target
+          ? 'defaultSaved'
+          : 'defaultCleared';
     state.current = null;
     events.push({ name: 'changed', value: {} });
   } else if (value.kind === 'committed') state.notice = 'defaultUnknown';
   else {
     state.current = null;
-    state.conflictRevision = value.kind === 'revision_conflict' ? current.revision : null;
-    state.notice = value.kind === 'revision_conflict' ? 'defaultConflict' : 'defaultRejected';
+    const conflict = value.kind === 'revision_conflict' || value.kind === 'connection_stale';
+    state.conflictRevision = conflict ? current.revision : null;
+    state.notice = conflict
+      ? 'defaultConflict'
+      : current.kind === 'tools'
+        ? 'modelToolsRejected'
+        : 'defaultRejected';
   }
 }
 function history(state: State, actions: Action[], after: number) {
@@ -149,6 +183,75 @@ function frame<N extends Node>(
   const main = ui.box(
     'default-main',
     [
+      ...(props.selection
+        ? [
+            ui.text('model-tools-name', props.selection.label, 16, props.theme.text, 550),
+            ui.text(
+              'model-tools-connection',
+              props.selection.connectionName,
+              12,
+              props.theme.muted,
+            ),
+            ...(['codeMode', 'applyPatch'] as const).map((field) =>
+              ui.box(
+                'tools-' + field,
+                [
+                  ui.text(
+                    'tools-label-' + field,
+                    field === 'codeMode' ? 'Code Mode' : 'Apply Patch',
+                    14,
+                    props.theme.text,
+                    550,
+                  ),
+                  ui.box(
+                    'tools-options-' + field,
+                    (['auto', 'on', 'off'] as const).map((option) => {
+                      const value = option === 'auto' ? null : option === 'on';
+                      return ui.button(
+                        `tools-${field}-${option}`,
+                        text[
+                          option === 'auto'
+                            ? 'modelToolsAuto'
+                            : option === 'on'
+                              ? 'modelToolsOn'
+                              : 'modelToolsOff'
+                        ],
+                        !canStart(state, props),
+                        state.tools[field] === value,
+                      );
+                    }),
+                    { row: true, gap: target === 'tui' ? 1 : 8 },
+                  ),
+                  ui.text(
+                    'tools-help-' + field,
+                    text[field === 'codeMode' ? 'modelCodeModeHelp' : 'modelApplyPatchHelp'],
+                    12,
+                    props.theme.muted,
+                  ),
+                ],
+                { gap: target === 'tui' ? 0 : 4 },
+              ),
+            ),
+            ui.text('model-tools-scope', text.modelToolsScope, 12, props.theme.muted),
+            ui.box(
+              'tools-actions',
+              [
+                ui.button(
+                  'tools-save',
+                  text.modelToolsSave,
+                  !canStart(state, props) || !toolsChanged(state, props),
+                  true,
+                ),
+                ui.button(
+                  'tools-reset',
+                  text.cancel,
+                  !canStart(state, props) || !toolsChanged(state, props),
+                ),
+              ],
+              { row: true, gap: target === 'tui' ? 1 : 8 },
+            ),
+          ]
+        : []),
       ui.text('default-heading', text.defaultModel, 16, props.theme.text, 550),
       ui.text('default-summary', summary, 13, props.theme.muted),
       ui.box(
@@ -372,6 +475,8 @@ export function modelDefault<N extends Node>(
   return {
     mount(props) {
       const state: State = {
+        toolsIdentity: '',
+        tools: { codeMode: null, applyPatch: null },
         revision: 0,
         serial: 0,
         confirmation: null,
@@ -384,10 +489,12 @@ export function modelDefault<N extends Node>(
         historyNext: null,
         historyFailed: false,
       };
+      syncTools(state, props);
       return frame(presentation, state, props);
     },
     update(state, props) {
       state.revision++;
+      syncTools(state, props);
       return frame(presentation, state, props);
     },
     event(state, input, props) {
@@ -415,8 +522,9 @@ export function modelDefault<N extends Node>(
         if (r.kind === 'mutate') {
           if (outcome.status === 'operation') settle(state, outcome.reply, events);
           else if (outcome.status === 'not_accepted') {
+            state.notice =
+              state.current?.kind === 'tools' ? 'modelToolsRejected' : 'defaultRejected';
             state.current = null;
-            state.notice = 'defaultRejected';
           } else state.notice = 'defaultUnknown';
         } else if (r.kind === 'receipt') {
           if (
@@ -436,7 +544,7 @@ export function modelDefault<N extends Node>(
                 .filter(
                   (entry) =>
                     entry.reference.contract.name === 'maka.settings.Settings' &&
-                    entry.reference.method === 'setDefault',
+                    ['setDefault', 'updateModelTools'].includes(entry.reference.method),
                 )
                 .map((entry) => ({
                   cursor: entry.cursor,
@@ -460,7 +568,12 @@ export function modelDefault<N extends Node>(
         else if (key === 'default-confirm' && canConfirm(state, props)) {
           const intent = state.confirmation!;
           state.confirmation = null;
-          state.current = { revision: intent.revision, target: intent.target, reference: null };
+          state.current = {
+            kind: 'default',
+            revision: intent.revision,
+            target: intent.target,
+            reference: null,
+          };
           state.notice = null;
           request(state, actions, { kind: 'mutate' }, 'settings', 'setDefault', {
             expectedCatalogRevision: intent.revision,
@@ -505,7 +618,32 @@ export function modelDefault<N extends Node>(
         } else if (canStart(state, props)) {
           const selected = props.selection,
             saved = props.defaultModel!;
-          if (key === 'default-set' && selected) {
+          if (key.startsWith('tools-') && selected) {
+            if (key === 'tools-reset') {
+              state.toolsIdentity = '';
+              syncTools(state, props);
+            } else if (key === 'tools-save' && toolsChanged(state, props)) {
+              state.current = {
+                kind: 'tools',
+                revision: props.catalogRevision!,
+                target: {
+                  connectionId: selected.selection.connectionId,
+                  modelId: selected.selection.modelId,
+                },
+                reference: null,
+              };
+              state.notice = null;
+              request(state, actions, { kind: 'mutate' }, 'settings', 'updateModelTools', {
+                selection: selected.selection,
+                tools: { ...state.tools },
+              });
+            } else {
+              const match = /^tools-(codeMode|applyPatch)-(auto|on|off)$/.exec(key);
+              if (match)
+                state.tools[match[1] as keyof SettingsModelToolPreferences] =
+                  match[2] === 'auto' ? null : match[2] === 'on';
+            }
+          } else if (key === 'default-set' && selected) {
             state.confirmation = {
               revision: props.catalogRevision!,
               target: {

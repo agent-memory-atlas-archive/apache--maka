@@ -23,6 +23,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionConfiguration {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<crate::contract::BackendPreference>,
     #[serde(default)]
     pub collaboration_mode: maka_agent_facts::execution::CollaborationMode,
     #[serde(default)]

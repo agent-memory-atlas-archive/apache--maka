@@ -168,7 +168,6 @@ pub struct Application<V: ?Sized = ()> {
     activations: BTreeMap<InstanceId, Activation>,
     modules: BTreeMap<InstanceId, Loaded>,
     values: BTreeMap<Uuid, values::Imports<V>>,
-    value_bytes: BTreeMap<Uuid, usize>,
     views: BTreeMap<Uuid, tree::Mounted<V>>,
     actions: actions::Actions<V>,
     slice: std::time::Duration,
@@ -193,7 +192,6 @@ pub struct Application<V: ?Sized = ()> {
     wake: std::sync::Arc<std::sync::Mutex<Waker>>,
     ui_update: Option<tree::Update<V>>,
     ui_inputs: std::collections::VecDeque<tree::QueuedInput>,
-    ui_input_bytes: usize,
     native_commit: bool,
 }
 
@@ -289,7 +287,6 @@ impl<V: ?Sized + 'static> Application<V> {
             activations: BTreeMap::new(),
             modules: BTreeMap::new(),
             values: BTreeMap::new(),
-            value_bytes: BTreeMap::new(),
             views: BTreeMap::new(),
             actions: actions::Actions::default(),
             slice: options.synchronous_slice,
@@ -314,7 +311,6 @@ impl<V: ?Sized + 'static> Application<V> {
             wake: std::sync::Arc::new(std::sync::Mutex::new(Waker::noop().clone())),
             ui_update: None,
             ui_inputs: std::collections::VecDeque::new(),
-            ui_input_bytes: 0,
             native_commit: false,
         };
         for remote in remotes.registrations {
@@ -384,7 +380,7 @@ impl<V: ?Sized + 'static> Application<V> {
         if let Some(entry) = &instance.entry {
             match &entry.implementation {
                 Implementation::Native { implementation } => {
-                    let values = self.values_snapshot(&activation, &instance.configuration)?;
+                    let values = self.values_snapshot(&activation)?;
                     for (name, actual) in self.native.as_ref().expect("open UI registry").activate(
                         implementation,
                         &instance.configuration,
@@ -475,7 +471,7 @@ impl<V: ?Sized + 'static> Application<V> {
                         },
                     );
                     let loaded = &self.modules[&instance.identity].module;
-                    let values = self.values_snapshot(&activation, &instance.configuration)?;
+                    let values = self.values_snapshot(&activation)?;
                     let job = loaded.activate(&instance.configuration, &values)?;
                     self.modules
                         .get_mut(&instance.identity)
@@ -485,7 +481,6 @@ impl<V: ?Sized + 'static> Application<V> {
                 }
             }
         }
-        self.charge_values(&activation, &batch)?;
         self.runtime
             .publish(&activation, batch)
             .map_err(|rejected| Error::Core(rejected.error))?;
@@ -503,7 +498,6 @@ impl<V: ?Sized + 'static> Application<V> {
         }
         let realm = self.modules[&id].realm.clone();
         let mut batch = BTreeMap::new();
-        tree::check_call_bytes(&actual)?;
         for (name, actual) in actual {
             let (contract, component) = match actual {
                 abi::UiExport::Value { contract, value } => {
@@ -552,7 +546,6 @@ impl<V: ?Sized + 'static> Application<V> {
                 },
             );
         }
-        self.charge_values(&activation, &batch)?;
         self.runtime
             .publish(&activation, batch)
             .map_err(|rejected| Error::Core(rejected.error))?;
@@ -719,7 +712,7 @@ impl<V: ?Sized + 'static> Application<V> {
         } else {
             None
         };
-        let values = self.mount_values(mount, &args)?;
+        let values = self.mount_values(mount)?;
         let execution = self.runtime.admit_mount(mount)?;
         let Export::Component { implementation, .. } = execution.value() else {
             unreachable!()
@@ -828,29 +821,12 @@ impl<V: ?Sized + 'static> Application<V> {
             unreachable!()
         };
         let result = result.and_then(|output| {
-            // Charge all declarative data, including the original guest scene.
-            // Trusted opaque native recipe memory is the only excluded payload.
-            let metadata = (
-                output.frame.revision,
-                &output.frame.state,
-                &output.frame.surface,
-                &output.events,
-                &output.actions,
-                &output.cancel,
-                &output.subscriptions,
-            );
-            tree::check_call_bytes(&(metadata, output.frame.view.metadata()))?;
-            if output.events.len() > 64 {
-                return Err(Error::Invalid("component emission limit".into()));
-            }
-            tree::check_call_bytes(&output.events)?;
             if output.actions.len() > 16
                 || output.subscriptions.len() > 16
                 || output.cancel.len() > 16
             {
                 return Err(Error::Invalid("component action limit".into()));
             }
-            tree::check_call_bytes(&output.actions)?;
             for event in &output.events {
                 events
                     .get(&event.name)
@@ -994,7 +970,6 @@ impl<V: ?Sized + 'static> Application<V> {
                         if activation.remote_target().is_none() {
                             self.activations.remove(activation.instance());
                             self.values.remove(&activation.epoch());
-                            self.value_bytes.remove(&activation.epoch());
                             self.origins.remove(&activation.epoch());
                         }
                     }

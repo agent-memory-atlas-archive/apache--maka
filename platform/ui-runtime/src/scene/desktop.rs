@@ -85,7 +85,6 @@ pub enum Node {
         background: u32,
         children: Vec<Node>,
         #[serde(default)]
-        #[schemars(length(max = 32))]
         shortcuts: Vec<crate::shortcut::Shortcut>,
         #[serde(default = "visible")]
         visible: bool,
@@ -189,9 +188,6 @@ impl Node {
         };
         if depth > 32 {
             return Err("UI node nesting exceeds limit".into());
-        }
-        if keys.len() >= 4096 {
-            return Err("UI node count exceeds limit".into());
         }
         if key.is_empty() || key.len() > 128 {
             return Err("invalid UI node identity".into());
@@ -379,7 +375,6 @@ impl Node {
         slots: &mut Vec<ComponentSlot>,
         inputs: &mut BTreeMap<String, Value>,
         hidden_slots: &mut BTreeSet<String>,
-        input_count: &mut usize,
         visible: bool,
         deadline: Instant,
     ) -> Result<(), String> {
@@ -394,10 +389,6 @@ impl Node {
                 open,
                 ..
             } => {
-                *input_count += 1;
-                if *input_count > crate::native::MAX_INPUTS {
-                    return Err("scene input limit".into());
-                }
                 if visible && *open {
                     inputs.insert(
                         key.clone(),
@@ -405,15 +396,8 @@ impl Node {
                             .expect("dialog input schema"),
                     );
                 }
-                background.metadata(slots, inputs, hidden_slots, input_count, visible, deadline)?;
-                content.metadata(
-                    slots,
-                    inputs,
-                    hidden_slots,
-                    input_count,
-                    visible && *open,
-                    deadline,
-                )?;
+                background.metadata(slots, inputs, hidden_slots, visible, deadline)?;
+                content.metadata(slots, inputs, hidden_slots, visible && *open, deadline)?;
             }
             Self::Popup {
                 key,
@@ -422,10 +406,6 @@ impl Node {
                 open,
                 ..
             } => {
-                *input_count += 1;
-                if *input_count > crate::native::MAX_INPUTS {
-                    return Err("scene input limit".into());
-                }
                 if visible && *open {
                     inputs.insert(
                         key.clone(),
@@ -433,39 +413,21 @@ impl Node {
                             .expect("popup input schema"),
                     );
                 }
-                trigger.metadata(slots, inputs, hidden_slots, input_count, visible, deadline)?;
-                content.metadata(
-                    slots,
-                    inputs,
-                    hidden_slots,
-                    input_count,
-                    visible && *open,
-                    deadline,
-                )?;
+                trigger.metadata(slots, inputs, hidden_slots, visible, deadline)?;
+                content.metadata(slots, inputs, hidden_slots, visible && *open, deadline)?;
             }
             Self::Component(slot) => {
-                if slots.len() >= 64 {
-                    return Err("scene slot limit".into());
-                }
                 slots.push(slot.clone());
                 if !visible {
                     hidden_slots.insert(slot.key.clone());
                 }
             }
             Self::Button { key, .. } => {
-                *input_count += 1;
-                if *input_count > crate::native::MAX_INPUTS {
-                    return Err("scene input limit".into());
-                }
                 if visible {
                     inputs.insert(key.clone(), json!(true));
                 }
             }
             Self::Canvas { key, .. } => {
-                *input_count += 1;
-                if *input_count > crate::native::MAX_INPUTS {
-                    return Err("scene input limit".into());
-                }
                 if visible {
                     inputs.insert(
                         key.clone(),
@@ -480,14 +442,7 @@ impl Node {
                 ..
             } => {
                 for child in children {
-                    child.metadata(
-                        slots,
-                        inputs,
-                        hidden_slots,
-                        input_count,
-                        visible && *local,
-                        deadline,
-                    )?;
+                    child.metadata(slots, inputs, hidden_slots, visible && *local, deadline)?;
                 }
             }
             _ => {}

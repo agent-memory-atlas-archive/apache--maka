@@ -55,14 +55,18 @@ import { draftPage, draftReceipt, draftFailed } from '../../shared/drafts.js';
 
 import { type Request, type Mutation, type DisplayPart, type State } from './state.js';
 import { readingKey } from './state.js';
-import { utf8Bytes, appendLive, closeLive } from './messages.js';
+import { utf8Bytes, appendLive, closeLive, rememberActivity } from './messages.js';
 import {
   intent,
   catalog,
   observe,
   history,
   follow,
+  refreshActivity,
+  readingPrompt,
+  promptAnchor,
   select,
+  restoreBackend,
   initializeQueueEdit,
   readInteraction,
   respondQuestion,
@@ -96,6 +100,44 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
     ) {
       state.catalogFilter = 'all';
       catalog(state, { kind: 'at', cursor: created.session.id });
+    }
+  } else if (request.kind === 'changeSession') {
+    const result = value as import('../../../packages/plugin-sdk/src/index.js').AgentSessionChanged;
+    if (result.kind === 'removed' || result.kind === 'changed') {
+      if (state.sessionChange?.id === request.sessionId) closeDialog(state);
+      const removedIndex =
+        state.catalog?.sessions.findIndex((session) => session.id === request.sessionId) ?? 0;
+      if (state.catalog)
+        state.catalog.sessions = state.catalog.sessions.filter(
+          (session) => session.id !== request.sessionId,
+        );
+      if (state.selected?.id === request.sessionId) {
+        const next =
+          state.catalog?.sessions[Math.max(0, removedIndex)] ??
+          state.catalog?.sessions.at(-1) ??
+          null;
+        select(state, actions, next);
+      }
+      state.visits = state.visits.filter((visit) => visit.id !== request.sessionId);
+      state.notice = null;
+      catalog(state, { kind: 'start' });
+    } else {
+      state.notice =
+        result.kind === 'rejected' && result.reason === 'busy'
+          ? 'sessionChangeBusy'
+          : 'sessionChangeFailed';
+      catalog(state);
+      if (state.selected?.id === request.sessionId) observe(state, actions);
+    }
+  } else if (request.kind === 'selectBackend') {
+    const result = value as AgentMetadataResult;
+    if (state.selected?.id === request.sessionId) {
+      if (result.kind === 'committed') {
+        if (result.session.revision >= state.selected.revision) state.selected = result.session;
+        state.notice = null;
+      } else {
+        state.notice = 'modelSaveFailed';
+      }
     }
   } else if (request.kind === 'graphChange') {
     if (request.epoch === state.epoch && request.sessionId === state.selected?.id)
@@ -350,6 +392,14 @@ export function queryFailed(state: State, request: Request) {
     }
     return;
   }
+  if (request.kind === 'changeSession') {
+    state.notice = 'sessionChangeFailed';
+    return;
+  }
+  if (request.kind === 'selectBackend') {
+    if (request.sessionId === state.selected?.id) state.notice = 'modelSaveFailed';
+    return;
+  }
   // Optional presentation work does not disable input or change execution facts.
   if (request.kind === 'history' && request.implicit) return;
   if (request.kind === 'source') {
@@ -495,8 +545,10 @@ export function querySucceeded(state: State, actions: Action[], request: Request
         state.notice = 'unavailable';
         break;
       }
-      if (observation.session.revision >= state.selected!.revision)
+      if (observation.session.revision >= state.selected!.revision) {
         state.selected = observation.session;
+        restoreBackend(state, observation.session, observation.rememberedBackend);
+      }
       if (
         observation.through >= state.runThrough &&
         observation.session.revision >= state.selected!.revision
@@ -550,6 +602,7 @@ export function querySucceeded(state: State, actions: Action[], request: Request
       )
         state.loading = false;
       follow(state, actions);
+      refreshActivity(state, actions);
       break;
     }
     case 'source': {
@@ -614,6 +667,45 @@ export function querySucceeded(state: State, actions: Action[], request: Request
       };
       break;
     }
+    case 'readingPrompt': {
+      if (
+        request.epoch !== state.epoch ||
+        !state.window ||
+        request.anchor !== promptAnchor(state.window.page)
+      )
+        break;
+      const visit = state.visits.find((entry) => entry.id === state.selected?.id);
+      if (visit)
+        visit.prompt = {
+          anchor: request.anchor,
+          value: value as { source: number; text: string } | null,
+        };
+      break;
+    }
+    case 'activity': {
+      if (request.epoch !== state.epoch || request.turnId !== state.run?.turnId) break;
+      const page = value as AgentHistoryPage;
+      if (page.through !== request.through) break;
+      if (page.kind === 'preparing' || (!page.chunks.length && page.before)) {
+        const position =
+          page.kind === 'preparing'
+            ? request.position
+            : { kind: 'before' as const, cursor: page.before! };
+        intent(state, actions, { ...request, position }, 'agent', 'history', {
+          sessionId: state.selected!.id,
+          through: request.through,
+          position,
+          includeThinking: true,
+          view: 'conversation',
+        });
+        break;
+      }
+      rememberActivity(state, page);
+      const wanted =
+        state.visits.find((entry) => entry.id === state.selected?.id)?.activityWanted ?? 0;
+      if (wanted > page.through) refreshActivity(state, actions, wanted);
+      break;
+    }
     case 'history': {
       if (request.epoch !== state.epoch || request.navigation !== state.navigation) break;
       if (
@@ -659,6 +751,7 @@ export function querySucceeded(state: State, actions: Action[], request: Request
         );
         break;
       }
+      if (request.latest) rememberActivity(state, page);
       const old = state.window;
       if (request.extend && !page.chunks.length) {
         const position =
@@ -725,6 +818,7 @@ export function querySucceeded(state: State, actions: Action[], request: Request
           edge: request.position.kind === 'before' || request.latest ? 'end' : 'start',
         };
       }
+      readingPrompt(state, actions, state.window.page);
       state.loading = false;
       if (!request.implicit) state.notice = null;
       state.live = state.live.filter(
@@ -1033,5 +1127,8 @@ export function delivery(state: State, page: AgentDeliveryPage, actions: Action[
     }
   }
   watch.last = Math.max(watch.last, page.nextAfter);
-  if (canonicalChanged) follow(state, actions);
+  if (canonicalChanged) {
+    follow(state, actions);
+    refreshActivity(state, actions);
+  }
 }

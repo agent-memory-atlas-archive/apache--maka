@@ -230,9 +230,12 @@ function frame<N extends Node>(
       theme: props.theme,
       locale: props.locale,
       selection: props.selection,
+      selectionKey: props.selectionKey ?? '',
+      preferredModel: props.preferredModel ?? null,
+      suggestDefault: props.suggestDefault ?? true,
       busy: props.busy || state.open || props.executor !== null,
     },
-    { selected: 'selected', setup: 'setup', connections: 'connections' },
+    { selected: 'selected', resolved: 'resolved', setup: 'setup', connections: 'connections' },
   );
   const background = ui.box(
     'backend-control',

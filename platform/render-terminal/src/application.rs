@@ -586,8 +586,10 @@ impl Presenter {
                 .iter()
                 .rev()
                 .find(|t| {
-                    !matches!(t.kind, paint::TargetKind::ContextMenu { button: false })
-                        && t.area.contains((mouse.column, mouse.row).into())
+                    !matches!(
+                        t.kind,
+                        paint::TargetKind::ContextMenu { button: false } | paint::TargetKind::Hint
+                    ) && t.area.contains((mouse.column, mouse.row).into())
                 })
                 .cloned();
             match target {
@@ -690,8 +692,11 @@ impl Presenter {
                         .iter()
                         .rev()
                         .find(|t| {
-                            !matches!(t.kind, paint::TargetKind::ContextMenu { button: false })
-                                && t.area.contains((mouse.column, mouse.row).into())
+                            !matches!(
+                                t.kind,
+                                paint::TargetKind::ContextMenu { button: false }
+                                    | paint::TargetKind::Hint
+                            ) && t.area.contains((mouse.column, mouse.row).into())
                         })
                         .cloned()
                 }

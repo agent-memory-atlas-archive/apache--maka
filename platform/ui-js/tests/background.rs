@@ -221,7 +221,7 @@ fn original_receipts_survive_rejected_candidate_and_drain_in_order_before_retire
 }
 
 #[test]
-fn a_slow_deployment_loads_more_than_the_worker_byte_capacity_without_overflow() {
+fn a_slow_deployment_loads_modules_sequentially() {
     use maka_plugin_core::package::{EntryTarget, Implementation, Realm};
     use std::task::Poll;
     let scheduler = tokio::runtime::Builder::new_multi_thread()
@@ -240,14 +240,11 @@ fn a_slow_deployment_loads_more_than_the_worker_byte_capacity_without_overflow()
         module: "index.mjs".into(),
         realm: Realm::Shared,
     };
-    // Each source fits the existing capacity; the accepted plan exceeds it.
-    // Slow original loads make eager enqueueing fail deterministically.
     let source = format!(
         "/*{}*/\nconst until=Date.now()+100;while(Date.now()<until){{}};\n{}",
         "x".repeat(800_000),
         std::str::from_utf8(original.file("index.mjs").unwrap()).unwrap()
     );
-    assert!(source.len() * 12 > 8 * 1024 * 1024);
     let app = support::package("dynamic.app", declaration, Some(source));
     input.instances.get_mut("app").unwrap().package = app.application_ref().into();
     for index in 1..12 {

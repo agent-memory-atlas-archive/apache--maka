@@ -228,7 +228,6 @@ pub struct AnimationFrame {
 pub struct Choice {
     pub key: String,
     pub label: String,
-    #[schemars(length(max = 64))]
     pub options: Vec<ChoiceOption>,
     pub current: Option<String>,
     #[serde(default)]
@@ -252,7 +251,6 @@ impl Choice {
     fn validate(&self) -> Result<(), String> {
         let mut keys = BTreeSet::new();
         if self.label.len() > 4096
-            || self.options.len() > 64
             || [
                 self.foreground,
                 self.background,
@@ -426,10 +424,8 @@ pub enum Node {
         #[serde(default)]
         wheel: Option<WheelCommands>,
         #[serde(default)]
-        #[schemars(length(max = 32))]
         shortcuts: Vec<crate::shortcut::Shortcut>,
         #[serde(default)]
-        #[schemars(length(max = 32))]
         focus_shortcuts: Vec<crate::shortcut::FocusShortcut>,
         #[serde(default)]
         layout: Layout,
@@ -441,6 +437,10 @@ pub enum Node {
     Text {
         key: String,
         text: String,
+        /// Passive hover description; never participates in focus or activation.
+        #[serde(default)]
+        #[schemars(length(max = 512))]
+        hint: String,
         color: Color,
         /// Render a single line, eliding overflow at a complete grapheme.
         #[serde(default)]
@@ -543,9 +543,6 @@ impl Node {
         };
         if depth > 32 {
             return Err("UI node nesting exceeds limit".into());
-        }
-        if keys.len() >= 4096 {
-            return Err("UI node count exceeds limit".into());
         }
         if key.is_empty() || key.len() > 128 {
             return Err("invalid UI node identity".into());
@@ -873,9 +870,6 @@ impl Node {
                         }
                         inputs.insert(key.clone(), Value::Bool(true));
                     }
-                    if inputs.len() > crate::native::MAX_INPUTS {
-                        return Err("scene input limit".into());
-                    }
                 }
             }
             for child in children {
@@ -889,7 +883,6 @@ impl Node {
         slots: &mut Vec<ComponentSlot>,
         inputs: &mut BTreeMap<String, Value>,
         hidden_slots: &mut BTreeSet<String>,
-        input_count: &mut usize,
         visible: bool,
         deadline: Instant,
     ) -> Result<(), String> {
@@ -905,10 +898,6 @@ impl Node {
                 submit_space,
                 ..
             } => {
-                *input_count += 1;
-                if *input_count > crate::native::MAX_INPUTS {
-                    return Err("scene input limit".into());
-                }
                 if visible && !disabled {
                     let kinds = if *submit || *submit_space {
                         vec!["activate", "submit"]
@@ -919,13 +908,9 @@ impl Node {
                         return Err("reserved scene input identity".into());
                     }
                 }
-                content.metadata(slots, inputs, hidden_slots, input_count, visible, deadline)?;
+                content.metadata(slots, inputs, hidden_slots, visible, deadline)?;
             }
             Self::Choice(choice) => {
-                *input_count += 1;
-                if *input_count > crate::native::MAX_INPUTS {
-                    return Err("scene input limit".into());
-                }
                 if visible && !choice.disabled && !choice.options.is_empty() {
                     let schema = json!({
                         "type":"object", "properties":{
@@ -957,15 +942,8 @@ impl Node {
                 {
                     return Err("reserved scene input identity".into());
                 }
-                background.metadata(slots, inputs, hidden_slots, input_count, visible, deadline)?;
-                content.metadata(
-                    slots,
-                    inputs,
-                    hidden_slots,
-                    input_count,
-                    visible && *open,
-                    deadline,
-                )?;
+                background.metadata(slots, inputs, hidden_slots, visible, deadline)?;
+                content.metadata(slots, inputs, hidden_slots, visible && *open, deadline)?;
             }
             Self::ContextMenu {
                 background,
@@ -979,13 +957,10 @@ impl Node {
             } => {
                 // Native visibility is local layout; both declarations keep
                 // their original component owners and input schemas.
-                background.metadata(slots, inputs, hidden_slots, input_count, visible, deadline)?;
-                content.metadata(slots, inputs, hidden_slots, input_count, visible, deadline)?;
+                background.metadata(slots, inputs, hidden_slots, visible, deadline)?;
+                content.metadata(slots, inputs, hidden_slots, visible, deadline)?;
             }
             Self::Component(slot) => {
-                if slots.len() >= 64 {
-                    return Err("scene slot limit".into());
-                }
                 slots.push(slot.clone());
                 if !visible {
                     hidden_slots.insert(slot.key.clone());
@@ -997,10 +972,6 @@ impl Node {
                 focus_child,
                 ..
             } => {
-                *input_count += 1;
-                if *input_count > crate::native::MAX_INPUTS {
-                    return Err("scene input limit".into());
-                }
                 if visible
                     && !disabled
                     && focus_child.is_none()
@@ -1015,14 +986,7 @@ impl Node {
                 ..
             } => {
                 for child in children {
-                    child.metadata(
-                        slots,
-                        inputs,
-                        hidden_slots,
-                        input_count,
-                        visible && *local,
-                        deadline,
-                    )?;
+                    child.metadata(slots, inputs, hidden_slots, visible && *local, deadline)?;
                 }
             }
             _ => {}

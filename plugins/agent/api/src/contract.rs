@@ -227,6 +227,7 @@ pub struct List {
 #[schemars(rename = "AgentSessionFilter")]
 pub enum SessionFilter {
     All,
+    Archived,
     NeedsYou,
 }
 #[derive(Deserialize, JsonSchema)]
@@ -372,6 +373,70 @@ pub struct Metadata {
     pub title: String,
     #[schemars(length(max = 32))]
     pub labels: Vec<String>,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentChangeSession")]
+pub struct ChangeSession {
+    pub session_id: String,
+    pub expected_revision: u64,
+    pub action: SessionAction,
+}
+#[derive(Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename = "AgentSessionAction")]
+pub enum SessionAction {
+    Archive,
+    Restore,
+    Remove,
+}
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "AgentSessionChanged")]
+pub enum SessionChanged {
+    Changed {
+        session: Box<Session>,
+    },
+    Removed {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+    },
+    RevisionConflict {
+        expected: u64,
+        actual: u64,
+    },
+    Rejected {
+        reason: Rejection,
+    },
+}
+/// The next turn's choice, independent of an already admitted execution.
+/// Model revisions are resolved afresh; preferences never grant execution authority.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[schemars(rename = "AgentBackendPreference")]
+pub enum BackendPreference {
+    Model {
+        #[schemars(length(min = 1, max = 128))]
+        connection_id: String,
+        #[schemars(length(min = 1, max = 512))]
+        model_id: String,
+        thinking_level: Option<maka_agent_facts::execution::ThinkingLevel>,
+    },
+    Executor {
+        selection: crate::executor::Selection,
+    },
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentSelectBackend")]
+pub struct SelectBackend {
+    pub session_id: String,
+    pub backend: BackendPreference,
 }
 #[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -527,6 +592,8 @@ pub struct DataSource {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentSession")]
 pub struct Session {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<BackendPreference>,
     #[serde(default)]
     pub collaboration_mode: CollaborationMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -675,6 +742,8 @@ pub struct SessionRead {
 #[schemars(rename = "AgentObservation")]
 pub struct Observation {
     pub session: Session,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remembered_backend: Option<BackendPreference>,
     pub through: u64,
     pub run: Option<Run>,
     pub parts: Vec<Part>,
@@ -890,6 +959,19 @@ pub struct History {
     pub view: maka_agent_ports::session::history::HistoryView,
 }
 pub use maka_agent_ports::session::history::Position as HistoryPosition;
+pub use maka_agent_ports::session::history::Prompt as HistoryPrompt;
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentHistoryPromptRead")]
+pub struct HistoryPromptRead {
+    #[schemars(length(min = 1, max = 128))]
+    pub session_id: String,
+    #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
+    pub through: u64,
+    #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
+    pub sequence: u64,
+}
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1206,6 +1288,10 @@ pub fn contract() -> Contract {
                     method::<History, HistoryPage>(MethodMode::Query),
                 ),
                 (
+                    "historyPrompt".into(),
+                    method::<HistoryPromptRead, Option<HistoryPrompt>>(MethodMode::Query),
+                ),
+                (
                     "search".into(),
                     method::<HistorySearch, HistorySearchPage>(MethodMode::Query),
                 ),
@@ -1232,6 +1318,14 @@ pub fn contract() -> Contract {
                 (
                     "metadata".into(),
                     method::<Metadata, MetadataResult>(MethodMode::Mutation),
+                ),
+                (
+                    "changeSession".into(),
+                    method::<ChangeSession, SessionChanged>(MethodMode::Mutation),
+                ),
+                (
+                    "selectBackend".into(),
+                    method::<SelectBackend, MetadataResult>(MethodMode::Mutation),
                 ),
                 // Authorizes the entire bounded run against the immutable selected
                 // account/model. A started reply is not a terminal business verdict.

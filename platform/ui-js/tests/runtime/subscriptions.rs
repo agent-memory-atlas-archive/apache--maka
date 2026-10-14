@@ -128,7 +128,6 @@ fn sequence(index: usize, stop: CancellationToken, mode: Mode) -> StreamFuture {
 #[derive(Clone, Copy)]
 enum Mode {
     Causal,
-    Budget,
     Many,
     Panic,
     BadItem,
@@ -166,18 +165,6 @@ impl NativeComponent<()> for Parent {
                 _ => {}
             }
         }
-        let budget = matches!(self.0, Mode::Budget)
-            && matches!(
-                &call,
-                ComponentCall::Event {
-                    origin: EventOrigin::Raw,
-                    key: "inc",
-                    ..
-                }
-            );
-        if budget {
-            state["blob"] = json!("x".repeat(600 * 1024));
-        }
         let mut slots = Vec::new();
         if matches!(self.0, Mode::Causal) {
             slots.push(ComponentSlot {
@@ -213,11 +200,7 @@ impl NativeComponent<()> for Parent {
                 binding: "stream".into(),
                 member: 0,
                 method: "read".into(),
-                input: if budget {
-                    json!("x".repeat(600 * 1024))
-                } else {
-                    state["selector"].clone()
-                },
+                input: state["selector"].clone(),
                 resources: BTreeMap::new(),
             })
             .collect();
@@ -486,25 +469,6 @@ fn close(app: &mut Application, roots: &[Mount]) {
     app.shutdown().unwrap();
 }
 
-#[test]
-fn native_full_callback_budget_includes_subscription_declarations_and_rolls_back() {
-    let timer = timer();
-    let (mut app, starts) = fixture(Mode::Budget, &timer);
-    let root = app.mount_launch(json!({})).unwrap();
-    assert!(
-        app.dispatch(&root, 0, "inc", Value::Null)
-            .unwrap_err()
-            .to_string()
-            .contains("1 MiB")
-    );
-    assert_eq!(app.frame(&root).unwrap().revision, 0);
-    assert_eq!(app.pending_action_count(), 1);
-    assert_eq!(starts.load(Ordering::SeqCst), 0);
-    let task = start(&mut app, &root);
-    finish(&timer, &mut app, &root, task);
-    assert_eq!(starts.load(Ordering::SeqCst), 1);
-    close(&mut app, &[root]);
-}
 #[test]
 fn temporary_causal_demand_changes_do_not_restart_original_committed_execution() {
     let timer = timer();

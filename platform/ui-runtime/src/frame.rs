@@ -125,7 +125,6 @@ impl ComponentSlot {
             || self.key.len() > 128
             || self.binding.is_empty()
             || self.binding.len() > 128
-            || self.on.len() > 64
             || self.on.iter().any(|(event, handler)| {
                 event.is_empty() || event.len() > 128 || handler.is_empty() || handler.len() > 128
             })

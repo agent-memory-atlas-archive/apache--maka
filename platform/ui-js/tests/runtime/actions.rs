@@ -343,28 +343,7 @@ fn specific_consumer_mount_is_checked_even_when_same_provider_has_another_live_r
     app.deliver_action_results(&b, |_, _, _| Ok(false)).unwrap();
     close_all(&mut app, &[a, b]);
 }
-#[test]
-fn native_capture_uses_the_complete_call_limit_before_native_callback() {
-    let timer = timer();
-    let (mut app, root, calls) = application(true, &timer);
-    // The native output fits its own budget; adding a valid versioned capture
-    // request makes the complete state/props/method/input envelope exceed it.
-    assert!(
-        app.dispatch(
-            &root,
-            0,
-            "read",
-            json!({"capture":{
-                "kind":"at_revision", "owner":"original", "revision":9007199254740991u64
-            }})
-        )
-        .is_err()
-    );
-    assert_eq!(calls.get(), 0);
-    assert_eq!(app.frame(&root).unwrap().revision, 0);
-    assert_eq!(app.pending_action_count(), 0);
-    close_all(&mut app, &[root]);
-}
+
 #[test]
 fn failed_or_lost_result_handlers_do_not_hold_accepted_work_or_healthy_pending_mounts() {
     let timer = timer();
@@ -553,33 +532,6 @@ fn cleanup_failure_preserves_work_and_input_until_explicit_recovery_without_repl
     assert!(app.can_shutdown());
     assert_eq!(app.pending_action_count(), 0);
     app.shutdown().unwrap();
-}
-#[test]
-fn oversized_feedback_envelope_delivers_failure_after_independent_settlement() {
-    let timer = timer();
-    let (mut app, a) = service_fixture(&timer, json!("y".repeat(600_000)), false, 500_000);
-    let b = app.mount_launch(json!({})).unwrap();
-    app.dispatch(&a, 0, "read", Value::Null).unwrap();
-    capture(&mut app, &a, "Start");
-    let work = app.start_task(&a).unwrap().unwrap();
-    let done = timer.block_on(work.future);
-    app.finish_task(work.id, done).unwrap();
-    assert_eq!(app.accepted_action_count(), 0);
-    assert_eq!(
-        app.deliver_action_results(&a, |_, _, _| Ok(false)).unwrap(),
-        1
-    );
-    assert!(!app.is_retiring(&a));
-    assert_eq!(app.frame(&a).unwrap().state["outcome"]["status"], "failed");
-    assert!(
-        app.frame(&a).unwrap().state["outcome"]["reason"]
-            .as_str()
-            .unwrap()
-            .contains("delivery failed")
-    );
-    assert!(!app.is_retiring(&b));
-    assert_eq!(app.pending_action_count(), 0);
-    close_all(&mut app, &[a, b]);
 }
 
 struct ExactFeedback;

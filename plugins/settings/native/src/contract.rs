@@ -55,6 +55,8 @@ pub struct ModelCursor {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "SettingsModelChoice")]
 pub struct ModelChoice {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<ModelToolPreferences>,
     pub selection: ModelSelection,
     #[schemars(length(max = 256))]
     pub connection_name: String,
@@ -66,6 +68,22 @@ pub struct ModelChoice {
         with = "maka_plugin_core::wire_schema::RequiredNullable<maka_agent_facts::execution::ThinkingLevel>"
     )]
     pub default_thinking_level: Option<maka_agent_facts::execution::ThinkingLevel>,
+}
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "SettingsModelToolPreferences")]
+pub struct ModelToolPreferences {
+    #[schemars(with = "maka_plugin_core::wire_schema::RequiredNullable<bool>")]
+    pub code_mode: Option<bool>,
+    #[schemars(with = "maka_plugin_core::wire_schema::RequiredNullable<bool>")]
+    pub apply_patch: Option<bool>,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "SettingsUpdateModelTools")]
+pub struct UpdateModelTools {
+    pub selection: ModelSelection,
+    pub tools: ModelToolPreferences,
 }
 #[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -441,6 +459,16 @@ pub fn contract() -> Contract {
                 (
                     "models".into(),
                     method::<ModelsRead, ModelsPage>(MethodMode::Query),
+                ),
+                (
+                    "updateModelTools".into(),
+                    method::<UpdateModelTools, CatalogMutationResult>(MethodMode::Mutation),
+                ),
+                (
+                    "resolveModel".into(),
+                    method::<maka_agent_facts::configuration::ConnectionTarget, DefaultModel>(
+                        MethodMode::Query,
+                    ),
                 ),
                 (
                     "setDefault".into(),

@@ -419,12 +419,7 @@ impl<V: ?Sized> Prepared<V> {
 impl<V: ?Sized + 'static> Application<V> {
     /// Check at each actual callback: an earlier queued result can change the
     /// same component's state after executor completion but before delivery.
-    pub(super) fn action_feedback(
-        &self,
-        mount: &Mount,
-        key: &str,
-        outcome: ActionOutcome,
-    ) -> ActionOutcome {
+    pub(super) fn action_feedback(&self, mount: &Mount, outcome: ActionOutcome) -> ActionOutcome {
         if !matches!(
             &outcome,
             ActionOutcome::Operation { .. }
@@ -433,32 +428,27 @@ impl<V: ?Sized + 'static> Application<V> {
         ) {
             return outcome;
         };
-        let valid = tree::check_call_bytes(&outcome).and_then(|()| {
+        let valid: Result<()> = (|| {
             // The exact provider determines the callback language. Native
             // components may return a portable tree and preserve Rust integers.
             let javascript = self.modules.contains_key(self.provider(mount)?.instance());
-            let value =
-                serde_json::to_value(&outcome).map_err(|e| Error::Invalid(e.to_string()))?;
-            let event = serde_json::to_value(abi::ComponentInput::Action {
-                key: key.into(),
-                event: value,
-            })
-            .map_err(|e| Error::Invalid(e.to_string()))?;
-            if let Some(view) = self.views.get(&mount.id()) {
-                let args = (&view.frame.state, &view.props, &event);
-                let values = self.mount_values(mount, &args)?;
-                if javascript {
-                    let args = serde_json::to_value((args, values))
-                        .map_err(|e| Error::Invalid(e.to_string()))?;
-                    maka_plugin_core::json::check_delivery(&args, 1024 * 1024)
+            if javascript {
+                let value =
+                    serde_json::to_value(&outcome).map_err(|e| Error::Invalid(e.to_string()))?;
+                maka_plugin_core::json::exact_numbers(&value).map_err(Error::Invalid)?;
+                if let Some(view) = self.views.get(&mount.id()) {
+                    maka_plugin_core::json::exact_numbers(&view.frame.state)
                         .map_err(Error::Invalid)?;
+                    maka_plugin_core::json::exact_numbers(&view.props).map_err(Error::Invalid)?;
+                    for members in self.mount_values(mount)?.0.values() {
+                        for value in members {
+                            maka_plugin_core::json::exact_numbers(value).map_err(Error::Invalid)?;
+                        }
+                    }
                 }
-            } else if javascript {
-                maka_plugin_core::json::check_delivery(&event, 1024 * 1024)
-                    .map_err(Error::Invalid)?;
             }
             Ok(())
-        });
+        })();
         match valid {
             Ok(()) => outcome,
             Err(error) => match outcome {
@@ -591,8 +581,6 @@ impl<V: ?Sized + 'static> Application<V> {
         {
             return Err(Error::Invalid("invalid capture source/depth".into()));
         }
-        tree::check_call_bytes(&source.input)?;
-        update.charge_intent(&source)?;
         let view = self.current(parent, update)?;
         let child = view
             .children
@@ -601,15 +589,7 @@ impl<V: ?Sized + 'static> Application<V> {
             .mount
             .clone();
         let view = self.current(&child, update)?;
-        let values = self.mount_values(
-            &child,
-            &(
-                &view.frame.state,
-                &view.props,
-                &source.method,
-                &source.input,
-            ),
-        )?;
+        let values = self.mount_values(&child)?;
         let state = view.frame.state.clone();
         let props = view.props.clone();
         edges.push(Edge {
@@ -697,7 +677,6 @@ impl<V: ?Sized + 'static> Application<V> {
                     self.retire_failed_realm(&pending.child)?;
                 }
                 let plan = result?;
-                update.charge_intent(&plan)?;
                 match plan {
                     CapturePlan::Forward { source } => {
                         preparing.capture = Some(self.begin_capture(
@@ -890,7 +869,6 @@ impl<V: ?Sized + 'static> Application<V> {
                     if bytes > 64 * 1024 * 1024 {
                         return Err(Error::Invalid("action resources exceed 64 MiB".into()));
                     }
-                    tree::check_call_bytes(&resource.metadata())?;
                     resources.insert(slot.clone(), resource);
                 }
                 let mut witnesses = Vec::new();
@@ -1045,12 +1023,10 @@ impl<V: ?Sized + 'static> Application<V> {
                 let Export::Service { methods, .. } = running.execution.value() else {
                     unreachable!()
                 };
-                let valid = tree::check_call_bytes(&value).and_then(|()| {
-                    methods[&running.method]
-                        .output
-                        .validate(&value)
-                        .map_err(|e| Error::Invalid(e.to_string()))
-                });
+                let valid = methods[&running.method]
+                    .output
+                    .validate(&value)
+                    .map_err(|e| Error::Invalid(e.to_string()));
                 match valid {
                     Ok(()) => ActionOutcome::Succeeded { value },
                     Err(e) => ActionOutcome::Failed {
@@ -1204,7 +1180,6 @@ impl<V: ?Sized + 'static> Application<V> {
             }
             let feedback = self.action_feedback(
                 &outcome.consumer,
-                &outcome.key,
                 if stale {
                     ActionOutcome::Stale
                 } else {

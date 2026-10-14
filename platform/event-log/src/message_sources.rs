@@ -105,6 +105,27 @@ impl RootMessageProof {
 }
 
 impl EventLog {
+    /// Last admitted user-message opening in this session's owned history.
+    pub async fn latest_message_opening(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<StoredEvent>, StoreError> {
+        self.validate_root()?;
+        crate::sessions::validate_id(session_id)?;
+        let session = session_id.to_owned();
+        self.connection.run(move |connection| Box::pin(async move {
+            let row: Option<(i64, Option<String>)> = sqlx::query_as(
+                "SELECT e.sequence, CASE WHEN length(CAST(e.event_json AS BLOB)) <= 1048576 THEN e.event_json END
+                 FROM runtime_events e WHERE e.kind='invocation_opened'
+                 AND json_extract(e.event_json,'$.fact.input.kind')='message'
+                 AND (json_extract(e.event_json,'$.invocation.session_id')=?1
+                    OR EXISTS(SELECT 1 FROM session_history_members h WHERE h.session_id=?1 AND h.sequence=e.sequence)
+                    OR EXISTS(SELECT 1 FROM session_revision_sources r WHERE r.session_id=?1 AND r.sequence=e.sequence))
+                 ORDER BY e.sequence DESC LIMIT 1"
+            ).bind(session).fetch_optional(connection).await?;
+            row.map(|(sequence, json)| decode_delivery(sequence, json)).transpose()
+        })).await
+    }
     /// The earliest user-message opening in owned history, including inherited
     /// prefixes. Later messages and successor invocations cannot become the first.
     pub async fn first_message_opening(

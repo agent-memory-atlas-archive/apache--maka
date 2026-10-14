@@ -24,6 +24,7 @@ mod evidence;
 mod history;
 mod image;
 pub mod navigation;
+mod prompt;
 mod read;
 pub mod search;
 mod source;

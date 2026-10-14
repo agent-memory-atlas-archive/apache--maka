@@ -117,6 +117,7 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
             None,
             None.into(),
             maka_event_log::sessions::CatalogFilter {
+                archived_only: false,
                 include_archived: true,
                 pending_only: false,
             },

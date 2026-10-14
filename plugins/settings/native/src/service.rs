@@ -109,7 +109,12 @@ async fn model_choice(row: &ConnectionCatalogEntry, model: &str) -> Option<Model
         .ok()?
     };
     let info = metadata.info;
+    let overrides = row.model_overrides.as_ref().and_then(|all| all.get(model));
     Some(ModelChoice {
+        tools: Some(ModelToolPreferences {
+            code_mode: overrides.and_then(|value| value.code_mode),
+            apply_patch: overrides.and_then(|value| value.apply_patch),
+        }),
         selection: ModelSelection {
             connection_id: row.connection_id.clone(),
             revision: row.revision,
@@ -121,26 +126,30 @@ async fn model_choice(row: &ConnectionCatalogEntry, model: &str) -> Option<Model
         thinking_levels: metadata.thinking_levels,
     })
 }
+async fn resolved_model(
+    catalog: &ConnectionCatalogSnapshot,
+    target: &ConnectionTarget,
+) -> DefaultModel {
+    let row = catalog.connections.iter().find(|row| {
+        row.connection_id == target.connection_id
+            && selectable(row)
+            && row.enabled_model_ids.contains(&target.model_id)
+    });
+    let choice = match row {
+        Some(row) => model_choice(row, &target.model_id).await,
+        None => None,
+    };
+    match choice {
+        Some(choice) => DefaultModel::Ready { choice },
+        None => DefaultModel::Unavailable {
+            target: target.clone(),
+        },
+    }
+}
 async fn default_model(catalog: &ConnectionCatalogSnapshot) -> DefaultModel {
     match &catalog.default_target {
         None => DefaultModel::None,
-        Some(target) => {
-            let row = catalog.connections.iter().find(|row| {
-                row.connection_id == target.connection_id
-                    && selectable(row)
-                    && row.enabled_model_ids.contains(&target.model_id)
-            });
-            let choice = match row {
-                Some(row) => model_choice(row, &target.model_id).await,
-                None => None,
-            };
-            match choice {
-                Some(choice) => DefaultModel::Ready { choice },
-                None => DefaultModel::Unavailable {
-                    target: target.clone(),
-                },
-            }
-        }
+        Some(target) => resolved_model(catalog, target).await,
     }
 }
 
@@ -256,6 +265,68 @@ impl Handler for Settings {
                     credential_result(store.delete_credential(input).await)
                 }
                 "saveCredential" => super::credential::save(&store, input, context).await,
+                "updateModelTools" => {
+                    context.operation().ok_or("settings_mutation_required")?;
+                    let input: UpdateModelTools =
+                        serde_json::from_value(input).map_err(|_| "settings_input_invalid")?;
+                    let catalog = store
+                        .catalog()
+                        .await
+                        .map_err(|_| "settings_store_unavailable")?;
+                    let expected = ConnectionVersionBasis {
+                        connection_id: input.selection.connection_id,
+                        revision: input.selection.revision,
+                    };
+                    let row = catalog
+                        .connections
+                        .into_iter()
+                        .find(|row| row.connection_id == expected.connection_id);
+                    let actual = row.as_ref().map(|row| ConnectionVersionBasis {
+                        connection_id: row.connection_id.clone(),
+                        revision: row.revision,
+                    });
+                    let Some(row) = row.filter(|row| row.revision == expected.revision) else {
+                        return super::connections::encode(
+                            CatalogMutationResult::ConnectionStale { expected, actual },
+                        );
+                    };
+                    if !row.enabled_model_ids.contains(&input.selection.model_id) {
+                        return rejected(ConfigurationRejection::InvalidInput);
+                    }
+                    let mut overrides = row.model_overrides.unwrap_or_default();
+                    let model = overrides
+                        .entry(input.selection.model_id.clone())
+                        .or_default();
+                    model.code_mode = input.tools.code_mode;
+                    model.apply_patch = input.tools.apply_patch;
+                    if *model == ModelOverride::default() {
+                        overrides.remove(&input.selection.model_id);
+                    }
+                    catalog_result(
+                        store
+                            .update_connection(UpdateCatalogConnectionInput {
+                                expected,
+                                changes: ConnectionCatalogEntryUpdate {
+                                    model_overrides: if overrides.is_empty() {
+                                        Patch::Clear
+                                    } else {
+                                        Patch::Set(overrides)
+                                    },
+                                    ..Default::default()
+                                },
+                            })
+                            .await,
+                    )
+                }
+                "resolveModel" => {
+                    let target: ConnectionTarget =
+                        serde_json::from_value(input).map_err(|_| "settings_input_invalid")?;
+                    let catalog = store
+                        .catalog()
+                        .await
+                        .map_err(|_| "settings_store_unavailable")?;
+                    super::connections::encode(resolved_model(&catalog, &target).await)
+                }
                 "models" => {
                     let input: ModelsRead =
                         serde_json::from_value(input).map_err(|_| "settings_input_invalid")?;

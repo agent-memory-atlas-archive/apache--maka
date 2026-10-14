@@ -20,36 +20,13 @@
 use super::*;
 use std::{
     collections::{BTreeSet, VecDeque},
-    io::Write,
     time::Instant,
 };
 
-/// Count JSON without allocating a serialized copy. Both adapters have the
-/// same call boundary; reject oversized input before schema evaluation/cloning.
-pub(super) fn check_call_bytes(value: &impl serde::Serialize) -> Result<()> {
-    call_bytes(value).map(|_| ())
-}
-
-pub(super) fn call_bytes(value: &impl serde::Serialize) -> Result<usize> {
-    struct Limit(usize);
-    impl Write for Limit {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0 = self
-                .0
-                .checked_add(bytes.len())
-                .ok_or_else(|| std::io::Error::other("UI byte overflow"))?;
-            if self.0 > 1024 * 1024 {
-                return Err(std::io::Error::other("UI call exceeds 1 MiB"));
-            }
-            Ok(bytes.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-    let mut limit = Limit(0);
-    serde_json::to_writer(&mut limit, value).map_err(|error| Error::Invalid(error.to_string()))?;
-    Ok(limit.0)
+/// Measure stream payloads without allocating a serialized copy.
+pub(super) fn serialized_bytes(value: &impl serde::Serialize) -> Result<usize> {
+    maka_plugin_core::json::encoded_size(value, usize::MAX)
+        .map_err(|error| Error::Invalid(error.to_string()))
 }
 
 #[derive(Clone)]
@@ -82,14 +59,12 @@ pub(super) struct Mounted<V: ?Sized> {
     pub frame: Frame<NativeView<V>>,
     pub props: Value,
     pub children: BTreeMap<String, Child>,
-    pub(super) bytes: usize,
     pub(super) subscriptions: BTreeMap<String, actions::subscriptions::Demand>,
 }
 
 pub(super) struct QueuedInput {
     mount: Mount,
     event: abi::ComponentInput,
-    bytes: usize,
     publication: Option<tokio::sync::oneshot::Sender<Result<()>>>,
 }
 pub(super) struct Feedback {
@@ -134,9 +109,7 @@ pub(super) struct Update<V: ?Sized> {
     created: Vec<Mount>,
     removed: BTreeMap<Uuid, Mount>,
     events: VecDeque<Notification>,
-    emitted: usize,
     pub deadline: Instant,
-    bytes: usize,
     actions: Vec<actions::Prepared<V>>,
     cancellations: Vec<(Mount, String)>,
     calls: VecDeque<Call>,
@@ -154,9 +127,7 @@ impl<V: ?Sized> Update<V> {
             created: Vec::new(),
             removed: BTreeMap::new(),
             events: VecDeque::new(),
-            emitted: 0,
             deadline: Instant::now() + slice,
-            bytes: 0,
             actions: Vec::new(),
             cancellations: Vec::new(),
             calls: VecDeque::new(),
@@ -169,7 +140,7 @@ impl<V: ?Sized> Update<V> {
         }
     }
     // Global presentation changes can visit every retained component. Bound
-    // actual work through the shared deadline and byte budget, not visit count.
+    // actual work through the shared deadline, not serialized size or visit count.
     pub fn step(&mut self, depth: usize) -> Result<()> {
         if depth > 32 {
             return Err(Error::Invalid(
@@ -178,55 +149,13 @@ impl<V: ?Sized> Update<V> {
         }
         Ok(())
     }
-    pub fn charge_intent(&mut self, value: &impl serde::Serialize) -> Result<()> {
-        // Every intent is already bounded by the per-call output limit.
-        let size = serde_json::to_vec(value)
-            .map_err(|e| Error::Invalid(e.to_string()))?
-            .len();
-        self.bytes = self
-            .bytes
-            .checked_add(size)
-            .ok_or_else(|| Error::Invalid("work byte overflow".into()))?;
-        if self.bytes > 4 * 1024 * 1024 {
-            return Err(Error::Invalid("component work exceeds 4 MiB".into()));
+    fn check_deadline(&self) -> Result<()> {
+        if Instant::now() >= self.deadline {
+            return Err(Error::Invalid(
+                "composed UI update deadline exceeded".into(),
+            ));
         }
         Ok(())
-    }
-    fn charge(
-        &mut self,
-        frame: &Frame<NativeView<V>>,
-        props: &Value,
-        events: &[Emission],
-        subscriptions: &[actions::Action],
-    ) -> Result<usize> {
-        struct Counter(usize);
-        impl Write for Counter {
-            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-                self.0 += bytes.len();
-                if self.0 > 4 * 1024 * 1024 {
-                    return Err(std::io::Error::other("component update exceeds 4 MiB"));
-                }
-                Ok(bytes.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-        let mut counter = Counter(self.bytes);
-        serde_json::to_writer(
-            &mut counter,
-            &(&frame.state, &frame.surface, frame.revision, props),
-        )
-        .map_err(|error| Error::Invalid(error.to_string()))?;
-        serde_json::to_writer(&mut counter, &frame.view.metadata())
-            .map_err(|error| Error::Invalid(error.to_string()))?;
-        serde_json::to_writer(&mut counter, subscriptions)
-            .map_err(|error| Error::Invalid(error.to_string()))?;
-        let bytes = counter.0 - self.bytes;
-        serde_json::to_writer(&mut counter, events)
-            .map_err(|error| Error::Invalid(error.to_string()))?;
-        self.bytes = counter.0;
-        Ok(bytes)
     }
     fn emit(
         &mut self,
@@ -234,10 +163,6 @@ impl<V: ?Sized> Update<V> {
         subscription: Option<Subscription>,
         events: Vec<Emission>,
     ) -> Result<()> {
-        self.emitted += events.len();
-        if self.emitted > 64 {
-            return Err(Error::Invalid("composed component emission limit".into()));
-        }
         if let Some(subscription) = subscription {
             for event in events {
                 if let Some(handler) = subscription.on.get(&event.name) {
@@ -411,7 +336,6 @@ impl<V: ?Sized + 'static> Application<V> {
         if current.frame.revision != revision {
             return Err(Error::Invalid("stale or undeclared UI event".into()));
         }
-        check_call_bytes(&(&current.frame.state, &current.props, key, &event))?;
         current.frame.view.validate_input(key, &event)?;
         self.enqueue_input(
             mount,
@@ -466,17 +390,11 @@ impl<V: ?Sized + 'static> Application<V> {
         event: abi::ComponentInput,
         publication: Option<tokio::sync::oneshot::Sender<Result<()>>>,
     ) -> Result<()> {
-        let bytes = call_bytes(&event)?;
-        if self.ui_inputs.len() >= 128 || self.ui_input_bytes + bytes > 1024 * 1024 {
-            return Err(Error::Invalid("UI input queue limit".into()));
-        }
         self.ui_inputs.push_back(QueuedInput {
             mount: mount.clone(),
             event,
-            bytes,
             publication,
         });
-        self.ui_input_bytes += bytes;
         self.advance_ui().map(|_| ())
     }
 
@@ -514,7 +432,6 @@ impl<V: ?Sized + 'static> Application<V> {
             .views
             .get(&mount.id())
             .ok_or_else(|| Error::Invalid("mount has no committed frame".into()))?;
-        check_call_bytes(&(&current.frame.state, &current.props, &event))?;
         let args = [current.frame.state.clone(), event, current.props.clone()];
         let props = current.props.clone();
         let revision = current.frame.revision;
@@ -556,7 +473,6 @@ impl<V: ?Sized + 'static> Application<V> {
     pub fn advance_ui(&mut self) -> Result<bool> {
         let Some(mut update) = self.ui_update.take() else {
             while let Some(input) = self.ui_inputs.pop_front() {
-                self.ui_input_bytes -= input.bytes;
                 if self.is_retiring(&input.mount) {
                     if let Some(publication) = input.publication {
                         let _ = publication.send(Err(maka_plugin_core::Error::Retired.into()));
@@ -619,6 +535,7 @@ impl<V: ?Sized + 'static> Application<V> {
                     }
                     continue;
                 }
+                update.check_deadline()?;
                 if self.deliver_one(&mut update)? {
                     continue;
                 }
@@ -832,7 +749,6 @@ impl<V: ?Sized + 'static> Application<V> {
         Ok(())
     }
     fn check_props(&mut self, mount: &Mount, value: &Value) -> Result<()> {
-        check_call_bytes(value)?;
         let execution = self.runtime.admit_mount(mount)?;
         let Export::Component { props, .. } = execution.value() else {
             unreachable!()
@@ -972,14 +888,11 @@ impl<V: ?Sized + 'static> Application<V> {
         update: &mut Update<V>,
     ) -> Result<()> {
         let Invocation { output } = invocation;
-        let bytes = update.charge(&output.frame, &props, &output.events, &output.subscriptions)?;
         let previous_subscriptions = self
             .current(mount, update)
             .map(|v| v.subscriptions.clone())
             .unwrap_or_default();
         let declarations = output.subscriptions;
-        update.charge_intent(&output.actions)?;
-        update.charge_intent(&output.cancel)?;
         for key in output.cancel {
             if key.is_empty() || key.len() > 128 || output.actions.iter().any(|a| a.key == key) {
                 return Err(Error::Invalid("invalid mutation cancellation key".into()));
@@ -1120,7 +1033,6 @@ impl<V: ?Sized + 'static> Application<V> {
                 frame,
                 props,
                 children,
-                bytes,
                 subscriptions: BTreeMap::new(),
             },
         );
@@ -1325,21 +1237,6 @@ impl<V: ?Sized + 'static> Application<V> {
         if Instant::now() >= update.deadline {
             return Err(Error::Invalid(
                 "composed UI update deadline exceeded".into(),
-            ));
-        }
-        let retained = self
-            .views
-            .iter()
-            .filter(|(id, _)| !update.changed.contains_key(id));
-        let (count, bytes) = retained.fold((0, 0), |(count, bytes), (_, view)| {
-            (count + 1, bytes + view.bytes)
-        });
-        let changed_bytes: usize = update.changed.values().map(|view| view.bytes).sum();
-        if count + update.changed.len() > 512
-            || bytes + changed_bytes + self.value_bytes.values().sum::<usize>() > 32 * 1024 * 1024
-        {
-            return Err(Error::Invalid(
-                "UI state limit reached; confirm retired mount cleanup".into(),
             ));
         }
         self.validate_commit_fence(update)

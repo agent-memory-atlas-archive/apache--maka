@@ -247,7 +247,9 @@ export function handleEvent<N extends Node>(
         delete state.pending[input.key];
         if (
           outcome.status === 'operation' &&
-          (request.kind === 'create' ||
+          (request.kind === 'changeSession' ||
+            request.kind === 'selectBackend' ||
+            request.kind === 'create' ||
             request.kind === 'send' ||
             request.kind === 'stop' ||
             request.kind === 'queue' ||

@@ -44,6 +44,7 @@ import type {
 import { terminalPanelContract, type TerminalPanelProps } from '../../shared/contracts.js';
 import { scrollBoundary, scrollRows, visibleRows, resetScroll } from '../../shared/scroll.js';
 import { copy, type Copy } from '../../shared/locale.js';
+import { panelHeader } from '../../shared/page-shell.js';
 import { sameValue } from '../../shared/value.js';
 import {
   compactLabel,
@@ -423,6 +424,20 @@ function frame<N extends Node>(
     ui.box(
       'terminal-panel',
       [
+        panelHeader(
+          p,
+          props,
+          'terminal-heading',
+          state.historyOpen ? text.terminalHistory : text.terminalTitle,
+          'close',
+          state.confirmation
+            ? 'cancel'
+            : state.historyOpen
+              ? 'history-back'
+              : state.commandOpen
+                ? 'command-back'
+                : undefined,
+        ),
         ui.box(
           'terminal-toolbar',
           [
@@ -444,9 +459,14 @@ function frame<N extends Node>(
               false,
               !desktop ? { background: 0, align: 'start' } : {},
             ),
-            ui.button('close', text.terminalClose),
           ],
-          { row: true, gap: desktop ? 8 : 1, terminal: { wrap: true }, style: { wrap: true } },
+          {
+            visible: !state.historyOpen && !state.confirmation,
+            row: true,
+            gap: desktop ? 8 : 1,
+            terminal: { wrap: true },
+            style: { wrap: true },
+          },
         ),
         ...(!props.enabled ? [ui.text('terminal-unavailable', text.terminalUnavailable)] : []),
         ...(state.notice
@@ -489,7 +509,6 @@ function frame<N extends Node>(
               state.confirmation === 'stop' ? text.terminalStopConfirm : text.terminalForgetConfirm,
             ),
             ui.button('confirm', state.confirmation === 'stop' ? text.stop : text.terminalForget),
-            ui.button('cancel', text.back),
           ],
           { visible: !!state.confirmation, gap: 1 },
         ),
@@ -682,13 +701,6 @@ function frame<N extends Node>(
                           ]),
                       ),
                       ui.button(
-                        'history-back',
-                        text.back,
-                        false,
-                        false,
-                        !desktop ? { background: 0, align: 'start' } : {},
-                      ),
-                      ui.button(
                         'history-refresh',
                         !desktop ? (props.theme.ascii ? 'r' : '↻') : text.refreshDefaultOperations,
                         false,
@@ -711,7 +723,26 @@ function frame<N extends Node>(
             ]
           : []),
       ],
-      { visible: props.open, gap: 0, terminal: { grow: 1 }, style: { width: fill, minWidth: 0 } },
+      {
+        visible: props.open,
+        gap: 1,
+        terminal: { grow: 1 },
+        style: { width: fill, minWidth: 0 },
+        shortcuts: [
+          {
+            key: 'escape',
+            modifiers: [],
+            input: state.confirmation
+              ? 'cancel'
+              : state.historyOpen
+                ? 'history-back'
+                : state.commandOpen
+                  ? 'command-back'
+                  : 'close',
+            enabled: true,
+          },
+        ],
+      },
     ),
     events,
   );
@@ -919,7 +950,8 @@ export function terminalPanel<N extends Node>(
         if (key === 'close') {
           disconnect(state);
           events.push({ name: 'closed', value: {} });
-        } else if (key === 'cancel') state.confirmation = null;
+        } else if (key === 'command-back') state.commandOpen = false;
+        else if (key === 'cancel') state.confirmation = null;
         else if (
           key === 'check' &&
           state.current?.reference &&

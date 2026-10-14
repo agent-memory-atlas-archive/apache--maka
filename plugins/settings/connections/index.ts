@@ -52,6 +52,7 @@ interface State extends PageState {
   search: Search;
   created?: ConnectionVersionBasis;
   detailRoute: 'credential' | 'form';
+  removeRequested: boolean;
   route: 'catalog' | 'credential' | 'form';
   detail: Extract<SettingsConnectionDetail, { kind: 'ready' }> | null;
   connections: SettingsConnectionSummary[];
@@ -120,8 +121,9 @@ function frame<N extends Node>(
       const id = connection.basis.connectionId;
       const selected = state.selected === id;
       const actions = [
-        ui.button('open-' + at, text.signInConnection, state.pending?.kind === 'detail'),
-        ui.button('edit-' + at, text.editConnection, state.pending?.kind === 'detail'),
+        ui.button('open-' + id, text.signInConnection, state.pending?.kind === 'detail'),
+        ui.button('edit-' + id, text.editConnection, state.pending?.kind === 'detail'),
+        ui.button('remove-' + id, text.removeConnection, state.pending?.kind === 'detail'),
       ];
       if (ui.item) {
         const identity =
@@ -244,14 +246,12 @@ function frame<N extends Node>(
           state.connections.some((c) => c.basis.connectionId === state.selected && c.editable)
             ? [
                 ui.button(
-                  'open-' +
-                    state.connections.findIndex((c) => c.basis.connectionId === state.selected),
+                  'open-' + state.selected,
                   text.signInConnection,
                   state.pending?.kind === 'detail',
                 ),
                 ui.button(
-                  'edit-' +
-                    state.connections.findIndex((c) => c.basis.connectionId === state.selected),
+                  'edit-' + state.selected,
                   text.editConnection,
                   state.pending?.kind === 'detail',
                 ),
@@ -305,6 +305,7 @@ function frame<N extends Node>(
                 shell: props.shell,
                 catalogRevision: state.catalogRevision!,
                 connection: state.detail,
+                removeRequested: state.removeRequested,
                 existingSlugs: state.connections.map((c) => c.slug),
               },
               { closed: 'closed', changed: 'changed', chrome: 'chrome' },
@@ -346,6 +347,7 @@ export function connections<N extends Node>(
           pending: null,
           search: searchState(),
           detailRoute: 'credential',
+          removeRequested: false,
           route: 'catalog',
           detail: null,
           connections: [],
@@ -504,6 +506,7 @@ export function connections<N extends Node>(
           else if (input.key === 'refresh') actions.push(...page(state));
           else if (input.key === 'create' && !state.pending && state.catalogRevision !== null) {
             state.detail = null;
+            state.removeRequested = false;
             state.route = 'form';
             state.mount++;
           } else if (state.pending?.kind !== 'detail' && input.key.startsWith('select-')) {
@@ -528,13 +531,13 @@ export function connections<N extends Node>(
                 actions.push(...request(state, 'detail', connection.basis, connection.basis));
               }
             }
-          } else if (
-            state.pending?.kind !== 'detail' &&
-            /^(open|edit)-(0|[1-9][0-9]*)$/.test(input.key)
-          ) {
-            const connection = state.connections[Number(input.key.slice(5))];
+          } else if (state.pending?.kind !== 'detail' && /^(open|edit|remove)-/.test(input.key)) {
+            const action = input.key.slice(0, input.key.indexOf('-'));
+            const id = input.key.slice(action.length + 1);
+            const connection = state.connections.find((row) => row.basis.connectionId === id);
             if (connection?.editable) {
-              state.detailRoute = input.key.startsWith('edit-') ? 'form' : 'credential';
+              state.removeRequested = action === 'remove';
+              state.detailRoute = action === 'open' ? 'credential' : 'form';
               actions.push(...request(state, 'detail', connection.basis, connection.basis));
             }
           }

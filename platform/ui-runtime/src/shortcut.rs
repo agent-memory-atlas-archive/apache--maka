@@ -117,10 +117,7 @@ fn validate_chords<'a>(
     primary_is_super: bool,
 ) -> Result<(), String> {
     let mut chords = BTreeSet::new();
-    for (index, (key, modifiers, target)) in bindings.into_iter().enumerate() {
-        if index >= 32 {
-            return Err("shortcut scope limit".into());
-        }
+    for (key, modifiers, target) in bindings {
         let printable = key == "space"
             || key.len() == 1
                 && key
@@ -164,7 +161,7 @@ fn validate_chords<'a>(
     Ok(())
 }
 /// Merge command inputs with ordinary buttons, never with a typed native input.
-/// The final component input table keeps the existing total bound.
+/// Aggregate scene bytes and the compilation deadline bound the input table.
 pub fn inputs(
     shortcuts: &[Shortcut],
     inputs: &mut BTreeMap<String, serde_json::Value>,
@@ -176,9 +173,6 @@ pub fn inputs(
             return Err("shortcut collides with typed native input".into());
         }
         inputs.insert(shortcut.input.clone(), serde_json::Value::Bool(true));
-        if inputs.len() > crate::native::MAX_INPUTS {
-            return Err("scene input limit".into());
-        }
     }
     Ok(())
 }
@@ -215,16 +209,17 @@ mod tests {
         );
     }
     #[test]
-    fn commands_merge_only_with_buttons_and_keep_the_input_bound() {
+    fn commands_merge_only_with_buttons_without_an_input_count_cap() {
         let command = shortcut("b", vec![Modifier::Primary]);
         let mut table = BTreeMap::from([("command".into(), json!(true))]);
         inputs(std::slice::from_ref(&command), &mut table).unwrap();
         assert_eq!(table.len(), 1);
         table.insert("command".into(), json!({"type":"object"}));
         assert!(inputs(std::slice::from_ref(&command), &mut table).is_err());
-        let mut table = (0..crate::native::MAX_INPUTS)
+        let mut table = (0..1024)
             .map(|n| (format!("input-{n}"), json!(true)))
             .collect();
-        assert!(inputs(&[command], &mut table).is_err());
+        inputs(&[command], &mut table).unwrap();
+        assert_eq!(table.len(), 1025);
     }
 }

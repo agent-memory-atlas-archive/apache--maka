@@ -178,6 +178,7 @@ export type RuntimeProtocol =
   | SettingsPreferencesUpdate
   | SettingsPreferencesUpdated
   | SettingsModelsPage
+  | SettingsUpdateModelTools
   | SettingsConnectionsRead
   | SettingsConnectionsPage
   | SettingsConnectionDetail
@@ -255,6 +256,9 @@ export type RuntimeProtocol =
   | AgentDirectoryPage
   | AgentMetadata
   | AgentMetadataResult
+  | AgentSelectBackend
+  | AgentChangeSession
+  | AgentSessionChanged
   | AgentSend
   | AgentStop
   | AgentExecutionRead
@@ -303,6 +307,8 @@ export type RuntimeProtocol =
   | AgentObservation
   | AgentSessionRead
   | AgentHistoryRead
+  | AgentHistoryPromptRead
+  | AgentHistoryPrompt
   | AgentDeliveryPage
   | AgentQueue
   | AgentQueueMessage
@@ -683,9 +689,6 @@ export type TerminalScene =
   | {
       key: string;
       label: string;
-      /**
-       * @maxItems 64
-       */
       options: TerminalChoiceOption[];
       current?: string | null;
       disabled?: boolean;
@@ -807,13 +810,7 @@ export type TerminalScene =
        */
       auto_focus?: boolean;
       wheel?: TerminalWheelCommands | null;
-      /**
-       * @maxItems 32
-       */
       shortcuts?: Shortcut[];
-      /**
-       * @maxItems 32
-       */
       focus_shortcuts?: FocusShortcut[];
       layout?: TerminalLayout;
       scroll?: TerminalScrollPolicy & string;
@@ -823,6 +820,10 @@ export type TerminalScene =
   | {
       key: string;
       text: string;
+      /**
+       * Passive hover description; never participates in focus or activation.
+       */
+      hint?: string;
       color: TerminalColor;
       /**
        * Render a single line, eliding overflow at a complete grapheme.
@@ -949,9 +950,6 @@ export type DesktopScene =
       padding: number;
       background: number;
       children: DesktopScene[];
-      /**
-       * @maxItems 32
-       */
       shortcuts?: Shortcut[];
       visible?: boolean;
       style?: DesktopStyle;
@@ -1815,6 +1813,21 @@ export type WorkHubCoordinator =
   | {
       reason: AgentRejection;
       kind: 'rejected';
+    };
+/**
+ * The next turn's choice, independent of an already admitted execution.
+ * Model revisions are resolved afresh; preferences never grant execution authority.
+ */
+export type AgentBackendPreference =
+  | {
+      connectionId: string;
+      modelId: string;
+      thinkingLevel?: ThinkingLevel | null;
+      kind: 'model';
+    }
+  | {
+      selection: AgentExecutorSelection;
+      kind: 'executor';
     };
 export type CollaborationMode = 'agent' | 'plan';
 export type AgentSessionActivity = 'idle' | 'working' | 'waiting';
@@ -3024,7 +3037,7 @@ export type SkillPreparation =
       kind: 'blocked';
     };
 export type SkillInvocationFailure = SkillRequestFailure | SkillOverflowFailure;
-export type AgentSessionFilter = 'all' | 'needs_you';
+export type AgentSessionFilter = 'all' | 'archived' | 'needs_you';
 export type AgentSessionPosition =
   | {
       kind: 'start';
@@ -4002,6 +4015,25 @@ export type AgentMetadataResult =
   | {
       session: AgentSession;
       kind: 'committed';
+    }
+  | {
+      expected: number;
+      actual: number;
+      kind: 'revision_conflict';
+    }
+  | {
+      reason: AgentRejection;
+      kind: 'rejected';
+    };
+export type AgentSessionAction = 'archive' | 'restore' | 'remove';
+export type AgentSessionChanged =
+  | {
+      session: AgentSession;
+      kind: 'changed';
+    }
+  | {
+      sessionId: string;
+      kind: 'removed';
     }
   | {
       expected: number;
@@ -7411,6 +7443,7 @@ export interface AgentDirectorySelection {
   directoryIdentity: string;
 }
 export interface AgentSession {
+  backend?: AgentBackendPreference | null;
   collaborationMode?: CollaborationMode & string;
   tools?: string[] | null;
   dataSource: AgentDataSource;
@@ -8193,6 +8226,7 @@ export interface SettingsPreferencesUpdate {
   mutation: SettingsPreferencesMutation;
 }
 export interface SettingsModelChoice {
+  tools?: SettingsModelToolPreferences | null;
   selection: ModelSelection;
   connectionName: string;
   label: string;
@@ -8228,9 +8262,17 @@ export interface SettingsModelChoice {
       ];
   defaultThinkingLevel: ThinkingLevel | null;
 }
+export interface SettingsModelToolPreferences {
+  codeMode: boolean | null;
+  applyPatch: boolean | null;
+}
 export interface ConnectionTarget {
   connectionId: string;
   modelId: string;
+}
+export interface SettingsUpdateModelTools {
+  selection: ModelSelection;
+  tools: SettingsModelToolPreferences;
 }
 export interface SettingsConnectionSummary {
   /**
@@ -9301,6 +9343,15 @@ export interface AgentPermissionChange {
    */
   revokeGrants: boolean;
 }
+export interface AgentSelectBackend {
+  sessionId: string;
+  backend: AgentBackendPreference;
+}
+export interface AgentChangeSession {
+  sessionId: string;
+  expectedRevision: number;
+  action: AgentSessionAction;
+}
 export interface AgentSend {
   /**
    * IDs of immutable user uploads in this Session; metadata is resolved by the owner.
@@ -9766,6 +9817,7 @@ export interface AgentDelivery {
 }
 export interface AgentObservation {
   session: AgentSession;
+  rememberedBackend?: AgentBackendPreference | null;
   through: number;
   run?: AgentRun | null;
   parts: AgentPart[];
@@ -9799,6 +9851,18 @@ export interface Cursor {
   field?: HistoryField & string;
   sequence: number;
   offset: number;
+}
+export interface AgentHistoryPromptRead {
+  sessionId: string;
+  through: number;
+  sequence: number;
+}
+/**
+ * A bounded presentation preview; the original message remains in history.
+ */
+export interface AgentHistoryPrompt {
+  source: number;
+  text: string;
 }
 export interface AgentQueue {
   revision: number;

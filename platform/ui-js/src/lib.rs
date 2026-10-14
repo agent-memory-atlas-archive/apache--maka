@@ -32,7 +32,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicU64, Ordering},
         mpsc,
     },
     time::Instant,
@@ -40,7 +40,6 @@ use std::{
 use tokio::sync::oneshot;
 
 const QUEUE_ITEMS: usize = 64;
-const QUEUE_BYTES: usize = 8 * 1024 * 1024;
 
 pub fn execution(limits: Limits) -> ExecutionOptions {
     ExecutionOptions {
@@ -69,7 +68,7 @@ impl backend::Factory for Factory {
         let health = Arc::new(Mutex::new(None));
         let retained = Arc::downgrade(&health);
         let limits = self.limits.clone();
-        worker.submit(0, move |state| {
+        worker.submit(move |state| {
             match Foreground::new(limits, scheduler) {
                 Ok(vm) => {
                     state.realms.insert(
@@ -98,25 +97,14 @@ impl backend::Factory for Factory {
 }
 
 /// One sleeping worker multiplexes realms without sharing their V8 failure
-/// domains. Queue admission is nonblocking and accounts pending plus active bytes.
+/// domains. Queue admission is nonblocking and bounds concurrent pending work.
 #[derive(Clone)]
 struct Worker {
     queue: mpsc::SyncSender<Command>,
-    bytes: Arc<AtomicUsize>,
     ids: Arc<AtomicU64>,
 }
 struct Command {
     run: Box<dyn FnOnce(&mut State) + Send>,
-    _reservation: Reservation,
-}
-struct Reservation {
-    usage: Arc<AtomicUsize>,
-    bytes: usize,
-}
-impl Drop for Reservation {
-    fn drop(&mut self) {
-        self.usage.fetch_sub(self.bytes, Ordering::AcqRel);
-    }
 }
 impl Worker {
     fn new() -> Result<Self> {
@@ -139,7 +127,6 @@ impl Worker {
             .map_err(script)?;
         Ok(Self {
             queue,
-            bytes: Arc::new(AtomicUsize::new(0)),
             ids: Arc::new(AtomicU64::new(1)),
         })
     }
@@ -148,25 +135,14 @@ impl Worker {
     }
     fn submit<T: Send + 'static>(
         &self,
-        bytes: usize,
         action: impl FnOnce(&mut State) -> Result<T> + Send + 'static,
     ) -> Result<backend::Job<T>> {
-        self.bytes
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
-                used.checked_add(bytes).filter(|next| *next <= QUEUE_BYTES)
-            })
-            .map_err(|_| Error::Invalid("UI execution queue byte limit".into()))?;
-        let reservation = Reservation {
-            usage: self.bytes.clone(),
-            bytes,
-        };
         let (send, receive) = oneshot::channel();
         self.queue
             .try_send(Command {
                 run: Box::new(move |state| {
                     let _ = send.send(action(state));
                 }),
-                _reservation: reservation,
             })
             .map_err(|error| match error {
                 mpsc::TrySendError::Full(_) => {
@@ -234,7 +210,7 @@ impl Drop for Realm {
         let id = self.id;
         // Module close receipts precede releasing the final realm reference.
         // Failure to admit disposal remains an execution failure, never a close ACK.
-        let _ = self.worker.submit(0, move |state| {
+        let _ = self.worker.submit(move |state| {
             state.realms.remove(&id);
             Ok(())
         });
@@ -256,17 +232,14 @@ impl backend::Module for Module {
             configuration.clone(),
             serde_json::to_value(values).map_err(invalid)?,
         ];
-        let bytes = delivery(&args)?;
+        delivery(&args)?;
         let (name, source) = self
             .source
             .borrow_mut()
             .take()
             .ok_or_else(|| invalid("UI module activation already admitted"))?;
-        let bytes = bytes
-            .checked_add(source.len())
-            .ok_or_else(|| invalid("UI module activation byte overflow"))?;
         let (realm, id) = (self.realm, self.id);
-        self.worker.submit(bytes, move |state| {
+        self.worker.submit(move |state| {
             state.with_vm(realm, |vm| {
                 // Loading and activation share one original completion receipt.
                 // A syntax/load failure cannot disappear in a discarded Job.
@@ -325,7 +298,7 @@ impl backend::Module for Module {
     }
     fn close(&self) -> Result<backend::Job<()>> {
         let (realm, id) = (self.realm, self.id);
-        self.worker.submit(0, move |state| {
+        self.worker.submit(move |state| {
             state.with_vm(realm, |vm| {
                 // Rejected admission or a failed load has no VM module handle.
                 // The original realm Job still confirms this exact absence.
@@ -351,9 +324,9 @@ impl Component {
         deadline: Instant,
         decode: impl FnOnce(Value) -> Result<T> + Send + 'static,
     ) -> Result<backend::Job<T>> {
-        let bytes = delivery(&args)?;
+        delivery(&args)?;
         let (realm, id, namespace) = (self.realm, self.module, self.namespace.clone());
-        self.worker.submit(bytes, move |state| {
+        self.worker.submit(move |state| {
             state.with_vm(realm, |vm| {
                 let callbacks = vm
                     .modules
@@ -417,9 +390,8 @@ impl backend::Component for Component {
         };
         args.push(serde_json::to_value(values).map_err(invalid)?);
         self.execute(method, args, deadline, move |value| {
-            // Reject the complete guest result before compiler code observes it.
+            // Validate number precision before compiler code observes the result.
             maka_plugin_core::json::exact_numbers(&value).map_err(Error::Invalid)?;
-            maka_plugin_core::json::encoded_size(&value, 1024 * 1024).map_err(invalid)?;
             let output: ComponentOutput = serde_json::from_value(value).map_err(script)?;
             let view = prepare(&output.frame.view, deadline)?
                 .with_declaration(output.frame.view.clone())?;
@@ -445,11 +417,11 @@ impl backend::Component for Component {
         )
     }
 }
-fn delivery(args: &[Value]) -> Result<usize> {
+fn delivery(args: &[Value]) -> Result<()> {
     for value in args {
         maka_plugin_core::json::exact_numbers(value).map_err(Error::Invalid)?;
     }
-    maka_plugin_core::json::encoded_size(args, 1024 * 1024).map_err(invalid)
+    Ok(())
 }
 fn script(error: impl ToString) -> Error {
     Error::Script(error.to_string())

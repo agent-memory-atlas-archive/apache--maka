@@ -207,7 +207,7 @@ test('switching tasks preserves the native reading owner, page, search basis and
     'background progress does not replace the saved reading page',
   );
   assert.equal(c.find(first).props.latest, true);
-  assert.ok(c.find('task-latest'));
+  assert.equal(c.find('task-latest'), undefined);
   c.child('timeline-noncurrent', 'source', { sequence: 10 });
   assert.equal(
     c.state.source,
@@ -226,7 +226,7 @@ test('ended turns describe completion of execution without asserting successful 
         }),
       ]),
     );
-  assert.equal(c.find('task-state').text, 'Turn ended');
+  assert.equal(c.find('task-state').text, '');
   assert.equal(c.find('task-face'), undefined);
   c.select('Task B')
     .observe(30)
@@ -445,7 +445,7 @@ test('returning to a running task buffers every delta while preserving the readi
       },
     },
   });
-  assert.equal(c.find('task-state').text, 'Working');
+  assert.equal(c.find('task-state').text, '');
   assert.equal(c.find(reader).props.live, false, 'new text does not re-enable following');
   assert.deepEqual(c.state.landing, landing);
   assert.equal(c.action('history'), undefined);
@@ -585,19 +585,23 @@ test('scrolling traverses empty history pages without another gesture or losing 
   }
 });
 
-test('a new turn cannot inherit the previous turn goal when its user message is outside the tail page', () => {
+test('reading prompt context belongs to the retained page and ignores late replies after paging', () => {
   const c = client()
-    .observe(10)
-    .history(page(10, [chunk(1, 'Old goal', { role: 'user' })]));
-  assert.equal(c.find('task-goal').text, 'Old goal');
-  c.raw('task-latest').history(page(10, [chunk(9, 'New output', { turnId: 'turn-2' })]));
-  assert.equal(c.find('task-goal'), undefined);
+    .observe(20)
+    .history(page(20, [chunk(1, 'Old question', { role: 'user' })]));
+  const reader = c.reader();
+  assert.equal(c.find(reader).props.leadingPrompt.text, 'Old question');
   c.raw('task-latest').history(
-    page(10, [chunk(8, 'New goal', { turnId: 'turn-2', role: 'user' })]),
+    page(20, [chunk(18, 'New answer', { turnId: 'turn-2' })], {
+      before: { sequence: 18, offset: 0, field: 'body' },
+    }),
   );
-  assert.equal(c.find('task-goal').text, 'New goal');
-  c.raw('task-latest').history(page(10, [chunk(9, 'New output', { turnId: 'turn-2' })]));
-  assert.equal(c.find('task-goal').text, 'New goal');
+  const pending = c.action('historyPrompt');
+  assert.equal(c.find(reader).props.leadingPrompt, null);
+  c.raw('task-latest').history(page(20, [chunk(8, 'Earlier question', { role: 'user' })]));
+  c.reply(pending, { source: 16, text: 'New question' });
+  assert.equal(c.find(reader).props.leadingPrompt.text, 'Earlier question');
+  assert.equal(c.find('task-goal'), undefined);
 });
 
 test('reading older content on a short page suspends automatic following including an in-flight tail reply', () => {
@@ -758,7 +762,7 @@ test('recap requires explicit model fee confirmation, preserves the draft, and r
   const c = client()
     .observe(8)
     .history(page(8, [chunk(1, 'Verified source')]));
-  c.child('models', 'selected', recapModel);
+  c.child('models', 'resolved', { selectionKey: String(c.state.epoch), selection: recapModel });
   const draft = structuredClone({ draft: c.state.draft, command: c.state.command });
   c.raw('recap-open');
   assert.equal(c.state.inspector, 'recap');
@@ -824,7 +828,7 @@ test('pending recap and unknown original operation allow read-only recovery with
   const c = client()
     .observe(8)
     .history(page(8, [chunk(1, 'Verified source')]));
-  c.child('models', 'selected', recapModel);
+  c.child('models', 'resolved', { selectionKey: String(c.state.epoch), selection: recapModel });
   c.raw('recap-open');
   c.reply(c.action('recap'), { kind: 'pending', operationId: recapReady.operationId, through: 8 });
   c.raw('recap-generate');
@@ -876,4 +880,110 @@ test('pending recap and unknown original operation allow read-only recovery with
   });
   assert.equal(c.state.uncertain, null);
   assert.equal(c.action('generateRecap'), undefined);
+});
+
+test('floating activity follows deltas and canonical tools without moving the history window', () => {
+  const run = { invocationId: 'run-a', turnId: 'turn-1', state: 'running' };
+  const c = client()
+    .observe(1, run)
+    .history(page(1, [chunk(1, 'Current goal', { role: 'user' })]));
+  const reader = c.reader();
+  const window = structuredClone(c.state.window);
+  const landing = structuredClone(c.state.landing);
+  c.child(reader, 'detached', { landing: landing.sequence, value: true });
+  const deliver = (through, facts) =>
+    c.event({
+      kind: 'action',
+      key: c.state.watch.key,
+      event: {
+        status: 'updated',
+        value: {
+          kind: 'events',
+          through,
+          nextAfter: through,
+          events: facts.map(([sequence, fact]) => ({
+            sequence,
+            fact,
+            invocationId: 'run-a',
+            turnId: 'turn-1',
+          })),
+        },
+      },
+    });
+  deliver(3, [
+    [
+      2,
+      {
+        kind: 'part_started',
+        messageId: 'thinking',
+        stepId: 'step',
+        partId: 'p',
+        textKind: 'thinking',
+      },
+    ],
+    [3, { kind: 'delta', stepId: 'step', partId: 'p', text: 'Reasoning now' }],
+  ]);
+  assert.equal(c.find(reader).props.activeOutput.role, 'thinking');
+  assert.equal(c.find(reader).props.activeOutput.text, 'Reasoning now');
+  assert.equal(c.action('history'), undefined, 'streaming alone does not read canonical history');
+  deliver(4, [[4, { kind: 'transcript_changed' }]]);
+  const pending = c.action('history');
+  const tool = {
+    toolUseId: 'call',
+    call: {
+      sequence: 4,
+      name: 'read',
+      title: null,
+      presentation: null,
+      pending: true,
+      dispatched: true,
+    },
+    result: null,
+  };
+  c.reply(pending, page(4, [chunk(4, '', { role: 'tool_call', tool })]));
+  assert.equal(c.find(reader).props.activeOutput.tool.toolUseId, 'call');
+  deliver(6, [
+    [
+      5,
+      { kind: 'part_started', messageId: 'answer', stepId: 'next', partId: 'p', textKind: 'text' },
+    ],
+    [6, { kind: 'delta', stepId: 'next', partId: 'p', text: 'x'.repeat(17000) + ' newest text' }],
+  ]);
+  assert.ok(
+    c.find(reader).props.activeOutput.text.endsWith('newest text'),
+    'floating output continues beyond the transcript live-prefix budget',
+  );
+  assert.deepEqual(c.state.window, window);
+  assert.deepEqual(c.state.landing, landing);
+  assert.equal(c.find('task-goal'), undefined);
+  deliver(7, [[7, { kind: 'transcript_changed' }]]);
+  const stale = c.action('history');
+  deliver(8, [[8, { kind: 'ended', failed: false }]]);
+  assert.equal(c.find(reader).props.activeOutput, null);
+  c.reply(stale, page(7, [chunk(7, 'Late canonical reply')]));
+  assert.equal(c.find(reader).props.activeOutput, null, 'late reads cannot revive an ended turn');
+  assert.deepEqual(c.state.window, window);
+});
+
+test('a cold long conversation queries its preceding prompt without paging the reader', () => {
+  const c = client()
+    .observe(20)
+    .history(
+      page(20, [chunk(18, 'Long answer tail')], {
+        before: { sequence: 18, offset: 0, field: 'thinking' },
+      }),
+    );
+  const window = structuredClone(c.state.window);
+  const landing = structuredClone(c.state.landing);
+  assert.deepEqual(c.action('historyPrompt').input, {
+    sessionId: 'Task A',
+    through: 20,
+    sequence: 18,
+  });
+  assert.equal(c.action('history'), undefined, 'context never walks answer pages');
+  c.reply(c.action('historyPrompt'), { source: 2, text: 'Earlier user message' });
+  assert.equal(c.find(c.reader()).props.leadingPrompt.text, 'Earlier user message');
+  assert.deepEqual(c.state.window, window);
+  assert.deepEqual(c.state.landing, landing);
+  assert.equal(c.action('historyPrompt'), undefined);
 });
