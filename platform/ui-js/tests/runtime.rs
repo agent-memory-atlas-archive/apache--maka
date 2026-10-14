@@ -326,7 +326,7 @@ fn invalid_child_props_do_not_publish_parent_or_prior_sibling_updates() {
 }
 
 #[test]
-fn sibling_callbacks_share_one_deadline_and_cannot_each_buy_a_new_slice() {
+fn sibling_callbacks_each_receive_their_execution_slice() {
     let timer = timer();
     let mut app = composed(
         "const end=Date.now()+125;while(Date.now()<end){}return frame({...state,label:props.label,revision:state.revision+1});",
@@ -336,11 +336,11 @@ fn sibling_callbacks_share_one_deadline_and_cannot_each_buy_a_new_slice() {
     let root = app.mount_launch(json!({})).unwrap();
     let left = app.child_mount(&root, "left").unwrap().clone();
     let right = app.child_mount(&root, "right").unwrap().clone();
-    assert!(app.dispatch(&root, 0, "parent", Value::Null).is_err());
+    app.dispatch(&root, 0, "parent", Value::Null).unwrap();
     for mount in [&root, &left, &right] {
-        assert_eq!(app.frame(mount).unwrap().revision, 0);
+        assert_eq!(app.frame(mount).unwrap().revision, 1);
     }
-    assert!(app.is_retiring(&right));
+    assert!(!app.is_retiring(&right));
     close_all(&mut app, &root);
 }
 

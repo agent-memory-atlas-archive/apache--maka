@@ -238,7 +238,7 @@ fn parent_event_sibling_failure_rolls_back_emitter_and_prior_parent_transitions(
 }
 
 #[test]
-fn child_parent_feedback_deadline_rolls_back() {
+fn child_parent_feedback_remains_cancellable_without_partial_publication() {
     let timer = timer();
     let (input, packages, _) = fixture(
         MOUNT,
@@ -250,14 +250,16 @@ fn child_parent_feedback_deadline_rolls_back() {
     let mut app = application(&input, packages, &timer);
     let root = app.mount_launch(json!({})).unwrap();
     let left = app.child_mount(&root, "left").unwrap().clone();
-    let error = app
-        .dispatch(&left, 0, "inc", Value::Null)
-        .unwrap_err()
-        .to_string();
+    maka_ui_runtime::Application::dispatch(&mut app, &left, 0, "inc", Value::Null).unwrap();
     assert!(
-        error.contains("deadline") || error.contains("synchronous budget exceeded"),
-        "{error}"
+        timer
+            .block_on(async {
+                tokio::time::timeout(std::time::Duration::from_millis(100), app.wait_idle()).await
+            })
+            .is_err()
     );
+    app.retire(&root).unwrap();
+    assert!(timer.block_on(app.wait_idle()).is_err());
     assert_eq!(app.frame(&root).unwrap().revision, 0);
     assert_eq!(app.frame(&left).unwrap().revision, 0);
     close_all(&mut app, &root);

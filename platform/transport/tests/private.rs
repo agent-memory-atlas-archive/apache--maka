@@ -543,6 +543,56 @@ async fn native_ui(
     .unwrap();
     (ui, connection, source, business)
 }
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn burst_of_native_queries_completes_without_manual_retry() {
+    let f = Fixture::with_gate(Some(Arc::new(Gate::default()))).await;
+    let (mut ui, connection, source, service) = native_ui(
+        &f,
+        Arc::new(Physical {
+            server: f.server.clone(),
+            peer: f.peer.clone(),
+        }),
+    )
+    .await;
+    let root = ui.mount_launch(serde_json::json!({})).unwrap();
+    ui.wait_idle().await.unwrap();
+    assert_eq!(
+        ui_action(&mut ui, &root, "read").await["status"],
+        "succeeded"
+    );
+    let source = source.lock().unwrap().take().unwrap();
+    let calls = (0..320)
+        .map(|_| {
+            service.call(maka_ui_runtime::actions::ServiceRequest {
+                source: source.clone(),
+                method: "read".into(),
+                input: serde_json::Value::Null,
+                resources: Default::default(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let results = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        futures_util::future::join_all(calls),
+    )
+    .await
+    .unwrap();
+    let mut failures = Vec::new();
+    for result in results {
+        if let Err(reason) = result.result {
+            failures.push(reason);
+        }
+        assert!(result.cleanup.is_ok());
+    }
+    stop_ui(ui, &root).await;
+    connection.close().await.unwrap();
+    drop(service);
+    drop(connection);
+    f.server.close().await.unwrap();
+    f.cleanup().await;
+    assert!(failures.is_empty(), "read burst failed: {failures:?}");
+}
+
 async fn ui_action(
     ui: &mut maka_ui_runtime::Application,
     root: &maka_plugin_core::runtime::Mount,
@@ -993,7 +1043,7 @@ impl maka_transport::transport::native::Connector for Connecting {
 async fn connection_close_cancels_the_same_pending_native_connector_before_any_host_dispatch() {
     let f = Fixture::new().await;
     let entered = Arc::new(tokio::sync::Notify::new());
-    let (mut ui, connection, _, service) = native_ui(
+    let (mut ui, connection, source, service) = native_ui(
         &f,
         Arc::new(Connecting {
             entered: entered.clone(),
@@ -1018,13 +1068,30 @@ async fn connection_close_cancels_the_same_pending_native_connector_before_any_h
     tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified())
         .await
         .unwrap();
-    let close = connection.close();
-    let (completion, cleanup) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        tokio::join!(original, close)
-    })
-    .await
-    .unwrap();
+    let source = source.lock().unwrap().take().unwrap();
+    let pending = (0..32)
+        .map(|_| {
+            service.call(maka_ui_runtime::actions::ServiceRequest {
+                source: source.clone(),
+                method: "read".into(),
+                input: serde_json::Value::Null,
+                resources: Default::default(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut close = connection.close();
+    assert!(futures_util::poll!(&mut close).is_pending());
+    let (completion, cleanup, pending) =
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            tokio::join!(original, close, futures_util::future::join_all(pending))
+        })
+        .await
+        .unwrap();
     cleanup.unwrap();
+    for result in pending {
+        assert!(result.result.is_err());
+        assert!(result.cleanup.is_ok());
+    }
     ui.finish_task(id, completion.unwrap()).unwrap();
     stop_ui(ui, &root).await;
     drop(service);
@@ -1543,7 +1610,7 @@ async fn lost_close_before_dispatch_poll_keeps_the_actual_confirmed_sql_token() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn private_hello_uses_original_capacity_and_close_cancels_partial_handshakes() {
+async fn private_hello_accepts_bursts_and_close_cancels_partial_handshakes() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let f = Fixture::new().await;
     let nonce = Uuid::new_v4();
@@ -1554,7 +1621,7 @@ async fn private_hello_uses_original_capacity_and_close_cancels_partial_handshak
     let mut listener = maka_host_runtime::ipc::LocalListener::bind(&path).unwrap();
     let mut clients = Vec::new();
     let mut observers = Vec::new();
-    for _ in 0..16 {
+    for _ in 0..48 {
         let mut client = maka_host_runtime::ipc::connect(&path).await.unwrap();
         let accepted = listener.accept().await.unwrap();
         let (reader, writer) = tokio::io::split(accepted);
@@ -1567,26 +1634,7 @@ async fn private_hello_uses_original_capacity_and_close_cancels_partial_handshak
         client.write_all(&[0]).await.unwrap();
         clients.push(client);
     }
-    let extra = maka_host_runtime::ipc::connect(&path).await.unwrap();
-    let accepted = listener.accept().await.unwrap();
-    let (reader, writer) = tokio::io::split(accepted);
-    assert!(
-        f.server
-            .serve_private(reader, writer, f.peer.clone(), nonce)
-            .err()
-            .unwrap()
-            .contains("capacity")
-    );
-    drop(extra);
-    drop(clients.remove(0));
-    assert!(
-        tokio::time::timeout(std::time::Duration::from_secs(2), observers.remove(0))
-            .await
-            .unwrap()
-            .is_err()
-    );
-    // The released original wire lease admits another connection. A foreign
-    // nonce fails before Scope and releases its same owner, without an Open.
+    // A foreign nonce still fails before Scope admission and without an Open.
     let mut foreign = maka_host_runtime::ipc::connect(&path).await.unwrap();
     let accepted = listener.accept().await.unwrap();
     let (reader, writer) = tokio::io::split(accepted);

@@ -294,9 +294,12 @@ pub trait NativeComponent<V: ?Sized>: 'static {
     /// Pure expensive preparation may return a pending job. The job retains
     /// the original invocation and yields only inert candidate recipe data;
     /// native resources and external operations remain with their existing owners.
+    /// `previous` is the immutable view matching this invocation's state, from
+    /// the current transaction when already staged, or the committed frame.
     fn start(
         &self,
         call: ComponentCall<'_>,
+        _previous: Option<&NativeView<V>>,
         values: &super::abi::ValueBindings,
         _: &tokio::runtime::Handle,
         _: std::time::Instant,
@@ -330,7 +333,7 @@ type Factory<V> =
 
 /// Presenter-owned, pure translation. No runtime or native owner is available
 /// at this precommit boundary. Implementations bound expansion and honor the
-/// caller's shared deadline; painting never executes a compiler.
+/// current callback's deadline; painting never executes a compiler.
 pub type PrepareScene = dyn Fn(&Value, std::time::Instant) -> Result<PreparedScene> + Send + Sync;
 type FinishScene<V> = dyn Fn(PreparedScene) -> Result<NativeView<V>>;
 pub(crate) struct SceneCompiler<V: ?Sized> {

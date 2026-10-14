@@ -661,6 +661,58 @@ fn real_native_reading_slot_inherits_root_grow_and_receipts_route_through_origin
 }
 
 #[test]
+fn native_reading_observations_reuse_the_scene_but_command_updates_replace_it() {
+    let settle = |presenter: &mut Presenter, width, height| {
+        draw(presenter, width, height);
+        presenter.settle().unwrap();
+    };
+    let mut declaration = props(vec![source("text", &"row\n".repeat(100))]);
+    declaration["content"]["layout"] = json!({"grow":1});
+    let props = Rc::new(RefCell::new(declaration));
+    let (_runtime, mut presenter) = layout::native(
+        layout::View::ReadingSlot(props.clone()),
+        Rc::new(Cell::new(true)),
+    );
+    settle(&mut presenter, 30, 12);
+    let reader = presenter
+        .application
+        .child_mount(&presenter.root, "reader")
+        .unwrap()
+        .clone();
+    let recipe = presenter
+        .application
+        .frame(&reader)
+        .unwrap()
+        .view
+        .view
+        .clone();
+    mouse(&mut presenter, MouseEventKind::ScrollDown, 5, 5);
+    settle(&mut presenter, 30, 12);
+    assert!(Rc::ptr_eq(
+        &recipe,
+        &presenter.application.frame(&reader).unwrap().view.view
+    ));
+    assert_eq!(observation(&presenter)["scroll"]["direction"], "down");
+    props.borrow_mut()["command"] = json!({"sequence":1,"target":{"kind":"end"}});
+    let root = presenter.root.clone();
+    let revision = presenter.application.frame(&root).unwrap().revision;
+    presenter
+        .application
+        .dispatch(&root, revision, "back", json!({"kind":"click"}))
+        .unwrap();
+    settle(&mut presenter, 30, 12);
+    assert!(!Rc::ptr_eq(
+        &recipe,
+        &presenter.application.frame(&reader).unwrap().view.view
+    ));
+    assert_eq!(
+        observation(&presenter)["receipt"],
+        json!({"sequence":1,"status":"applied"})
+    );
+    close(&mut presenter);
+}
+
+#[test]
 fn hidden_same_root_retains_pending_command_until_visible_flush() {
     let (_runtime, mut presenter, props) = native(vec![
         source("one", "one"),

@@ -634,6 +634,41 @@ impl Widget for Reading {
 }
 pub(super) struct Component;
 impl NativeComponent<dyn Widget> for Component {
+    fn start(
+        &self,
+        call: ComponentCall<'_>,
+        previous: Option<&NativeView<dyn Widget>>,
+        values: &maka_ui_runtime::abi::ValueBindings,
+        _: &tokio::runtime::Handle,
+        _: Instant,
+    ) -> maka_ui_runtime::backend::Job<ComponentOutput<NativeView<dyn Widget>>> {
+        if let ComponentCall::Event {
+            state,
+            key: OBSERVED,
+            input,
+            origin: EventOrigin::Raw,
+            ..
+        } = &call
+            && let Some(previous) = previous
+        {
+            // A native viewport observation reports geometry; it cannot change
+            // content or commands. Preserve the exact prepared scene and slots.
+            let revision = state["revision"].as_u64().unwrap() + 1;
+            let mut state = (*state).clone();
+            state["revision"] = json!(revision);
+            return maka_ui_runtime::backend::Job::ready(Ok(Frame {
+                revision,
+                state,
+                surface: None,
+                view: previous.clone(),
+            }
+            .output(vec![Emission {
+                name: "observed".into(),
+                value: (*input).clone(),
+            }])));
+        }
+        maka_ui_runtime::backend::Job::ready(self.call(call, values))
+    }
     fn capture(&self, call: CaptureCall<'_>) -> maka_ui_runtime::Result<CapturePlan> {
         if call.method != "tail" {
             return Err(maka_ui_runtime::Error::Invalid(

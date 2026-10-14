@@ -72,7 +72,6 @@ impl CallResources {
 // Physical values precede permits and the inert Scope ticket in drop order.
 pub(super) struct Reserved {
     pub(super) attachments: Attachments,
-    pub(super) slot: OwnedSemaphorePermit,
     pub(super) bytes: OwnedSemaphorePermit,
     pub(super) resources: OwnedSemaphorePermit,
     group: Arc<Resources>,
@@ -87,15 +86,14 @@ struct Receiving {
 /// before confirming server shutdown; Application::shutdown does not own it.
 pub struct ResourceCapture {
     receiving: BTreeMap<String, Receiving>,
-    slot: OwnedSemaphorePermit,
     bytes: OwnedSemaphorePermit,
     resources: OwnedSemaphorePermit,
     scope: Scope,
-    commands: mpsc::Sender<Command>,
+    commands: mpsc::UnboundedSender<Command>,
     parent: Option<Ticket>,
 }
 impl Client {
-    /// Reserve the original call slot, JSON and payload budgets before allocation.
+    /// Reserve the original JSON and payload budgets before allocation.
     /// The trusted ingress must already bound the decoded descriptor envelope.
     /// Original request Scope custody covers partial reception and frozen input.
     pub fn capture_resources(
@@ -152,11 +150,6 @@ impl Dispatch {
         };
         // Ticket first; every subsequent local drop releases physical custody first.
         let parent = scope.resources.reserve().map_err(|e| e.to_string())?;
-        let slot = self
-            .slots
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| "Host call capacity exhausted")?;
         let bytes = self
             .bytes
             .clone()
@@ -186,7 +179,6 @@ impl Dispatch {
         }
         Ok(ResourceCapture {
             receiving,
-            slot,
             bytes,
             resources,
             scope,
@@ -238,7 +230,6 @@ impl ResourceCapture {
         }
         let Self {
             receiving,
-            slot,
             bytes,
             resources,
             scope,
@@ -257,7 +248,6 @@ impl ResourceCapture {
             .collect();
         Ok(CallResources(ResourceInput::Captured(Box::new(Reserved {
             attachments,
-            slot,
             bytes,
             resources,
             group: scope.resources.clone(),
@@ -360,8 +350,7 @@ impl Dispatch {
     ) -> Result<Reserved> {
         match value.0 {
             ResourceInput::Captured(mut reserved) => {
-                if !Arc::ptr_eq(reserved.slot.semaphore(), &self.slots)
-                    || !Arc::ptr_eq(reserved.bytes.semaphore(), &self.bytes)
+                if !Arc::ptr_eq(reserved.bytes.semaphore(), &self.bytes)
                     || !Arc::ptr_eq(reserved.resources.semaphore(), &self.resources)
                 {
                     return Err("captured resources belong to another Application".into());
@@ -392,11 +381,6 @@ impl Dispatch {
                         return Err(error);
                     }
                 };
-                let slot = self
-                    .slots
-                    .clone()
-                    .try_acquire_owned()
-                    .map_err(|_| "Host call capacity exhausted")?;
                 let bytes = self
                     .bytes
                     .clone()
@@ -410,7 +394,6 @@ impl Dispatch {
                 let (attachments, parent) = custody;
                 Ok(Reserved {
                     attachments,
-                    slot,
                     bytes,
                     resources,
                     group: scope.resources.clone(),

@@ -212,19 +212,19 @@ impl SceneState {
         if !state.initialized && policy == ScrollPolicy::FollowEnd {
             offset = end;
         }
-        if let Some(old) = state
-            .presented
-            .as_ref()
-            .filter(|old| old.intent == state.intent)
-        {
-            if policy == ScrollPolicy::FollowEnd && old.at_end() {
+        if let Some(old) = &state.presented {
+            if old.intent == state.intent && policy == ScrollPolicy::FollowEnd && old.at_end() {
                 offset = end;
             } else if matches!(policy, ScrollPolicy::Anchor | ScrollPolicy::FollowEnd)
                 && let Some((key, delta)) = &old.anchor
                 && let Some((_, start, _)) =
                     children.iter().find(|(candidate, _, _)| candidate == key)
             {
-                offset = (i64::from(*start) + *delta).clamp(0, i64::from(end)) as u32;
+                // A history page can prepend rows while a wheel gesture is
+                // awaiting paint. Preserve its movement relative to the last
+                // visible child, rather than reusing an offset in the old page.
+                let movement = i64::from(state.offset) - i64::from(old.offset);
+                offset = (i64::from(*start) + *delta + movement).clamp(0, i64::from(end)) as u32;
             }
         }
         let reading = self

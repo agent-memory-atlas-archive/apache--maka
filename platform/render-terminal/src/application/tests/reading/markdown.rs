@@ -438,3 +438,82 @@ fn keyboard_range_crosses_markdown_decorations_into_clipped_literal_and_back() {
     assert_eq!(copied(&mut presenter).unwrap(), b"c");
     close(&mut presenter);
 }
+
+#[test]
+fn wheel_scrolling_reuses_text_layouts_with_a_scrollbar_and_after_resize() {
+    use super::super::super::selection::Layout;
+    use std::sync::Arc;
+
+    let text = "Short **bold** `code` 中.\n\n".repeat(100);
+    for child in [
+        source("text", &text),
+        markdown("text", &text),
+        diff(&text, json!([])),
+    ] {
+        let key = child["key"].as_str().unwrap().to_owned();
+        // The row probes the available width and then paints the child's
+        // intrinsic width, in addition to the reading area's scrollbar probe.
+        let row = json!({"kind":"stack","key":"message","direction":"row","gap":0,"padding":0,"background":0,"children":[child]});
+        let (_runtime, mut presenter, _) = native(vec![row]);
+        let geometry = |presenter: &Presenter| {
+            let mount = presenter
+                .application
+                .child_mount(&presenter.root, &key)
+                .unwrap();
+            let owner = presenter.resources.owners[&mount.id()]
+                .state
+                .downcast_ref::<super::super::super::source::Owner>()
+                .unwrap();
+            owner
+                .document
+                .borrow()
+                .glyphs
+                .as_ref()
+                .unwrap()
+                .layout
+                .clone()
+        };
+        let shared = |before: &Layout, after: &Layout| match (before, after) {
+            (Layout::Literal(a, _), Layout::Literal(b, _)) => Arc::ptr_eq(a, b),
+            (Layout::Markdown { lines: a, .. }, Layout::Markdown { lines: b, .. }) => {
+                Arc::ptr_eq(a, b)
+            }
+            _ => false,
+        };
+        let budget = presenter.resources.budget.clone();
+        let mut previous = None;
+        for width in [40, 15, 50, 12] {
+            settle(&mut presenter, width, 10);
+            settle(&mut presenter, width, 10);
+            let original = geometry(&presenter);
+            if let Some(before) = previous.take() {
+                assert!(
+                    !shared(&before, &original),
+                    "resize must recompute wrapping"
+                );
+            }
+            let retained = budget.usage();
+            for kind in [
+                MouseEventKind::ScrollDown,
+                MouseEventKind::ScrollDown,
+                MouseEventKind::ScrollUp,
+            ] {
+                mouse(&mut presenter, kind, 5, 5);
+                settle(&mut presenter, width, 10);
+                assert!(
+                    shared(&original, &geometry(&presenter)),
+                    "wheel scrolling must reuse wrapped rows even with a scrollbar"
+                );
+                assert_eq!(
+                    budget.usage(),
+                    retained,
+                    "warm scrolling must not retain more layout storage"
+                );
+            }
+            previous = Some(original);
+        }
+        close(&mut presenter);
+        drop(previous);
+        assert_eq!(budget.usage(), (0, 0, 0));
+    }
+}

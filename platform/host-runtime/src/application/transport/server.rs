@@ -35,14 +35,12 @@ use std::{
 };
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite},
-    sync::{OwnedSemaphorePermit, Semaphore, oneshot},
+    sync::oneshot,
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
-const CONNECTIONS: u32 = 16;
 struct Failed {
     _scope: Option<Scope>,
-    _permit: OwnedSemaphorePermit,
     reason: String,
 }
 /// Own this alongside the original Application and SQL Root. Close/drain this
@@ -51,7 +49,6 @@ pub struct Server {
     client: Client,
     policy: PolicyOwner,
     endpoints: Mutex<super::Endpoints>,
-    slots: Arc<Semaphore>,
     stop: CancellationToken,
     tasks: TaskTracker,
     failed: Mutex<Vec<Failed>>,
@@ -69,7 +66,6 @@ impl Server {
             client,
             policy,
             endpoints: Mutex::new(endpoints),
-            slots: Arc::new(Semaphore::new(CONNECTIONS as usize)),
             stop: CancellationToken::new(),
             tasks: TaskTracker::new(),
             failed: Mutex::new(Vec::new()),
@@ -103,8 +99,8 @@ impl Server {
         self.serve_inner(reader, writer, peer, None, false)
     }
     /// An inherited-bootstrap nonce pairs a private current-account channel
-    /// with this original Host incarnation. Hello uses the same capacity and
-    /// tracked connection owner as Open; it never creates request authority.
+    /// with this original Host incarnation. Hello uses the same tracked
+    /// connection owner as Open; it never creates request authority.
     pub fn serve_private<R, W>(
         self: &Arc<Self>,
         reader: R,
@@ -152,11 +148,6 @@ impl Server {
         if *gate {
             return Err("Application transport is closing".into());
         }
-        let permit = self
-            .slots
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| "Application connection capacity exhausted")?;
         let server = self.clone();
         let (reply, result) = oneshot::channel();
         // Publish actual custody before returning the first-poll observer.
@@ -185,7 +176,7 @@ impl Server {
             .await;
             let scope = session.scope.take();
             // Each generic physical half can fail independently during Drop.
-            // Keep Scope and lease outside both unwind boundaries.
+            // Keep Scope outside both unwind boundaries.
             let Session { reader, writer, .. } = session;
             let read_drop = std::panic::catch_unwind(AssertUnwindSafe(|| drop(reader)));
             let write_drop = std::panic::catch_unwind(AssertUnwindSafe(|| drop(writer)));
@@ -196,11 +187,8 @@ impl Server {
             if let Err(reason) = &cleanup {
                 server.failed.lock().unwrap().push(Failed {
                     _scope: scope,
-                    _permit: permit,
                     reason: reason.clone(),
                 });
-            } else {
-                drop(permit);
             }
             let _ = reply.send(execution.and(cleanup));
         });
@@ -608,7 +596,7 @@ mod tests {
         sync::atomic::{AtomicBool, Ordering},
         task::{Context, Poll, Waker},
     };
-    use tokio::io::DuplexStream;
+    use tokio::{io::DuplexStream, sync::Semaphore};
     struct Gate {
         entered: Semaphore,
         release: AtomicBool,

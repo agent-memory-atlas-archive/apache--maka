@@ -335,7 +335,6 @@ struct PreparedInvocation {
     scope: Scope,
     attachments: Attachments,
     capture: Option<Uuid>,
-    slot: OwnedSemaphorePermit,
     bytes: OwnedSemaphorePermit,
     resources: OwnedSemaphorePermit,
     // Last: inert drop releases physical custody before acknowledging its Scope.
@@ -452,8 +451,7 @@ pub struct Client {
 }
 
 struct Dispatch {
-    commands: mpsc::Sender<Command>,
-    slots: Arc<Semaphore>,
+    commands: mpsc::UnboundedSender<Command>,
     bytes: Arc<Semaphore>,
     resources: Arc<Semaphore>,
     stream_buffers: Arc<Semaphore>,
@@ -480,7 +478,6 @@ pub(super) enum Command {
         scope: Scope,
         parent: Option<Ticket>,
         reply: oneshot::Sender<Result<Option<OperationObservation>>>,
-        _slot: OwnedSemaphorePermit,
         _bytes: OwnedSemaphorePermit,
     },
 }
@@ -492,7 +489,6 @@ pub(super) struct Call {
     scope: Scope,
     attachments: Attachments,
     capture: Option<Uuid>,
-    slot: OwnedSemaphorePermit,
     bytes: OwnedSemaphorePermit,
     resources: OwnedSemaphorePermit,
     parent: Option<Ticket>,
@@ -766,7 +762,7 @@ impl Application {
             None => prepare(&input, packages, &native, persisted.is_some())?,
         };
         let scheduler = tokio::runtime::Handle::try_current().map_err(|e| e.to_string())?;
-        let (commands, receiver) = mpsc::channel(128);
+        let (commands, receiver) = mpsc::unbounded_channel();
         let (control, controls) = mpsc::channel(16);
         let (adoptions, adoption_requests) = mpsc::channel(16);
         let (updates, observations) = watch::channel(Snapshot {
@@ -776,7 +772,6 @@ impl Application {
         let stop = CancellationToken::new();
         let dispatch = Arc::new(Dispatch {
             commands,
-            slots: Arc::new(Semaphore::new(128)),
             bytes: Arc::new(Semaphore::new(32 * 1024 * 1024)),
             resources: Arc::new(Semaphore::new(64 * 1024 * 1024)),
             stream_buffers: Arc::new(Semaphore::new(16)),
@@ -832,7 +827,6 @@ impl Application {
             .dispatch
             .commands
             .send(Command::ShutdownIdle { reply })
-            .await
             .map_err(|_| "Host owner disappeared before idle retirement".to_string())?;
         if !receive
             .await
@@ -920,7 +914,7 @@ impl Client {
         let (reply, result) = oneshot::channel();
         self.dispatch
             .commands
-            .try_send(Command::Bind {
+            .send(Command::Bind {
                 consumer,
                 import,
                 reply,
@@ -940,7 +934,7 @@ impl Client {
         let (reply, result) = oneshot::channel();
         self.dispatch
             .commands
-            .try_send(Command::CaptureImport {
+            .send(Command::CaptureImport {
                 consumer,
                 import,
                 reply,
@@ -1096,7 +1090,6 @@ impl Client {
             scope,
             attachments,
             capture,
-            slot,
             bytes,
             resources,
             parent,
@@ -1104,7 +1097,7 @@ impl Client {
         let (reply, result) = oneshot::channel();
         self.dispatch
             .commands
-            .try_send(Command::Call(Box::new(Call {
+            .send(Command::Call(Box::new(Call {
                 parent,
                 kind: CallKind::Mutation {
                     operation: reference.operation,
@@ -1117,7 +1110,6 @@ impl Client {
                 scope,
                 attachments,
                 capture,
-                slot,
                 bytes,
                 resources,
             })))
@@ -1211,7 +1203,6 @@ impl Dispatch {
         }
         let resource_ingress::Reserved {
             attachments,
-            slot,
             bytes,
             resources,
             parent,
@@ -1219,7 +1210,7 @@ impl Dispatch {
         } = self.resources(custody.0, &scope, size, custody.1)?;
         let capture = (kind.operation().is_some() && !attachments.is_empty()).then(Uuid::new_v4);
         self.commands
-            .try_send(Command::Call(Box::new(Call {
+            .send(Command::Call(Box::new(Call {
                 parent,
                 kind,
                 binding,
@@ -1228,7 +1219,6 @@ impl Dispatch {
                 scope,
                 attachments,
                 capture,
-                slot,
                 bytes,
                 resources,
             })))
@@ -1243,11 +1233,6 @@ impl Dispatch {
         parent: Option<Ticket>,
     ) -> Result<oneshot::Receiver<Result<Option<OperationObservation>>>> {
         let size = check_reference(&reference)?;
-        let slot = self
-            .slots
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| "Host recovery capacity exhausted")?;
         let bytes = self
             .bytes
             .clone()
@@ -1255,13 +1240,12 @@ impl Dispatch {
             .map_err(|_| "Host recovery budget exhausted")?;
         let (reply, result) = oneshot::channel();
         self.commands
-            .try_send(Command::Recover {
+            .send(Command::Recover {
                 consumer,
                 reference: Box::new(reference),
                 scope,
                 parent,
                 reply,
-                _slot: slot,
                 _bytes: bytes,
             })
             .map_err(|e| e.to_string())?;

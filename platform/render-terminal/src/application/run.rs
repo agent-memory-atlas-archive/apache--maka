@@ -20,7 +20,7 @@
 use super::{PaintedScene, Presenter, registry, sanitize};
 use crate::terminal;
 use crossterm::event::{self, Event, EventStream, KeyCode, KeyEventKind, KeyModifiers};
-use futures_util::{FutureExt, StreamExt};
+use futures_util::StreamExt;
 use serde_json::json;
 use std::time::{Duration, Instant};
 use std::{
@@ -460,12 +460,17 @@ pub fn run(
                 // Keep other gestures for the next presented frame.
                 let until = Instant::now() + Duration::from_millis(8);
                 while scrolling && Instant::now() < until {
-                    let Some(Some(input)) = events
-                        .as_mut()
-                        .expect("initialized terminal")
-                        .next()
-                        .now_or_never()
-                    else {
+                    // The level-triggered tty backend does not drain its parser
+                    // on a zero-time poll. Give EventStream's reader a short
+                    // chance to publish already buffered input before repainting.
+                    let idle = until.min(Instant::now() + Duration::from_millis(1));
+                    let Ok(Some(input)) = scheduler.block_on(async {
+                        tokio::time::timeout_at(
+                            idle.into(),
+                            events.as_mut().expect("initialized terminal").next(),
+                        )
+                        .await
+                    }) else {
                         break;
                     };
                     let input = input.map_err(|e| e.to_string())?;

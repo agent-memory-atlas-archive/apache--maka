@@ -627,7 +627,7 @@ impl<V: ?Sized + 'static> Application<V> {
                         method: &source.method,
                         input: &source.input,
                     },
-                    update.deadline,
+                    std::time::Instant::now() + self.slice,
                 ),
                 Component::Native(component) => {
                     Ok(backend::Job::ready(component.capture(CaptureCall {

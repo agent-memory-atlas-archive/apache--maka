@@ -981,6 +981,41 @@ fn anchor_keeps_gap_offset_and_original_child_after_hide_and_prepend() {
     presenter.shutdown_settled().unwrap();
 }
 
+#[test]
+fn history_prepend_preserves_wheel_movement_since_the_last_presented_anchor() {
+    for policy in ["anchor", "follow_end"] {
+        let text = (0..30).map(|n| format!("row {n:02}\n")).collect::<String>();
+        let source = Rc::new(std::cell::RefCell::new(scroll_scene(policy, &text)));
+        let (_runtime, mut presenter) = native(
+            View::ChangingScene(source.clone()),
+            Rc::new(Cell::new(true)),
+        );
+        flushed(&mut presenter, 12, 6);
+        for _ in 0..5 {
+            wheel(&mut presenter, policy == "anchor", 1, 1);
+        }
+        flushed(&mut presenter, 12, 6);
+        let before = scroll_state(&presenter, "body").0;
+        wheel(&mut presenter, false, 1, 1);
+        wheel(&mut presenter, false, 1, 1);
+        source.borrow_mut()["children"][0]["children"]
+            .as_array_mut()
+            .unwrap()
+            .insert(
+                0,
+                json!({"kind":"text","key":"older","text":"older\nolder\nolder","color":0xffffff}),
+            );
+        refresh(&mut presenter);
+        let buffer = flushed(&mut presenter, 12, 6);
+        assert_eq!(scroll_state(&presenter, "body"), (before + 1, before + 1));
+        assert_eq!(buffer[(5, 0)].symbol(), ((before - 2) % 10).to_string());
+        presenter
+            .surface_closed(&presenter.surface(), Ok(()))
+            .unwrap();
+        presenter.shutdown_settled().unwrap();
+    }
+}
+
 fn refresh(presenter: &mut Presenter) {
     let revision = presenter
         .application

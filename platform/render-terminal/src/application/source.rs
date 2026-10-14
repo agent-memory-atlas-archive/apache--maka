@@ -91,12 +91,22 @@ impl Owner {
         doc.markdown = recipe.1.clone();
     }
 }
-type CachedLayout = (u16, super::selection::Layout, (u16, u32));
+struct CachedLayout {
+    width: u16,
+    layout: super::selection::Layout,
+    size: (u16, u32),
+    used: bool,
+}
+#[derive(Default)]
+struct LayoutCache {
+    frame: Option<std::time::Instant>,
+    layouts: Vec<CachedLayout>,
+}
 struct Recipe(
     SourceTextProps,
     Option<Arc<crate::markdown::prepared::Document>>,
     bool,
-    RefCell<Option<CachedLayout>>,
+    RefCell<LayoutCache>,
 );
 fn color(rgba: u32) -> Color {
     Color::Rgb((rgba >> 24) as u8, (rgba >> 16) as u8, (rgba >> 8) as u8)
@@ -204,7 +214,13 @@ impl Widget for Recipe {
         doc.standalone = None;
     }
     fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui_runtime::Result<(u16, u32)> {
-        Ok(self.layout(width, &slots.presenter.resources.budget)?.1)
+        Ok(self
+            .layout(
+                width,
+                &slots.presenter.resources.budget,
+                slots.measurements.time(),
+            )?
+            .1)
     }
     fn paint(
         &self,
@@ -232,7 +248,11 @@ impl Widget for Recipe {
         }
         let doc = document.borrow();
         let scope = parent.clone().or_else(|| SelectionScope::active(&document));
-        let (layout, _) = self.layout(area.width, &slots.presenter.resources.budget)?;
+        let (layout, _) = self.layout(
+            area.width,
+            &slots.presenter.resources.budget,
+            slots.measurements.time(),
+        )?;
         let super::selection::Layout::Literal(literal_layout, _) = &layout else {
             unreachable!()
         };
@@ -409,22 +429,35 @@ impl Recipe {
         &self,
         width: u16,
         budget: &maka_ui_runtime::budget::NativeBudget,
+        frame: std::time::Instant,
     ) -> maka_ui_runtime::Result<(super::selection::Layout, (u16, u32))> {
-        if let Some((old_width, layout, size)) = &*self.3.borrow()
-            && *old_width == width
-        {
-            return Ok((layout.clone(), *size));
+        let mut cached = self.3.borrow_mut();
+        if cached.frame != Some(frame) {
+            // Retain the widths used by the preceding paint pass. A scroll bar,
+            // intrinsic sizing and nested wrappers can all probe different widths.
+            // Widths abandoned after resize disappear on the next pass; every
+            // retained row allocation remains charged to the aggregate budget.
+            cached
+                .layouts
+                .retain_mut(|entry| std::mem::replace(&mut entry.used, false));
+            cached.frame = Some(frame);
         }
-        // One width belongs to this immutable recipe. Source/style replacement
-        // creates another recipe; scrolling and selection share these same rows.
-        self.3.borrow_mut().take();
+        if let Some(entry) = cached.layouts.iter_mut().find(|entry| entry.width == width) {
+            entry.used = true;
+            return Ok((entry.layout.clone(), entry.size));
+        }
         let mut layout = match &self.1 {
             Some(document) => super::selection::Layout::markdown(document, width)?,
             None => Layout::literal(&self.0.source, width).into(),
         };
         let size = Self::measured(&layout, width);
         if layout.retain(budget) {
-            *self.3.borrow_mut() = Some((width, layout.clone(), size));
+            cached.layouts.push(CachedLayout {
+                width,
+                layout: layout.clone(),
+                size,
+                used: true,
+            });
         }
         Ok((layout, size))
     }
@@ -479,7 +512,11 @@ impl Recipe {
         if area.width == 0 || area.is_empty() && reveal.is_none() {
             return Ok(());
         }
-        let (layout, _) = self.layout(area.width, &slots.presenter.resources.budget)?;
+        let (layout, _) = self.layout(
+            area.width,
+            &slots.presenter.resources.budget,
+            slots.measurements.time(),
+        )?;
         if let Some(offset) = reveal {
             let row = area.y + layout.cursor(offset, false).0 as i64;
             let visible = area.visible();
@@ -725,7 +762,7 @@ fn prepare_markdown(
         focus_on_pointer: props.focus_on_pointer,
     };
     maka_ui_runtime::PreparedScene::new(
-        Recipe(source, Some(document), props.selectable, RefCell::new(None)),
+        Recipe(source, Some(document), props.selectable, RefCell::default()),
         BTreeMap::new(),
         vec![],
     )?
@@ -775,7 +812,7 @@ fn prepare_diff(
         focus_on_pointer: props.focus_on_pointer,
     };
     maka_ui_runtime::PreparedScene::new(
-        Recipe(source, Some(document), true, RefCell::new(None)),
+        Recipe(source, Some(document), true, RefCell::default()),
         BTreeMap::new(),
         vec![],
     )?
@@ -831,6 +868,7 @@ impl NativeComponent<dyn Widget> for Component {
     fn start(
         &self,
         call: ComponentCall<'_>,
+        _: Option<&NativeView<dyn Widget>>,
         _: &maka_ui_runtime::abi::ValueBindings,
         scheduler: &tokio::runtime::Handle,
         deadline: std::time::Instant,
@@ -878,7 +916,7 @@ fn prepare_source(
         return Err(maka_ui_runtime::Error::Invalid("source byte budget".into()));
     }
     maka_ui_runtime::PreparedScene::new(
-        Recipe(props, None, true, RefCell::new(None)),
+        Recipe(props, None, true, RefCell::default()),
         BTreeMap::new(),
         vec![],
     )?

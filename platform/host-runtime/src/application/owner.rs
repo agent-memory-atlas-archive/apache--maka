@@ -47,7 +47,6 @@ fn next_change(
 struct Failed {
     _execution: Execution<Service>,
     _scope: Scope,
-    _slot: OwnedSemaphorePermit,
     _bytes: OwnedSemaphorePermit,
     _attachments: Attachments,
     _resources: OwnedSemaphorePermit,
@@ -88,7 +87,6 @@ enum Done {
         cleanup: Result<()>,
         receipt: Option<Box<Result<OperationObservation>>>,
         reply: Reply,
-        _slot: OwnedSemaphorePermit,
         _bytes: OwnedSemaphorePermit,
         attachments: Attachments,
         _resources: OwnedSemaphorePermit,
@@ -102,7 +100,6 @@ enum Done {
         parent: Option<Ticket>,
         result: Box<Result<Option<OperationObservation>>>,
         reply: oneshot::Sender<Result<Option<OperationObservation>>>,
-        _slot: OwnedSemaphorePermit,
         _bytes: OwnedSemaphorePermit,
     },
     Closed {
@@ -200,7 +197,7 @@ impl Owner {
     }
     pub async fn run(
         mut self,
-        mut commands: mpsc::Receiver<Command>,
+        mut commands: mpsc::UnboundedReceiver<Command>,
         mut control: mpsc::Receiver<Retirement>,
         mut adoptions: mpsc::Receiver<Adoption>,
         stop: CancellationToken,
@@ -1028,7 +1025,6 @@ impl Owner {
                     scope,
                     attachments,
                     capture,
-                    slot,
                     bytes,
                     resources,
                 } = *call;
@@ -1207,7 +1203,7 @@ impl Owner {
                 match admission {
                     Err(error) => {
                         drop(kind.take_confirmation());
-                        drop((attachments, resources, slot, bytes, input, scope));
+                        drop((attachments, resources, bytes, input, scope));
                         if let Some(ticket) = parent.take() {
                             ticket.complete(if descriptor_failed {
                                 Err(error.clone())
@@ -1228,7 +1224,6 @@ impl Owner {
                                     scope,
                                     attachments,
                                     capture,
-                                    slot,
                                     bytes,
                                     resources,
                                     parent,
@@ -1262,7 +1257,6 @@ impl Owner {
                                 scope,
                                 attachments,
                                 capture,
-                                slot,
                                 bytes,
                                 resources,
                             });
@@ -1359,7 +1353,7 @@ impl Owner {
                                 receipt=Some(Err("operation receipt unavailable; read original reference".into()));
                             }
                             Done::Called { parent, execution, result, historical, consumer, caller: Box::new(caller),
-                                scope: Box::new(scope), cleanup, receipt: receipt.map(Box::new), reply: output, _slot: slot, _bytes: bytes, attachments, _resources: resources, confirmation }
+                                scope: Box::new(scope), cleanup, receipt: receipt.map(Box::new), reply: output, _bytes: bytes, attachments, _resources: resources, confirmation }
                         }));
                     }
                 }
@@ -1370,7 +1364,6 @@ impl Owner {
                 scope,
                 mut parent,
                 reply,
-                _slot,
                 _bytes,
             } => {
                 let admission = self
@@ -1409,7 +1402,6 @@ impl Owner {
                                 parent,
                                 result: Box::new(result),
                                 reply,
-                                _slot,
                                 _bytes,
                             }
                         }));
@@ -1499,13 +1491,12 @@ impl Owner {
                         kind,
                         attachments,
                         resources,
-                        slot,
                         bytes,
                         input,
                         scope,
                         ..
                     } = *call;
-                    drop((attachments, resources, slot, bytes, input, scope));
+                    drop((attachments, resources, bytes, input, scope));
                     if let Some(ticket) = parent {
                         ticket.complete(Ok(()));
                     }
@@ -1566,7 +1557,6 @@ impl Owner {
                 cleanup,
                 mut receipt,
                 reply,
-                _slot,
                 _bytes,
                 attachments,
                 _resources,
@@ -1590,7 +1580,6 @@ impl Owner {
                     self.failed.push(Failed {
                         _execution: execution,
                         _scope: *scope,
-                        _slot,
                         _bytes,
                         _attachments: attachments,
                         _resources,
@@ -1599,7 +1588,7 @@ impl Owner {
                 } else {
                     // Confirmed physical cleanup releases caller custody before waking
                     // an observer that may immediately reopen the caller Root.
-                    drop((confirmation, attachments, _resources, _slot, _bytes, scope));
+                    drop((confirmation, attachments, _resources, _bytes, scope));
                 }
                 if let Some(ticket) = parent {
                     ticket.complete(cleanup.clone());
@@ -1614,7 +1603,6 @@ impl Owner {
                 parent,
                 result,
                 reply,
-                _slot,
                 _bytes,
             } => {
                 let result = self

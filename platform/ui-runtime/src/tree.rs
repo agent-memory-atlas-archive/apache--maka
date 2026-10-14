@@ -109,7 +109,6 @@ pub(super) struct Update<V: ?Sized> {
     created: Vec<Mount>,
     removed: BTreeMap<Uuid, Mount>,
     events: VecDeque<Notification>,
-    pub deadline: Instant,
     actions: Vec<actions::Prepared<V>>,
     cancellations: Vec<(Mount, String)>,
     calls: VecDeque<Call>,
@@ -121,13 +120,12 @@ pub(super) struct Update<V: ?Sized> {
     publication: Option<tokio::sync::oneshot::Sender<Result<()>>>,
 }
 impl<V: ?Sized> Update<V> {
-    fn new(slice: std::time::Duration) -> Self {
+    fn new() -> Self {
         Self {
             changed: BTreeMap::new(),
             created: Vec::new(),
             removed: BTreeMap::new(),
             events: VecDeque::new(),
-            deadline: Instant::now() + slice,
             actions: Vec::new(),
             cancellations: Vec::new(),
             calls: VecDeque::new(),
@@ -139,20 +137,10 @@ impl<V: ?Sized> Update<V> {
             publication: None,
         }
     }
-    // Global presentation changes can visit every retained component. Bound
-    // actual work through the shared deadline, not serialized size or visit count.
     pub fn step(&mut self, depth: usize) -> Result<()> {
         if depth > 32 {
             return Err(Error::Invalid(
                 "component mount depth limit exceeded".into(),
-            ));
-        }
-        Ok(())
-    }
-    fn check_deadline(&self) -> Result<()> {
-        if Instant::now() >= self.deadline {
-            return Err(Error::Invalid(
-                "composed UI update deadline exceeded".into(),
             ));
         }
         Ok(())
@@ -297,7 +285,7 @@ impl<V: ?Sized + 'static> Application<V> {
         props: Value,
     ) -> Result<Mount> {
         let mount = self.runtime.mount_root(kind)?;
-        let mut update = Update::new(self.slice);
+        let mut update = Update::new();
         update.created.push(mount.clone());
         if let Err(error) = self.check_props(&mount, &props) {
             self.rollback(&update)?;
@@ -425,7 +413,7 @@ impl<V: ?Sized + 'static> Application<V> {
     ) -> Result<()> {
         let event =
             serde_json::to_value(event).map_err(|error| Error::Invalid(error.to_string()))?;
-        let mut update = Update::new(self.slice);
+        let mut update = Update::new();
         update.feedback = feedback;
         update.publication = publication;
         let current = self
@@ -490,8 +478,15 @@ impl<V: ?Sized + 'static> Application<V> {
         }
         let wake = self.waker();
         let mut cx = Context::from_waker(&wake);
+        // Yield long compositions to input and presentation without rejecting
+        // their original transaction or counting asynchronous waits as work.
+        let yield_at = Instant::now() + std::time::Duration::from_millis(4);
         let result = (|| {
             loop {
+                if Instant::now() >= yield_at {
+                    wake.wake_by_ref();
+                    return Ok(false);
+                }
                 if let Some((call, mut pending)) = update.pending.take() {
                     let invocation = match self.poll_invocation(&mut pending, &mut cx) {
                         Poll::Pending => {
@@ -524,8 +519,21 @@ impl<V: ?Sized + 'static> Application<V> {
                 }
                 if let Some(call) = update.calls.pop_front() {
                     update.step(call.depth)?;
-                    let pending =
-                        self.begin_invoke(&call.mount, call.method, &call.args, update.deadline)?;
+                    let previous = match &call.basis {
+                        Some((revision, _)) => {
+                            let current = self.current(&call.mount, &update)?;
+                            (current.frame.revision == *revision)
+                                .then(|| current.frame.view.clone())
+                        }
+                        None => None,
+                    };
+                    let pending = self.begin_invoke(
+                        &call.mount,
+                        call.method,
+                        &call.args,
+                        previous.as_ref(),
+                        Instant::now() + self.slice,
+                    )?;
                     update.pending = Some((call, pending));
                     continue;
                 }
@@ -535,7 +543,6 @@ impl<V: ?Sized + 'static> Application<V> {
                     }
                     continue;
                 }
-                update.check_deadline()?;
                 if self.deliver_one(&mut update)? {
                     continue;
                 }
@@ -1207,11 +1214,6 @@ impl<V: ?Sized + 'static> Application<V> {
         }
         let mut pending: Vec<_> = roots.into_values().map(|mount| (mount, 0u16)).collect();
         while let Some((mount, enclosing)) = pending.pop() {
-            if Instant::now() >= update.deadline {
-                return Err(Error::Invalid(
-                    "composed UI update deadline exceeded".into(),
-                ));
-            }
             let mounted = self.current(&mount, update)?;
             let view = &mounted.frame.view;
             let total = enclosing
@@ -1234,27 +1236,12 @@ impl<V: ?Sized + 'static> Application<V> {
     fn preflight(&mut self, update: &mut Update<V>) -> Result<()> {
         self.validate_render_depth(update)?;
         self.discard_private(update)?;
-        if Instant::now() >= update.deadline {
-            return Err(Error::Invalid(
-                "composed UI update deadline exceeded".into(),
-            ));
-        }
         self.validate_commit_fence(update)
     }
     fn validate_commit_fence(&mut self, update: &Update<V>) -> Result<()> {
-        if Instant::now() >= update.deadline {
-            return Err(Error::Invalid(
-                "composed UI update deadline exceeded".into(),
-            ));
-        }
         for view in update.changed.values() {
             let execution = self.runtime.admit_mount(&view.mount)?;
             self.runtime.settle(&execution, Ok(()))?;
-        }
-        if Instant::now() >= update.deadline {
-            return Err(Error::Invalid(
-                "composed UI update deadline exceeded".into(),
-            ));
         }
         Ok(())
     }

@@ -36,6 +36,25 @@ struct Counter {
     calls: Rc<Cell<usize>>,
 }
 impl NativeComponent<String> for Counter {
+    fn start(
+        &self,
+        call: ComponentCall<'_>,
+        previous: Option<&NativeView<String>>,
+        values: &maka_ui_runtime::abi::ValueBindings,
+        _: &tokio::runtime::Handle,
+        _: std::time::Instant,
+    ) -> maka_ui_runtime::backend::Job<ComponentOutput<NativeView<String>>> {
+        match &call {
+            ComponentCall::Mount { .. } => assert!(previous.is_none()),
+            ComponentCall::Update { state, .. } | ComponentCall::Event { state, .. } => {
+                assert_eq!(
+                    previous.unwrap().view.as_str(),
+                    format!("{}={}", state["label"].as_str().unwrap(), state["count"])
+                );
+            }
+        }
+        maka_ui_runtime::backend::Job::ready(self.call(call, values))
+    }
     fn call(
         &self,
         call: ComponentCall<'_>,
@@ -177,6 +196,92 @@ fn opaque_native_children_share_transaction_identity_and_input_admission_with_js
     assert_ne!(replacement, &right);
     assert_eq!(app.frame(replacement).unwrap().state["count"], 20);
     assert!(app.dispatch(&right, 0, "inc", json!({"delta":1})).is_err());
+    close_all(&mut app, &root);
+}
+
+struct DelayedCounter {
+    counter: Counter,
+    release: Rc<std::cell::RefCell<Option<tokio::sync::oneshot::Receiver<()>>>>,
+}
+impl NativeComponent<String> for DelayedCounter {
+    fn call(
+        &self,
+        call: ComponentCall<'_>,
+        values: &maka_ui_runtime::abi::ValueBindings,
+    ) -> maka_ui_runtime::Result<ComponentOutput<NativeView<String>>> {
+        self.counter.call(call, values)
+    }
+    fn start(
+        &self,
+        call: ComponentCall<'_>,
+        _: Option<&NativeView<String>>,
+        values: &maka_ui_runtime::abi::ValueBindings,
+        _: &tokio::runtime::Handle,
+        _: std::time::Instant,
+    ) -> maka_ui_runtime::backend::Job<ComponentOutput<NativeView<String>>> {
+        let release = if matches!(&call, ComponentCall::Event { .. }) {
+            self.release.borrow_mut().take()
+        } else {
+            None
+        };
+        let output = self.call(call, values);
+        maka_ui_runtime::backend::Job::new(async move {
+            if let Some(release) = release {
+                release.await.unwrap();
+            }
+            output
+        })
+    }
+}
+
+#[test]
+fn waiting_for_native_work_does_not_expire_the_composed_update() {
+    let timer = timer();
+    let (input, packages, contract) = fixture();
+    let (release, waiting) = tokio::sync::oneshot::channel();
+    let waiting = Rc::new(std::cell::RefCell::new(Some(waiting)));
+    let mut registry = crate::support::scene::registry(PresentationTarget::Desktop);
+    registry
+        .register("test.counter", move |_, _| {
+            Ok(BTreeMap::from([(
+                "Counter".into(),
+                NativeExport {
+                    contract: contract.clone(),
+                    value: NativeCapability::Component(Rc::new(DelayedCounter {
+                        counter: Counter {
+                            calls: Rc::new(Cell::new(0)),
+                        },
+                        release: waiting.clone(),
+                    })),
+                },
+            )]))
+        })
+        .unwrap();
+    let slice = std::time::Duration::from_millis(100);
+    let mut app = Application::new(
+        &input,
+        packages,
+        timer.handle().clone(),
+        maka_ui_js::execution(maka_js_runtime::plugin::Limits {
+            synchronous_slice: slice,
+            ..Default::default()
+        }),
+        registry,
+        Default::default(),
+    )
+    .unwrap();
+    let root = app.mount_launch(json!({})).unwrap();
+    let left = app.child_mount(&root, "left").unwrap().clone();
+    maka_ui_runtime::Application::dispatch(&mut app, &left, 0, "inc", json!({"delta":2})).unwrap();
+    assert!(
+        timer
+            .block_on(async { tokio::time::timeout(slice * 2, app.wait_idle()).await })
+            .is_err()
+    );
+    assert_eq!(app.frame(&left).unwrap().state["count"], 10);
+    release.send(()).unwrap();
+    timer.block_on(app.wait_idle()).unwrap();
+    assert_eq!(app.frame(&left).unwrap().state["count"], 12);
     close_all(&mut app, &root);
 }
 

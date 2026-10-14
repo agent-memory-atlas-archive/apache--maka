@@ -30,11 +30,14 @@ use maka_plugin_core::{
 use maka_ui_runtime::actions::*;
 use std::{
     panic::AssertUnwindSafe,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadHalf, WriteHalf},
-    sync::{Notify, OwnedSemaphorePermit, Semaphore},
+    sync::Notify,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -64,7 +67,6 @@ pub trait Connector: Send + Sync + 'static {
     fn connect(&self, stop: CancellationToken) -> BoxFuture<'static, Result<Stream>>;
 }
 type Invocation = Call<ReadHalf<Stream>, WriteHalf<Stream>>;
-const CONNECTIONS: u32 = 16;
 struct Failures {
     reason: Option<String>,
     custody: Vec<Failed>,
@@ -73,14 +75,13 @@ struct Failed {
     _call: Option<Invocation>,
     _request: Option<ServiceRequest>,
     _recorded: Option<RecordedIntent>,
-    _permit: OwnedSemaphorePermit,
 }
 /// Physical lifecycle custody. This is not a routing, replay or execution map.
 /// Failed original calls remain owned and fenced; historical receipts cannot
 /// settle them. Drain UI accepted tasks before awaiting this connection close.
 pub struct Connection {
     connector: Arc<dyn Connector>,
-    slots: Arc<Semaphore>,
+    active: AtomicUsize,
     stop: CancellationToken,
     closed: Mutex<bool>,
     failed: Mutex<Failures>,
@@ -90,7 +91,7 @@ impl Connection {
     pub fn new(connector: Arc<dyn Connector>) -> Arc<Self> {
         Arc::new(Self {
             connector,
-            slots: Arc::new(Semaphore::new(CONNECTIONS as usize)),
+            active: AtomicUsize::new(0),
             stop: CancellationToken::new(),
             closed: Mutex::new(false),
             failed: Mutex::new(Failures {
@@ -110,11 +111,7 @@ impl Connection {
         if *gate {
             return Err("physical connection is closing".into());
         }
-        let permit = self
-            .slots
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| "physical connection capacity exhausted")?;
+        self.active.fetch_add(1, Ordering::SeqCst);
         Ok(Arc::new(Session {
             connection: self.clone(),
             selection,
@@ -127,7 +124,6 @@ impl Connection {
                 physical_failure: None,
             }),
             recorded: Mutex::new(None),
-            permit: Some(permit),
         }))
     }
     fn failure(&self, reason: String) {
@@ -145,10 +141,11 @@ impl Connection {
                 let changed = own.changed.notified();
                 tokio::pin!(changed);
                 changed.as_mut().enable();
+                let active = own.active.load(Ordering::SeqCst);
                 if own.failed.lock().unwrap().reason.is_some() {
                     return Err("original physical call cleanup remains unconfirmed".into());
                 }
-                if own.slots.available_permits() == CONNECTIONS as usize {
+                if active == 0 {
                     return Ok(());
                 }
                 changed.await;
@@ -271,7 +268,6 @@ struct Session {
     stop: CancellationToken,
     state: tokio::sync::Mutex<State>,
     recorded: Mutex<Option<RecordedIntent>>,
-    permit: Option<OwnedSemaphorePermit>,
 }
 impl Session {
     async fn begin(&self, state: &mut State) -> Result<()> {
@@ -552,7 +548,7 @@ impl Drop for Session {
             || call.as_ref().is_some_and(|call| !call.cleanup_confirmed());
         if !failed {
             // Destructors own real resources and SQL leases. Complete them
-            // before publishing the final permit; panic keeps the close fence.
+            // before publishing completion; panic keeps the close fence.
             let inputs = std::panic::catch_unwind(AssertUnwindSafe(|| drop(state.request.take())));
             let token = std::panic::catch_unwind(AssertUnwindSafe(|| {
                 drop(self.recorded.get_mut().unwrap().take());
@@ -567,10 +563,9 @@ impl Drop for Session {
                 _call: call,
                 _request: state.request.take(),
                 _recorded: self.recorded.get_mut().unwrap().take(),
-                _permit: self.permit.take().unwrap(),
             });
         }
-        drop(self.permit.take());
+        self.connection.active.fetch_sub(1, Ordering::SeqCst);
         self.connection.changed.notify_waiters();
     }
 }

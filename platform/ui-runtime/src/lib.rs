@@ -740,6 +740,7 @@ impl<V: ?Sized + 'static> Application<V> {
         mount: &Mount,
         method: &str,
         args: &[Value],
+        previous: Option<&NativeView<V>>,
         deadline: std::time::Instant,
     ) -> Result<PendingInvocation<V>> {
         let input = if method == "event" {
@@ -801,7 +802,13 @@ impl<V: ?Sized + 'static> Application<V> {
                 Some(realm.clone()),
             ),
             Component::Native(component) => (
-                InvocationResult::Native(component.start(call, &values, &self.scheduler, deadline)),
+                InvocationResult::Native(component.start(
+                    call,
+                    previous,
+                    &values,
+                    &self.scheduler,
+                    deadline,
+                )),
                 None,
             ),
         };

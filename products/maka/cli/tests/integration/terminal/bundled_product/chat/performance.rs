@@ -110,3 +110,260 @@ fn default_product_input_continues_while_the_original_stdout_owner_is_blocked() 
     assert!(!tui.screen.snapshot().unwrap().alternate_screen);
     drop(RootOwner::open(&host, &namespaces).unwrap());
 }
+
+fn large_history_fixture(model_base: Option<&str>) -> (tempfile::TempDir, std::path::PathBuf) {
+    use maka_agent_facts::import::{Content, Record, Source};
+    use maka_event_log::{EventLog, sessions::PluginSession};
+    let directory = tempfile::tempdir().unwrap();
+    let workspace = directory.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let ui = directory.path().join("ui");
+    let host = ui.join("host");
+    let namespaces = RootNamespaces::for_current_account().unwrap();
+    drop(RootOwner::create(&ui, &namespaces).unwrap());
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    if let Some(base) = model_base {
+        runtime.block_on(seed_connection(&host, &namespaces, base, json!({})));
+    }
+    let args = [
+        "application",
+        "launch",
+        "--root",
+        ui.to_str().unwrap(),
+        "--workspace",
+        workspace.to_str().unwrap(),
+        "--trust-workspace",
+        "--locale",
+        "en",
+    ];
+    let mut bootstrap = Pty::spawn(&args);
+    bootstrap.wait_until_with_timeout(|s| s.contains("Settings"), Duration::from_secs(60));
+    bootstrap.send(b"\x11");
+    // Wait for the original Host shutdown as well as terminal restoration.
+    let closing = Instant::now();
+    while bootstrap.child.try_wait().unwrap().is_none() {
+        bootstrap.read();
+        assert!(
+            closing.elapsed() < Duration::from_secs(15),
+            "bootstrap did not exit"
+        );
+    }
+    bootstrap.finish();
+    runtime.block_on(async {
+        let identity = maka_fs_tools::workspace::ensure_identity(&workspace).await.unwrap();
+        let published = maka_fs_tools::workspace::directory::PublishedDirectory::open(&workspace).unwrap();
+        let owner = Arc::new(RootOwner::open(&host, &namespaces).unwrap());
+        let log = EventLog::for_root(owner).await.unwrap();
+        use sqlx::Connection;
+        let mut db = sqlx::SqliteConnection::connect_with(&sqlx::sqlite::SqliteConnectOptions::new().filename(host.join(maka_event_log::root::ROOT_DATABASE)).read_only(true)).await.unwrap();
+        let deployments: Vec<String> = sqlx::query_scalar("SELECT id FROM application_deployments").fetch_all(&mut db).await.unwrap();
+        db.close().await.unwrap();
+        let mut prefix = None;
+        for deployment in deployments {
+            let deployment = Uuid::parse_str(&deployment).unwrap();
+            let source = log.read_application_metadata(deployment).await.unwrap().unwrap();
+            if let Some(agent) = source.source.input.instances.get("agent") {
+                let head = log.application_head(deployment).await.unwrap().unwrap();
+                prefix = Some(maka_host_runtime::storage::instance_prefix(&head.state_domain, deployment, &maka_plugin_core::composition::InstanceId(vec![agent.key])));
+            }
+        }
+        let session = format!("{}{}", prefix.expect("default Agent namespace"), Uuid::new_v4().simple());
+        let mut records = Vec::new();
+        for message in 0..32 {
+            for (suffix, content) in [
+                ("user", Content::User { text: format!("Question {message:02}") }),
+                ("assistant", Content::Assistant {
+                    text: (0..30).map(|row| format!("Scroll row {message:02}-{row:02}: a paragraph with **bold** and `code` in a long conversation.\n\n")).collect(),
+                    model: None, thinking: None,
+                }),
+            ] {
+                records.push(Record {
+                    source_message_id: format!("{message}-{suffix}"),
+                    source_turn_id: format!("turn-{message}"),
+                    timestamp: Some(1), content,
+                });
+            }
+        }
+        log.import_session(
+            &PluginSession {
+                session_id: session,
+                creator: maka_capabilities::storage::Namespace::new(maka_agent_api::IMPLEMENTATION, maka_plugin_core::scope::Scope::Profile).unwrap(),
+                fingerprint: "scroll-fixture".into(), managed: false, authority_session_id: None,
+            },
+            &Source { adapter: "fixture".into(), session_id: "scroll-source".into() },
+            &json!({"title":"Scroll fixture","titleIsManual":true,"labels":[],
+                "workspace":{"path":published.path(),"directoryIdentity":published.identity().unwrap(),"identity":identity},
+                "permissions":{"access":"workspace_write","requestPermissions":true},"boundary_revision":0}),
+            records, 1,
+        ).await.unwrap();
+        log.close().await.unwrap();
+    });
+    (directory, ui)
+}
+
+#[test]
+#[ignore = "manual default product history scroll profiling in a real PTY"]
+fn default_product_scrolls_large_imported_history() {
+    let (_directory, ui) = large_history_fixture(None);
+    let mut tui = Pty::spawn(&["application", "launch", "--root", ui.to_str().unwrap()]);
+    eprintln!("scroll fixture PID {}", tui.child.id());
+    tui.wait_until_with_timeout(|s| s.contains("Scroll fixture"), Duration::from_secs(60));
+    click(&mut tui, "Scroll fixture");
+    tui.wait_until_with_timeout(|s| s.contains("Scroll row 31-29"), Duration::from_secs(60));
+    let ready = Instant::now();
+    while ready.elapsed() < Duration::from_millis(500) {
+        tui.read();
+    }
+    let first_row = |screen: &str| {
+        screen.lines().enumerate().find_map(|(index, line)| {
+            let at = line.find("Scroll row ")?;
+            Some((index, line[at..at + 16].to_owned()))
+        })
+    };
+    let rounds = std::env::var("MAKA_SCROLL_PROFILE_ROUNDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20);
+    // Start away from the tail: showing/hiding the "Scroll to end" control
+    // changes viewport height and is not an extra wheel movement.
+    for _ in 0..20 {
+        let before = first_row(&tui.screen.snapshot().unwrap().screen).unwrap();
+        tui.send(b"\x1b[<64;70;10M");
+        tui.wait_until(|screen| first_row(screen).is_some_and(|row| row != before));
+    }
+    let ready = Instant::now();
+    while ready.elapsed() < Duration::from_millis(500) {
+        tui.read();
+    }
+    let baseline = first_row(&tui.screen.snapshot().unwrap().screen).unwrap();
+    eprintln!("scroll baseline: {baseline:?}");
+    for _ in 0..rounds {
+        let before = first_row(&tui.screen.snapshot().unwrap().screen).unwrap();
+        let started = Instant::now();
+        tui.send(b"\x1b[<64;70;10M");
+        tui.wait_until(|screen| first_row(screen).is_some_and(|row| row != before));
+        eprintln!("history wheel to visible row: {:?}", started.elapsed());
+    }
+    let ready = Instant::now();
+    while ready.elapsed() < Duration::from_millis(500) {
+        tui.read();
+    }
+    let scrolled = first_row(&tui.screen.snapshot().unwrap().screen).unwrap();
+    eprintln!("scroll target: {scrolled:?}");
+    for (event, expected) in [
+        (b"\x1b[<65;70;10M", baseline),
+        (b"\x1b[<64;70;10M", scrolled),
+    ] {
+        // Keep consuming output while input arrives independently at 100 Hz,
+        // so the fixture itself cannot cause PTY output backpressure.
+        let mut input = tui.master.as_ref().unwrap().try_clone().unwrap();
+        let last_input = std::thread::scope(|scope| {
+            let sender = scope.spawn(move || {
+                use std::io::Write;
+                let mut last = Instant::now();
+                for _ in 0..rounds {
+                    std::thread::sleep(Duration::from_millis(10));
+                    input.write_all(event).unwrap();
+                    last = Instant::now();
+                }
+                last
+            });
+            tui.wait_until(|screen| first_row(screen).as_ref() == Some(&expected));
+            sender.join().unwrap()
+        });
+        let latency = last_input.elapsed();
+        eprintln!("history 100 Hz wheel burst stop to final row: {latency:?}");
+        assert!(
+            latency < Duration::from_millis(150),
+            "wheel backlog after stopping: {latency:?}"
+        );
+        let settled = Instant::now();
+        while settled.elapsed() < Duration::from_millis(250) {
+            tui.read();
+            if tui.frames.ready() {
+                assert_eq!(
+                    first_row(&tui.screen.snapshot().unwrap().screen).as_ref(),
+                    Some(&expected)
+                );
+            }
+        }
+        assert_eq!(
+            first_row(&tui.screen.snapshot().unwrap().screen).as_ref(),
+            Some(&expected)
+        );
+    }
+    evidence(&tui, "scroll-profile");
+    tui.send(b"\x11");
+    tui.finish();
+}
+
+#[test]
+#[ignore = "real default product sends over large imported history"]
+fn default_product_sends_over_large_imported_history() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let (requests, received) = mpsc::channel();
+    let server = model_server(listener, requests, 2, 0);
+    let (_directory, ui) = large_history_fixture(Some(&base));
+    let mut tui = Pty::spawn(&["application", "launch", "--root", ui.to_str().unwrap()]);
+    eprintln!("send fixture PID {}", tui.child.id());
+    tui.wait_until_with_timeout(|s| s.contains("Scroll fixture"), Duration::from_secs(60));
+    click(&mut tui, "Scroll fixture");
+    tui.wait_until_with_timeout(
+        |s| {
+            s.contains("Scroll row 31-29")
+                && s.contains("Message…")
+                && s.contains("fixture-model")
+                && !s.contains("Restoring draft…")
+        },
+        Duration::from_secs(60),
+    );
+    for turn in 0..2 {
+        let prompt = format!("Persistent history send {turn}");
+        click(&mut tui, "Message…");
+        paste(&mut tui, &prompt);
+        tui.wait_for(&prompt);
+        let started = Instant::now();
+        tui.send(b"\r");
+        let (sent, mut socket) = next_request(&mut tui, &received);
+        assert!(sent.to_string().contains(&prompt));
+        eprintln!(
+            "large history Enter to model request: {:?}",
+            started.elapsed()
+        );
+        let transcript = format!("❯ {prompt}");
+        tui.wait_for(&transcript);
+        eprintln!(
+            "large history Enter to visible message: {:?}",
+            started.elapsed()
+        );
+        let observed = Instant::now();
+        while observed.elapsed() < Duration::from_secs(6) {
+            tui.read();
+            if tui.frames.ready() {
+                assert!(
+                    tui.screen.snapshot().unwrap().screen.contains(&transcript),
+                    "submitted message disappeared"
+                );
+            }
+            assert!(
+                tui.child.try_wait().unwrap().is_none(),
+                "UI exited while awaiting model response"
+            );
+        }
+        let reply = format!("Completed history send {turn}");
+        delta(&mut socket, &reply);
+        complete(&mut socket);
+        tui.wait_until(|s| {
+            s.contains(&reply)
+                && s.contains("Message…")
+                && s.contains("Send")
+                && !s.contains("Queue for next turn")
+        });
+        assert!(tui.screen.snapshot().unwrap().screen.contains(&transcript));
+    }
+    evidence(&tui, "large-history-send");
+    tui.send(b"\x11");
+    tui.finish();
+    server.join().unwrap();
+}

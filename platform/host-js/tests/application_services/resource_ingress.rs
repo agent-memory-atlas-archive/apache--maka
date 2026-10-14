@@ -170,25 +170,13 @@ fn observation(value: Value) -> Value {
 }
 
 #[tokio::test]
-async fn zero_byte_receptions_use_original_slots_and_transfer_without_double_charging() {
+async fn many_empty_resource_receptions_keep_scope_ownership_through_execution() {
     tokio::time::timeout(Duration::from_secs(15), async {
         let f = Fixture::new(MethodMode::Query).await;
         let mut pending = Vec::new();
-        for _ in 0..128 {
+        for _ in 0..320 {
             pending.push(f.capture(0, json!(null), ResourceEncoding::Bytes));
         }
-        let denied = scope(&f.issuer, true);
-        assert!(
-            f.client
-                .capture_resources(
-                    denied.clone(),
-                    descriptors(0, json!(null), ResourceEncoding::Bytes)
-                )
-                .err()
-                .unwrap()
-                .contains("call capacity")
-        );
-        denied.finish().await.unwrap();
         let (scope, capture) = pending.pop().unwrap();
         let accepted = f
             .client
@@ -202,15 +190,8 @@ async fn zero_byte_receptions_use_original_slots_and_transfer_without_double_cha
             .await
             .unwrap();
         permit(&f.started).await;
-        let extra = super::scope(&f.issuer, true);
-        assert!(
-            f.client
-                .capture_resources(
-                    extra.clone(),
-                    descriptors(0, json!(null), ResourceEncoding::Bytes)
-                )
-                .is_err()
-        );
+        let (extra, capture) = f.capture(0, json!(null), ResourceEncoding::Bytes);
+        drop(capture);
         extra.finish().await.unwrap();
         drop(accepted);
         f.release.add_permits(1);
