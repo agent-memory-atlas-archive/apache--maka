@@ -804,11 +804,11 @@ impl Launcher {
             });
             return Err(error.into());
         }
-        let source = connections.source().clone();
+        let loaded = connections.take_initial().expect("initial UI snapshot");
         let registrations = connections.registrations();
-        let started = timer.block_on(Application::start_from_store(
+        let started = timer.block_on(Application::start_loaded(
             store.clone(),
-            source,
+            loaded,
             PresentationTarget::Desktop,
             timer.handle().clone(),
             maka_ui_js::execution(maka_js_limits()),

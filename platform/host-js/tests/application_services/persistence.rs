@@ -170,8 +170,9 @@ async fn stored_source_and_lease_survive_abandoned_query_resources_and_native_cl
         };
         let store = EventLog::for_root(Arc::new(reopened)).await.unwrap();
         let loaded = store.load_application(deployment).await.unwrap().unwrap();
-        assert_eq!(loaded.source.reference.state_domain, source.state_domain);
-        assert_eq!(loaded.source.reference.revision, 2);
+        let (loaded_source, _, _, _) = loaded.into_parts();
+        assert_eq!(loaded_source.reference.state_domain, source.state_domain);
+        assert_eq!(loaded_source.reference.revision, 2);
         store.close().await.unwrap();
     })
     .await

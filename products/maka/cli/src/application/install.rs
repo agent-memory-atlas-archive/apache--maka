@@ -61,11 +61,12 @@ impl InstallUrl {
                     launch.deployment
                 }
             };
-            let mut current = store
+            let current = store
                 .load_application(deployment)
                 .await?
                 .ok_or("deployment not found")?;
-            let revision = current.source.reference.revision;
+            let (source, mut packages, _, _) = current.into_parts();
+            let revision = source.reference.revision;
             if self
                 .expected_revision
                 .is_some_and(|expected| expected != revision)
@@ -81,20 +82,19 @@ impl InstallUrl {
             let package =
                 tokio::task::spawn_blocking(move || Package::from_bundle(&bytes)).await??;
             let reference = package.application_ref();
-            if !current
-                .packages
+            if !packages
                 .iter()
                 .any(|old| old.application_ref() == reference)
             {
-                current.packages.push(package);
+                packages.push(package);
             }
             let source = store
                 .commit_application(
                     deployment,
                     revision,
-                    current.source.input,
-                    current.source.remote_exports,
-                    current.packages,
+                    source.input,
+                    source.remote_exports,
+                    packages,
                 )
                 .await?;
             Ok::<_, HostError>(PackageInstalled {

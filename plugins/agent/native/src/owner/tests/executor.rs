@@ -507,8 +507,9 @@ async fn executor_service_selects_the_exact_authorized_import_member() {
             .await
             .unwrap()
             .unwrap();
-        let mut input = loaded.source.input;
-        let mut packages = loaded.packages;
+        let (loaded_source, loaded_packages, _, _) = loaded.into_parts();
+        let mut input = loaded_source.input;
+        let mut packages = loaded_packages;
         let mut manifest = packages
             .iter()
             .find(|p| p.manifest().id == "agent")
@@ -548,8 +549,8 @@ async fn executor_service_selects_the_exact_authorized_import_member() {
         let source = f
             .store
             .commit_application(
-                loaded.source.reference.deployment,
-                loaded.source.reference.revision,
+                loaded_source.reference.deployment,
+                loaded_source.reference.revision,
                 input,
                 vec![],
                 packages,

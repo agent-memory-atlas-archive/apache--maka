@@ -528,3 +528,27 @@ async fn metadata_snapshot_never_materializes_package_payloads() {
     );
     store.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn checked_deployment_cannot_cross_root_owners() {
+    let (_first_dir, first) = store().await;
+    let (_other_dir, other) = store().await;
+    let id = Uuid::new_v4();
+    first
+        .commit_application(id, 0, input(), vec![], vec![])
+        .await
+        .unwrap();
+    let loaded = first.load_application(id).await.unwrap().unwrap();
+    loaded.check_store(&first).unwrap();
+    assert!(loaded.check_store(&other).is_err());
+    first.drain().await;
+    drop(first);
+    assert!(
+        loaded
+            .check_store(&other)
+            .unwrap_err()
+            .to_string()
+            .contains("original source Root has closed")
+    );
+    other.drain().await;
+}

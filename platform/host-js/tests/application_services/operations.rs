@@ -619,7 +619,7 @@ async fn original_receipt_survives_restart_and_new_composition_without_provider(
                 .await
                 .unwrap()
                 .unwrap()
-                .source
+                .source()
                 .reference,
             reference.source
         );
@@ -666,14 +666,9 @@ async fn original_receipt_survives_restart_and_new_composition_without_provider(
             .await
             .unwrap()
             .unwrap();
+        let (source, packages, _, _) = current.into_parts();
         other_store
-            .commit_application(
-                deployment,
-                0,
-                current.source.input,
-                vec![],
-                current.packages,
-            )
+            .commit_application(deployment, 0, source.input, vec![], packages)
             .await
             .unwrap();
         let other_app = Application::start_from_store(
@@ -1854,7 +1849,7 @@ async fn separate_caller_root_stays_owned_through_effect_cleanup_and_keeps_origi
             } else {
                 let owner=Arc::new(RootOwner::open(&caller_dir.path().join("root"),&caller_ns).unwrap());
                 let caller=Arc::new(EventLog::for_root(owner).await.unwrap());
-                assert_eq!(caller.load_application(caller_deployment).await.unwrap().unwrap().source.reference,next);
+                assert_eq!(caller.load_application(caller_deployment).await.unwrap().unwrap().source().reference,next);
                 let saved=caller.application_intents(caller_deployment,id(41),0,128).await.unwrap();
                 assert_eq!(saved.len(),1);assert_eq!(saved[0].caller,caller_source);assert_eq!(saved[0].reference,reference);
                 assert!(caller.operation_observation(&reference).await.is_err(),"the current caller Root cannot substitute a not-recorded business receipt");

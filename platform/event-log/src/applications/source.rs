@@ -67,6 +67,15 @@ impl SourceSnapshot {
         self.0.location
     }
     pub(super) fn check(&self, store: &EventLog, consumer: &InstanceId) -> Result<(), StoreError> {
+        self.check_root(store)?;
+        if !self.0.executable.contains(consumer) {
+            return Err(invalid(
+                "caller must belong to an executable original source instance",
+            ));
+        }
+        Ok(())
+    }
+    pub(super) fn check_root(&self, store: &EventLog) -> Result<(), StoreError> {
         store.validate_root()?;
         let root = self
             .0
@@ -79,11 +88,6 @@ impl SourceSnapshot {
             .is_none_or(|actual| !Arc::ptr_eq(actual, &root))
         {
             return Err(invalid("foreign original source Root"));
-        }
-        if !self.0.executable.contains(consumer) {
-            return Err(invalid(
-                "caller must belong to an executable original source instance",
-            ));
         }
         Ok(())
     }

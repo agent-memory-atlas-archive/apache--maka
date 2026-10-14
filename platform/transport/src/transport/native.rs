@@ -361,14 +361,17 @@ impl Session {
             return Err(reason);
         }
         state.opening = false;
-        observe_two(
-            state.call.as_mut().unwrap().start_unless(|| {
+        // Once framing starts, finish this original handshake before appending
+        // cancellation. Dropping it between Open and Ready poisons the channel
+        // and loses the only path to its real cleanup acknowledgement.
+        state
+            .call
+            .as_mut()
+            .unwrap()
+            .start_unless(|| {
                 self.stop.is_cancelled() || stop.is_cancelled() || self.approval.live().is_err()
-            }),
-            &self.stop,
-            stop,
-        )
-        .await
+            })
+            .await
     }
     async fn finish(&self, state: &mut State) -> Settlement {
         if let Some(reason) = &state.physical_failure {

@@ -242,12 +242,13 @@ fn url_install_commits_validated_bytes_without_changing_the_composition() {
             .await
             .unwrap();
         let loaded = store.load_application(deployment).await.unwrap().unwrap();
+        let (loaded_source, loaded_packages, _, _) = loaded.into_parts();
         assert_eq!(
-            serde_json::to_value(loaded.source.input).unwrap(),
+            serde_json::to_value(loaded_source.input).unwrap(),
             serde_json::to_value(input).unwrap()
         );
         assert_eq!(
-            loaded.packages[0].application_ref(),
+            loaded_packages[0].application_ref(),
             package.application_ref()
         );
         store.shutdown().await.unwrap();

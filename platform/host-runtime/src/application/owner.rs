@@ -64,7 +64,7 @@ struct Owned {
 }
 enum Done {
     Loaded {
-        loaded: Result<maka_event_log::applications::LoadedDeployment>,
+        loaded: Result<Box<maka_event_log::applications::LoadedDeployment>>,
         reply: Option<oneshot::Sender<Result<()>>>,
     },
     IntentRecorded {
@@ -335,7 +335,8 @@ impl Owner {
                 .load_application_at(&source)
                 .await
                 .map_err(|e| e.to_string())
-                .and_then(|loaded| loaded.ok_or("committed deployment not found".into()));
+                .and_then(|loaded| loaded.ok_or("committed deployment not found".into()))
+                .map(Box::new);
             Done::Loaded { loaded, reply }
         }));
     }
@@ -347,18 +348,19 @@ impl Owner {
             .persisted
             .as_ref()
             .ok_or("persisted deployment required")?;
-        let source = loaded.source.reference;
+        let (deployment, packages, plan, _) = loaded.into_parts();
+        let source = deployment.reference;
         if source.revision < current.revision {
             return Err("stale deployment source".into());
         }
         if source == *current {
             return Ok(());
         }
-        if !loaded.source.remote_exports.is_empty() {
+        if !deployment.remote_exports.is_empty() {
             return Err("remote Host executor is unavailable".into());
         }
-        let input = loaded.source.input;
-        let (plan, sources) = prepare(&input, loaded.packages, &self.native, true)?;
+        let input = deployment.input;
+        let (plan, sources) = prepare_plan(&input, packages, &self.native, true, plan)?;
         let instances = plan
             .instances()
             .values()
@@ -1474,7 +1476,7 @@ impl Owner {
         match done {
             Done::Loaded { loaded, reply } => {
                 self.loading_adoption = None;
-                let result = loaded.and_then(|loaded| self.adopt(loaded));
+                let result = loaded.and_then(|loaded| self.adopt(*loaded));
                 if let Err(error) = &result {
                     self.startup_error = Some(error.clone());
                 }

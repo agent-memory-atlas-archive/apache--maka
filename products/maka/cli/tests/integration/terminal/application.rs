@@ -314,6 +314,11 @@ fn check_terminal_connections(unrelated_failure: bool) {
     let args = local_arguments(directory.path(), unrelated_failure);
     let args = args.iter().map(String::as_str).collect::<Vec<_>>();
     let mut tui = Pty::spawn(&args);
+    if unrelated_failure {
+        tui.wait_for("unrelated initializer rejected");
+        tui.wait_for("open recovery interface");
+        tui.send(b"\r");
+    }
     tui.wait_for("Read Host");
     tui.send(b"\r");
     tui.wait_for("\"effects\":0");

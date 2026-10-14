@@ -106,14 +106,12 @@ fn split_contracts(files: &mut BTreeMap<String, PathBuf>) {
         if let Some(name) = line
             .strip_prefix("  ")
             .and_then(|line| line.strip_suffix(": {\n"))
+            && !name.is_empty()
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
         {
-            if !name.is_empty()
-                && name
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-            {
-                members.push((name.to_owned(), offset));
-            }
+            members.push((name.to_owned(), offset));
         }
         offset += line.len();
     }

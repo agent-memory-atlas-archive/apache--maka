@@ -32,7 +32,6 @@ use maka_event_log::{EventLog, root::RootNamespaces};
 use maka_plugin_core::{
     composition::{ExecutionLocation, InstanceId, PresentationTarget},
     deployment::{DeploymentRef, RemoteObservation},
-    package::Packages,
     plan::{Plan, Provider, RemoteCapability, RemoteExports},
 };
 use maka_ui_runtime::actions::RemoteService;
@@ -188,6 +187,7 @@ enum Phase {
 pub struct Connections {
     target: PresentationTarget,
     source: DeploymentRef,
+    initial: Option<maka_event_log::applications::LoadedDeployment>,
     observations: Vec<RemoteObservation>,
     store: Option<Arc<EventLog>>,
     cohost_native: maka_host_runtime::application::NativeRegistry,
@@ -220,33 +220,12 @@ impl Connections {
             .await
             .map_err(|e| e.to_string())?
             .ok_or("UI deployment not found")?;
-        if loaded.source.input.environment.location != ExecutionLocation::Ui
-            || loaded.source.input.environment.presentation != Some(target)
+        if loaded.source().input.environment.location != ExecutionLocation::Ui
+            || loaded.source().input.environment.presentation != Some(target)
         {
             return Err("stored presentation target mismatch".into());
         }
-        let mut packages = Packages::default();
-        for package in &loaded.packages {
-            packages
-                .insert(
-                    package.application_ref(),
-                    package
-                        .manifest()
-                        .application
-                        .as_ref()
-                        .ok_or("package has no application declaration")?
-                        .clone(),
-                )
-                .map_err(|e| e.to_string())?;
-        }
-        let remote: RemoteExports = loaded
-            .source
-            .remote_exports
-            .iter()
-            .map(|o| (o.capability.clone(), o.declaration.clone()))
-            .collect();
-        let plan =
-            Plan::prepare(&loaded.source.input, &packages, &remote).map_err(|e| e.to_string())?;
+        let plan = loaded.plan();
         if plan
             .instances()
             .values()
@@ -262,7 +241,7 @@ impl Connections {
         let mut prepared = Vec::new();
         let mut cohosts = BTreeSet::new();
         for mut host in configuration.hosts {
-            let consumers = consumers(&plan, &host.name);
+            let consumers = consumers(plan, &host.name);
             match &mut host.location {
                 HostLocation::Process { root, .. } => {
                     *root = std::path::absolute(&*root).map_err(|e| e.to_string())?
@@ -283,7 +262,7 @@ impl Connections {
             let management =
                 maka_host_runtime::application::management::ManagementTarget::from_source(
                     store.clone(),
-                    loaded.source.reference.clone(),
+                    loaded.source().reference.clone(),
                 )
                 .await?;
             maka_host_runtime::application::management::provide_target(
@@ -297,8 +276,9 @@ impl Connections {
             cohost_native,
             cohost_scripts,
             target,
-            source: loaded.source.reference,
-            observations: loaded.source.remote_exports,
+            source: loaded.source().reference.clone(),
+            observations: loaded.source().remote_exports.clone(),
+            initial: Some(loaded),
             namespaces,
             executable,
             prepared,
@@ -509,6 +489,10 @@ impl Connections {
         owned.ready = true;
         Ok(catalogue)
     }
+    /// Transfer the original checked bytes to the foreground owner.
+    pub fn take_initial(&mut self) -> Option<maka_event_log::applications::LoadedDeployment> {
+        self.initial.take()
+    }
     pub fn source(&self) -> &DeploymentRef {
         &self.source
     }
@@ -555,34 +539,14 @@ impl Connections {
             .await
             .map_err(|e| e.to_string())?
             .ok_or("committed UI source not found")?;
-        if loaded.source.input.environment.location != ExecutionLocation::Ui
-            || loaded.source.input.environment.presentation != Some(self.target)
+        if loaded.source().input.environment.location != ExecutionLocation::Ui
+            || loaded.source().input.environment.presentation != Some(self.target)
         {
             return Err("stored presentation target mismatch".into());
         }
-        let mut packages = Packages::default();
-        for package in &loaded.packages {
-            packages
-                .insert(
-                    package.application_ref(),
-                    package
-                        .manifest()
-                        .application
-                        .as_ref()
-                        .ok_or("package has no application declaration")?
-                        .clone(),
-                )
-                .map_err(|e| e.to_string())?;
-        }
-        let remote: RemoteExports = loaded
-            .source
-            .remote_exports
-            .iter()
-            .map(|o| (o.capability.clone(), o.declaration.clone()))
-            .collect();
-        let plan =
-            Plan::prepare(&loaded.source.input, &packages, &remote).map_err(|e| e.to_string())?;
-        self.approve_plan(source, self.target, plan, retain).await
+        let plan = loaded.plan();
+        self.approve_plan(source, self.target, plan.clone(), retain)
+            .await
     }
 
     /// The foreground's preflighted source supplies the projection. Trusted

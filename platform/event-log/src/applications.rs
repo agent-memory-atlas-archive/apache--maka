@@ -49,11 +49,28 @@ const MAX_JSON: usize = MAX_DOCUMENT_BYTES;
 
 /// One read transaction captures the source and every immutable byte it selects.
 pub struct LoadedDeployment {
-    pub source: Deployment,
-    pub packages: Vec<Package>,
+    source: Deployment,
+    packages: Vec<Package>,
+    plan: Plan,
     snapshot: SourceSnapshot,
 }
 impl LoadedDeployment {
+    pub fn source(&self) -> &Deployment {
+        &self.source
+    }
+    pub fn packages(&self) -> &[Package] {
+        &self.packages
+    }
+    pub fn plan(&self) -> &Plan {
+        &self.plan
+    }
+    /// Consume the immutable checked snapshot. Edited parts require a new plan.
+    pub fn into_parts(self) -> (Deployment, Vec<Package>, Plan, SourceSnapshot) {
+        (self.source, self.packages, self.plan, self.snapshot)
+    }
+    pub fn check_store(&self, store: &EventLog) -> Result<(), StoreError> {
+        self.snapshot.check_root(store)
+    }
     pub fn snapshot(&self) -> SourceSnapshot {
         self.snapshot.clone()
     }
@@ -324,6 +341,7 @@ impl EventLog {
                         snapshot,
                         source: metadata.source,
                         packages,
+                        plan,
                     }))
                 })
             })

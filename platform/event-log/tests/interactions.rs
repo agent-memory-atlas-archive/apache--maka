@@ -515,6 +515,7 @@ async fn pending_session_pages_use_canonical_outcomes_and_isolate_continuation_s
                 cursor.into(),
                 maka_event_log::sessions::CatalogFilter {
                     include_archived,
+                    archived_only: false,
                     pending_only: true
                 }
             )

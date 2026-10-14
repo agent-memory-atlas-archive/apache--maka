@@ -63,7 +63,7 @@ impl Manager {
         let _read = self.writes.lock().await;
         let loaded = self.source_at(Some(request.source)).await?;
         let package = loaded
-            .packages
+            .packages()
             .iter()
             .find(|p| p.application_ref() == request.package)
             .ok_or("package is not installed in this UI source")?;

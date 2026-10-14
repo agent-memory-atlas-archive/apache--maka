@@ -18,7 +18,7 @@
  */
 
 //! Default upgrades and explicit three-way synchronization of customized products.
-use super::{HostError, Product, Sources, author, launch, packages};
+use super::{HostError, Product, Sources, launch, packages};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use clap::Args;
 use maka_event_log::EventLog;
@@ -33,6 +33,9 @@ use std::{
 #[serde(deny_unknown_fields)]
 pub(super) struct Baseline {
     pub(super) product: Product,
+    /// Exact authoring code and package bytes last compared to this baseline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) version: Option<String>,
     pub(super) installation: Value,
     /// Standard launcher inputs regenerate defaults; explicit configurations stay explicit.
     pub(super) default_options: Option<Value>,
@@ -91,28 +94,29 @@ async fn synchronize(store: &EventLog, custom: bool, apply: bool) -> Result<Outc
     if record.pending.is_some() {
         return Err("finish the prepared product operation before checking for updates".into());
     }
-    let baseline: Baseline = serde_json::from_value(store.application_product().await?
-        .ok_or("product storage predates automatic updates; remove this development root and initialize it again")?)?;
+    let original = store.application_product().await?
+        .ok_or("product storage predates automatic updates; remove this development root and initialize it again")?;
+    let mut baseline: Baseline = serde_json::from_value(original.clone())?;
+    let version = tokio::task::spawn_blocking(super::bundle_fingerprint).await??;
+    if !custom && baseline.version.as_ref() == Some(&version) {
+        return Ok(Outcome::default());
+    }
     let connections = serde_json::from_value(record.configuration.clone())?;
     let (path, domain, host_id, management) = launch::targets(&connections)?;
     let host = launch::open(path, false, Some(domain.clone())).await?;
     let result = async {
         let mut revisions = BTreeMap::new();
         let mut current = Vec::new();
-        let mut available = BTreeMap::new();
         for (target, deployment) in [
             (&host, host_id),
             (store, management),
             (store, record.deployment),
         ] {
             let head = target
-                .load_application(deployment)
+                .read_application_metadata(deployment)
                 .await?
                 .ok_or("product source missing")?;
             revisions.insert(deployment, head.source.reference.revision);
-            for package in &head.packages {
-                available.insert(package.application_ref(), package.clone());
-            }
             current.push(head);
         }
         let local = Sources {
@@ -131,10 +135,21 @@ async fn synchronize(store: &EventLog, custom: bool, apply: bool) -> Result<Outc
         if outcome.customized && !custom {
             return Ok(outcome);
         }
+        if baseline.version.as_ref() == Some(&version) {
+            return Ok(outcome);
+        }
         let packages = tokio::task::spawn_blocking(packages).await??;
+        let authoring = super::authoring()?;
+        let version = super::fingerprint(
+            &authoring,
+            packages
+                .iter()
+                .map(|(name, package)| (name.clone(), package.digest().to_owned())),
+        );
         let configuration = match &baseline.default_options {
             Some(options) => {
-                let mut configuration = super::installation(options.clone()).await?;
+                let mut configuration =
+                    super::installation_with_source(options.clone(), &authoring).await?;
                 // Product identities survive changes to the default feature set.
                 // The author allocates identities only for newly introduced instances.
                 for key in ["keys", "hostDeployment", "managementDeployment"] {
@@ -142,9 +157,11 @@ async fn synchronize(store: &EventLog, custom: bool, apply: bool) -> Result<Outc
                 }
                 configuration
             }
-            None => baseline.installation,
+            None => baseline.installation.clone(),
         };
-        let (mut next, installation) = author(baseline.product, configuration, &packages).await?;
+        let (mut next, installation) =
+            super::author_with_source(baseline.product, configuration, &packages, &authoring)
+                .await?;
         for endpoint in next.connections["hosts"]
             .as_array_mut()
             .ok_or("product connections missing")?
@@ -155,6 +172,12 @@ async fn synchronize(store: &EventLog, custom: bool, apply: bool) -> Result<Outc
         }
         let next_value = serde_json::to_value(&next)?;
         if next_value == base {
+            if apply {
+                baseline.version = Some(version);
+                store
+                    .compare_and_set_application_product(original, serde_json::to_value(&baseline)?)
+                    .await?;
+            }
             return Ok(outcome);
         }
         outcome.changed = true;
@@ -175,6 +198,22 @@ async fn synchronize(store: &EventLog, custom: bool, apply: bool) -> Result<Outc
             != launch::targets(&connections)?
         {
             return Err("default update changed installation identity".into());
+        }
+        // Unchanged defaults only need source metadata. Read and validate old
+        // package bytes when an actual merge needs to retain user-selected code.
+        let mut available = BTreeMap::new();
+        for (target, head) in [
+            (&host, &current[0]),
+            (store, &current[1]),
+            (store, &current[2]),
+        ] {
+            let loaded = target
+                .load_application_at(&head.source.reference)
+                .await?
+                .ok_or("product source missing")?;
+            for package in loaded.into_parts().1 {
+                available.insert(package.application_ref(), package);
+            }
         }
         for package in packages.values() {
             available.insert(package.application_ref(), package.clone());
@@ -200,6 +239,7 @@ async fn synchronize(store: &EventLog, custom: bool, apply: bool) -> Result<Outc
             let preparation = launch::Preparation {
                 product: Some(Baseline {
                     product: baseline.product,
+                    version: Some(version),
                     installation,
                     default_options: baseline.default_options,
                     sources: next,

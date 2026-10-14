@@ -486,22 +486,23 @@ async fn publication_results_survive_host_process_loss_without_replaying_or_weak
             std::fs::remove_dir_all(&installed).unwrap();
         }
         // Recovery must survive removal of the business provider and caller.
-        let mut loaded = fixture
+        let loaded = fixture
             .store
             .load_application(DEPLOYMENT)
             .await
             .unwrap()
             .unwrap();
-        loaded.source.input.instances.remove("skills");
-        loaded.source.input.instances.remove("caller");
+        let (mut loaded_source, loaded_packages, _, _) = loaded.into_parts();
+        loaded_source.input.instances.remove("skills");
+        loaded_source.input.instances.remove("caller");
         let next = fixture
             .store
             .commit_application(
                 DEPLOYMENT,
-                loaded.source.reference.revision,
-                loaded.source.input,
+                loaded_source.reference.revision,
+                loaded_source.input,
                 vec![],
-                loaded.packages,
+                loaded_packages,
             )
             .await
             .unwrap();
@@ -669,14 +670,14 @@ async fn preference_mutations_require_independent_authority_and_keep_instance_st
         matches!(denied.receipt, Receipt::Recorded { outcome: OperationOutcome::Returned { ref value }, cleanup: OperationCleanup::Confirmed } if value["kind"] == "rejected" && value["reason"] == "read_only_preferences")
     );
     async fn configure(fixture: &Fixture, enabled: bool) {
-        let mut loaded = fixture
+        let loaded = fixture
             .store
             .load_application(DEPLOYMENT)
             .await
             .unwrap()
             .unwrap();
-        loaded
-            .source
+        let (mut loaded_source, loaded_packages, _, _) = loaded.into_parts();
+        loaded_source
             .input
             .instances
             .get_mut("skills")
@@ -688,10 +689,10 @@ async fn preference_mutations_require_independent_authority_and_keep_instance_st
             .store
             .commit_application(
                 DEPLOYMENT,
-                loaded.source.reference.revision,
-                loaded.source.input,
+                loaded_source.reference.revision,
+                loaded_source.input,
                 vec![],
-                loaded.packages,
+                loaded_packages,
             )
             .await
             .unwrap();
@@ -853,17 +854,18 @@ async fn imported_source_operations_recover_through_the_original_host_after_libr
         .await
         .unwrap()
         .unwrap();
-    let mut input = loaded.source.input;
+    let (loaded_source, loaded_packages, _, _) = loaded.into_parts();
+    let mut input = loaded_source.input;
     input.instances.remove("skills");
     input.instances.remove("caller");
     fixture
         .store
         .commit_application(
             DEPLOYMENT,
-            loaded.source.reference.revision,
+            loaded_source.reference.revision,
             input,
             vec![],
-            loaded.packages,
+            loaded_packages,
         )
         .await
         .unwrap();

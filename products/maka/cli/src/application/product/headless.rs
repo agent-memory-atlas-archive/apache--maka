@@ -192,31 +192,22 @@ async fn apply_directories(
         return Ok(());
     }
     // Read payloads only for an actual configuration change, never on ordinary reopen.
-    let mut loaded = store
+    let loaded = store
         .load_application_at(&metadata.source.reference)
         .await?
         .ok_or("public Host source missing")?;
-    let input = &mut loaded.source.input;
-    configuration_values(
-        input,
-        &loaded.packages,
-        "agent",
-        maka_agent_api::IMPLEMENTATION,
-    )?
-    .insert("workspaceRoots".into(), roots.clone());
+    let (mut source, packages, _, _) = loaded.into_parts();
+    let input = &mut source.input;
+    configuration_values(input, &packages, "agent", maka_agent_api::IMPLEMENTATION)?
+        .insert("workspaceRoots".into(), roots.clone());
     if input.instances.contains_key("skills") {
-        configuration_values(
-            input,
-            &loaded.packages,
-            "skills",
-            maka_skills_api::IMPLEMENTATION,
-        )?
-        .insert("projectRoots".into(), roots.clone());
+        configuration_values(input, &packages, "skills", maka_skills_api::IMPLEMENTATION)?
+            .insert("projectRoots".into(), roots.clone());
     }
     if input.instances.contains_key("workspace-processes") {
         let filesystem = configuration_values(
             input,
-            &loaded.packages,
+            &packages,
             "workspace-processes",
             maka_workspace_api::processes::IMPLEMENTATION,
         )?
@@ -247,9 +238,9 @@ async fn apply_directories(
         .commit_application(
             deployment,
             metadata.source.reference.revision,
-            loaded.source.input,
-            loaded.source.remote_exports,
-            loaded.packages,
+            source.input,
+            source.remote_exports,
+            packages,
         )
         .await?;
     Ok(())
@@ -323,7 +314,7 @@ mod tests {
                 .is_none()
         );
         let original = store.load_application(deployment).await.unwrap().unwrap();
-        let agent = original.source.input.instances.get("agent").unwrap();
+        let agent = original.source().input.instances.get("agent").unwrap();
         let config = serde_json::to_value(agent).unwrap();
         assert_eq!(
             config["configuration"]["values"]["permissions"]["access"],
@@ -333,7 +324,7 @@ mod tests {
             config["configuration"]["values"]["workspaceRoots"][0]["path"],
             serde_json::to_value(workspace.canonicalize().unwrap()).unwrap()
         );
-        assert!(original.packages.iter().all(|package| {
+        assert!(original.packages().iter().all(|package| {
             package
                 .manifest()
                 .application
@@ -342,7 +333,7 @@ mod tests {
                 .entries
                 .contains_key(&maka_plugin_core::package::EntryTarget::Host)
         }));
-        let revision = original.source.reference.revision;
+        let revision = original.source().reference.revision;
         let (reopened, _) = prepare(&store, Roots::Saved).await.unwrap();
         assert_eq!(reopened, deployment);
         assert_eq!(
@@ -351,12 +342,12 @@ mod tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .source
+                .source()
                 .reference
                 .revision,
             revision
         );
-        let mut customized = original.source.input.clone();
+        let mut customized = original.source().input.clone();
         let restriction =
             json!({"path": workspace.join("private"), "scope": "subtree", "access": "deny"});
         customized
@@ -375,8 +366,8 @@ mod tests {
                 deployment,
                 revision,
                 customized,
-                original.source.remote_exports.clone(),
-                original.packages.clone(),
+                original.source().remote_exports.clone(),
+                original.packages().to_vec(),
             )
             .await
             .unwrap();
@@ -384,25 +375,29 @@ mod tests {
             .await
             .unwrap();
         let changed = store.load_application(deployment).await.unwrap().unwrap();
-        assert_eq!(changed.source.reference.revision, revision + 2);
+        assert_eq!(changed.source().reference.revision, revision + 2);
         assert_eq!(
-            changed.source.input.instances["agent"].configuration.values["workspaceRoots"],
+            changed.source().input.instances["agent"]
+                .configuration
+                .values["workspaceRoots"],
             json!([])
         );
         assert_eq!(
-            changed.source.input.instances["skills"]
+            changed.source().input.instances["skills"]
                 .configuration
                 .values["projectRoots"],
             json!([])
         );
         assert_eq!(
-            changed.source.input.instances["workspace-processes"]
+            changed.source().input.instances["workspace-processes"]
                 .configuration
                 .values["filesystem"]["rules"],
             json!([restriction])
         );
         assert_eq!(
-            changed.source.input.instances["agent"].configuration.values["permissions"]["access"],
+            changed.source().input.instances["agent"]
+                .configuration
+                .values["permissions"]["access"],
             "read_only"
         );
         prepare(&store, Roots::Configured(Some(vec![])))
@@ -417,7 +412,7 @@ mod tests {
                 .unwrap()
                 .source
                 .reference,
-            changed.source.reference
+            changed.source().reference
         );
         store.drain().await;
     }

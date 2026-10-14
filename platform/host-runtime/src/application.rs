@@ -695,7 +695,7 @@ impl Application {
         policy: Arc<dyn Policy>,
         scripts: Option<Arc<dyn backend::Factory>>,
     ) -> Result<Self> {
-        Self::start_owned(input, packages, native, issuer, policy, scripts, None)
+        Self::start_owned(input, packages, native, issuer, policy, scripts, None, None)
     }
 
     /// Loads the original source and exact bytes in one storage snapshot.
@@ -715,19 +715,21 @@ impl Application {
             .ok_or("deployment not found")?;
         // Persisted remote declarations are compatibility observations. This
         // executor has no trusted remote transport and cannot turn them into grants.
-        if !loaded.source.remote_exports.is_empty() {
+        if !loaded.source().remote_exports.is_empty() {
             return Err("remote Host executor is unavailable".into());
         }
         operations::provide(&mut native)?;
         management::provide(&mut native)?;
+        let (source, packages, plan, _) = loaded.into_parts();
         Self::start_owned(
-            loaded.source.input,
-            loaded.packages,
+            source.input,
+            packages,
             native,
             issuer,
             policy,
             scripts,
-            Some((loaded.source.reference, store)),
+            Some((source.reference, store)),
+            Some(plan),
         )
     }
 
@@ -757,8 +759,12 @@ impl Application {
         policy: Arc<dyn Policy>,
         scripts: Option<Arc<dyn backend::Factory>>,
         persisted: Option<(DeploymentRef, Arc<maka_event_log::EventLog>)>,
+        plan: Option<Plan>,
     ) -> Result<Self> {
-        let (plan, sources) = prepare(&input, packages, &native, persisted.is_some())?;
+        let (plan, sources) = match plan {
+            Some(plan) => prepare_plan(&input, packages, &native, persisted.is_some(), plan)?,
+            None => prepare(&input, packages, &native, persisted.is_some())?,
+        };
         let scheduler = tokio::runtime::Handle::try_current().map_err(|e| e.to_string())?;
         let (commands, receiver) = mpsc::channel(128);
         let (control, controls) = mpsc::channel(16);
@@ -1274,20 +1280,38 @@ fn prepare(
         return Err("Host service deployment required".into());
     }
     let mut declarations = Packages::default();
-    let mut sources = BTreeMap::<PackageRef, Package>::new();
-    for package in packages {
-        let declaration = package
-            .manifest()
-            .application
-            .as_ref()
-            .ok_or("application package declaration required")?;
+    for package in &packages {
         declarations
-            .insert(package.application_ref(), declaration.clone())
+            .insert(
+                package.application_ref(),
+                package
+                    .manifest()
+                    .application
+                    .as_ref()
+                    .ok_or("application package declaration required")?
+                    .clone(),
+            )
             .map_err(|e| e.to_string())?;
-        sources.insert(package.application_ref(), package);
     }
     let plan =
         Plan::prepare(input, &declarations, &RemoteExports::new()).map_err(|e| e.to_string())?;
+    prepare_plan(input, packages, native, durable, plan)
+}
+
+fn prepare_plan(
+    input: &Input,
+    packages: Vec<Package>,
+    native: &NativeRegistry,
+    durable: bool,
+    plan: Plan,
+) -> Result<(Plan, BTreeMap<PackageRef, Package>)> {
+    if input.environment.location != ExecutionLocation::Host || input.launch.is_some() {
+        return Err("Host service deployment required".into());
+    }
+    let sources = packages
+        .into_iter()
+        .map(|p| (p.application_ref(), p))
+        .collect();
     for instance in plan.instances().values().filter(|i| !i.disabled) {
         check_json(&instance.configuration)?;
         if let Some(entry) = &instance.entry {

@@ -47,7 +47,8 @@ fn start(timer: &tokio::runtime::Runtime, store: Arc<EventLog>, id: Uuid) -> App
         .block_on(store.load_application(id))
         .unwrap()
         .unwrap()
-        .source
+        .into_parts()
+        .0
         .reference;
     timer
         .block_on(Application::start_from_store(
@@ -123,7 +124,7 @@ fn persisted_execution_keeps_original_bytes_source_and_root_until_mount_cleanup(
             .block_on(stored.load_application(id))
             .unwrap()
             .unwrap()
-            .source
+            .source()
             .reference,
         desired
     );

@@ -218,7 +218,7 @@ impl<V: ?Sized + 'static> Application<V> {
         target: PresentationTarget,
         timer: tokio::runtime::Handle,
         options: ExecutionOptions,
-        mut native: NativeRegistry<V>,
+        native: NativeRegistry<V>,
         registrations: Vec<actions::RemoteService>,
     ) -> Result<Self> {
         let loaded = store
@@ -226,25 +226,48 @@ impl<V: ?Sized + 'static> Application<V> {
             .await
             .map_err(|e| Error::Invalid(e.to_string()))?
             .ok_or_else(|| Error::Invalid("UI deployment not found".into()))?;
-        if loaded.source.input.environment.location != ExecutionLocation::Ui
-            || loaded.source.input.environment.presentation != Some(target)
+        Self::start_loaded(store, loaded, target, timer, options, native, registrations).await
+    }
+
+    /// Use the launcher's original checked snapshot; no second storage read.
+    pub async fn start_loaded(
+        store: std::sync::Arc<maka_event_log::EventLog>,
+        loaded: maka_event_log::applications::LoadedDeployment,
+        target: PresentationTarget,
+        timer: tokio::runtime::Handle,
+        options: ExecutionOptions,
+        mut native: NativeRegistry<V>,
+        registrations: Vec<actions::RemoteService>,
+    ) -> Result<Self> {
+        loaded
+            .check_store(&store)
+            .map_err(|e| Error::Invalid(e.to_string()))?;
+        if loaded.source().input.environment.location != ExecutionLocation::Ui
+            || loaded.source().input.environment.presentation != Some(target)
         {
             return Err(Error::Invalid("stored presentation target mismatch".into()));
         }
-        let snapshot = loaded.snapshot();
-        operations::provide(&mut native, loaded.source.reference.clone(), store.clone())?;
+        let (source, packages, plan, snapshot) = loaded.into_parts();
+        operations::provide(&mut native, source.reference.clone(), store.clone())?;
         let remotes = actions::RemoteServices {
-            declarations: loaded
-                .source
+            declarations: source
                 .remote_exports
                 .into_iter()
                 .map(|r| (r.capability, r.declaration))
                 .collect(),
             registrations,
         };
-        let mut app = Self::new_owned(
-            &loaded.source.input,
-            loaded.packages,
+        let candidate = deployment::prepare_plan(
+            &source.input.environment,
+            plan,
+            packages
+                .into_iter()
+                .map(|p| (p.application_ref(), p))
+                .collect(),
+            &native,
+        )?;
+        let mut app = Self::new_prepared(
+            candidate,
             timer,
             options,
             native,
@@ -272,12 +295,27 @@ impl<V: ?Sized + 'static> Application<V> {
             std::sync::Arc<maka_event_log::EventLog>,
         )>,
     ) -> Result<Self> {
+        let candidate = deployment::prepare(input, bytes, &native, &remotes.declarations)?;
+        Self::new_prepared(candidate, timer, options, native, remotes, persisted)
+    }
+
+    fn new_prepared(
+        candidate: deployment::Candidate,
+        timer: tokio::runtime::Handle,
+        options: ExecutionOptions,
+        native: NativeRegistry<V>,
+        remotes: actions::RemoteServices,
+        persisted: Option<(
+            maka_event_log::applications::SourceSnapshot,
+            std::sync::Arc<maka_event_log::EventLog>,
+        )>,
+    ) -> Result<Self> {
         let deployment::Candidate {
             plan,
             sources,
             instances: pending,
             target,
-        } = deployment::prepare(input, bytes, &native, &remotes.declarations)?;
+        } = candidate;
         let (source, store) = match persisted {
             Some((source, store)) => (Some(source), Some(store)),
             None => (None, None),

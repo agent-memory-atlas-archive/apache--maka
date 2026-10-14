@@ -137,7 +137,7 @@ pub enum ModelsPage {
         #[schemars(length(max = 16))]
         choices: Vec<ModelChoice>,
         #[serde(rename = "defaultModel")]
-        default_model: DefaultModel,
+        default_model: Box<DefaultModel>,
         #[schemars(with = "maka_plugin_core::wire_schema::RequiredNullable<ModelCursor>")]
         next: Option<ModelCursor>,
     },

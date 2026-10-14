@@ -18,7 +18,7 @@
  */
 
 //! One native launcher record, original source commits, and the existing UI/Host owners.
-use super::{Product, Sources, author, packages};
+use super::{Product, Sources, packages};
 use crate::application::{HostError, read_json, run_tui};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use clap::Args;
@@ -92,6 +92,7 @@ impl Launch {
         }
         let root = super::root_path(self.root.clone())?;
         let store = Arc::new(open(root.clone(), true, None).await?);
+
         let mut startup = None;
         let result = async {
             let existing = store.application_launch().await?.is_some();
@@ -108,6 +109,7 @@ impl Launch {
                 },
             };
             let selected = prepare(&store, configuration, self.product.unwrap_or(Product::Agent)).await?;
+
             if existing && super::update::begin(&store).await? {
                 prepare(&store, None, Product::Agent).await.map(Some)
             } else {
@@ -327,10 +329,12 @@ pub(super) async fn prepare(
     Ok((record.deployment, connections))
 }
 async fn begin(store: &EventLog, input: Installation, product: Product) -> Result<(), HostError> {
+    let authoring = super::authoring()?;
     let (mut configuration, mut default_options) = match input {
-        Installation::Standard(options) => {
-            (super::installation(options.clone()).await?, Some(options))
-        }
+        Installation::Standard(options) => (
+            super::installation_with_source(options.clone(), &authoring).await?,
+            Some(options),
+        ),
         Installation::Configured(configuration) => (configuration, None),
     };
     let values = configuration
@@ -359,7 +363,8 @@ async fn begin(store: &EventLog, input: Installation, product: Product) -> Resul
             options["hostRoot"] = configuration["hostRoot"].clone();
         }
         let packages = tokio::task::spawn_blocking(packages).await??;
-        let (mut sources, installation) = author(product, configuration, &packages).await?;
+        let version = super::fingerprint(&authoring, packages.iter().map(|(name, package)| (name.clone(), package.digest().to_owned())));
+        let (mut sources, installation) = super::author_with_source(product, configuration, &packages, &authoring).await?;
         for host in sources.connections["hosts"].as_array_mut().ok_or("product connections missing")? {
             if host["location"]["kind"] == "process" {
                 host["location"]["stateDomain"] = Value::String(owner.root_id().into());
@@ -374,7 +379,7 @@ async fn begin(store: &EventLog, input: Installation, product: Product) -> Resul
         }
         let selection = sources.connections.clone();
         let preparation = Preparation {
-            product: Some(super::update::Baseline { product, installation, default_options, sources: sources.clone() }),
+            product: Some(super::update::Baseline { product, installation, default_options, sources: sources.clone(), version: Some(version) }),
             previous_connections: None,
             restore: BTreeMap::new(),
             sources,
@@ -420,15 +425,15 @@ pub(super) async fn ensure(
     };
     if let Some(original) = store.load_application_at(&reference).await? {
         let mut actual: Vec<_> = original
-            .packages
+            .packages()
             .iter()
             .map(Package::application_ref)
             .collect();
         let mut expected: Vec<_> = packages.iter().map(Package::application_ref).collect();
         actual.sort();
         expected.sort();
-        if serde_json::to_value(&original.source.input)? != serde_json::to_value(input)?
-            || serde_json::to_value(&original.source.remote_exports)?
+        if serde_json::to_value(&original.source().input)? != serde_json::to_value(input)?
+            || serde_json::to_value(&original.source().remote_exports)?
                 != serde_json::to_value(observations)?
             || actual != expected
         {

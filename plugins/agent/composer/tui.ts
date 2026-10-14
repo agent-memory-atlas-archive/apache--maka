@@ -18,9 +18,9 @@
  */
 
 import { presentations } from '../../shared/view.js';
-import { components, exports } from '../../shared/components.js';
-export const component = components(presentations.tui).composer;
+import { composer } from '../../shared/components.js';
+import { composerContract } from '../../shared/contracts.js';
+export const component = composer(presentations.tui);
 export function activate() {
-  const declaration = exports().Composer;
-  return { Composer: { ...declaration, component: ['component'] } };
+  return { Composer: { kind: 'component', contract: composerContract, component: ['component'] } };
 }

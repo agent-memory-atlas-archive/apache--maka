@@ -94,7 +94,11 @@ fn bundled_product_launch_initializes_and_reopens_original_roots_without_node() 
         );
         tui.send(b"\x0b");
         tui.wait_for("Close commands");
-        tui.send(b"Skills");
+        // The first character after a newly visible dialog must survive its
+        // outstanding output receipt, including on the faster reopen path.
+        tui.send("测".as_bytes());
+        tui.wait_for("测");
+        tui.send(b"\x7fSkills");
         tui.wait_for("› Skills");
         tui.send(b"\r");
         tui.wait_until(|screen| {
@@ -115,14 +119,14 @@ fn bundled_product_launch_initializes_and_reopens_original_roots_without_node() 
                 let store = maka_event_log::EventLog::for_root(owner).await.unwrap();
                 let launch = store.application_launch().await.unwrap().unwrap();
                 assert!(launch.pending.is_none());
-                let mut loaded = store
+                let loaded = store
                     .load_application(launch.deployment)
                     .await
                     .unwrap()
                     .unwrap();
-                assert_eq!(loaded.source.reference.revision, 1);
-                loaded
-                    .source
+                let (mut loaded_source, loaded_packages, _, _) = loaded.into_parts();
+                assert_eq!(loaded_source.reference.revision, 1);
+                loaded_source
                     .input
                     .instances
                     .get_mut("appearance")
@@ -134,9 +138,9 @@ fn bundled_product_launch_initializes_and_reopens_original_roots_without_node() 
                     .commit_application(
                         launch.deployment,
                         1,
-                        loaded.source.input,
-                        loaded.source.remote_exports,
-                        loaded.packages,
+                        loaded_source.input,
+                        loaded_source.remote_exports,
+                        loaded_packages,
                     )
                     .await
                     .unwrap();
@@ -259,10 +263,10 @@ fn bundled_product_launch_recovers_partial_commits_without_reauthoring() {
         drop(owner);
         let owner = Arc::new(RootOwner::open(&host, &namespaces).unwrap());
         let store = EventLog::for_root(owner).await.unwrap();
-        let mut loaded = store.load_application(host_id).await.unwrap().unwrap();
-        assert_eq!(loaded.source.reference.revision, 1);
-        loaded
-            .source
+        let loaded = store.load_application(host_id).await.unwrap().unwrap();
+        let (mut loaded_source, loaded_packages, _, _) = loaded.into_parts();
+        assert_eq!(loaded_source.reference.revision, 1);
+        loaded_source
             .input
             .instances
             .get_mut("agent")
@@ -274,9 +278,9 @@ fn bundled_product_launch_recovers_partial_commits_without_reauthoring() {
             .commit_application(
                 host_id,
                 1,
-                loaded.source.input,
-                loaded.source.remote_exports,
-                loaded.packages,
+                loaded_source.input,
+                loaded_source.remote_exports,
+                loaded_packages,
             )
             .await
             .unwrap();
@@ -379,24 +383,25 @@ fn bundled_ui_authoring_installs_and_reloads_original_source_without_replaying()
         let store=EventLog::for_root(Arc::new(RootOwner::open(&ui,&namespaces).unwrap())).await.unwrap();
         let launch=store.application_launch().await.unwrap().unwrap();
         let loaded=store.load_application(launch.deployment).await.unwrap().unwrap();
+        let (loaded_source, loaded_packages, _, _) = loaded.into_parts();
         let host_id=launch.configuration["hosts"].as_array().unwrap().iter().find(|v|v["name"]=="local").unwrap()["deployment"].as_str().unwrap().parse().unwrap();
-        let footer=loaded.packages.iter().find(|p|p.manifest().id=="maka.agent.composer-footer").unwrap();
+        let footer=loaded_packages.iter().find(|p|p.manifest().id=="maka.agent.composer-footer").unwrap();
         let mut files=footer.files().clone();
         files.get_mut("tui.js").unwrap().extend_from_slice(b"\n// runtime authored footer\n");
         let authored=Package::new(files.clone()).unwrap().application_ref();
         let files:BTreeMap<_,_>=files.into_iter().map(|(path,bytes)|(path,String::from_utf8(bytes).unwrap())).collect();
-        let mut input=serde_json::to_value(&loaded.source.input).unwrap();
+        let mut input=serde_json::to_value(&loaded_source.input).unwrap();
         input["instances"]["composer-footer"]["package"]=json!({"source":"pinned","package":authored});
         input["instances"]["agent-screen"]["configuration"]["values"]["locale"]=json!("zh-CN");
-        let mut packages:Vec<_>=loaded.packages.iter().map(Package::application_ref).collect();packages.push(authored);
+        let mut packages:Vec<_>=loaded_packages.iter().map(Package::application_ref).collect();packages.push(authored);
         let commands=[
             json!({"method":"installSource","input":{"expectedRevision":1,"files":files}}),
-            json!({"method":"replaceSource","input":{"expectedRevision":2,"document":{"input":input,"remoteExports":loaded.source.remote_exports,"packages":packages}}})
+            json!({"method":"replaceSource","input":{"expectedRevision":2,"document":{"input":input,"remoteExports":loaded_source.remote_exports,"packages":packages}}})
         ];
         let deployment=launch.deployment;
         store.shutdown().await.unwrap();drop(store);
         let store=EventLog::for_root(Arc::new(RootOwner::open(&host,&namespaces).unwrap())).await.unwrap();
-        let source=store.load_application(host_id).await.unwrap().unwrap().source;
+        let source=store.load_application(host_id).await.unwrap().unwrap().into_parts().0;
         let instance=InstanceId(vec![source.input.instances["ui-authoring"].key]);
         let prefix=maka_host_runtime::storage::instance_prefix(&source.reference.state_domain,host_id,&instance);
         // Seed accepted intents while the fixture Host is closed. The foreground,

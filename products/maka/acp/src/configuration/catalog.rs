@@ -47,7 +47,7 @@ pub(super) async fn read(client: &Client) -> Result<Catalog, Error> {
         let Some(cursor) = next else {
             return Ok(Catalog {
                 choices,
-                default: default_model,
+                default: *default_model,
             });
         };
         if !seen.insert(serde_json::to_string(&cursor)?) {

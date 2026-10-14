@@ -95,7 +95,8 @@ async fn native_acp_continues_after_only_its_caller_is_reactivated() {
             .await
             .unwrap()
             .unwrap();
-        let mut input = loaded.source.input;
+        let (loaded_source, loaded_packages, _, _) = loaded.into_parts();
+        let mut input = loaded_source.input;
         input
             .instances
             .get_mut("provider")
@@ -106,11 +107,11 @@ async fn native_acp_continues_after_only_its_caller_is_reactivated() {
         let source = f
             .store
             .commit_application(
-                loaded.source.reference.deployment,
-                loaded.source.reference.revision,
+                loaded_source.reference.deployment,
+                loaded_source.reference.revision,
                 input,
                 vec![],
-                loaded.packages,
+                loaded_packages,
             )
             .await
             .unwrap();

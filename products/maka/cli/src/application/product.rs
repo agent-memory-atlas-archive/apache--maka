@@ -113,10 +113,10 @@ fn development_bundle() -> PathBuf {
         .unwrap_or_else(|| DEVELOPMENT_BUNDLE.into())
 }
 #[cfg(not(maka_embedded_product))]
-fn packages() -> Result<BTreeMap<String, Package>, HostError> {
+fn package_paths() -> Result<BTreeMap<String, PathBuf>, HostError> {
     let directory = std::path::absolute(development_bundle())?;
     let names: Vec<String> = serde_json::from_value(read_json(&directory.join("packages.json"))?)?;
-    let mut packages = BTreeMap::new();
+    let mut paths = BTreeMap::new();
     for name in names {
         if name.is_empty()
             || name.len() > 128
@@ -124,12 +124,53 @@ fn packages() -> Result<BTreeMap<String, Package>, HostError> {
         {
             return Err("invalid development package name".into());
         }
-        let package = Package::read_from(&directory.join("packages").join(&name))?;
-        if packages.insert(name, package).is_some() {
+        let path = directory.join("packages").join(&name);
+        if paths.insert(name, path).is_some() {
             return Err("duplicate development package name".into());
         }
     }
-    Ok(packages)
+    Ok(paths)
+}
+#[cfg(not(maka_embedded_product))]
+fn packages() -> Result<BTreeMap<String, Package>, HostError> {
+    package_paths()?
+        .into_iter()
+        .map(|(name, path)| Ok((name, Package::read_from(&path)?)))
+        .collect()
+}
+
+fn fingerprint(source: &str, packages: impl IntoIterator<Item = (String, String)>) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    hash.update(b"maka-product-v1\0");
+    hash.update((source.len() as u64).to_be_bytes());
+    hash.update(source.as_bytes());
+    let packages: BTreeMap<_, _> = packages.into_iter().collect();
+    for (name, digest) in packages {
+        hash.update((name.len() as u64).to_be_bytes());
+        hash.update(name.as_bytes());
+        hash.update((digest.len() as u64).to_be_bytes());
+        hash.update(digest.as_bytes());
+    }
+    format!("sha256-{:x}", hash.finalize())
+}
+fn bundle_fingerprint() -> Result<String, HostError> {
+    #[cfg(maka_embedded_product)]
+    let digests = BUNDLED
+        .iter()
+        .map(|p| {
+            (
+                p.name.to_owned(),
+                maka_packages::content_digest(p.files.iter().copied()),
+            )
+        })
+        .collect::<Vec<_>>();
+    #[cfg(not(maka_embedded_product))]
+    let digests = package_paths()?
+        .into_iter()
+        .map(|(name, path)| Ok((name, Package::directory_digest(&path)?)))
+        .collect::<Result<Vec<_>, HostError>>()?;
+    Ok(fingerprint(&authoring()?, digests))
 }
 fn authoring() -> Result<String, HostError> {
     #[cfg(maka_embedded_product)]
@@ -146,8 +187,16 @@ fn authoring() -> Result<String, HostError> {
 
 async fn author(
     product: Product,
+    configuration: Value,
+    packages: &BTreeMap<String, Package>,
+) -> Result<(Sources, Value), HostError> {
+    author_with_source(product, configuration, packages, &authoring()?).await
+}
+async fn author_with_source(
+    product: Product,
     mut configuration: Value,
     packages: &BTreeMap<String, Package>,
+    source: &str,
 ) -> Result<(Sources, Value), HostError> {
     let values = configuration
         .as_object_mut()
@@ -163,47 +212,47 @@ async fn author(
             .entry(key)
             .or_insert_with(|| Value::String(uuid::Uuid::new_v4().to_string()));
     }
-    let source = authoring()?;
     let vm = Vm::pure(Default::default())?;
-    let result: Result<Value, HostError> = match vm.load("maka-product-authoring".into(), source) {
-        Ok(module) => {
-            let result = async {
-                {
-                    // The ordinary authoring code supplies every installation
-                    // identity, including configuration-dependent instances.
-                    let names: Vec<String> = serde_json::from_value(
-                        module
-                            .call(
-                                vec!["installationNames".into()],
-                                vec![Value::Object(values.clone())],
-                            )
-                            .await?,
-                    )?;
-                    let keys = values
-                        .entry("keys")
-                        .or_insert_with(|| serde_json::json!({}))
-                        .as_object_mut()
-                        .ok_or("installation keys must be an object")?;
-                    for name in names {
-                        keys.entry(name)
-                            .or_insert_with(|| Value::String(uuid::Uuid::new_v4().to_string()));
+    let result: Result<Value, HostError> =
+        match vm.load("maka-product-authoring".into(), source.to_owned()) {
+            Ok(module) => {
+                let result = async {
+                    {
+                        // The ordinary authoring code supplies every installation
+                        // identity, including configuration-dependent instances.
+                        let names: Vec<String> = serde_json::from_value(
+                            module
+                                .call(
+                                    vec!["installationNames".into()],
+                                    vec![Value::Object(values.clone())],
+                                )
+                                .await?,
+                        )?;
+                        let keys = values
+                            .entry("keys")
+                            .or_insert_with(|| serde_json::json!({}))
+                            .as_object_mut()
+                            .ok_or("installation keys must be an object")?;
+                        for name in names {
+                            keys.entry(name)
+                                .or_insert_with(|| Value::String(uuid::Uuid::new_v4().to_string()));
+                        }
                     }
+                    let method = match product {
+                        Product::Agent => "composition",
+                        Product::Studio => "studioComposition",
+                        Product::Workhub => "workhubComposition",
+                    };
+                    Ok(module
+                        .call(vec![method.into()], vec![Value::Object(values.clone())])
+                        .await?)
                 }
-                let method = match product {
-                    Product::Agent => "composition",
-                    Product::Studio => "studioComposition",
-                    Product::Workhub => "workhubComposition",
-                };
-                Ok(module
-                    .call(vec![method.into()], vec![Value::Object(values.clone())])
-                    .await?)
+                .await;
+                let closed = module.close().await.map_err(HostError::from);
+                result.and_then(|value| closed.map(|()| value))
             }
-            .await;
-            let closed = module.close().await.map_err(HostError::from);
-            result.and_then(|value| closed.map(|()| value))
-        }
-        Err(error) => Err(error.into()),
-    };
+            Err(error) => Err(error.into()),
+        };
     vm.shutdown().await;
     let sources: Sources = serde_json::from_value(result?)?;
     let checked: Vec<_> = packages.values().cloned().collect();
@@ -265,9 +314,11 @@ fn export(
 }
 
 async fn installation(options: Value) -> Result<Value, HostError> {
-    let source = authoring()?;
+    installation_with_source(options, &authoring()?).await
+}
+async fn installation_with_source(options: Value, source: &str) -> Result<Value, HostError> {
     let vm = maka_js_runtime::plugin::Vm::pure(Default::default())?;
-    let result = match vm.load("maka-product-installation".into(), source) {
+    let result = match vm.load("maka-product-installation".into(), source.to_owned()) {
         Ok(module) => {
             let result = module
                 .call(vec!["installation".into()], vec![options])

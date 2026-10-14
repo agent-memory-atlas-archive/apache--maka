@@ -506,16 +506,25 @@ async fn original_source_snapshot_keeps_its_checked_instances_without_reloading_
     let store = Arc::new(store);
     let deployment = Uuid::new_v4();
     let first = source(&store, deployment, 0).await;
-    let mut loaded = store.load_application_at(&first).await.unwrap().unwrap();
+    let loaded = store.load_application_at(&first).await.unwrap().unwrap();
+    loaded.check_store(&store).unwrap();
+    assert!(loaded.plan().instances().contains_key(&consumer()));
     let snapshot = loaded.snapshot();
     assert!(
         store.ui_checkpoints_from(&snapshot, &consumer()).is_err(),
         "Host origin cannot create UI checkpoint access"
     );
-    // Public editable data is not the private captured caller proof.
-    loaded.source.reference.deployment = Uuid::new_v4();
-    loaded.source.input.instances.get_mut("caller").unwrap().key = Uuid::from_u128(43);
-    assert_eq!(loaded.snapshot().reference(), &first);
+    // Consuming a checked snapshot permits editing source, never its old plan or proof.
+    let (mut edited, _, plan, original) = loaded.into_parts();
+    edited.reference.deployment = Uuid::new_v4();
+    edited.input.instances.get_mut("caller").unwrap().key = Uuid::from_u128(43);
+    assert_eq!(original.reference(), &first);
+    assert!(plan.instances().contains_key(&consumer()));
+    assert!(
+        !plan
+            .instances()
+            .contains_key(&InstanceId(vec![Uuid::from_u128(43)]))
+    );
     assert!(
         store
             .record_application_intent_from(

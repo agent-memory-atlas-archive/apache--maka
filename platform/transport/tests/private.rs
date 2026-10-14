@@ -857,6 +857,122 @@ async fn unpolled_dispatch_observer_keeps_actual_sql_custody_until_original_prep
 struct Connecting {
     entered: Arc<tokio::sync::Notify>,
 }
+
+struct HeldReservation {
+    stream: maka_transport::transport::native::Stream,
+    release: Option<tokio::sync::oneshot::Receiver<()>>,
+    entered: Arc<tokio::sync::Notify>,
+}
+impl AsyncRead for HeldReservation {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        if self.release.is_some() {
+            self.entered.notify_one();
+            std::task::ready!(Pin::new(self.release.as_mut().unwrap()).poll(cx)).unwrap();
+            self.release = None;
+        }
+        Pin::new(&mut self.stream).poll_read(cx, buffer)
+    }
+}
+impl AsyncWrite for HeldReservation {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bytes: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.stream).poll_write(cx, bytes)
+    }
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stream).poll_flush(cx)
+    }
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stream).poll_shutdown(cx)
+    }
+}
+struct Reserving {
+    physical: Physical,
+    release: std::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+    entered: Arc<tokio::sync::Notify>,
+}
+impl maka_transport::transport::native::Connector for Reserving {
+    fn connect(
+        &self,
+        stop: tokio_util::sync::CancellationToken,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<maka_transport::transport::native::Stream, String>,
+    > {
+        let opening = self.physical.connect(stop);
+        let release = self.release.lock().unwrap().take();
+        let entered = self.entered.clone();
+        Box::pin(async move {
+            Ok(Box::new(HeldReservation {
+                stream: opening.await?,
+                release,
+                entered,
+            }) as maka_transport::transport::native::Stream)
+        })
+    }
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancellation_during_native_reservation_finishes_the_original_handshake_and_cleanup() {
+    use futures_util::FutureExt;
+    let f = Fixture::new().await;
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let (release, held) = tokio::sync::oneshot::channel();
+    let (mut ui, connection, _, service) = native_ui(
+        &f,
+        Arc::new(Reserving {
+            physical: Physical {
+                server: f.server.clone(),
+                peer: f.peer.clone(),
+            },
+            release: std::sync::Mutex::new(Some(held)),
+            entered: entered.clone(),
+        }),
+    )
+    .await;
+    let root = ui.mount_launch(serde_json::json!({})).unwrap();
+    ui.wait_idle().await.unwrap();
+    ui.dispatch(
+        &root,
+        ui.frame(&root).unwrap().revision,
+        "read",
+        serde_json::Value::Null,
+    )
+    .unwrap();
+    ui.wait_idle().await.unwrap();
+    ui.capture_actions(&root, |_| panic!("resource-free action"))
+        .unwrap();
+    let task = ui.start_task(&root).unwrap().unwrap();
+    let id = task.id;
+    let mut original = task.future;
+    assert!(original.as_mut().now_or_never().is_none());
+    tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified())
+        .await
+        .unwrap();
+    let close = connection.close();
+    // Cancellation has been delivered, but Ready is still held. This must
+    // remain the original live handshake, not a lost-channel completion.
+    assert!(original.as_mut().now_or_never().is_none());
+    release.send(()).unwrap();
+    let (completion, cleanup) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        tokio::join!(original, close)
+    })
+    .await
+    .unwrap();
+    cleanup.unwrap();
+    ui.finish_task(id, completion).unwrap();
+    assert_eq!(ui.accepted_action_count(), 0);
+    stop_ui(ui, &root).await;
+    drop(service);
+    drop(connection);
+    f.server.close().await.unwrap();
+    f.cleanup().await;
+}
 impl maka_transport::transport::native::Connector for Connecting {
     fn connect(
         &self,

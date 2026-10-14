@@ -32,12 +32,11 @@ use maka_plugin_core::{
 };
 
 fn entry<'a>(
-    loaded: &'a LoadedDeployment,
+    packages: &'a [Package],
     reference: &PackageRef,
     target: EntryTarget,
 ) -> Result<&'a EntryDeclaration> {
-    loaded
-        .packages
+    packages
         .iter()
         .find(|p| &p.application_ref() == reference)
         .and_then(|p| p.manifest().application.as_ref())
@@ -94,12 +93,12 @@ impl Manager {
             serde_json::from_value(input).map_err(|e| e.to_string())?;
         let _read = self.writes.lock().await;
         let loaded = self.source_at(request.source).await?;
-        let plan = desired_plan(&loaded)?;
+        let plan = loaded.plan();
         let target = self.environment.entry_target().map_err(|e| e.to_string())?;
         let (entry, configuration, current) = match &request.consumer {
             BindingConsumer::Root { name } => {
                 let node = loaded
-                    .source
+                    .source()
                     .input
                     .instances
                     .get(name)
@@ -127,9 +126,11 @@ impl Manager {
                         .unwrap_or_default(),
                 )
             }
-            BindingConsumer::Package { package } => {
-                (entry(&loaded, package, target)?, BTreeMap::new(), vec![])
-            }
+            BindingConsumer::Package { package } => (
+                entry(loaded.packages(), package, target)?,
+                BTreeMap::new(),
+                vec![],
+            ),
         };
         let import = entry
             .imports
@@ -152,7 +153,7 @@ impl Manager {
                         key: format!("instance:{label}"),
                         label,
                         presentation: loaded
-                            .packages
+                            .packages()
                             .iter()
                             .find(|package| package.application_ref() == instance.package)
                             .map(|package| package.manifest().presentation())
@@ -165,7 +166,7 @@ impl Manager {
                 }
             }
         }
-        for observed in &loaded.source.remote_exports {
+        for observed in &loaded.source().remote_exports {
             if compatible(&observed.declaration) {
                 let remote = &observed.capability;
                 let key = format!(
@@ -193,7 +194,7 @@ impl Manager {
             }
         }
         if request.include_packages {
-            for package in &loaded.packages {
+            for package in loaded.packages() {
                 if let Some(entry) = package
                     .manifest()
                     .application
@@ -238,7 +239,7 @@ impl Manager {
         let next = (candidates.len() > 8).then(|| candidate_key(&candidates[7]).to_owned());
         candidates.truncate(8);
         serde_json::to_value(BindingCandidatesPage {
-            source: loaded.source.reference,
+            source: loaded.source().reference.clone(),
             configuration,
             current,
             candidates,
@@ -253,7 +254,7 @@ impl Manager {
         let _read = self.writes.lock().await;
         let loaded = self.source_at(Some(request.source.clone())).await?;
         let entry = entry(
-            &loaded,
+            loaded.packages(),
             &request.package,
             self.environment.entry_target().map_err(|e| e.to_string())?,
         )?;
@@ -297,7 +298,8 @@ impl Manager {
         if request.expected_revision != metadata.source.reference.revision {
             return conflict(metadata.source.reference.revision);
         }
-        let mut loaded = self.source_at(Some(metadata.source.reference)).await?;
+        let loaded = self.source_at(Some(metadata.source.reference)).await?;
+        let (mut source, packages, _, _) = loaded.into_parts();
         let target = self.environment.entry_target().map_err(|e| e.to_string())?;
         let applied = (|| -> Result<()> {
             if request.edits.is_empty() {
@@ -311,10 +313,10 @@ impl Manager {
                         settings: changes,
                         bindings,
                     } => {
-                        if loaded.source.input.instances.contains_key(&name) {
+                        if source.input.instances.contains_key(&name) {
                             return Err("instance name already exists".into());
                         }
-                        let schema = &entry(&loaded, &package, target)?.configuration;
+                        let schema = &entry(&packages, &package, target)?.configuration;
                         let mut configuration = defaults(schema);
                         if !changes.is_empty() {
                             settings::apply(&mut configuration, &changes)?;
@@ -325,7 +327,7 @@ impl Manager {
                             .iter()
                             .map(|(k, v)| (k.clone(), v.clone()))
                             .collect();
-                        loaded.source.input.instances.insert(
+                        source.input.instances.insert(
                             name,
                             Node {
                                 key: uuid::Uuid::new_v4(),
@@ -347,8 +349,7 @@ impl Manager {
                         configuration,
                         bindings,
                     } => {
-                        let node = loaded
-                            .source
+                        let node = source
                             .input
                             .instances
                             .get_mut(&name)
@@ -360,8 +361,7 @@ impl Manager {
                         node.bindings.extend(bindings);
                     }
                     CompositionChange::Remove { name } => {
-                        loaded
-                            .source
+                        source
                             .input
                             .instances
                             .remove(&name)
@@ -376,9 +376,9 @@ impl Manager {
         }
         self.commit(
             request.expected_revision,
-            loaded.source.input,
-            loaded.source.remote_exports,
-            loaded.packages,
+            source.input,
+            source.remote_exports,
+            packages,
             |source| source,
         )
         .await

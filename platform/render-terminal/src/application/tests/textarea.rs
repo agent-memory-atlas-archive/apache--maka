@@ -690,7 +690,24 @@ fn dispatch(tui: &mut Presenter, key: &str, value: Value) {
 }
 fn close(tui: &mut Presenter) {
     tui.surface_closed(&tui.surface(), Ok(())).unwrap();
-    assert!(tui.can_shutdown());
+    let scheduler = tui.application.scheduler().clone();
+    scheduler.block_on(async {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            std::future::poll_fn(|cx| {
+                tui.application.set_waker(cx.waker().clone());
+                tui.pump().unwrap();
+                // File-paste workers can still own cleanup after the surface closes.
+                if tui.can_shutdown() {
+                    std::task::Poll::Ready(())
+                } else {
+                    std::task::Poll::Pending
+                }
+            }),
+        )
+        .await
+        .expect("original textarea workers did not close");
+    });
     tui.shutdown_settled().unwrap();
 }
 

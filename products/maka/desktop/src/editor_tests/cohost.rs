@@ -295,13 +295,14 @@ fn actual_quit_drains_cohost_native_sql_write_before_shared_store_close(cx: &mut
         .block_on(store.load_application(ui.deployment))
         .unwrap()
         .unwrap();
+    let (loaded_source, loaded_packages, _, _) = loaded.into_parts();
     let next = timer
         .block_on(store.commit_application(
             ui.deployment,
             1,
-            loaded.source.input,
-            loaded.source.remote_exports,
-            loaded.packages,
+            loaded_source.input,
+            loaded_source.remote_exports,
+            loaded_packages,
         ))
         .unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);

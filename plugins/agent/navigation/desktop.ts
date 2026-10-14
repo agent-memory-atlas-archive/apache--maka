@@ -18,9 +18,11 @@
  */
 
 import { presentations } from '../../shared/view.js';
-import { components, exports } from '../../shared/components.js';
-export const component = components(presentations.desktop).navigation;
+import { navigation } from '../../shared/components.js';
+import { navigationContract } from '../../shared/contracts.js';
+export const component = navigation(presentations.desktop);
 export function activate() {
-  const declaration = exports().Navigation;
-  return { Navigation: { ...declaration, component: ['component'] } };
+  return {
+    Navigation: { kind: 'component', contract: navigationContract, component: ['component'] },
+  };
 }

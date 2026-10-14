@@ -218,7 +218,7 @@ pub enum Coordinator {
         workspace: crate::contract::DirectorySelection,
     },
     Ready {
-        session: crate::contract::Session,
+        session: Box<crate::contract::Session>,
     },
     Rejected {
         reason: crate::contract::Rejection,

@@ -200,7 +200,7 @@ impl Command {
                 let closed = store.close().await;
                 let loaded = result?.ok_or("deployment not found")?;
                 closed?;
-                println!("{}", serde_json::to_string_pretty(&loaded.source)?);
+                println!("{}", serde_json::to_string_pretty(&loaded.source())?);
             }
             Self::Run(args) => {
                 let configuration = args
@@ -336,6 +336,7 @@ async fn run_tui(
     }
     let startup_errors = connections.startup_errors().to_vec();
     let source = connections.source().clone();
+    let loaded = connections.take_initial().expect("initial UI snapshot");
     let registrations = connections.registrations();
     let foreground_store = store.clone();
     let connections = Arc::new(tokio::sync::Mutex::new(connections));
@@ -356,7 +357,7 @@ async fn run_tui(
     let result = tokio::task::spawn_blocking(move || -> Result<(), HostError> {
         maka_render_terminal::application::run(
             foreground_store,
-            source,
+            loaded,
             registrations,
             scheduler,
             updates,

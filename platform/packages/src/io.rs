@@ -41,6 +41,28 @@ pub enum PackageIoError {
 }
 
 impl Package {
+    /// Hash directory bytes without parsing declarations. A matching digest can
+    /// avoid an unchanged-product update; it never admits code for execution.
+    pub fn directory_digest(source: &Path) -> Result<String, PackageIoError> {
+        if !source.is_absolute() {
+            return Err(invalid("package source must be absolute"));
+        }
+        let parent = source
+            .parent()
+            .ok_or_else(|| invalid("package source needs a parent"))?;
+        let name = source
+            .file_name()
+            .ok_or_else(|| invalid("package source needs a filename"))?;
+        let parent = Dir::open_ambient_dir(parent, ambient_authority())?;
+        let directory = parent.open_dir_nofollow(name)?;
+        let mut files = BTreeMap::new();
+        collect(&directory, "", &mut files, &mut Budget::default())?;
+        Ok(super::content_digest(
+            files
+                .iter()
+                .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
+        ))
+    }
     /// Blocking I/O; call on the Host blocking pool. Directory-relative handles
     /// refuse substituted symlinks at every package component on all platforms.
     pub fn read_from(source: &Path) -> Result<Self, PackageIoError> {
@@ -202,6 +224,20 @@ mod tests {
         .unwrap();
         fs::write(package_root.join("index.mjs"), b"export default {}").unwrap();
         let package = Package::read_from(&package_root).unwrap();
+        assert_eq!(
+            Package::directory_digest(&package_root).unwrap(),
+            package.digest()
+        );
+        fs::write(
+            package_root.join("index.mjs"),
+            b"export default {changed: true}",
+        )
+        .unwrap();
+        assert_ne!(
+            Package::directory_digest(&package_root).unwrap(),
+            package.digest()
+        );
+        fs::write(package_root.join("index.mjs"), b"export default {}").unwrap();
         let bundle = directory.path().join("example.maka-extension");
         package.export_to(&bundle).unwrap();
         assert_eq!(
@@ -217,6 +253,7 @@ mod tests {
         {
             std::os::unix::fs::symlink(&bundle, package_root.join("linked")).unwrap();
             assert!(Package::read_from(&package_root).is_err());
+            assert!(Package::directory_digest(&package_root).is_err());
         }
     }
 

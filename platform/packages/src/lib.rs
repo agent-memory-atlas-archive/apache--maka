@@ -88,7 +88,11 @@ impl Package {
                 )));
             }
         }
-        let digest = content_digest(&files);
+        let digest = content_digest(
+            files
+                .iter()
+                .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
+        );
         Ok(Self {
             manifest: Arc::new(manifest),
             files: Arc::new(files),
@@ -116,9 +120,10 @@ impl Package {
     }
 }
 
-fn content_digest(files: &BTreeMap<String, Vec<u8>>) -> String {
+/// Exact bundle identity, independent of declaration parsing or execution admission.
+pub fn content_digest<'a>(files: impl IntoIterator<Item = (&'a str, &'a [u8])>) -> String {
     // The existing bundle format sorts paths as JavaScript strings (UTF-16).
-    let mut files: Vec<_> = files.iter().collect();
+    let mut files: Vec<_> = files.into_iter().collect();
     files.sort_unstable_by(|(left, _), (right, _)| left.encode_utf16().cmp(right.encode_utf16()));
     let mut hash = Sha256::new();
     for (path, content) in files {

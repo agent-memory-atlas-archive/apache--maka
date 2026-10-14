@@ -71,7 +71,9 @@ async fn old_installation(path: &std::path::Path, standard: bool) -> (EventLog, 
         .unwrap()
         .extend_from_slice(b"\n// previous product release\n");
     packages.insert("agent-screen".into(), Package::new(files).unwrap());
-    let (mut sources, installation) = author(Product::Agent, config, &packages).await.unwrap();
+    let (mut sources, installation) = super::super::author(Product::Agent, config, &packages)
+        .await
+        .unwrap();
     for endpoint in sources.connections["hosts"].as_array_mut().unwrap() {
         if endpoint["location"]["kind"] == "process" {
             endpoint["location"]["stateDomain"] = json!(host.owned_root().unwrap().root_id());
@@ -81,6 +83,7 @@ async fn old_installation(path: &std::path::Path, standard: bool) -> (EventLog, 
     let preparation = launch::Preparation {
         product: Some(Baseline {
             product: Product::Agent,
+            version: None,
             installation,
             default_options: standard.then_some(options),
             sources: sources.clone(),
@@ -146,6 +149,7 @@ async fn defaults_update_once_and_resume_an_acknowledgement_lost_after_commit() 
     let directory = tempfile::tempdir().unwrap();
     let (store, ui) = old_installation(directory.path(), true).await;
     let original = store.load_application(ui).await.unwrap().unwrap();
+    let (original_source, _, _, _) = original.into_parts();
     let preview = synchronize(&store, true, false).await.unwrap();
     assert!(preview.changed && !preview.customized && preview.conflicts.is_empty());
     assert!(
@@ -207,13 +211,14 @@ async fn defaults_update_once_and_resume_an_acknowledgement_lost_after_commit() 
         .unwrap();
     launch::prepare(&store, None, Product::Agent).await.unwrap();
     let current = store.load_application(ui).await.unwrap().unwrap();
-    assert_eq!(current.source.reference.revision, 2);
-    for (name, node) in &original.source.input.instances {
-        assert_eq!(node.key, current.source.input.instances[name].key);
+    let (current_source, _, _, _) = current.into_parts();
+    assert_eq!(current_source.reference.revision, 2);
+    for (name, node) in &original_source.input.instances {
+        assert_eq!(node.key, current_source.input.instances[name].key);
     }
     assert!(
         store
-            .load_application_at(&original.source.reference)
+            .load_application_at(&original_source.reference)
             .await
             .unwrap()
             .is_some()
@@ -237,7 +242,8 @@ async fn explicit_sync_keeps_custom_configuration_and_advances_the_default_basel
     let directory = tempfile::tempdir().unwrap();
     let (store, ui) = old_installation(directory.path(), true).await;
     let current = store.load_application(ui).await.unwrap().unwrap();
-    let mut customized = current.source.input;
+    let (current_source, current_packages, _, _) = current.into_parts();
+    let mut customized = current_source.input;
     customized
         .instances
         .get_mut("appearance")
@@ -250,8 +256,8 @@ async fn explicit_sync_keeps_custom_configuration_and_advances_the_default_basel
             ui,
             1,
             customized,
-            current.source.remote_exports,
-            current.packages,
+            current_source.remote_exports,
+            current_packages,
         )
         .await
         .unwrap();
@@ -270,13 +276,14 @@ async fn explicit_sync_keeps_custom_configuration_and_advances_the_default_basel
     synchronize(&store, true, true).await.unwrap();
     launch::prepare(&store, None, Product::Agent).await.unwrap();
     let current = store.load_application(ui).await.unwrap().unwrap();
+    let (current_source, _, _, _) = current.into_parts();
     assert_eq!(
-        current.source.input.instances["appearance"]
+        current_source.input.instances["appearance"]
             .configuration
             .values["scheme"],
         json!("light")
     );
-    assert_eq!(current.source.reference.revision, 3);
+    assert_eq!(current_source.reference.revision, 3);
     let preview = synchronize(&store, true, false).await.unwrap();
     assert!(preview.customized && !preview.changed);
     assert!(!begin(&store).await.unwrap());
@@ -289,11 +296,12 @@ async fn conflicting_custom_plugin_does_not_prepare_or_change_any_head() {
     let directory = tempfile::tempdir().unwrap();
     let (store, ui) = old_installation(directory.path(), true).await;
     let current = store.load_application(ui).await.unwrap().unwrap();
-    let old_ref = match &current.source.input.instances["agent-screen"].package {
+    let (current_source, current_packages, _, _) = current.into_parts();
+    let old_ref = match &current_source.input.instances["agent-screen"].package {
         maka_plugin_core::package::PackageSelection::Pinned { package } => package.clone(),
         _ => unreachable!(),
     };
-    let mut packages = current.packages;
+    let mut packages = current_packages;
     let at = packages
         .iter()
         .position(|p| p.application_ref() == old_ref)
@@ -304,14 +312,14 @@ async fn conflicting_custom_plugin_does_not_prepare_or_change_any_head() {
         .unwrap()
         .extend_from_slice(b"\n// user customization\n");
     packages[at] = Package::new(files).unwrap();
-    let mut input = current.source.input;
+    let mut input = current_source.input;
     for node in input.instances.values_mut() {
         if node.package == maka_plugin_core::package::PackageSelection::from(old_ref.clone()) {
             node.package = packages[at].application_ref().into();
         }
     }
     store
-        .commit_application(ui, 1, input, current.source.remote_exports, packages)
+        .commit_application(ui, 1, input, current_source.remote_exports, packages)
         .await
         .unwrap();
     let baseline = store.application_product().await.unwrap();
@@ -339,10 +347,87 @@ async fn conflicting_custom_plugin_does_not_prepare_or_change_any_head() {
             .await
             .unwrap()
             .unwrap()
-            .source
+            .source()
             .reference
             .revision,
         2
+    );
+    store.drain().await;
+}
+
+#[test]
+fn product_version_covers_authoring_and_each_named_package() {
+    let version = |source, packages: &[(&str, &str)]| {
+        super::super::fingerprint(
+            source,
+            packages
+                .iter()
+                .map(|(name, digest)| (name.to_string(), digest.to_string())),
+        )
+    };
+    let original = version("author", &[("a", "one"), ("b", "two")]);
+    assert_eq!(original, version("author", &[("b", "two"), ("a", "one")]));
+    assert_ne!(original, version("changed", &[("a", "one"), ("b", "two")]));
+    assert_ne!(
+        original,
+        version("author", &[("a", "changed"), ("b", "two")])
+    );
+    assert_ne!(
+        original,
+        version("author", &[("renamed", "one"), ("b", "two")])
+    );
+    assert_ne!(original, version("author", &[("a", "one")]));
+}
+
+#[tokio::test]
+#[ignore = "requires the built bundled product"]
+async fn unchanged_product_records_version_without_rewriting_deployments() {
+    let directory = tempfile::tempdir().unwrap();
+    let (store, ui) = old_installation(directory.path(), true).await;
+    assert!(begin(&store).await.unwrap());
+    launch::prepare(&store, None, Product::Agent).await.unwrap();
+    let original = store.application_product().await.unwrap().unwrap();
+    let mut uncached = original.clone();
+    uncached.as_object_mut().unwrap().remove("version");
+    assert!(
+        store
+            .compare_and_set_application_product(original, uncached)
+            .await
+            .unwrap()
+    );
+    let revision = store
+        .read_application_metadata(ui)
+        .await
+        .unwrap()
+        .unwrap()
+        .source
+        .reference;
+    assert!(!begin(&store).await.unwrap());
+    let saved: Baseline =
+        serde_json::from_value(store.application_product().await.unwrap().unwrap()).unwrap();
+    assert_eq!(
+        saved.version,
+        Some(super::super::bundle_fingerprint().unwrap())
+    );
+    assert!(!begin(&store).await.unwrap());
+    assert_eq!(
+        store
+            .read_application_metadata(ui)
+            .await
+            .unwrap()
+            .unwrap()
+            .source
+            .reference,
+        revision
+    );
+    assert!(
+        store
+            .application_launch()
+            .await
+            .unwrap()
+            .unwrap()
+            .pending
+            .is_none()
     );
     store.drain().await;
 }

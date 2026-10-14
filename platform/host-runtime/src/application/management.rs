@@ -97,7 +97,7 @@ impl Manager {
             .await
             .map_err(|e| e.to_string())?
             .ok_or("managed source not found")?;
-        let plan = desired_plan(&loaded)?;
+        let plan = loaded.plan();
         if after
             .as_ref()
             .is_some_and(|after| !plan.instances().contains_key(after))
@@ -117,7 +117,7 @@ impl Manager {
                 path: instance.path.clone(),
                 package: instance.package.clone(),
                 presentation: loaded
-                    .packages
+                    .packages()
                     .iter()
                     .find(|package| package.application_ref() == instance.package)
                     .map(|package| package.manifest().presentation())
@@ -190,13 +190,13 @@ impl Manager {
         if request.expected_revision != metadata.source.reference.revision {
             return conflict(metadata.source.reference.revision);
         }
-        let mut loaded = self
+        let loaded = self
             .store
             .load_application_at(&metadata.source.reference)
             .await
             .map_err(|e| e.to_string())?
             .ok_or("managed source not found")?;
-        let plan = desired_plan(&loaded)?;
+        let (mut source, packages, plan, _) = loaded.into_parts();
         let Some(instance) = plan.instances().get(&request.instance) else {
             return rejected(ManagementRejection::InstanceUnavailable);
         };
@@ -211,8 +211,7 @@ impl Manager {
         let [root, path @ ..] = instance.path.as_slice() else {
             return Err("invalid actual managed path".into());
         };
-        let node = loaded
-            .source
+        let node = source
             .input
             .instances
             .get_mut(root)
@@ -235,9 +234,9 @@ impl Manager {
         // explicit intent even when that effective projection already matches.
         self.commit(
             request.expected_revision,
-            loaded.source.input,
-            loaded.source.remote_exports,
-            loaded.packages,
+            source.input,
+            source.remote_exports,
+            packages,
             |source| source,
         )
         .await
@@ -283,24 +282,24 @@ impl Manager {
         metadata: maka_plugin_core::deployment::management::ManagedDeployment,
     ) -> Result<Value> {
         let reference = package.application_ref();
-        let mut loaded = self
+        let loaded = self
             .store
             .load_application_at(&metadata.source.reference)
             .await
             .map_err(|error| error.to_string())?
             .ok_or("managed source not found")?;
-        if !loaded
-            .packages
+        let (source, mut packages, _, _) = loaded.into_parts();
+        if !packages
             .iter()
             .any(|old| old.application_ref() == reference)
         {
-            loaded.packages.push(package);
+            packages.push(package);
         }
         self.commit(
             expected_revision,
-            loaded.source.input,
-            loaded.source.remote_exports,
-            loaded.packages,
+            source.input,
+            source.remote_exports,
+            packages,
             move |source| PackageInstalled {
                 source,
                 package: reference,
@@ -368,9 +367,9 @@ impl Manager {
             .map_err(|error| error.to_string())?
             .ok_or("managed source not found")?;
         let available: BTreeMap<_, _> = loaded
-            .packages
-            .into_iter()
-            .map(|package| (package.application_ref(), package))
+            .packages()
+            .iter()
+            .map(|package| (package.application_ref(), package.clone()))
             .collect();
         let packages = document
             .packages
@@ -429,28 +428,6 @@ impl Manager {
             Err(error) => Err(error.to_string()),
         }
     }
-}
-fn desired_plan(loaded: &maka_event_log::applications::LoadedDeployment) -> Result<Plan> {
-    let mut packages = maka_plugin_core::package::Packages::default();
-    for package in &loaded.packages {
-        packages
-            .insert(
-                package.application_ref(),
-                package
-                    .manifest()
-                    .application
-                    .clone()
-                    .ok_or("application declaration required")?,
-            )
-            .map_err(|e| e.to_string())?;
-    }
-    let declarations = loaded
-        .source
-        .remote_exports
-        .iter()
-        .map(|r| (r.capability.clone(), r.declaration.clone()))
-        .collect();
-    Plan::prepare(&loaded.source.input, &packages, &declarations).map_err(|e| e.to_string())
 }
 fn rejected(reason: ManagementRejection) -> Result<Value> {
     serde_json::to_value(ManagementResult::<DeploymentRef>::Rejected {

@@ -228,7 +228,8 @@ fn start(
         .block_on(store.load_application(deployment))
         .unwrap()
         .unwrap()
-        .source
+        .into_parts()
+        .0
         .reference;
     let mut app = timer
         .block_on(Application::start_from_store(

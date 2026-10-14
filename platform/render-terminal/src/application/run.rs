@@ -100,13 +100,53 @@ fn retain_clipboard(queue: &mut VecDeque<Vec<u8>>, bytes: Vec<u8>) -> Result<(),
     Ok(())
 }
 
+fn input_needs_presentation(presenter: &mut Presenter, event: &Event) -> Result<bool, String> {
+    if !presenter.physical_admitted() {
+        // Pointer coordinates remain bound to the last published geometry.
+        return Ok(matches!(event, Event::Key(_) | Event::Paste(_)));
+    }
+    if presenter.captures_keyboard().map_err(|e| e.to_string())? {
+        return Ok(false);
+    }
+    let Event::Key(key) = event else {
+        return Ok(false);
+    };
+    let Some((key, modifiers)) = super::shortcut_chord(key) else {
+        return Ok(false);
+    };
+    let ancestors = match &presenter.focus {
+        Some(target) => target.ancestors.as_slice(),
+        None => presenter.keyboard.as_slice(),
+    };
+    for ancestor in ancestors.iter().rev() {
+        if let Some(shortcut) = ancestor
+            .shortcuts
+            .iter()
+            .find(|s| s.matches(&key, modifiers, false))
+        {
+            return Ok(shortcut.enabled
+                && presenter.target_admitted(ancestor)
+                && presenter.resources.admits(ancestor)
+                && !presenter.application.is_retiring(&ancestor.mount)
+                && presenter.application.mount_visible(&ancestor.mount)
+                && presenter
+                    .application
+                    .frame(&ancestor.mount)
+                    .map_err(|e| e.to_string())?
+                    .revision
+                    != ancestor.revision);
+        }
+    }
+    Ok(false)
+}
+
 /// Run on the foreground thread inside a multithreaded Tokio runtime.
 /// Accepted service workers remain owned after the terminal surface closes.
 /// 在前台线程运行；关闭界面后仍等待真实服务执行与资源回执。
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     store: std::sync::Arc<maka_event_log::EventLog>,
-    source: maka_plugin_core::deployment::DeploymentRef,
+    loaded: maka_event_log::applications::LoadedDeployment,
     registrations: Vec<maka_ui_runtime::actions::RemoteService>,
     scheduler: tokio::runtime::Handle,
     mut updates: maka_transport::Updates,
@@ -115,9 +155,9 @@ pub fn run(
     mut startup_errors: Vec<String>,
 ) -> Result<(), String> {
     let mut presenter = scheduler
-        .block_on(Presenter::start_from_store(
+        .block_on(Presenter::start_loaded(
             store,
-            source,
+            loaded,
             scheduler.clone(),
             registry(),
             json!({}),
@@ -158,14 +198,16 @@ pub fn run(
     let waker = Waker::from(wake.clone());
     presenter.application.set_waker(waker.clone());
     updates.set_waker(waker);
-    let mut events = EventStream::new();
+    // Rejected terminal setup has no input source. Keep draining the application
+    // without asking crossterm to construct a reader for a missing terminal.
+    let mut events = screen.as_ref().map(|_| EventStream::new());
     let output = terminal::Output::new().map_err(|e| e.to_string())?;
     let mut pending_output: Option<PendingOutput> = None;
     let mut clipboard_output = VecDeque::new();
     let mut issued_sequence = 0u64;
     let mut written_sequence = 0u64;
     let mut exit_key = ExitKey::default();
-    let mut queued_input = None;
+    let mut queued_input: Option<(Event, Option<Vec<super::dialog::Scope>>)> = None;
     loop {
         if let Err(error) = poll_output(
             &mut pending_output,
@@ -250,7 +292,7 @@ pub fn run(
                     scheduler.block_on(async {
                         tokio::select! {
                             _ = wake.0.notified() => {},
-                            _ = events.next() => {},
+                            _ = events.as_mut().expect("initialized terminal").next() => {},
                         }
                     });
                     continue;
@@ -320,9 +362,22 @@ pub fn run(
                 presenter.resources.redraw = false;
                 presenter.next_frame = None;
             }
-            let first_frame_pending = written_sequence == 0 && pending_output.is_some();
-            let input = if queued_input.is_some() && !first_frame_pending {
-                queued_input.take()
+            if queued_input.as_ref().is_some_and(|(_, openings)| {
+                openings
+                    .as_ref()
+                    .is_some_and(|openings| !presenter.scene_openings_current(openings))
+            }) {
+                queued_input = None;
+            }
+            let admission_pending = match &queued_input {
+                Some((event, _)) => {
+                    (written_sequence == 0 && pending_output.is_some())
+                        || input_needs_presentation(&mut presenter, event)?
+                }
+                None => false,
+            };
+            let input = if queued_input.is_some() && !admission_pending {
+                queued_input.take().map(|(event, _)| event)
             } else {
                 let at = [
                     presenter.next_frame.filter(|_| pending_output.is_none()),
@@ -335,7 +390,7 @@ pub fn run(
                 scheduler
                     .block_on(async {
                         tokio::select! {
-                            input = events.next(), if queued_input.is_none() => input.transpose(),
+                            input = events.as_mut().expect("initialized terminal").next(), if queued_input.is_none() => input.transpose(),
                             _ = wake.0.notified() => Ok(None),
                             _ = deadline(at) => Ok(None),
                         }
@@ -352,11 +407,19 @@ pub fn run(
                 if exit_key.ready(Some(&input), Instant::now()) {
                     return Ok(true);
                 }
-                // A terminal can expose the first frame before the writer sends
-                // its receipt. Retain input until that frame admits its keyboard
-                // and hit targets; later frames use the already presented scene.
-                if written_sequence == 0 && pending_output.is_some() && !is_exit(&input) {
-                    queued_input = Some(input);
+                // The terminal can expose a new surface or dialog before its
+                // write receipt admits input. Keep that input for this opening;
+                // ordinary updates still use the already presented geometry.
+                if ((written_sequence == 0 && pending_output.is_some())
+                    || input_needs_presentation(&mut presenter, &input)?)
+                    && !is_exit(&input)
+                {
+                    queued_input = Some((
+                        input,
+                        Some(presenter.opening_witnesses().map_err(|e| e.to_string())?),
+                    ));
+                    presenter.resources.redraw = true;
+                    wake.0.notify_one();
                     return Ok(false);
                 }
                 if is_copy(&input) {
@@ -397,12 +460,17 @@ pub fn run(
                 // Keep other gestures for the next presented frame.
                 let until = Instant::now() + Duration::from_millis(8);
                 while scrolling && Instant::now() < until {
-                    let Some(Some(input)) = events.next().now_or_never() else {
+                    let Some(Some(input)) = events
+                        .as_mut()
+                        .expect("initialized terminal")
+                        .next()
+                        .now_or_never()
+                    else {
                         break;
                     };
                     let input = input.map_err(|e| e.to_string())?;
                     if !is_wheel(&input) {
-                        queued_input = Some(input);
+                        queued_input = Some((input, None));
                         break;
                     }
                     poll_output(

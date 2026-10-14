@@ -377,7 +377,8 @@ async fn complete_unicode_document_uses_fixed_source_chunks_and_recorded_native_
         .await
         .unwrap()
         .unwrap()
-        .packages;
+        .into_parts()
+        .1;
     packages.push(payload.clone());
     let mut payload_node = node(&payload, 77, true);
     payload_node.disabled = true;

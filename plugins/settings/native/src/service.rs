@@ -429,7 +429,7 @@ impl Handler for Settings {
                     }
                     serde_json::to_value(ModelsPage::Ready {
                         revision: catalog.revision,
-                        default_model: default_model(&catalog).await,
+                        default_model: Box::new(default_model(&catalog).await),
                         choices,
                         next,
                     })

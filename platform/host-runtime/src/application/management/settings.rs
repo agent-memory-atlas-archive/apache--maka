@@ -41,7 +41,7 @@ impl Manager {
             .await
             .map_err(|e| e.to_string())?
             .ok_or("managed source not found")?;
-        let plan = desired_plan(&loaded)?;
+        let plan = loaded.plan();
         let instance = plan
             .instances()
             .get(&request.instance)
@@ -88,13 +88,13 @@ impl Manager {
         if request.expected_revision != metadata.source.reference.revision {
             return conflict(metadata.source.reference.revision);
         }
-        let mut loaded = self
+        let loaded = self
             .store
             .load_application_at(&metadata.source.reference)
             .await
             .map_err(|e| e.to_string())?
             .ok_or("managed source not found")?;
-        let plan = desired_plan(&loaded)?;
+        let (mut source, packages, plan, _) = loaded.into_parts();
         let Some(instance) = plan
             .instances()
             .get(&request.instance)
@@ -110,8 +110,7 @@ impl Manager {
         let [root, path @ ..] = instance.path.as_slice() else {
             return Err("invalid managed path".into());
         };
-        let node = loaded
-            .source
+        let node = source
             .input
             .instances
             .get_mut(root)
@@ -156,9 +155,9 @@ impl Manager {
         }
         self.commit(
             request.expected_revision,
-            loaded.source.input,
-            loaded.source.remote_exports,
-            loaded.packages,
+            source.input,
+            source.remote_exports,
+            packages,
             |source| source,
         )
         .await

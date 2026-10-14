@@ -42,7 +42,7 @@ pub struct CommittedUpdate {
 }
 impl CommittedUpdate {
     pub fn source(&self) -> &DeploymentRef {
-        &self.loaded.source.reference
+        &self.loaded.source().reference
     }
 }
 
@@ -79,13 +79,6 @@ pub(super) fn prepare<V: ?Sized + 'static>(
     native: &NativeRegistry<V>,
     declarations: &RemoteExports,
 ) -> Result<Candidate> {
-    if input.environment.location != ExecutionLocation::Ui {
-        return Err(Error::Invalid("UI deployment required".into()));
-    }
-    let target = input
-        .environment
-        .presentation
-        .ok_or_else(|| Error::Invalid("presentation target required".into()))?;
     let mut packages = Packages::default();
     let mut sources: BTreeMap<PackageRef, Package> = BTreeMap::new();
     for package in bytes {
@@ -98,6 +91,21 @@ pub(super) fn prepare<V: ?Sized + 'static>(
         sources.insert(package.application_ref(), package);
     }
     let plan = Plan::prepare(input, &packages, declarations)?;
+    prepare_plan(&input.environment, plan, sources, native)
+}
+
+pub(super) fn prepare_plan<V: ?Sized + 'static>(
+    environment: &maka_plugin_core::composition::Environment,
+    plan: Plan,
+    sources: BTreeMap<PackageRef, Package>,
+    native: &NativeRegistry<V>,
+) -> Result<Candidate> {
+    if environment.location != ExecutionLocation::Ui {
+        return Err(Error::Invalid("UI deployment required".into()));
+    }
+    let target = environment
+        .presentation
+        .ok_or_else(|| Error::Invalid("presentation target required".into()))?;
     let pending: Vec<_> = plan
         .instances()
         .values()
@@ -287,19 +295,15 @@ impl<V: ?Sized + 'static> Application<V> {
     /// Preflight before the trusted launcher publishes any new connection grant.
     pub fn prepare_update(&self, update: CommittedUpdate) -> Result<PreparedUpdate> {
         self.check_update_source(update.source())?;
-        let loaded = update.loaded;
-        let source = loaded.snapshot();
-        let declarations = loaded
-            .source
-            .remote_exports
-            .into_iter()
-            .map(|r| (r.capability, r.declaration))
-            .collect();
-        let candidate = prepare(
-            &loaded.source.input,
-            loaded.packages,
+        let (deployment, packages, plan, source) = update.loaded.into_parts();
+        let candidate = prepare_plan(
+            &deployment.input.environment,
+            plan,
+            packages
+                .into_iter()
+                .map(|p| (p.application_ref(), p))
+                .collect(),
             self.native.as_ref().expect("open UI registry"),
-            &declarations,
         )?;
         if candidate.target != self.target {
             return Err(Error::Invalid("stored presentation target mismatch".into()));

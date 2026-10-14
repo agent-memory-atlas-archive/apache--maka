@@ -369,7 +369,7 @@ async fn retired_native_initializer_keeps_original_store_until_actual_configurat
                                 .await
                                 .unwrap()
                                 .unwrap()
-                                .source
+                                .source()
                                 .reference
                                 .revision,
                             2

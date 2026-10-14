@@ -70,44 +70,53 @@ pub(crate) fn content_hash(value: &str) -> bool {
 }
 
 pub(crate) fn schema(value: &serde_json::Value) -> Result<(), Error> {
-    // Package imports repeat the same immutable public schemas. Cache only a
-    // successful schema check, keyed by the complete bytes, never by contract
-    // name/version. Configuration values are still validated separately.
+    validator(value).map(|_| ())
+}
+
+fn validator(value: &serde_json::Value) -> Result<std::sync::Arc<jsonschema::Validator>, Error> {
+    // Package imports repeat the same immutable public schemas. Cache compiled
+    // validators by the complete schema, never by contract name/version.
+    // Configuration values are still validated on every call.
     // JSON Schema is built without external file/network resolution features.
     #[derive(Default)]
     struct Checked {
-        schemas: std::collections::HashSet<String>,
+        schemas:
+            std::collections::HashMap<serde_json::Value, std::sync::Arc<jsonschema::Validator>>,
         bytes: usize,
     }
     static CHECKED: std::sync::OnceLock<std::sync::Mutex<Checked>> = std::sync::OnceLock::new();
     let checked = CHECKED.get_or_init(Default::default);
-    let key = serde_json::to_string(value).expect("JSON schema value");
-    if checked.lock().expect("schema cache").schemas.contains(&key) {
-        return Ok(());
+    if let Some(validator) = checked.lock().expect("schema cache").schemas.get(value) {
+        return Ok(validator.clone());
     }
-    jsonschema::validator_for(value)
-        .map_err(|error| Error::Declaration(format!("invalid schema: {error}")))?;
+    let validator = std::sync::Arc::new(
+        jsonschema::validator_for(value)
+            .map_err(|error| Error::Declaration(format!("invalid schema: {error}")))?,
+    );
+    let size = serde_json::to_vec(value).expect("JSON schema value").len();
     const MAX_BYTES: usize = 4 * 1024 * 1024;
-    if key.len() <= MAX_BYTES {
+    if size <= MAX_BYTES {
         let mut checked = checked.lock().expect("schema cache");
-        if checked.bytes + key.len() > MAX_BYTES || checked.schemas.len() >= 1024 {
+        if checked.bytes + size > MAX_BYTES || checked.schemas.len() >= 1024 {
             checked.schemas.clear();
             checked.bytes = 0;
         }
-        let size = key.len();
-        if checked.schemas.insert(key) {
+        if checked
+            .schemas
+            .insert(value.clone(), validator.clone())
+            .is_none()
+        {
             checked.bytes += size;
         }
     }
-    Ok(())
+    Ok(validator)
 }
 
 pub(crate) fn validate_value(
     schema: &serde_json::Value,
     value: &serde_json::Value,
 ) -> Result<(), Error> {
-    jsonschema::validator_for(schema)
-        .map_err(|error| Error::Declaration(format!("invalid schema: {error}")))?
+    validator(schema)?
         .validate(value)
         .map_err(|error| Error::Composition(format!("configuration: {error}")))
 }
@@ -131,4 +140,26 @@ pub fn identifier(value: &str) -> Result<(), Error> {
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod schema_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn compiled_schemas_are_reused_without_reusing_value_validation() {
+        let schema = json!({"type":"integer", "minimum": 3});
+        let first = validator(&schema).unwrap();
+        assert!(std::sync::Arc::ptr_eq(
+            &first,
+            &validator(&schema.clone()).unwrap()
+        ));
+        assert!(validate_value(&schema, &json!(3)).is_ok());
+        assert!(validate_value(&schema, &json!(2)).is_err());
+        assert!(validate_value(&schema, &json!("3")).is_err());
+        let changed = json!({"type":"integer", "minimum": 4});
+        assert!(validate_value(&changed, &json!(3)).is_err());
+        assert!(validator(&json!({"type": "not-a-json-type"})).is_err());
+    }
 }

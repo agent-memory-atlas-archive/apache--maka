@@ -29,15 +29,11 @@ import type {
   ReadingObservation,
   ReadingCommand,
   ComponentInput,
-  UiExport,
   Action,
   InputProps,
   FilePasteObservation,
 } from '../../packages/plugin-sdk/src/index.js';
 import {
-  composerContract,
-  navigationContract,
-  timelineContract,
   type ComposerProps,
   type NavigationProps,
   type TimelineProps,
@@ -139,13 +135,9 @@ interface Reading extends Revision {
   files: Record<string, ToolFileContext>;
   fileContext: TimelineFileContext | null;
 }
-export function components<N extends Node>(
+export function composer<N extends Node>(
   presentation: Presentation<N>,
-): {
-  composer: Component<Draft, ComposerProps, N>;
-  navigation: Component<Navigation, NavigationProps, N>;
-  timeline: Component<Reading, TimelineProps, N>;
-} {
+): Component<Draft, ComposerProps, N> {
   const target = presentation.target;
   const composerFrame = (
     state: Draft,
@@ -438,6 +430,117 @@ export function components<N extends Node>(
       events,
     );
   };
+  return {
+    mount: (props) => composerFrame({ revision: 0, serial: 0, active: null, entries: [] }, props),
+    update: (state, props) =>
+      composerFrame({ ...state, entries: [...state.entries], revision: state.revision + 1 }, props),
+    event(state, input, props) {
+      const next = {
+        ...state,
+        entries: state.entries.map((entry) => ({ ...entry })),
+        revision: state.revision + 1,
+      };
+      const source =
+        input.kind === 'component' ? next.entries.find((entry) => entry.key === input.child) : null;
+      if (input.kind === 'component' && !source) return composerFrame(next, props);
+      if (input.kind === 'component' && source && input.name === 'checkpoint') {
+        const observation = input.event as EditorCheckpointObservation;
+        source.checkpoint =
+          observation.state.kind === 'restore'
+            ? { ...observation, state: { ...observation.state, metadata: null } }
+            : observation;
+        return composerFrame(next, props, [
+          {
+            name: 'checkpoint',
+            value: {
+              context: source.context,
+              dataSource: source.dataSource,
+              observation,
+              owners: next.entries.flatMap((entry) =>
+                entry.observation
+                  ? [entry.observation.snapshot.text.owner]
+                  : entry.checkpoint
+                    ? [entry.checkpoint.owner]
+                    : [],
+              ),
+            },
+          },
+        ]);
+      }
+      if (input.kind === 'component' && source && input.name === 'files') {
+        source.files = input.event as FilePasteObservation;
+        return composerFrame(next, props, [
+          { name: 'files', value: { ...source.files, dataSource: source.dataSource } },
+        ]);
+      }
+      if (
+        input.kind === 'component' &&
+        source &&
+        (input.name === 'changed' || input.name === 'submitted')
+      ) {
+        source.observation = input.event as EditorObservation;
+        if (input.name === 'changed')
+          return composerFrame(next, props, [{ name: 'changed', value: source.observation }]);
+      }
+      const current = next.entries.find(
+        (entry) => entry.context === props.context && sameValue(entry.dataSource, props.dataSource),
+      );
+      const observation = current?.observation;
+      if (input.kind === 'raw' && input.key === 'draft-retry' && current?.checkpoint) {
+        if (current.checkpoint.state.kind === 'failed') {
+          current.retry++;
+          return composerFrame(next, props);
+        }
+        return composerFrame(next, props, [
+          { name: 'draftCheck', value: { owner: current.checkpoint.owner } },
+        ]);
+      }
+
+      if (
+        ((input.kind === 'raw' && input.key === 'send') ||
+          (input.kind === 'component' && source === current && input.name === 'submitted')) &&
+        current?.checkpoint?.state.kind === 'ready' &&
+        current.checkpoint.state.initialized &&
+        props.enabled &&
+        !props.busy &&
+        (target === 'tui' || !props.running) &&
+        observation &&
+        (observation.snapshot.text.bytes > 0 || props.hasAttachments) &&
+        !observation.snapshot.marked &&
+        (!props.command ||
+          next.entries.some(
+            (entry) =>
+              entry.observation?.receipt?.owner === props.command!.owner &&
+              entry.observation?.receipt?.sequence === props.command!.sequence,
+          ))
+      ) {
+        return composerFrame(next, props, [{ name: 'send', value: observation }]);
+      }
+      if (input.kind === 'raw' && input.key === 'attach' && props.context && !props.busy)
+        return composerFrame(next, props, [{ name: 'attachments', value: {} }]);
+      if (input.kind === 'raw' && input.key === 'stop' && props.running && !props.busy)
+        return composerFrame(next, props, [{ name: 'stop', value: {} }]);
+      return composerFrame(next, props);
+    },
+    capture(state, props, method, input) {
+      const owner = (input as { owner?: string }).owner;
+      const entry = state.entries.find((entry) =>
+        method === 'file'
+          ? entry.files?.selection.owner === owner
+          : owner
+            ? entry.observation?.snapshot.text.owner === owner
+            : entry.context === props.context,
+      );
+      if (!entry) throw new Error('Original draft is unavailable');
+      return { kind: 'forward', source: { child: entry.key, method, input } };
+    },
+  };
+}
+
+export function navigation<N extends Node>(
+  presentation: Presentation<N>,
+): Component<Navigation, NavigationProps, N> {
+  const target = presentation.target;
   const navigationFrame = (state: Navigation, props: NavigationProps) => {
     const ui = presentation.paint(props.theme);
     return output(
@@ -644,6 +747,118 @@ export function components<N extends Node>(
       ),
     );
   };
+  return {
+    mount: (props) =>
+      navigationFrame(
+        { revision: 0, menu: null, toggled: [], scrollRevision: 0, focused: null },
+        props,
+      ),
+    update: (state, props) => navigationFrame({ ...state, revision: state.revision + 1 }, props),
+    event(state, input, props) {
+      const next = { ...state, revision: state.revision + 1 };
+      const events: Parameters<typeof output>[2] = [];
+      if (input.kind === 'component' && input.child === 'session-list') {
+        if (input.name === 'input') input = input.event as ComponentInput;
+        else if (input.name === 'observed') {
+          const observed = input.event as ReadingObservation;
+          const scroll = observed.scroll && observed.scroll.readingRevision > next.scrollRevision;
+          if (
+            scroll &&
+            observed.viewport?.readingRevision === observed.readingRevision &&
+            observed.pendingCommand == null
+          )
+            next.scrollRevision = observed.scroll!.readingRevision;
+          if (
+            !props.busy &&
+            !props.loading &&
+            observed.pendingCommand == null &&
+            observed.viewport?.readingRevision === observed.readingRevision
+          ) {
+            if (
+              props.newer &&
+              scroll &&
+              observed.scroll!.direction === 'down' &&
+              observed.viewport.atEnd
+            )
+              events.push({ name: 'newer', value: {} });
+            else if (
+              props.older &&
+              scroll &&
+              observed.scroll!.direction === 'up' &&
+              observed.viewport.atStart
+            )
+              events.push({ name: 'older', value: {} });
+          }
+        }
+      }
+      if (input.kind === 'raw' && (input.event as { kind?: string }).kind === 'dismiss')
+        next.menu = null;
+      if (input.kind === 'raw' && !props.busy) {
+        if (input.key.startsWith('menu-') && input.key !== 'menu-close') {
+          const id = input.key.slice(5);
+          if (props.sessions.some((session) => session.id === id)) next.menu = id;
+        }
+        const groups = sessionGroups(props);
+        const group = groups.find((group) => group.key === input.key);
+        if (group)
+          next.toggled = next.toggled.includes(group.key)
+            ? next.toggled.filter((key) => key !== group.key)
+            : [...next.toggled, group.key];
+        else {
+          const session = groups
+            .filter((group) => groupOpen(next, group.key))
+            .flatMap((group) => group.sessions)
+            .find(
+              (session) =>
+                session.id === input.key ||
+                'details-' + session.id === input.key ||
+                'usage-' + session.id === input.key ||
+                ['rename-', 'archive-', 'remove-', 'stop-'].some(
+                  (prefix) => prefix + session.id === input.key,
+                ),
+            );
+          if (
+            session &&
+            target === 'tui' &&
+            (input.event as { kind?: string }).kind === 'activate' &&
+            input.key === session.id
+          ) {
+            const at = props.sessions.indexOf(session);
+            if (!props.loading && next.focused !== session.id) {
+              if (props.newer && at >= props.sessions.length - 3)
+                events.push({ name: 'newer', value: {} });
+              else if (props.older && at < 3) events.push({ name: 'older', value: {} });
+            }
+            next.focused = session.id;
+          } else if (session)
+            events.push({
+              name: 'select',
+              value: {
+                sessionId: session.id,
+                details:
+                  input.key === 'details-' + session.id || input.key === 'rename-' + session.id,
+                ...(['archive-', 'remove-', 'stop-'].some(
+                  (prefix) => prefix + session.id === input.key,
+                )
+                  ? { action: input.key.slice(0, input.key.indexOf('-')) }
+                  : {}),
+                ...(input.key === 'usage-' + session.id ? { usage: true } : {}),
+              },
+            });
+        }
+      }
+      if (events.length) next.menu = null;
+      const out = navigationFrame(next, props);
+      out.events.push(...events);
+      return out;
+    },
+  };
+}
+
+export function timeline<N extends Node>(
+  presentation: Presentation<N>,
+): Component<Reading, TimelineProps, N> {
+  const target = presentation.target;
   const focusMessage = (state: Reading, id: string) => {
     state.browse!.id = id;
     state.command = {
@@ -1403,622 +1618,393 @@ export function components<N extends Node>(
     return out;
   };
   return {
-    composer: {
-      mount: (props) => composerFrame({ revision: 0, serial: 0, active: null, entries: [] }, props),
-      update: (state, props) =>
-        composerFrame(
-          { ...state, entries: [...state.entries], revision: state.revision + 1 },
-          props,
-        ),
-      event(state, input, props) {
-        const next = {
-          ...state,
-          entries: state.entries.map((entry) => ({ ...entry })),
-          revision: state.revision + 1,
-        };
-        const source =
-          input.kind === 'component'
-            ? next.entries.find((entry) => entry.key === input.child)
-            : null;
-        if (input.kind === 'component' && !source) return composerFrame(next, props);
-        if (input.kind === 'component' && source && input.name === 'checkpoint') {
-          const observation = input.event as EditorCheckpointObservation;
-          source.checkpoint =
-            observation.state.kind === 'restore'
-              ? { ...observation, state: { ...observation.state, metadata: null } }
-              : observation;
-          return composerFrame(next, props, [
-            {
-              name: 'checkpoint',
-              value: {
-                context: source.context,
-                dataSource: source.dataSource,
-                observation,
-                owners: next.entries.flatMap((entry) =>
-                  entry.observation
-                    ? [entry.observation.snapshot.text.owner]
-                    : entry.checkpoint
-                      ? [entry.checkpoint.owner]
-                      : [],
-                ),
-              },
-            },
-          ]);
-        }
-        if (input.kind === 'component' && source && input.name === 'files') {
-          source.files = input.event as FilePasteObservation;
-          return composerFrame(next, props, [
-            { name: 'files', value: { ...source.files, dataSource: source.dataSource } },
-          ]);
-        }
-        if (
-          input.kind === 'component' &&
-          source &&
-          (input.name === 'changed' || input.name === 'submitted')
-        ) {
-          source.observation = input.event as EditorObservation;
-          if (input.name === 'changed')
-            return composerFrame(next, props, [{ name: 'changed', value: source.observation }]);
-        }
-        const current = next.entries.find(
-          (entry) =>
-            entry.context === props.context && sameValue(entry.dataSource, props.dataSource),
-        );
-        const observation = current?.observation;
-        if (input.kind === 'raw' && input.key === 'draft-retry' && current?.checkpoint) {
-          if (current.checkpoint.state.kind === 'failed') {
-            current.retry++;
-            return composerFrame(next, props);
-          }
-          return composerFrame(next, props, [
-            { name: 'draftCheck', value: { owner: current.checkpoint.owner } },
-          ]);
-        }
-
-        if (
-          ((input.kind === 'raw' && input.key === 'send') ||
-            (input.kind === 'component' && source === current && input.name === 'submitted')) &&
-          current?.checkpoint?.state.kind === 'ready' &&
-          current.checkpoint.state.initialized &&
-          props.enabled &&
-          !props.busy &&
-          (target === 'tui' || !props.running) &&
-          observation &&
-          (observation.snapshot.text.bytes > 0 || props.hasAttachments) &&
-          !observation.snapshot.marked &&
-          (!props.command ||
-            next.entries.some(
-              (entry) =>
-                entry.observation?.receipt?.owner === props.command!.owner &&
-                entry.observation?.receipt?.sequence === props.command!.sequence,
-            ))
-        ) {
-          return composerFrame(next, props, [{ name: 'send', value: observation }]);
-        }
-        if (input.kind === 'raw' && input.key === 'attach' && props.context && !props.busy)
-          return composerFrame(next, props, [{ name: 'attachments', value: {} }]);
-        if (input.kind === 'raw' && input.key === 'stop' && props.running && !props.busy)
-          return composerFrame(next, props, [{ name: 'stop', value: {} }]);
-        return composerFrame(next, props);
-      },
-      capture(state, props, method, input) {
-        const owner = (input as { owner?: string }).owner;
-        const entry = state.entries.find((entry) =>
-          method === 'file'
-            ? entry.files?.selection.owner === owner
-            : owner
-              ? entry.observation?.snapshot.text.owner === owner
-              : entry.context === props.context,
-        );
-        if (!entry) throw new Error('Original draft is unavailable');
-        return { kind: 'forward', source: { child: entry.key, method, input } };
-      },
+    mount: (props) => {
+      const initial: Reading = {
+        copy: null,
+        revision: 0,
+        browse: null,
+        search: null,
+        expanded: [],
+        files: {},
+        fileContext: null,
+        observation: null,
+        scrollRevision: 0,
+        command:
+          props.landing.sequence > 0 ? { sequence: 1, target: { kind: props.landing.edge } } : null,
+        landing: props.landing,
+      };
+      syncSearch(initial, target === 'tui' ? props.search : null);
+      return timelineFrame(initial, props);
     },
-    navigation: {
-      mount: (props) =>
-        navigationFrame(
-          { revision: 0, menu: null, toggled: [], scrollRevision: 0, focused: null },
-          props,
-        ),
-      update: (state, props) => navigationFrame({ ...state, revision: state.revision + 1 }, props),
-      event(state, input, props) {
-        const next = { ...state, revision: state.revision + 1 };
-        const events: Parameters<typeof output>[2] = [];
-        if (input.kind === 'component' && input.child === 'session-list') {
-          if (input.name === 'input') input = input.event as ComponentInput;
-          else if (input.name === 'observed') {
-            const observed = input.event as ReadingObservation;
-            const scroll = observed.scroll && observed.scroll.readingRevision > next.scrollRevision;
-            if (
-              scroll &&
-              observed.viewport?.readingRevision === observed.readingRevision &&
-              observed.pendingCommand == null
-            )
-              next.scrollRevision = observed.scroll!.readingRevision;
-            if (
-              !props.busy &&
-              !props.loading &&
-              observed.pendingCommand == null &&
-              observed.viewport?.readingRevision === observed.readingRevision
-            ) {
-              if (
-                props.newer &&
-                scroll &&
-                observed.scroll!.direction === 'down' &&
-                observed.viewport.atEnd
-              )
-                events.push({ name: 'newer', value: {} });
-              else if (
-                props.older &&
-                scroll &&
-                observed.scroll!.direction === 'up' &&
-                observed.viewport.atStart
-              )
-                events.push({ name: 'older', value: {} });
-            }
-          }
-        }
-        if (input.kind === 'raw' && (input.event as { kind?: string }).kind === 'dismiss')
-          next.menu = null;
-        if (input.kind === 'raw' && !props.busy) {
-          if (input.key.startsWith('menu-') && input.key !== 'menu-close') {
-            const id = input.key.slice(5);
-            if (props.sessions.some((session) => session.id === id)) next.menu = id;
-          }
-          const groups = sessionGroups(props);
-          const group = groups.find((group) => group.key === input.key);
-          if (group)
-            next.toggled = next.toggled.includes(group.key)
-              ? next.toggled.filter((key) => key !== group.key)
-              : [...next.toggled, group.key];
-          else {
-            const session = groups
-              .filter((group) => groupOpen(next, group.key))
-              .flatMap((group) => group.sessions)
-              .find(
-                (session) =>
-                  session.id === input.key ||
-                  'details-' + session.id === input.key ||
-                  'usage-' + session.id === input.key ||
-                  ['rename-', 'archive-', 'remove-', 'stop-'].some(
-                    (prefix) => prefix + session.id === input.key,
-                  ),
-              );
-            if (
-              session &&
-              target === 'tui' &&
-              (input.event as { kind?: string }).kind === 'activate' &&
-              input.key === session.id
-            ) {
-              const at = props.sessions.indexOf(session);
-              if (!props.loading && next.focused !== session.id) {
-                if (props.newer && at >= props.sessions.length - 3)
-                  events.push({ name: 'newer', value: {} });
-                else if (props.older && at < 3) events.push({ name: 'older', value: {} });
+    update(state, props) {
+      if (
+        props.landing.sequence < state.landing.sequence ||
+        (props.landing.sequence === state.landing.sequence &&
+          props.landing.edge !== state.landing.edge)
+      )
+        throw new Error('Invalid reading landing sequence');
+      const next: Reading = {
+        ...state,
+        browse:
+          state.landing.sequence === props.landing.sequence && state.browse
+            ? { ...state.browse }
+            : null,
+        revision: state.revision + 1,
+        command:
+          state.landing.sequence !== props.landing.sequence
+            ? {
+                sequence: (state.command?.sequence ?? 0) + 1,
+                target: { kind: props.landing.edge },
               }
-              next.focused = session.id;
-            } else if (session)
-              events.push({
-                name: 'select',
-                value: {
-                  sessionId: session.id,
-                  details:
-                    input.key === 'details-' + session.id || input.key === 'rename-' + session.id,
-                  ...(['archive-', 'remove-', 'stop-'].some(
-                    (prefix) => prefix + session.id === input.key,
-                  )
-                    ? { action: input.key.slice(0, input.key.indexOf('-')) }
-                    : {}),
-                  ...(input.key === 'usage-' + session.id ? { usage: true } : {}),
-                },
-              });
-          }
+            : state.command,
+        landing: props.landing,
+        observation: state.landing.sequence === props.landing.sequence ? state.observation : null,
+      };
+      if (state.browse && state.browse.request === props.browse && !next.browse) {
+        // A page split within one message replaces the bounded window. Follow
+        // its existing landing edge instead of restarting at the first row.
+        const rows = toolCards(props.messages);
+        const row = props.landing.edge === 'end' ? rows.at(-1) : rows[0];
+        if (row) {
+          next.browse = { ...state.browse };
+          focusMessage(next, row.message.id);
         }
-        if (events.length) next.menu = null;
-        const out = navigationFrame(next, props);
-        out.events.push(...events);
-        return out;
-      },
+      }
+      syncSearch(next, target === 'tui' ? props.search : null);
+      return timelineFrame(next, props, messageCopyObservation(state));
     },
-    timeline: {
-      mount: (props) => {
-        const initial: Reading = {
-          copy: null,
-          revision: 0,
-          browse: null,
-          search: null,
-          expanded: [],
-          files: {},
-          fileContext: null,
-          observation: null,
-          scrollRevision: 0,
-          command:
-            props.landing.sequence > 0
-              ? { sequence: 1, target: { kind: props.landing.edge } }
-              : null,
-          landing: props.landing,
+    event(state, input, props) {
+      const next = {
+        ...state,
+        browse: state.browse ? { ...state.browse } : null,
+        revision: state.revision + 1,
+      };
+      if (
+        input.kind === 'component' &&
+        (['reading', 'source-reading', 'find-results-reading'].includes(input.child) ||
+          input.child.startsWith('find-preview-reading-'))
+      ) {
+        if (input.child === 'reading' && input.name === 'observed')
+          next.observation = input.event as ReadingObservation;
+        if (input.name === 'input') input = input.event as ComponentInput;
+      }
+      if (
+        input.kind === 'component' &&
+        input.name === 'fileContext' &&
+        input.child.startsWith('tool-details-')
+      ) {
+        next.files = {
+          ...state.files,
+          [input.child.slice('tool-details-'.length)]: input.event as ToolFileContext,
         };
-        syncSearch(initial, target === 'tui' ? props.search : null);
-        return timelineFrame(initial, props);
-      },
-      update(state, props) {
-        if (
-          props.landing.sequence < state.landing.sequence ||
-          (props.landing.sequence === state.landing.sequence &&
-            props.landing.edge !== state.landing.edge)
-        )
-          throw new Error('Invalid reading landing sequence');
-        const next: Reading = {
-          ...state,
-          browse:
-            state.landing.sequence === props.landing.sequence && state.browse
-              ? { ...state.browse }
-              : null,
-          revision: state.revision + 1,
-          command:
-            state.landing.sequence !== props.landing.sequence
-              ? {
-                  sequence: (state.command?.sequence ?? 0) + 1,
-                  target: { kind: props.landing.edge },
-                }
-              : state.command,
-          landing: props.landing,
-          observation: state.landing.sequence === props.landing.sequence ? state.observation : null,
-        };
-        if (state.browse && state.browse.request === props.browse && !next.browse) {
-          // A page split within one message replaces the bounded window. Follow
-          // its existing landing edge instead of restarting at the first row.
-          const rows = toolCards(props.messages);
-          const row = props.landing.edge === 'end' ? rows.at(-1) : rows[0];
-          if (row) {
-            next.browse = { ...state.browse };
-            focusMessage(next, row.message.id);
-          }
-        }
-        syncSearch(next, target === 'tui' ? props.search : null);
-        return timelineFrame(next, props, messageCopyObservation(state));
-      },
-      event(state, input, props) {
-        const next = {
-          ...state,
-          browse: state.browse ? { ...state.browse } : null,
-          revision: state.revision + 1,
-        };
-        if (
-          input.kind === 'component' &&
-          (['reading', 'source-reading', 'find-results-reading'].includes(input.child) ||
-            input.child.startsWith('find-preview-reading-'))
-        ) {
-          if (input.child === 'reading' && input.name === 'observed')
-            next.observation = input.event as ReadingObservation;
-          if (input.name === 'input') input = input.event as ComponentInput;
-        }
-        if (
-          input.kind === 'component' &&
-          input.name === 'fileContext' &&
-          input.child.startsWith('tool-details-')
-        ) {
-          next.files = {
-            ...state.files,
-            [input.child.slice('tool-details-'.length)]: input.event as ToolFileContext,
-          };
-        }
-        if (
-          next.browse &&
-          props.browse === next.browse.request &&
-          !props.source &&
-          !props.search &&
-          !props.loading &&
-          input.kind === 'raw'
-        ) {
-          const rows = toolCards(props.messages).map(({ message }) => message);
-          const selected = rows.find((message) => input.key === 'browse-' + message.id);
-          const at = rows.findIndex((message) => message.id === next.browse!.id);
-          let toggle = false;
-          if (selected) {
-            next.browse.id = selected.id;
-            // The original Item distinguishes focus-following activation from Enter.
-            toggle = (input.event as { kind?: string }).kind === 'submit';
-          } else if (input.key === 'browse-previous' || input.key === 'browse-next') {
-            const forward = input.key === 'browse-next';
-            if (
-              at >= 0 &&
-              (forward ? at === rows.length - 1 && props.newer : at === 0 && props.older)
-            ) {
-              // Extend the original bounded history window without moving focus
-              // on an asynchronous reply. The next arrow enters the added rows.
-              const out = timelineFrame(next, props, messageCopyObservation(state));
-              out.events.push({ name: forward ? 'newer' : 'older', value: {} });
-              return out;
-            }
-            const row = rows[Math.max(0, Math.min(rows.length - 1, at + (forward ? 1 : -1)))];
-            if (row) focusMessage(next, row.id);
-          }
-          const row = rows.find((message) => message.id === next.browse!.id);
+      }
+      if (
+        next.browse &&
+        props.browse === next.browse.request &&
+        !props.source &&
+        !props.search &&
+        !props.loading &&
+        input.kind === 'raw'
+      ) {
+        const rows = toolCards(props.messages).map(({ message }) => message);
+        const selected = rows.find((message) => input.key === 'browse-' + message.id);
+        const at = rows.findIndex((message) => message.id === next.browse!.id);
+        let toggle = false;
+        if (selected) {
+          next.browse.id = selected.id;
+          // The original Item distinguishes focus-following activation from Enter.
+          toggle = (input.event as { kind?: string }).kind === 'submit';
+        } else if (input.key === 'browse-previous' || input.key === 'browse-next') {
+          const forward = input.key === 'browse-next';
           if (
-            row &&
-            (row.role === 'tool_call' || row.role === 'tool_result') &&
-            (row.source !== null || row.text)
+            at >= 0 &&
+            (forward ? at === rows.length - 1 && props.newer : at === 0 && props.older)
           ) {
-            const expanded = next.expanded.includes(row.id);
-            const open = input.key === 'browse-expand' || (toggle && !expanded);
-            if (toggle || input.key === 'browse-expand' || input.key === 'browse-collapse')
-              next.expanded = open
-                ? [...new Set([...next.expanded, row.id])]
-                : next.expanded.filter((id) => id !== row.id);
-          }
-          if (input.key === 'browse-close') {
-            const request = next.browse.request;
+            // Extend the original bounded history window without moving focus
+            // on an asynchronous reply. The next arrow enters the added rows.
             const out = timelineFrame(next, props, messageCopyObservation(state));
-            out.events.push({ name: 'browseClosed', value: { request } });
+            out.events.push({ name: forward ? 'newer' : 'older', value: {} });
             return out;
           }
+          const row = rows[Math.max(0, Math.min(rows.length - 1, at + (forward ? 1 : -1)))];
+          if (row) focusMessage(next, row.id);
         }
-        const actions: Action[] = [];
-        if (messageCopyEvent(next, input, actions)) {
-          const out = timelineFrame(next, props, messageCopyObservation(state));
-          out.actions.push(...actions.filter((action) => action.key === next.copy?.pending?.key));
-          return out;
-        }
-        const handled = searchEvent(next, input, props, actions);
-        if (handled) {
-          const out = timelineFrame(next, props, messageCopyObservation(state));
-          out.actions.push(...actions);
-          if (handled === 'closed') out.events.push({ name: 'searchClosed', value: {} });
-          return out;
-        }
+        const row = rows.find((message) => message.id === next.browse!.id);
         if (
-          input.kind === 'raw' &&
-          input.key === 'end' &&
-          next.observation?.viewport &&
-          !next.observation.viewport.atEnd &&
-          next.observation.pendingCommand == null
-        )
-          next.command = { sequence: (next.command?.sequence ?? 0) + 1, target: { kind: 'end' } };
-        if (
-          input.kind === 'raw' &&
-          input.key === 'prompt-text' &&
-          state.promptShown &&
-          state.promptTarget &&
-          !props.loading
+          row &&
+          (row.role === 'tool_call' || row.role === 'tool_result') &&
+          (row.source !== null || row.text)
         ) {
-          const prompt = state.promptTarget;
-          const events: Emission[] = [
-            { name: 'detached', value: { landing: props.landing.sequence, value: true } },
-          ];
-          if (prompt.id)
-            next.command = {
-              sequence: (state.command?.sequence ?? 0) + 1,
-              target: { kind: 'reveal_child', key: 'message-' + prompt.id },
-            };
-          else if (prompt.source !== null)
-            events.push({ name: 'prompt', value: { sequence: prompt.source } });
-          const out = timelineFrame(next, props);
-          out.events.push(...events);
+          const expanded = next.expanded.includes(row.id);
+          const open = input.key === 'browse-expand' || (toggle && !expanded);
+          if (toggle || input.key === 'browse-expand' || input.key === 'browse-collapse')
+            next.expanded = open
+              ? [...new Set([...next.expanded, row.id])]
+              : next.expanded.filter((id) => id !== row.id);
+        }
+        if (input.key === 'browse-close') {
+          const request = next.browse.request;
+          const out = timelineFrame(next, props, messageCopyObservation(state));
+          out.events.push({ name: 'browseClosed', value: { request } });
           return out;
         }
-        if (input.kind === 'raw' && !props.source) {
-          const tool = toolCards(props.messages)
-            .map(({ message }) => message)
-            .find(
-              (message) =>
-                (message.role === 'tool_call' || message.role === 'tool_result') &&
-                (message.source !== null || message.text.length > 0) &&
-                input.key === 'toggle-' + message.id,
-            );
-          if (tool)
-            next.expanded = next.expanded.includes(tool.id)
-              ? next.expanded.filter((id) => id !== tool.id)
-              : [...next.expanded, tool.id];
-        }
+      }
+      const actions: Action[] = [];
+      if (messageCopyEvent(next, input, actions)) {
         const out = timelineFrame(next, props, messageCopyObservation(state));
-        const observed = next.observation;
+        out.actions.push(...actions.filter((action) => action.key === next.copy?.pending?.key));
+        return out;
+      }
+      const handled = searchEvent(next, input, props, actions);
+      if (handled) {
+        const out = timelineFrame(next, props, messageCopyObservation(state));
+        out.actions.push(...actions);
+        if (handled === 'closed') out.events.push({ name: 'searchClosed', value: {} });
+        return out;
+      }
+      if (
+        input.kind === 'raw' &&
+        input.key === 'end' &&
+        next.observation?.viewport &&
+        !next.observation.viewport.atEnd &&
+        next.observation.pendingCommand == null
+      )
+        next.command = { sequence: (next.command?.sequence ?? 0) + 1, target: { kind: 'end' } };
+      if (
+        input.kind === 'raw' &&
+        input.key === 'prompt-text' &&
+        state.promptShown &&
+        state.promptTarget &&
+        !props.loading
+      ) {
+        const prompt = state.promptTarget;
+        const events: Emission[] = [
+          { name: 'detached', value: { landing: props.landing.sequence, value: true } },
+        ];
+        if (prompt.id)
+          next.command = {
+            sequence: (state.command?.sequence ?? 0) + 1,
+            target: { kind: 'reveal_child', key: 'message-' + prompt.id },
+          };
+        else if (prompt.source !== null)
+          events.push({ name: 'prompt', value: { sequence: prompt.source } });
+        const out = timelineFrame(next, props);
+        out.events.push(...events);
+        return out;
+      }
+      if (input.kind === 'raw' && !props.source) {
+        const tool = toolCards(props.messages)
+          .map(({ message }) => message)
+          .find(
+            (message) =>
+              (message.role === 'tool_call' || message.role === 'tool_result') &&
+              (message.source !== null || message.text.length > 0) &&
+              input.key === 'toggle-' + message.id,
+          );
+        if (tool)
+          next.expanded = next.expanded.includes(tool.id)
+            ? next.expanded.filter((id) => id !== tool.id)
+            : [...next.expanded, tool.id];
+      }
+      const out = timelineFrame(next, props, messageCopyObservation(state));
+      const observed = next.observation;
+      if (
+        target === 'tui' &&
+        props.live &&
+        !props.latest &&
+        props.older &&
+        !props.source &&
+        !props.browse &&
+        !next.search &&
+        !props.loading &&
+        input.kind === 'component' &&
+        input.child === 'reading' &&
+        input.name === 'observed' &&
+        observed?.viewport?.atStart &&
+        observed.viewport.atEnd &&
+        observed.viewport.readingRevision === observed.readingRevision &&
+        observed.pendingCommand == null
+      )
+        out.events.push({ name: 'fill', value: {} });
+      if (
+        target === 'tui' &&
+        !props.source &&
+        !next.search &&
+        !props.loading &&
+        input.kind === 'component' &&
+        input.child === 'reading' &&
+        input.name === 'observed' &&
+        observed?.scroll &&
+        observed.scroll.readingRevision > next.scrollRevision &&
+        observed.viewport?.readingRevision === observed.readingRevision &&
+        observed.pendingCommand == null
+      ) {
+        next.scrollRevision = observed.scroll.readingRevision;
+        const rows = toolCards(props.messages);
+        const edgeRows = Math.max(1, Math.min(2, Math.floor(rows.length / 2)));
+        const visible = new Set(observed.viewport.visibleChildKeys);
+        const visibleRow = ({ message }: (typeof rows)[number]) =>
+          visible.has('message-' + message.id) || visible.has('time-' + message.contentKey);
         if (
-          target === 'tui' &&
-          props.live &&
-          !props.latest &&
+          observed.scroll.direction === 'up' &&
           props.older &&
-          !props.source &&
-          !props.browse &&
-          !next.search &&
-          !props.loading &&
-          input.kind === 'component' &&
-          input.child === 'reading' &&
-          input.name === 'observed' &&
-          observed?.viewport?.atStart &&
+          (observed.viewport.atStart || rows.slice(0, edgeRows).some(visibleRow))
+        )
+          out.events.push({ name: 'older', value: {} });
+        else if (
+          observed.scroll.direction === 'down' &&
+          props.newer &&
+          (observed.viewport.atEnd || rows.slice(-edgeRows).some(visibleRow))
+        )
+          out.events.push({ name: 'newer', value: {} });
+        else if (
+          observed.scroll.direction === 'down' &&
           observed.viewport.atEnd &&
-          observed.viewport.readingRevision === observed.readingRevision &&
-          observed.pendingCommand == null
+          !props.newer &&
+          (!props.live || props.latest)
         )
-          out.events.push({ name: 'fill', value: {} });
+          out.events.push({ name: 'latest', value: {} });
+      }
+      if (
+        input.kind === 'component' &&
+        input.child === 'reading' &&
+        input.name === 'observed' &&
+        next.observation?.viewport &&
+        next.observation.viewport.readingRevision === next.observation.readingRevision &&
+        next.observation.pendingCommand == null &&
+        state.observation?.viewport?.atEnd !== next.observation.viewport.atEnd
+      ) {
+        out.events.push({
+          name: 'detached',
+          value: { landing: props.landing.sequence, value: !next.observation.viewport.atEnd },
+        });
+      }
+      if (
+        !props.source &&
+        !props.browse &&
+        !next.search &&
+        input.kind === 'component' &&
+        input.child === 'reading' &&
+        input.name === 'observed' &&
+        next.observation?.viewport?.atEnd &&
+        next.observation.viewport.readingRevision === next.observation.readingRevision &&
+        next.observation.pendingCommand == null &&
+        (!next.command || next.observation.receipt?.sequence === next.command.sequence)
+      )
+        out.events.push({
+          name: 'tailReady',
+          value: {
+            landing: props.landing.sequence,
+            readingRevision: next.observation.readingRevision,
+          },
+        });
+      const sourceDirection = scrollBoundary(next, input, 'source-reading');
+      if (sourceDirection && props.source && !props.source.loading && !props.source.failed) {
+        if (sourceDirection === 'up' && !props.source.atStart)
+          out.events.push({ name: 'sourcePrevious', value: {} });
+        else if (sourceDirection === 'down' && !props.source.atEnd)
+          out.events.push({ name: 'sourceNext', value: {} });
+      }
+      if (input.kind === 'raw' && props.source) {
+        const source = props.source;
+        const event =
+          input.key === 'source-back'
+            ? 'sourceBack'
+            : !source.loading && input.key === 'source-first' && !source.atStart
+              ? 'sourceFirst'
+              : !source.loading && input.key === 'source-previous' && !source.atStart
+                ? 'sourcePrevious'
+                : !source.loading && input.key === 'source-next' && !source.atEnd
+                  ? 'sourceNext'
+                  : !source.loading && input.key === 'source-last' && !source.atEnd
+                    ? 'sourceLast'
+                    : !source.loading && source.failed && input.key === 'source-retry'
+                      ? 'sourceRetry'
+                      : null;
+        if (event) out.events.push({ name: event, value: {} });
+        const field = source.fields.find((field) => input.key === 'source-field-' + field);
         if (
-          target === 'tui' &&
-          !props.source &&
-          !next.search &&
-          !props.loading &&
-          input.kind === 'component' &&
-          input.child === 'reading' &&
-          input.name === 'observed' &&
-          observed?.scroll &&
-          observed.scroll.readingRevision > next.scrollRevision &&
-          observed.viewport?.readingRevision === observed.readingRevision &&
-          observed.pendingCommand == null
-        ) {
-          next.scrollRevision = observed.scroll.readingRevision;
-          const rows = toolCards(props.messages);
-          const edgeRows = Math.max(1, Math.min(2, Math.floor(rows.length / 2)));
-          const visible = new Set(observed.viewport.visibleChildKeys);
-          const visibleRow = ({ message }: (typeof rows)[number]) =>
-            visible.has('message-' + message.id) || visible.has('time-' + message.contentKey);
-          if (
-            observed.scroll.direction === 'up' &&
-            props.older &&
-            (observed.viewport.atStart || rows.slice(0, edgeRows).some(visibleRow))
-          )
-            out.events.push({ name: 'older', value: {} });
-          else if (
-            observed.scroll.direction === 'down' &&
-            props.newer &&
-            (observed.viewport.atEnd || rows.slice(-edgeRows).some(visibleRow))
-          )
-            out.events.push({ name: 'newer', value: {} });
-          else if (
-            observed.scroll.direction === 'down' &&
-            observed.viewport.atEnd &&
-            !props.newer &&
-            (!props.live || props.latest)
-          )
-            out.events.push({ name: 'latest', value: {} });
-        }
-        if (
-          input.kind === 'component' &&
-          input.child === 'reading' &&
-          input.name === 'observed' &&
-          next.observation?.viewport &&
-          next.observation.viewport.readingRevision === next.observation.readingRevision &&
-          next.observation.pendingCommand == null &&
-          state.observation?.viewport?.atEnd !== next.observation.viewport.atEnd
-        ) {
-          out.events.push({
-            name: 'detached',
-            value: { landing: props.landing.sequence, value: !next.observation.viewport.atEnd },
-          });
-        }
-        if (
-          !props.source &&
-          !props.browse &&
-          !next.search &&
-          input.kind === 'component' &&
-          input.child === 'reading' &&
-          input.name === 'observed' &&
-          next.observation?.viewport?.atEnd &&
-          next.observation.viewport.readingRevision === next.observation.readingRevision &&
-          next.observation.pendingCommand == null &&
-          (!next.command || next.observation.receipt?.sequence === next.command.sequence)
+          !source.loading &&
+          field &&
+          field !== (source.kind === 'message' ? 'body' : source.kind)
         )
-          out.events.push({
-            name: 'tailReady',
-            value: {
-              landing: props.landing.sequence,
-              readingRevision: next.observation.readingRevision,
-            },
-          });
-        const sourceDirection = scrollBoundary(next, input, 'source-reading');
-        if (sourceDirection && props.source && !props.source.loading && !props.source.failed) {
-          if (sourceDirection === 'up' && !props.source.atStart)
-            out.events.push({ name: 'sourcePrevious', value: {} });
-          else if (sourceDirection === 'down' && !props.source.atEnd)
-            out.events.push({ name: 'sourceNext', value: {} });
-        }
-        if (input.kind === 'raw' && props.source) {
-          const source = props.source;
-          const event =
-            input.key === 'source-back'
-              ? 'sourceBack'
-              : !source.loading && input.key === 'source-first' && !source.atStart
-                ? 'sourceFirst'
-                : !source.loading && input.key === 'source-previous' && !source.atStart
-                  ? 'sourcePrevious'
-                  : !source.loading && input.key === 'source-next' && !source.atEnd
-                    ? 'sourceNext'
-                    : !source.loading && input.key === 'source-last' && !source.atEnd
-                      ? 'sourceLast'
-                      : !source.loading && source.failed && input.key === 'source-retry'
-                        ? 'sourceRetry'
-                        : null;
-          if (event) out.events.push({ name: event, value: {} });
-          const field = source.fields.find((field) => input.key === 'source-field-' + field);
-          if (
-            !source.loading &&
-            field &&
-            field !== (source.kind === 'message' ? 'body' : source.kind)
-          )
-            out.events.push({ name: 'sourceField', value: { field } });
-        } else if (input.kind === 'raw' && !props.loading) {
-          if (props.markReadEnabled && props.toolContext && !next.search) {
-            const message = props.messages.find(
-              (message) =>
-                message.source !== null &&
-                (message.role === 'user' ||
-                  message.role === 'assistant' ||
-                  message.role === 'thinking') &&
-                input.key ===
-                  'mark-read-' + message.id + (message.role === 'thinking' ? '-thinking' : ''),
-            );
-            if (message)
-              out.events.push({
-                name: 'markRead',
-                value: {
-                  sessionId: props.toolContext.sessionId,
-                  sequence: message.source,
-                  field: message.role === 'thinking' ? 'thinking' : 'body',
-                },
-              });
-          }
-
-          const tool = toolCards(props.messages)
-            .map(({ message }) => message)
-            .find(
-              (message) =>
-                message.source !== null &&
-                (message.role === 'tool_call' || message.role === 'tool_result') &&
-                next.expanded.includes(message.id) &&
-                ((message.tool?.call && input.key === 'tool-source-' + message.id + '-arguments') ||
-                  (message.tool?.result && input.key === 'tool-source-' + message.id + '-result')),
-            );
-          const image = toolCards(props.messages)
-            .map(({ message }) => message)
-            .find(
-              (message) =>
-                message.image &&
-                message.source !== null &&
-                next.expanded.includes(message.id) &&
-                input.key === 'image-' + message.id,
-            );
-          if (image) out.events.push({ name: 'viewImage', value: { sequence: image.source } });
-          if (tool)
-            out.events.push({
-              name: 'toolSource',
-              value: {
-                sequence: tool.source,
-                field: input.key.endsWith('-arguments') ? 'arguments' : 'result',
-              },
-            });
-          const message = toolCards(props.messages)
-            .map(({ message }) => message)
-            .find(
-              (message) =>
-                message.source !== null &&
-                ((message.role !== 'tool_call' && message.role !== 'tool_result') ||
-                  (message.text.length > 0 && next.expanded.includes(message.id))) &&
-                input.key ===
-                  'source-' + message.id + (message.role === 'thinking' ? '-thinking' : ''),
-            );
+          out.events.push({ name: 'sourceField', value: { field } });
+      } else if (input.kind === 'raw' && !props.loading) {
+        if (props.markReadEnabled && props.toolContext && !next.search) {
+          const message = props.messages.find(
+            (message) =>
+              message.source !== null &&
+              (message.role === 'user' ||
+                message.role === 'assistant' ||
+                message.role === 'thinking') &&
+              input.key ===
+                'mark-read-' + message.id + (message.role === 'thinking' ? '-thinking' : ''),
+          );
           if (message)
             out.events.push({
-              name: 'source',
+              name: 'markRead',
               value: {
+                sessionId: props.toolContext.sessionId,
                 sequence: message.source,
                 field: message.role === 'thinking' ? 'thinking' : 'body',
               },
             });
-          if (input.key === 'older' && props.older) out.events.push({ name: 'older', value: {} });
-          if (input.key === 'newer' && props.newer) out.events.push({ name: 'newer', value: {} });
-          if (input.key === 'latest' && props.latest)
-            out.events.push({ name: 'latest', value: {} });
         }
-        return out;
-      },
-      capture(_state, _props, method, input) {
-        return { kind: 'forward', source: { child: 'reading', method, input } };
-      },
+
+        const tool = toolCards(props.messages)
+          .map(({ message }) => message)
+          .find(
+            (message) =>
+              message.source !== null &&
+              (message.role === 'tool_call' || message.role === 'tool_result') &&
+              next.expanded.includes(message.id) &&
+              ((message.tool?.call && input.key === 'tool-source-' + message.id + '-arguments') ||
+                (message.tool?.result && input.key === 'tool-source-' + message.id + '-result')),
+          );
+        const image = toolCards(props.messages)
+          .map(({ message }) => message)
+          .find(
+            (message) =>
+              message.image &&
+              message.source !== null &&
+              next.expanded.includes(message.id) &&
+              input.key === 'image-' + message.id,
+          );
+        if (image) out.events.push({ name: 'viewImage', value: { sequence: image.source } });
+        if (tool)
+          out.events.push({
+            name: 'toolSource',
+            value: {
+              sequence: tool.source,
+              field: input.key.endsWith('-arguments') ? 'arguments' : 'result',
+            },
+          });
+        const message = toolCards(props.messages)
+          .map(({ message }) => message)
+          .find(
+            (message) =>
+              message.source !== null &&
+              ((message.role !== 'tool_call' && message.role !== 'tool_result') ||
+                (message.text.length > 0 && next.expanded.includes(message.id))) &&
+              input.key ===
+                'source-' + message.id + (message.role === 'thinking' ? '-thinking' : ''),
+          );
+        if (message)
+          out.events.push({
+            name: 'source',
+            value: {
+              sequence: message.source,
+              field: message.role === 'thinking' ? 'thinking' : 'body',
+            },
+          });
+        if (input.key === 'older' && props.older) out.events.push({ name: 'older', value: {} });
+        if (input.key === 'newer' && props.newer) out.events.push({ name: 'newer', value: {} });
+        if (input.key === 'latest' && props.latest) out.events.push({ name: 'latest', value: {} });
+      }
+      return out;
     },
-  };
-}
-export function exports(): Record<string, UiExport> {
-  return {
-    Composer: { kind: 'component', contract: composerContract, component: ['composer'] },
-    Navigation: { kind: 'component', contract: navigationContract, component: ['navigation'] },
-    Timeline: { kind: 'component', contract: timelineContract, component: ['timeline'] },
+    capture(_state, _props, method, input) {
+      return { kind: 'forward', source: { child: 'reading', method, input } };
+    },
   };
 }

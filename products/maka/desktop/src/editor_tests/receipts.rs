@@ -73,9 +73,10 @@ async fn reader_source(store: &EventLog, original: &DeploymentRef) {
         .await
         .unwrap()
         .unwrap();
-    let mut input = loaded.source.input;
+    let (loaded_source, loaded_packages, _, _) = loaded.into_parts();
+    let mut input = loaded_source.input;
     let mut packages = Vec::new();
-    for old in loaded.packages {
+    for old in loaded_packages {
         let mut declaration = old.manifest().application.clone().unwrap();
         let entry = declaration.entries.get_mut(&EntryTarget::Host).unwrap();
         let node = if old.manifest().id == "host.reader" {
@@ -160,9 +161,10 @@ async fn recovery_source(
         .await
         .unwrap()
         .unwrap();
-    let mut input = loaded.source.input;
-    let mut packages = loaded.packages;
-    let mut observations = loaded.source.remote_exports;
+    let (loaded_source, loaded_packages, _, _) = loaded.into_parts();
+    let mut input = loaded_source.input;
+    let mut packages = loaded_packages;
+    let mut observations = loaded_source.remote_exports;
     let business = observations[0].clone();
     assert_eq!(business.capability.deployment, "replacement-host");
     let old = packages.remove(

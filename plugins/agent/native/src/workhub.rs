@@ -165,7 +165,7 @@ impl Hub {
             .map_err(|_| "workhub_store_unavailable")?;
         Ok(match session {
             Some(session) => Coordinator::Ready {
-                session: crate::service::summary(owner, session),
+                session: Box::new(crate::service::summary(owner, session)),
             },
             None => Coordinator::Pending {
                 workspace: intent.workspace.clone(),
@@ -254,9 +254,7 @@ impl Hub {
             )
             .await?
         {
-            crate::contract::Created::Created { session } => {
-                Ok(Coordinator::Ready { session: *session })
-            }
+            crate::contract::Created::Created { session } => Ok(Coordinator::Ready { session }),
             crate::contract::Created::Rejected { reason } => Ok(Coordinator::Rejected { reason }),
         }
     }

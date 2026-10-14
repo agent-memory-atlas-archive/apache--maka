@@ -18,9 +18,9 @@
  */
 
 import { presentations } from '../../shared/view.js';
-import { components, exports } from '../../shared/components.js';
-export const component = components(presentations.desktop).timeline;
+import { timeline } from '../../shared/components.js';
+import { timelineContract } from '../../shared/contracts.js';
+export const component = timeline(presentations.desktop);
 export function activate() {
-  const declaration = exports().Timeline;
-  return { Timeline: { ...declaration, component: ['component'] } };
+  return { Timeline: { kind: 'component', contract: timelineContract, component: ['component'] } };
 }

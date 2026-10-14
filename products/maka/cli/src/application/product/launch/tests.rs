@@ -109,7 +109,7 @@ async fn partial_initialization_resumes_original_inputs_and_preserves_new_heads(
             .await
             .unwrap()
             .unwrap()
-            .source
+            .source()
             .reference
             .revision,
         1
@@ -120,7 +120,7 @@ async fn partial_initialization_resumes_original_inputs_and_preserves_new_heads(
             .await
             .unwrap()
             .unwrap()
-            .source
+            .source()
             .reference
             .revision,
         1
@@ -131,7 +131,7 @@ async fn partial_initialization_resumes_original_inputs_and_preserves_new_heads(
             .await
             .unwrap()
             .unwrap()
-            .source
+            .source()
             .reference
             .revision,
         2
@@ -157,7 +157,7 @@ async fn partial_initialization_resumes_original_inputs_and_preserves_new_heads(
             .await
             .unwrap()
             .unwrap()
-            .source
+            .source()
             .reference
             .revision,
         2

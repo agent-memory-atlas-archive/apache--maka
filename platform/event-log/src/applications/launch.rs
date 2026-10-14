@@ -50,6 +50,24 @@ impl EventLog {
         })).await
     }
 
+    /// Refresh derived product metadata only while the observed baseline is still current.
+    pub async fn compare_and_set_application_product(
+        &self,
+        expected: Value,
+        product: Value,
+    ) -> Result<bool, StoreError> {
+        self.application_domain()?;
+        let expected = encode(&expected, MAX_PRODUCT)?;
+        let product = encode(&product, MAX_PRODUCT)?;
+        self.connection.run(move |connection| Box::pin(async move {
+            let mut tx = connection.begin_with("BEGIN IMMEDIATE").await?;
+            let changed = sqlx::query("UPDATE application_launch SET product=? WHERE singleton=1 AND product=? AND pending IS NULL")
+                .bind(product).bind(expected).execute(&mut *tx).await?.rows_affected() == 1;
+            tx.commit().await.map_err(StoreError::CommitUnknown)?;
+            Ok(changed)
+        })).await
+    }
+
     /// Publish an already prepared default upgrade only after every source commit.
     /// Selection, baseline and preparation completion change atomically.
     pub async fn complete_application_product(

@@ -86,23 +86,23 @@ async fn restore(store: &EventLog) -> Result<DeploymentRef, HostError> {
                 .await?
                 .ok_or("installation baseline missing")?;
             revisions.insert(deployment, current.source.reference.revision);
-            for package in &original.packages {
+            for package in original.packages() {
                 packages.insert(package.application_ref(), package.clone());
             }
             originals.push(original);
         }
-        let ui = originals.pop().unwrap();
-        let management = originals.pop().unwrap();
-        let host = originals.pop().unwrap();
+        let ui = originals.pop().unwrap().into_parts().0;
+        let management = originals.pop().unwrap().into_parts().0;
+        let host = originals.pop().unwrap().into_parts().0;
         let preparation = launch::Preparation {
             product: None,
             previous_connections: None,
             restore: revisions,
             sources: Sources {
-                host: host.source.input,
-                management_host: management.source.input,
-                ui: ui.source.input,
-                remote_exports: ui.source.remote_exports,
+                host: host.input,
+                management_host: management.input,
+                ui: ui.input,
+                remote_exports: ui.remote_exports,
                 connections: record.configuration,
             },
             packages: packages
@@ -147,7 +147,7 @@ pub(super) async fn ensure(
         .await?
         .ok_or("restore source missing")?;
     let mut actual: Vec<_> = current
-        .packages
+        .packages()
         .iter()
         .map(Package::application_ref)
         .collect();
@@ -155,16 +155,16 @@ pub(super) async fn ensure(
     actual.sort();
     desired.sort();
     let matches = actual == desired
-        && serde_json::to_value(&current.source.input)? == serde_json::to_value(input)?
-        && serde_json::to_value(&current.source.remote_exports)?
+        && serde_json::to_value(&current.source().input)? == serde_json::to_value(input)?
+        && serde_json::to_value(&current.source().remote_exports)?
             == serde_json::to_value(observations)?;
     if matches
-        && (current.source.reference.revision == expected
-            || current.source.reference.revision == expected + 1)
+        && (current.source().reference.revision == expected
+            || current.source().reference.revision == expected + 1)
     {
         return Ok(());
     }
-    if current.source.reference.revision != expected {
+    if current.source().reference.revision != expected {
         return Err("restoration conflicts with a later source revision".into());
     }
     store
@@ -269,7 +269,10 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(old.source.input.environment.location, ExecutionLocation::Ui);
+        assert_eq!(
+            old.source().input.environment.location,
+            ExecutionLocation::Ui
+        );
         assert_eq!(restore(&store).await.unwrap(), restored); // Already restored: no new revision.
 
         let host = launch::open(host_path.clone(), false, None).await.unwrap();

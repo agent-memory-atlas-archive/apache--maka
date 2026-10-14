@@ -345,6 +345,28 @@ impl Presenter {
         .await?;
         Self::mount_async(application, props).await
     }
+    /// Mount the original checked snapshot without loading it again.
+    pub async fn start_loaded(
+        store: std::sync::Arc<maka_event_log::EventLog>,
+        loaded: maka_event_log::applications::LoadedDeployment,
+        scheduler: tokio::runtime::Handle,
+        native: NativeRegistry<dyn Widget>,
+        props: Value,
+        registrations: Vec<maka_ui_runtime::actions::RemoteService>,
+        execution: maka_ui_runtime::ExecutionOptions,
+    ) -> maka_ui_runtime::Result<Self> {
+        let application = Application::start_loaded(
+            store,
+            loaded,
+            PresentationTarget::Tui,
+            scheduler,
+            execution,
+            native,
+            registrations,
+        )
+        .await?;
+        Self::mount_async(application, props).await
+    }
     /// Load immutable desired input without borrowing this terminal owner.
     pub fn load_committed_update(
         &self,

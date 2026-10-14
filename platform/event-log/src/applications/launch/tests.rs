@@ -184,5 +184,30 @@ async fn product_baseline_and_connections_publish_atomically_with_completion() {
             .await
             .is_err()
     );
+    let baseline = json!({"baseline":2});
+    let cached = json!({"baseline":2,"version":"checked"});
+    assert!(
+        store
+            .compare_and_set_application_product(baseline.clone(), cached.clone())
+            .await
+            .unwrap()
+    );
+    assert!(
+        !store
+            .compare_and_set_application_product(baseline, json!({"stale":true}))
+            .await
+            .unwrap()
+    );
+    store.begin_application_restore(id, vec![9]).await.unwrap();
+    assert!(
+        !store
+            .compare_and_set_application_product(cached.clone(), json!({"pending":true}))
+            .await
+            .unwrap()
+    );
+    assert_eq!(store.application_product().await.unwrap(), Some(cached));
+    let current = store.application_launch().await.unwrap().unwrap();
+    assert_eq!(current.configuration, completed.configuration);
+    assert_eq!(current.pending, Some(vec![9]));
     store.close().await.unwrap();
 }
