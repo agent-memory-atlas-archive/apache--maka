@@ -498,7 +498,7 @@ mod tests {
         assert!(!directory.truncated);
         assert!(budget.usage().0 > 0);
         drop(directory);
-        assert_eq!(budget.usage(), (0, 0));
+        assert_eq!(budget.usage(), (0, 0, 0));
         let tiny = NativeBudget::new(maka_ui_runtime::budget::BudgetLimits {
             encoded_bytes: 1,
             ..Default::default()
@@ -513,7 +513,7 @@ mod tests {
             ),
             Err(FileError::BudgetExhausted)
         ));
-        assert_eq!(tiny.usage(), (0, 0));
+        assert_eq!(tiny.usage(), (0, 0, 0));
         assert!(matches!(
             select(
                 Request {
@@ -531,7 +531,7 @@ mod tests {
         assert!(directory.truncated);
         assert!(directory.entries.len() <= MAX_ENTRIES);
         drop(directory);
-        assert_eq!(budget.usage(), (0, 0));
+        assert_eq!(budget.usage(), (0, 0, 0));
     }
     #[test]
     fn browser_uses_only_presented_rows_and_suspends_navigation_on_retirement() {
@@ -644,6 +644,6 @@ mod tests {
             Input::Handled
         ));
         drop(browser);
-        assert_eq!(budget.usage(), (0, 0));
+        assert_eq!(budget.usage(), (0, 0, 0));
     }
 }

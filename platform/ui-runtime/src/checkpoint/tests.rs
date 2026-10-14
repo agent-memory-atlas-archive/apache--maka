@@ -181,7 +181,7 @@ async fn final_coalesced_snapshot_flushes_before_cleanup_and_restores_after_root
     blocker.execute_batch("COMMIT").unwrap();
     drop(blocker);
     resources.finish().await.unwrap();
-    assert_eq!(budget.usage(), (0, 0));
+    assert_eq!(budget.usage(), (0, 0, 0));
     tokio::time::timeout(Duration::from_secs(5), async {
         while retained.upgrade().is_some() {
             tokio::task::yield_now().await;
@@ -277,7 +277,7 @@ async fn an_older_ack_cannot_hide_a_newer_capture_failure_and_retry_accounts_for
     editor.close();
     drop(editor);
     resources.finish().await.unwrap();
-    assert_eq!(budget.usage(), (0, 0));
+    assert_eq!(budget.usage(), (0, 0, 0));
 }
 
 #[tokio::test]
@@ -407,5 +407,5 @@ async fn concurrent_preference_reads_are_not_rejected_by_a_worker_count() {
     })
     .await
     .unwrap();
-    assert_eq!(budget.usage(), (0, 0));
+    assert_eq!(budget.usage(), (0, 0, 0));
 }

@@ -283,9 +283,9 @@ mod tests {
             let png = snapshot.read(0..snapshot.bytes()).unwrap();
             let decoded = image::load_from_memory(&png).unwrap();
             assert_eq!(decoded.to_rgba8(), original.to_rgba8());
-            assert_eq!(budget.usage(), (65536, 0));
+            assert_eq!(budget.usage(), (65536, 0, 0));
             drop(snapshot);
-            assert_eq!(budget.usage(), (0, 0));
+            assert_eq!(budget.usage(), (0, 0, 0));
             let small = NativeBudget::new(BudgetLimits {
                 encoded_bytes: 100,
                 ..Default::default()
@@ -294,7 +294,7 @@ mod tests {
                 encode_image(&bytes, &small),
                 Err(FileError::BudgetExhausted)
             ));
-            assert_eq!(small.usage(), (0, 0));
+            assert_eq!(small.usage(), (0, 0, 0));
             if format == image::ImageFormat::Bmp {
                 let restored = dib_bitmap(bytes[14..].to_vec()).unwrap();
                 assert_eq!(restored, bytes);
@@ -313,7 +313,7 @@ mod tests {
         assert_eq!(paths.items.len(), 1);
         assert!(budget.usage().0 > 0);
         drop(paths);
-        assert_eq!(budget.usage(), (0, 0));
+        assert_eq!(budget.usage(), (0, 0, 0));
     }
     #[test]
     fn image_pixel_limit_rejects_before_decoding_or_output_allocation() {
@@ -337,6 +337,6 @@ mod tests {
             encode_decoder(Oversized, &budget),
             Err(FileError::LimitExceeded)
         ));
-        assert_eq!(budget.usage(), (0, 0));
+        assert_eq!(budget.usage(), (0, 0, 0));
     }
 }
