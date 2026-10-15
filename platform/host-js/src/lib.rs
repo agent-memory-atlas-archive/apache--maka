@@ -65,7 +65,7 @@ struct Module(maka_js_runtime::plugin::Module);
 impl backend::Module for Module {
     fn activate(
         &self,
-        entry: EntryDeclaration,
+        entry: Arc<EntryDeclaration>,
         configuration: Value,
     ) -> BoxFuture<'static, Result<backend::Exports>> {
         let module = self.0.clone();

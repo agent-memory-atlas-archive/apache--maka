@@ -199,7 +199,7 @@ pub(super) struct Method {
     progress: Option<Arc<jsonschema::Validator>>,
 }
 pub(super) struct Service {
-    contract: Contract,
+    contract: Arc<Contract>,
     methods: BTreeMap<String, Method>,
     implementation: Arc<dyn Handler>,
 }
@@ -240,7 +240,7 @@ impl Service {
             })
             .collect::<Result<_>>()?;
         Ok(Self {
-            contract,
+            contract: Arc::new(contract),
             methods: compiled,
             implementation,
         })

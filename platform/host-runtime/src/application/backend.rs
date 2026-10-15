@@ -39,7 +39,7 @@ pub trait Realm: Send + Sync + 'static {
 pub trait Module: Send + Sync + 'static {
     fn activate(
         &self,
-        entry: EntryDeclaration,
+        entry: Arc<EntryDeclaration>,
         configuration: Value,
     ) -> BoxFuture<'static, Result<Exports>>;
     fn close(&self) -> BoxFuture<'static, Result<()>>;

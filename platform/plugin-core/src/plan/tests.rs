@@ -166,6 +166,35 @@ fn instance<'a>(plan: &'a Plan, path: &[&str]) -> &'a Instance {
 }
 
 #[test]
+fn forwarded_exports_and_plan_snapshots_share_frozen_declarations() {
+    let (input, packages) = fixture();
+    let plan = Plan::prepare(&input, &packages, &RemoteExports::new()).unwrap();
+    let content = instance(&plan, &["a", "content"]);
+    let original = &content.exports["Content"].declaration;
+    assert!(Arc::ptr_eq(
+        original,
+        &instance(&plan, &["a"]).exports["App"].declaration
+    ));
+    assert!(Arc::ptr_eq(original, &plan.launch().unwrap().declaration));
+    let snapshot = plan.clone();
+    let retained = instance(&snapshot, &["a", "content"]);
+    assert!(Arc::ptr_eq(
+        original,
+        &retained.exports["Content"].declaration
+    ));
+    assert!(Arc::ptr_eq(
+        content.entry.as_ref().unwrap(),
+        retained.entry.as_ref().unwrap()
+    ));
+    assert_eq!(
+        serde_json::to_value(original).unwrap(),
+        json!({
+            "contract": contract(), "availability": "required"
+        })
+    );
+}
+
+#[test]
 fn template_instances_keep_overrides_and_identity_through_upgrade_and_alias_change() {
     let (mut input, mut packages) = fixture();
     input

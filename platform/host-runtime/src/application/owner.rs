@@ -929,7 +929,7 @@ impl Owner {
                     "package": instance.package, "disabled": instance.disabled,
                     "configuration": instance.configuration, "entry": instance.entry,
                     "bindings": instance.bindings, "exports": instance.exports,
-                    "imports": imports, "export": capability.export(), "contract": contract,
+                    "imports": imports, "export": capability.export(), "contract": contract.as_ref(),
                     "native": native,
                 });
                 basis.sort_all_objects();
@@ -938,7 +938,7 @@ impl Owner {
                 );
                 Ok(Binding(
                     capability,
-                    Arc::new(contract),
+                    contract,
                     digest.into(),
                     Arc::new(instance.package.clone()),
                 ))

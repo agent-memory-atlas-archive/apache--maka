@@ -18,6 +18,7 @@
  */
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -57,7 +58,7 @@ pub enum Provider {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Binding {
     pub provider: Provider,
-    pub declaration: Export,
+    pub declaration: Arc<Export>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -69,7 +70,7 @@ pub struct Instance {
     pub package: PackageRef,
     pub disabled: bool,
     pub configuration: Value,
-    pub entry: Option<EntryDeclaration>,
+    pub entry: Option<Arc<EntryDeclaration>>,
     pub bindings: BTreeMap<String, Vec<Binding>>,
     pub exports: BTreeMap<String, Binding>,
 }
@@ -101,10 +102,14 @@ impl Plan {
             aliases: BTreeMap::new(),
         };
         builder.expand(&input.instances, &[], None, &BTreeMap::new(), &[], false)?;
+        let remote = remote
+            .iter()
+            .map(|(capability, declaration)| (capability.clone(), Arc::new(declaration.clone())))
+            .collect();
         let resolver = Resolver {
             nodes: &builder.nodes,
             aliases: &builder.aliases,
-            remote,
+            remote: &remote,
         };
         let mut instances = BTreeMap::new();
         for (id, pending) in &builder.nodes {
@@ -184,7 +189,7 @@ impl Plan {
 }
 
 enum PendingExport {
-    Actual(Export),
+    Actual(Arc<Export>),
     Forward(Target),
 }
 
@@ -330,9 +335,18 @@ impl Builder<'_> {
                     let exports = entry
                         .exports
                         .iter()
-                        .map(|(name, export)| (name.clone(), PendingExport::Actual(export.clone())))
+                        .map(|(name, export)| {
+                            (
+                                name.clone(),
+                                PendingExport::Actual(Arc::new(export.clone())),
+                            )
+                        })
                         .collect();
-                    (Some(entry.clone()), entry.imports.clone(), exports)
+                    (
+                        Some(Arc::new(entry.clone())),
+                        entry.imports.clone(),
+                        exports,
+                    )
                 }
                 PackageUse::Composition => {
                     if configuration != serde_json::json!({}) {
@@ -418,7 +432,7 @@ enum Resolving {
 struct Resolver<'a> {
     nodes: &'a BTreeMap<InstanceId, Pending>,
     aliases: &'a BTreeMap<Vec<String>, InstanceId>,
-    remote: &'a RemoteExports,
+    remote: &'a BTreeMap<RemoteCapability, Arc<Export>>,
 }
 
 impl Resolver<'_> {

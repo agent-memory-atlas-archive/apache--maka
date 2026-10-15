@@ -575,7 +575,7 @@ impl Connections {
             .flat_map(|i| i.bindings.values().flatten())
             .filter_map(|b| match &b.provider {
                 Provider::Remote { capability } => {
-                    Some((capability.clone(), b.declaration.clone()))
+                    Some((capability.clone(), b.declaration.as_ref().clone()))
                 }
                 Provider::Local { .. } => None,
             })

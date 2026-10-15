@@ -111,7 +111,7 @@ impl Manager {
                 (
                     instance
                         .entry
-                        .as_ref()
+                        .as_deref()
                         .ok_or("executable consumer required")?,
                     instance
                         .configuration
