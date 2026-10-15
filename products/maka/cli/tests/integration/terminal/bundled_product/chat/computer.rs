@@ -72,28 +72,29 @@ fn default_product_computer_approval_and_restart_keep_grant_but_reset_vm() {
         "cua_repl",
         json!({"code":"globalThis.denied = true;"}),
     );
-    tui.wait_for("Review request");
-    click(&mut tui, "Review request");
+    tui.wait_for("Approval needed");
+    click(&mut tui, "Approval needed");
     tui.wait_for("Computer Use access");
     tui.wait_for("Deny access");
     evidence(&tui, "computer-deny");
-    click(&mut tui, "Confirm choice");
+    click(&mut tui, "Deny access");
     let (denied, mut socket) = next_request(&mut tui, &received);
     assert!(denied.to_string().contains("not granted"));
     click(&mut tui, "Close");
     tui.wait_until(|s| {
-        !s.contains("Confirm choice") && !s.contains("Review request") && s.contains("Message…")
+        !s.contains("Computer Use access")
+            && !s.contains("Approval needed")
+            && s.contains("Message…")
     });
     code_mode::tool_response(
         &mut socket,
         "cua_repl",
         json!({"code":"if (globalThis.denied) throw Error('denied cell ran'); globalThis.persisted = 42; await cua.listBrowsers(); nodeRepl.write('computer-original-effect');"}),
     );
-    tui.wait_for("Review request");
-    click(&mut tui, "Review request");
+    tui.wait_for("Approval needed");
+    click(&mut tui, "Approval needed");
     tui.wait_for("Computer Use access");
     click(&mut tui, "Allow for this conversation");
-    click(&mut tui, "Confirm choice");
     let (allowed, mut socket) = next_request(&mut tui, &received);
     assert!(
         allowed.to_string().contains("computer-original-effect"),
@@ -101,7 +102,9 @@ fn default_product_computer_approval_and_restart_keep_grant_but_reset_vm() {
     );
     click(&mut tui, "Close");
     tui.wait_until(|s| {
-        !s.contains("Confirm choice") && !s.contains("Review request") && s.contains("Message…")
+        !s.contains("Computer Use access")
+            && !s.contains("Approval needed")
+            && s.contains("Message…")
     });
     delta(&mut socket, "Computer access is ready.");
     complete(&mut socket);

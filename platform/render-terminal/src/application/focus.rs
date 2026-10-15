@@ -373,6 +373,7 @@ impl Presenter {
     pub(super) fn navigate_items(
         &mut self,
         event: &crossterm::event::Event,
+        capture: Option<&mut Option<super::activation::CapturedActivation>>,
     ) -> maka_ui_runtime::Result<bool> {
         use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
         let Event::Key(key) = event else {
@@ -423,7 +424,7 @@ impl Presenter {
         let target = peers[next].clone();
         // At an item-group edge, let its declared action request another page.
         // Interior navigation and undeclared boundaries retain native behavior.
-        if next == at && self.dispatch_focused_shortcut(event)? {
+        if next == at && self.dispatch_focused_shortcut_with_capture(event, capture)? {
             return Ok(true);
         }
         self.focus_item(target)?;

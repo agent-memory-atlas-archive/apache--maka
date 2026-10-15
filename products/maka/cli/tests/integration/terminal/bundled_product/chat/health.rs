@@ -29,6 +29,35 @@ fn result(request: &serde_json::Value) -> serde_json::Value {
         .unwrap();
     serde_json::from_str(message["content"].as_str().unwrap()).unwrap()
 }
+
+fn answer_health(tui: &mut Pty, endpoint: &TcpListener) -> std::net::TcpStream {
+    let mut connection = None;
+    tui.wait_until_with_timeout(
+        |_| {
+            connection = endpoint.accept().ok();
+            connection.is_some()
+        },
+        Duration::from_secs(30),
+    );
+    let (mut endpoint_socket, _) = connection.unwrap();
+    endpoint_socket.set_nonblocking(false).unwrap();
+    endpoint_socket
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let mut head = vec![];
+    while !head.ends_with(b"\r\n\r\n") {
+        let mut byte = [0];
+        endpoint_socket.read_exact(&mut byte).unwrap();
+        head.push(byte[0]);
+        assert!(head.len() < 8192);
+    }
+    assert!(head.starts_with(b"HEAD /health "));
+    endpoint_socket
+        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 999999\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    endpoint_socket
+}
+
 #[test]
 #[ignore = "real default product process health, permission approval and restart"]
 fn default_product_health_checks_process_and_independent_endpoint() {
@@ -38,7 +67,7 @@ fn default_product_health_checks_process_and_independent_endpoint() {
     let url = format!("http://{}/health", endpoint.local_addr().unwrap());
     endpoint.set_nonblocking(true).unwrap();
     let (requests, received) = mpsc::channel();
-    let server = model_server(listener, requests, 8, 1);
+    let server = model_server(listener, requests, 9, 1);
     let directory = tempfile::tempdir().unwrap();
     let workspace = directory.path().join("workspace");
     std::fs::create_dir(&workspace).unwrap();
@@ -106,10 +135,10 @@ fn default_product_health_checks_process_and_independent_endpoint() {
         "BackgroundTaskHealth",
         json!({"ref":reference,"url":url}),
     );
-    tui.wait_for("Review request");
-    click(&mut tui, "Review request");
+    tui.wait_for("Approval needed");
+    click(&mut tui, "Approval needed");
     tui.wait_for("Allow health check access to");
-    click(&mut tui, "Confirm choice");
+    click(&mut tui, "Deny this call");
     let (denied, mut socket) = next_request(&mut tui, &received);
     let denied = result(&denied);
     assert_eq!(denied["value"]["endpoint"]["state"], "unknown", "{denied}");
@@ -118,41 +147,26 @@ fn default_product_health_checks_process_and_independent_endpoint() {
         std::io::ErrorKind::WouldBlock
     );
     click(&mut tui, "Close");
-    tui.wait_until(|s| !s.contains("Confirm choice") && s.contains("Message…"));
+    tui.wait_until(|s| !s.contains("Allow health check access to") && s.contains("Message…"));
     code_mode::tool_response(
         &mut socket,
         "BackgroundTaskHealth",
         json!({"ref":reference,"url":url,"include_logs":true}),
     );
-    tui.wait_for("Review request");
-    click(&mut tui, "Review request");
+    tui.wait_for("Approval needed");
+    click(&mut tui, "Approval needed");
     tui.wait_for("Allow health check access to");
-    click(&mut tui, "Allow this call");
-    click(&mut tui, "Confirm choice");
-    let mut connection = None;
-    tui.wait_until_with_timeout(
-        |_| {
-            connection = endpoint.accept().ok();
-            connection.is_some()
-        },
-        Duration::from_secs(30),
-    );
-    let (mut endpoint_socket, _) = connection.unwrap();
-    endpoint_socket.set_nonblocking(false).unwrap();
-    endpoint_socket
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .unwrap();
-    let mut head = vec![];
-    while !head.ends_with(b"\r\n\r\n") {
-        let mut byte = [0];
-        endpoint_socket.read_exact(&mut byte).unwrap();
-        head.push(byte[0]);
-        assert!(head.len() < 8192);
-    }
-    assert!(head.starts_with(b"HEAD /health "));
-    endpoint_socket
-        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 999999\r\nConnection: close\r\n\r\n")
-        .unwrap();
+    click(&mut tui, "This conversation");
+    tui.wait_for("Allow · This conversation");
+    click(&mut tui, "Allow · This conversation");
+    // Close immediately while the approved endpoint is still unanswered. The
+    // physical activation must survive the approval's logical commit, and
+    // dismissal must not wait for the original service action to finish.
+    let closing = Instant::now();
+    click(&mut tui, "Close");
+    tui.wait_until(|s| !s.contains("Allow health check access to") && s.contains("Message…"));
+    eprintln!("approval Close to dismissed frame: {:?}", closing.elapsed());
+    let mut endpoint_socket = answer_health(&mut tui, &endpoint);
     let (checked, mut socket) = next_request(&mut tui, &received);
     let checked = result(&checked);
     assert_eq!(
@@ -164,7 +178,6 @@ fn default_product_health_checks_process_and_independent_endpoint() {
         "product-health"
     );
     assert_eq!(endpoint_socket.read(&mut [0; 1]).unwrap(), 0);
-    click(&mut tui, "Close");
     delta(
         &mut socket,
         "Process finished; endpoint independently responded.",
@@ -202,6 +215,25 @@ fn default_product_health_checks_process_and_independent_endpoint() {
     assert_eq!(
         endpoint.accept().unwrap_err().kind(),
         std::io::ErrorKind::WouldBlock
+    );
+    // Session approval must authorize a later invocation after process restart,
+    // without another decision or silently widening the saved network boundary.
+    code_mode::tool_response(
+        &mut socket,
+        "BackgroundTaskHealth",
+        json!({"ref":reference,"url":url}),
+    );
+    let mut endpoint_socket = answer_health(&mut tui, &endpoint);
+    let (rechecked, mut socket) = next_request(&mut tui, &received);
+    let rechecked = result(&rechecked);
+    assert_eq!(rechecked["value"]["endpoint"]["health"], "healthy");
+    assert_eq!(endpoint_socket.read(&mut [0; 1]).unwrap(), 0);
+    assert!(
+        !tui.screen
+            .snapshot()
+            .unwrap()
+            .screen
+            .contains("Approval needed")
     );
     delta(&mut socket, "Original process logs survived restart.");
     complete(&mut socket);

@@ -17,6 +17,7 @@
  * under the License.
  */
 
+use super::activation::{Admission, CapturedActivation};
 use super::{PaintedScene, Presenter, registry, sanitize};
 use crate::terminal;
 use crossterm::event::{self, Event, EventStream, KeyCode, KeyEventKind, KeyModifiers};
@@ -54,6 +55,10 @@ struct PendingOutput {
     surface: maka_plugin_core::runtime::Mount,
     receipt: tokio::sync::oneshot::Receiver<std::io::Result<()>>,
     scene: Option<PaintedScene>,
+}
+enum QueuedInput {
+    Physical(Event, Vec<super::dialog::Scope>),
+    Activation(CapturedActivation),
 }
 // Input readiness can win the same select as a completed write. Publish that
 // original receipt before resolving coordinates or keyboard focus, including
@@ -100,44 +105,8 @@ fn retain_clipboard(queue: &mut VecDeque<Vec<u8>>, bytes: Vec<u8>) -> Result<(),
     Ok(())
 }
 
-fn input_needs_presentation(presenter: &mut Presenter, event: &Event) -> Result<bool, String> {
-    if !presenter.physical_admitted() {
-        // Pointer coordinates remain bound to the last published geometry.
-        return Ok(matches!(event, Event::Key(_) | Event::Paste(_)));
-    }
-    if presenter.captures_keyboard().map_err(|e| e.to_string())? {
-        return Ok(false);
-    }
-    let Event::Key(key) = event else {
-        return Ok(false);
-    };
-    let Some((key, modifiers)) = super::shortcut_chord(key) else {
-        return Ok(false);
-    };
-    let ancestors = match &presenter.focus {
-        Some(target) => target.ancestors.as_slice(),
-        None => presenter.keyboard.as_slice(),
-    };
-    for ancestor in ancestors.iter().rev() {
-        if let Some(shortcut) = ancestor
-            .shortcuts
-            .iter()
-            .find(|s| s.matches(&key, modifiers, false))
-        {
-            return Ok(shortcut.enabled
-                && presenter.target_admitted(ancestor)
-                && presenter.resources.admits(ancestor)
-                && !presenter.application.is_retiring(&ancestor.mount)
-                && presenter.application.mount_visible(&ancestor.mount)
-                && presenter
-                    .application
-                    .frame(&ancestor.mount)
-                    .map_err(|e| e.to_string())?
-                    .revision
-                    != ancestor.revision);
-        }
-    }
-    Ok(false)
+fn input_needs_presentation(presenter: &Presenter, event: &Event) -> bool {
+    !presenter.physical_admitted() && matches!(event, Event::Key(_) | Event::Paste(_))
 }
 
 /// Run on the foreground thread inside a multithreaded Tokio runtime.
@@ -207,7 +176,7 @@ pub fn run(
     let mut issued_sequence = 0u64;
     let mut written_sequence = 0u64;
     let mut exit_key = ExitKey::default();
-    let mut queued_input: Option<(Event, Option<Vec<super::dialog::Scope>>)> = None;
+    let mut queued_input: Option<QueuedInput> = None;
     loop {
         if let Err(error) = poll_output(
             &mut pending_output,
@@ -257,7 +226,9 @@ pub fn run(
             Ok(None) => {}
             Err(error) => presenter.report(&error),
         }
-        if let Err(error) = presenter.pump() {
+        if let Err(error) = presenter
+            .pump_with_input_priority(matches!(queued_input, Some(QueuedInput::Activation(_))))
+        {
             let error = sanitize(&error.to_string());
             presenter.report(&error);
             failure.get_or_insert(error);
@@ -362,22 +333,34 @@ pub fn run(
                 presenter.resources.redraw = false;
                 presenter.next_frame = None;
             }
-            if queued_input.as_ref().is_some_and(|(_, openings)| {
-                openings
-                    .as_ref()
-                    .is_some_and(|openings| !presenter.scene_openings_current(openings))
+            if queued_input.as_ref().is_some_and(|input| match input {
+                QueuedInput::Physical(_, openings) => !presenter.scene_openings_current(openings),
+                QueuedInput::Activation(input) => {
+                    presenter.activation_admission(input) == Admission::Discard
+                }
             }) {
                 queued_input = None;
             }
             let admission_pending = match &queued_input {
-                Some((event, _)) => {
+                Some(QueuedInput::Physical(event, _)) => {
                     (written_sequence == 0 && pending_output.is_some())
-                        || input_needs_presentation(&mut presenter, event)?
+                        || input_needs_presentation(&presenter, event)
+                }
+                Some(QueuedInput::Activation(input)) => {
+                    presenter.activation_admission(input) == Admission::Pending
                 }
                 None => false,
             };
+            let mut replay = None;
             let input = if queued_input.is_some() && !admission_pending {
-                queued_input.take().map(|(event, _)| event)
+                queued_input.take().map(|input| match input {
+                    QueuedInput::Physical(event, _) => event,
+                    QueuedInput::Activation(input) => {
+                        let event = input.event();
+                        replay = Some(input);
+                        event
+                    }
+                })
             } else {
                 let at = [
                     presenter.next_frame.filter(|_| pending_output.is_none()),
@@ -397,26 +380,52 @@ pub fn run(
                     })
                     .map_err(|e| e.to_string())?
             };
-            if let Some(input) = input {
+            let mut next_input = input;
+            while let Some(mut input) = next_input.take() {
                 poll_output(
                     &mut pending_output,
                     &mut written_sequence,
                     Some(screen),
                     &mut presenter,
                 )?;
+                if let Some(activation) = replay.take() {
+                    match presenter.activation_admission(&activation) {
+                        Admission::Ready => match presenter
+                            .release_activation(activation)
+                            .map_err(|error| error.to_string())?
+                        {
+                            Some(event) => input = event,
+                            None => return Ok(false),
+                        },
+                        Admission::Discard => return Ok(false),
+                        Admission::Pending => {
+                            queued_input = Some(QueuedInput::Activation(activation));
+                            wake.0.notify_one();
+                            return Ok(false);
+                        }
+                    }
+                }
                 if exit_key.ready(Some(&input), Instant::now()) {
                     return Ok(true);
+                }
+                if let Some(activation) = presenter.capture_activation(&input)
+                    && presenter.activation_admission(&activation) == Admission::Pending
+                {
+                    queued_input = Some(QueuedInput::Activation(activation));
+                    presenter.resources.redraw = true;
+                    wake.0.notify_one();
+                    return Ok(false);
                 }
                 // The terminal can expose a new surface or dialog before its
                 // write receipt admits input. Keep that input for this opening;
                 // ordinary updates still use the already presented geometry.
                 if ((written_sequence == 0 && pending_output.is_some())
-                    || input_needs_presentation(&mut presenter, &input)?)
+                    || input_needs_presentation(&presenter, &input))
                     && !is_exit(&input)
                 {
-                    queued_input = Some((
+                    queued_input = Some(QueuedInput::Physical(
                         input,
-                        Some(presenter.opening_witnesses().map_err(|e| e.to_string())?),
+                        presenter.opening_witnesses().map_err(|e| e.to_string())?,
                     ));
                     presenter.resources.redraw = true;
                     wake.0.notify_one();
@@ -434,9 +443,16 @@ pub fn run(
                     return Ok(false);
                 }
                 if is_exit(&input) && !presenter.captures_keyboard().map_err(|e| e.to_string())? {
+                    let mut captured = None;
                     let handled = presenter
-                        .dispatch_focused_shortcut(&input)
+                        .dispatch_focused_shortcut_with_capture(&input, Some(&mut captured))
                         .map_err(|error| error.to_string())?;
+                    if let Some(activation) = captured {
+                        queued_input = Some(QueuedInput::Activation(activation));
+                        presenter.resources.redraw = true;
+                        wake.0.notify_one();
+                        return Ok(false);
+                    }
                     let Event::Key(key) = input else {
                         unreachable!()
                     };
@@ -448,16 +464,25 @@ pub fn run(
                         ));
                 }
                 let scrolling = is_wheel(&input);
-                if scrolling {
-                    presenter.wheel(input)
+                let captured = if scrolling {
+                    presenter.wheel(input).map_err(|error| error.to_string())?;
+                    None
                 } else {
-                    presenter.input(input)
+                    presenter
+                        .input_with_capture(input)
+                        .map_err(|error| error.to_string())?
+                };
+                if let Some(activation) = captured {
+                    queued_input = Some(QueuedInput::Activation(activation));
+                    presenter.resources.redraw = true;
+                    wake.0.notify_one();
+                    return Ok(false);
                 }
-                .map_err(|e| e.to_string())?;
                 // A trackpad gesture arrives as many small wheel events. Apply
                 // the queued gesture before another live update and repaint,
                 // so streaming cannot repeatedly move the tail ahead of it.
-                // Keep other gestures for the next presented frame.
+                // A drained non-wheel event uses this same intake before a
+                // background commit can replace its original hit geometry.
                 let until = Instant::now() + Duration::from_millis(8);
                 while scrolling && Instant::now() < until {
                     // The level-triggered tty backend does not drain its parser
@@ -474,16 +499,16 @@ pub fn run(
                         break;
                     };
                     let input = input.map_err(|e| e.to_string())?;
-                    if !is_wheel(&input) {
-                        queued_input = Some((input, None));
-                        break;
-                    }
                     poll_output(
                         &mut pending_output,
                         &mut written_sequence,
                         Some(screen),
                         &mut presenter,
                     )?;
+                    if !is_wheel(&input) {
+                        next_input = Some(input);
+                        break;
+                    }
                     presenter.wheel(input).map_err(|e| e.to_string())?;
                 }
                 if scrolling {

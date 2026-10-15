@@ -353,6 +353,13 @@ fn grouped_items_cross_component_slots_and_focus_child_share_original_entry() {
     p.application
         .dispatch(&p.root, revision, "after", json!({"kind":"click"}))
         .unwrap();
+    // Wait for the complete candidate, then commit without the pump pruning
+    // the original scene's retired target before the stale-input assertion.
+    let root = p.root.clone();
+    let scheduler = p.application.scheduler().clone();
+    scheduler
+        .block_on(p.application.wait_prepared(&root))
+        .unwrap();
     p.sync_native().unwrap();
     let revision = p.application.frame(&p.root).unwrap().revision;
     p.input_settled(key(KeyCode::End)).unwrap();

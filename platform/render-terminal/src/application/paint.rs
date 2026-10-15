@@ -1828,8 +1828,7 @@ impl Presenter {
                 let offset = viewport.as_ref().map_or(0, |viewport| viewport.offset);
                 let focus_shortcuts = self.freeze_focus_shortcuts(mount, focus_shortcuts)?;
                 let scoped = *focus_group || !shortcuts.is_empty() || !focus_shortcuts.is_empty();
-                if !shortcuts.is_empty() && scene.input_scope.is_some() && scene.ancestry.is_empty()
-                {
+                if !shortcuts.is_empty() && scene.ancestry.is_empty() {
                     scene.keyboard = Some(std::rc::Rc::new(Ancestor {
                         identity: TargetIdentity {
                             mount: mount.clone(),

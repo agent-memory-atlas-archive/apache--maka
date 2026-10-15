@@ -17,6 +17,8 @@
  * under the License.
  */
 
+#[path = "tests/activation.rs"]
+mod activation;
 #[path = "tests/adaptive.rs"]
 mod adaptive;
 #[path = "tests/continuations.rs"]
@@ -1368,9 +1370,30 @@ fn recovery_uses_independent_component_after_exact_original_surface_restoration(
     tui.input_settled(key(KeyCode::Enter)).unwrap();
     assert!(tui.requires_surface_replacement());
     assert!(tui.try_replace_surface(json!({})).is_err());
+    // The receipt can precede the original realm's asynchronous close. Await
+    // that owner's error rather than requiring its first pump to finish close.
+    let failure = match tui.surface_closed(&old, Err("original Guard restoration failed".into())) {
+        Err(error) => error,
+        Ok(()) => runtime.block_on(async {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                std::future::poll_fn(|cx| {
+                    tui.application.set_waker(cx.waker().clone());
+                    match tui.pump() {
+                        Err(error) => std::task::Poll::Ready(error),
+                        Ok(()) => std::task::Poll::Pending,
+                    }
+                }),
+            )
+            .await
+            .expect("original Guard failure was not observed after realm close")
+        }),
+    };
     assert!(
-        tui.surface_closed(&old, Err("original Guard restoration failed".into()))
-            .is_err()
+        failure
+            .to_string()
+            .contains("original Guard restoration failed"),
+        "{failure}"
     );
     assert!(tui.try_replace_surface(json!({})).is_err());
     assert_eq!(tui.surface(), old);

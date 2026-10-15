@@ -47,7 +47,8 @@ fn refresh_key(tui: &mut Presenter, key: &str) {
     tui.application
         .dispatch(&tui.root.clone(), rev, key, json!({"kind":"click"}))
         .unwrap();
-    tui.sync_native().unwrap();
+    // Props must commit before testing the still-unflushed physical targets.
+    tui.pump_settled().unwrap();
 }
 fn close(mut tui: Presenter) {
     tui.surface_closed(&tui.surface(), Ok(())).unwrap();

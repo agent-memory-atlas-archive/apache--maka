@@ -19,6 +19,7 @@
 
 //! Native terminal presentation of the shared plugin application kernel.
 //! 统一插件应用内核的原生终端呈现器。
+mod activation;
 mod adaptive;
 mod border;
 mod checkpoint;
@@ -586,8 +587,18 @@ impl Presenter {
     /// 输入立即绑定到最后成功输出的场景和真实 mount/revision。
     pub fn input(&mut self, event: Event) -> maka_ui_runtime::Result<()> {
         self.resources.redraw = true;
-        let result = self.input_inner(event, false);
+        let result = self.input_inner(event, false, None);
         self.recover_result(result)
+    }
+    fn input_with_capture(
+        &mut self,
+        event: Event,
+    ) -> maka_ui_runtime::Result<Option<activation::CapturedActivation>> {
+        self.resources.redraw = true;
+        let mut captured = None;
+        let result = self.input_inner(event, false, Some(&mut captured));
+        self.recover_result(result)?;
+        Ok(captured)
     }
     // The event loop publishes local scroll observations once per wheel batch.
     // Explicit guest commands still enter their ordered input queue immediately.
@@ -595,10 +606,15 @@ impl Presenter {
         debug_assert!(matches!(event, Event::Mouse(mouse) if matches!(mouse.kind,
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown)));
         self.resources.redraw = true;
-        let result = self.input_inner(event, true);
+        let result = self.input_inner(event, true, None);
         self.recover_result(result)
     }
-    fn input_inner(&mut self, event: Event, defer_scroll: bool) -> maka_ui_runtime::Result<()> {
+    fn input_inner(
+        &mut self,
+        event: Event,
+        defer_scroll: bool,
+        mut capture: Option<&mut Option<activation::CapturedActivation>>,
+    ) -> maka_ui_runtime::Result<()> {
         match event {
             Event::FocusLost => self.window_focused = false,
             Event::FocusGained => self.window_focused = true,
@@ -683,7 +699,9 @@ impl Presenter {
             Some(target) => self.resources.handles_tab(target)?,
             None => false,
         };
-        if self.extend_item_selection(&event)? || self.navigate_items(&event)? {
+        if self.extend_item_selection(&event)?
+            || self.navigate_items(&event, capture.as_deref_mut())?
+        {
             return Ok(());
         }
         let target = if raw_pointer_target.is_some() {
@@ -692,7 +710,10 @@ impl Presenter {
             match &event {
                 Event::Key(key) if key.kind != KeyEventKind::Release => match key.code {
                     KeyCode::Tab | KeyCode::BackTab if !returnable && !native_tab => {
-                        if self.dispatch_focused_shortcut(&event)? {
+                        if self.dispatch_focused_shortcut_with_capture(
+                            &event,
+                            capture.as_deref_mut(),
+                        )? {
                             return Ok(());
                         }
                         let reverse = key.code == KeyCode::BackTab
@@ -854,10 +875,11 @@ impl Presenter {
                 }
                 return Ok(());
             }
-            if self.dispatch_shortcut(
+            if self.dispatch_shortcut_with_capture(
                 &target.ancestors,
                 &event,
                 matches!(native, WidgetInput::Navigate),
+                capture.as_deref_mut(),
             )? {
                 return Ok(());
             }
@@ -974,12 +996,20 @@ impl Presenter {
         if self.focus.is_none()
             && let Some(scope) = self.keyboard.clone()
         {
-            self.dispatch_shortcut(&[scope], &event, false)?;
+            self.dispatch_shortcut_with_capture(&[scope], &event, false, capture)?;
         }
         Ok(())
     }
     /// Allow a live declared command to own an otherwise reserved embedding key.
+    #[cfg(test)]
     fn dispatch_focused_shortcut(&mut self, event: &Event) -> maka_ui_runtime::Result<bool> {
+        self.dispatch_focused_shortcut_with_capture(event, None)
+    }
+    fn dispatch_focused_shortcut_with_capture(
+        &mut self,
+        event: &Event,
+        capture: Option<&mut Option<activation::CapturedActivation>>,
+    ) -> maka_ui_runtime::Result<bool> {
         if !self.surface.is_live() || !self.physical_admitted() {
             return Ok(false);
         }
@@ -995,13 +1025,14 @@ impl Presenter {
             Some(_) => return Ok(false),
             None => self.keyboard.clone().into_iter().collect(),
         };
-        self.dispatch_shortcut(&ancestors, event, false)
+        self.dispatch_shortcut_with_capture(&ancestors, event, false, capture)
     }
-    fn dispatch_shortcut(
+    fn dispatch_shortcut_with_capture(
         &mut self,
         ancestors: &[std::rc::Rc<paint::Ancestor>],
         event: &Event,
         navigation: bool,
+        mut capture: Option<&mut Option<activation::CapturedActivation>>,
     ) -> maka_ui_runtime::Result<bool> {
         let Event::Key(key) = event else {
             return Ok(false);
@@ -1037,8 +1068,23 @@ impl Presenter {
                     && self.resources.admits(ancestor)
                     && self.application.mount_visible(&ancestor.mount)
                     && !self.application.is_retiring(&ancestor.mount)
-                    && self.application.frame(&ancestor.mount)?.revision == ancestor.revision
                 {
+                    let current =
+                        self.application.frame(&ancestor.mount)?.revision == ancestor.revision;
+                    if let Some(capture) = capture.as_deref_mut()
+                        && (!current || self.application.ui_pending())
+                    {
+                        *capture = Some(self.capture_shortcut(
+                            ancestor.clone(),
+                            shortcut.clone(),
+                            event.clone(),
+                            navigation,
+                        )?);
+                        return Ok(true);
+                    }
+                    if !current {
+                        return Ok(true);
+                    }
                     self.application.dispatch(
                         &ancestor.mount,
                         ancestor.revision,
@@ -1102,6 +1148,11 @@ impl Presenter {
         }
     }
     pub fn pump(&mut self) -> maka_ui_runtime::Result<()> {
+        self.pump_with_input_priority(false)
+    }
+    // Finish the transaction already ahead of physical input without admitting
+    // another stream feedback transaction before that input can run.
+    fn pump_with_input_priority(&mut self, input_waiting: bool) -> maka_ui_runtime::Result<()> {
         // This original launch candidate has no physical surface yet. Capture
         // its existing recovery permission before rollback can retire its mount.
         let replacement = self
@@ -1117,7 +1168,7 @@ impl Presenter {
                     && !self.resources.owners.contains_key(&mount.id())
             })
             .cloned();
-        let result = self.pump_inner();
+        let result = self.pump_inner(input_waiting);
         if let (Some(mount), Err(error @ (Error::Script(_) | Error::Invalid(_)))) =
             (replacement, &result)
             && !self.application.logical_pending()
@@ -1172,7 +1223,7 @@ impl Presenter {
         }
         result
     }
-    fn pump_inner(&mut self) -> maka_ui_runtime::Result<()> {
+    fn pump_inner(&mut self, input_waiting: bool) -> maka_ui_runtime::Result<()> {
         let advancement = if self.surface.is_live() && !self.application.is_retiring(&self.root) {
             self.application.advance_deployment()
         } else {
@@ -1192,11 +1243,15 @@ impl Presenter {
             while let Some(action) = self.application.start_task(&self.root)? {
                 self.execute(action);
             }
-            let resources = &mut self.resources;
-            self.application
-                .deliver_action_results(&self.root, |target, recipe, witness| {
-                    resources.validate_continuation(target, recipe, witness)
-                })?;
+            if !input_waiting {
+                let resources = &mut self.resources;
+                self.application.deliver_action_results(
+                    &self.root,
+                    |target, recipe, witness| {
+                        resources.validate_continuation(target, recipe, witness)
+                    },
+                )?;
+            }
         }
         self.sync_native()?;
         // Discard native hit references before
