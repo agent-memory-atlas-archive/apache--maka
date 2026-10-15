@@ -43493,6 +43493,105 @@ export const contracts = {
           },
           resources: {},
         },
+        exportPackage: {
+          mode: 'subscription',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'PackageBundleRead',
+            description:
+              'An immutable package from one committed revision, including binary files.',
+            type: 'object',
+            properties: {
+              source: {
+                $ref: '#/$defs/DeploymentRef',
+              },
+              package: {
+                $ref: '#/$defs/PackageRef',
+              },
+            },
+            additionalProperties: false,
+            required: ['source', 'package'],
+            $defs: {
+              DeploymentRef: {
+                type: 'object',
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['stateDomain', 'deployment', 'revision'],
+              },
+              PackageRef: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['id', 'revision'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'PackageBundleExport',
+            description:
+              'Bundle JSON already encodes file bytes; text chunks add no second base64 layer.',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  offset: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 0,
+                  },
+                  totalBytes: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 0,
+                  },
+                  text: {
+                    type: 'string',
+                    maxLength: 16384,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'chunk',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'offset', 'totalBytes', 'text'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'complete',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind'],
+              },
+            ],
+          },
+          resources: {},
+        },
         install: {
           mode: 'mutation',
           input: {
@@ -45722,6 +45821,13 @@ export const contracts = {
                 version: 1,
               },
               optional: false,
+            },
+            packages: {
+              type: {
+                name: 'maka.bytes',
+                version: 1,
+              },
+              optional: true,
             },
           },
         },

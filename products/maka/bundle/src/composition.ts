@@ -556,6 +556,7 @@ function settingsComposition(
             'deployment-gateway',
             'management',
             [
+              'read',
               'instances',
               'setEnabled',
               'readSettings',
@@ -569,6 +570,7 @@ function settingsComposition(
               'installSource',
               'installUrl',
               'readPackage',
+              'exportPackage',
               'replaceSource',
             ],
             false,
@@ -585,6 +587,7 @@ function settingsComposition(
             'host-deployment-gateway',
             'management',
             [
+              'read',
               'instances',
               'setEnabled',
               'readSettings',
@@ -598,6 +601,7 @@ function settingsComposition(
               'installSource',
               'installUrl',
               'readPackage',
+              'exportPackage',
               'replaceSource',
             ],
             false,

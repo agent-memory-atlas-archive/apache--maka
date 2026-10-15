@@ -24,8 +24,8 @@ use maka_plugin_core::contract::binary_resource_type;
 use maka_plugin_core::deployment::management::{
     DeploymentDocument, DeploymentDocumentChunk, DeploymentDocumentRead, DeploymentInstances,
     DeploymentRead, DeploymentReplace, InstanceSetEnabled, MAX_DOCUMENT_BYTES, ManagedInstance,
-    ManagedInstancesPage, ManagementRejection, ManagementResult, PackageInstall, PackageInstalled,
-    deployment_manager_contract,
+    ManagedInstancesPage, ManagementRejection, ManagementResult, PackageBundleExport,
+    PackageBundleRead, PackageInstall, PackageInstalled, deployment_manager_contract,
 };
 use serde::Deserialize;
 
@@ -34,6 +34,8 @@ mod download;
 pub use download::download_bundle;
 mod composition;
 mod settings;
+#[cfg(test)]
+mod tests;
 
 pub const DEPLOYMENT_MANAGER: &str = "maka.application.management";
 
@@ -320,6 +322,7 @@ impl Manager {
             .get("document")
             .ok_or("source document required")?
             .clone();
+        let bundles = context.attachments().get("packages").cloned();
         let mut ticket = context
             .scope()
             .resources
@@ -327,18 +330,28 @@ impl Manager {
             .map_err(|e| e.to_string())?;
         ticket.start();
         let parsed = tokio::task::spawn_blocking(move || {
-            let parsed = read_document_resource(&resource);
+            let parsed = (|| {
+                let document = read_document_resource(&resource)
+                    .map_err(|error| (ManagementRejection::InvalidDocument, error))?;
+                let packages = match &bundles {
+                    Some(resource) => read_package_bundles(resource)
+                        .map_err(|error| (ManagementRejection::InvalidBundle, error))?,
+                    None => Vec::new(),
+                };
+                Ok((document, packages))
+            })();
             drop(resource);
+            drop(bundles);
             ticket.complete(Ok(()));
             parsed
         })
         .await
         .map_err(|e| format!("document validation worker failed: {e}"))?;
-        let document = match parsed {
-            Ok(document) => document,
-            Err(error) => return rejected_diagnostic(ManagementRejection::InvalidDocument, error),
+        let (document, packages) = match parsed {
+            Ok(parsed) => parsed,
+            Err((reason, error)) => return rejected_diagnostic(reason, error),
         };
-        self.replace_document(request.expected_revision, document, metadata)
+        self.replace_document(request.expected_revision, document, metadata, packages)
             .await
     }
     async fn replace_document(
@@ -346,6 +359,7 @@ impl Manager {
         expected_revision: u64,
         document: DeploymentDocument,
         metadata: maka_plugin_core::deployment::management::ManagedDeployment,
+        supplied: Vec<Package>,
     ) -> Result<Value> {
         if document.input.environment != self.environment
             || (self.environment.location == ExecutionLocation::Host
@@ -353,11 +367,26 @@ impl Manager {
         {
             return rejected(ManagementRejection::ExecutionEnvironment);
         }
-        if document
-            .packages
-            .iter()
-            .any(|reference| !metadata.packages.contains(reference))
-        {
+        let desired: BTreeSet<_> = document.packages.iter().cloned().collect();
+        if desired.len() != document.packages.len() {
+            return rejected_diagnostic(
+                ManagementRejection::InvalidDocument,
+                "duplicate document package reference".into(),
+            );
+        }
+        let mut added = BTreeMap::new();
+        for package in supplied {
+            let reference = package.application_ref();
+            if !desired.contains(&reference) || added.insert(reference, package).is_some() {
+                return rejected_diagnostic(
+                    ManagementRejection::InvalidBundle,
+                    "supplied packages must be distinct and selected by the document".into(),
+                );
+            }
+        }
+        if desired.iter().any(|reference| {
+            !metadata.packages.contains(reference) && !added.contains_key(reference)
+        }) {
             return rejected(ManagementRejection::PackageUnavailable);
         }
         let loaded = self
@@ -366,11 +395,12 @@ impl Manager {
             .await
             .map_err(|error| error.to_string())?
             .ok_or("managed source not found")?;
-        let available: BTreeMap<_, _> = loaded
+        let mut available: BTreeMap<_, _> = loaded
             .packages()
             .iter()
             .map(|package| (package.application_ref(), package.clone()))
             .collect();
+        available.extend(added);
         let packages = document
             .packages
             .into_iter()
@@ -389,6 +419,54 @@ impl Manager {
             |source| source,
         )
         .await
+    }
+    async fn export_package(&self, input: Value, context: Context) -> Result<Value> {
+        let request: PackageBundleRead =
+            serde_json::from_value(input).map_err(|error| error.to_string())?;
+        let package = {
+            let _read = self.writes.lock().await;
+            let loaded = self.source_at(Some(request.source)).await?;
+            loaded
+                .packages()
+                .iter()
+                .find(|package| package.application_ref() == request.package)
+                .cloned()
+                .ok_or("package is not installed in this source")?
+        };
+        let mut ticket = context
+            .scope()
+            .resources
+            .reserve()
+            .map_err(|error| error.to_string())?;
+        ticket.start();
+        let bytes = tokio::task::spawn_blocking(move || {
+            let bytes = package.to_bundle();
+            drop(package);
+            ticket.complete(Ok(()));
+            bytes
+        })
+        .await
+        .map_err(|error| format!("package export worker failed: {error}"))?;
+        let text = String::from_utf8(bytes).map_err(|error| error.to_string())?;
+        let mut offset = 0;
+        while offset < text.len() {
+            let mut end = (offset + 16 * 1024).min(text.len());
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            context
+                .emit(
+                    serde_json::to_value(PackageBundleExport::Chunk {
+                        offset,
+                        total_bytes: text.len(),
+                        text: text[offset..end].into(),
+                    })
+                    .map_err(|error| error.to_string())?,
+                )
+                .await?;
+            offset = end;
+        }
+        serde_json::to_value(PackageBundleExport::Complete {}).map_err(|error| error.to_string())
     }
     async fn commit<T: serde::Serialize>(
         &self,
@@ -476,6 +554,7 @@ impl Handler for Manager {
                 "installSource" => manager.install_source(input).await,
                 "installUrl" => manager.install_url(input, context).await,
                 "readPackage" => manager.read_package(input).await,
+                "exportPackage" => manager.export_package(input, context).await,
                 "replaceSource" => manager.replace_source(input).await,
                 "replace" => manager.replace(input, context).await,
                 _ => Err("unknown deployment management method".into()),
@@ -558,11 +637,34 @@ fn read_document_resource(
     serde_json::from_slice(&bytes).map_err(|e| e.to_string())
 }
 fn read_bundle(resource: &Arc<dyn maka_capabilities::call::ReadResource>) -> Result<Package> {
+    let bytes = read_binary_resource(resource, maka_packages::MAX_PACKAGE_BYTES * 2)?;
+    Package::from_bundle(&bytes).map_err(|error| error.to_string())
+}
+fn read_package_bundles(
+    resource: &Arc<dyn maka_capabilities::call::ReadResource>,
+) -> Result<Vec<Package>> {
+    let bytes = read_binary_resource(resource, 64 * 1024 * 1024)?;
+    let bundles: Vec<&serde_json::value::RawValue> =
+        serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    if bundles.len() > 128 {
+        return Err("maximum 128 supplied package bundles".into());
+    }
+    bundles
+        .into_iter()
+        .map(|bundle| {
+            Package::from_bundle(bundle.get().as_bytes()).map_err(|error| error.to_string())
+        })
+        .collect()
+}
+fn read_binary_resource(
+    resource: &Arc<dyn maka_capabilities::call::ReadResource>,
+    max_bytes: usize,
+) -> Result<Vec<u8>> {
     use maka_capabilities::call::ResourceEncoding;
     let length = resource.bytes();
     if resource.resource_type() != binary_resource_type()
         || resource.encoding() != ResourceEncoding::Bytes
-        || length > maka_packages::MAX_PACKAGE_BYTES * 2
+        || length > max_bytes
     {
         return Err("invalid immutable package bundle resource".into());
     }
@@ -575,7 +677,7 @@ fn read_bundle(resource: &Arc<dyn maka_capabilities::call::ReadResource>) -> Res
         }
         bytes.extend_from_slice(&chunk);
     }
-    Package::from_bundle(&bytes).map_err(|error| error.to_string())
+    Ok(bytes)
 }
 
 pub(super) fn provide(native: &mut NativeRegistry) -> Result<()> {
