@@ -20,7 +20,7 @@
 import { composerFooterContract } from '../../shared/contracts.js';
 import { uiEntries } from '../../shared/package.js';
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.composer-footer',
   displayName: 'Message status',
   description: 'Show context and status below the message editor.',

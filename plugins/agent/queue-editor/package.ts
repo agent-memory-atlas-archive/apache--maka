@@ -27,7 +27,7 @@ const entries = uiEntries({
   imports: { editor: one(sdk.contracts.textarea) },
 });
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.queue-editor',
   displayName: 'Queued messages',
   description: 'Review and edit messages waiting to run.',

@@ -20,7 +20,7 @@
 import * as sdk from '../../../packages/plugin-sdk/src/index.js';
 import { one, required, native } from '../../shared/package.js';
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.workspace-web',
   displayName: 'Web tools',
   description: 'Search the web and read web pages for the assistant.',

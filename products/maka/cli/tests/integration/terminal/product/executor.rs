@@ -70,7 +70,7 @@ fn executor_selection_and_composer_reach_production_timeline_before_backend_comp
         json!([local("executor", "executor")]);
     packages.insert("agent".into(), agent_package);
     let executor_package = Package::new(BTreeMap::from([
-        (MANIFEST_FILE.into(),serde_json::to_vec(&json!({"schemaVersion":2,"id":"fixture.executor.progress","application":{"entries":{"host":{
+        (MANIFEST_FILE.into(),serde_json::to_vec(&json!({"schemaVersion":1,"id":"fixture.executor.progress","application":{"entries":{"host":{
             "implementation":{"kind":"javascript","module":"executor.mjs","realm":"shared"},
             "configuration":{"type":"object","additionalProperties":false},"imports":{},
             "exports":{"executor":required(&executor),"control":required(&control)}
@@ -141,7 +141,7 @@ fn executor_selection_and_composer_reach_production_timeline_before_backend_comp
     )
     .unwrap();
     let ui_package=Package::new(BTreeMap::from([
-        (MANIFEST_FILE.into(),serde_json::to_vec(&json!({"schemaVersion":2,"id":"fixture.executor.ui","application":{"entries":{"tui":{
+        (MANIFEST_FILE.into(),serde_json::to_vec(&json!({"schemaVersion":1,"id":"fixture.executor.ui","application":{"entries":{"tui":{
             "implementation":{"kind":"javascript","module":"ui.mjs","realm":"shared"},"scene":{"name":"maka.tui.scene","version":1},"configuration":{"type":"object","additionalProperties":false},
             "imports":{"agentScreen":one(&screen_contract),"agent":one(&agent_contract),"control":one(&control),"surface":one(&surface)},
             "exports":{"App":required(&screen_contract)}

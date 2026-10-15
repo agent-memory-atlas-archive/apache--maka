@@ -105,7 +105,7 @@ fn package(provider: bool) -> Package {
         },
     };
     Package::new(BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({
-        "schemaVersion":2, "id": if provider { "independent.web" } else { "independent.caller" },
+        "schemaVersion":1, "id": if provider { "independent.web" } else { "independent.caller" },
         "application": Declaration { entries: BTreeMap::from([(EntryTarget::Host, entry)]), composition: None }
     })).unwrap())])).unwrap()
 }

@@ -438,7 +438,7 @@ fn terminal_packages(mut input: Input, packages: Vec<Package>) -> (Input, Vec<Pa
         let mut files = BTreeMap::from([(
             maka_packages::MANIFEST_FILE.into(),
             serde_json::to_vec(
-                &json!({"schemaVersion":2,"id":original.manifest().id,"application":declaration}),
+                &json!({"schemaVersion":1,"id":original.manifest().id,"application":declaration}),
             )
             .unwrap(),
         )]);
@@ -663,7 +663,7 @@ fn service_fixture(
         (
             maka_packages::MANIFEST_FILE.into(),
             serde_json::to_vec(
-                &json!({"schemaVersion":2,"id":"dynamic.app","application":declaration}),
+                &json!({"schemaVersion":1,"id":"dynamic.app","application":declaration}),
             )
             .unwrap(),
         ),

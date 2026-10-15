@@ -34,7 +34,7 @@ const entries = uiEntries({
 });
 entries.tui.imports.checkpoint = one(sdk.contracts.valueCheckpoint);
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.insights',
   displayName: 'Usage',
   description: 'Review model usage and costs.',

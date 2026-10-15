@@ -35,7 +35,7 @@ const entries = uiEntries({
   },
 });
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.conversation-import',
   displayName: 'Import conversations',
   description: 'Bring conversations from other tools into Maka.',

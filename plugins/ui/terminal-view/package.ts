@@ -20,7 +20,7 @@
 import * as sdk from '../../../packages/plugin-sdk/src/index.js';
 import { one, required, native } from '../../shared/package.js';
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.terminal-view',
   displayName: 'Terminal display',
   description: 'Render terminal output and forward keyboard input.',

@@ -24,7 +24,7 @@ use futures_util::TryStreamExt;
 use sha2::{Digest, Sha256};
 use sqlx::SqliteConnection;
 
-/// The same v2 scoped digest as complete prefix(), without retaining source rows.
+/// The same scoped digest as complete prefix(), without retaining source rows.
 /// Even a single old giant observation is hashed in bounded SQL BLOB slices.
 pub(super) async fn evidence(
     connection: &mut SqliteConnection,
@@ -46,7 +46,7 @@ pub(crate) async fn selected(
         .ok_or_else(|| invalid("context requires a Session"))?;
     let encoded = serde_json::to_vec(&scope)?;
     let mut digest = Sha256::new();
-    digest.update(b"maka.log-prefix.v2\0");
+    digest.update(b"maka.log-prefix.v1\0");
     digest.update((encoded.len() as u64).to_be_bytes());
     digest.update(encoded);
     digest.update(through.to_be_bytes());

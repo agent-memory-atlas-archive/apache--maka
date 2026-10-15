@@ -21,7 +21,7 @@ import * as sdk from '../../../packages/plugin-sdk/src/index.js';
 import { native, one, uiEntries } from '../../shared/package.js';
 import { uiAuthoringContract } from '../../shared/contracts.js';
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.application.authoring',
   displayName: 'App authoring',
   description: 'Create and validate plugin apps for Maka.',

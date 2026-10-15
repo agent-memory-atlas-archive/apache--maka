@@ -154,7 +154,7 @@ fn url_install_commits_validated_bytes_without_changing_the_composition() {
         store.shutdown().await.unwrap();
     });
     let package = maka_packages::Package::new(BTreeMap::from([
-        ("maka.extension.json".into(), br#"{"schemaVersion":2,"id":"example.url-cli","application":{"entries":{"host":{"implementation":{"kind":"javascript","module":"host.mjs","realm":"shared"},"configuration":{"type":"object"},"imports":{},"exports":{}}}}}"#.to_vec()),
+        ("maka.extension.json".into(), br#"{"schemaVersion":1,"id":"example.url-cli","application":{"entries":{"host":{"implementation":{"kind":"javascript","module":"host.mjs","realm":"shared"},"configuration":{"type":"object"},"imports":{},"exports":{}}}}}"#.to_vec()),
         ("host.mjs".into(), b"export function activate() { return {}; }".to_vec()),
     ])).unwrap();
     let bytes = package.to_bundle();

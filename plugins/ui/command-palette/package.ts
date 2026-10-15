@@ -32,7 +32,7 @@ const entries = uiEntries({
   },
 });
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.command-palette',
   displayName: 'Commands',
   description: 'Search for actions and open them from one place.',

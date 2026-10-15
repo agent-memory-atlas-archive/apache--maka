@@ -68,7 +68,7 @@ fn packages(source: &Path) -> (Input, Vec<Package>) {
     let provider = Package::new(BTreeMap::from([(
         MANIFEST_FILE.into(),
         serde_json::to_vec(&json!({
-            "schemaVersion":2,"id":"skills","application":{"entries":{"host":{
+            "schemaVersion":1,"id":"skills","application":{"entries":{"host":{
                 "implementation":{"kind":"native","implementation":IMPLEMENTATION},
                 "configuration":configuration_schema(),"imports":{},
                 "exports":{EXPORT:{"contract":contract(),"availability":"required"}}
@@ -81,7 +81,7 @@ fn packages(source: &Path) -> (Input, Vec<Package>) {
         (
             MANIFEST_FILE.into(),
             serde_json::to_vec(&json!({
-                "schemaVersion":2,"id":"consumer","application":{"entries":{"host":{
+                "schemaVersion":1,"id":"consumer","application":{"entries":{"host":{
                     "implementation":{"kind":"javascript","module":"main.mjs","realm":"shared"},
                     "configuration":{"type":"object","additionalProperties":false},
                     "imports":{EXPORT:{"contract":contract(),"cardinality":maka_plugin_core::contract::Cardinality::One}},"exports":{}
@@ -96,7 +96,7 @@ fn packages(source: &Path) -> (Input, Vec<Package>) {
     ]))
     .unwrap();
     let reader = Package::new(BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({
-        "schemaVersion":2,"id":"outcomes","application":{"entries":{"host":{
+        "schemaVersion":1,"id":"outcomes","application":{"entries":{"host":{
             "implementation":{"kind":"native","implementation":maka_skills_api::outcomes::IMPLEMENTATION},
             "configuration":{"type":"object","additionalProperties":false},"imports":{},
             "exports":{maka_skills_api::outcomes::EXPORT:{"contract":maka_skills_api::outcomes::contract(),"availability":"required"}}

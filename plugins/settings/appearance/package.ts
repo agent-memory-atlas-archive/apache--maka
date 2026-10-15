@@ -29,7 +29,7 @@ const entries = uiEntries({
   scene: false,
 });
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.appearance',
   displayName: 'Appearance',
   description: 'Choose the theme and display preferences.',

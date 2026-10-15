@@ -33,7 +33,7 @@ const entries = uiEntries({
   },
 });
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.execution-picker',
   displayName: 'Execution options',
   description: 'Choose how and where the assistant runs.',

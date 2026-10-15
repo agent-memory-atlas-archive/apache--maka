@@ -72,7 +72,7 @@ impl EventLog {
             return Err(StoreError::PrefixTooLarge);
         }
         let mut digest = Sha256::new();
-        digest.update(b"maka.log-prefix.v2\0");
+        digest.update(b"maka.log-prefix.v1\0");
         let scope_bytes = serde_json::to_vec(&scope)?;
         digest.update((scope_bytes.len() as u64).to_be_bytes());
         digest.update(scope_bytes);

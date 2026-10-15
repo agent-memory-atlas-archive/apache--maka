@@ -27,7 +27,7 @@ const entries = uiEntries({
   imports: { editor: one(sdk.contracts.textarea) },
 });
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.question-editor',
   displayName: 'Answer questions',
   description: 'Choose or write answers to the assistant’s questions.',

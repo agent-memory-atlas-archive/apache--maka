@@ -198,7 +198,7 @@ fn sdk_typescript_bundles_execute_the_same_package_in_both_presentations() {
     let old = packages.pop().unwrap();
     let mut files = BTreeMap::from([(
         maka_packages::MANIFEST_FILE.into(),
-        serde_json::to_vec(&json!({"schemaVersion":2,"id":old.manifest().id,
+        serde_json::to_vec(&json!({"schemaVersion":1,"id":old.manifest().id,
             "application":old.manifest().application}))
         .unwrap(),
     )]);

@@ -235,7 +235,7 @@ async fn activate_worker_mode(
         }
         if external {
             let package=Package::new(BTreeMap::from([
-                (MANIFEST_FILE.into(),serde_json::to_vec(&json!({"schemaVersion":2,"id":"fixture-executor","application":{"entries":{"host":{
+                (MANIFEST_FILE.into(),serde_json::to_vec(&json!({"schemaVersion":1,"id":"fixture-executor","application":{"entries":{"host":{
                     "implementation":{"kind":"javascript","module":"executor.mjs","realm":"shared"},"configuration":{"type":"object","additionalProperties":false},"imports":{},
                     "exports":{"executor":{"contract":maka_agent_api::executor::contract(),"availability":"required"}}
                 }}}})).unwrap()),

@@ -966,7 +966,7 @@ async fn instance_pages_freeze_source_and_nested_enabled_intents_preserve_origin
     use maka_plugin_core::composition::{Override, Parameter, PresentationTarget, Template};
     let f = Fixture::create(Some(PresentationTarget::Desktop)).await;
     let leaf = Package::new(BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({
-        "schemaVersion":2,"id":"nested.leaf","application":Declaration {
+        "schemaVersion":1,"id":"nested.leaf","application":Declaration {
             entries: BTreeMap::from([(EntryTarget::Desktop, EntryDeclaration {
                 scene: None, implementation: Implementation::Native { implementation:"unused.ui.availability".into() },
                 configuration: json!({"type":"object"}), imports: BTreeMap::new(), exports: BTreeMap::new(),
@@ -984,7 +984,7 @@ async fn instance_pages_freeze_source_and_nested_enabled_intents_preserve_origin
         })
         .collect();
     let product = Package::new(BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({
-        "schemaVersion":2,"id":"nested.product","application":Declaration {
+        "schemaVersion":1,"id":"nested.product","application":Declaration {
             entries:BTreeMap::new(), composition:Some(Template {
                 parameters:BTreeMap::from([("label".into(), Parameter { schema:json!({"type":"string"}), default:None })]),
                 imports:BTreeMap::new(), exports:BTreeMap::new(), children,
@@ -1289,7 +1289,7 @@ async fn settings_forms_preserve_exact_numbers_unedited_sources_and_original_cas
         "$defs":{"details":{"type":"object","properties":{"path":{"type":"string"},"opaque":{"type":"integer"}},"required":["path","opaque"],"additionalProperties":false}}
     });
     let leaf = Package::new(BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({
-        "schemaVersion":2,"id":"form.leaf","application":Declaration {
+        "schemaVersion":1,"id":"form.leaf","application":Declaration {
             entries:BTreeMap::from([(EntryTarget::Tui, EntryDeclaration {
                 scene:None, implementation:Implementation::Native { implementation:"unused.form.availability".into() },
                 configuration:schema, imports:BTreeMap::new(), exports:BTreeMap::new(),
@@ -1312,7 +1312,7 @@ async fn settings_forms_preserve_exact_numbers_unedited_sources_and_original_cas
         .parameters
         .insert("label".into(), "name".into());
     let template = Package::new(BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({
-        "schemaVersion":2,"id":"form.product","application":Declaration {
+        "schemaVersion":1,"id":"form.product","application":Declaration {
             entries:BTreeMap::new(),composition:Some(Template {
                 parameters:BTreeMap::from([("name".into(),Parameter { schema:json!({"type":"string"}),default:None })]),
                 imports:BTreeMap::new(),exports:BTreeMap::new(),children:BTreeMap::from([("child".into(),child)]),
@@ -1483,7 +1483,7 @@ async fn composition_choices_and_atomic_edits_preserve_source_bindings_and_origi
     let contract = deployment_manager_contract();
     let make = |name: &str, configuration: Value, imports, exports| {
         Package::new(BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({
-            "schemaVersion":2,"id":name,"application":Declaration {
+            "schemaVersion":1,"id":name,"application":Declaration {
                 entries:BTreeMap::from([(EntryTarget::Tui, EntryDeclaration {
                     scene:None, implementation:Implementation::Native { implementation:"test.form".into() },
                     configuration, imports, exports,

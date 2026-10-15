@@ -44,7 +44,7 @@ const entries = uiEntries({
   }),
 });
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.apps',
   displayName: 'Apps',
   description: 'Add, open, and manage apps in the sidebar.',

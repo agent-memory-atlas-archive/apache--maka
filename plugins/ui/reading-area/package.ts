@@ -21,7 +21,7 @@ import * as sdk from '../../../packages/plugin-sdk/src/index.js';
 import * as own from '../../shared/contracts.js';
 import { one, required, native } from '../../shared/package.js';
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.reading-area',
   displayName: 'Scrollable content',
   description: 'Scroll content and keep the focused item visible.',

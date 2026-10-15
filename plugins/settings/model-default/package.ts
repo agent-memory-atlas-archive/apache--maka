@@ -34,7 +34,7 @@ const entries = uiEntries({
   },
 });
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.model-default',
   displayName: 'Default model',
   description: 'Choose the model used by new conversations.',

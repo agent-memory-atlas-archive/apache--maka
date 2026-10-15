@@ -35,7 +35,7 @@ const entries = uiEntries({
   },
 });
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.projects',
   displayName: 'Projects',
   description: 'Organize workspaces and project settings.',

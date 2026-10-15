@@ -182,7 +182,7 @@ fn package(marker: &str) -> Package {
         (
             maka_packages::MANIFEST_FILE.into(),
             serde_json::to_vec(
-                &serde_json::json!({"schemaVersion":2,"id":"sample","application":declaration}),
+                &serde_json::json!({"schemaVersion":1,"id":"sample","application":declaration}),
             )
             .unwrap(),
         ),

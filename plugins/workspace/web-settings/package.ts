@@ -32,7 +32,7 @@ const entries = uiEntries({
   },
 });
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.web-settings',
   displayName: 'Web access settings',
   description: 'Configure the assistant’s web search and browsing.',

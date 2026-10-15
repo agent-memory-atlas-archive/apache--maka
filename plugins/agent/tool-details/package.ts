@@ -32,7 +32,7 @@ const entries = uiEntries({
 });
 entries.tui.imports.diff = one(sdk.contracts.diff);
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.tool-details',
   displayName: 'Tool activity',
   description: 'Inspect tool inputs, results, and running processes.',

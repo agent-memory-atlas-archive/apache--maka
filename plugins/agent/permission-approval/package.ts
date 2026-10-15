@@ -27,7 +27,7 @@ const entries = uiEntries({
   imports: { reading: one(sdk.contracts.readingArea) },
 });
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.permission-approval',
   displayName: 'Permission requests',
   description: 'Review requests for additional access.',

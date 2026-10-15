@@ -34,7 +34,7 @@ const entries = uiEntries({
   },
 });
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.connections',
   displayName: 'Model connections',
   description: 'Manage connections to model providers.',

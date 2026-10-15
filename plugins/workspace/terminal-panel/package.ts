@@ -35,7 +35,7 @@ const entries = uiEntries({
   },
 });
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.terminal-panel',
   displayName: 'Terminal',
   description: 'View and control terminal processes in your workspace.',

@@ -45,7 +45,7 @@ impl Manifest {
     }
     pub fn validate(&self) -> Result<(), Error> {
         maka_plugin_core::identifier(&self.id).map_err(|e| Error::Invalid(e.to_string()))?;
-        if self.schema_version != 2 {
+        if self.schema_version != 1 {
             return Err(Error::Invalid("unsupported manifest version".into()));
         }
         let application = self

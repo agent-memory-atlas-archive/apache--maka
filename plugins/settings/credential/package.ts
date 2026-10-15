@@ -35,7 +35,7 @@ const entries = uiEntries({
   },
 });
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.credential',
   displayName: 'API keys',
   description: 'Add and manage saved API keys.',

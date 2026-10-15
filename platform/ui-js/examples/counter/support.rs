@@ -50,7 +50,7 @@ pub(crate) fn node(package: &Package, key: u128) -> Node {
 pub(crate) fn package(id: &str, declaration: Declaration, source: Option<String>) -> Package {
     let mut files = BTreeMap::from([(
         MANIFEST_FILE.into(),
-        serde_json::to_vec(&json!({"schemaVersion":2,"id":id,"application":declaration})).unwrap(),
+        serde_json::to_vec(&json!({"schemaVersion":1,"id":id,"application":declaration})).unwrap(),
     )]);
     if let Some(source) = source {
         files.insert("index.mjs".into(), source.into_bytes());
@@ -746,7 +746,7 @@ pub fn dual_fixture(handler: &str) -> (Input, Vec<Package>) {
         files.insert(
             MANIFEST_FILE.into(),
             serde_json::to_vec(
-                &json!({"schemaVersion":2,"id":original.manifest().id,"application":declaration}),
+                &json!({"schemaVersion":1,"id":original.manifest().id,"application":declaration}),
             )
             .unwrap(),
         );

@@ -31,7 +31,7 @@ const entries = uiEntries({
   },
 });
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.service-approval',
   displayName: 'Service requests',
   description: 'Review service calls that need your approval.',

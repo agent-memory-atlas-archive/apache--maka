@@ -129,7 +129,7 @@ mod tests {
             .unwrap()
             .0;
         let files = json!({
-            "maka.extension.json":json!({"schemaVersion":2,"id":"example.footer","application":{"entries":{"host":{"implementation":{"kind":"javascript","module":"host.mjs","realm":"shared"},"configuration":{"type":"object"},"imports":{},"exports":{}}}}}).to_string(),
+            "maka.extension.json":json!({"schemaVersion":1,"id":"example.footer","application":{"entries":{"host":{"implementation":{"kind":"javascript","module":"host.mjs","realm":"shared"},"configuration":{"type":"object"},"imports":{},"exports":{}}}}}).to_string(),
             "host.mjs":"export function activate() { return {}; } // 界面"
         });
         let installed = manager

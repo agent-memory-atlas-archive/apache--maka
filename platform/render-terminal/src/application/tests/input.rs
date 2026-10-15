@@ -94,7 +94,7 @@ fn configured_input(
    }
    _=>{}
   }
-  files.insert("maka.extension.json".into(),serde_json::to_vec(&json!({"schemaVersion":2,"id":original.manifest().id,"application":decl})).unwrap());
+  files.insert("maka.extension.json".into(),serde_json::to_vec(&json!({"schemaVersion":1,"id":original.manifest().id,"application":decl})).unwrap());
   let package=Package::new(files).unwrap();
   for node in input.instances.values_mut().filter(|node|matches!(&node.package,maka_plugin_core::package::PackageSelection::Pinned{package} if package.id==original.manifest().id)){node.package=package.application_ref().into();}
   package
@@ -443,7 +443,7 @@ fn reserved_shortcut_presenter(reserved: bool) -> (tokio::runtime::Runtime, Pres
             if reserved { source = source.replace("shortcuts:[{key:'b'", "shortcuts:[{key:'tab',modifiers:[],input:'close',enabled:true},{key:'tab',modifiers:['shift'],input:'close',enabled:true},{key:'c',modifiers:['control'],input:'close',enabled:true},{key:'q',modifiers:['control'],input:'close',enabled:true},{key:'b'"); }
             files.insert(module.clone(), source.into_bytes());
         }
-        files.insert("maka.extension.json".into(), serde_json::to_vec(&json!({"schemaVersion":2,"id":original.manifest().id,"application":declaration})).unwrap());
+        files.insert("maka.extension.json".into(), serde_json::to_vec(&json!({"schemaVersion":1,"id":original.manifest().id,"application":declaration})).unwrap());
         let package = Package::new(files).unwrap();
         for node in input.instances.values_mut().filter(|node| matches!(&node.package,maka_plugin_core::package::PackageSelection::Pinned{package} if package.id==original.manifest().id)) {
             node.package = package.application_ref().into();

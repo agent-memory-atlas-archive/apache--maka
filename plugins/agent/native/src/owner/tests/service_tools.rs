@@ -621,7 +621,7 @@ impl Setup {
         } else {
             json!({"kind":"javascript","module":"counter.mjs","realm":"shared"})
         };
-        let mut files = BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({"schemaVersion":2,"id":"fixture.counter","application":{"entries":{"host":{
+        let mut files = BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({"schemaVersion":1,"id":"fixture.counter","application":{"entries":{"host":{
             "implementation":implementation,"configuration":if self.computer { maka_workspace_api::computer::configuration_schema() } else if self.jev { maka_workspace_api::jev::configuration_schema() } else if self.web { maka_web_api::configuration_schema() } else if self.skills.is_some() { maka_skills_api::configuration_schema() } else if self.processes || self.protocol { maka_workspace_api::processes::configuration_schema() } else { json!({"type":"object","additionalProperties":false}) },"imports":{},
             "exports":if self.processes {
                 json!({(self.export()):{"contract":self.contract(),"availability":"required"},

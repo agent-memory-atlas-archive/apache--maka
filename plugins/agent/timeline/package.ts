@@ -35,7 +35,7 @@ Object.assign(entries.tui.imports, {
   agent: one(sdk.contracts.agent),
 });
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.timeline',
   displayName: 'Conversation messages',
   description: 'Read messages and follow the assistant’s progress.',

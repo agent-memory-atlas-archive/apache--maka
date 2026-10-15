@@ -31,7 +31,7 @@ const entries = uiEntries({
 });
 entries.tui.imports.checkpoint = one(sdk.contracts.valueCheckpoint);
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.deployment-settings',
   displayName: 'Plugin settings',
   description: 'Manage plugins on this device and the connected host.',

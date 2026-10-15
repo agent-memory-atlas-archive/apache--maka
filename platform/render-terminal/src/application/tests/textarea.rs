@@ -60,7 +60,7 @@ pub(super) fn editor_fixture() -> (tokio::runtime::Runtime, Input, Vec<Package>)
             _ => {}
         }
         declaration.entries.insert(EntryTarget::Tui, entry);
-        files.insert("maka.extension.json".into(), serde_json::to_vec(&json!({"schemaVersion":2,"id":original.manifest().id,"application":declaration})).unwrap());
+        files.insert("maka.extension.json".into(), serde_json::to_vec(&json!({"schemaVersion":1,"id":original.manifest().id,"application":declaration})).unwrap());
         let package = Package::new(files).unwrap();
         for node in input.instances.values_mut().filter(|node| matches!(&node.package,maka_plugin_core::package::PackageSelection::Pinned {package} if package.id == original.manifest().id)) {
             node.package = package.application_ref().into();

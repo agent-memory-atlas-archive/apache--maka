@@ -35,7 +35,7 @@ const entries = uiEntries({
   },
 });
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.connection-form',
   displayName: 'Connection editor',
   description: 'Enter a model provider’s address and connection options.',

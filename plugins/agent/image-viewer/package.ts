@@ -28,7 +28,7 @@ const entries = uiEntries({
 });
 entries.desktop.imports.image = one(sdk.contracts.image);
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.image-viewer',
   displayName: 'Image viewer',
   description: 'Open images attached to a conversation.',

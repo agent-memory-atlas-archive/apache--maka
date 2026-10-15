@@ -248,7 +248,7 @@ pub fn ui(target: PresentationTarget) -> (Input, Vec<Package>, Vec<RemoteObserva
     }
     let mut files = BTreeMap::from([(
         maka_packages::MANIFEST_FILE.into(),
-        serde_json::to_vec(&json!({"schemaVersion":2,"id":"local.ui","application":declaration}))
+        serde_json::to_vec(&json!({"schemaVersion":1,"id":"local.ui","application":declaration}))
             .unwrap(),
     )]);
     for (entry_target, module) in [

@@ -35,7 +35,7 @@ const entries = uiEntries({
   },
 });
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.session-details',
   displayName: 'Conversation settings',
   description: 'Edit a conversation’s name, model, and execution settings.',

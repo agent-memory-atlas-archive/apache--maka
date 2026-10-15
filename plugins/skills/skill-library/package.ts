@@ -36,7 +36,7 @@ const entries = uiEntries({
   },
 });
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.skill-library',
   displayName: 'Skills',
   description: 'Browse and manage instructions the assistant can use.',

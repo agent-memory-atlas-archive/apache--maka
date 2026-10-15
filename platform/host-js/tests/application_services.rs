@@ -125,7 +125,7 @@ fn package(id: &str, entry: EntryDeclaration, source: Option<String>) -> Package
     let mut files = BTreeMap::from([(
         MANIFEST_FILE.into(),
         serde_json::to_vec(&json!({
-            "schemaVersion":2,"id":id,"application":Declaration {
+            "schemaVersion":1,"id":id,"application":Declaration {
                 entries: BTreeMap::from([(EntryTarget::Host, entry)]), composition: None,
             }
         }))

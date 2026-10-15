@@ -78,7 +78,7 @@ def main():
         consumer.mkdir()
         (consumer / "consumer.mjs").write_text("export function activate() { return {}; }")
         save(consumer / "maka.extension.json", {
-            "schemaVersion": 2, "id": "example.echo-test",
+            "schemaVersion": 1, "id": "example.echo-test",
             "application": {"entries": {"host": {
                 "implementation": {"kind": "javascript", "module": "consumer.mjs", "realm": "dedicated"},
                 "configuration": {"type": "object"}, "exports": {},

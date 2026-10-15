@@ -51,7 +51,7 @@ for (const target of ['desktop', 'tui'] as const)
     target === 'desktop' ? sdk.contracts.desktopSurface : sdk.contracts.terminalSurface,
   );
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.workhub.root',
   displayName: 'WorkHub',
   description: 'Organize work across agents and projects.',

@@ -38,7 +38,7 @@ for (const target of ['desktop', 'tui'] as const)
     target === 'desktop' ? sdk.contracts.desktopSurface : sdk.contracts.terminalSurface,
   );
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.studio.workbench',
   displayName: 'Workspace',
   description: 'Open the assistant and installed apps.',

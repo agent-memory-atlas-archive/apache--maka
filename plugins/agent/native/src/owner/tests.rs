@@ -240,7 +240,7 @@ fn package(provider: bool) -> Package {
         entries: BTreeMap::from([(EntryTarget::Host, entry)]),
         composition: None,
     };
-    let mut files = BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({"schemaVersion":2,"id":if provider {"agent"} else {"consumer"},"application":declaration})).unwrap())]);
+    let mut files = BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({"schemaVersion":1,"id":if provider {"agent"} else {"consumer"},"application":declaration})).unwrap())]);
     if !provider {
         files.insert(
             "host.mjs".into(),
@@ -294,7 +294,7 @@ fn input(settings: &Configuration) -> (Input, Vec<Package>) {
     let receipts = Package::new(BTreeMap::from([(
         MANIFEST_FILE.into(),
         serde_json::to_vec(&json!({
-            "schemaVersion":2,"id":"receipts","application":{"entries":{"host":{
+            "schemaVersion":1,"id":"receipts","application":{"entries":{"host":{
                 "implementation":{"kind":"native","implementation":"maka.operations.receipts"},
                 "configuration":{"type":"object","additionalProperties":false},"imports":{},
                 "exports":{"Receipts":{"contract":receipt_contract,"availability":"required"}}

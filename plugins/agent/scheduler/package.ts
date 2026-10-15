@@ -36,7 +36,7 @@ const entries = uiEntries({
   },
 });
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.scheduler',
   displayName: 'Scheduled tasks',
   description: 'Schedule assistant tasks and reminders.',

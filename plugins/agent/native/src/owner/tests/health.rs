@@ -50,7 +50,7 @@ pub(super) fn install(input: &mut Input, packages: &mut Vec<Package>) {
         }],
     );
     let web = Package::new(BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({
-        "schemaVersion":2,"id":"fixture.health-web","application":{"entries":{"host":{
+        "schemaVersion":1,"id":"fixture.health-web","application":{"entries":{"host":{
             "implementation":{"kind":"native","implementation":maka_web_api::IMPLEMENTATION},
             "configuration":maka_web_api::configuration_schema(),"imports":{},
             "exports":{(maka_web_api::EXPORT):{"contract":maka_web_api::contract(),"availability":"required"}}

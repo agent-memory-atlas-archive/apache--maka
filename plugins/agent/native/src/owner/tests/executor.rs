@@ -293,7 +293,7 @@ async fn activate_backend(
                     }],
                 );
                 let package = Package::new(BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({
-                    "schemaVersion":2,"id":format!("fixture-acp-{name}"),"application":{"entries":{"host":{
+                    "schemaVersion":1,"id":format!("fixture-acp-{name}"),"application":{"entries":{"host":{
                         "implementation":{"kind":"native","implementation":implementation},"configuration":schema,"imports":{},
                         "exports":{(export):{"contract":contract,"availability":"required"}}
                     }}}
@@ -332,7 +332,7 @@ async fn activate_backend(
                 json!({"contract":executor::setup::contract(),"availability":"required"}),
             );
         }
-        let mut files=BTreeMap::from([(MANIFEST_FILE.into(),serde_json::to_vec(&json!({"schemaVersion":2,"id":"fixture-executor","application":{"entries":{"host":{
+        let mut files=BTreeMap::from([(MANIFEST_FILE.into(),serde_json::to_vec(&json!({"schemaVersion":1,"id":"fixture-executor","application":{"entries":{"host":{
             "implementation":implementation,"configuration":configuration_schema,"imports":imports,
             "exports":exports
         }}}})).unwrap())]);

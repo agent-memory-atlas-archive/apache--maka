@@ -106,7 +106,7 @@ impl Catalog<'_> {
         let tools: BTreeSet<_> = self.host.tools.iter().collect();
         let capabilities: BTreeSet<_> = self.host.capabilities.iter().collect();
         serde_json::to_vec(&(
-            "maka.skills.execution.v2",
+            "maka.skills.execution.v1",
             inventory,
             preferences,
             tools,

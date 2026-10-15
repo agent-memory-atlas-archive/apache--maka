@@ -20,7 +20,7 @@
 import * as sdk from '../../../packages/plugin-sdk/src/index.js';
 import { native, one } from '../../shared/package.js';
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.application.authoring-gateway',
   displayName: 'App authoring access',
   description: 'Connect app authoring tools to the host.',

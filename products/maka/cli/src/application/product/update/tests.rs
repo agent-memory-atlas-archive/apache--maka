@@ -520,7 +520,7 @@ fn generated_version_reads_no_packages_and_rejects_invalid_metadata() {
 
 #[test]
 fn stale_generated_version_cannot_admit_changed_candidates() {
-    let manifest = json!({"schemaVersion":2,"id":"example.notes","application":{"entries":{"host":{"implementation":{"kind":"javascript","module":"entry.js","realm":"shared"},"configuration":{"type":"object"}}}}});
+    let manifest = json!({"schemaVersion":1,"id":"example.notes","application":{"entries":{"host":{"implementation":{"kind":"javascript","module":"entry.js","realm":"shared"},"configuration":{"type":"object"}}}}});
     let package = Package::new(BTreeMap::from([
         (
             "maka.extension.json".into(),

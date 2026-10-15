@@ -32,7 +32,7 @@ const entries = uiEntries({
   },
 });
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.recall',
   displayName: 'Search conversations',
   description: 'Find messages in saved conversations.',

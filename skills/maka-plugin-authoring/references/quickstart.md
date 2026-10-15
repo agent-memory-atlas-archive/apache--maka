@@ -44,6 +44,6 @@ node create.mjs --output /tmp/my-plugin --target tui --maka /path/to/maka
 
 The output directory must be new. `--target host` creates an Echo service graph; `tui` and `desktop` create native counter graphs. The helper reads the executable's schemas, computes exact package references and checks the composition. It does not initialize a Root or start execution. Use the emitted input and package paths for later commands.
 
-The generated `maka.extension.json` uses `schemaVersion: 2` and `application.entries`. A JavaScript entry declares its bundled module and realm; component entries also declare the target's scene language. The composition selects pinned package references, instance UUIDs, entry names and bindings.
+The generated `maka.extension.json` uses `schemaVersion: 1` and `application.entries`. A JavaScript entry declares its bundled module and realm; component entries also declare the target's scene language. The composition selects pinned package references, instance UUIDs, entry names and bindings.
 
 Keep the composition outside the package so its digest cannot refer to itself. Recompute references after changing package bytes, and retain instance identities when updating saved data. See [Testing and shipping](testing-and-shipping.md) to check and install the result.

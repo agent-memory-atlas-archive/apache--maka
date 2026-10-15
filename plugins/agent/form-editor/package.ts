@@ -27,7 +27,7 @@ const entries = uiEntries({
   imports: { editor: one(sdk.contracts.textarea), reader: one(sdk.contracts.textReader) },
 });
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.form-editor',
   displayName: 'Form editor',
   description: 'Fill out structured information requested by the assistant.',

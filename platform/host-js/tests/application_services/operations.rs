@@ -1780,7 +1780,7 @@ async fn ui_caller_source(
     };
     let caller = Package::new(BTreeMap::from([(
         MANIFEST_FILE.into(),
-        serde_json::to_vec(&json!({"schemaVersion":2,"id":"ui.caller","application":declaration}))
+        serde_json::to_vec(&json!({"schemaVersion":1,"id":"ui.caller","application":declaration}))
             .unwrap(),
     )]))
     .unwrap();

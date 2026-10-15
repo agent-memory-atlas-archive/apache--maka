@@ -76,7 +76,7 @@ for (const presentation of ['tui', 'desktop']) {
 for (const file of ['host.mjs', 'tui.mjs', 'desktop.mjs'])
   copyFileSync(join(source, file), join(packageDirectory, file));
 write(join(packageDirectory, 'maka.extension.json'), {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'example.plugin',
   application: { entries },
 });
@@ -98,7 +98,7 @@ if (target !== 'host') {
   const path = join(output, 'surface');
   mkdirSync(path);
   write(join(path, 'maka.extension.json'), {
-    schemaVersion: 2,
+    schemaVersion: 1,
     id: 'example.surface',
     application: {
       entries: {

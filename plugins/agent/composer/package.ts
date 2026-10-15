@@ -33,7 +33,7 @@ const entries = uiEntries({
   },
 });
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.composer',
   displayName: 'Message editor',
   description: 'Write messages and add attachments before sending.',

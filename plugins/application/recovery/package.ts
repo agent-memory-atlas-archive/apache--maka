@@ -41,7 +41,7 @@ for (const target of ['desktop', 'tui'] as const)
     target === 'desktop' ? sdk.contracts.desktopSurface : sdk.contracts.terminalSurface,
   );
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.recovery',
   displayName: 'App recovery',
   description: 'Check unfinished changes and repair plugin configuration.',

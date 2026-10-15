@@ -32,7 +32,7 @@ const entries = uiEntries({
   },
 });
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.directory-picker',
   displayName: 'Folder picker',
   description: 'Browse and select workspace folders.',

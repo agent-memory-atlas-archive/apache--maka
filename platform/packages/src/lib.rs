@@ -142,7 +142,7 @@ mod tests {
 
     #[test]
     fn author_descriptions_round_trip_with_localized_copy() {
-        let manifest = json!({"schemaVersion":2,"id":"example.notes", "displayName":"Notes", "description":"Write and find your notes.", "localizations":{"zh-CN":{"displayName":"笔记","description":"记录和查找笔记。"}}, "application":{"entries":{"host":{"implementation":{"kind":"native","implementation":"example.notes"},"configuration":{"type":"object"}}}}});
+        let manifest = json!({"schemaVersion":1,"id":"example.notes", "displayName":"Notes", "description":"Write and find your notes.", "localizations":{"zh-CN":{"displayName":"笔记","description":"记录和查找笔记。"}}, "application":{"entries":{"host":{"implementation":{"kind":"native","implementation":"example.notes"},"configuration":{"type":"object"}}}}});
         let package = Package::new(BTreeMap::from([(
             MANIFEST_FILE.into(),
             serde_json::to_vec(&manifest).unwrap(),
@@ -162,7 +162,7 @@ mod tests {
         // Multi-presentation applications carry complete nominal contracts.
         // Their manifest has the same bounded byte budget as every other file.
         let manifest = json!({
-            "schemaVersion":2,"id":"large.application",
+            "schemaVersion":1,"id":"large.application",
             "application":{"entries":{"host":{
                 "implementation":{"kind":"native","implementation":"example.host"},
                 "configuration":{"description":"a".repeat(300 * 1024)}
@@ -194,7 +194,7 @@ mod tests {
             (
                 MANIFEST_FILE.into(),
                 serde_json::to_vec(
-                    &json!({"schemaVersion":2,"id":"example","application":declaration}),
+                    &json!({"schemaVersion":1,"id":"example","application":declaration}),
                 )
                 .unwrap(),
             ),
@@ -213,11 +213,12 @@ mod tests {
         let mut missing = files.clone();
         missing.remove("desktop.mjs");
         assert!(Package::new(missing).is_err());
-        let mut old = files.clone();
-        let mut manifest: serde_json::Value = serde_json::from_slice(&old[MANIFEST_FILE]).unwrap();
-        manifest["schemaVersion"] = json!(1);
-        old.insert(MANIFEST_FILE.into(), serde_json::to_vec(&manifest).unwrap());
-        assert!(Package::new(old).is_err());
+        let mut invalid = files.clone();
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&invalid[MANIFEST_FILE]).unwrap();
+        manifest["schemaVersion"] = json!(0);
+        invalid.insert(MANIFEST_FILE.into(), serde_json::to_vec(&manifest).unwrap());
+        assert!(Package::new(invalid).is_err());
         let mut mixed = files;
         let mut manifest: serde_json::Value =
             serde_json::from_slice(&mixed[MANIFEST_FILE]).unwrap();
@@ -228,7 +229,7 @@ mod tests {
         let structural = Package::new(BTreeMap::from([(
             MANIFEST_FILE.into(),
             serde_json::to_vec(&json!({
-                "schemaVersion":2,"id":"product","application":{"composition":{"children":{}}}
+                "schemaVersion":1,"id":"product","application":{"composition":{"children":{}}}
             }))
             .unwrap(),
         )]))
@@ -247,7 +248,7 @@ mod tests {
     #[test]
     fn package_pins_exact_bytes_and_rejects_cross_platform_path_aliases() {
         let manifest = serde_json::to_vec(&json!({
-            "schemaVersion":2,"id":"graph","application":{"entries":{"host":{"implementation":{"kind":"native","implementation":"example.host"},"configuration":{"type":"object"}}}}
+            "schemaVersion":1,"id":"graph","application":{"entries":{"host":{"implementation":{"kind":"native","implementation":"example.host"},"configuration":{"type":"object"}}}}
         })).unwrap();
         let files = BTreeMap::from([
             (MANIFEST_FILE.into(), manifest),

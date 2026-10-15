@@ -104,7 +104,7 @@ fn fixture() -> (Input, Vec<Package>) {
         declaration.entries.insert(EntryTarget::Tui, terminal);
         files.insert(
             MANIFEST_FILE.into(),
-            serde_json::to_vec(&json!({"schemaVersion":2,"id":name,"application":declaration}))
+            serde_json::to_vec(&json!({"schemaVersion":1,"id":name,"application":declaration}))
                 .unwrap(),
         );
         let package = Package::new(files).unwrap();

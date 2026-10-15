@@ -27,7 +27,7 @@ const entries = uiEntries({
   imports: { reading: one(sdk.contracts.readingArea) },
 });
 export default {
-  schemaVersion: 2,
+  schemaVersion: 1,
   id: 'maka.agent.navigation',
   displayName: 'Conversation list',
   description: 'Browse and select saved conversations.',

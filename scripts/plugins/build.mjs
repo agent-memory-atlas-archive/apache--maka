@@ -78,7 +78,7 @@ export async function bundle({ packages, output, composition }) {
     const { default: manifest } = await import(
       pathToFileURL(resolve(destination, `authoring/packages/${name}.mjs`))
     );
-    if (manifest.schemaVersion !== 2 || typeof manifest.id !== 'string' || !manifest.application)
+    if (manifest.schemaVersion !== 1 || typeof manifest.id !== 'string' || !manifest.application)
       throw new Error(`Invalid package declaration: ${path}`);
     const directory = resolve(destination, 'packages', name);
     await mkdir(directory, { recursive: true });
