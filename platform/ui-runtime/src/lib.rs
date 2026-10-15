@@ -75,6 +75,7 @@ use std::{
     future::Future,
     pin::Pin,
     rc::Rc,
+    sync::Arc,
     task::{Context, Poll, Waker},
 };
 use uuid::Uuid;
@@ -118,21 +119,21 @@ enum InvocationResult<V: ?Sized> {
     Script(backend::Job<ComponentOutput<PreparedScene>>),
 }
 struct CaptureDefinition {
-    input: jsonschema::Validator,
+    input: Arc<jsonschema::Validator>,
     output: maka_plugin_core::contract::CaptureOutput,
 }
 struct ServiceMethod {
     mode: maka_plugin_core::contract::MethodMode,
-    input: jsonschema::Validator,
-    output: jsonschema::Validator,
-    progress: Option<jsonschema::Validator>,
+    input: Arc<jsonschema::Validator>,
+    output: Arc<jsonschema::Validator>,
+    progress: Option<Arc<jsonschema::Validator>>,
     resources: BTreeMap<String, maka_plugin_core::contract::ResourceSlot>,
 }
 enum Export<V: ?Sized> {
     Component {
         implementation: Component<V>,
-        props: jsonschema::Validator,
-        events: BTreeMap<String, jsonschema::Validator>,
+        props: Arc<jsonschema::Validator>,
+        events: BTreeMap<String, Arc<jsonschema::Validator>>,
         captures: BTreeMap<String, CaptureDefinition>,
     },
     Surface(PresentationTarget),
@@ -432,7 +433,7 @@ impl<V: ?Sized + 'static> Application<V> {
                                 };
                                 Export::Component {
                                     implementation: Component::Native(component),
-                                    props: jsonschema::validator_for(props)
+                                    props: maka_plugin_core::validator(props)
                                         .map_err(|error| Error::Invalid(error.to_string()))?,
                                     events: event_schemas(events)?,
                                     captures: capture_schemas(captures)?,
@@ -550,7 +551,7 @@ impl<V: ?Sized + 'static> Application<V> {
             else {
                 unreachable!()
             };
-            let props = jsonschema::validator_for(props)
+            let props = maka_plugin_core::validator(props)
                 .map_err(|error| Error::Invalid(error.to_string()))?;
             let events = event_schemas(events)?;
             let compiled_captures = capture_schemas(captures)?;
@@ -1036,14 +1037,14 @@ fn service_export<V: ?Sized>(
             name.clone(),
             ServiceMethod {
                 mode: method.mode,
-                input: jsonschema::validator_for(&method.input)
+                input: maka_plugin_core::validator(&method.input)
                     .map_err(|e| Error::Invalid(e.to_string()))?,
-                output: jsonschema::validator_for(&method.output)
+                output: maka_plugin_core::validator(&method.output)
                     .map_err(|e| Error::Invalid(e.to_string()))?,
                 progress: method
                     .progress
                     .as_ref()
-                    .map(jsonschema::validator_for)
+                    .map(maka_plugin_core::validator)
                     .transpose()
                     .map_err(|e| Error::Invalid(e.to_string()))?,
                 resources: method.resources.clone(),
@@ -1058,11 +1059,11 @@ fn service_export<V: ?Sized>(
 
 fn event_schemas(
     events: &BTreeMap<String, Value>,
-) -> Result<BTreeMap<String, jsonschema::Validator>> {
+) -> Result<BTreeMap<String, Arc<jsonschema::Validator>>> {
     events
         .iter()
         .map(|(name, schema)| {
-            jsonschema::validator_for(schema)
+            maka_plugin_core::validator(schema)
                 .map(|schema| (name.clone(), schema))
                 .map_err(|error| Error::Invalid(error.to_string()))
         })
@@ -1094,7 +1095,7 @@ fn capture_schemas(
             Ok((
                 name.clone(),
                 CaptureDefinition {
-                    input: jsonschema::validator_for(&c.input)
+                    input: maka_plugin_core::validator(&c.input)
                         .map_err(|e| Error::Invalid(e.to_string()))?,
                     output: c.output.clone(),
                 },
@@ -1105,3 +1106,59 @@ fn capture_schemas(
 
 pub use native::surface_native;
 pub use native::{IMPLEMENTATION as LABEL_IMPLEMENTATION, native as label_native};
+
+#[cfg(test)]
+mod export_schema_tests {
+    use super::*;
+
+    #[test]
+    fn event_schema_changes_and_invalid_replacements_remain_checked() {
+        let events = BTreeMap::from([("submitted".into(), json!({"type":"string"}))]);
+        let original = event_schemas(&events).unwrap();
+        assert!(original["submitted"].validate(&json!("value")).is_ok());
+        assert!(original["submitted"].validate(&json!(true)).is_err());
+        let changed = event_schemas(&BTreeMap::from([(
+            "submitted".into(),
+            json!({"type":"boolean"}),
+        )]))
+        .unwrap();
+        assert!(changed["submitted"].validate(&json!(true)).is_ok());
+        assert!(changed["submitted"].validate(&json!("value")).is_err());
+        assert!(matches!(
+            event_schemas(&BTreeMap::from([(
+                "submitted".into(),
+                json!({"type":"invalid"})
+            ),])),
+            Err(Error::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn actual_value_exports_validate_each_value_against_the_complete_schema() {
+        let mut contract = Contract {
+            name: "example.Value".into(),
+            version: 1,
+            transport: Transport::Local,
+            interface: Interface::Value {
+                schema: json!({"type":"string"}),
+            },
+        };
+        assert!(matches!(
+            values::export::<()>(json!("value"), &contract),
+            Ok(Export::Value(_))
+        ));
+        assert!(values::export::<()>(json!(true), &contract).is_err());
+        contract.interface = Interface::Value {
+            schema: json!({"type":"boolean"}),
+        };
+        assert!(matches!(
+            values::export::<()>(json!(true), &contract),
+            Ok(Export::Value(_))
+        ));
+        assert!(values::export::<()>(json!("value"), &contract).is_err());
+        contract.interface = Interface::Value {
+            schema: json!({"type":"invalid"}),
+        };
+        assert!(values::export::<()>(json!(true), &contract).is_err());
+    }
+}
