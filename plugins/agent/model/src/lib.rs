@@ -33,6 +33,7 @@ mod step;
 pub use conversation::Conversation;
 pub use maka_agent_facts::model::ModelEvent;
 pub use maka_agent_facts::tools::ToolDefinition;
+pub use maka_agent_ports::model::Emission;
 pub use step::StepBuilder;
 
 use maka_js_runtime::trusted::TrustedRuntime;
@@ -133,7 +134,7 @@ impl ModelRequest {
 
 /// Bounded stream of runtime events, independent of the selected adapter.
 pub struct ModelStream {
-    receiver: mpsc::Receiver<Result<ModelEvent, ModelError>>,
+    receiver: mpsc::Receiver<Result<Emission, ModelError>>,
     cancellation: CancellationToken,
     worker: Option<tokio::task::JoinHandle<Result<(), StreamCleanupError>>>,
     cleanup: Result<(), StreamCleanupError>,
@@ -149,7 +150,7 @@ pub struct ModelStream {
 pub struct StreamCleanupError;
 
 impl ModelStream {
-    pub async fn next(&mut self) -> Option<Result<ModelEvent, ModelError>> {
+    pub async fn next(&mut self) -> Option<Result<Emission, ModelError>> {
         if self.ended {
             return None;
         }
@@ -187,7 +188,7 @@ impl ModelStream {
                     Err(ModelError::Adapter("event after model finish".into()))
                 }
                 Some(Ok(value)) => {
-                    self.finished = matches!(value, ModelEvent::Finished { .. });
+                    self.finished = matches!(value.event, ModelEvent::Finished { .. });
                     Ok(Some(value))
                 }
                 Some(Err(error)) => Err(error),
@@ -205,12 +206,21 @@ impl ModelStream {
             };
             match result {
                 Ok(None) => continue,
-                Ok(Some(ModelEvent::PartDelta {
-                    id,
-                    text,
-                    provider_options,
+                Ok(Some(Emission {
+                    event:
+                        ModelEvent::PartDelta {
+                            id,
+                            text,
+                            provider_options,
+                        },
+                    reservation,
                 })) if text.len() > 8 * 1024 => {
-                    self.pending_delta = Some(delta::PendingDelta::new(id, text, provider_options));
+                    self.pending_delta = Some(delta::PendingDelta::new(
+                        id,
+                        text,
+                        provider_options,
+                        reservation,
+                    ));
                 }
                 Ok(Some(event)) => return Some(Ok(event)),
                 Err(error) => {
@@ -226,6 +236,8 @@ impl ModelStream {
     pub async fn cancel_and_wait(mut self) -> Result<(), StreamCleanupError> {
         self.cancellation.cancel();
         self.receiver.close();
+        self.pending_delta = None;
+        while self.receiver.try_recv().is_ok() {}
         if let Some(worker) = self.worker.take() {
             self.cleanup = worker.await.unwrap_or(Err(StreamCleanupError));
         }
@@ -482,19 +494,16 @@ impl ModelExecutor {
 
 struct ChannelEvents {
     total: std::sync::atomic::AtomicU32,
-    sender: mpsc::Sender<Result<ModelEvent, ModelError>>,
+    sender: mpsc::Sender<Result<Emission, ModelError>>,
     activity: tokio::sync::watch::Sender<tokio::time::Instant>,
 }
 impl maka_agent_ports::model::Events for ChannelEvents {
     fn progress(&self) {
         self.activity.send_replace(tokio::time::Instant::now());
     }
-    fn emit(
-        &self,
-        event: ModelEvent,
-    ) -> futures_util::future::BoxFuture<'_, Result<(), ModelError>> {
+    fn emit(&self, event: Emission) -> futures_util::future::BoxFuture<'_, Result<(), ModelError>> {
         Box::pin(async move {
-            let bytes = budget::bytes(&event, 8 * 1024 * 1024)?;
+            let bytes = budget::bytes(&event.event, 8 * 1024 * 1024)?;
             self.total
                 .try_update(
                     std::sync::atomic::Ordering::Relaxed,
@@ -514,3 +523,6 @@ impl maka_agent_ports::model::Events for ChannelEvents {
         })
     }
 }
+
+#[cfg(test)]
+mod stream_tests;

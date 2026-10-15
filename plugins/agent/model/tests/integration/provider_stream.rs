@@ -153,7 +153,7 @@ async fn large_sdk_requests_reserve_the_queue_without_a_body_size_cap() {
             }
             let mut stream = models.stream(input, CancellationToken::new()).await.unwrap();
             let mut output = StepBuilder::for_step("large-sdk-request").unwrap();
-            while let Some(event) = stream.next().await { output.push(event.unwrap()).unwrap(); }
+            while let Some(event) = stream.next().await { output.push(event.unwrap().event).unwrap(); }
             assert!(serde_json::to_string(&output.finish().unwrap()).unwrap().contains("large request accepted"));
             stream.cancel_and_wait().await.expect("actual stream cleanup");
         }
@@ -213,7 +213,7 @@ async fn sdk_text_and_tool_streams_cross_real_http_before_response_finishes() {
             let mut observed_text = String::new();
             let mut builder = StepBuilder::default();
             while let Some(event) = stream.next().await {
-                let event = event.unwrap();
+                let event = event.unwrap().event;
                 if let ModelEvent::PartDelta { text, .. } = &event {
                     assert!(text.len() <= 8 * 1024);
                     observed_text.push_str(text);
@@ -356,7 +356,7 @@ async fn chat_tool_deltas_keep_arguments_separate_when_gateways_omit_or_reuse_id
                 let mut stream = executor.stream(request(kind.clone(), base), CancellationToken::new()).await.unwrap();
                 let mut builder = StepBuilder::default();
                 while let Some(event) = stream.next().await {
-                    builder.push(event.unwrap()).unwrap();
+                    builder.push(event.unwrap().event).unwrap();
                 }
                 stream.cancel_and_wait().await.expect("actual stream cleanup");
                 let step = builder.finish().unwrap();
@@ -396,7 +396,7 @@ async fn malformed_provider_tool_identity_cannot_complete_a_model_step() {
             let mut builder = StepBuilder::for_step("step").unwrap();
             let mut rejected_call = false;
             while let Some(event) = stream.next().await {
-                let event = event.expect("SDK must pass the malformed identity to model acceptance");
+                let event = event.expect("SDK must pass the malformed identity to model acceptance").event;
                 let is_call = matches!(&event, ModelEvent::ToolCall(_));
                 if builder.push(event).is_err() {
                     assert!(is_call, "reject the tool identity at its first acceptance boundary");
@@ -448,6 +448,7 @@ async fn active_stream_outlives_idle_budget_but_silence_closes_the_socket() {
             while let Some(event) = stream.next().await {
                 match event {
                     Ok(event) => {
+                        let event = event.event;
                         if matches!(event, ModelEvent::PartDelta { .. }) {
                             deltas += 1;
                             observed.notify_one();

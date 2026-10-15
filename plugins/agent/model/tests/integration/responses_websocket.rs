@@ -182,7 +182,7 @@ async fn generate_step(
         .unwrap();
     let mut builder = StepBuilder::for_step("test-step").unwrap();
     while let Some(event) = stream.next().await {
-        builder.push(event.unwrap()).unwrap();
+        builder.push(event.unwrap().event).unwrap();
     }
     let output = builder.finish().unwrap();
     stream

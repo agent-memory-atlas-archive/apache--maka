@@ -58,8 +58,8 @@ pub(super) type Reply = oneshot::Sender<Result<()>>;
 
 const INPUT_WINDOW: u32 = 32 * 1024 * 1024;
 
-/// Queued SDK output retains its share of the runtime-wide byte budget until
-/// the consumer takes it. Queue count alone is not a useful memory boundary
+/// SDK output retains its share of the runtime-wide byte budget through
+/// normalization and journaling. Queue count alone is not a useful memory boundary
 /// when model events vary from a few bytes to several MiB.
 pub struct ProviderEvent {
     value: Value,
@@ -67,8 +67,8 @@ pub struct ProviderEvent {
 }
 
 impl ProviderEvent {
-    pub fn into_value(self) -> Value {
-        self.value
+    pub fn into_parts(self) -> (Value, OwnedSemaphorePermit) {
+        (self.value, self._budget)
     }
 }
 
@@ -153,14 +153,14 @@ impl TrustedRuntime {
 
     pub async fn model(
         &self,
-        request: Value,
+        request: impl serde::Serialize,
         sender: mpsc::Sender<Result<ProviderEvent>>,
         cancellation: CancellationToken,
         network: Arc<dyn maka_agent_ports::model::Transport>,
     ) -> Result<()> {
         let bytes =
             maka_agent_facts::model::budget::reservation(&request, INPUT_WINDOW).map_err(failed)?;
-        // Large image/context requests queue before V8 conversion. Oversized
+        // Large image/context requests queue before JSON and V8 conversion. Oversized
         // requests take the whole window rather than failing a fixed body cap.
         // The reservation lasts through request cleanup.
         let input = tokio::select! {
@@ -168,6 +168,7 @@ impl TrustedRuntime {
             _ = cancellation.cancelled() => return Err(TrustedError::Cancelled),
             input = self.0.input.clone().acquire_many_owned(bytes) => input.map_err(failed)?,
         };
+        let request = serde_json::to_value(request).map_err(failed)?;
         let service = self.service()?;
         let id = self.next_id()?;
         let (reply, mut done) = oneshot::channel();

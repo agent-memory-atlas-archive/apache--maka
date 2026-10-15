@@ -27,7 +27,7 @@ use std::{sync::Arc, time::SystemTime};
 pub struct EventWrite {
     composition: Option<Arc<crate::composition::FrozenComposition>>,
     quote: Option<crate::pricing::Quote>,
-    event: RuntimeEvent,
+    event: Arc<RuntimeEvent>,
     raw_payload: Option<Arc<[u8]>>,
     projection_artifacts: Vec<ProjectionArtifactWrite>,
 }
@@ -262,7 +262,7 @@ impl EventWrite {
         Ok(Self {
             composition: None,
             quote: None,
-            event,
+            event: Arc::new(event),
             raw_payload: None,
             projection_artifacts: Vec::new(),
         })
@@ -290,7 +290,7 @@ impl EventWrite {
             Self {
                 composition: None,
                 quote: None,
-                event: RuntimeEvent {
+                event: Arc::new(RuntimeEvent {
                     id,
                     recorded_at,
                     invocation,
@@ -306,12 +306,16 @@ impl EventWrite {
                                 .collect(),
                         },
                     },
-                },
+                }),
                 raw_payload: Some(bytes.into()),
                 projection_artifacts: success.artifacts,
             },
             output,
         ))
+    }
+
+    pub fn into_event(self) -> RuntimeEvent {
+        Arc::unwrap_or_clone(self.event)
     }
 
     pub fn event(&self) -> &RuntimeEvent {

@@ -48,16 +48,15 @@ pub(super) async fn run(
     cancellation: &CancellationToken,
     continuation_base: Option<u64>,
 ) -> Result<Candidate, RunError> {
-    match capture(inner, input, mode, cancellation, continuation_base).await {
-        Ok(Some(job)) => job.execute(inner, cancellation).await,
-        Ok(None) => Ok((
+    let Some(job) = capture(inner, input, mode, cancellation, continuation_base).await? else {
+        return Ok((
             CompactOutcome::Unchanged {
                 reason: "no_new_history".into(),
             },
             None,
-        )),
-        Err(error) => Err(error),
-    }
+        ));
+    };
+    job.execute(inner, cancellation).await
 }
 
 pub(super) async fn capture(

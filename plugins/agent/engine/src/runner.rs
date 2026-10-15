@@ -162,13 +162,15 @@ pub async fn run(
             .await
             .map(|outcome| (outcome, None))
         } else {
-            compact::run(
+            // Compaction owns a larger preparation frame than normal steps.
+            // Allocate it only for this branch, not for every live invocation.
+            Box::pin(compact::run(
                 &inner,
                 &mut input,
                 &maka_agent_facts::context::CheckpointMode::Standalone,
                 &cancellation,
                 None,
-            )
+            ))
             .await
             .map(|(outcome, checkpoint)| {
                 (
@@ -297,6 +299,19 @@ pub(super) async fn append(
     Ok(())
 }
 
-pub(super) fn digest(bytes: &[u8]) -> String {
-    format!("sha256:{:x}", Sha256::digest(bytes))
+pub(super) fn digest(value: &impl serde::Serialize) -> Result<String, RunError> {
+    struct Writer(Sha256);
+    impl std::io::Write for Writer {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.update(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut writer = Writer(Sha256::new());
+    serde_json::to_writer(&mut writer, value)
+        .map_err(|error| RunError::Internal(error.to_string()))?;
+    Ok(format!("sha256:{:x}", writer.0.finalize()))
 }

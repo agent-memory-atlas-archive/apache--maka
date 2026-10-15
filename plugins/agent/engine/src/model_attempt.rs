@@ -28,7 +28,6 @@ use maka_agent_facts::model::ModelStep;
 use maka_event_log::context::ModelContextSource;
 use maka_model::prompt::Message;
 use maka_model::{ModelError, ModelEvent, ModelRequest, StepBuilder, ToolDefinition};
-use serde_json::json;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -471,10 +470,7 @@ pub(super) struct PreparedRequest {
 }
 
 pub(super) fn route_identity(input: &RunInput) -> Result<String, RunError> {
-    Ok(digest(
-        &serde_json::to_vec(&input.provider)
-            .map_err(|error| RunError::Internal(error.to_string()))?,
-    ))
+    digest(&input.provider)
 }
 
 pub(super) fn prepare_request(
@@ -501,14 +497,23 @@ pub(super) fn prepare_request(
         &definitions,
         max_output_tokens.unwrap_or(8000),
     ));
-    let mut evidence = json!({"projection":"maka.model-history.v1","prompt":prompt,
-        "tools":definitions,"providerOptions":input.provider_options});
-    if let Some(limit) = max_output_tokens {
-        evidence["maxOutputTokens"] = json!(limit);
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Evidence<'a> {
+        projection: &'static str,
+        prompt: &'a [Message],
+        tools: &'a [ToolDefinition],
+        provider_options: &'a serde_json::Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        max_output_tokens: Option<u64>,
     }
-    let input_digest = digest(
-        &serde_json::to_vec(&evidence).map_err(|error| RunError::Internal(error.to_string()))?,
-    );
+    let input_digest = digest(&Evidence {
+        projection: "maka.model-history.v1",
+        prompt: &prompt,
+        tools: &definitions,
+        provider_options: &input.provider_options,
+        max_output_tokens,
+    })?;
     Ok(PreparedRequest {
         request: ModelRequest {
             provider: input.provider.clone(),
@@ -557,6 +562,7 @@ async fn receive(
                     if !writes.is_empty() {
                         inner.log.append_batch(&writes).await?;
                     }
+                    drop(observations.reservations);
                     if tools.is_some() && observations.accepted_item {
                         *progressed = true;
                     }
@@ -614,6 +620,7 @@ async fn receive(
 
 struct ReadyObservations {
     events: Vec<ModelEvent>,
+    reservations: Vec<Arc<tokio::sync::OwnedSemaphorePermit>>,
     accepted_item: bool,
     error: Option<ModelError>,
 }
@@ -622,19 +629,23 @@ struct ReadyObservations {
 /// earlier valid observations or cause us to consume events beyond the failure.
 fn ready_observations(
     builder: &mut StepBuilder,
-    first: Result<ModelEvent, ModelError>,
-    mut next_ready: impl FnMut() -> Option<Result<ModelEvent, ModelError>>,
+    first: Result<maka_model::Emission, ModelError>,
+    mut next_ready: impl FnMut() -> Option<Result<maka_model::Emission, ModelError>>,
 ) -> ReadyObservations {
     let mut observations = ReadyObservations {
         events: Vec::new(),
+        reservations: Vec::new(),
         accepted_item: false,
         error: None,
     };
     let mut next = Some(first);
     while let Some(event) = next {
-        match event.and_then(|event| {
-            builder.push(event.clone())?;
-            Ok(event)
+        match event.and_then(|emission| {
+            builder.push(emission.event.clone())?;
+            if let Some(reservation) = emission.reservation {
+                observations.reservations.push(reservation);
+            }
+            Ok(emission.event)
         }) {
             Ok(event) => {
                 observations.accepted_item |= builder.accepted_item().is_some();
@@ -732,13 +743,7 @@ async fn finish(
     use maka_agent_facts::event::RuntimeEvent;
     let incomplete = purpose == ModelPurpose::Main
         && output.finish_reason == maka_agent_facts::model::ModelFinishReason::Length;
-    let mut writes = vec![EventWrite::plain(RuntimeEvent::new(
-        input.invocation.clone(),
-        Fact::ModelCompleted {
-            step_id: step_id.clone(),
-            output: output.clone(),
-        },
-    ))?];
+    let mut writes = Vec::new();
     if incomplete && !item_acceptance {
         for call in output.tool_calls().filter(|call| !call.provider_executed) {
             writes.push(EventWrite::plain(RuntimeEvent::new(
@@ -758,6 +763,16 @@ async fn finish(
             ))?);
         }
     }
+    writes.insert(
+        0,
+        EventWrite::plain(RuntimeEvent::new(
+            input.invocation.clone(),
+            Fact::ModelCompleted {
+                step_id: step_id.clone(),
+                output,
+            },
+        ))?,
+    );
     inner.log.append_batch(&writes).await?;
     if incomplete {
         return Err(RunError::ModelIncomplete);
@@ -765,6 +780,9 @@ async fn finish(
     if cancellation.is_cancelled() {
         return Err(RunError::Cancelled);
     }
+    let Fact::ModelCompleted { output, .. } = writes.remove(0).into_event().fact else {
+        unreachable!("first write is the model completion");
+    };
     Ok((step_id, output))
 }
 
@@ -814,10 +832,38 @@ mod tests {
     }
 
     fn batch(events: &[ModelEvent]) -> super::ReadyObservations {
-        let mut ready = events.iter().cloned().map(Ok);
+        let mut ready = events.iter().cloned().map(|event| Ok(event.into()));
         ready_observations(&mut StepBuilder::default(), ready.next().unwrap(), || {
             ready.next()
         })
+    }
+
+    #[tokio::test]
+    async fn coalesced_observations_retain_all_input_reservations_until_commit() {
+        use std::sync::Arc;
+        let budget = Arc::new(tokio::sync::Semaphore::new(2));
+        let mut builder = StepBuilder::default();
+        builder.push(started("text")).unwrap();
+        let first = maka_model::Emission {
+            event: delta("text", "one", None),
+            reservation: Some(Arc::new(budget.clone().acquire_owned().await.unwrap())),
+        };
+        let second = maka_model::Emission {
+            event: delta("text", " two", None),
+            reservation: Some(Arc::new(budget.clone().acquire_owned().await.unwrap())),
+        };
+        let mut second = Some(Ok(second));
+        let batch = ready_observations(&mut builder, Ok(first), || second.take());
+        assert_eq!(batch.events, [delta("text", "one two", None)]);
+        assert_eq!(
+            budget.available_permits(),
+            0,
+            "uncommitted observations own both inputs"
+        );
+        drop(batch);
+        assert_eq!(budget.available_permits(), 2);
+        // StepBuilder retains the answer, but no longer owns in-flight capacity.
+        builder.push(closed("text")).unwrap();
     }
 
     #[test]
@@ -956,9 +1002,11 @@ mod tests {
             }),
             Ok(started("must-not-be-read")),
         ]);
-        let batch = ready_observations(&mut StepBuilder::default(), Ok(valid[0].clone()), || {
-            ready.next()
-        });
+        let batch = ready_observations(
+            &mut StepBuilder::default(),
+            Ok(valid[0].clone().into()),
+            || ready.next().map(|result| result.map(Into::into)),
+        );
         assert_eq!(
             batch.events,
             [
@@ -981,9 +1029,11 @@ mod tests {
         ] {
             let event = started("saved");
             let mut next = Some(Err(error));
-            let batch = ready_observations(&mut StepBuilder::default(), Ok(event.clone()), || {
-                next.take()
-            });
+            let batch = ready_observations(
+                &mut StepBuilder::default(),
+                Ok(event.clone().into()),
+                || next.take(),
+            );
             assert_eq!(batch.events, [event]);
             assert!(batch.error.is_some());
             assert!(!batch.accepted_item);
@@ -998,7 +1048,7 @@ mod tests {
             usage: Default::default(),
             provider_options: None,
         };
-        let batch = ready_observations(&mut builder, Ok(event.clone()), || None);
+        let batch = ready_observations(&mut builder, Ok(event.clone().into()), || None);
         assert_eq!(batch.events, [event]);
         assert!(batch.error.is_none());
         builder.finish().unwrap();

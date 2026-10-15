@@ -59,12 +59,29 @@ pub trait Socket: Send + Sync {
     fn receive(&self) -> BoxFuture<'_, Result<Option<Frame>, Error>>;
     fn close(&self) -> BoxFuture<'_, Result<(), Error>>;
 }
+/// A model event and the in-flight bytes it owns. Consumers release the
+/// reservation after journaling; retained response text has a separate lifetime.
+#[derive(Debug)]
+pub struct Emission {
+    pub event: ModelEvent,
+    pub reservation: Option<Arc<tokio::sync::OwnedSemaphorePermit>>,
+}
+
+impl From<ModelEvent> for Emission {
+    fn from(event: ModelEvent) -> Self {
+        Self {
+            event,
+            reservation: None,
+        }
+    }
+}
+
 pub trait Events: Send + Sync {
     /// Observed provider progress (including heartbeats and partial wire items)
     /// resets the idle deadline without inventing a canonical model event.
     fn progress(&self) {}
     /// Backpressure is observed before the next event is produced.
-    fn emit(&self, event: ModelEvent) -> BoxFuture<'_, Result<(), Error>>;
+    fn emit(&self, event: Emission) -> BoxFuture<'_, Result<(), Error>>;
 }
 #[derive(Clone)]
 pub struct Context {

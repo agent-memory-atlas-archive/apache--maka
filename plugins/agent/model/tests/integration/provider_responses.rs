@@ -165,7 +165,7 @@ async fn responses_http_preserves_reasoning_and_raw_tool_identity_across_steps()
             let mut stream = executor.stream(request, CancellationToken::new()).await.unwrap();
             let mut builder = StepBuilder::for_step(&format!("step-{index}")).unwrap();
             while let Some(event) = stream.next().await {
-                let event = event.unwrap();
+                let event = event.unwrap().event;
                 if matches!(&event, ModelEvent::PartDelta { text, .. } if text == "Check the echo tool.") {
                     gate.notify_one(); // The provider cannot finish until reasoning reaches Rust.
                 }
@@ -310,7 +310,7 @@ async fn plaintext_responses_replays_only_its_declared_carrier_after_a_tool_step
                 let mut stream = executor.stream(request, CancellationToken::new()).await.unwrap();
                 let mut builder = StepBuilder::for_step(&format!("plain-{index}")).unwrap();
                 while let Some(event) = stream.next().await {
-                    let event = event.unwrap();
+                    let event = event.unwrap().event;
                     if matches!(&event, ModelEvent::PartDelta { text, .. } if text == "想😀") { gate.notify_one(); }
                     builder.push(event).unwrap();
                 }
@@ -374,7 +374,7 @@ async fn plaintext_responses_does_not_turn_transport_eof_into_success() {
         let mut failure = None;
         while let Some(event) = stream.next().await {
             match event {
-                Ok(ModelEvent::Finished { .. }) => panic!("EOF was mistaken for provider completion"),
+                Ok(maka_model::Emission { event: ModelEvent::Finished { .. }, .. }) => panic!("EOF was mistaken for provider completion"),
                 Err(error) => { failure = Some(error); break; }
                 _ => {}
             }

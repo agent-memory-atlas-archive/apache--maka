@@ -69,8 +69,6 @@ pub(super) async fn stream(
         idle_timeout: _,
         transport: network,
     } = context;
-    #[derive(Serialize)]
-    struct Tools<'a>(#[serde(serialize_with = "serialize_tools")] &'a [ToolDefinition]);
     request.prompt = crate::prompt::notification_fallback(request.prompt);
     audio_fallback(
         &mut request.prompt,
@@ -82,11 +80,24 @@ pub(super) async fn stream(
     ) {
         request.prompt = chat::project(request.prompt);
     }
-    let tools = serde_json::to_value(Tools(&request.tools))
-        .map_err(|error| ModelError::Adapter(error.to_string()))?;
-    let mut request =
-        serde_json::to_value(request).map_err(|error| ModelError::Adapter(error.to_string()))?;
-    request["tools"] = tools;
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct SdkRequest {
+        provider: maka_agent_facts::model::request::Provider,
+        prompt: Vec<crate::prompt::Message>,
+        #[serde(serialize_with = "serialize_tools")]
+        tools: Vec<ToolDefinition>,
+        provider_options: Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        max_output_tokens: Option<u64>,
+    }
+    let request = SdkRequest {
+        provider: request.provider,
+        prompt: request.prompt,
+        tools: request.tools,
+        provider_options: request.provider_options,
+        max_output_tokens: request.max_output_tokens,
+    };
     let (events, mut receiver) = mpsc::channel(1);
     let execution = runtime.model(request, events, cancellation.clone(), network);
     tokio::pin!(execution);
@@ -94,8 +105,13 @@ pub(super) async fn stream(
     let forward = async {
         while let Some(event) = receiver.recv().await {
             sender.progress();
-            let event = normalizer.push(event.map_err(ModelError::from)?.into_value())?;
+            let (value, reservation) = event.map_err(ModelError::from)?.into_parts();
+            let event = normalizer.push(value)?;
             if let Some(event) = event {
+                let event = maka_agent_ports::model::Emission {
+                    event,
+                    reservation: Some(std::sync::Arc::new(reservation)),
+                };
                 tokio::select! {
                     biased;
                     _ = cancellation.cancelled() => return Err(ModelError::Cancelled),

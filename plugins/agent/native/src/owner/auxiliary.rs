@@ -142,7 +142,10 @@ async fn receive(
         let mut bytes = 0usize;
         let mut observed_usage = false;
         while let Some(event) = stream.next().await {
-            let event = event.map_err(failed)?;
+            let maka_model::Emission {
+                event,
+                reservation: _reservation,
+            } = event.map_err(failed)?;
             if let ModelEvent::Finished { usage, .. } = &event
                 && !observed_usage
             {
@@ -151,7 +154,10 @@ async fn receive(
                     .map_err(persistence)?;
                 observed_usage = true;
             }
-            bytes = bytes.saturating_add(serde_json::to_vec(&event).map_err(failed)?.len());
+            bytes = bytes.saturating_add(
+                maka_agent_facts::model::budget::reservation(&event, 2 * 1024 * 1024 + 1)
+                    .map_err(failed)? as usize,
+            );
             if bytes > 2 * 1024 * 1024 {
                 return Err(failed("Auxiliary generation exceeds 2 MiB stream limit"));
             }

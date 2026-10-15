@@ -108,6 +108,7 @@ impl EventLog {
                     } else {
                         transaction.rollback().await?;
                     }
+                    drop(events);
                     Ok(sequences)
                 })
             })

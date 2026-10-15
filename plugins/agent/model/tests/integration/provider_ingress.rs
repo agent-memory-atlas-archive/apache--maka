@@ -114,6 +114,7 @@ async fn ingress_limits_close_only_offending_http_and_preserve_bounded_sse_recor
             while let Some(event) = stream.next().await {
                 match event {
                     Ok(event) => {
+                        let event = event.event;
                         if let ModelEvent::PartDelta { text: delta, .. } = &event { text.push_str(delta); }
                         step.push(event).unwrap();
                     },

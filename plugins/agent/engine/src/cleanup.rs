@@ -27,8 +27,11 @@ use std::sync::{
 pub(crate) struct Evidence(Arc<AtomicBool>);
 tokio::task_local! { static CURRENT: Evidence; }
 impl Evidence {
-    pub async fn scope<F: std::future::Future>(&self, future: F) -> F::Output {
-        CURRENT.scope(self.clone(), future).await
+    pub fn scope<F: std::future::Future>(
+        &self,
+        future: F,
+    ) -> impl std::future::Future<Output = F::Output> + use<F> {
+        CURRENT.scope(self.clone(), future)
     }
     pub fn confirmed(&self) -> bool {
         !self.0.load(Ordering::Acquire)

@@ -51,11 +51,14 @@ impl Session for Controlled {
         Box::pin(async move {
             context
                 .events
-                .emit(ModelEvent::ResponseMetadata {
-                    id: Some("accepted".into()),
-                    model: None,
-                    timestamp: None,
-                })
+                .emit(
+                    ModelEvent::ResponseMetadata {
+                        id: Some("accepted".into()),
+                        model: None,
+                        timestamp: None,
+                    }
+                    .into(),
+                )
                 .await?;
             tokio::select! {
                 _ = release.cancelled() => {}
@@ -63,11 +66,14 @@ impl Session for Controlled {
             }
             context
                 .events
-                .emit(ModelEvent::Finished {
-                    reason: maka_agent_facts::model::ModelFinishReason::Stop,
-                    usage: Default::default(),
-                    provider_options: None,
-                })
+                .emit(
+                    ModelEvent::Finished {
+                        reason: maka_agent_facts::model::ModelFinishReason::Stop,
+                        usage: Default::default(),
+                        provider_options: None,
+                    }
+                    .into(),
+                )
                 .await
         })
     }
@@ -106,7 +112,7 @@ async fn captured_adapter_survives_executor_replacement_and_bounds_idle_work() {
         .await
         .unwrap();
     assert!(matches!(
-        accepted.next().await.unwrap().unwrap(),
+        accepted.next().await.unwrap().unwrap().event,
         ModelEvent::ResponseMetadata { .. }
     ));
     let executor = executor.with_adapters(std::collections::BTreeMap::from([(
@@ -119,7 +125,7 @@ async fn captured_adapter_survives_executor_replacement_and_bounds_idle_work() {
     assert_eq!(original.source(), &source);
     release.cancel();
     assert!(matches!(
-        accepted.next().await.unwrap().unwrap(),
+        accepted.next().await.unwrap().unwrap().event,
         ModelEvent::Finished { .. }
     ));
     assert!(accepted.next().await.is_none());
@@ -145,7 +151,7 @@ async fn captured_adapter_survives_executor_replacement_and_bounds_idle_work() {
         .await
         .unwrap();
     assert!(matches!(
-        stalled.next().await.unwrap().unwrap(),
+        stalled.next().await.unwrap().unwrap().event,
         ModelEvent::ResponseMetadata { .. }
     ));
     assert!(matches!(

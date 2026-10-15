@@ -99,7 +99,11 @@ async fn sglang_protocols_preserve_reasoning_tools_and_replay() {
             let mut builder = StepBuilder::default();
             while let Some(event) = stream.next().await {
                 builder
-                    .push(event.unwrap_or_else(|error| panic!("{protocol} step {turn}: {error}")))
+                    .push(
+                        event
+                            .unwrap_or_else(|error| panic!("{protocol} step {turn}: {error}"))
+                            .event,
+                    )
                     .unwrap();
             }
             let step = builder.finish().unwrap();
@@ -246,7 +250,7 @@ async fn codex_search_preserves_real_provider_calls_and_citations() {
         };
         let mut stream = executor.stream_in_conversation(request, CancellationToken::new(), Some(lane.clone())).await.unwrap();
         let mut builder = StepBuilder::for_step("live-native-search").unwrap();
-        while let Some(event) = stream.next().await { builder.push(event.unwrap()).unwrap(); }
+        while let Some(event) = stream.next().await { builder.push(event.unwrap().event).unwrap(); }
         let step = builder.finish().unwrap();
         stream.cancel_and_wait().await.expect("actual stream cleanup");
         let calls = step.tool_calls().filter(|call| call.provider_executed && call.name == "WebSearch").count();

@@ -61,7 +61,7 @@ async fn shared_sdk_requests_progress_through_backpressure_and_cancellation() {
         });
         let mut slow = models.stream(request(ProviderKind::OpenaiChat, flooding_base), CancellationToken::new()).await.unwrap();
         loop {
-            if matches!(slow.next().await.unwrap().unwrap(), ModelEvent::PartDelta { .. }) { break; }
+            if matches!(slow.next().await.unwrap().unwrap().event, ModelEvent::PartDelta { .. }) { break; }
         }
         // Leave the stream alive and undrained. More events than its bounded
         // output queue can hold must not occupy the shared worker indefinitely.
@@ -83,7 +83,7 @@ async fn shared_sdk_requests_progress_through_backpressure_and_cancellation() {
             let mut step = StepBuilder::default();
             let mut text = String::new();
             while let Some(event) = stream.next().await {
-                let event = event.unwrap();
+                let event = event.unwrap().event;
                 if let ModelEvent::PartDelta { text: delta, .. } = &event { text.push_str(delta); }
                 step.push(event).unwrap();
             }

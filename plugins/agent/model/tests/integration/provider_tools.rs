@@ -144,7 +144,7 @@ async fn scenario() {
             .unwrap();
         let mut builder = StepBuilder::for_step("native-search").unwrap();
         while let Some(event) = stream.next().await {
-            builder.push(event.unwrap()).unwrap();
+            builder.push(event.unwrap().event).unwrap();
         }
         let step = builder.finish().unwrap();
         assert_eq!(

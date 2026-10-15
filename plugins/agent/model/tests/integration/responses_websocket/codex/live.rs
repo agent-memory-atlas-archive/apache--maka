@@ -176,7 +176,7 @@ async fn live_luna_subscription_http_decodes_the_stream_without_a_content_type_h
             .unwrap();
         let mut step = StepBuilder::for_step("live-http").unwrap();
         while let Some(event) = stream.next().await {
-            step.push(event.unwrap()).unwrap();
+            step.push(event.unwrap().event).unwrap();
         }
         let step = step.finish().unwrap();
         stream

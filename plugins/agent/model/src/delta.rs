@@ -17,8 +17,10 @@
  * under the License.
  */
 
-use crate::ModelEvent;
+use crate::{Emission, ModelEvent};
 use serde_json::Value;
+use std::sync::Arc;
+use tokio::sync::OwnedSemaphorePermit;
 
 /// Bound individual journal observations independently of provider chunk sizes.
 /// Splitting is linear and retains provider metadata once, on the first chunk.
@@ -27,21 +29,28 @@ pub(crate) struct PendingDelta {
     text: String,
     offset: usize,
     provider_options: Option<Value>,
+    reservation: Option<Arc<OwnedSemaphorePermit>>,
 }
 
 impl PendingDelta {
-    pub fn new(id: String, text: String, provider_options: Option<Value>) -> Self {
+    pub fn new(
+        id: String,
+        text: String,
+        provider_options: Option<Value>,
+        reservation: Option<Arc<OwnedSemaphorePermit>>,
+    ) -> Self {
         Self {
             id,
             text,
             offset: 0,
             provider_options,
+            reservation,
         }
     }
 }
 
 impl Iterator for PendingDelta {
-    type Item = ModelEvent;
+    type Item = Emission;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.offset == self.text.len() {
@@ -53,10 +62,13 @@ impl Iterator for PendingDelta {
         }
         let text = self.text[self.offset..end].to_owned();
         self.offset = end;
-        Some(ModelEvent::PartDelta {
-            id: self.id.clone(),
-            text,
-            provider_options: self.provider_options.take(),
+        Some(Emission {
+            event: ModelEvent::PartDelta {
+                id: self.id.clone(),
+                text,
+                provider_options: self.provider_options.take(),
+            },
+            reservation: self.reservation.clone(),
         })
     }
 }

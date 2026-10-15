@@ -128,7 +128,7 @@ async fn collect(executor: &ModelExecutor, url: &str) -> Result<ModelStep, Strin
     let mut builder = StepBuilder::default();
     while let Some(event) = stream.next().await {
         match event {
-            Ok(event) => builder.push(event).unwrap(),
+            Ok(event) => builder.push(event.event).unwrap(),
             Err(error) => {
                 stream
                     .cancel_and_wait()

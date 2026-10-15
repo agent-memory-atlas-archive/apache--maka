@@ -77,7 +77,7 @@ async fn emit(
     sender: &Arc<dyn Events>,
 ) -> Result<(), ModelError> {
     for event in decoder.push(value).map_err(failure)? {
-        sender.emit(event).await?;
+        sender.emit(event.into()).await?;
     }
     Ok(())
 }

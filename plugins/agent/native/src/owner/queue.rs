@@ -139,7 +139,9 @@ impl Owner {
                 let next = if runs.closing {
                     Ok(None)
                 } else {
-                    self.next(&session).await
+                    // Preparation is temporary; completion waits must not
+                    // retain space for the next invocation's input state.
+                    Box::pin(self.next(&session)).await
                 };
                 match next {
                     Ok(Some((next, basis))) => {
