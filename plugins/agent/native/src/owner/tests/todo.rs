@@ -27,7 +27,6 @@ use maka_agent_facts::{
 async fn fixture(base: &str) -> Fixture {
     Fixture::configured(base, None, None, None, |settings| {
         settings.todo = true;
-        settings.max_steps = 3;
         settings.permissions.access = WorkspaceAccess::ReadOnly;
     })
     .await

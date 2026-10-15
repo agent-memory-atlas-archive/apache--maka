@@ -24,7 +24,6 @@ use maka_agent_facts::handoff::HandoffIntent;
 use maka_agent_facts::handoff::HandoffPause;
 use maka_agent_facts::model::ModelEvent;
 use maka_agent_facts::model::ModelToolCall;
-use std::num::NonZeroU16;
 
 pub(super) fn execution() -> Box<maka_agent_facts::handoff::HandoffExecution> {
     use maka_agent_facts::handoff::HandoffExecution;
@@ -107,7 +106,6 @@ async fn handoff_rejects_unresolved_provider_effects_but_accepts_effect_free_sum
                             successor_invocation_id: "successor-invocation".into(),
                             claim_id: "claim".into(),
                         },
-                        remaining_steps: NonZeroU16::new(2).unwrap(),
                         execution: execution(),
                     },
                 },

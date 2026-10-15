@@ -224,11 +224,11 @@ async fn notifications_trigger_followup_without_wait_and_audio_survives_copy_and
         let mut input = fixture::input(&base, "media", Arc::new(fixture::Effects { log:log.clone(), count:Arc::default(), together:Arc::new(tokio::sync::Barrier::new(2)) }));
         input.provider.kind = ProviderKind::OpenaiResponses; input.provider_options = json!({"openai":{"store":false}});
         let handler = Arc::new(GateHandler { gates: gates.clone() });
-        if let RunWork::Message { tools, max_steps, .. } = &mut input.work {
+        if let RunWork::Message { tools, .. } = &mut input.work {
             *tools = ToolCatalog::new(["gate", "hold"].map(|name| ToolRegistration {
                 definition:ToolDefinition { name:name.into(), description:"fixture gate".into(), input_schema:json!({"type":"object"}), provider:None, freeform:None, output_schema:None },
                 handler:ToolHandler::Immediate(handler.clone()), nesting:ToolNesting::Nestable, semantics:ToolSemantics::Parallel,
-            })).unwrap(); *max_steps = 4;
+            })).unwrap();
         }
         let engine = Engine::with_pricing(log.clone(), ModelExecutor::new(Duration::from_secs(5)).unwrap(), CodeExecutor::new(CellLimits::default()).unwrap(), Arc::new(GatePricing { log:log.clone(), gates, before_commit, calls:std::sync::atomic::AtomicUsize::new(0) }));
         engine.run(input.clone(), CancellationToken::new()).await.unwrap();

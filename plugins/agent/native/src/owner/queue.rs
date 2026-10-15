@@ -382,7 +382,6 @@ impl Owner {
                         message: delivered.message.content.clone(),
                         source_messages: vec![delivered],
                         tools,
-                        max_steps: basis.max_steps,
                         allow_prior_unknown: false,
                     },
                 }))

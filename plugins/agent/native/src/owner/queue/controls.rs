@@ -34,7 +34,6 @@ impl MessageBasis {
             && self.behavior == other.behavior
             && self.workspace == other.workspace
             && self.tools == other.tools
-            && self.max_steps == other.max_steps
     }
 }
 impl Owner {

@@ -21,7 +21,6 @@ use super::*;
 use maka_agent_facts::handoff::HandoffIntent;
 use maka_agent_facts::handoff::HandoffPause;
 use maka_event_log::turns::InvocationState;
-use std::num::NonZeroU16;
 
 #[tokio::test]
 async fn paused_cancellation_claim_is_atomic_idempotent_and_never_cancels_an_existing_owner() {
@@ -44,7 +43,6 @@ async fn paused_cancellation_claim_is_atomic_idempotent_and_never_cancels_an_exi
                 successor_invocation_id: "next-invocation".into(),
                 claim_id: "claim".into(),
             },
-            remaining_steps: NonZeroU16::new(2).unwrap(),
             execution: super::handoff::execution(),
         };
         append(

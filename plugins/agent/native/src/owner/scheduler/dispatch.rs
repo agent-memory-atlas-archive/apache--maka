@@ -165,7 +165,6 @@ impl Owner {
             workspace: session.configuration.workspace,
             fingerprint: String::new(),
             tools: self.tool_basis.clone(),
-            max_steps: self.settings.max_steps,
         };
         self.prepare_plan_behavior(id, &mut basis).await?;
         Ok(basis)

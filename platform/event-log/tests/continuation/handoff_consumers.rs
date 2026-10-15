@@ -68,7 +68,6 @@ pub(super) async fn seal(
             successor_invocation_id: format!("invocation-{next}"),
             claim_id: next,
         },
-        remaining_steps: std::num::NonZeroU16::new(2).unwrap(),
         execution: super::handoff::execution(),
     };
     append(

@@ -260,7 +260,6 @@ mod tests {
         use maka_agent_facts::handoff::HandoffTools;
         std::future::ready(Some(HandoffPause {
             intent,
-            remaining_steps: std::num::NonZeroU16::new(2).unwrap(),
             execution: Box::new(HandoffExecution {
                 replay: maka_agent_facts::continuation::ReplayEvidence {
                     version: maka_agent_facts::continuation::REPLAY_VERSION,

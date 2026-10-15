@@ -20,7 +20,6 @@
 use super::*;
 use maka_agent_facts::handoff::HandoffIntent;
 use maka_agent_facts::handoff::HandoffPause;
-use std::num::NonZeroU16;
 
 #[tokio::test]
 async fn handoff_claim_preserves_turn_and_frozen_ancestry_without_releasing_reserved_identity() {
@@ -48,7 +47,6 @@ async fn handoff_claim_preserves_turn_and_frozen_ancestry_without_releasing_rese
                 successor_invocation_id: format!("invocation-{round}"),
                 claim_id: format!("claim-{round}"),
             },
-            remaining_steps: NonZeroU16::new(3 - round).unwrap(),
             execution: super::handoff::execution(),
         };
         append(
@@ -88,7 +86,7 @@ async fn handoff_claim_preserves_turn_and_frozen_ancestry_without_releasing_rese
                 unreachable!()
             };
             match mutation {
-                0 => pause.remaining_steps = NonZeroU16::new(20).unwrap(),
+                0 => pause.execution.main_output_limit = Some(20),
                 1 => configuration.as_mut().unwrap().sandbox_mode = SandboxMode::DangerFullAccess,
                 2 => claim.source.digest = digest('d'),
                 3 => claim.id = "not-reserved".into(),
@@ -233,7 +231,6 @@ async fn handoff_claim_preserves_turn_and_frozen_ancestry_without_releasing_rese
             successor_invocation_id: "manual-successor-invocation".into(),
             claim_id: "manual-successor-claim".into(),
         },
-        remaining_steps: NonZeroU16::new(2).unwrap(),
         execution: super::handoff::execution(),
     };
     assert!(
@@ -310,7 +307,6 @@ async fn ineligible_handoff_never_seals_or_reserves_a_successor() {
             successor_invocation_id: "successor-invocation".into(),
             claim_id: "claim".into(),
         },
-        remaining_steps: NonZeroU16::new(3).unwrap(),
         execution: super::handoff::execution(),
     };
     assert!(

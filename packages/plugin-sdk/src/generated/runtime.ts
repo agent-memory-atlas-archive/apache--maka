@@ -6805,7 +6805,6 @@ export interface AgentConfiguration {
    * Explicit read-only roots for user-selected conversation sources.
    */
   importRoots?: DirectoryRootSpec[];
-  maxSteps: number;
   /**
    * Explicitly selected, frozen application service tools, alongside configured native tools.
    */

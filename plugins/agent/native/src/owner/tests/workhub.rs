@@ -116,10 +116,6 @@ async fn activate_worker_mode(
             let mut node = composition.instances["provider"].clone();
             node.key = Uuid::from_u128(21);
             node.package = worker.application_ref().into();
-            // Permit the next model step to consume a genuinely promoted message.
-            node.configuration
-                .values
-                .insert("maxSteps".into(), json!(2));
             if external {
                 node.configuration.values.insert(
                     "executors".into(),
@@ -189,15 +185,10 @@ async fn activate_worker_mode(
                 if manifest.id == "agent" {
                     node.configuration = NodeConfiguration {
                         values: BTreeMap::from([
-                            ("agent".into(), {
-                                let mut settings =
-                                    serde_json::to_value(&fixture.owner.settings).unwrap();
-                                if workers {
-                                    // Route, wait, then answer in this same invocation.
-                                    settings["maxSteps"] = json!(3);
-                                }
-                                settings
-                            }),
+                            (
+                                "agent".into(),
+                                serde_json::to_value(&fixture.owner.settings).unwrap(),
+                            ),
                             (
                                 "workers".into(),
                                 if workers {

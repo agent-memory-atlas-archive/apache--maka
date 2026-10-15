@@ -130,7 +130,6 @@ pub(crate) fn input(base: &str, suffix: &str, effect: Arc<Effect>) -> RunInput {
                 handler: ToolHandler::Immediate(effect),
             }])
             .unwrap(),
-            max_steps: 3,
         },
     }
 }

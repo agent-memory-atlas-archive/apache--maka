@@ -113,8 +113,6 @@ pub struct Configuration {
     /// Explicit read-only roots for user-selected conversation sources.
     #[serde(default)]
     pub import_roots: Vec<maka_host_runtime::DirectoryRootSpec>,
-    #[schemars(range(min = 1, max = 16))]
-    pub max_steps: usize,
     /// Explicitly selected, frozen application service tools, alongside configured native tools.
     pub tools: Vec<ServiceTool>,
 }

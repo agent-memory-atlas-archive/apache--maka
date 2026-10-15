@@ -99,7 +99,6 @@ struct MessageBasis {
     workspace: Workspace,
     fingerprint: String,
     tools: Vec<crate::tools::SelectedTool>,
-    max_steps: usize,
 }
 fn is_agent_collaboration(mode: &CollaborationMode) -> bool {
     *mode == CollaborationMode::Agent
@@ -926,7 +925,6 @@ impl Owner {
             } else {
                 self.tool_basis.clone()
             },
-            max_steps: self.settings.max_steps,
         };
         self.prepare_plan_behavior(&id, &mut basis).await?;
         self.prepare_graph_behavior(&id, &mut basis, queued.is_none())

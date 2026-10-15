@@ -460,8 +460,7 @@ async fn parallel_calls_overlap_while_the_model_stream_is_still_open() {
         let mut input = input(&base,"parallel");
         input.provider.kind = ProviderKind::OpenaiResponses;
         input.provider_options = json!({"openai":{"store":false}});
-        if let maka_agent_engine::RunWork::Message {tools,max_steps,..} = &mut input.work {
-            *max_steps=2;
+        if let maka_agent_engine::RunWork::Message {tools,..} = &mut input.work {
             *tools = ToolCatalog::new([ToolRegistration {
                 definition:serde_json::from_value(json!({"name":"echo","description":"echo","inputSchema":{"type":"object"}})).unwrap(),
                 nesting:ToolNesting::Nestable,semantics:ToolSemantics::Parallel,

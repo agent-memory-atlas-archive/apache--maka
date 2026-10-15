@@ -88,7 +88,6 @@ pub fn input(base: &str, id: &str, compact: bool) -> RunInput {
                 source_messages: Vec::new(),
                 message: format!("question-{id}").into(),
                 tools: Default::default(),
-                max_steps: 1,
             }
         },
     }

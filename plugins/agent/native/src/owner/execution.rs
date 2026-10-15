@@ -314,7 +314,6 @@ impl Owner {
             workspace: workspace.clone(),
             fingerprint: fingerprint.clone(),
             tools: self.tool_basis.clone(),
-            max_steps: self.settings.max_steps,
         };
         configuration.model = Some(source.accepted.binding.clone());
         configuration.thinking_level = source.accepted.thinking_level;
@@ -340,7 +339,6 @@ impl Owner {
             work: RunWork::Continuation {
                 source: source_boundary,
                 tools,
-                max_steps: basis.max_steps,
             },
         };
         let prepared = match self.engine.prepare_continuation(run, &self.stop).await {

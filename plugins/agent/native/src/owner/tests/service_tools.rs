@@ -1687,7 +1687,6 @@ async fn admitted_message_keeps_original_model_workspace_and_dispatcher_when_ope
     assert!(!basis.fingerprint.is_empty());
     assert_eq!(basis.tools.len(), 1);
     assert!(basis.tools == fixture.owner.tool_basis);
-    assert_eq!(basis.max_steps, fixture.owner.settings.max_steps);
     assert_eq!(
         fixture
             .store
@@ -2306,7 +2305,7 @@ async fn code_mode_wait_observes_original_native_process_and_its_workspace_effec
         setup.nestable = true;
         let fixture = Fixture::configured(
             &format!("http://{}/v1", listener.local_addr().unwrap()), None, None,
-            Some(setup), |settings| { settings.tool_discovery = true; settings.max_steps = 3; },
+            Some(setup), |settings| { settings.tool_discovery = true; },
         ).await;
         selection::edit(&fixture, |changes| {
             changes.model_overrides = Patch::Set(BTreeMap::from([("fixture-model".into(), ModelOverride {

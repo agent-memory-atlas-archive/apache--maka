@@ -230,7 +230,6 @@ async fn settled_results_are_pruned_before_context_limits_and_survive_failed_sum
             source_messages: Vec::new(),
             message: "read".into(),
             tools: catalog(count.clone(), repeats),
-            max_steps: 2,
         };
         let worker = fixture::engine(log.clone());
         if interrupted {

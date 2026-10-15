@@ -37,7 +37,6 @@ pub(super) async fn run(
 ) -> Result<maka_agent_facts::event::InvocationOutcome, RunError> {
     let crate::runner::ModelWork {
         tools: catalog,
-        max_steps,
         restored,
     } = work;
     let lane = maka_model::Conversation::default();
@@ -67,7 +66,7 @@ pub(super) async fn run(
             tools.restore(&checkpoint)?;
             compaction = budget;
         }
-        for step in 0..max_steps {
+        loop {
             crate::interactions::wait_until_clear(&inner.log, &input.invocation, cancellation)
                 .await?;
             inner.log.commit_pending_steering(&input.invocation).await?;
@@ -106,8 +105,6 @@ pub(super) async fn run(
                     .ok()?;
                     let pause = maka_agent_facts::handoff::HandoffPause {
                         intent,
-                        remaining_steps: std::num::NonZeroU16::new((max_steps - step) as u16)
-                            .expect("validated step budget"),
                         execution: Box::new(maka_agent_facts::handoff::HandoffExecution {
                             replay,
                             context: input.context.clone(),
@@ -262,7 +259,6 @@ pub(super) async fn run(
                     }),
                 ) if (compaction == CompactionBudget::Available || pending.is_some())
                     && tools.code_idle()
-                    && step + 1 < max_steps
                     && !cancellation.is_cancelled() =>
                 {
                     let candidate = match pending.take() {
@@ -304,8 +300,8 @@ pub(super) async fn run(
                 return Ok(maka_agent_facts::event::InvocationOutcome::Completed);
             }
             // An exec/wait observation can settle while its cell is still
-            // asking the user. Pause before advancing or consuming the final
-            // step budget. First settle/reject the entire model tool batch:
+            // asking the user. Pause before advancing. First settle/reject
+            // the entire model tool batch:
             // cancellation must still journal every remaining provider call.
             crate::interactions::wait_until_clear(&inner.log, &input.invocation, cancellation)
                 .await?;
@@ -318,7 +314,7 @@ pub(super) async fn run(
             if request_tools.finished() {
                 return Ok(maka_agent_facts::event::InvocationOutcome::Completed);
             }
-            if step + 1 < max_steps && !cancellation.is_cancelled() && lane.needs_confirmation() {
+            if !cancellation.is_cancelled() && lane.needs_confirmation() {
                 let context = model_attempt::read_source(inner, input, prior_unknown).await?;
                 let replay = model_attempt::prompt(
                     inner,
@@ -336,11 +332,6 @@ pub(super) async fn run(
                     .await?;
             }
             main_progress = true;
-        }
-        if cancellation.is_cancelled() {
-            Err(RunError::Cancelled)
-        } else {
-            Err(RunError::StepLimit)
         }
     })
     .catch_unwind()

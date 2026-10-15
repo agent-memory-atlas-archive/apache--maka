@@ -208,7 +208,6 @@ test('WorkHub product authors two independent Agent graphs with explicit native 
     const agent = {
       workspaceRoots: [{ label: 'Project', path: '/private/product-workspace' }],
       permissions: { access: 'workspace_write', requestPermissions: true },
-      maxSteps: 2,
       tools: [],
     };
     for (const presentation of ['desktop', 'tui']) {

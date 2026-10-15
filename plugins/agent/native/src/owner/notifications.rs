@@ -107,7 +107,6 @@ impl Owner {
             internal_tools: self.internal_tools.clone(),
             internal_bindings: self.internal_bindings.clone(),
             behavior: self.capture_behavior(&route.workspace).await?,
-            max_steps: self.settings.max_steps,
         };
         self.prepare_plan_behavior(&source.session_id, &mut basis)
             .await?;

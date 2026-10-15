@@ -22,7 +22,6 @@
 
 use crate::{event::Invocation, interaction::entity_id};
 use serde::{Deserialize, Serialize};
-use std::num::NonZeroU16;
 
 mod execution;
 pub use execution::{CompactionBudget, HandoffExecution, HandoffTools};
@@ -42,8 +41,6 @@ pub struct HandoffIntent {
 #[serde(deny_unknown_fields)]
 pub struct HandoffPause {
     pub intent: HandoffIntent,
-    /// Captured by the Engine, never restored from mutable Session policy.
-    pub remaining_steps: NonZeroU16,
     pub execution: Box<HandoffExecution>,
 }
 
@@ -103,9 +100,6 @@ impl HandoffPause {
     pub fn validate(&self, source: &Invocation) -> Result<(), &'static str> {
         self.intent.validate(source)?;
         self.execution.validate()?;
-        if self.remaining_steps.get() > 256 {
-            return Err("handoff exceeds the Engine step budget");
-        }
         Ok(())
     }
 }

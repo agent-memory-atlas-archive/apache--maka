@@ -115,12 +115,11 @@ async fn handoff_waits_for_settlement_rollback_keeps_run_and_seal_survives_reope
                 }
             }
             let prefix = log.run_prefix("session", &source.run_id, None, 100, 128 * 1024).await.unwrap().unwrap();
-            let maka_agent_engine::RunWork::Message { tools, max_steps, .. } = run.work else { unreachable!() };
+            let maka_agent_engine::RunWork::Message { tools, .. } = run.work else { unreachable!() };
             run.work = maka_agent_engine::RunWork::Continuation {
                 source: maka_agent_facts::continuation::RunBoundary {
                     invocation: source, high_water: prefix.high_water, digest: prefix.digest,
-                },tools, max_steps,
-            };
+                },tools, };
         }
         let configuration = run.configuration.clone();
         let running = engine.start(run, CancellationToken::new()).await.unwrap();
@@ -133,7 +132,7 @@ async fn handoff_waits_for_settlement_rollback_keeps_run_and_seal_survives_reope
         assert_eq!(count.load(Ordering::SeqCst), 0, "model request has not returned a tool");
         release_first.send(()).unwrap();
         let held = ready.await.unwrap();
-        assert_eq!(held.preview().remaining_steps.get(), 2);
+
         assert_eq!(count.load(Ordering::SeqCst), 1);
         let prefix = log.prefix(100, 128 * 1024).await.unwrap();
         assert!(prefix.events.iter().any(|event| matches!(event.event.fact, Fact::ToolSettled { .. })));
@@ -143,7 +142,7 @@ async fn handoff_waits_for_settlement_rollback_keeps_run_and_seal_survives_reope
         let next = gate.reserve(intent("committed")).unwrap();
         release_second.send(()).unwrap();
         let held = next.ready().await.unwrap();
-        assert_eq!(held.preview().remaining_steps.get(), 1);
+
         let expected = held.preview().clone();
         assert_eq!(expected.execution.replay_base.is_some(), manual);
         let receipt = held.commit().unwrap().wait().await.unwrap();

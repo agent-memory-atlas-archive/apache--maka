@@ -279,7 +279,7 @@ fn bundled_chat_sends_follows_renders_markdown_and_scrolls_original_history() {
     runtime.block_on(seed_connection(&host, &namespaces, &base, json!({})));
     std::fs::write(&configuration, serde_json::to_vec(&json!({
         "presentation":"tui", "locale":"en", "scheme":"dark", "hostRoot":host,
-        "agent":{"workspaceRoots":[{"label":"Workspace","path":workspace}],"maxSteps":4,"tools":[],"permissions":{"access":"read_only","requestPermissions":true}}
+        "agent":{"workspaceRoots":[{"label":"Workspace","path":workspace}],"tools":[],"permissions":{"access":"read_only","requestPermissions":true}}
     })).unwrap()).unwrap();
     let mut tui = Pty::spawn(&[
         "application",
