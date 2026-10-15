@@ -17,7 +17,7 @@
  * under the License.
  */
 
-use crate::{RunError, RunInput};
+use crate::{RunContext, RunError};
 use maka_agent_facts::composition::FrozenComposition;
 use maka_agent_facts::composition::RequestComposition;
 use maka_model::prompt::Message;
@@ -35,7 +35,7 @@ impl Surface {
     pub fn capture(
         tools: &RequestTools<'_>,
         models: &maka_model::ModelExecutor,
-        input: &RunInput,
+        input: &RunContext,
         source: &maka_event_log::context::ModelContextSource,
         prior_unknown_notice: Option<&str>,
     ) -> Result<Self, RunError> {

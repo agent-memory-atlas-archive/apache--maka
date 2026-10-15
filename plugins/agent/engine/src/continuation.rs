@@ -225,8 +225,8 @@ pub(super) async fn inspect(
 }
 
 /// Shared by reversible handoff preparation and independently verified admission.
-pub(super) fn replay(
-    input: &RunInput,
+pub(super) fn replay<W>(
+    input: &RunInput<W>,
     prompt: Vec<Message>,
     definitions: Vec<maka_model::ToolDefinition>,
     cancellation: &CancellationToken,

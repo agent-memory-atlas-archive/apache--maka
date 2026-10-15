@@ -17,18 +17,17 @@
  * under the License.
  */
 
-use crate::{Inner, RunError, RunInput, compact, history};
+use crate::{Inner, RunContext, RunError, compact};
 use maka_agent_facts::context::CheckpointMode;
 use maka_agent_facts::context::ModelRequestContext;
 use maka_agent_facts::event::EventWrite;
-use maka_agent_facts::event::Fact;
 use maka_event_log::context::{LatestMainContext, ModelContextSource};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 /// A cap on this request, never a mutation of the configured model limit.
 pub(super) fn output_limit(
-    input: &RunInput,
+    input: &RunContext,
     source: &ModelContextSource,
 ) -> Result<Option<u64>, RunError> {
     let limit = input.main_output_limit.unwrap_or(8000);
@@ -86,7 +85,7 @@ fn cap_output(limit: u64, window: u64, retained: u64, thinking: u64) -> u64 {
     available.min(limit).max(limit.min(8000))
 }
 
-pub(super) fn due(input: &RunInput, source: &ModelContextSource) -> bool {
+pub(super) fn due(input: &RunContext, source: &ModelContextSource) -> bool {
     let Some(ModelRequestContext {
         declared_window: Some(window),
         ..
@@ -133,46 +132,19 @@ fn threshold(input: Option<u64>, output: Option<u64>, window: u64) -> bool {
 
 pub(super) async fn start(
     inner: &Arc<Inner>,
-    input: &mut RunInput,
-    source: &ModelContextSource,
+    input: &mut RunContext,
+    opening_id: &str,
     mid_turn: bool,
     cancellation: &CancellationToken,
     continuation_base: Option<u64>,
 ) -> Result<Option<Pending>, RunError> {
-    let opening = source
-        .anchor
-        .iter()
-        .chain(source.tail.iter().filter_map(|event| match event {
-            maka_event_log::context::ContextEvent::Canonical(stored) => Some(stored.as_ref()),
-            _ => None,
-        }))
-        .find(|stored| {
-            stored.event.invocation.invocation_id == input.invocation.invocation_id
-                && matches!(stored.event.fact, Fact::InvocationOpened { .. })
-        })
-        .ok_or_else(|| {
-            RunError::ReconciliationRequired(
-                "automatic compaction lacks its canonical opening".into(),
-            )
-        })?;
     let mode = if mid_turn {
         CheckpointMode::MidTurn {
-            anchor_event_id: opening.event.id.clone(),
+            anchor_event_id: opening_id.to_owned(),
         }
     } else {
         CheckpointMode::PreTurn
     };
-    // The candidate is a checked text summary plus this exact durable opening.
-    // Materialize its attachments with the normal bounded reader before adopting.
-    history::materialize(
-        &inner.log,
-        &[],
-        Some(opening),
-        &input.invocation.session_id,
-        input.supports_vision,
-        cancellation,
-    )
-    .await?;
     let job = match compact::capture(inner, input, &mode, cancellation, continuation_base).await {
         Ok(Some(job)) => job,
         Ok(None) => {

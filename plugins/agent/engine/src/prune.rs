@@ -18,7 +18,7 @@
  */
 
 //! Bounded projection-only selection; persistence precedes every replacement.
-use crate::{Inner, RunError, RunInput, runner::append};
+use crate::{Inner, RunContext, RunError, runner::append};
 use maka_agent_facts::archive::ArchivedPlaceholder;
 use maka_agent_facts::event::Fact;
 use std::sync::Arc;
@@ -26,7 +26,7 @@ use tokio_util::sync::CancellationToken;
 
 pub(super) async fn run(
     inner: &Arc<Inner>,
-    input: &RunInput,
+    input: &RunContext,
     cancellation: &CancellationToken,
 ) -> Result<(), RunError> {
     let mut cursor = None;

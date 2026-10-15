@@ -17,7 +17,7 @@
  * under the License.
  */
 
-use crate::{Inner, RunError, RunInput, auto_context, model_attempt, prune};
+use crate::{Inner, RunContext, RunError, auto_context, model_attempt, prune};
 use futures_util::FutureExt;
 use maka_agent_facts::context::ModelPurpose;
 use maka_tools::RunTools;
@@ -27,20 +27,25 @@ use tokio_util::sync::CancellationToken;
 #[allow(clippy::too_many_arguments)] // Admission policy must remain visible across the step loop.
 pub(super) async fn run(
     inner: &Arc<Inner>,
-    input: &mut RunInput,
-    catalog: &maka_tools::ToolCatalog,
-    max_steps: usize,
+    input: &mut RunContext,
+    work: crate::runner::ModelWork,
+    opening_id: &str,
     cancellation: &CancellationToken,
     continuation_base: Option<u64>,
     handoff: &crate::HandoffGate,
     prior_unknown: bool,
 ) -> Result<maka_agent_facts::event::InvocationOutcome, RunError> {
+    let crate::runner::ModelWork {
+        tools: catalog,
+        max_steps,
+        restored,
+    } = work;
     let lane = maka_model::Conversation::default();
     let session = inner.session_state(&input.invocation.session_id);
     let mut tools = RunTools::new(
         inner.log.clone(),
         input.invocation.clone(),
-        catalog.clone(),
+        catalog,
         input.configuration.tool_mode,
         inner.cells.clone(),
         session.loaded,
@@ -58,9 +63,9 @@ pub(super) async fn run(
         // This tracks work after this physical opening, not after the logical root.
         // A successor may compact the sealed prefix with a PreTurn boundary.
         let mut main_progress = false;
-        if let crate::RunWork::Handoff { pause, .. } = &input.work {
-            tools.restore(&pause.execution.tools)?;
-            compaction = pause.execution.compaction;
+        if let Some((checkpoint, budget)) = restored {
+            tools.restore(&checkpoint)?;
+            compaction = budget;
         }
         for step in 0..max_steps {
             crate::interactions::wait_until_clear(&inner.log, &input.invocation, cancellation)
@@ -77,20 +82,13 @@ pub(super) async fn run(
                     if !tools.code_idle() {
                         return None;
                     }
-                    let source = inner
-                        .log
-                        .read_model_context(
-                            &input.invocation.session_id,
-                            Some(&input.invocation.invocation_id),
-                        )
-                        .await
-                        .ok()?;
+                    let context = model_attempt::read_source(inner, input, false).await.ok()?;
                     // Read the live source, but project from the successor's point of
                     // view: manual replay cuts distinguish current from inherited work.
                     let prompt = model_attempt::prompt(
                         inner,
                         input,
-                        &source,
+                        &context,
                         ModelPurpose::Main,
                         cancellation,
                         continuation_base,
@@ -151,27 +149,11 @@ pub(super) async fn run(
             {
                 compaction = CompactionBudget::Reshaped;
             }
-            let mut source = if prior_unknown {
-                inner
-                    .log
-                    .read_manual_message_context(
-                        &input.invocation.session_id,
-                        &input.invocation.invocation_id,
-                    )
-                    .await?
-            } else {
-                inner
-                    .log
-                    .read_model_context(
-                        &input.invocation.session_id,
-                        Some(&input.invocation.invocation_id),
-                    )
-                    .await?
-            };
+            let mut context = model_attempt::read_source(inner, input, prior_unknown).await?;
             let mut prompt = model_attempt::prompt(
                 inner,
                 input,
-                &source,
+                &context,
                 ModelPurpose::Main,
                 cancellation,
                 continuation_base,
@@ -184,13 +166,15 @@ pub(super) async fn run(
                 && compaction == CompactionBudget::Available
                 && pending.is_none()
                 && !prior_unknown
-                && (needs_compaction || auto_context::due(input, &source))
+                && (needs_compaction || auto_context::due(input, &context))
             {
+                drop(prompt);
+                drop(context);
                 compaction = CompactionBudget::Failed;
                 if let Some(candidate) = auto_context::start(
                     inner,
                     input,
-                    &source,
+                    opening_id,
                     main_progress,
                     cancellation,
                     continuation_base,
@@ -203,20 +187,14 @@ pub(super) async fn run(
                         compaction = CompactionBudget::Reshaped;
                     }
                 }
-                source = inner
-                    .log
-                    .read_model_context(
-                        &input.invocation.session_id,
-                        Some(&input.invocation.invocation_id),
-                    )
-                    .await?;
-                // Compaction makes its own logical requests. The following
-                // main step must observe any provider change made meanwhile.
+                // Compaction makes its own logical requests. The next Main
+                // must observe any provider change made meanwhile.
                 input.refresh_model(cancellation).await?;
+                context = model_attempt::read_source(inner, input, prior_unknown).await?;
                 prompt = model_attempt::prompt(
                     inner,
                     input,
-                    &source,
+                    &context,
                     ModelPurpose::Main,
                     cancellation,
                     continuation_base,
@@ -230,7 +208,7 @@ pub(super) async fn run(
                 .capture(&input.configuration.cwd, cancellation.clone())
                 .await?;
             let unknown_notice =
-                prior_unknown.then(|| model_attempt::prior_unknown_notice(&source));
+                prior_unknown.then(|| model_attempt::prior_unknown_notice(&context));
             if unknown_notice.as_deref() == Some("") {
                 return Err(RunError::ReconciliationRequired(
                     "unknown prior tool is missing from model context".into(),
@@ -240,17 +218,17 @@ pub(super) async fn run(
                 &request_tools,
                 &inner.model,
                 input,
-                &source,
+                &context,
                 unknown_notice.as_deref(),
             )?);
-            let initial_high_water = source.source_evidence.high_water;
-            let result = model_attempt::execute(
+            let initial_high_water = context.source_evidence.high_water;
+            let (high_water, result) = model_attempt::execute_main(
                 inner,
                 input,
-                &mut source,
+                context,
                 surface.apply(prompt),
                 request_tools.definitions(),
-                model_attempt::Attempt::Main {
+                model_attempt::Main {
                     lane: lane.clone(),
                     continuation_base,
                     surface: surface.clone(),
@@ -263,12 +241,12 @@ pub(super) async fn run(
             // Recovery advances this source only after retaining complete Main
             // items. They renew compaction just like a completed response, even
             // if the resumed request itself immediately exceeds context.
-            if source.source_evidence.high_water > initial_high_water {
+            if high_water > initial_high_water {
                 main_progress = true;
                 compaction = CompactionBudget::Available;
             }
             let output = match result {
-                Ok(model_attempt::Outcome::Response(_, output)) => output,
+                Ok(model_attempt::Outcome::Response(output)) => output,
                 Ok(model_attempt::Outcome::FinishedByTool) => {
                     crate::interactions::wait_until_clear(
                         &inner.log,
@@ -293,7 +271,7 @@ pub(super) async fn run(
                             auto_context::start(
                                 inner,
                                 input,
-                                &source,
+                                opening_id,
                                 main_progress,
                                 cancellation,
                                 continuation_base,
@@ -319,10 +297,7 @@ pub(super) async fn run(
                 .filter(|call| !call.provider_executed)
                 .collect();
             if local_calls.is_empty() {
-                if !tools
-                    .finish_output(source.source_evidence.high_water)
-                    .await?
-                {
+                if !tools.finish_output(high_water).await? {
                     main_progress = true;
                     continue;
                 }
@@ -344,27 +319,11 @@ pub(super) async fn run(
                 return Ok(maka_agent_facts::event::InvocationOutcome::Completed);
             }
             if step + 1 < max_steps && !cancellation.is_cancelled() && lane.needs_confirmation() {
-                let source = if prior_unknown {
-                    inner
-                        .log
-                        .read_manual_message_context(
-                            &input.invocation.session_id,
-                            &input.invocation.invocation_id,
-                        )
-                        .await?
-                } else {
-                    inner
-                        .log
-                        .read_model_context(
-                            &input.invocation.session_id,
-                            Some(&input.invocation.invocation_id),
-                        )
-                        .await?
-                };
+                let context = model_attempt::read_source(inner, input, prior_unknown).await?;
                 let replay = model_attempt::prompt(
                     inner,
                     input,
-                    &source,
+                    &context,
                     ModelPurpose::Main,
                     cancellation,
                     continuation_base,

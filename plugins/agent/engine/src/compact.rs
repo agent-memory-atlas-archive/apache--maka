@@ -17,7 +17,7 @@
  * under the License.
  */
 
-use crate::{Inner, RunError, RunInput, context_input, model_attempt};
+use crate::{Inner, RunContext, RunError, context_input, model_attempt};
 use maka_agent_facts::context::CheckpointMode;
 use maka_agent_facts::context::CompactOutcome;
 use maka_agent_facts::context::ContextCheckpoint;
@@ -34,8 +34,8 @@ use tokio_util::sync::CancellationToken;
 pub(super) type Candidate = (CompactOutcome, Option<RuntimeEvent>);
 
 pub(super) struct Job {
-    input: RunInput,
-    source: maka_event_log::context::ModelContextSource,
+    input: RunContext,
+    source: model_attempt::RequestSource,
     mode: CheckpointMode,
     prompt: Vec<maka_model::prompt::Message>,
     adapter: maka_agent_ports::model::Binding,
@@ -43,7 +43,7 @@ pub(super) struct Job {
 
 pub(super) async fn run(
     inner: &Arc<Inner>,
-    input: &mut RunInput,
+    input: &mut RunContext,
     mode: &CheckpointMode,
     cancellation: &CancellationToken,
     continuation_base: Option<u64>,
@@ -61,7 +61,7 @@ pub(super) async fn run(
 
 pub(super) async fn capture(
     inner: &Arc<Inner>,
-    input: &mut RunInput,
+    input: &mut RunContext,
     mode: &CheckpointMode,
     cancellation: &CancellationToken,
     continuation_base: Option<u64>,
@@ -109,7 +109,7 @@ pub(super) async fn capture(
     let adapter = inner.model.binding(&input.provider)?;
     Ok(Some(Job {
         input: input.clone(),
-        source,
+        source: model_attempt::RequestSource::from(&source),
         mode: mode.clone(),
         prompt,
         adapter,
@@ -124,7 +124,7 @@ impl Job {
     ) -> Result<Candidate, RunError> {
         let Self {
             input,
-            mut source,
+            source,
             mode,
             prompt,
             adapter,
@@ -139,25 +139,22 @@ impl Job {
         loop {
             let mut request = context_input::fit_summary(&prompt, input_budget);
             request.push(maka_model::prompt::Message::user(format!("{instruction}\n\nNow write the structured summary of the conversation above. Output only the summary.")));
-            let result = model_attempt::execute(
+            let result = model_attempt::execute_once(
                 inner,
                 &input,
-                &mut source,
+                &source,
                 request,
                 Vec::new(),
                 model_attempt::Attempt::Summary {
                     adapter: adapter.clone(),
                 },
                 cancellation,
+                &mut false,
+                &mut None,
             )
             .await;
             let (step_id, output) = match result {
-                Ok(model_attempt::Outcome::Response(step_id, output)) => (step_id, output),
-                Ok(model_attempt::Outcome::FinishedByTool) => {
-                    return Err(RunError::Internal(
-                        "summary cannot dispatch a finishing tool".into(),
-                    ));
-                }
+                Ok(output) => output,
                 Err(RunError::Model(maka_model::ModelError::ContextOverflow {
                     observed_output: false,
                 })) if input_budget > 256 => {
@@ -176,7 +173,7 @@ impl Job {
                 );
                 continue;
             }
-            let summary = match TextSummary::from_model_step(&output, source.baseline.is_none()) {
+            let summary = match TextSummary::from_model_step(&output, source.checkpoint.is_none()) {
                 Ok(summary) => summary,
                 Err(defect) => {
                     if let Some(original) = repair {
@@ -202,9 +199,9 @@ impl Job {
                 Fact::ContextCheckpointRecorded {
                     checkpoint: ContextCheckpoint {
                         mode: mode.clone(),
-                        covered_through: source.source_evidence.high_water,
-                        source_digest: source.source_evidence.digest,
-                        previous_checkpoint_id: source.baseline.map(|baseline| baseline.event_id),
+                        covered_through: source.evidence.high_water,
+                        source_digest: source.evidence.digest.clone(),
+                        previous_checkpoint_id: source.checkpoint.clone(),
                         summary,
                         summary_step_id: step_id,
                     },

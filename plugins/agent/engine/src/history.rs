@@ -57,7 +57,6 @@ impl<'a> From<&'a maka_event_log::context::ContextEvent> for EventRef<'a> {
 }
 mod references;
 mod resources;
-pub(super) use images::materialize;
 pub(super) use images::materialize_replay;
 use projection::build;
 

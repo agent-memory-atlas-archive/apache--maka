@@ -30,9 +30,18 @@ use maka_event_log::StoreError;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
+pub(super) struct ModelWork {
+    pub tools: maka_tools::ToolCatalog,
+    pub max_steps: usize,
+    pub restored: Option<(
+        maka_agent_facts::handoff::HandoffTools,
+        maka_agent_facts::handoff::CompactionBudget,
+    )>,
+}
+
 pub async fn run(
     inner: Arc<Inner>,
-    mut input: RunInput,
+    input: RunInput,
     cancellation_owner: tokio_util::sync::CancellationToken,
     admitted: tokio::sync::oneshot::Sender<()>,
     handoff: Option<crate::HandoffGate>,
@@ -94,66 +103,90 @@ pub async fn run(
         RunWork::Handoff { pause, .. } => pause.execution.replay_base,
         _ => claim.as_ref().map(|claim| claim.base.high_water),
     };
-    let opening = match &input.work {
-        RunWork::Handoff { pause, .. } => InvocationInput::Handoff {
-            claim: Box::new(claim.expect("prepared handoff")),
-            pause: pause.clone(),
-        },
-        RunWork::Continuation { .. } => InvocationInput::Continuation {
-            claim: Box::new(claim.expect("prepared continuation")),
-            request_fingerprint: input
-                .request_fingerprint
-                .clone()
-                .expect("validated continuation fingerprint"),
-        },
+    let (mut input, work) = input.into_context();
+    let (opening, model_work) = match work {
+        RunWork::Handoff { pause, tools, .. } => {
+            let work = ModelWork {
+                tools,
+                max_steps: usize::from(pause.remaining_steps.get()),
+                restored: Some((pause.execution.tools.clone(), pause.execution.compaction)),
+            };
+            (
+                InvocationInput::Handoff {
+                    claim: Box::new(claim.expect("prepared handoff")),
+                    pause,
+                },
+                Some(work),
+            )
+        }
+        RunWork::Continuation {
+            tools, max_steps, ..
+        } => (
+            InvocationInput::Continuation {
+                claim: Box::new(claim.expect("prepared continuation")),
+                request_fingerprint: input
+                    .request_fingerprint
+                    .clone()
+                    .expect("validated continuation fingerprint"),
+            },
+            Some(ModelWork {
+                tools,
+                max_steps,
+                restored: None,
+            }),
+        ),
         RunWork::Message {
             message,
             source_messages,
+            tools,
+            max_steps,
             ..
-        } => InvocationInput::Message {
-            content: message.clone(),
-            request_fingerprint: input.request_fingerprint.clone(),
-            source_messages: source_messages.clone(),
-        },
-        RunWork::ContextCompact => InvocationInput::ContextCompact {
-            request_fingerprint: input
-                .request_fingerprint
-                .clone()
-                .expect("validated compact fingerprint"),
-        },
+        } => (
+            InvocationInput::Message {
+                content: message,
+                request_fingerprint: input.request_fingerprint.clone(),
+                source_messages,
+            },
+            Some(ModelWork {
+                tools,
+                max_steps,
+                restored: None,
+            }),
+        ),
+        RunWork::ContextCompact => (
+            InvocationInput::ContextCompact {
+                request_fingerprint: input
+                    .request_fingerprint
+                    .clone()
+                    .expect("validated compact fingerprint"),
+            },
+            None,
+        ),
     };
-    append(
-        &inner,
-        &input.invocation,
+    let opening = RuntimeEvent::new(
+        input.invocation.clone(),
         Fact::InvocationOpened {
             configuration: Some(Box::new(input.configuration.clone())),
             input: opening,
         },
-    )
-    .await?;
+    );
+    let opening_id = opening.id.clone();
+    inner
+        .log
+        .clone()
+        .commit(EventWrite::plain(opening)?)
+        .await?;
     let _ = admitted.send(());
     let result = async {
         if !prior_unknown {
             prune::run(&inner, &input, &cancellation).await?;
         }
-        let model_work = match &input.work {
-            RunWork::Message {
-                tools, max_steps, ..
-            }
-            | RunWork::Continuation {
-                tools, max_steps, ..
-            } => Some((tools.clone(), *max_steps)),
-            RunWork::Handoff { tools, pause, .. } => {
-                Some((tools.clone(), usize::from(pause.remaining_steps.get())))
-            }
-            RunWork::ContextCompact => None,
-        };
-        if let Some((tools, max_steps)) = model_work {
+        if let Some(work) = model_work {
             steps::run(
                 &inner,
                 &mut input,
-                &tools,
-                max_steps,
+                work,
+                &opening_id,
                 &cancellation,
                 continuation_base,
                 handoff.as_ref().expect("model Runs own a handoff gate"),

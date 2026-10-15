@@ -18,7 +18,7 @@
  */
 
 use crate::{
-    Inner, RunError, RunInput, history,
+    Inner, RunContext, RunError, RunInput, history,
     runner::{append, digest},
 };
 use maka_agent_facts::context::ModelPurpose;
@@ -33,14 +33,16 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+pub(super) struct Main<'a> {
+    pub lane: maka_model::Conversation,
+    pub continuation_base: Option<u64>,
+    pub surface: Arc<crate::request_composition::Surface>,
+    pub tools: &'a maka_tools::RequestTools<'a>,
+    pub prior_unknown: bool,
+}
+
 pub(super) enum Attempt<'a> {
-    Main {
-        lane: maka_model::Conversation,
-        continuation_base: Option<u64>,
-        surface: Arc<crate::request_composition::Surface>,
-        tools: &'a maka_tools::RequestTools<'a>,
-        prior_unknown: bool,
-    },
+    Main(Main<'a>),
     Summary {
         adapter: maka_agent_ports::model::Binding,
     },
@@ -51,19 +53,19 @@ pub(super) enum Attempt<'a> {
     reason = "One result per request; keep the ordinary response inline without another allocation."
 )]
 pub(super) enum Outcome {
-    Response(String, ModelStep),
+    Response(ModelStep),
     FinishedByTool,
 }
 impl From<(String, ModelStep)> for Outcome {
-    fn from((step, output): (String, ModelStep)) -> Self {
-        Self::Response(step, output)
+    fn from((_, output): (String, ModelStep)) -> Self {
+        Self::Response(output)
     }
 }
 
 #[allow(clippy::too_many_arguments)] // Keep the admitted history policy explicit at each model request.
-pub(super) async fn prompt(
+pub(super) async fn prompt<W>(
     inner: &Inner,
-    input: &RunInput,
+    input: &RunInput<W>,
     source: &ModelContextSource,
     purpose: ModelPurpose,
     cancellation: &CancellationToken,
@@ -187,151 +189,183 @@ pub(super) fn prior_unknown_notice(source: &ModelContextSource) -> String {
     notice
 }
 
-pub(super) async fn execute(
+pub(super) struct RequestSource {
+    pub evidence: maka_event_log::context::SourceEvidence,
+    pub effective_digest: String,
+    pub checkpoint: Option<String>,
+}
+
+impl From<&ModelContextSource> for RequestSource {
+    fn from(source: &ModelContextSource) -> Self {
+        Self {
+            evidence: source.source_evidence.clone(),
+            effective_digest: source.effective_source_digest.clone(),
+            checkpoint: source
+                .baseline
+                .as_ref()
+                .map(|baseline| baseline.event_id.clone()),
+        }
+    }
+}
+
+pub(super) async fn read_source(
+    inner: &Inner,
+    input: &RunContext,
+    prior_unknown: bool,
+) -> Result<ModelContextSource, RunError> {
+    if prior_unknown {
+        Ok(inner
+            .log
+            .read_manual_message_context(
+                &input.invocation.session_id,
+                &input.invocation.invocation_id,
+            )
+            .await?)
+    } else {
+        Ok(inner
+            .log
+            .read_model_context(
+                &input.invocation.session_id,
+                Some(&input.invocation.invocation_id),
+            )
+            .await?)
+    }
+}
+
+pub(super) async fn execute_main(
     inner: &Arc<Inner>,
-    input: &RunInput,
-    source: &mut ModelContextSource,
-    mut prompt: Vec<Message>,
+    input: &RunContext,
+    context: ModelContextSource,
+    prompt: Vec<Message>,
     definitions: Vec<ToolDefinition>,
-    attempt: Attempt<'_>,
+    main: Main<'_>,
     cancellation: &CancellationToken,
-) -> Result<Outcome, RunError> {
-    let Attempt::Main {
+) -> (u64, Result<Outcome, RunError>) {
+    let Main {
         lane,
         continuation_base,
         surface,
         tools,
         prior_unknown,
-    } = attempt
-    else {
-        return execute_once(
-            inner,
-            input,
-            source,
-            prompt,
-            definitions,
-            attempt,
-            cancellation,
-            &mut false,
-        )
-        .await
-        .map(Outcome::from);
-    };
-    let mut failures = 0;
-    loop {
-        // Preserve captured capabilities. Rebuild history only when a completed
-        // item advanced canonical progress, never from a shortened WS request.
-        let mut progressed = false;
-        let result = execute_once(
-            inner,
-            input,
-            source,
-            prompt.clone(),
-            definitions.clone(),
-            Attempt::Main {
-                lane: lane.clone(),
-                continuation_base,
-                surface: surface.clone(),
-                tools,
-                prior_unknown,
-            },
-            cancellation,
-            &mut progressed,
-        )
-        .await;
-        let delay = match &result {
-            Err(RunError::Model(maka_model::ModelError::Provider(failure)))
-                if failure.replay_safe() || (progressed && failure.retained_output_safe()) =>
-            {
-                if cancellation.is_cancelled() {
-                    return Err(RunError::Cancelled);
-                }
-                // A successful finishing effect is already authoritative. Safe
-                // stream recovery must not reopen this turn for another model.
-                if tools.finished() {
-                    return Ok(Outcome::FinishedByTool);
-                }
-                if failures >= 9 {
-                    if !lane.try_switch_fallback_transport() {
-                        return result.map(Outcome::from);
-                    }
-                    failures = 0;
-                    failure.retry_after().unwrap_or_default()
-                } else {
-                    // Codex's ordinary stream recovery starts at 200 ms with
-                    // +/-10% jitter. The bounded attempt count caps this delay.
-                    let base_ms = 200u64 << failures;
-                    failures += 1;
-                    failure.retry_after().unwrap_or_else(|| {
-                        std::time::Duration::from_millis(fastrand::u64(
-                            base_ms * 9 / 10..=base_ms * 11 / 10,
-                        ))
-                    })
-                }
-            }
-            _ => return result.map(Outcome::from),
-        };
-        if progressed {
-            let next = if prior_unknown {
-                inner
-                    .log
-                    .read_manual_message_context(
-                        &input.invocation.session_id,
-                        &input.invocation.invocation_id,
-                    )
-                    .await?
-            } else {
-                inner
-                    .log
-                    .read_model_context(
-                        &input.invocation.session_id,
-                        Some(&input.invocation.invocation_id),
-                    )
-                    .await?
-            };
-            prompt = surface.apply(
-                self::prompt(
-                    inner,
-                    input,
-                    &next,
-                    ModelPurpose::Main,
-                    cancellation,
+    } = main;
+    let mut source = RequestSource::from(&context);
+    let mut high_water = source.evidence.high_water;
+    drop(context);
+    let mut retry = Some(prompt);
+    let result = async {
+        let mut failures = 0;
+        loop {
+            // Preserve captured capabilities. Rebuild history only when a completed
+            // item advanced canonical progress, never from a shortened WS request.
+            let mut progressed = false;
+            let result = execute_once(
+                inner,
+                input,
+                &source,
+                retry
+                    .as_ref()
+                    .expect("unprogressed attempt retains its prompt")
+                    .clone(),
+                definitions.clone(),
+                Attempt::Main(Main {
+                    lane: lane.clone(),
                     continuation_base,
-                    &input.invocation.invocation_id,
+                    surface: surface.clone(),
+                    tools,
                     prior_unknown,
-                )
-                .await?,
-            );
-            *source = next;
-        }
-        // execute_once has drained the worker and committed ModelInterrupted.
-        // A local/storage error cannot reach this wait or authorize another send.
-        tokio::select! {
-            biased;
-            _ = cancellation.cancelled() => return Err(RunError::Cancelled),
-            _ = tokio::time::sleep(delay) => {}
+                }),
+                cancellation,
+                &mut progressed,
+                &mut retry,
+            )
+            .await;
+            let delay = match &result {
+                Err(RunError::Model(maka_model::ModelError::Provider(failure)))
+                    if failure.replay_safe() || (progressed && failure.retained_output_safe()) =>
+                {
+                    if cancellation.is_cancelled() {
+                        return Err(RunError::Cancelled);
+                    }
+                    // A successful finishing effect is already authoritative. Safe
+                    // stream recovery must not reopen this turn for another model.
+                    if tools.finished() {
+                        return Ok(Outcome::FinishedByTool);
+                    }
+                    if failures >= 9 {
+                        if !lane.try_switch_fallback_transport() {
+                            return result.map(Outcome::from);
+                        }
+                        failures = 0;
+                        failure.retry_after().unwrap_or_default()
+                    } else {
+                        // Codex's ordinary stream recovery starts at 200 ms with
+                        // +/-10% jitter. The bounded attempt count caps this delay.
+                        let base_ms = 200u64 << failures;
+                        failures += 1;
+                        failure.retry_after().unwrap_or_else(|| {
+                            std::time::Duration::from_millis(fastrand::u64(
+                                base_ms * 9 / 10..=base_ms * 11 / 10,
+                            ))
+                        })
+                    }
+                }
+                _ => return result.map(Outcome::from),
+            };
+            if progressed {
+                // Accepted progress replaces the frozen retry prompt. Release it
+                // before materializing the next canonical source.
+                drop(retry.take());
+                let context = read_source(inner, input, prior_unknown).await?;
+                high_water = context.source_evidence.high_water;
+                source = RequestSource::from(&context);
+                let prompt = surface.apply(
+                    self::prompt(
+                        inner,
+                        input,
+                        &context,
+                        ModelPurpose::Main,
+                        cancellation,
+                        continuation_base,
+                        &input.invocation.invocation_id,
+                        prior_unknown,
+                    )
+                    .await?,
+                );
+                drop(context);
+                retry = Some(prompt);
+            }
+            // execute_once has drained the worker and committed ModelInterrupted.
+            // A local/storage error cannot reach this wait or authorize another send.
+            tokio::select! {
+                biased;
+                _ = cancellation.cancelled() => return Err(RunError::Cancelled),
+                _ = tokio::time::sleep(delay) => {}
+            }
         }
     }
+    .await;
+    (high_water, result)
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn execute_once(
+pub(super) async fn execute_once(
     inner: &Arc<Inner>,
-    input: &RunInput,
-    source: &ModelContextSource,
+    input: &RunContext,
+    source: &RequestSource,
     prompt: Vec<Message>,
     definitions: Vec<ToolDefinition>,
     attempt: Attempt<'_>,
     cancellation: &CancellationToken,
     progressed: &mut bool,
+    retry: &mut Option<Vec<Message>>,
 ) -> Result<(String, ModelStep), RunError> {
     let (purpose, lane, surface, summary_adapter, tools) = match attempt {
-        Attempt::Main {
+        Attempt::Main(Main {
             lane,
             surface,
             tools,
             ..
-        } => (
+        }) => (
             ModelPurpose::Main,
             Some(lane),
             Some(surface),
@@ -384,20 +418,17 @@ async fn execute_once(
         input.invocation.clone(),
         Fact::ModelRequested {
             item_acceptance,
-            effective_source_digest: Some(source.effective_source_digest.clone()),
+            effective_source_digest: Some(source.effective_digest.clone()),
             purpose,
             context: input.context.clone(),
             step_id: step_id.clone(),
             model_id: input.provider.model.clone(),
-            source_scope: source.source_evidence.scope.clone(),
-            source_high_water: source.source_evidence.high_water,
-            source_digest: source.source_evidence.digest.clone(),
+            source_scope: source.evidence.scope.clone(),
+            source_high_water: source.evidence.high_water,
+            source_digest: source.evidence.digest.clone(),
             input_digest: prepared.input_digest,
             route_identity: prepared.route_identity,
-            checkpoint_event_id: source
-                .baseline
-                .as_ref()
-                .map(|baseline| baseline.event_id.clone()),
+            checkpoint_event_id: source.checkpoint.clone(),
         },
     );
     let mut write =
@@ -427,6 +458,7 @@ async fn execute_once(
                 .map(|tools| tools.clone().into_step(&step_id)),
             progressed,
             cancellation,
+            retry,
         )
         .await
     }
@@ -442,6 +474,8 @@ async fn execute_once(
     )
     .await?;
     if !item_acceptance && let Some(tools) = tools {
+        // The successful request no longer needs its retry payload while tools run.
+        drop(retry.take());
         use futures_util::FutureExt;
         let mut step = tools.clone().into_step(&accepted.0);
         for call in accepted
@@ -469,12 +503,12 @@ pub(super) struct PreparedRequest {
     pub route_identity: String,
 }
 
-pub(super) fn route_identity(input: &RunInput) -> Result<String, RunError> {
+pub(super) fn route_identity<W>(input: &RunInput<W>) -> Result<String, RunError> {
     digest(&input.provider)
 }
 
-pub(super) fn prepare_request(
-    input: &RunInput,
+pub(super) fn prepare_request<W>(
+    input: &RunInput<W>,
     prompt: Vec<Message>,
     definitions: Vec<ToolDefinition>,
     max_output_tokens: Option<u64>,
@@ -530,13 +564,14 @@ pub(super) fn prepare_request(
 #[allow(clippy::too_many_arguments)]
 async fn receive(
     inner: &Arc<Inner>,
-    input: &RunInput,
+    input: &RunContext,
     step_id: &str,
     purpose: ModelPurpose,
     mut stream: maka_model::ModelStream,
     mut tools: Option<maka_tools::StepTools<'_>>,
     progressed: &mut bool,
     cancellation: &CancellationToken,
+    retry: &mut Option<Vec<Message>>,
 ) -> Result<ModelStep, RunError> {
     use futures_util::{FutureExt, StreamExt, stream::FuturesUnordered};
     use maka_agent_facts::tools::ToolError;
@@ -565,6 +600,9 @@ async fn receive(
                     drop(observations.reservations);
                     if tools.is_some() && observations.accepted_item {
                         *progressed = true;
+                        // Any retry now rebuilds from accepted progress. Release
+                        // the obsolete prompt before dispatching dependent work.
+                        drop(retry.take());
                     }
                     // Every call's acceptance is durable before dispatch, even
                     // when a later ready event failed validation or cancelled.
@@ -702,7 +740,7 @@ fn tool_result(
 #[allow(clippy::too_many_arguments)]
 async fn finish(
     inner: &Arc<Inner>,
-    input: &RunInput,
+    input: &RunContext,
     step_id: String,
     purpose: ModelPurpose,
     result: Result<ModelStep, RunError>,

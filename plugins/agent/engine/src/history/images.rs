@@ -60,27 +60,6 @@ enum ImageRead {
     Unavailable(&'static str),
 }
 
-pub(crate) async fn materialize(
-    log: &EventLog,
-    events: &[maka_event_log::context::ContextEvent],
-    anchor: Option<&StoredEvent>,
-    session: &str,
-    vision: bool,
-    cancellation: &CancellationToken,
-) -> Result<Vec<Message>, RunError> {
-    materialize_replay(
-        log,
-        events,
-        anchor,
-        session,
-        vision,
-        cancellation,
-        None,
-        false,
-    )
-    .await
-}
-
 #[allow(clippy::too_many_arguments)] // Model projection needs both the replay cut and admission policy.
 pub(crate) async fn materialize_replay(
     log: &EventLog,

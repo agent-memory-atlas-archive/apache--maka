@@ -121,7 +121,7 @@ impl From<ToolError> for RunError {
 }
 
 #[derive(Clone)]
-pub struct RunInput {
+pub struct RunInput<W = RunWork> {
     /// Optional for standalone adapters; Host executions supply a public provider source.
     pub model_source: Option<Arc<dyn ModelSource>>,
     pub model_revision: Option<maka_agent_facts::composition::SourceRevision>,
@@ -129,7 +129,7 @@ pub struct RunInput {
     pub provider_id: String,
     pub invocation: Invocation,
     pub context: Option<maka_agent_facts::context::ModelRequestContext>,
-    pub work: RunWork,
+    pub work: W,
     /// Stable domain admission identity, when this invocation was client-issued.
     pub request_fingerprint: Option<String>,
     pub provider: ProviderConfig,
@@ -139,6 +139,46 @@ pub struct RunInput {
     /// Current selected-model capability; image bytes are projected per request.
     pub supports_vision: bool,
     pub configuration: InvocationConfiguration,
+}
+
+// Admission owns the submitted body. Running execution owns only settings and
+// identity; canonical opening facts supply the body to bounded history reads.
+type RunContext = RunInput<()>;
+
+impl RunInput {
+    fn into_context(self) -> (RunContext, RunWork) {
+        let Self {
+            work,
+            model_source,
+            model_revision,
+            provider_id,
+            invocation,
+            context,
+            request_fingerprint,
+            provider,
+            provider_options,
+            main_output_limit,
+            supports_vision,
+            configuration,
+        } = self;
+        (
+            RunInput {
+                work: (),
+                model_source,
+                model_revision,
+                provider_id,
+                invocation,
+                context,
+                request_fingerprint,
+                provider,
+                provider_options,
+                main_output_limit,
+                supports_vision,
+                configuration,
+            },
+            work,
+        )
+    }
 }
 
 #[derive(Clone)]

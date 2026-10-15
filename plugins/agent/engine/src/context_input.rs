@@ -83,7 +83,7 @@ fn json_tokens(value: &(impl serde::Serialize + ?Sized)) -> u64 {
     count.0.div_ceil(3)
 }
 
-pub(super) fn summary_budget(input: &RunInput) -> u64 {
+pub(super) fn summary_budget<W>(input: &RunInput<W>) -> u64 {
     let context = input.context.as_ref();
     let window = context
         .and_then(|context| context.context_window)
@@ -97,7 +97,7 @@ pub(super) fn summary_budget(input: &RunInput) -> u64 {
     window.min(total.saturating_sub(output)).saturating_mul(3) / 4
 }
 
-pub(super) fn needs_compaction(input: &RunInput, prompt: &[Message]) -> bool {
+pub(super) fn needs_compaction<W>(input: &RunInput<W>, prompt: &[Message]) -> bool {
     estimate(prompt) > summary_budget(input)
 }
 
@@ -162,8 +162,8 @@ fn excerpt(text: &str, bytes: usize) -> String {
 
 /// The final request owns its output reserve, after all prompt/tool projections.
 /// This cap never changes the configured model limit or the persisted history.
-pub(super) fn output_limit(
-    input: &RunInput,
+pub(super) fn output_limit<W>(
+    input: &RunInput<W>,
     prompt: &[Message],
     tools: &[maka_model::ToolDefinition],
     requested: u64,

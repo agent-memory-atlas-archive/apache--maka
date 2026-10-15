@@ -41,7 +41,7 @@ pub struct PreparedModel {
     pub revision: SourceRevision,
 }
 
-impl RunInput {
+impl<W> RunInput<W> {
     pub(crate) async fn refresh_model(
         &mut self,
         cancellation: &CancellationToken,
