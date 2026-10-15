@@ -21,6 +21,7 @@ use super::*;
 use maka_agent_facts::tool_call::ToolRejection;
 use maka_agent_facts::tools::*;
 #[derive(Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(extend("type" = "object"))]
 #[serde(
     tag = "mode",
     rename_all = "snake_case",

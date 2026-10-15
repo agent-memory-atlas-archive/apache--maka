@@ -32,7 +32,7 @@ pub const EXPORT: &str = "Authoring";
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "method", content = "input", rename_all = "camelCase")]
-#[schemars(rename = "UiAuthoringCommand")]
+#[schemars(rename = "UiAuthoringCommand", extend("type" = "object"))]
 pub enum Command {
     Instances(DeploymentInstances),
     ReadDocument(DeploymentDocumentRead),

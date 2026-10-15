@@ -46992,6 +46992,7 @@ export const contracts = {
                 required: ['id', 'command'],
               },
               UiAuthoringCommand: {
+                type: 'object',
                 oneOf: [
                   {
                     type: 'object',
@@ -48246,6 +48247,7 @@ export const contracts = {
           input: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
             title: 'UiAuthoringCommand',
+            type: 'object',
             oneOf: [
               {
                 type: 'object',

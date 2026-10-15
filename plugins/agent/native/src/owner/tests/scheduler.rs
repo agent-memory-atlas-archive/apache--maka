@@ -74,6 +74,42 @@ async fn reopen(f: &mut Fixture) {
 }
 
 #[tokio::test]
+async fn scheduler_tool_schema_declares_object_and_preserves_operation_constraints() {
+    let f = fixture("http://127.0.0.1:1/v1").await;
+    let tools = f.owner.scheduler.tools();
+    let schema = &tools[0].definition.input_schema;
+    assert_eq!(schema["type"], "object");
+    let validator = jsonschema::validator_for(schema).unwrap();
+    for input in [
+        json!({"mode":"create","title":"Model proposal","intentBody":"Original scheduled body","effect":"agent_run","schedule":{"kind":"interval","everySeconds":3600,"startAt":now()+3_600_000},"timezone":"UTC"}),
+        json!({"mode":"list"}),
+        json!({"mode":"pause","taskId":"task","revision":1}),
+        json!({"mode":"resume","taskId":"task","revision":1}),
+        json!({"mode":"delete","taskId":"task","revision":1}),
+    ] {
+        assert!(
+            validator.is_valid(&input),
+            "valid task input rejected: {input}"
+        );
+    }
+    for input in [
+        json!({"mode":"create","title":"Missing task fields"}),
+        json!({"mode":"list","unexpected":true}),
+        json!({"mode":"pause","taskId":"task"}),
+        json!({"mode":"resume","taskId":"task","revision":"1"}),
+        json!({"mode":"delete","revision":1}),
+        json!({"mode":"unknown"}),
+        json!([]),
+    ] {
+        assert!(
+            !validator.is_valid(&input),
+            "invalid task input accepted: {input}"
+        );
+    }
+    f.app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn scheduler_reminder_survives_lost_host_reply_restart_snooze_and_delete_with_original_receipt()
  {
     tokio::time::timeout(Duration::from_secs(45), async {
