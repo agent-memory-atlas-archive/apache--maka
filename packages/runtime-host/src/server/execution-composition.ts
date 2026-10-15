@@ -27,6 +27,7 @@ import { createWorkHubResultRuntime } from './workhub-result-runtime.js';
 import { createWorkHubInspectionTool } from './workhub-inspection-tool.js';
 import { copyWorkHubAttachmentsToTarget } from './workhub-message-attachments.js';
 import { createHash, randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { attachmentKindFromMimeType, MAX_READ_IMAGE_BYTES } from '@maka/core/attachments';
 import type { ContextOffloadLimits } from '@maka/core/context-offload';
 import { messageContentDigest, normalizeMessageContent } from '@maka/core/events';
@@ -44,6 +45,7 @@ import {
   type RuntimeInvocationRecord,
 } from '@maka/core/runtime-invocation';
 import {
+  decodeCanonicalMessage,
   ASSISTANT_BACKGROUND_SESSION_LABEL,
   type SessionHeader,
   type WorkHubDelegationAssignedMessage,
@@ -479,7 +481,12 @@ export async function createExecutionRuntimeHostComposition(
               (row) => row.id === message.id,
             );
             if (existing) {
-              if (JSON.stringify(existing) !== JSON.stringify(message))
+              if (
+                !isDeepStrictEqual(
+                  decodeCanonicalMessage(existing),
+                  decodeCanonicalMessage(message),
+                )
+              )
                 throw Error('Assistant message identity conflict');
             }
             // The desktop reads the event ledger, not the legacy message table.
@@ -2163,6 +2170,7 @@ export async function createExecutionRuntimeHostComposition(
       message: unknown,
       placement: 'current_turn' | 'next_turn',
       initiator: import('@maka/runtime/plugin-agent-service').PluginAgentInvocation,
+      messageId: string = randomUUID(),
     ) => {
       // Plugin activation precedes Root Turn recovery. A background timer must
       // not admit a new root against the still-empty in-memory admission chain.
@@ -2183,7 +2191,7 @@ export async function createExecutionRuntimeHostComposition(
         {
           originHostEpoch: context.hostEpoch,
           sessionId: id,
-          messageId: randomUUID(),
+          messageId,
           content,
           placement,
         },
@@ -2274,7 +2282,24 @@ export async function createExecutionRuntimeHostComposition(
         (await visibleAgentSessions(initiator))
           .filter((session) => !session.parentSessionId)
           .map(describeAgent),
-      followup: (id, message, initiator) => submitAgentMessage(id, message, 'next_turn', initiator),
+      followup: (id, message, initiator, options) =>
+        submitAgentMessage(id, message, 'next_turn', initiator, options?.messageId),
+      messageExecution: async (id, messageId, initiator) => {
+        initiator.abortSignal.throwIfAborted();
+        if (!(await visibleAgentSessions(initiator)).some((session) => session.id === id))
+          throw new Error('Agent is outside the current ownership tree');
+        const result = await messages.handlers['turn.message.execution.query'](
+          { sessionId: id, messageIds: [messageId] },
+          {
+            hostEpoch: context.hostEpoch,
+            connectionId: 'plugin-agent',
+            principal: 'runtime_host',
+            acquireResidency: () => context.acquireResidency('plugin-agent'),
+          },
+        );
+        if (!result.ok) throw new Error(result.error.message);
+        return result.result.resolutions[0];
+      },
       steer: (id, message, initiator) => submitAgentMessage(id, message, 'current_turn', initiator),
       inject: (id, message, initiator) =>
         submitAgentMessage(id, message, 'current_turn', initiator),

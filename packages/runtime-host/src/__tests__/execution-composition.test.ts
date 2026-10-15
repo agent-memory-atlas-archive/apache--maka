@@ -18,6 +18,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { BotStore } from '../assistant/bot/store.js';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
@@ -179,6 +180,12 @@ test('assistant messages enter a durable Inbox through real Host admission witho
   timeout: 20000,
 }, async (t) => {
   let assistant!: PersonalAssistantService;
+  let mailbox!: BotStore;
+  const delivered = BotStore.prototype.delivered;
+  t.mock.method(BotStore.prototype, 'delivered', function (this: BotStore, id: string) {
+    mailbox = this;
+    return delivered.call(this, id);
+  });
   const recover = PersonalAssistantService.prototype.recover;
   t.mock.method(
     PersonalAssistantService.prototype,
@@ -249,7 +256,7 @@ test('assistant messages enter a durable Inbox through real Host admission witho
             originHostEpoch: 'execution-composition-test',
             sessionId: chat.id,
             messageId,
-            content: { text: '帮我安排一下，先别直接执行。' },
+            content: { text: '帮我安排一下，先别直接执行。', inlineReferences: [] },
             placement: 'current_turn',
           },
           caller,
@@ -262,6 +269,37 @@ test('assistant messages enter a durable Inbox through real Host admission witho
       const sessionStore = createSessionStore(root);
       const messages = await sessionStore.readMessages(chat.id);
       assert.equal(messages.filter((row) => row.id === messageId).length, 1);
+      // Crash window: canonical history committed, outbox acknowledgement did not.
+      mailbox.db.prepare('UPDATE outbox SET delivered=0 WHERE id=?').run(messageId);
+      await assistant.receiveUser(chat.id, messageId, {
+        text: '帮我安排一下，先别直接执行。',
+        inlineReferences: [],
+      });
+      assert.equal(mailbox.pendingVisible().length, 0);
+      assert.equal(
+        (await sessionStore.readMessages(chat.id)).filter((row) => row.id === messageId).length,
+        1,
+      );
+      // Semantic changes must still be rejected rather than silently treated as replay.
+      const row = mailbox.db.prepare('SELECT payload FROM outbox WHERE id=?').get(messageId)!;
+      const altered = { ...JSON.parse(String(row.payload)), text: 'different content' };
+      mailbox.db
+        .prepare('UPDATE outbox SET payload=?, delivered=0 WHERE id=?')
+        .run(JSON.stringify(altered), messageId);
+      await assert.rejects(
+        assistant.receiveUser(chat.id, messageId, {
+          text: '帮我安排一下，先别直接执行。',
+          inlineReferences: [],
+        }),
+        /Assistant message identity conflict/,
+      );
+      mailbox.db
+        .prepare('UPDATE outbox SET payload=?, delivered=0 WHERE id=?')
+        .run(String(row.payload), messageId);
+      await assistant.receiveUser(chat.id, messageId, {
+        text: '帮我安排一下，先别直接执行。',
+        inlineReferences: [],
+      });
       const proof = await composition.handlers['turn.message.execution.query'](
         { sessionId: chat.id, messageIds: [messageId] },
         caller,
@@ -446,7 +484,25 @@ test('Plugin Agent snapshot exposes pending interaction without losing ownership
       assert.equal(header.model, parent.model);
       assert.equal(header.permissionMode, parent.permissionMode);
       assert.equal(header.thinkingLevel, parent.thinkingLevel);
-      await runtime.followup(child.sessionId, FAKE_ASK_USER_QUESTION_PROMPT, invocation);
+      const wakeId = randomUUID();
+      assert.deepEqual(await runtime.messageExecution!(child.sessionId, wakeId, invocation), {
+        messageId: wakeId,
+        state: 'not_admitted',
+      });
+      await runtime.followup(child.sessionId, FAKE_ASK_USER_QUESTION_PROMPT, invocation, {
+        messageId: wakeId,
+      });
+      assert.equal(
+        ((await runtime.messageExecution!(child.sessionId, wakeId, invocation)) as any).state,
+        'owned',
+      );
+      await assert.rejects(
+        runtime.messageExecution!(child.sessionId, wakeId, {
+          ...invocation,
+          sessionId: randomUUID(),
+        }),
+        /ownership tree/,
+      );
       await waitFor(
         async () =>
           ((await runtime.snapshot(child.sessionId, invocation)) as any).agent.status ===

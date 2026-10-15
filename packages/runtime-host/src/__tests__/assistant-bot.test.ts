@@ -61,6 +61,11 @@ async function fixture(readAvatarImage?: AssistantDependencies['readAvatarImage'
   let starts = 0;
   let failAppend = false;
   let queueNext = false;
+  let queryFailures = 0;
+  let cancelQueued = false;
+  let loseSubmitResponse = false;
+  const executions = new Map<string, string>();
+  const submittedIds: string[] = [];
   let invocation: any;
   let service: PersonalAssistantService;
   const dependencies = {
@@ -111,7 +116,14 @@ async function fixture(readAvatarImage?: AssistantDependencies['readAvatarImage'
     get: async (id) => ({ id, sessionId: id, root: true }),
     list: async () => [],
     roots: async () => [],
-    followup: async (id, message) => {
+    messageExecution: async (_id, messageId) => {
+      if (queryFailures-- > 0) throw Error('temporary query failure');
+      return { messageId, state: executions.get(messageId) ?? 'not_admitted' };
+    },
+    followup: async (id, message, _invocation, options) => {
+      const messageId = options?.messageId ?? randomUUID();
+      submittedIds.push(messageId);
+      executions.set(messageId, 'pending');
       const worker = sessions.get(id);
       const turnId = randomUUID();
       starts++;
@@ -121,6 +133,12 @@ async function fixture(readAvatarImage?: AssistantDependencies['readAvatarImage'
       worker.task = Promise.resolve()
         .then(async () => {
           if (queued) await new Promise((resolve) => setTimeout(resolve, 100));
+          if (cancelQueued) {
+            cancelQueued = false;
+            executions.set(messageId, 'cancelled');
+            return;
+          }
+          executions.set(messageId, 'owned');
           worker.status = 'running';
           worker.messages.push({ type: 'user', text: message, turnId });
           const input = {
@@ -139,6 +157,10 @@ async function fixture(readAvatarImage?: AssistantDependencies['readAvatarImage'
           worker.status = 'idle';
         });
       void worker.task.catch(() => {});
+      if (loseSubmitResponse) {
+        loseSubmitResponse = false;
+        throw Error('response lost after submission');
+      }
       return { disposition: queued ? 'followup' : 'turn_started', turnId };
     },
     steer: async () => {},
@@ -170,6 +192,17 @@ async function fixture(readAvatarImage?: AssistantDependencies['readAvatarImage'
   await service!.call('assistant.bind', { sessionId: 'owner' });
   return {
     directory,
+    submittedIds,
+    failQueries: (count: number) => {
+      queryFailures = count;
+    },
+    cancelWake: () => {
+      queueNext = true;
+      cancelQueued = true;
+    },
+    loseSubmitResponse: () => {
+      loseSubmitResponse = true;
+    },
     visible,
     sessions,
     get service() {
@@ -791,4 +824,125 @@ test('Bot exposes index administration without giving it index writer tools', as
     assert.ok(names.includes(name), name);
   assert.equal(names.includes('MemoryIndexCheckpoint'), false);
   assert.equal(names.includes('MemoryIndexWrite'), false);
+});
+
+test('cancelled queued wake releases the run and preserves mail for a subsequent user retry', async (t) => {
+  const f = await fixture();
+  t.after(f.close);
+  f.cancelWake();
+  await f.send('cancelled-wake', '第一条');
+  await until(async () => {
+    const status: any = await f.service.call('assistant.status', { includeMemory: false });
+    return status.bot.error?.includes('cancelled');
+  });
+  let received = 0;
+  f.runner(async ({ invoke }) => {
+    received = (await invoke('InboxCheck')).items.length;
+    await invoke('Sleep');
+  });
+  await f.send('retry-wake', '继续');
+  await until(() => received === 2);
+  assert.equal(f.starts(), 2);
+});
+
+test('ambiguous submission and transient execution query failure reuse the durable wake', async (t) => {
+  const f = await fixture();
+  t.after(f.close);
+  f.loseSubmitResponse();
+  f.queueWake();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  f.runner(async ({ invoke }) => {
+    await gate;
+    await invoke('InboxCheck');
+    await invoke('Sleep');
+  });
+  await f.send('ambiguous-wake', '继续处理');
+  await until(() => f.starts() === 1);
+  f.failQueries(1);
+  await f.send('while-waiting', '补充信息');
+  await new Promise((resolve) => setTimeout(resolve, 2200));
+  assert.equal(f.submittedIds.length, 1);
+  release();
+  await until(async () => {
+    const status: any = await f.service.call('assistant.status', { includeMemory: false });
+    return status.bot.sleeping;
+  });
+  assert.equal(f.starts(), 1);
+});
+
+test('restart reconciles a persisted queued wake without resubmitting or reading transcript', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'bot-wake-recovery-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  let store = new BotStore(dir);
+  const binding = { fence() {}, get: () => ({ sessionId: 'owner', cwd: dir }) } as any;
+  let state = 'not_admitted';
+  let submissions = 0;
+  let queries = 0;
+  let controller: BotController;
+  const agent = {
+    snapshot: async () => ({ agent: { status: 'idle' } }),
+    followup: async (_text: string, options: { messageId: string }) => {
+      assert.equal(options.messageId, store.get<any>('wake').messageId);
+      submissions++;
+      state = 'pending';
+      return { disposition: 'followup' };
+    },
+    messageExecution: async (messageId: string) => {
+      queries++;
+      return { messageId, state };
+    },
+    whenIdle: async () => {
+      assert.equal(controller.checkInbox('recovered', 50).items.length, 2);
+      controller.sleep('recovered-turn');
+      assert.equal(controller.beforeFinish('recovered-turn').allow, true);
+    },
+    cancel: async () => {},
+    transcript: async () => {
+      throw Error('must not scan transcript');
+    },
+  };
+  const ctx = {
+    agents: {
+      withInvocation: async (_: unknown, fn: () => unknown) => fn(),
+      resume: async () => agent,
+    },
+  } as any;
+  store.set('worker', 'worker');
+  store.post({ id: 'first', type: 'user_message', source: 'user', content: 'first' });
+  controller = new BotController(ctx, binding, store);
+  controller.start();
+  await until(() => submissions === 1);
+  const wake = store.get('wake');
+  await controller.close();
+  store.close();
+  store = new BotStore(dir);
+  store.post({ id: 'second', type: 'user_message', source: 'user', content: 'second' });
+  assert.deepEqual(store.get('wake'), wake);
+  state = 'owned';
+  controller = new BotController(ctx, binding, store);
+  t.after(async () => {
+    await controller.close();
+    store.close();
+  });
+  controller.start();
+  await until(() => controller.isSleeping());
+  assert.equal(submissions, 1);
+  assert.ok(queries >= 2);
+  assert.equal(store.get('wake'), null);
+  assert.equal(store.get('error') ?? null, null);
+});
+
+test('a completed Sleep clears an ambiguous wake error without submitting again', async (t) => {
+  const f = await fixture();
+  t.after(f.close);
+  f.loseSubmitResponse();
+  await f.send('quick-completion', '不用回复');
+  await until(async () => {
+    const status: any = await f.service.call('assistant.status', { includeMemory: false });
+    return status.bot.sleeping && status.bot.wakeError === null;
+  });
+  assert.equal(f.starts(), 1);
 });

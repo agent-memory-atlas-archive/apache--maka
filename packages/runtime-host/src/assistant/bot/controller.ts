@@ -162,11 +162,12 @@ export class BotController {
   }
   private async run() {
     await this.flush();
-    if (
-      this.store.get('error') ||
-      this.store.head() <= (this.store.get<number>('deliveredThrough') ?? 0)
-    )
+    if (this.store.get('error')) return;
+    if (this.store.head() <= (this.store.get<number>('deliveredThrough') ?? 0)) {
+      this.store.set('wake', null);
+      this.store.set('wakeError', null);
       return;
+    }
     // Commit delivery only at a normal Sleep boundary. An interrupted loop may
     // replay mail, but cannot lose it between a tool return and durable history.
     this.deliveredThrough = this.store.get<number>('deliveredThrough') ?? 0;
@@ -177,23 +178,59 @@ export class BotController {
       const status = ((await agent.snapshot()) as any)?.agent?.status;
       if (['blocked', 'waiting_for_user'].includes(status))
         throw Error('Bot requires attention in its worker Session');
-      if (status !== 'running') {
-        this.store.set('sleepTurn', null);
-        const wakeId = randomUUID();
-        const admitted: any = await agent.followup(
-          `Inbox 有新消息。唤醒 ID：${wakeId}。当前 UTC 时间：${new Date().toISOString()}。用 InboxCheck 批量接收新消息正文，自主决定如何处理；不需要轮询。`,
-        );
-        if (!['turn_started', 'followup'].includes(admitted?.disposition))
-          throw Error('Bot wake was not admitted');
-        // A queued wake is not complete until its message entered the worker history.
-        while (
-          admitted.disposition === 'followup' &&
-          !JSON.stringify(await agent.transcript()).includes(wakeId)
-        )
-          await delay(25, undefined, { signal: this.abort.signal });
+      let wake = this.store.get<{ messageId: string; text: string }>('wake');
+      if (wake || status !== 'running') {
+        if (!wake) {
+          this.store.set('sleepTurn', null);
+          wake = {
+            messageId: randomUUID(),
+            text: `Inbox 有新消息。当前 UTC 时间：${new Date().toISOString()}。用 InboxCheck 批量接收新消息正文，自主决定如何处理；不需要轮询。`,
+          };
+          // Persist before submission: an ambiguous response must not create another wake.
+          this.store.set('wake', wake);
+        }
+        for (;;) {
+          this.ready();
+          let resolution: any;
+          try {
+            resolution = await agent.messageExecution(wake.messageId);
+            if (resolution?.state === 'not_admitted') {
+              const admitted: any = await agent.followup(wake.text, { messageId: wake.messageId });
+              if (!['turn_started', 'followup'].includes(admitted?.disposition))
+                throw Error('Bot wake was not admitted');
+              if (admitted.disposition === 'turn_started') {
+                this.store.set('wakeError', null);
+                break;
+              }
+            }
+          } catch (error) {
+            // Retry reconciliation on the next scheduler tick, keeping the submission identity.
+            this.store.set('wakeError', String(error));
+            return;
+          }
+          this.store.set('wakeError', null);
+          if (resolution?.state === 'owned') break;
+          if (resolution?.state === 'cancelled') {
+            this.store.set('wake', null);
+            throw Error('Bot wake was cancelled; Inbox is preserved');
+          }
+          if (!['pending', 'not_admitted'].includes(resolution?.state))
+            throw Error('Unexpected Bot wake execution state: ' + resolution?.state);
+          await delay(1000, undefined, { signal: this.abort.signal });
+        }
       }
-      await agent.whenIdle(this.abort.signal);
+      try {
+        await agent.whenIdle(this.abort.signal);
+      } catch (error) {
+        // A failed execution is terminal; a failed observation is not.
+        if (!this.abort.signal.aborted) {
+          const stopped = ((await agent.snapshot()) as any)?.agent?.status;
+          if (['active', 'idle', 'aborted'].includes(stopped)) this.store.set('wake', null);
+        }
+        throw error;
+      }
       const finalStatus = ((await agent.snapshot()) as any)?.agent?.status;
+      this.store.set('wake', null);
       if (['aborted', 'blocked', 'waiting_for_user'].includes(finalStatus))
         throw Error('Bot stopped: ' + finalStatus);
       if (!this.store.get('sleepTurn'))

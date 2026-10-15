@@ -54,6 +54,7 @@ export function initializeBot(
     status: () => ({
       sessionId: bot.worker() ?? null,
       error: store.get('error') ?? null,
+      wakeError: store.get('wakeError') ?? null,
       sleeping: bot.isSleeping(),
     }),
     receive: (id, content) => bot.receive(id, content),

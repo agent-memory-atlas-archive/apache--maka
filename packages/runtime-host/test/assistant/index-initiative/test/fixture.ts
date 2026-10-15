@@ -103,6 +103,10 @@ export async function fixture(options: any = {}) {
       return { id, sessionId: id, root: false };
     },
     resume: async ({ sessionId }: any) => ({ id: sessionId, sessionId, root: false }),
+    messageExecution: async (id: string, messageId: string) => ({
+      messageId,
+      state: workers.get(id)?.executions?.get(messageId) ?? 'not_admitted',
+    }),
     inbox: async () => [],
     transcript: async (id: string) => workers.get(id)?.transcript ?? [],
     snapshot: async (id: string) => ({
@@ -128,12 +132,20 @@ export async function fixture(options: any = {}) {
         signal?.removeEventListener('abort', onAbort);
       }
     },
-    followup: async (id: string, prompt: string) => {
+    followup: async (
+      id: string,
+      prompt: string,
+      _invocation: unknown,
+      options?: { messageId: string },
+    ) => {
       const w = workers.get(id),
         turnId = randomUUID();
+      const messageId = options?.messageId ?? randomUUID();
+      (w.executions ??= new Map()).set(messageId, 'pending');
       w.status = queued ? 'idle' : 'running';
       w.task = (async () => {
         await beforeRun?.(prompt);
+        w.executions.set(messageId, 'owned');
         w.status = 'running';
         (w.transcript ??= []).push({ role: 'user', text: prompt });
         const invoke = (name: string, input: any) => invokeAs(id, name, input, turnId);
