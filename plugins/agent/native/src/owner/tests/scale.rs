@@ -433,3 +433,6 @@ async fn real_host_agent_scale() {
         .unwrap();
     println!("MAKA_AGENT_SCALE {result}");
 }
+
+#[path = "scale/flowing.rs"]
+mod flowing;

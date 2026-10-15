@@ -37,19 +37,32 @@ parser.add_argument("--binary", type=Path, required=True)
 parser.add_argument("--agents", type=int, nargs="+", default=[10, 100, 1000])
 parser.add_argument("--output", type=Path, default=Path("/tmp/maka-agent-memory"))
 parser.add_argument("--stacks", action="store_true")
+parser.add_argument("--scenario", choices=["barrier", "flowing"], default="barrier")
+parser.add_argument("--waves", type=int, default=5)
+parser.add_argument("--mixed", action="store_true")
 parser.add_argument("--prompt-bytes", type=int)
 parser.add_argument("--delta-bytes", type=int)
 parser.add_argument("--deltas", type=int, default=32)
 args = parser.parse_args()
-if platform.system() != "Darwin" or min(args.agents + [args.deltas] + [n for n in (args.prompt_bytes, args.delta_bytes) if n is not None]) < 1:
+if platform.system() != "Darwin" or min(args.agents + [args.deltas, args.waves] + [n for n in (args.prompt_bytes, args.delta_bytes) if n is not None]) < 1:
     parser.error("macOS and positive agent counts are required")
+if args.scenario == "barrier" and args.mixed:
+    parser.error("--mixed requires --scenario flowing")
+if args.scenario == "flowing" and (args.prompt_bytes is not None or args.delta_bytes is not None):
+    parser.error("flowing uses fixed light sizes or the deterministic --mixed distribution")
+test = "owner::tests::scale::real_host_agent_scale" if args.scenario == "barrier" else "owner::tests::scale::flowing::real_host_agent_memory"
 args.output.mkdir(parents=True, exist_ok=True)
 report = {
     "machine": platform.platform(),
     "binary": str(args.binary.resolve()),
     "binary_sha256": hashlib.file_digest(args.binary.open("rb"), "sha256").hexdigest(),
     "allocator_tracing": args.stacks,
-    "workload": {"prompt_bytes": args.prompt_bytes or 5, "delta_bytes": args.delta_bytes or 6, "deltas": args.deltas},
+    "workload": {
+        "prompt_bytes": ([1024, 8192, 65536, 262144] if args.mixed else 32) if args.scenario == "flowing" else args.prompt_bytes or 5,
+        "delta_bytes": ([16, 256, 2048, 8192] if args.mixed else 6) if args.scenario == "flowing" else args.delta_bytes or 6,
+        "deltas": args.deltas, "scenario": args.scenario,
+        "waves": args.waves if args.scenario == "flowing" else 1, "mixed": args.mixed,
+    },
     "scope": "whole process, including the local HTTP fixture; lifecycle pauses invalidate timing metrics",
     "runs": [],
 }
@@ -67,6 +80,12 @@ for count in args.agents:
         env.pop(name, None)
         if value is not None:
             env[name] = str(value)
+    for name in ("MAKA_SCALE_WAVES", "MAKA_SCALE_MIXED", "MallocStackLoggingNoCompact"):
+        env.pop(name, None)
+    if args.scenario == "flowing":
+        env["MAKA_SCALE_WAVES"] = str(args.waves)
+        if args.mixed:
+            env["MAKA_SCALE_MIXED"] = "1"
     env.pop("MallocStackLogging", None)
     if args.stacks:
         env["MallocStackLogging"] = "1"
@@ -74,7 +93,7 @@ for count in args.agents:
     report["runs"].append(row)
     with (folder / "stdout.log").open("w") as stdout, (folder / "stderr.log").open("w") as stderr:
         process = subprocess.Popen(
-            [str(args.binary.resolve()), "owner::tests::scale::real_host_agent_scale", "--ignored", "--exact", "--nocapture", "--test-threads=1"],
+            [str(args.binary.resolve()), test, "--ignored", "--exact", "--nocapture", "--test-threads=1"],
             env=env, stdin=subprocess.PIPE, stdout=stdout, stderr=subprocess.PIPE,
             text=True, bufsize=1,
         )
@@ -93,7 +112,7 @@ for count in args.agents:
                     ("vmmap", ["vmmap", "-summary", str(process.pid)]),
                     ("heap", ["heap", "-s", "--noContent", str(process.pid)]),
                 ]
-                if args.stacks and phase in ("all_active", "output_settled", "dropped"):
+                if args.stacks and phase.endswith(("all_active", "all_admitted", "output_settled", "dropped")):
                     commands.append(("stacks", ["malloc_history", str(process.pid), "-callTree", "-invert", "-ignoreThreads", "-noContent", "-consolidateAllBySymbol"]))
                 for name, command in commands:
                     destination = folder / f"{phase}-{name}.txt"
