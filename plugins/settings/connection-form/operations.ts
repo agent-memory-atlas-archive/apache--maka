@@ -45,7 +45,7 @@ export function request(
   resources: Action['resources'] = {},
 ) {
   const key = 'connection-form-' + ++state.serial;
-  if (r.kind === 'providers') state.providersFailed = false;
+  if (r.kind === 'providers' || r.kind === 'provider') state.providersFailed = false;
   state.pending[key] = r;
   actions.push({ key, binding, member: 0, method, input, resources });
 }

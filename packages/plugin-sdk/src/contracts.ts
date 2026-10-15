@@ -38632,9 +38632,8 @@ export const contracts = {
               providers: {
                 type: 'array',
                 items: {
-                  $ref: '#/$defs/SettingsProvider',
+                  $ref: '#/$defs/SettingsProviderSummary',
                 },
-                maxItems: 8,
               },
               next: {
                 type: ['integer', 'null'],
@@ -38645,18 +38644,24 @@ export const contracts = {
             additionalProperties: false,
             required: ['providers', 'next'],
             $defs: {
-              SettingsProvider: {
+              SettingsProviderSummary: {
                 type: 'object',
                 properties: {
                   identity: {
                     $ref: '#/$defs/Identity',
                   },
-                  descriptor: {
-                    $ref: '#/$defs/Descriptor',
+                  label: {
+                    type: 'string',
+                  },
+                  authentication: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/SettingsProviderAuthenticationSummary',
+                    },
                   },
                 },
                 additionalProperties: false,
-                required: ['identity', 'descriptor'],
+                required: ['identity', 'label', 'authentication'],
               },
               Identity: {
                 description:
@@ -38679,64 +38684,18 @@ export const contracts = {
                 additionalProperties: false,
                 required: ['packageId', 'entryId', 'scope', 'name'],
               },
-              Descriptor: {
+              SettingsProviderAuthenticationSummary: {
                 type: 'object',
                 properties: {
                   label: {
                     type: 'string',
-                  },
-                  customEndpoint: {
-                    description: 'Offers a user-selected endpoint instead of a named service.',
-                    type: 'boolean',
-                    default: false,
-                  },
-                  configurationSchema: true,
-                  configurationDefaults: true,
-                  authentication: {
-                    type: 'array',
-                    items: {
-                      $ref: '#/$defs/Method',
-                    },
-                  },
-                  anonymous: {
-                    description:
-                      "Whether the provider supports a connection without a stored credential.\nPresentation metadata; authorization remains the provider's decision.",
-                    type: 'boolean',
-                  },
-                  discovery: {
-                    type: 'boolean',
-                  },
-                },
-                additionalProperties: false,
-                required: [
-                  'label',
-                  'customEndpoint',
-                  'configurationSchema',
-                  'configurationDefaults',
-                  'authentication',
-                  'anonymous',
-                  'discovery',
-                ],
-              },
-              Method: {
-                type: 'object',
-                properties: {
-                  id: {
-                    type: 'string',
-                  },
-                  label: {
-                    type: 'string',
-                  },
-                  inputSchema: {
-                    description:
-                      'Secret-bearing form input never enters the connection configuration.',
                   },
                   interactive: {
                     type: 'boolean',
                   },
                 },
                 additionalProperties: false,
-                required: ['id', 'label', 'inputSchema', 'interactive'],
+                required: ['label', 'interactive'],
               },
             },
           },

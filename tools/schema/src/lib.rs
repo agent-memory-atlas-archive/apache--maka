@@ -205,6 +205,7 @@ pub fn catalog() -> Value {
         root::<maka_settings_native::contract::ConnectionDetail>(&mut g),
         root::<maka_settings_native::contract::ProvidersRead>(&mut g),
         root::<maka_settings_native::contract::ProvidersPage>(&mut g),
+        root::<maka_settings_native::contract::Provider>(&mut g),
         root::<maka_settings_native::contract::LoginCredential>(&mut g),
         root::<maka_settings_native::contract::LoginPrompt>(&mut g),
         root::<maka_settings_native::contract::CredentialLoginResult>(&mut g),

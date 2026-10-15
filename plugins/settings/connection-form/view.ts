@@ -62,7 +62,9 @@ export function frame<N extends Node>(
   const ui = presentation.paint(props.theme),
     text = copy(props.locale);
   const locked = busy(state);
-  const loadingProviders = Object.values(state.pending).some((r) => r.kind === 'providers');
+  const loadingProviders = Object.values(state.pending).some(
+    (r) => r.kind === 'providers' || r.kind === 'provider',
+  );
   const identity: Identity | undefined =
     state.baseline?.target.provider ?? state.provider?.identity;
 
@@ -71,6 +73,7 @@ export function frame<N extends Node>(
     { label: string; rows: { provider: (typeof state.providers)[number]; at: number }[] }
   >();
   state.providers.forEach((provider, at) => {
+    if (state.provider || state.baseline) return;
     if (!matchesProvider(state.search, provider)) return;
     const group = providerGroup(provider);
     if (!groups.has(group.key))
@@ -101,7 +104,7 @@ export function frame<N extends Node>(
                   'provider-' + at,
                   ui.text(
                     'provider-label-' + at,
-                    (group.rows.length > 1 ? '  ' : '') + provider.descriptor.label,
+                    (group.rows.length > 1 ? '  ' : '') + provider.label,
                     14,
                     props.theme.text,
                     400,
@@ -111,7 +114,7 @@ export function frame<N extends Node>(
                   locked,
                   { followFocus: true, submit: true },
                 )
-              : ui.button('provider-' + at, provider.descriptor.label, locked),
+              : ui.button('provider-' + at, provider.label, locked),
           )
         : []),
     ];

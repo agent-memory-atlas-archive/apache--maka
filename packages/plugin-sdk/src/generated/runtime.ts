@@ -184,6 +184,7 @@ export type RuntimeProtocol =
   | SettingsConnectionDetail
   | SettingsProvidersRead
   | SettingsProvidersPage
+  | SettingsProvider
   | SettingsCredentialLogin
   | SettingsLoginPrompt
   | SettingsCredentialLoginResult
@@ -8344,44 +8345,17 @@ export interface SettingsProvidersRead {
   offset: number;
 }
 export interface SettingsProvidersPage {
-  /**
-   * @maxItems 8
-   */
-  providers:
-    | []
-    | [SettingsProvider]
-    | [SettingsProvider, SettingsProvider]
-    | [SettingsProvider, SettingsProvider, SettingsProvider]
-    | [SettingsProvider, SettingsProvider, SettingsProvider, SettingsProvider]
-    | [SettingsProvider, SettingsProvider, SettingsProvider, SettingsProvider, SettingsProvider]
-    | [
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-      ]
-    | [
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-      ]
-    | [
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-      ];
+  providers: SettingsProviderSummary[];
   next: number | null;
+}
+export interface SettingsProviderSummary {
+  identity: Identity;
+  label: string;
+  authentication: SettingsProviderAuthenticationSummary[];
+}
+export interface SettingsProviderAuthenticationSummary {
+  label: string;
+  interactive: boolean;
 }
 export interface SettingsProvider {
   identity: Identity;

@@ -441,6 +441,7 @@ function settingsComposition(
         {
           reading: [local('reading-area', 'ReadingArea')],
           settings: [remote('settings', 'Settings')],
+          authentication: [remote('settings-authentication', 'Authentication')],
           input: [local('input', 'TextInput')],
           editor: [local('editor', 'Textarea')],
           reader: [local('reader', 'Reader')],

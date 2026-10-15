@@ -286,7 +286,7 @@ async fn chatgpt_login_saves_privately_and_rejects_cancelled_or_changed_connecti
 }
 
 #[test]
-fn compiled_catalog_includes_chatgpt_and_still_bounds_provider_pages() {
+fn compiled_catalog_projects_search_metadata_and_resolves_selected_provider() {
     let mut offset = 0;
     let mut found = false;
     let mut count = 0;
@@ -294,14 +294,24 @@ fn compiled_catalog_includes_chatgpt_and_still_bounds_provider_pages() {
     loop {
         let page = connections::providers(json!({"offset":offset})).unwrap();
         let rows = page["providers"].as_array().unwrap();
-        assert!(rows.len() <= 8);
+        assert!(page.to_string().len() <= 128 * 1024);
         count += rows.len();
         bytes += page.to_string().len();
         for row in rows {
             if row["identity"]["packageId"] == "maka.codex" {
                 found = true;
-                assert_eq!(row["descriptor"]["label"], "ChatGPT Subscription");
-                assert_eq!(row["descriptor"]["authentication"][0]["interactive"], true);
+                assert_eq!(row["label"], "ChatGPT Subscription");
+                assert_eq!(row["authentication"][0]["interactive"], true);
+                assert!(row.get("descriptor").is_none());
+                let selected = connections::provider(row["identity"].clone()).unwrap();
+                assert_eq!(selected["identity"], row["identity"]);
+                assert_eq!(selected["descriptor"]["label"], "ChatGPT Subscription");
+                assert_eq!(selected["descriptor"]["authentication"][0]["id"], "chatgpt");
+                assert!(selected["descriptor"]["configurationSchema"].is_object());
+                assert_eq!(
+                    selected["descriptor"]["configurationDefaults"]["baseUrl"],
+                    "https://chatgpt.com/backend-api/codex"
+                );
             }
         }
         match page["next"].as_u64() {

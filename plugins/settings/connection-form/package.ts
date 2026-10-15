@@ -27,6 +27,7 @@ const entries = uiEntries({
   imports: {
     reading: one(sdk.contracts.readingArea),
     settings: one(sdk.contracts.settings),
+    authentication: one(sdk.contracts.settingsAuthentication),
     input: one(sdk.contracts.textInput),
     editor: one(sdk.contracts.textarea),
     reader: one(sdk.contracts.textReader),

@@ -228,10 +228,24 @@ pub struct Provider {
 }
 #[derive(Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(rename = "SettingsProviderAuthenticationSummary")]
+pub struct ProviderAuthenticationSummary {
+    pub label: String,
+    pub interactive: bool,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "SettingsProviderSummary")]
+pub struct ProviderSummary {
+    pub identity: maka_agent_facts::provider::Identity,
+    pub label: String,
+    pub authentication: Vec<ProviderAuthenticationSummary>,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 #[schemars(rename = "SettingsProvidersPage")]
 pub struct ProvidersPage {
-    #[schemars(length(max = 8))]
-    pub providers: Vec<Provider>,
+    pub providers: Vec<ProviderSummary>,
     #[schemars(with = "maka_plugin_core::wire_schema::RequiredNullable<usize>")]
     pub next: Option<usize>,
 }
