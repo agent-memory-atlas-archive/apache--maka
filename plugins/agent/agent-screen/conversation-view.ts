@@ -302,6 +302,7 @@ export function conversationView<N extends Node>(
     },
     {
       sent: 'sent',
+      submission: 'submission',
       setup: 'setup',
       readiness: 'readiness',
       restored: 'restored',
@@ -310,12 +311,13 @@ export function conversationView<N extends Node>(
       files: 'files',
     },
   );
+  const queued = (state.queue?.entries ?? []).filter((entry) => entry.kind !== 'in_flight');
   const queueProps: RowsProps = {
     terminal: theme.terminal,
-    entry: state.queue?.entries.at(-1)?.messageId ?? null,
+    entry: queued.at(-1)?.messageId ?? null,
     revision: state.queue?.revision ?? 0,
-    rows: (state.queue?.entries ?? []).map((entry): RowsProps['rows'][number] => {
-      const lane = state.queue!.entries.filter((row) => row.kind === entry.kind);
+    rows: queued.map((entry): RowsProps['rows'][number] => {
+      const lane = queued.filter((row) => row.kind === entry.kind);
       const index = lane.findIndex((row) => row.messageId === entry.messageId);
       const enabled = !busy && !executionPending(state);
       const up = {
@@ -336,23 +338,21 @@ export function conversationView<N extends Node>(
       };
       return {
         key: entry.messageId,
-        text: `${tuiText(locale, entry.kind === 'steering' ? 'task-steering' : entry.kind === 'in_flight' ? 'task-current' : 'task-followup')} · ${entry.preview}`,
+        text: `${tuiText(locale, entry.kind === 'steering' ? 'task-steering' : 'task-followup')} · ${entry.preview}`,
         actions:
-          entry.kind === 'in_flight'
-            ? []
-            : entry.kind === 'followup'
-              ? [
-                  {
-                    key: 'promote',
-                    label: theme.ascii ? '^' : '↗',
-                    enabled: enabled && !!state.run,
-                  },
-                  up,
-                  down,
-                  edit,
-                  retract,
-                ]
-              : [up, down, edit, retract],
+          entry.kind === 'followup'
+            ? [
+                {
+                  key: 'promote',
+                  label: theme.ascii ? '^' : '↗',
+                  enabled: enabled && !!state.run,
+                },
+                up,
+                down,
+                edit,
+                retract,
+              ]
+            : [up, down, edit, retract],
       };
     }),
     shortcuts: [
@@ -483,6 +483,7 @@ export function conversationView<N extends Node>(
     !state.window.page.before &&
     !state.window.page.after &&
     !state.live.length &&
+    !state.visits.find((entry) => entry.id === state.selected?.id)?.submissions?.length &&
     !state.run &&
     !state.source &&
     !state.image &&

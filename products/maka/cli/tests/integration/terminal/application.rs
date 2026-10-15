@@ -20,6 +20,7 @@
 use super::{AsRawFd, Command, Pty};
 use local_fixture::counter as fixture;
 use maka_plugin_core::composition::PresentationTarget;
+use std::time::{Duration, Instant};
 fn packages(directory: &std::path::Path, poisoned: bool) -> Vec<String> {
     let (mut input, mut packages) =
         fixture::dual_fixture("return frame({count:state.count+1,revision:state.revision+1});");
@@ -124,6 +125,24 @@ fn plugin_application_uses_actual_foreground_transactions_and_restores_the_real_
     tui.wait_for("Increment");
     tui.send(b"\r");
     tui.wait_until(|screen| screen.lines().any(|line| line.trim() == "1"));
+    tui.send(b"\x03");
+    let expired = Instant::now() + Duration::from_millis(2100);
+    while Instant::now() < expired {
+        tui.read();
+        assert!(
+            tui.child.try_wait().unwrap().is_none(),
+            "first interrupt must not quit on timeout"
+        );
+    }
+    tui.send(b"\x03");
+    let armed = Instant::now() + Duration::from_millis(100);
+    while Instant::now() < armed {
+        tui.read();
+        assert!(
+            tui.child.try_wait().unwrap().is_none(),
+            "expired press must start a new window"
+        );
+    }
     tui.send(b"\x03");
     tui.finish();
     let mut termios = unsafe { std::mem::zeroed::<libc::termios>() };
@@ -326,7 +345,7 @@ fn check_terminal_connections(unrelated_failure: bool) {
     tui.wait_for("\"effects\":1");
     tui.send(b"\t\r");
     tui.wait_for("Original receipt recorded");
-    tui.send(b"\x03");
+    tui.send(b"\x11");
     tui.finish();
     let ns = maka_event_log::root::RootNamespaces::for_current_account().unwrap();
     drop(maka_event_log::root::RootOwner::open(&directory.path().join("caller"), &ns).unwrap());
@@ -404,6 +423,6 @@ fn bundled_authoring_starter_generates_checked_presenters_and_runs_native_counte
     tui.wait_for("Count 1");
     tui.send(b"\r");
     tui.wait_for("Count 2");
-    tui.send(b"\x03");
+    tui.send(b"\x11");
     tui.finish();
 }

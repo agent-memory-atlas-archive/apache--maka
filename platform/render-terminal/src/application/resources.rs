@@ -552,8 +552,9 @@ impl Resources {
     pub fn copy(
         &mut self,
         target: &paint::TargetIdentity,
+        selection_only: bool,
     ) -> maka_ui_runtime::Result<Option<String>> {
-        self.read_native(target, |recipe, state| recipe.copy(state))?
+        self.read_native(target, |recipe, state| recipe.copy(state, selection_only))?
             .unwrap_or(Ok(None))
     }
     pub fn present_focus(&mut self, target: &paint::TargetIdentity) -> bool {

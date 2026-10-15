@@ -623,14 +623,22 @@ export function timeline<N extends Node>(
               {
                 source: message.text,
                 focusOnPointer: !search,
-                appearance: props.theme.markdown.body,
+                appearance: message.pending
+                  ? { ...props.theme.markdown.body, foreground: props.theme.muted }
+                  : props.theme.markdown.body,
                 selection: props.theme.markdown.selection,
-                terminal: props.theme.terminal,
+                terminal:
+                  message.pending && props.theme.terminal
+                    ? { ...props.theme.terminal, foreground: props.theme.terminal.muted }
+                    : props.theme.terminal,
                 disabled: false,
               },
               {},
             );
-      const messageNode = messageView(presentation, target, props.theme, props.locale, {
+      const messageTheme = message.pending
+        ? { ...props.theme, accent: props.theme.muted, text: props.theme.muted }
+        : props.theme;
+      const messageNode = messageView(presentation, target, messageTheme, props.locale, {
         ...message,
         browse: browsing
           ? { key: 'browse-' + message.id, current: browsing.id === message.id }

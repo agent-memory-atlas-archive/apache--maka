@@ -284,7 +284,7 @@ fn executor_selection_and_composer_reach_production_timeline_before_backend_comp
         .unwrap();
         std::fs::write(Path::new(&path).join("terminal.ansi"), &tui.output).unwrap();
     }
-    tui.send(b"\x03");
+    tui.send(b"\x11");
     tui.finish();
     drop(RootOwner::open(&agent_root, &ns).unwrap());
 }

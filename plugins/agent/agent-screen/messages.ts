@@ -138,8 +138,8 @@ function chunkId(chunk: NonNullable<State['window']>['page']['chunks'][number]) 
   );
 }
 
-export function messages(state: State): Message[] {
-  const canonical: Message[] = (state.window?.page.chunks ?? []).map((chunk) => ({
+function historyMessage(chunk: NonNullable<State['window']>['page']['chunks'][number]): Message {
+  return {
     id: chunkId(chunk),
     contentKey: 'body-' + chunkId(chunk),
     role: chunk.field === 'thinking' ? 'thinking' : chunk.role,
@@ -149,8 +149,35 @@ export function messages(state: State): Message[] {
     continued: chunk.offset !== 0 || utf8Bytes(chunk.text) !== chunk.totalBytes,
     source: chunk.sequence,
     image: chunk.tool?.result?.image ?? false,
+  };
+}
+
+export function messages(state: State): Message[] {
+  const visit = state.visits.find((entry) => entry.id === state.selected?.id);
+  const chunks = state.window?.page.chunks ?? [];
+  if (visit?.submissions)
+    visit.submissions = visit.submissions.filter(
+      (entry) => !entry.messageId || !chunks.some((chunk) => chunk.messageId === entry.messageId),
+    );
+  const submissions = visit?.submissions ?? [];
+  const canonical = chunks.map(historyMessage);
+  const previews: Message[] = submissions.map((entry) => ({
+    id: 'submission-' + entry.key,
+    contentKey: 'submission-' + entry.key,
+    role: 'user',
+    timestamp: null,
+    text: [entry.text, ...entry.attachmentNames]
+      .filter(Boolean)
+      .join('\n')
+      .slice(0, 24000)
+      .replace(/[\uD800-\uDBFF]$/u, ''),
+    tool: null,
+    continued: false,
+    source: null,
+    image: false,
+    pending: entry.status !== 'accepted',
   }));
-  if (!state.window?.latest) return canonical;
+  if (!state.window?.latest) return [...canonical, ...previews];
   const live = new Map<string, Message>();
   for (const fragment of state.live) {
     if (
@@ -180,7 +207,7 @@ export function messages(state: State): Message[] {
     }
     message.text += fragment.text;
   }
-  return [...canonical, ...live.values()];
+  return [...canonical, ...previews, ...live.values()];
 }
 
 export function turnTimings(state: State, displayed: Message[]): TimelineProps['timings'] {
@@ -222,9 +249,7 @@ export function rememberActivity(state: State, page: NonNullable<State['window']
     .filter((entry) => entry.turnId === turnId && entry.role !== 'user')
     .at(-1);
   const sequence = chunk?.sequence ?? 0;
-  const message = chunk
-    ? messages({ ...state, window: { page: { ...page, chunks: [chunk] }, latest: false } })[0]!
-    : null;
+  const message = chunk ? historyMessage(chunk) : null;
   visit.activity = {
     through: Math.max(page.through, previous?.through ?? 0),
     sequence: Math.max(sequence, previous?.sequence ?? 0),

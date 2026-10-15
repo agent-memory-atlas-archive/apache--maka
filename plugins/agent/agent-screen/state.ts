@@ -197,6 +197,9 @@ export function navigationKey(state: State): string {
 // Bounded visited workspaces keep their original native reading owners. These
 // are presentation snapshots only; run, queue and permission facts are refreshed.
 export interface Visit {
+  submissions?: (import('../../shared/contracts.js').ComposerSubmission & {
+    attachmentNames: string[];
+  })[];
   detached?: boolean;
   activityWanted?: number;
   prompt?: { anchor: string; value: { source: number; text: string } | null };

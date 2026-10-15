@@ -307,7 +307,7 @@ fn executor_setup_shows_live_login_url_cancels_and_reads_original_receipt() {
         }
         std::fs::write(Path::new(&path).join("terminal.ansi"), &tui.output).unwrap();
     }
-    tui.send(b"\x03");
+    tui.send(b"\x11");
     tui.finish();
     runtime.block_on(async {
         let store = EventLog::for_root(Arc::new(RootOwner::open(&agent_root, &ns).unwrap()))

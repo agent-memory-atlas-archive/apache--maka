@@ -1822,3 +1822,74 @@ fn blocked_partial_output_keeps_written_geometry_and_native_input_until_the_next
     );
     close(&mut tui);
 }
+
+#[test]
+fn interrupt_clears_native_draft_before_yielding_to_exit_and_keeps_undo() {
+    let (_runtime, mut tui) = presenter();
+    draw(&mut tui, 80, 24);
+    tui.input_settled(Event::Key(KeyEvent::new(
+        KeyCode::Char('a'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    let mount = draft(&tui);
+    tui.input_settled(Event::Paste("draft to clear".into()))
+        .unwrap();
+    draw(&mut tui, 80, 24);
+    let interrupt = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    assert!(tui.dispatch_focused_shortcut(&interrupt).unwrap());
+    tui.settle().unwrap();
+    assert_eq!(
+        editor_owner(&*tui.resources.owners[&mount.id()].state)
+            .editor
+            .text(),
+        ""
+    );
+    assert_eq!(observation(&tui)["snapshot"]["text"]["bytes"], 0);
+    draw(&mut tui, 80, 24);
+    assert!(!tui.dispatch_focused_shortcut(&interrupt).unwrap());
+    tui.input_settled(Event::Key(KeyEvent::new(
+        KeyCode::Char('z'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    assert_eq!(
+        editor_owner(&*tui.resources.owners[&mount.id()].state)
+            .editor
+            .text(),
+        "draft to clear"
+    );
+    close(&mut tui);
+}
+
+#[test]
+fn primary_copy_requires_selection_and_preserves_the_draft() {
+    let (_runtime, mut tui) = presenter();
+    draw(&mut tui, 80, 24);
+    tui.input_settled(Event::Key(KeyEvent::new(
+        KeyCode::Char('a'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    tui.input_settled(Event::Paste("copy this".into())).unwrap();
+    draw(&mut tui, 80, 24);
+    let mut bytes = Vec::new();
+    assert!(!tui.copy_scope(&mut bytes, true).unwrap());
+    tui.input_settled(Event::Key(KeyEvent::new(
+        KeyCode::Char('a'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    assert!(tui.copy_scope(&mut bytes, true).unwrap());
+    let mut expected = Vec::new();
+    crate::terminal::copy(&mut expected, "copy this").unwrap();
+    assert_eq!(bytes, expected);
+    let mount = draft(&tui);
+    assert_eq!(
+        editor_owner(&*tui.resources.owners[&mount.id()].state)
+            .editor
+            .text(),
+        "copy this"
+    );
+    close(&mut tui);
+}

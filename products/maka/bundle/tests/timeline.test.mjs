@@ -423,3 +423,60 @@ test('prompt header follows the visible answer, yields to user rows, and never f
     'header is never copied or searched as transcript text',
   );
 });
+
+for (const target of ['tui', 'desktop']) {
+  test(`${target} pending user message uses muted text and normalizes on admission`, async () => {
+    const { component } = await import(`../dist/packages/timeline/${target}.js`);
+    const props = {
+      theme,
+      locale: 'en',
+      copyRequest: null,
+      browse: null,
+      timings: [],
+      markReadEnabled: false,
+      toolContext: null,
+      waitingTools: [],
+      liveTools: [],
+      source: null,
+      search: null,
+      loading: false,
+      older: false,
+      newer: false,
+      latest: false,
+      landing: { sequence: 0, edge: 'end' },
+      live: true,
+      messages: [
+        {
+          id: 'submission-send-1',
+          contentKey: 'submission-send-1',
+          role: 'user',
+          text: 'Hello',
+          timestamp: null,
+          source: null,
+          image: false,
+          continued: false,
+          tool: null,
+          pending: true,
+        },
+      ],
+    };
+    const nodes = (node) =>
+      node && typeof node === 'object'
+        ? [
+            node,
+            ...Object.values(node).flatMap((value) =>
+              Array.isArray(value) ? value.flatMap(nodes) : nodes(value),
+            ),
+          ]
+        : [];
+    let out = component.mount(props, {});
+    const source = () =>
+      nodes(out.frame.view).find((node) => node.key === 'text-submission-send-1');
+    assert.equal(source().props.appearance.foreground, theme.muted);
+    assert.equal(source().props.terminal.foreground, theme.terminal.muted);
+    props.messages[0].pending = false;
+    out = component.update(out.frame.state, props, {});
+    assert.equal(source().props.appearance.foreground, theme.markdown.body.foreground);
+    assert.equal(source().props.terminal.foreground, theme.terminal.foreground);
+  });
+}

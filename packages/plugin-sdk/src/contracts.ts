@@ -9428,13 +9428,16 @@ export const contracts = {
                   invocationId: {
                     type: 'string',
                   },
+                  messageId: {
+                    type: 'string',
+                  },
                   kind: {
                     type: 'string',
                     const: 'started',
                   },
                 },
                 additionalProperties: false,
-                required: ['kind', 'sessionId', 'invocationId'],
+                required: ['kind', 'sessionId', 'invocationId', 'messageId'],
               },
               {
                 type: 'object',
@@ -21083,13 +21086,16 @@ export const contracts = {
                   invocationId: {
                     type: 'string',
                   },
+                  messageId: {
+                    type: 'string',
+                  },
                   kind: {
                     type: 'string',
                     const: 'started',
                   },
                 },
                 additionalProperties: false,
-                required: ['kind', 'sessionId', 'invocationId'],
+                required: ['kind', 'sessionId', 'invocationId', 'messageId'],
               },
               {
                 type: 'object',

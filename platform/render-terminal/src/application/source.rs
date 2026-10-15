@@ -175,7 +175,7 @@ impl Widget for Recipe {
             && SelectionScope::active(&owner.document)
                 .is_some_and(|scope| scope.pointer_capture(&owner.document))
     }
-    fn copy(&self, state: &dyn Any) -> maka_ui_runtime::Result<Option<String>> {
+    fn copy(&self, state: &dyn Any, _: bool) -> maka_ui_runtime::Result<Option<String>> {
         let owner = state.downcast_ref::<Owner>().unwrap();
         let doc = owner.document.borrow();
         if !self.2

@@ -143,7 +143,7 @@ impl Presenter {
                 .clone()
                 .filter(|focus| self.target_admitted(focus))
         {
-            opening.selection = match self.resources.copy(&focus)? {
+            opening.selection = match self.resources.copy(&focus, false)? {
                 Some(text) => Some(text.into()),
                 None => self
                     .item_reading_scope(&focus)

@@ -1051,6 +1051,7 @@ impl Owner {
         Ok(crate::contract::SendResult::Started {
             session_id: invocation.session_id.clone(),
             invocation_id: invocation.invocation_id,
+            message_id: format!("m_{identity}"),
         })
     }
 }

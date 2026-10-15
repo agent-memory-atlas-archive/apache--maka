@@ -73,7 +73,14 @@ const scope = JSON.stringify([
   caller.caller.deployment,
   caller.consumer,
 ]);
-const returned = (value = { kind: 'started', sessionId: 'session', invocationId: 'run' }) => ({
+const returned = (
+  value = {
+    kind: 'started',
+    sessionId: 'session',
+    invocationId: 'run',
+    messageId: 'canonical-message',
+  },
+) => ({
   reference,
   receipt: {
     kind: 'recorded',
@@ -215,7 +222,16 @@ for (const target of ['tui', 'desktop']) {
       model: backend.model,
       thinkingLevel: null,
     });
-    assert.deepEqual(c.out.events, [], 'dispatch does not wait for any parent event');
+    assert.equal(c.out.events[0].name, 'submission');
+    assert.deepEqual(c.out.events[0].value, {
+      context: 'session',
+      dataSource,
+      attachments: [],
+      key: send.key,
+      text: 'hello',
+      status: 'pending',
+      messageId: null,
+    });
     assert.deepEqual(send.recovery, {
       format: 'maka.agent.draft-send@2',
       sessionId: 'session',
@@ -223,9 +239,12 @@ for (const target of ['tui', 'desktop']) {
       attachments: [],
     });
     c.reply({ status: 'operation', reply: returned(), caller });
-    assert.deepEqual(c.out.events, [
-      { name: 'sent', value: { context: 'session', dataSource, attachments: [] } },
-    ]);
+    assert.equal(c.out.events[0].value.status, 'accepted');
+    assert.equal(c.out.events[0].value.messageId, 'canonical-message');
+    assert.deepEqual(
+      c.out.events.filter((event) => event.name === 'sent'),
+      [{ name: 'sent', value: { context: 'session', dataSource, attachments: [] } }],
+    );
     assert.equal(c.editor().command.owner, 'editor');
     assert.equal(
       c.editor().persistence.metadata.historyAfter,
@@ -287,7 +306,7 @@ for (const target of ['tui', 'desktop']) {
     assert.equal(c.editor().command, null);
     assert.equal(c.editor().persistence.metadata.historyAfter, 0);
     assert.equal(c.state.entries[0].notice, 'skillInputUnavailable');
-    assert.deepEqual(c.out.events, []);
+    assert.equal(c.out.events[0].value.status, 'removed');
     c.emit('submitted', observed(text));
     assert.equal(c.out.actions[0].binding, 'reader');
     c.reply({ status: 'failed', reason: 'capture retired' });
@@ -441,5 +460,45 @@ for (const target of ['tui', 'desktop']) {
     assert.deepEqual(invalid.out.actions, []);
     assert.equal(invalid.editor().persistence.restore, null);
     assert.equal(invalid.state.records[0].work.status, 'failed');
+  });
+}
+
+for (const target of ['tui', 'desktop']) {
+  test(`${target} pending submissions settle only on original admission`, async () => {
+    const c = await client(target);
+    c.ready();
+    c.send();
+    const pending = c.out.events.find((event) => event.name === 'submission').value;
+    assert.equal(pending.status, 'pending');
+    c.reply({ status: 'failed', reason: 'offline' });
+    assert.equal(c.out.events[0].value.status, 'removed');
+    assert.equal(c.editor().command, null);
+    c.send();
+    c.reply({
+      status: 'operation',
+      caller,
+      reply: { reference, receipt: { kind: 'unavailable', diagnostic: 'unknown' } },
+    });
+    assert.equal(c.out.events[0].value.status, 'unknown');
+    assert.equal(
+      c.out.events.some((event) => event.name === 'sent'),
+      false,
+    );
+    assert.equal(c.editor().command, null);
+    c.raw('draft-retry');
+    c.reply({
+      status: 'succeeded',
+      value: returned({
+        kind: 'queued',
+        sessionId: 'session',
+        messageId: 'queued-message',
+        revision: 1,
+      }),
+    });
+    assert.equal(c.out.events[0].value.status, 'removed');
+    assert.equal(
+      c.out.events.some((event) => event.name === 'sent'),
+      true,
+    );
   });
 }

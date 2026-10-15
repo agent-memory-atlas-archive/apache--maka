@@ -446,6 +446,16 @@ impl Editor {
             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
         if control {
             match key.code {
+                KeyCode::Char('c' | 'C')
+                    if !self.single_line
+                        && key.modifiers == KeyModifiers::CONTROL
+                        && !self.text.is_empty() =>
+                {
+                    if key.kind == crossterm::event::KeyEventKind::Press {
+                        self.clear();
+                    }
+                    return true;
+                }
                 KeyCode::Char('j')
                     if !self.single_line && key.modifiers == KeyModifiers::CONTROL =>
                 {

@@ -1003,6 +1003,11 @@ fn declared_tab_and_interrupt_keep_original_focus_and_cannot_run_after_hiding() 
     assert!(!tui.captures_keyboard().unwrap());
     assert!(tui.dispatch_focused_shortcut(&interrupt).unwrap());
     tui.settle().unwrap();
+    assert_eq!(tui.application.frame(&child).unwrap().state["commands"], 3);
+    // The original nonempty textarea consumes the first interrupt as an edit.
+    draw(&mut tui, 80, 24);
+    assert!(tui.dispatch_focused_shortcut(&interrupt).unwrap());
+    tui.settle().unwrap();
     assert_eq!(tui.application.frame(&child).unwrap().state["commands"], 4);
     draw(&mut tui, 80, 24);
     let quit = Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL));

@@ -1063,3 +1063,210 @@ test('footer sandbox changes use the current revision and settle the original re
   assert.equal(c.action('metadata').input.expectedRevision, 2);
   assert.equal(c.action('metadata').input.permissions.settings.access, 'read_only');
 });
+
+const submission = (context, extra = {}) => ({
+  context,
+  dataSource,
+  key: 'send-2',
+  text: 'same text',
+  attachments: [],
+  status: 'pending',
+  messageId: null,
+  ...extra,
+});
+test('submitted history replaces the current-run queue notice while queued messages keep their actions', () => {
+  const c = client().observe(0).history(page(0, []));
+  c.state.queue = {
+    revision: 1,
+    entries: [
+      { messageId: 'next', kind: 'followup', preview: 'next message' },
+      { messageId: 'current', kind: 'in_flight', preview: 'same text' },
+    ],
+  };
+  c.child('composer', 'submission', submission(c.state.selected.id));
+  const queue = c.find('queue').props;
+  assert.equal(c.find(c.reader()).props.messages[0].pending, true);
+  assert.deepEqual(
+    queue.rows.map((row) => row.key),
+    ['next'],
+  );
+  assert.equal(queue.entry, 'next');
+  assert.ok(queue.rows[0].actions.some((action) => action.key === 'edit'));
+  c.state.queue.entries = c.state.queue.entries.filter((entry) => entry.kind === 'in_flight');
+  c.child('composer', 'submission', submission(c.state.selected.id));
+  assert.deepEqual(c.find('queue').props.rows, []);
+  assert.equal(c.find('queue').props.entry, null);
+});
+test('submitted message is muted until admission and reconciles by canonical identity, including overtaking history', () => {
+  const c = client()
+    .observe(1)
+    .history(page(1, [chunk(1, 'same text', { role: 'user' })]));
+  const id = c.state.selected.id;
+  c.child('composer', 'submission', submission(id));
+  let messages = c.find(c.reader()).props.messages;
+  assert.equal(messages.length, 2);
+  assert.equal(messages[1].pending, true);
+  c.state.window = {
+    latest: true,
+    page: page(3, [
+      chunk(1, 'same text', { role: 'user' }),
+      chunk(2, 'same text', { role: 'user', messageId: 'canonical-message' }),
+      chunk(3, 'reply'),
+    ]),
+  };
+  c.child('composer', 'submission', submission(id));
+  assert.equal(
+    c.find(c.reader()).props.messages[2].text,
+    'reply',
+    'pending send cannot hide canonical assistant output',
+  );
+  c.child('composer', 'submission', submission(id, { status: 'unknown' }));
+  messages = c.find(c.reader()).props.messages;
+  assert.equal(
+    messages.length,
+    4,
+    'canonical facts stay visible while the original receipt is unknown',
+  );
+  assert.equal(messages[2].text, 'reply');
+  assert.equal(messages[3].pending, true);
+  c.child(
+    'composer',
+    'submission',
+    submission(id, { status: 'accepted', messageId: 'canonical-message' }),
+  );
+  messages = c.find(c.reader()).props.messages;
+  assert.equal(messages.length, 3);
+  assert.deepEqual(
+    messages.map((message) => message.id),
+    ['message-1', 'canonical-message', 'message-3'],
+  );
+  assert.equal(
+    messages.some((message) => message.pending),
+    false,
+  );
+  assert.equal(c.state.visits.find((visit) => visit.id === id).submissions.length, 0);
+});
+test('accepted preview turns normal before history; session switches and failures keep original ownership', () => {
+  const c = client().observe(1).history(page(1, []));
+  const id = c.state.selected.id,
+    reader = c.reader();
+  c.child('composer', 'submission', submission(id));
+  c.child(
+    'composer',
+    'submission',
+    submission(id, { status: 'accepted', messageId: 'canonical-message' }),
+  );
+  assert.equal(c.find(reader).props.messages[0].pending, false);
+  c.select('Task B').observe(1).history(page(1, []));
+  assert.equal(c.find(c.reader()).props.messages.length, 0);
+  assert.equal(c.find(reader).props.messages[0].text, 'same text');
+  c.child('composer', 'submission', submission('Task B'));
+  c.child('composer', 'submission', submission('Task B', { status: 'removed' }));
+  assert.equal(c.find(c.reader()).props.messages.length, 0);
+  c.child(
+    'composer',
+    'submission',
+    submission(id, { status: 'removed', dataSource: { ...dataSource, deployment: 'foreign' } }),
+  );
+  assert.equal(
+    c.find(reader).props.messages.length,
+    1,
+    'foreign delivery cannot change original session',
+  );
+});
+
+test('attachment preview captures only original identities and survives attachment cleanup', () => {
+  const c = client().observe(1).history(page(1, []));
+  const id = c.state.selected.id;
+  const file = {
+    sessionId: id,
+    dataSource,
+    id: 'attachment',
+    name: 'original.txt',
+    mimeType: 'text/plain',
+    bytes: 3,
+  };
+  c.state.attachments.files = [
+    file,
+    { ...file, dataSource: { ...dataSource, deployment: 'foreign' }, name: 'foreign.txt' },
+    { ...file, id: 'later', name: 'later.txt' },
+  ];
+  c.child('composer', 'submission', submission(id, { text: '', attachments: ['attachment'] }));
+  assert.equal(c.find(c.reader()).props.messages[0].text, 'original.txt');
+  c.child(
+    'composer',
+    'submission',
+    submission(id, {
+      text: '',
+      attachments: ['attachment'],
+      status: 'accepted',
+      messageId: 'canonical',
+    }),
+  );
+  c.child('composer', 'sent', { context: id, dataSource, attachments: ['attachment'] });
+  assert.equal(c.find(c.reader()).props.messages[0].text, 'original.txt');
+  assert.deepEqual(
+    c.state.attachments.files.map((file) => file.name),
+    ['foreign.txt', 'later.txt'],
+  );
+});
+
+test('pending preview truncation preserves complete Unicode attachment names', () => {
+  const c = client().observe(1).history(page(1, []));
+  const id = c.state.selected.id;
+  c.state.attachments.files = [
+    {
+      sessionId: id,
+      dataSource,
+      id: 'attachment',
+      name: '🙂.txt',
+      mimeType: 'text/plain',
+      bytes: 3,
+    },
+  ];
+  c.child(
+    'composer',
+    'submission',
+    submission(id, { text: 'a'.repeat(23998), attachments: ['attachment'] }),
+  );
+  const text = c.find(c.reader()).props.messages[0].text;
+  assert.equal(text, 'a'.repeat(23998) + '\n');
+  assert.equal(text.isWellFormed(), true);
+});
+
+test('pending and unknown submissions never replace canonical activity output', () => {
+  for (const status of ['pending', 'unknown']) {
+    const c = client()
+      .observe(1, { invocationId: 'run-a', turnId: 'turn-1', state: 'running' })
+      .history(page(1, []));
+    const id = c.state.selected.id,
+      reader = c.reader();
+    c.child('composer', 'submission', submission(id));
+    if (status === 'unknown') c.child('composer', 'submission', submission(id, { status }));
+    c.child(reader, 'detached', { landing: c.state.landing.sequence, value: true });
+    c.event({
+      kind: 'action',
+      key: c.state.watch.key,
+      event: {
+        status: 'updated',
+        value: {
+          kind: 'events',
+          through: 2,
+          nextAfter: 2,
+          events: [
+            {
+              sequence: 2,
+              invocationId: 'run-a',
+              turnId: 'turn-1',
+              fact: { kind: 'transcript_changed' },
+            },
+          ],
+        },
+      },
+    });
+    c.reply(c.action('history'), page(2, [chunk(2, 'Canonical agent output')]));
+    assert.equal(c.find(reader).props.activeOutput.role, 'assistant');
+    assert.equal(c.find(reader).props.activeOutput.text, 'Canonical agent output');
+    assert.equal(c.state.visits.find((visit) => visit.id === id).submissions[0].status, status);
+  }
+});

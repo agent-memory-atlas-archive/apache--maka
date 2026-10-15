@@ -176,6 +176,7 @@ pub fn run(
     let mut issued_sequence = 0u64;
     let mut written_sequence = 0u64;
     let mut exit_key = ExitKey::default();
+    let mut interrupt = InterruptWindow::default();
     let mut queued_input: Option<QueuedInput> = None;
     loop {
         if let Err(error) = poll_output(
@@ -408,6 +409,7 @@ pub fn run(
                 if exit_key.ready(Some(&input), Instant::now()) {
                     return Ok(true);
                 }
+                interrupt.observe(&input);
                 if let Some(activation) = presenter.capture_activation(&input)
                     && presenter.activation_admission(&activation) == Admission::Pending
                 {
@@ -431,16 +433,23 @@ pub fn run(
                     wake.0.notify_one();
                     return Ok(false);
                 }
-                if is_copy(&input) {
+                if let Some(selection_only) = copy_gesture(&input, cfg!(target_os = "macos")) {
                     let mut bytes = Vec::new();
-                    if let Err(error) = presenter.copy(&mut bytes) {
-                        presenter.report(&error);
-                    }
+                    let copied = match presenter.copy_scope(&mut bytes, selection_only) {
+                        Ok(copied) => copied,
+                        Err(error) => {
+                            presenter.report(&error);
+                            true
+                        }
+                    };
                     if let Err(error) = retain_clipboard(&mut clipboard_output, bytes) {
                         presenter.report(&error);
                     }
-                    wake.0.notify_one();
-                    return Ok(false);
+                    if copied || !is_interrupt(&input) {
+                        interrupt.0 = None;
+                        wake.0.notify_one();
+                        return Ok(false);
+                    }
                 }
                 if is_exit(&input) && !presenter.captures_keyboard().map_err(|e| e.to_string())? {
                     let mut captured = None;
@@ -456,12 +465,20 @@ pub fn run(
                     let Event::Key(key) = input else {
                         unreachable!()
                     };
-                    return Ok(!handled
-                        && exit_key.request(
-                            key.code,
-                            guard.reports_key_releases(),
-                            Instant::now(),
-                        ));
+                    if handled {
+                        interrupt.0 = None;
+                        return Ok(false);
+                    }
+                    let now = Instant::now();
+                    if matches!(key.code, KeyCode::Char('c' | 'C')) && !interrupt.request(now) {
+                        return Ok(false);
+                    }
+                    return Ok(exit_key.request(key.code, guard.reports_key_releases(), now));
+                }
+                // Captured terminal input belongs to its child process, never
+                // to a previously armed application exit gesture.
+                if is_interrupt(&input) {
+                    interrupt.0 = None;
                 }
                 let scrolling = is_wheel(&input);
                 let captured = if scrolling {
@@ -568,11 +585,62 @@ fn is_wheel(event: &Event) -> bool {
     matches!(event, Event::Mouse(mouse) if matches!(mouse.kind,
         crossterm::event::MouseEventKind::ScrollUp | crossterm::event::MouseEventKind::ScrollDown))
 }
-fn is_copy(event: &Event) -> bool {
-    matches!(event,Event::Key(key) if key.kind!=KeyEventKind::Release && matches!(key.code,KeyCode::Char('c'|'C')) && key.modifiers==KeyModifiers::CONTROL|KeyModifiers::SHIFT)
+// The primary copy chord only copies an actual selection. The explicit
+// terminal Ctrl+Shift+C command retains its whole-screen copy behavior.
+fn copy_gesture(event: &Event, macos: bool) -> Option<bool> {
+    let Event::Key(key) = event else { return None };
+    if key.kind != KeyEventKind::Press || !matches!(key.code, KeyCode::Char('c' | 'C')) {
+        return None;
+    }
+    if key.modifiers == KeyModifiers::CONTROL | KeyModifiers::SHIFT {
+        Some(false)
+    } else if key.modifiers
+        == if macos {
+            KeyModifiers::SUPER
+        } else {
+            KeyModifiers::CONTROL
+        }
+    {
+        Some(true)
+    } else {
+        None
+    }
+}
+pub(super) fn is_interrupt(event: &Event) -> bool {
+    matches!(event,Event::Key(key) if key.kind==KeyEventKind::Press && matches!(key.code,KeyCode::Char('c' | 'C')) && key.modifiers==KeyModifiers::CONTROL)
 }
 fn is_exit(event: &Event) -> bool {
-    matches!(event,Event::Key(key) if key.kind==KeyEventKind::Press && matches!(key.code,KeyCode::Char('c' | 'q')) && key.modifiers==KeyModifiers::CONTROL)
+    is_interrupt(event)
+        || matches!(event,Event::Key(key) if key.kind==KeyEventKind::Press && key.code==KeyCode::Char('q') && key.modifiers==KeyModifiers::CONTROL)
+}
+
+#[derive(Default)]
+struct InterruptWindow(Option<Instant>);
+impl InterruptWindow {
+    fn request(&mut self, now: Instant) -> bool {
+        if self.0.take().is_some_and(|until| now < until) {
+            return true;
+        }
+        self.0 = Some(now + Duration::from_secs(2));
+        false
+    }
+    fn observe(&mut self, event: &Event) {
+        if !is_interrupt(event)
+            && matches!(event,
+            Event::Key(key) if key.kind == KeyEventKind::Press)
+            || matches!(
+                event,
+                Event::Paste(_)
+                    | Event::FocusLost
+                    | Event::Mouse(event::MouseEvent {
+                        kind: event::MouseEventKind::Down(_),
+                        ..
+                    })
+            )
+        {
+            self.0 = None;
+        }
+    }
 }
 
 /// Keep a negotiated physical quit gesture inside its original raw terminal.
@@ -611,6 +679,38 @@ mod tests {
     use super::*;
     use crossterm::event::KeyEvent;
     #[test]
+    fn interrupt_requires_two_unused_presses_within_two_seconds() {
+        let now = Instant::now();
+        let mut window = InterruptWindow::default();
+        assert!(!window.request(now));
+        assert!(window.request(now + Duration::from_millis(1999)));
+        assert!(!window.request(now + Duration::from_secs(3)));
+        assert!(!window.request(now + Duration::from_secs(5)));
+        let other = Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        window.observe(&other);
+        assert!(!window.request(now + Duration::from_millis(5500)));
+        for kind in [KeyEventKind::Release, KeyEventKind::Repeat] {
+            let event = Event::Key(KeyEvent::new_with_kind(
+                KeyCode::Char('c'),
+                KeyModifiers::CONTROL,
+                kind,
+            ));
+            assert!(!is_interrupt(&event));
+            window.observe(&event);
+        }
+        assert!(window.request(now + Duration::from_secs(6)));
+    }
+    #[test]
+    fn primary_copy_uses_command_on_mac_and_control_elsewhere() {
+        let command = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::SUPER));
+        let control = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert_eq!(copy_gesture(&command, true), Some(true));
+        assert_eq!(copy_gesture(&control, true), None);
+        assert_eq!(copy_gesture(&control, false), Some(true));
+        assert_eq!(copy_gesture(&command, false), None);
+        assert!(!is_exit(&command));
+    }
+    #[test]
     fn quit_release_keeps_original_key_and_cancels_on_a_new_gesture() {
         let now = Instant::now();
         let mut exit = ExitKey::default();
@@ -647,20 +747,21 @@ mod tests {
             KeyCode::Char('c'),
             KeyModifiers::CONTROL | KeyModifiers::SHIFT,
         ));
-        assert!(is_copy(&copy));
+        assert_eq!(copy_gesture(&copy, true), Some(false));
         assert!(!is_exit(&copy));
         let uppercase = Event::Key(KeyEvent::new(
             KeyCode::Char('C'),
             KeyModifiers::CONTROL | KeyModifiers::SHIFT,
         ));
-        assert!(is_copy(&uppercase));
+        assert_eq!(copy_gesture(&uppercase, false), Some(false));
         assert!(!is_exit(&uppercase));
         let exit = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
         assert!(is_exit(&exit));
-        assert!(!is_copy(&exit));
+        assert_eq!(copy_gesture(&exit, true), None);
+        assert_eq!(copy_gesture(&exit, false), Some(true));
         let quit = Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL));
         assert!(is_exit(&quit));
-        assert!(!is_copy(&quit));
+        assert_eq!(copy_gesture(&quit, false), None);
         let mut held = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL);
         held.kind = KeyEventKind::Repeat;
         assert!(!is_exit(&Event::Key(held)));
@@ -669,7 +770,7 @@ mod tests {
             KeyModifiers::CONTROL | KeyModifiers::SHIFT,
         );
         released.kind = KeyEventKind::Release;
-        assert!(!is_copy(&Event::Key(released)));
+        assert_eq!(copy_gesture(&Event::Key(released), false), None);
         assert!(!is_exit(&Event::Key(released)));
     }
 }

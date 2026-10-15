@@ -36,6 +36,7 @@ import type {
 } from '../../../packages/plugin-sdk/src/index.js';
 import type {
   ComposerSent,
+  ComposerSubmission,
   MessageCopyObservation,
   ModelSetup,
   PageChrome,
@@ -536,6 +537,38 @@ export function handleComponent<N extends Node>(
     state.catalogEpoch++;
     state.modelSetup = 'loading';
     state.modelRefreshing = !!state.model;
+  } else if (input.child === 'composer' && input.name === 'submission') {
+    const submission = input.event as ComposerSubmission;
+    const visit = state.visits.find(
+      (entry) =>
+        entry.id === submission.context && sameValue(entry.dataSource, submission.dataSource),
+    );
+    if (visit) {
+      const entries = (visit.submissions ??= []);
+      const index = entries.findIndex((entry) => entry.key === submission.key);
+      if (submission.status === 'removed') {
+        if (index >= 0) entries.splice(index, 1);
+      } else if (index >= 0) Object.assign(entries[index]!, submission);
+      else if (submission.status === 'pending') {
+        entries.push({
+          ...submission,
+          attachmentNames: state.attachments.files
+            .filter(
+              (file) =>
+                file.sessionId === submission.context &&
+                sameValue(file.dataSource, submission.dataSource) &&
+                submission.attachments.includes(file.id),
+            )
+            .map((file) => file.name),
+        });
+        if (state.selected?.id === visit.id) {
+          state.searchOpen = false;
+          state.browse = null;
+          visit.following = true;
+          state.landing = { sequence: state.landing.sequence + 1, edge: 'end' };
+        }
+      }
+    }
   } else if (input.child === 'composer' && input.name === 'sent') {
     sentDraft(state, actions, input.event as ComposerSent);
   } else if (input.child === 'composer' && input.name === 'setup') {

@@ -145,7 +145,14 @@ impl Widget for Recipe {
             WidgetInput::Unhandled
         })
     }
-    fn copy(&self, state: &dyn Any) -> maka_ui_runtime::Result<Option<String>> {
+    fn copy(
+        &self,
+        state: &dyn Any,
+        selection_only: bool,
+    ) -> maka_ui_runtime::Result<Option<String>> {
+        if selection_only {
+            return Ok(None);
+        }
         Ok(state
             .downcast_ref::<Owner>()
             .unwrap()

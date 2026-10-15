@@ -156,7 +156,7 @@ pub trait Widget: std::any::Any {
     fn pointer_capture(&self, _: &dyn std::any::Any) -> bool {
         false
     }
-    fn copy(&self, _: &dyn std::any::Any) -> maka_ui_runtime::Result<Option<String>> {
+    fn copy(&self, _: &dyn std::any::Any, _: bool) -> maka_ui_runtime::Result<Option<String>> {
         Ok(None)
     }
     fn capture(
@@ -1020,6 +1020,26 @@ impl Presenter {
                     && self.application.mount_visible(&target.mount)
                     && !self.application.is_retiring(&target.mount) =>
             {
+                // Native editing gets the first opportunity to consume Ctrl+C.
+                // This uses the same owner and observation path as ordinary edits.
+                if run::is_interrupt(event) && !target.area.is_empty() {
+                    match self.resources.input(&target, event)? {
+                        Some(WidgetInput::Consumed(observed)) => {
+                            if let Some(observed) = observed {
+                                self.resources.observe(&target.mount, observed)?;
+                            }
+                            self.sync_native()?;
+                            self.resources.redraw = true;
+                            return Ok(true);
+                        }
+                        Some(WidgetInput::Emitted(input)) => {
+                            self.accept_native_input(&target.mount, input, None)?;
+                            self.sync_native()?;
+                            return Ok(true);
+                        }
+                        _ => {}
+                    }
+                }
                 target.ancestors
             }
             Some(_) => return Ok(false),
@@ -1101,6 +1121,13 @@ impl Presenter {
     /// Copy only the focused original live native scope through the bounded
     /// terminal writer. An OSC52 write is not an OS clipboard acknowledgement.
     pub fn copy(&mut self, writer: &mut impl std::io::Write) -> maka_ui_runtime::Result<bool> {
+        self.copy_scope(writer, false)
+    }
+    fn copy_scope(
+        &mut self,
+        writer: &mut impl std::io::Write,
+        selection_only: bool,
+    ) -> maka_ui_runtime::Result<bool> {
         if !self.physical_admitted() {
             return Ok(false);
         }
@@ -1113,7 +1140,7 @@ impl Presenter {
         if !self.target_admitted(&target) {
             return Ok(false);
         }
-        let text = match self.resources.copy(&target)? {
+        let text = match self.resources.copy(&target, selection_only)? {
             Some(text) => Some(text),
             None => match self.item_reading_scope(&target) {
                 Some((scope, _)) => scope.copy()?,

@@ -86,6 +86,7 @@ export interface Theme {
   markdown: MarkdownAppearance;
 }
 export interface Message {
+  pending?: boolean;
   id: string;
   // Stable message field/byte-segment identity, including the streaming prefix.
   contentKey: string;
@@ -314,6 +315,15 @@ export interface QueueEditorProps {
 export type ComposerBackend =
   | { kind: 'model'; model: ModelSelection; thinkingLevel: ThinkingLevel | null }
   | { kind: 'executor'; selection: AgentExecutorSelection };
+export interface ComposerSubmission {
+  context: string;
+  dataSource: AgentDataSource;
+  key: string;
+  text: string;
+  attachments: string[];
+  status: 'pending' | 'unknown' | 'accepted' | 'removed';
+  messageId: string | null;
+}
 export interface ComposerSent {
   context: string;
   dataSource: AgentDataSource;
@@ -387,19 +397,23 @@ const themeSchema = object({
   menu: { $ref: '#/$defs/MenuAppearance' },
   markdown: { $ref: '#/$defs/MarkdownAppearance' },
 });
-const messageSchema = object({
-  id: string,
-  contentKey: { type: 'string', minLength: 1, maxLength: 123, pattern: '^[A-Za-z0-9_-]+$' },
-  role: { enum: ['user', 'assistant', 'thinking', 'tool_call', 'tool_result'] },
-  timestamp: {
-    anyOf: [{ type: 'integer', minimum: 0, maximum: 9007199254740991 }, { type: 'null' }],
+const messageSchema = object(
+  {
+    pending: { type: 'boolean' },
+    id: string,
+    contentKey: { type: 'string', minLength: 1, maxLength: 123, pattern: '^[A-Za-z0-9_-]+$' },
+    role: { enum: ['user', 'assistant', 'thinking', 'tool_call', 'tool_result'] },
+    timestamp: {
+      anyOf: [{ type: 'integer', minimum: 0, maximum: 9007199254740991 }, { type: 'null' }],
+    },
+    text: { type: 'string', maxLength: 24000 },
+    tool: { anyOf: [{ $ref: '#/$defs/HistoryTool' }, { type: 'null' }] },
+    continued: { type: 'boolean' },
+    image: { type: 'boolean' },
+    source: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
   },
-  text: { type: 'string', maxLength: 24000 },
-  tool: { anyOf: [{ $ref: '#/$defs/HistoryTool' }, { type: 'null' }] },
-  continued: { type: 'boolean' },
-  image: { type: 'boolean' },
-  source: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
-});
+  ['id', 'contentKey', 'role', 'timestamp', 'text', 'tool', 'continued', 'image', 'source'],
+);
 const withDefs = (schema: Schema, additional: Schema = {}): Schema => {
   const { $defs: local, ...body } = schema;
   const available: Record<string, unknown> = {
@@ -1185,6 +1199,17 @@ export const composerContract = component(
     ],
   ),
   {
+    submission: withDefs(
+      object({
+        context: string,
+        dataSource: { $ref: '#/$defs/AgentDataSource' },
+        key: string,
+        text: { type: 'string', maxLength: 24000 },
+        attachments: { type: 'array', maxItems: 8, items: string },
+        status: { enum: ['pending', 'unknown', 'accepted', 'removed'] },
+        messageId: { anyOf: [string, { type: 'null' }] },
+      }),
+    ),
     sent: withDefs(
       object({
         context: string,

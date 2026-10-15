@@ -646,6 +646,7 @@ pub enum SendResult {
     Started {
         session_id: String,
         invocation_id: String,
+        message_id: String,
     },
     Queued {
         session_id: String,

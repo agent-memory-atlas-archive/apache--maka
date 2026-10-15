@@ -4421,6 +4421,7 @@ export type AgentSendResult =
   | {
       sessionId: string;
       invocationId: string;
+      messageId: string;
       kind: 'started';
     }
   | {

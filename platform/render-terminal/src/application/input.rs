@@ -188,6 +188,14 @@ impl Widget for Recipe {
             .capture(target)
     }
 
+    fn copy(&self, state: &dyn Any, _: bool) -> maka_ui_runtime::Result<Option<String>> {
+        let owner = state.downcast_ref::<Owner>().unwrap();
+        if self.secret || self.props.disabled {
+            return Ok(None);
+        }
+        let text = owner.editor.selected_text();
+        Ok((!text.is_empty()).then(|| text.to_owned()))
+    }
     fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui_runtime::Result<(u16, u32)> {
         let _ = slots.native_state::<Owner>()?;
         Ok((

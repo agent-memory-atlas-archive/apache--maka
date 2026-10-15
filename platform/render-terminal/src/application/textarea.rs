@@ -500,7 +500,7 @@ impl Widget for Recipe {
         owner.edit.presented = Some(geometry);
         None
     }
-    fn copy(&self, state: &dyn Any) -> maka_ui_runtime::Result<Option<String>> {
+    fn copy(&self, state: &dyn Any, _: bool) -> maka_ui_runtime::Result<Option<String>> {
         let owner = state.downcast_ref::<Owner>().unwrap();
         if !owner.visible || self.props.disabled {
             return Ok(None);

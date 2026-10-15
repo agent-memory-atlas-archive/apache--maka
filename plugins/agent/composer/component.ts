@@ -35,7 +35,7 @@ import type {
   TextChunk,
   TextareaProps,
 } from '../../../packages/plugin-sdk/src/index.js';
-import type { ComposerBackend, ComposerProps } from '../../shared/contracts.js';
+import type { ComposerBackend, ComposerProps, ComposerSubmission } from '../../shared/contracts.js';
 import {
   observeDraft,
   nextDraftStep,
@@ -52,6 +52,7 @@ import { output, fill, pixels, type Presentation, type Node } from '../../shared
 import { sameValue } from '../../shared/value.js';
 
 interface Submission {
+  preview?: { key: string; text: string };
   context: string;
   dataSource: AgentDataSource;
   backend: ComposerBackend;
@@ -99,6 +100,27 @@ function advance(entry: DraftEntry, caller: CallerConfirmation | null) {
       scope: JSON.stringify([caller.caller.stateDomain, caller.caller.deployment, caller.consumer]),
     };
 }
+function submissionEvent(
+  submission: Submission,
+  status: ComposerSubmission['status'],
+  messageId: string | null = null,
+): Emission[] {
+  return submission.preview
+    ? [
+        {
+          name: 'submission',
+          value: {
+            context: submission.context,
+            dataSource: submission.dataSource,
+            ...submission.preview,
+            attachments: submission.attachments,
+            status,
+            messageId,
+          } satisfies ComposerSubmission,
+        },
+      ]
+    : [];
+}
 function admitted(
   state: Draft,
   entry: DraftEntry,
@@ -113,7 +135,15 @@ function admitted(
       if (result.kind === 'rejected') {
         entry.delivery = null;
         entry.notice = 'skillInputUnavailable';
+        events.push(...submissionEvent(submission, 'removed'));
       } else {
+        events.push(
+          ...submissionEvent(
+            submission,
+            result.kind === 'started' ? 'accepted' : 'removed',
+            result.messageId,
+          ),
+        );
         entry.notice = null;
         entry.delivery = {
           kind: 'clear',
@@ -137,6 +167,7 @@ function admitted(
       return;
     }
   }
+  events.push(...submissionEvent(submission, 'unknown'));
   entry.delivery = {
     kind: 'unknown',
     submission,
@@ -544,6 +575,11 @@ export function composer<N extends Node>(
                 else {
                   const key = `send-${++state.serial}`,
                     backend = submission.backend;
+                  submission.preview = {
+                    key,
+                    text: chunk.text.slice(0, 24000).replace(/[\uD800-\uDBFF]$/u, ''),
+                  };
+                  events.push(...submissionEvent(submission, 'pending'));
                   entry.delivery = { kind: 'send', key, submission };
                   actions.push({
                     ...action(key, 'agent', backend.kind === 'executor' ? 'execute' : 'send', {
@@ -571,6 +607,7 @@ export function composer<N extends Node>(
             if (outcome.status === 'operation')
               admitted(state, entry, delivery.submission, outcome.reply, outcome.caller, events);
             else {
+              events.push(...submissionEvent(delivery.submission, 'removed'));
               entry.delivery = null;
               entry.notice = 'draftKept';
             }
