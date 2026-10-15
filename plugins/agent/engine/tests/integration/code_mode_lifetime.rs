@@ -95,7 +95,7 @@ fn input(
                 handler: ToolHandler::Immediate(effect),
             }])
             .unwrap(),
-            max_steps: 1,
+            max_steps: Some(1),
         },
     }
 }
@@ -332,7 +332,7 @@ async fn verify_yielded(continuation: bool) {
     );
     let mut request = input(&base, "yielded", effect.clone());
     if let maka_agent_engine::RunWork::Message { max_steps, .. } = &mut request.work {
-        *max_steps = 3;
+        *max_steps = Some(3);
     }
     if continuation {
         use maka_agent_facts::event::EventWrite;

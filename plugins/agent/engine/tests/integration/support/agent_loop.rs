@@ -51,7 +51,7 @@ impl ToolExecutor for Effect {
         let log = self.log.clone();
         let count = self.count.clone();
         Box::pin(async move {
-            let prefix = log.prefix(100, 128 * 1024).await.unwrap();
+            let prefix = log.prefix(10000, 16 * 1024 * 1024).await.unwrap();
             assert!(prefix.events.iter().any(|event| matches!(
                 &event.event.fact,
                 Fact::ModelRequested { model_id, .. } if model_id == "test"
@@ -130,7 +130,7 @@ pub(crate) fn input(base: &str, suffix: &str, effect: Arc<Effect>) -> RunInput {
                 handler: ToolHandler::Immediate(effect),
             }])
             .unwrap(),
-            max_steps: 3,
+            max_steps: Some(3),
         },
     }
 }

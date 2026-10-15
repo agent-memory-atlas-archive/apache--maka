@@ -113,8 +113,10 @@ pub struct Configuration {
     /// Explicit read-only roots for user-selected conversation sources.
     #[serde(default)]
     pub import_roots: Vec<maka_host_runtime::DirectoryRootSpec>,
-    #[schemars(range(min = 1, max = 16))]
-    pub max_steps: usize,
+    /// Optional model-step limit per invocation; omitted or null means unlimited.
+    #[serde(default)]
+    #[schemars(range(min = 1, max = 256))]
+    pub max_steps: Option<usize>,
     /// Explicitly selected, frozen application service tools, alongside configured native tools.
     pub tools: Vec<ServiceTool>,
 }
@@ -1431,6 +1433,36 @@ pub fn contract() -> Contract {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn step_limit_is_optional_and_explicit_limits_are_positive_and_bounded() {
+        let validator = jsonschema::validator_for(&configuration_schema()).unwrap();
+        let mut input = json!({
+            "permissions":{"access":"read_only","requestPermissions":false},
+            "workspaceRoots":[],"tools":[]
+        });
+        assert!(validator.is_valid(&input));
+        assert_eq!(
+            serde_json::from_value::<Configuration>(input.clone())
+                .unwrap()
+                .max_steps,
+            None
+        );
+        for limit in [json!(null), json!(1), json!(256)] {
+            input["maxSteps"] = limit.clone();
+            assert!(validator.is_valid(&input), "{limit}");
+            assert_eq!(
+                serde_json::from_value::<Configuration>(input.clone())
+                    .unwrap()
+                    .max_steps,
+                limit.as_u64().map(|steps| steps as usize)
+            );
+        }
+        for limit in [json!(0), json!(-1), json!(1.5), json!(257)] {
+            input["maxSteps"] = limit.clone();
+            assert!(!validator.is_valid(&input), "{limit}");
+        }
+    }
 
     #[test]
     fn history_window_contract_distinguishes_end_from_missing_boundaries() {

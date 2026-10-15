@@ -56,7 +56,7 @@ fn intent(id: &str) -> HandoffIntent {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn handoff_waits_for_settlement_rollback_keeps_run_and_seal_survives_reopen() {
-    for manual in [false, true] {
+    for (manual, unlimited) in [(false, false), (true, false), (false, true), (true, true)] {
         tokio::time::timeout(Duration::from_secs(20), async {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("events.sqlite");
@@ -89,6 +89,10 @@ async fn handoff_waits_for_settlement_rollback_keeps_run_and_seal_survives_reope
         let count = Arc::new(AtomicUsize::new(0));
         let effect = Arc::new(Effect { log: log.clone(), count: count.clone() });
         let mut run = input(&base, "first", effect);
+        if unlimited {
+            let maka_agent_engine::RunWork::Message { max_steps, .. } = &mut run.work else { unreachable!() };
+            *max_steps = None;
+        }
         run.configuration.workspace_identity = Some(maka_agent_facts::execution::WorkspaceIdentity::from_marker_id(
             "ef751105-55b5-4d65-a364-646281586a17").unwrap());
         run.main_output_limit = Some(120);
@@ -133,7 +137,7 @@ async fn handoff_waits_for_settlement_rollback_keeps_run_and_seal_survives_reope
         assert_eq!(count.load(Ordering::SeqCst), 0, "model request has not returned a tool");
         release_first.send(()).unwrap();
         let held = ready.await.unwrap();
-        assert_eq!(held.preview().remaining_steps.get(), 2);
+        assert_eq!(held.preview().remaining_steps.map(|steps| steps.get()), (!unlimited).then_some(2));
         assert_eq!(count.load(Ordering::SeqCst), 1);
         let prefix = log.prefix(100, 128 * 1024).await.unwrap();
         assert!(prefix.events.iter().any(|event| matches!(event.event.fact, Fact::ToolSettled { .. })));
@@ -143,7 +147,7 @@ async fn handoff_waits_for_settlement_rollback_keeps_run_and_seal_survives_reope
         let next = gate.reserve(intent("committed")).unwrap();
         release_second.send(()).unwrap();
         let held = next.ready().await.unwrap();
-        assert_eq!(held.preview().remaining_steps.get(), 1);
+        assert_eq!(held.preview().remaining_steps.map(|steps| steps.get()), (!unlimited).then_some(1));
         let expected = held.preview().clone();
         assert_eq!(expected.execution.replay_base.is_some(), manual);
         let receipt = held.commit().unwrap().wait().await.unwrap();

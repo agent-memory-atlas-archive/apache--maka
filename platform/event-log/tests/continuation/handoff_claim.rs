@@ -48,9 +48,44 @@ async fn handoff_claim_preserves_turn_and_frozen_ancestry_without_releasing_rese
                 successor_invocation_id: format!("invocation-{round}"),
                 claim_id: format!("claim-{round}"),
             },
-            remaining_steps: NonZeroU16::new(3 - round).unwrap(),
+            remaining_steps: NonZeroU16::new(3 - round),
             execution: super::handoff::execution(),
         };
+        let mut encoded = serde_json::to_value(&pause).unwrap();
+        assert_eq!(
+            serde_json::from_value::<HandoffPause>(encoded.clone()).unwrap(),
+            pause
+        );
+        encoded["remaining_steps"] = serde_json::Value::Null;
+        assert!(
+            serde_json::from_value::<HandoffPause>(encoded.clone())
+                .unwrap()
+                .remaining_steps
+                .is_none()
+        );
+        encoded.as_object_mut().unwrap().remove("remaining_steps");
+        assert!(
+            serde_json::from_value::<HandoffPause>(encoded).is_err(),
+            "missing budget must not become unlimited"
+        );
+        if round > 0 {
+            for remaining in [None, NonZeroU16::new(20)] {
+                let mut increased = pause.clone();
+                increased.remaining_steps = remaining;
+                let changed = RuntimeEvent::new(
+                    source.invocation.clone(),
+                    Fact::InvocationEnded {
+                        outcome: InvocationOutcome::HandoffPaused { pause: increased },
+                    },
+                );
+                assert!(
+                    log.append(&EventWrite::plain(changed).unwrap())
+                        .await
+                        .is_err(),
+                    "a finite Run cannot gain steps or become unlimited during handoff"
+                );
+            }
+        }
         append(
             &log,
             &RuntimeEvent::new(
@@ -88,7 +123,7 @@ async fn handoff_claim_preserves_turn_and_frozen_ancestry_without_releasing_rese
                 unreachable!()
             };
             match mutation {
-                0 => pause.remaining_steps = NonZeroU16::new(20).unwrap(),
+                0 => pause.remaining_steps = NonZeroU16::new(20),
                 1 => configuration.as_mut().unwrap().sandbox_mode = SandboxMode::DangerFullAccess,
                 2 => claim.source.digest = digest('d'),
                 3 => claim.id = "not-reserved".into(),
@@ -233,7 +268,7 @@ async fn handoff_claim_preserves_turn_and_frozen_ancestry_without_releasing_rese
             successor_invocation_id: "manual-successor-invocation".into(),
             claim_id: "manual-successor-claim".into(),
         },
-        remaining_steps: NonZeroU16::new(2).unwrap(),
+        remaining_steps: NonZeroU16::new(2),
         execution: super::handoff::execution(),
     };
     assert!(
@@ -310,7 +345,7 @@ async fn ineligible_handoff_never_seals_or_reserves_a_successor() {
             successor_invocation_id: "successor-invocation".into(),
             claim_id: "claim".into(),
         },
-        remaining_steps: NonZeroU16::new(3).unwrap(),
+        remaining_steps: NonZeroU16::new(3),
         execution: super::handoff::execution(),
     };
     assert!(

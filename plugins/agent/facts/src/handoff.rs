@@ -43,7 +43,9 @@ pub struct HandoffIntent {
 pub struct HandoffPause {
     pub intent: HandoffIntent,
     /// Captured by the Engine, never restored from mutable Session policy.
-    pub remaining_steps: NonZeroU16,
+    /// Null preserves an unlimited invocation across physical Runs.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub remaining_steps: Option<NonZeroU16>,
     pub execution: Box<HandoffExecution>,
 }
 
@@ -103,7 +105,7 @@ impl HandoffPause {
     pub fn validate(&self, source: &Invocation) -> Result<(), &'static str> {
         self.intent.validate(source)?;
         self.execution.validate()?;
-        if self.remaining_steps.get() > 256 {
+        if self.remaining_steps.is_some_and(|steps| steps.get() > 256) {
             return Err("handoff exceeds the Engine step budget");
         }
         Ok(())

@@ -107,7 +107,7 @@ async fn handoff_rejects_unresolved_provider_effects_but_accepts_effect_free_sum
                             successor_invocation_id: "successor-invocation".into(),
                             claim_id: "claim".into(),
                         },
-                        remaining_steps: NonZeroU16::new(2).unwrap(),
+                        remaining_steps: NonZeroU16::new(2),
                         execution: execution(),
                     },
                 },

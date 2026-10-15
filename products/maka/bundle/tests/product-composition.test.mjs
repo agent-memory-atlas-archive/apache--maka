@@ -43,6 +43,7 @@ test('default Agent and WorkHub installations allow requests for additional proc
   ]) {
     assert.equal(agent.permissions.access, 'workspace_write');
     assert.equal(agent.permissions.requestPermissions, true);
+    assert.equal(agent.maxSteps, undefined);
     assert.equal(processes.network, 'allowed');
     assert.deepEqual(processes.filesystem, { default: 'write', rules: [], denyGlobs: [] });
   }

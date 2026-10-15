@@ -228,7 +228,7 @@ async fn notifications_trigger_followup_without_wait_and_audio_survives_copy_and
             *tools = ToolCatalog::new(["gate", "hold"].map(|name| ToolRegistration {
                 definition:ToolDefinition { name:name.into(), description:"fixture gate".into(), input_schema:json!({"type":"object"}), provider:None, freeform:None, output_schema:None },
                 handler:ToolHandler::Immediate(handler.clone()), nesting:ToolNesting::Nestable, semantics:ToolSemantics::Parallel,
-            })).unwrap(); *max_steps = 4;
+            })).unwrap(); *max_steps = Some(4);
         }
         let engine = Engine::with_pricing(log.clone(), ModelExecutor::new(Duration::from_secs(5)).unwrap(), CodeExecutor::new(CellLimits::default()).unwrap(), Arc::new(GatePricing { log:log.clone(), gates, before_commit, calls:std::sync::atomic::AtomicUsize::new(0) }));
         engine.run(input.clone(), CancellationToken::new()).await.unwrap();

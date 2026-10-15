@@ -67,7 +67,8 @@ pub(super) async fn run(
             tools.restore(&checkpoint)?;
             compaction = budget;
         }
-        for step in 0..max_steps {
+        let mut remaining_steps = max_steps;
+        while remaining_steps != Some(0) {
             crate::interactions::wait_until_clear(&inner.log, &input.invocation, cancellation)
                 .await?;
             inner.log.commit_pending_steering(&input.invocation).await?;
@@ -106,8 +107,9 @@ pub(super) async fn run(
                     .ok()?;
                     let pause = maka_agent_facts::handoff::HandoffPause {
                         intent,
-                        remaining_steps: std::num::NonZeroU16::new((max_steps - step) as u16)
-                            .expect("validated step budget"),
+                        remaining_steps: remaining_steps.map(|steps| {
+                            std::num::NonZeroU16::new(steps as u16).expect("validated step budget")
+                        }),
                         execution: Box::new(maka_agent_facts::handoff::HandoffExecution {
                             replay,
                             context: input.context.clone(),
@@ -136,6 +138,7 @@ pub(super) async fn run(
             if cancellation.is_cancelled() {
                 return Err(RunError::Cancelled);
             }
+            remaining_steps = remaining_steps.map(|remaining| remaining - 1);
             input.refresh_model(cancellation).await?;
             if tools.code_idle()
                 && pending
@@ -262,7 +265,7 @@ pub(super) async fn run(
                     }),
                 ) if (compaction == CompactionBudget::Available || pending.is_some())
                     && tools.code_idle()
-                    && step + 1 < max_steps
+                    && remaining_steps != Some(0)
                     && !cancellation.is_cancelled() =>
                 {
                     let candidate = match pending.take() {
@@ -318,7 +321,10 @@ pub(super) async fn run(
             if request_tools.finished() {
                 return Ok(maka_agent_facts::event::InvocationOutcome::Completed);
             }
-            if step + 1 < max_steps && !cancellation.is_cancelled() && lane.needs_confirmation() {
+            if remaining_steps != Some(0)
+                && !cancellation.is_cancelled()
+                && lane.needs_confirmation()
+            {
                 let context = model_attempt::read_source(inner, input, prior_unknown).await?;
                 let replay = model_attempt::prompt(
                     inner,

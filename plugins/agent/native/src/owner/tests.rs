@@ -139,6 +139,31 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
 
+#[test]
+fn accepted_message_preserves_explicit_and_unlimited_step_limits() {
+    let mut encoded = json!({
+        "workspace": {
+            "path": "/workspace",
+            "directoryIdentity": format!("sha256:{}", "a".repeat(64)),
+            "identity": "workspace:v1:ef751105-55b5-4d65-a364-646281586a17"
+        },
+        "fingerprint": "accepted",
+        "tools": [],
+        "max_steps": 16
+    });
+    for limit in [json!(16), json!(null)] {
+        encoded["max_steps"] = limit.clone();
+        let basis: MessageBasis = serde_json::from_value(encoded.clone()).unwrap();
+        assert_eq!(basis.max_steps, limit.as_u64().map(|steps| steps as usize));
+        assert_eq!(serde_json::to_value(basis).unwrap()["max_steps"], limit);
+    }
+    encoded.as_object_mut().unwrap().remove("max_steps");
+    assert!(
+        serde_json::from_value::<MessageBasis>(encoded).is_err(),
+        "missing accepted budget must not become unlimited"
+    );
+}
+
 struct CallerGrant(maka_host_runtime::application::Caller);
 struct Grant(Issuer, Option<Arc<maka_transport::transport::PeerPolicy>>);
 impl Policy for Grant {
@@ -565,27 +590,29 @@ impl Fixture {
                     path: other_workspace,
                 },
             ],
-            max_steps: 1,
+            max_steps: Some(1),
             tools: vec![],
         };
         configure(&mut settings);
         let selected_max_steps = settings.max_steps;
         if settings.recall || settings.scheduled_tasks {
-            settings.max_steps = 6;
+            settings.max_steps = Some(6);
         }
         if let Some(tooling) = &tooling {
             settings.tools = tooling.selections();
-            settings.max_steps = selected_max_steps.max(
-                if settings
-                    .tools
-                    .iter()
-                    .any(|tool| tool.input == contract::ToolInput::Skill)
-                {
-                    8
-                } else {
-                    2
-                },
-            );
+            settings.max_steps = selected_max_steps.map(|max_steps| {
+                max_steps.max(
+                    if settings
+                        .tools
+                        .iter()
+                        .any(|tool| tool.input == contract::ToolInput::Skill)
+                    {
+                        8
+                    } else {
+                        2
+                    },
+                )
+            });
         }
         let (mut input, mut packages) = input(&settings);
         if let Some(tooling) = &tooling {

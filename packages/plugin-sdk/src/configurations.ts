@@ -241,10 +241,12 @@ export const configurations = {
         default: [],
       },
       maxSteps: {
-        type: 'integer',
+        description: 'Optional model-step limit per invocation; omitted or null means unlimited.',
+        type: ['integer', 'null'],
         format: 'uint',
         minimum: 1,
-        maximum: 16,
+        maximum: 256,
+        default: null,
       },
       tools: {
         description:
@@ -256,7 +258,7 @@ export const configurations = {
       },
     },
     additionalProperties: false,
-    required: ['permissions', 'workspaceRoots', 'maxSteps', 'tools'],
+    required: ['permissions', 'workspaceRoots', 'tools'],
     $defs: {
       AgentAssistantConfiguration: {
         type: 'object',
@@ -736,10 +738,13 @@ export const configurations = {
             default: [],
           },
           maxSteps: {
-            type: 'integer',
+            type: ['integer', 'null'],
             format: 'uint',
             minimum: 1,
-            maximum: 16,
+            description:
+              'Optional model-step limit per invocation; omitted or null means unlimited.',
+            maximum: 256,
+            default: null,
           },
           tools: {
             type: 'array',
@@ -750,7 +755,7 @@ export const configurations = {
               'Explicitly selected, frozen application service tools, alongside configured native tools.',
           },
         },
-        required: ['permissions', 'workspaceRoots', 'maxSteps', 'tools'],
+        required: ['permissions', 'workspaceRoots', 'tools'],
       },
       AgentAssistantConfiguration: {
         type: 'object',

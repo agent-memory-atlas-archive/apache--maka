@@ -28,7 +28,7 @@ async fn fixture(base: &str) -> Fixture {
         Some(service_tools::Setup::files("write")),
         |settings| {
             settings.plans = true;
-            settings.max_steps = 6;
+            settings.max_steps = Some(6);
         },
     )
     .await
@@ -339,7 +339,7 @@ async fn planning_filters_actual_service_methods_before_discovery_and_code_mode_
                 Some(service_tools::Setup::files("write").named(name)),|settings| {
                     settings.plans=true;
                     settings.tool_discovery=true;
-                    settings.max_steps=6;
+                    settings.max_steps=Some(6);
                 }).await;
             selection::edit(&f,|changes|changes.model_overrides=Patch::Set(BTreeMap::from([("fixture-model".into(),ModelOverride { code_mode:Some(true),..Default::default() })]))).await;
             let session=f.create("Planning alias isolation").await;
@@ -366,7 +366,7 @@ async fn planning_filters_actual_service_methods_before_discovery_and_code_mode_
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
         let f=Fixture::configured(&format!("http://{}/v1",listener.local_addr().unwrap()),None,None,
             Some(service_tools::Setup::files("readText").named("InspectDocument")),|settings| {
-                settings.plans=true; settings.max_steps=3;
+                settings.plans=true; settings.max_steps=Some(3);
             }).await;
         std::fs::write(f.workspace.join("inspect.txt"),"Actual planning read").unwrap();
         let session=f.create("Planning read alias").await;

@@ -82,7 +82,7 @@ pub fn input(base: &str, attachments: Value) -> RunInput {
             message: serde_json::from_value(json!({"text":"current", "attachments":attachments}))
                 .unwrap(),
             tools: ToolCatalog::new([]).unwrap(),
-            max_steps: 1,
+            max_steps: Some(1),
         },
     }
 }

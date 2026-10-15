@@ -32,7 +32,7 @@ use std::sync::Arc;
 
 pub(super) struct ModelWork {
     pub tools: maka_tools::ToolCatalog,
-    pub max_steps: usize,
+    pub max_steps: Option<usize>,
     pub restored: Option<(
         maka_agent_facts::handoff::HandoffTools,
         maka_agent_facts::handoff::CompactionBudget,
@@ -108,7 +108,7 @@ pub async fn run(
         RunWork::Handoff { pause, tools, .. } => {
             let work = ModelWork {
                 tools,
-                max_steps: usize::from(pause.remaining_steps.get()),
+                max_steps: pause.remaining_steps.map(|steps| usize::from(steps.get())),
                 restored: Some((pause.execution.tools.clone(), pause.execution.compaction)),
             };
             (

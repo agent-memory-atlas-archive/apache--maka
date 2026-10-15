@@ -137,7 +137,7 @@ pub fn input(base: &str, suffix: &str, effects: Arc<Effects>) -> RunInput {
             source_messages: Vec::new(),
             message: format!("question {suffix}").into(),
             tools,
-            max_steps: 3,
+            max_steps: Some(3),
         },
     }
 }

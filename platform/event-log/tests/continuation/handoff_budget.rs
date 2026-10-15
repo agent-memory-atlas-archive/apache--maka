@@ -85,7 +85,7 @@ async fn handoff_reserves_successor_and_cancellation_before_sealing_a_near_capac
                 successor_invocation_id: "successor-invocation".into(),
                 claim_id: "claim".into(),
             },
-            remaining_steps: NonZeroU16::new(2).unwrap(),
+            remaining_steps: NonZeroU16::new(2),
             execution: super::handoff::execution(),
         };
         let mut seal = RuntimeEvent::new(

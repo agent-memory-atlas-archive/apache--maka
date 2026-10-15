@@ -99,7 +99,8 @@ struct MessageBasis {
     workspace: Workspace,
     fingerprint: String,
     tools: Vec<crate::tools::SelectedTool>,
-    max_steps: usize,
+    #[serde(deserialize_with = "Option::deserialize")]
+    max_steps: Option<usize>,
 }
 fn is_agent_collaboration(mode: &CollaborationMode) -> bool {
     *mode == CollaborationMode::Agent

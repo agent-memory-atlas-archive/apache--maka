@@ -6805,7 +6805,10 @@ export interface AgentConfiguration {
    * Explicit read-only roots for user-selected conversation sources.
    */
   importRoots?: DirectoryRootSpec[];
-  maxSteps: number;
+  /**
+   * Optional model-step limit per invocation; omitted or null means unlimited.
+   */
+  maxSteps?: number | null;
   /**
    * Explicitly selected, frozen application service tools, alongside configured native tools.
    */

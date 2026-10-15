@@ -44,7 +44,7 @@ async fn paused_cancellation_claim_is_atomic_idempotent_and_never_cancels_an_exi
                 successor_invocation_id: "next-invocation".into(),
                 claim_id: "claim".into(),
             },
-            remaining_steps: NonZeroU16::new(2).unwrap(),
+            remaining_steps: NonZeroU16::new(2),
             execution: super::handoff::execution(),
         };
         append(

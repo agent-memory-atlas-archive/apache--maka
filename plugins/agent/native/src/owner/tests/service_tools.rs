@@ -2306,7 +2306,7 @@ async fn code_mode_wait_observes_original_native_process_and_its_workspace_effec
         setup.nestable = true;
         let fixture = Fixture::configured(
             &format!("http://{}/v1", listener.local_addr().unwrap()), None, None,
-            Some(setup), |settings| { settings.tool_discovery = true; settings.max_steps = 3; },
+            Some(setup), |settings| { settings.tool_discovery = true; settings.max_steps = Some(3); },
         ).await;
         selection::edit(&fixture, |changes| {
             changes.model_overrides = Patch::Set(BTreeMap::from([("fixture-model".into(), ModelOverride {

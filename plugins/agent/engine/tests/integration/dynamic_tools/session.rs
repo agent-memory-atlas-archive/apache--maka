@@ -46,7 +46,7 @@ fn input(
         source_messages: vec![],
         message: "continue".into(),
         tools,
-        max_steps: 2,
+        max_steps: Some(2),
     };
     input
 }
@@ -167,9 +167,9 @@ use maka_agent_facts::event::RuntimeEvent;
                 let mut resumed=input(&base,"resumed",ToolMode::Direct,catalog(false,effects.clone()));
                 resumed.configuration=source.configuration.clone();
                 resumed.request_fingerprint=Some(maka_agent_facts::artifact::content_digest(b"resume-fixture"));
-                resumed.work=RunWork::Continuation {source:boundary.clone(),tools:catalog(true,effects.clone()),max_steps:1};
+                resumed.work=RunWork::Continuation {source:boundary.clone(),tools:catalog(true,effects.clone()),max_steps:Some(1)};
                 let mut preview=resumed.clone();
-                preview.work=RunWork::Continuation {source:boundary,tools:ToolCatalog::default().with_discovery(),max_steps:1};
+                preview.work=RunWork::Continuation {source:boundary,tools:ToolCatalog::default().with_discovery(),max_steps:Some(1)};
                 assert!(matches!(engine.check_continuation(&preview,&CancellationToken::new()).await,
                     Err(maka_agent_engine::RunError::ReconciliationRequired(message)) if message.contains("unavailable tool")));
                 engine.run(resumed,CancellationToken::new()).await.unwrap();
@@ -287,7 +287,7 @@ async fn continuation_admission_rejects_changed_loading_before_claiming_the_sour
                     digest: prefix.digest,
                 },
                 tools: catalog(false, effects.clone()),
-                max_steps: 1,
+                max_steps: Some(1),
             };
             let cold = engine
                 .prepare_continuation(resumed.clone(), &CancellationToken::new())

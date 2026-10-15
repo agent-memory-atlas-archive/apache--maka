@@ -94,7 +94,7 @@ async fn overflow_recovers_once_only_without_output_and_with_remaining_main_budg
         let mut next = fixture::input(&base, "overflow", false);
         next.main_output_limit = Some(128_000);
         if let RunWork::Message { max_steps, .. } = &mut next.work {
-            *max_steps = budget;
+            *max_steps = Some(budget);
         }
         let result = worker.run(next, CancellationToken::new()).await;
         if recover {
@@ -200,7 +200,7 @@ async fn proactive_failure_spends_the_same_budget_as_overflow_recovery() {
         model_context_window: None,
     });
     if let RunWork::Message { max_steps, .. } = &mut next.work {
-        *max_steps = 3;
+        *max_steps = Some(3);
     }
     assert!(matches!(
         worker.run(next, CancellationToken::new()).await,

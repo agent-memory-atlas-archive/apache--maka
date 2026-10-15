@@ -229,3 +229,87 @@ async fn loop_commits_before_effects_replays_history_after_reopen_and_rejects_du
     .await
     .expect("agent loop must make bounded progress");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn optional_step_limit_allows_long_tool_runs_and_preserves_explicit_stop() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        for limit in [None, Some(32), Some(2)] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}/v1", listener.local_addr().unwrap());
+            let limited = limit == Some(2);
+            let tool_rounds = if limit.is_none() { 33 } else { 20 };
+            let requests = if limited { 2 } else { tool_rounds + 1 };
+            let server = tokio::spawn(async move {
+                for index in 0..requests {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    read_request(&mut socket).await;
+                    respond(&mut socket, index < tool_rounds).await;
+                }
+            });
+            let directory = tempfile::tempdir().unwrap();
+            let log = Arc::new(
+                EventLog::open(&directory.path().join("steps.sqlite"))
+                    .await
+                    .unwrap(),
+            );
+            let engine = Engine::new(
+                log.clone(),
+                ModelExecutor::new(Duration::from_secs(5)).unwrap(),
+                CodeExecutor::new(CellLimits::default()).unwrap(),
+            );
+            let count = Arc::new(AtomicUsize::new(0));
+            let effect = Arc::new(Effect {
+                log: log.clone(),
+                count: count.clone(),
+            });
+            for invalid in [0, 257] {
+                let mut request = input(&base, "invalid", effect.clone());
+                let maka_agent_engine::RunWork::Message { max_steps, .. } = &mut request.work
+                else {
+                    unreachable!()
+                };
+                *max_steps = Some(invalid);
+                assert!(matches!(
+                    engine.start(request, CancellationToken::new()).await,
+                    Err(RunError::InvalidInput(_))
+                ));
+            }
+            let mut request = input(&base, "steps", effect);
+            let maka_agent_engine::RunWork::Message { max_steps, .. } = &mut request.work else {
+                unreachable!()
+            };
+            *max_steps = limit;
+            let result = engine.run(request, CancellationToken::new()).await;
+            if limited {
+                assert!(matches!(result, Err(RunError::StepLimit)));
+            } else {
+                result.unwrap();
+            }
+            engine.drain().await;
+            server.await.unwrap();
+            assert_eq!(
+                count.load(Ordering::SeqCst),
+                if limited { 2 } else { tool_rounds }
+            );
+            let prefix = log.prefix(10000, 16 * 1024 * 1024).await.unwrap();
+            assert_eq!(
+                prefix
+                    .events
+                    .iter()
+                    .filter(|event| matches!(event.event.fact, Fact::ModelRequested { .. }))
+                    .count(),
+                requests
+            );
+            assert_eq!(
+                prefix.project_invocation("invocation-steps").terminal,
+                Some(if limited {
+                    TerminalStatus::Failed
+                } else {
+                    TerminalStatus::Completed
+                })
+            );
+        }
+    })
+    .await
+    .unwrap();
+}
