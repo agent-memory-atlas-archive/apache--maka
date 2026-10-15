@@ -27,7 +27,7 @@ fn fixture() -> (
 ) {
     let (mut input, packages) = support::resource_fixture();
     let packages = packages.into_iter().map(|original| {
-        let declaration = original.manifest().application.clone().unwrap();
+        let declaration = original.manifest().application.as_ref().unwrap().declaration().clone();
         let entry = declaration.entries.values().next().unwrap();
         let Implementation::JavaScript {module,..} = &entry.implementation else { return original; };
         let source = std::str::from_utf8(original.file(module).unwrap()).unwrap()
@@ -71,7 +71,7 @@ fn original_desktop_paste_and_submit_stay_immediate_during_a_slow_js_transaction
     let (mut input, packages) = fixture();
     let packages = packages.into_iter().map(|original| {
         if original.manifest().id != "dynamic.app" { return original; }
-        let declaration = original.manifest().application.clone().unwrap();
+        let declaration = original.manifest().application.as_ref().unwrap().declaration().clone();
         let source = std::str::from_utf8(original.file("index.mjs").unwrap()).unwrap().replace(
             "const next={...state,revision:state.revision+1};",
             "if(event.kind==='raw'&&event.key==='slow'){const until=Date.now()+100;while(Date.now()<until){}}const next={...state,revision:state.revision+1};",

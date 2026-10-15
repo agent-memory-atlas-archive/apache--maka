@@ -207,7 +207,13 @@ async fn cancelled_cohost_start_keeps_original_initializer_native_file_and_sql_u
             packages.push(old);
             continue;
         }
-        let mut declaration = old.manifest().application.clone().unwrap();
+        let mut declaration = old
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         declaration
             .entries
             .get_mut(&EntryTarget::Host)

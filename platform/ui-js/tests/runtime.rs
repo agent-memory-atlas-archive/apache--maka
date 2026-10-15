@@ -419,12 +419,23 @@ fn dispatch_at_a_deep_mount_cannot_restart_the_whole_tree_depth_budget() {
         .replace("right:true", "right:false");
     let root = package(
         "dynamic.app",
-        root.manifest().application.clone().unwrap(),
+        root.manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone(),
         Some(source),
     );
     input.instances.get_mut("app").unwrap().package = root.application_ref().into();
 
-    let mut declaration = terminal.manifest().application.clone().unwrap();
+    let mut declaration = terminal
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
     if let maka_plugin_core::package::Implementation::JavaScript { realm, .. } =
         &mut entry.implementation

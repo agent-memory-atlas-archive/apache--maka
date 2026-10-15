@@ -177,7 +177,7 @@ fn context(attachments: Attachments) -> Context {
     let package = package(vec![]);
     let mut packages = Packages::default();
     packages
-        .insert(
+        .insert_checked(
             package.application_ref(),
             package.manifest().application.clone().unwrap(),
         )

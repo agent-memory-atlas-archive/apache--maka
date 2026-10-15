@@ -1263,7 +1263,7 @@ fn prepare(
     let mut declarations = Packages::default();
     for package in &packages {
         declarations
-            .insert(
+            .insert_checked(
                 package.application_ref(),
                 package
                     .manifest()

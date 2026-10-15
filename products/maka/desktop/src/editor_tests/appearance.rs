@@ -56,7 +56,13 @@ pub(super) fn scoped_fixture() -> (
         .position(|p| p.manifest().id == "dynamic.app")
         .unwrap();
     let old = packages.remove(index);
-    let mut declaration = old.manifest().application.clone().unwrap();
+    let mut declaration = old
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     declaration
         .entries
         .get_mut(&EntryTarget::Desktop)

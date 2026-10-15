@@ -70,7 +70,13 @@ fn committed_ui_addition_retains_original_mount_frame_and_then_replacement_waits
         .unwrap();
     let added = support::package(
         "installed.extra",
-        selected.manifest().application.clone().unwrap(),
+        selected
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone(),
         Some(
             std::str::from_utf8(selected.file("index.mjs").unwrap())
                 .unwrap()
@@ -197,7 +203,13 @@ fn invalid_ui_candidate_does_not_retire_original_product() {
         .iter()
         .find(|p| p.manifest().id == "dynamic.app")
         .unwrap();
-    let mut declaration = old.manifest().application.clone().unwrap();
+    let mut declaration = old
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     declaration
         .entries
         .get_mut(&maka_plugin_core::package::EntryTarget::Desktop)

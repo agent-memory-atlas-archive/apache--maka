@@ -104,11 +104,9 @@ fn packages(source: &Path) -> (Input, Vec<Package>) {
     })).unwrap())])).unwrap();
     let mut files = consumer.files().clone();
     let mut manifest = consumer.manifest().clone();
+    let mut manifest_application = manifest.application.as_ref().unwrap().declaration().clone();
     manifest.id = "recovery-consumer".into();
-    manifest
-        .application
-        .as_mut()
-        .unwrap()
+    manifest_application
         .entries
         .get_mut(&maka_plugin_core::package::EntryTarget::Host)
         .unwrap()
@@ -119,7 +117,11 @@ fn packages(source: &Path) -> (Input, Vec<Package>) {
             cardinality: maka_plugin_core::contract::Cardinality::One,
         },
     )]);
-    files.insert(MANIFEST_FILE.into(), serde_json::to_vec(&manifest).unwrap());
+    files.insert(MANIFEST_FILE.into(), {
+        manifest.application =
+            Some(maka_plugin_core::package::CheckedDeclaration::new(manifest_application).unwrap());
+        serde_json::to_vec(&manifest).unwrap()
+    });
     let recovery_consumer = Package::new(files).unwrap();
     let node = |key, package: &Package, configuration, bindings| Node {
         key: Uuid::from_u128(key),

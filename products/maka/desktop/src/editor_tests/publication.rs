@@ -91,7 +91,13 @@ fn scene(
         .position(|p| p.manifest().id == "dynamic.app")
         .unwrap();
     let old = packages.remove(index);
-    let mut declaration = old.manifest().application.clone().unwrap();
+    let mut declaration = old
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
     entry.implementation = Implementation::Native {
         implementation: "test.publication.parent".into(),

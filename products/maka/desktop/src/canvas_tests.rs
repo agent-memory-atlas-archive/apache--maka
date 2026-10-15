@@ -429,7 +429,13 @@ fn canvas_tab_and_copy_defaults_obey_committed_plugin_veto(cx: &mut TestAppConte
                 "draggable: true,",
                 "draggable: true, tabNavigation: state.mode !== 'tab-veto', nativeCopy: false,",
             );
-        let mut declaration = old.manifest().application.clone().unwrap();
+        let mut declaration = old
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         if reading {
             use maka_plugin_core::{
                 contract::{Availability, Cardinality, Export, Import},
@@ -448,7 +454,13 @@ fn canvas_tab_and_copy_defaults_obey_committed_plugin_veto(cx: &mut TestAppConte
                         cardinality: Cardinality::One,
                     },
                 );
-            let mut native = packages[0].manifest().application.clone().unwrap();
+            let mut native = packages[0]
+                .manifest()
+                .application
+                .as_ref()
+                .unwrap()
+                .declaration()
+                .clone();
             let entry = native.entries.get_mut(&EntryTarget::Desktop).unwrap();
             entry.implementation = Implementation::Native {
                 implementation: "maka.ui.reading".into(),

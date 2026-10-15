@@ -419,7 +419,13 @@ fn terminal_packages(mut input: Input, packages: Vec<Package>) -> (Input, Vec<Pa
     use std::collections::BTreeMap;
     let mut adapted = Vec::new();
     for original in packages {
-        let mut declaration = original.manifest().application.clone().unwrap();
+        let mut declaration = original
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         let mut entry = declaration.entries.remove(&EntryTarget::Desktop).unwrap();
         if let Implementation::Native { implementation } = &mut entry.implementation
             && implementation == "maka.ui.surface.desktop"
@@ -646,7 +652,13 @@ fn service_fixture(
         .insert("service".into(), support::node(&service, 99));
     packages.push(service);
     let original = packages.remove(1);
-    let mut declaration = original.manifest().application.clone().unwrap();
+    let mut declaration = original
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     declaration
         .entries
         .get_mut(&EntryTarget::Tui)
@@ -793,7 +805,13 @@ fn native_slots_fixture(runtime: &tokio::runtime::Runtime, duplicate: bool) -> P
     let mut converted = Vec::new();
     let mut root_contract = None;
     for old in packages {
-        let mut declaration = old.manifest().application.clone().unwrap();
+        let mut declaration = old
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         let mut entry = declaration.entries.remove(&EntryTarget::Desktop).unwrap();
         let is_root = old.manifest().id == "dynamic.app";
         if is_root {
@@ -1159,7 +1177,13 @@ fn retired_target_cleanup_preserves_the_original_nested_scroll_ancestor_identity
         + "const originalFrame=frame;frame=state=>{const out=originalFrame(state);const root=out.frame.view;const counters=root.children.find(node=>node.key==='counters').children;root.children=[{kind:'stack',key:'outer',direction:'column',gap:1,padding:0,background:root.background,scroll:'manual',layout:{grow:1},children:[...(state.right?[counters.find(node=>node.key==='right')]:[]),{kind:'stack',key:'inner',direction:'column',gap:0,padding:0,background:root.background,scroll:'manual',layout:{basis:3},children:[{kind:'button',key:'inner-action',label:'Inner'},{kind:'text',key:'inner-tail',text:'inner\\n'.repeat(20),color:16777215}]},{kind:'text',key:'outer-tail',text:'outer\\n'.repeat(20),color:16777215}]},...root.children.filter(node=>node.kind==='button')];return out;};";
     let replacement = support::package(
         "dynamic.app",
-        original.manifest().application.clone().unwrap(),
+        original
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone(),
         Some(source),
     );
     input.instances.get_mut("app").unwrap().package = replacement.application_ref().into();

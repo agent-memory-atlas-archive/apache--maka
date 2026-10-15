@@ -562,10 +562,8 @@ impl Setup {
         let project_roots =
             input.instances["provider"].configuration.values["workspaceRoots"].clone();
         let mut manifest = packages[0].manifest().clone();
-        manifest
-            .application
-            .as_mut()
-            .unwrap()
+        let mut manifest_application = manifest.application.as_ref().unwrap().declaration().clone();
+        manifest_application
             .entries
             .get_mut(&EntryTarget::Host)
             .unwrap()
@@ -577,10 +575,12 @@ impl Setup {
                     cardinality: Cardinality::One,
                 },
             );
-        let provider = Package::new(BTreeMap::from([(
-            MANIFEST_FILE.into(),
-            serde_json::to_vec(&manifest).unwrap(),
-        )]))
+        let provider = Package::new(BTreeMap::from([(MANIFEST_FILE.into(), {
+            manifest.application = Some(
+                maka_plugin_core::package::CheckedDeclaration::new(manifest_application).unwrap(),
+            );
+            serde_json::to_vec(&manifest).unwrap()
+        })]))
         .unwrap();
         input.instances.get_mut("provider").unwrap().package = provider.application_ref().into();
         input
@@ -678,10 +678,9 @@ impl Setup {
             let consumer = &packages[1];
             let mut files = consumer.files().clone();
             let mut manifest = consumer.manifest().clone();
-            manifest
-                .application
-                .as_mut()
-                .unwrap()
+            let mut manifest_application =
+                manifest.application.as_ref().unwrap().declaration().clone();
+            manifest_application
                 .entries
                 .get_mut(&EntryTarget::Host)
                 .unwrap()
@@ -702,7 +701,13 @@ impl Setup {
                         cardinality: Cardinality::One,
                     },
                 );
-            files.insert(MANIFEST_FILE.into(), serde_json::to_vec(&manifest).unwrap());
+            files.insert(MANIFEST_FILE.into(), {
+                manifest.application = Some(
+                    maka_plugin_core::package::CheckedDeclaration::new(manifest_application)
+                        .unwrap(),
+                );
+                serde_json::to_vec(&manifest).unwrap()
+            });
             let consumer = Package::new(files).unwrap();
             for name in ["a", "b"] {
                 let node = input.instances.get_mut(name).unwrap();

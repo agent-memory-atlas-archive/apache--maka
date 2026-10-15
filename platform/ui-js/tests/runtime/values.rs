@@ -48,7 +48,13 @@ fn fixture(
         "return frame({revision:state.revision+1,count:++globalThis.calls,size:values.brand[0].length??0});",
     );
     let old = packages.pop().unwrap();
-    let mut declaration = old.manifest().application.clone().unwrap();
+    let mut declaration = old
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
     for name in if duplicate {
         vec!["brand", "second"]
@@ -223,7 +229,13 @@ fn native_activation_and_callback_preserve_exact_integers_without_a_js_roundtrip
     let (mut input, mut packages, mut native) =
         fixture(json!(9_007_199_254_740_993u64), false, false);
     let old = packages.pop().unwrap();
-    let mut declaration = old.manifest().application.clone().unwrap();
+    let mut declaration = old
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
     entry.scene = None;
     entry.implementation = Implementation::Native {

@@ -53,7 +53,7 @@ fn configured_input(
         }
     }
     let packages=packages.into_iter().map(|original|{
-  let mut decl=original.manifest().application.clone().unwrap();
+  let mut decl=original.manifest().application.as_ref().unwrap().declaration().clone();
   let entry=decl.entries.get_mut(&EntryTarget::Tui).unwrap();
   if let Some(import)=entry.imports.get_mut("editor"){import.contract=contract.clone();}
   let mut files=BTreeMap::new();
@@ -427,7 +427,7 @@ fn shortcut_presenter() -> (tokio::runtime::Runtime, Presenter) {
 fn reserved_shortcut_presenter(reserved: bool) -> (tokio::runtime::Runtime, Presenter) {
     let (runtime, mut input, packages) = textarea::editor_fixture();
     let packages = packages.into_iter().map(|original| {
-        let declaration = original.manifest().application.clone().unwrap();
+        let declaration = original.manifest().application.as_ref().unwrap().declaration().clone();
         let mut files = BTreeMap::new();
         if let Implementation::JavaScript { module, .. } = &declaration.entries[&EntryTarget::Tui].implementation {
             let mut source = std::str::from_utf8(original.file(module).unwrap()).unwrap().to_owned();

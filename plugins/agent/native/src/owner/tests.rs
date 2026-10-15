@@ -339,10 +339,8 @@ fn input(settings: &Configuration) -> (Input, Vec<Package>) {
     // Both consumers declare recovery independently of their execution import.
     let mut files = consumer.files().clone();
     let mut manifest = consumer.manifest().clone();
-    manifest
-        .application
-        .as_mut()
-        .unwrap()
+    let mut manifest_application = manifest.application.as_ref().unwrap().declaration().clone();
+    manifest_application
         .entries
         .get_mut(&EntryTarget::Host)
         .unwrap()
@@ -354,18 +352,20 @@ fn input(settings: &Configuration) -> (Input, Vec<Package>) {
                 cardinality: Cardinality::One,
             },
         );
-    files.insert(MANIFEST_FILE.into(), serde_json::to_vec(&manifest).unwrap());
+    files.insert(MANIFEST_FILE.into(), {
+        manifest.application =
+            Some(maka_plugin_core::package::CheckedDeclaration::new(manifest_application).unwrap());
+        serde_json::to_vec(&manifest).unwrap()
+    });
     let consumer = Package::new(files).unwrap();
     for name in ["a", "b"] {
         input.instances.get_mut(name).unwrap().package = consumer.application_ref().into();
     }
     let settings = {
         let mut manifest = provider.manifest().clone();
+        let mut manifest_application = manifest.application.as_ref().unwrap().declaration().clone();
         manifest.id = "settings".into();
-        let entry = manifest
-            .application
-            .as_mut()
-            .unwrap()
+        let entry = manifest_application
             .entries
             .get_mut(&EntryTarget::Host)
             .unwrap();
@@ -380,18 +380,18 @@ fn input(settings: &Configuration) -> (Input, Vec<Package>) {
                 availability: Availability::Required,
             },
         )]);
-        Package::new(BTreeMap::from([(
-            MANIFEST_FILE.into(),
-            serde_json::to_vec(&manifest).unwrap(),
-        )]))
+        Package::new(BTreeMap::from([(MANIFEST_FILE.into(), {
+            manifest.application = Some(
+                maka_plugin_core::package::CheckedDeclaration::new(manifest_application).unwrap(),
+            );
+            serde_json::to_vec(&manifest).unwrap()
+        })]))
         .unwrap()
     };
     let mut files = consumer.files().clone();
     let mut manifest = consumer.manifest().clone();
-    manifest
-        .application
-        .as_mut()
-        .unwrap()
+    let mut manifest_application = manifest.application.as_ref().unwrap().declaration().clone();
+    manifest_application
         .entries
         .get_mut(&EntryTarget::Host)
         .unwrap()
@@ -403,7 +403,11 @@ fn input(settings: &Configuration) -> (Input, Vec<Package>) {
                 cardinality: Cardinality::One,
             },
         );
-    files.insert(MANIFEST_FILE.into(), serde_json::to_vec(&manifest).unwrap());
+    files.insert(MANIFEST_FILE.into(), {
+        manifest.application =
+            Some(maka_plugin_core::package::CheckedDeclaration::new(manifest_application).unwrap());
+        serde_json::to_vec(&manifest).unwrap()
+    });
     let consumer = Package::new(files).unwrap();
     input.instances.insert(
         "settings".into(),

@@ -1614,7 +1614,13 @@ fn remote_mutation_packages() -> (Package, Package, Contract) {
     let mut declared = contract(MethodMode::Mutation);
     declared.transport = Transport::Remote;
     let (provider, consumer) = mutation_packages();
-    let mut p = provider.manifest().application.clone().unwrap();
+    let mut p = provider
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     p.entries
         .get_mut(&EntryTarget::Host)
         .unwrap()
@@ -1622,7 +1628,13 @@ fn remote_mutation_packages() -> (Package, Package, Contract) {
         .get_mut("echo")
         .unwrap()
         .contract = declared.clone();
-    let mut c = consumer.manifest().application.clone().unwrap();
+    let mut c = consumer
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     c.entries
         .get_mut(&EntryTarget::Host)
         .unwrap()

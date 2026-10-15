@@ -247,7 +247,13 @@ pub(super) fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Run
         .position(|p| p.manifest().id == "dynamic.app")
         .unwrap();
     let original = packages.remove(index);
-    let mut declaration = original.manifest().application.clone().unwrap();
+    let mut declaration = original
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let entry = declaration.entries.get_mut(&EntryTarget::Tui).unwrap();
     entry.scene = None;
     entry.implementation = Implementation::Native {

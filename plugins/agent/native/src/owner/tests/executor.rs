@@ -168,10 +168,8 @@ async fn activate_backend(
         }];
         let (mut input, mut packages) = input(&settings);
         let mut manifest = packages[0].manifest().clone();
-        manifest
-            .application
-            .as_mut()
-            .unwrap()
+        let mut manifest_application = manifest.application.as_ref().unwrap().declaration().clone();
+        manifest_application
             .entries
             .get_mut(&EntryTarget::Host)
             .unwrap()
@@ -183,10 +181,12 @@ async fn activate_backend(
                     cardinality: Cardinality::One,
                 },
             );
-        let provider = Package::new(BTreeMap::from([(
-            MANIFEST_FILE.into(),
-            serde_json::to_vec(&manifest).unwrap(),
-        )]))
+        let provider = Package::new(BTreeMap::from([(MANIFEST_FILE.into(), {
+            manifest.application = Some(
+                maka_plugin_core::package::CheckedDeclaration::new(manifest_application).unwrap(),
+            );
+            serde_json::to_vec(&manifest).unwrap()
+        })]))
         .unwrap();
         input.instances.get_mut("provider").unwrap().package = provider.application_ref().into();
         input
@@ -203,10 +203,9 @@ async fn activate_backend(
             );
         let provider = if acp.is_some() {
             let mut manifest = provider.manifest().clone();
-            manifest
-                .application
-                .as_mut()
-                .unwrap()
+            let mut manifest_application =
+                manifest.application.as_ref().unwrap().declaration().clone();
+            manifest_application
                 .entries
                 .get_mut(&EntryTarget::Host)
                 .unwrap()
@@ -218,10 +217,13 @@ async fn activate_backend(
                         cardinality: Cardinality::One,
                     },
                 );
-            let provider = Package::new(BTreeMap::from([(
-                MANIFEST_FILE.into(),
-                serde_json::to_vec(&manifest).unwrap(),
-            )]))
+            let provider = Package::new(BTreeMap::from([(MANIFEST_FILE.into(), {
+                manifest.application = Some(
+                    maka_plugin_core::package::CheckedDeclaration::new(manifest_application)
+                        .unwrap(),
+                );
+                serde_json::to_vec(&manifest).unwrap()
+            })]))
             .unwrap();
             let node = input.instances.get_mut("provider").unwrap();
             node.package = provider.application_ref().into();
@@ -516,10 +518,8 @@ async fn executor_service_selects_the_exact_authorized_import_member() {
             .unwrap()
             .manifest()
             .clone();
-        manifest
-            .application
-            .as_mut()
-            .unwrap()
+        let mut manifest_application = manifest.application.as_ref().unwrap().declaration().clone();
+        manifest_application
             .entries
             .get_mut(&EntryTarget::Host)
             .unwrap()
@@ -527,10 +527,12 @@ async fn executor_service_selects_the_exact_authorized_import_member() {
             .get_mut("executor")
             .unwrap()
             .cardinality = Cardinality::Many { min: 0, max: 8 };
-        let package = Package::new(BTreeMap::from([(
-            MANIFEST_FILE.into(),
-            serde_json::to_vec(&manifest).unwrap(),
-        )]))
+        let package = Package::new(BTreeMap::from([(MANIFEST_FILE.into(), {
+            manifest.application = Some(
+                maka_plugin_core::package::CheckedDeclaration::new(manifest_application).unwrap(),
+            );
+            serde_json::to_vec(&manifest).unwrap()
+        })]))
         .unwrap();
         let mut decoy = input.instances["executor"].clone();
         decoy.key = Uuid::from_u128(25);

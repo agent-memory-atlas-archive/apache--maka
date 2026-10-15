@@ -63,7 +63,13 @@ fn fixture(
         .position(|p| p.manifest().id == "dynamic.app")
         .unwrap();
     let original = packages.remove(index);
-    let mut declaration = original.manifest().application.clone().unwrap();
+    let mut declaration = original
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let history = Contract {
         name: "test.History".into(),
         version: 1,
@@ -331,7 +337,13 @@ fn committed_addition_preserves_original_reading_selection_copy_and_viewport(
                 .replace("scroll:'follow_end'", "scroll:'manual'");
             let package = support::package(
                 "dynamic.app",
-                original.manifest().application.clone().unwrap(),
+                original
+                    .manifest()
+                    .application
+                    .as_ref()
+                    .unwrap()
+                    .declaration()
+                    .clone(),
                 Some(source),
             );
             input.instances.get_mut("app").unwrap().package = package.application_ref().into();

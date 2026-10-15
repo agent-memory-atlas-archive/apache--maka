@@ -36,7 +36,13 @@ fn fixture(
         .position(|p| p.manifest().id == "dynamic.app")
         .unwrap();
     let old = packages.remove(index);
-    let mut declaration = old.manifest().application.clone().unwrap();
+    let mut declaration = old
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     declaration
         .entries
         .get_mut(&maka_plugin_core::package::EntryTarget::Desktop)
@@ -138,7 +144,13 @@ fn selected_languages_are_checked_before_any_factory_or_guest_evaluates() {
             .position(|p| p.manifest().id == "dynamic.app")
             .unwrap();
         let old = packages.remove(index);
-        let declaration = old.manifest().application.clone().unwrap();
+        let declaration = old
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         let mut other = declaration.entries[&EntryTarget::Desktop].clone();
         other.imports.clear();
         other.exports.get_mut("App").unwrap().availability = Availability::Optional;

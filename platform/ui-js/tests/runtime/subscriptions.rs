@@ -331,7 +331,13 @@ fn fixture_data(
 ) {
     let (mut input, mut packages) = support::fixture("");
     let original = packages.pop().unwrap();
-    let mut declaration = original.manifest().application.clone().unwrap();
+    let mut declaration = original
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
     entry.scene = None;
     entry.implementation = Implementation::Native {

@@ -124,7 +124,7 @@ fn validate_packages(bytes: &[Package]) -> Result<Packages, StoreError> {
             .as_ref()
             .ok_or_else(|| invalid("application declaration required"))?;
         packages
-            .insert(package.application_ref(), declaration.clone())
+            .insert_checked(package.application_ref(), declaration.clone())
             .map_err(|e| invalid(e.to_string()))?;
     }
     Ok(packages)

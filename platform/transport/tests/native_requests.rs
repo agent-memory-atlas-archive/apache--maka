@@ -446,7 +446,13 @@ async fn native_owner_close_waits_for_actual_child_cleanup_after_observer_drop()
             .iter_mut()
             .find(|p| p.manifest().id == "local.business")
             .unwrap();
-        let mut declaration = provider.manifest().application.clone().unwrap();
+        let mut declaration = provider
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         declaration
             .entries
             .get_mut(&EntryTarget::Host)
@@ -568,7 +574,13 @@ async fn native_origin_survives_forwarding_but_never_grants_an_unlisted_downstre
             .find(|package| package.manifest().id == "local.business")
             .unwrap();
         let next_package = provider.clone();
-        let mut declaration = provider.manifest().application.clone().unwrap();
+        let mut declaration = provider
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         let entry = declaration.entries.get_mut(&EntryTarget::Host).unwrap();
         entry.implementation = Implementation::Native {
             implementation: "native.forward".into(),
@@ -698,7 +710,13 @@ async fn native_requests_preserve_unknown_receipts_and_independent_failed_cleanu
             .iter_mut()
             .find(|package| package.manifest().id == "local.business")
             .unwrap();
-        let mut declaration = provider.manifest().application.clone().unwrap();
+        let mut declaration = provider
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         declaration
             .entries
             .get_mut(&EntryTarget::Host)

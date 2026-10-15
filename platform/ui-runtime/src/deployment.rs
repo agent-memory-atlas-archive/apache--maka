@@ -87,7 +87,7 @@ pub(super) fn prepare<V: ?Sized + 'static>(
             .application
             .as_ref()
             .ok_or_else(|| Error::Invalid("application declaration required".into()))?;
-        packages.insert(package.application_ref(), declaration.clone())?;
+        packages.insert_checked(package.application_ref(), declaration.clone())?;
         sources.insert(package.application_ref(), package);
     }
     let plan = Plan::prepare(input, &packages, declarations)?;

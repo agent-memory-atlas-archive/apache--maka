@@ -167,7 +167,13 @@ pub fn fixture(handler: &str) -> (Input, Vec<Package>) {
 pub(crate) fn composed_fixture(child_update: &str, parent_event: &str) -> (Input, Vec<Package>) {
     let (mut input, mut packages) = fixture("");
     let root = packages.pop().unwrap();
-    let mut declaration = root.manifest().application.clone().unwrap();
+    let mut declaration = root
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let root_contract = declaration.entries[&EntryTarget::Desktop].exports["App"]
         .contract
         .clone();
@@ -361,7 +367,13 @@ pub(crate) fn native_fixture() -> (Input, Vec<Package>) {
         .position(|package| package.manifest().id == "dynamic.app")
         .unwrap();
     let root = packages.remove(index);
-    let mut declaration = root.manifest().application.clone().unwrap();
+    let mut declaration = root
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     bind_brand(&mut input, &mut packages, &mut declaration);
     let contract = maka_ui_runtime::label_contract();
     declaration
@@ -428,7 +440,13 @@ pub(crate) fn editor_fixture() -> (Input, Vec<Package>) {
         .position(|package| package.manifest().id == "dynamic.app")
         .unwrap();
     let root = packages.remove(index);
-    let mut declaration = root.manifest().application.clone().unwrap();
+    let mut declaration = root
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let contract = maka_ui_runtime::textarea::textarea_contract();
     declaration
         .entries
@@ -507,7 +525,12 @@ pub(crate) fn editor_events_fixture() -> (Input, Vec<Package>) {
         .replace("children:[...(state.right?", "children:[{kind:'text',key:'editor_status',text:'Draft revision '+(state.observation?.revision??0),color:16777215},...(state.right?");
     let root = package(
         "dynamic.app",
-        old.manifest().application.clone().unwrap(),
+        old.manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone(),
         Some(source),
     );
     input.instances.get_mut("app").unwrap().package = root.application_ref().into();
@@ -524,7 +547,13 @@ pub(crate) fn resource_fixture() -> (Input, Vec<Package>) {
         .position(|p| p.manifest().id == "dynamic.app")
         .unwrap();
     let old = packages.remove(root_index);
-    let mut declaration = old.manifest().application.clone().unwrap();
+    let mut declaration = old
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
     entry.imports.remove("counter");
     entry.imports.remove("label");
@@ -673,7 +702,13 @@ pub(crate) fn continuation_fixture() -> (Input, Vec<Package>, maka_plugin_core::
     );
     let changed = serde_json::to_string(&contract).unwrap();
     for package in &mut packages {
-        let mut declaration = package.manifest().application.clone().unwrap();
+        let mut declaration = package
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         let mut updated = false;
         for entry in declaration.entries.values_mut() {
             for import in entry.imports.values_mut() {
@@ -721,7 +756,13 @@ pub fn dual_fixture(handler: &str) -> (Input, Vec<Package>) {
     let (mut input, packages) = fixture(handler);
     let mut dual = Vec::new();
     for original in packages {
-        let mut declaration = original.manifest().application.clone().unwrap();
+        let mut declaration = original
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         let mut terminal = declaration.entries[&EntryTarget::Desktop].clone();
         let mut files = BTreeMap::new();
         match &mut terminal.implementation {
@@ -826,14 +867,26 @@ frame=(state)=>{
         .replace("color:16777215", "color:0x242724");
     let counter = package(
         "dynamic.counter",
-        counter.manifest().application.clone().unwrap(),
+        counter
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone(),
         Some(code),
     );
     input.instances.get_mut("counter").unwrap().package = counter.application_ref().into();
     packages.push(counter);
     let root = package(
         "dynamic.app",
-        original.manifest().application.clone().unwrap(),
+        original
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone(),
         Some(source),
     );
     input.instances.get_mut("app").unwrap().package = root.application_ref().into();
@@ -847,7 +900,13 @@ frame=(state)=>{
 pub(crate) fn canvas_fixture() -> (Input, Vec<Package>) {
     let (mut input, mut packages) = fixture("");
     let old = packages.pop().unwrap();
-    let declaration = old.manifest().application.clone().unwrap();
+    let declaration = old
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let contract = &declaration.entries[&EntryTarget::Desktop].exports["App"].contract;
     let source = include_str!("canvas.mjs").replace(
         "const contract = null;",

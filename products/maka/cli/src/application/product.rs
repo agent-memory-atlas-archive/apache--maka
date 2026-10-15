@@ -389,7 +389,7 @@ fn selected(
 ) -> Result<Vec<Package>, HostError> {
     let mut declarations = maka_plugin_core::package::Packages::default();
     for package in packages {
-        declarations.insert(
+        declarations.insert_checked(
             package.application_ref(),
             package
                 .manifest()

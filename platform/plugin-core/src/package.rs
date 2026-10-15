@@ -260,14 +260,66 @@ impl Declaration {
     }
 }
 
+/// Immutable declaration checked once at its input boundary.
+/// Cloning shares the checked value; editing requires a separate raw declaration.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CheckedDeclaration(std::sync::Arc<Declaration>);
+
+impl CheckedDeclaration {
+    pub fn new(declaration: Declaration) -> Result<Self, Error> {
+        declaration.validate()?;
+        Ok(Self(std::sync::Arc::new(declaration)))
+    }
+
+    pub fn declaration(&self) -> &Declaration {
+        &self.0
+    }
+}
+impl std::ops::Deref for CheckedDeclaration {
+    type Target = Declaration;
+    fn deref(&self) -> &Declaration {
+        self.declaration()
+    }
+}
+impl Serialize for CheckedDeclaration {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.declaration().serialize(serializer)
+    }
+}
+impl<'de> Deserialize<'de> for CheckedDeclaration {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::new(Declaration::deserialize(deserializer)?).map_err(|error| {
+            serde::de::Error::custom(format!("invalid application declaration: {error}"))
+        })
+    }
+}
+impl JsonSchema for CheckedDeclaration {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        Declaration::schema_name()
+    }
+    fn schema_id() -> std::borrow::Cow<'static, str> {
+        Declaration::schema_id()
+    }
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        Declaration::json_schema(generator)
+    }
+}
+
 /// Immutable declarations indexed by their exact package revision.
 #[derive(Clone, Default)]
-pub struct Packages(BTreeMap<PackageRef, Declaration>);
+pub struct Packages(BTreeMap<PackageRef, CheckedDeclaration>);
 
 impl Packages {
     pub fn insert(&mut self, package: PackageRef, declaration: Declaration) -> Result<(), Error> {
+        self.insert_checked(package, CheckedDeclaration::new(declaration)?)
+    }
+
+    pub fn insert_checked(
+        &mut self,
+        package: PackageRef,
+        declaration: CheckedDeclaration,
+    ) -> Result<(), Error> {
         package.validate()?;
-        declaration.validate()?;
         if self
             .0
             .get(&package)
@@ -282,7 +334,7 @@ impl Packages {
     }
 
     pub fn get(&self, package: &PackageRef) -> Option<&Declaration> {
-        self.0.get(package)
+        self.0.get(package).map(CheckedDeclaration::declaration)
     }
 }
 
@@ -309,5 +361,25 @@ impl NativeDefinition {
                 .map(|(name, contract)| (name.into(), contract))
                 .collect(),
         }
+    }
+}
+
+#[cfg(test)]
+mod checked_tests {
+    use super::*;
+
+    #[test]
+    fn checked_declaration_keeps_the_raw_schema_and_rejects_invalid_wire_values() {
+        assert_eq!(
+            schemars::schema_for!(CheckedDeclaration),
+            schemars::schema_for!(Declaration)
+        );
+        let error = serde_json::from_value::<CheckedDeclaration>(serde_json::json!({"entries":{}}))
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("invalid application declaration")
+        );
     }
 }

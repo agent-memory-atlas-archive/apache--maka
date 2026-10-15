@@ -56,7 +56,13 @@ fn fixture() -> (Input, Vec<Package>) {
             .position(|p| p.manifest().id == name)
             .unwrap();
         let old = packages.remove(i);
-        let mut declaration = old.manifest().application.clone().unwrap();
+        let mut declaration = old
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         let mut terminal = declaration.entries[&EntryTarget::Desktop].clone();
         let mut files = old.files().clone();
         if name == "native.surface" {
@@ -485,7 +491,13 @@ fn history_requires_persisted_source_and_rejects_configuration_selecting_another
         .position(|p| p.manifest().id == "native.history")
         .unwrap();
     let old = packages.remove(i);
-    let mut declaration = old.manifest().application.clone().unwrap();
+    let mut declaration = old
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     declaration
         .entries
         .get_mut(&EntryTarget::Desktop)

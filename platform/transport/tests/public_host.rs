@@ -158,7 +158,7 @@ async fn lost_session_close_observer_cannot_release_accepted_work_or_root_early(
         let deployment = Uuid::new_v4();
         let (mut input, mut packages) = support::host();
         let package = packages.iter_mut().find(|package| package.manifest().id == "local.business").unwrap();
-        let mut declaration = package.manifest().application.clone().unwrap();
+        let mut declaration = package.manifest().application.as_ref().unwrap().declaration().clone();
         declaration.entries.get_mut(&maka_plugin_core::package::EntryTarget::Host).unwrap().implementation = maka_plugin_core::package::Implementation::Native { implementation: "public.blocked".into() };
         *package = support::counter::package("local.business", declaration, None);
         input.instances.get_mut("business").unwrap().package = package.application_ref().into();
@@ -854,7 +854,13 @@ async fn configured_native_grants_apply_live_survive_source_update_and_root_rest
             .iter_mut()
             .find(|package| package.manifest().id == "local.gateway")
             .unwrap();
-        let mut declaration = gateway.manifest().application.clone().unwrap();
+        let mut declaration = gateway
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         declaration
             .entries
             .get_mut(&maka_plugin_core::package::EntryTarget::Host)

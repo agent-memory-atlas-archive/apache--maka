@@ -38,7 +38,12 @@ fn replacement(
     assert!(source.as_bytes() != old.file("index.mjs").unwrap());
     let package = support::package(
         "dynamic.app",
-        old.manifest().application.clone().unwrap(),
+        old.manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone(),
         Some(source),
     );
     input.instances.get_mut("app").unwrap().package = package.application_ref().into();
@@ -192,7 +197,13 @@ fn replacement_preserves_original_snapshot_work_and_only_waits_for_its_provider(
             .position(|p| p.manifest().id == "native.reader")
             .unwrap();
         let old_package = packages.remove(index);
-        let mut declaration = old_package.manifest().application.clone().unwrap();
+        let mut declaration = old_package
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         declaration
             .entries
             .get_mut(&maka_plugin_core::package::EntryTarget::Desktop)
@@ -401,7 +412,13 @@ fn recovery_root_waits_for_original_editor_release_and_keeps_independent_input(
     assert_ne!(source, changed);
     let package = support::package(
         "dynamic.app",
-        old_package.manifest().application.clone().unwrap(),
+        old_package
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone(),
         Some(changed),
     );
     input.instances.get_mut("app").unwrap().package = package.application_ref().into();

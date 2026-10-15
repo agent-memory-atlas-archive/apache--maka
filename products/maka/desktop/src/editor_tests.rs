@@ -110,7 +110,12 @@ impl Scene {
             let source=std::str::from_utf8(old.file("index.mjs").unwrap()).unwrap().replace(support::CHILD_UPDATE,"if(props.label==='Right 1')throw new Error('failed sibling');return frame({...state,label:props.label,revision:state.revision+1});");
             let counter = support::package(
                 "dynamic.counter",
-                old.manifest().application.clone().unwrap(),
+                old.manifest()
+                    .application
+                    .as_ref()
+                    .unwrap()
+                    .declaration()
+                    .clone(),
                 Some(source),
             );
             input.instances.get_mut("counter").unwrap().package = counter.application_ref().into();
@@ -998,7 +1003,13 @@ fn public_editor_events_preserve_a_same_batch_command_until_receipt_and_do_not_l
             .position(|p| p.manifest().id == "dynamic.counter")
             .unwrap();
         let old = packages.remove(index);
-        let mut declaration = old.manifest().application.clone().unwrap();
+        let mut declaration = old
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         let contract = &mut declaration
             .entries
             .get_mut(&EntryTarget::Desktop)
@@ -1028,7 +1039,13 @@ fn public_editor_events_preserve_a_same_batch_command_until_receipt_and_do_not_l
             .position(|p| p.manifest().id == "dynamic.app")
             .unwrap();
         let old = packages.remove(index);
-        let mut declaration = old.manifest().application.clone().unwrap();
+        let mut declaration = old
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         declaration
             .entries
             .get_mut(&EntryTarget::Desktop)
@@ -1264,7 +1281,13 @@ fn application_owner_preserves_failed_and_panicked_work_after_real_window_cleanu
             .position(|p| p.manifest().id == "native.reader")
             .unwrap();
         let old = packages.remove(index);
-        let mut declaration = old.manifest().application.clone().unwrap();
+        let mut declaration = old
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         declaration
             .entries
             .get_mut(&maka_plugin_core::package::EntryTarget::Desktop)
@@ -1705,7 +1728,13 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
         .position(|p| p.manifest().id == "dynamic.app")
         .unwrap();
     let old = packages.remove(index);
-    let mut declaration = old.manifest().application.clone().unwrap();
+    let mut declaration = old
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let mut contract = maka_ui_runtime::text::reader_contract();
     contract.transport = maka_plugin_core::contract::Transport::Remote;
     declaration
@@ -2177,7 +2206,13 @@ fn committed_addition_preserves_actual_editor_entity_focus_selection_and_composi
         .iter()
         .find(|p| p.manifest().id == "dynamic.app")
         .unwrap();
-    let mut declaration = original.manifest().application.clone().unwrap();
+    let mut declaration = original
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     if let maka_plugin_core::package::Implementation::JavaScript { realm, .. } = &mut declaration
         .entries
         .get_mut(&maka_plugin_core::package::EntryTarget::Desktop)

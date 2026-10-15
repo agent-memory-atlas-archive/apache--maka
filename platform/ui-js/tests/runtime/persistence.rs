@@ -227,7 +227,13 @@ fn unavailable_native_implementation_is_rejected_before_an_earlier_factory_execu
     let store = store(&timer, dir.path());
     let id = Uuid::new_v4();
     let (mut input, mut packages) = support::fixture("");
-    let mut declaration = packages[0].manifest().application.clone().unwrap();
+    let mut declaration = packages[0]
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     declaration
         .entries
         .get_mut(&EntryTarget::Desktop)
@@ -310,7 +316,13 @@ fn bootstrap_recovery_survives_primary_activation_or_mount_failure() {
         assert!(source.contains(needle));
         let broken = support::package(
             "dynamic.app",
-            original.manifest().application.clone().unwrap(),
+            original
+                .manifest()
+                .application
+                .as_ref()
+                .unwrap()
+                .declaration()
+                .clone(),
             Some(source.replace(
                 needle,
                 &format!("{needle}throw new Error('primary {stage} failure');"),

@@ -141,6 +141,67 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn checked_application_shares_its_declaration_and_rejects_invalid_authoring() {
+        use maka_plugin_core::package::{CheckedDeclaration, EntryTarget, Packages};
+        let manifest = json!({"schemaVersion":1,"id":"example.checked","application":{"entries":{"host":{
+            "implementation":{"kind":"native","implementation":"example.checked"},
+            "configuration":{"type":"object"}, "imports":{}, "exports":{}
+        }}}});
+        let package = Package::new(BTreeMap::from([(
+            MANIFEST_FILE.into(),
+            serde_json::to_vec(&manifest).unwrap(),
+        )]))
+        .unwrap();
+        let declaration = package.manifest().application.as_ref().unwrap();
+        let shared = declaration.clone();
+        assert!(std::ptr::eq(
+            declaration.declaration(),
+            shared.declaration()
+        ));
+        assert_eq!(
+            serde_json::to_value(declaration).unwrap(),
+            manifest["application"]
+        );
+        let reference = package.application_ref();
+        let mut packages = Packages::default();
+        packages.insert_checked(reference.clone(), shared).unwrap();
+        assert!(std::ptr::eq(
+            packages.get(&reference).unwrap(),
+            declaration.declaration()
+        ));
+        let mut changed = declaration.declaration().clone();
+        changed
+            .entries
+            .get_mut(&EntryTarget::Host)
+            .unwrap()
+            .configuration = json!({"type":"string"});
+        assert!(
+            packages
+                .insert_checked(reference.clone(), CheckedDeclaration::new(changed).unwrap())
+                .is_err()
+        );
+        assert_eq!(packages.get(&reference).unwrap(), declaration.declaration());
+        let mut edited = declaration.declaration().clone();
+        edited
+            .entries
+            .get_mut(&EntryTarget::Host)
+            .unwrap()
+            .configuration = json!({"type":42});
+        assert!(packages.insert(reference.clone(), edited.clone()).is_err());
+        assert!(CheckedDeclaration::new(edited).is_err());
+        assert_eq!(packages.get(&reference).unwrap(), declaration.declaration());
+        let mut invalid = manifest;
+        invalid["application"]["entries"]["host"]["configuration"] = json!({"type":42});
+        let error = Package::new(BTreeMap::from([(
+            MANIFEST_FILE.into(),
+            serde_json::to_vec(&invalid).unwrap(),
+        )]))
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("invalid application declaration"));
+    }
+
+    #[test]
     fn author_descriptions_round_trip_with_localized_copy() {
         let manifest = json!({"schemaVersion":1,"id":"example.notes", "displayName":"Notes", "description":"Write and find your notes.", "localizations":{"zh-CN":{"displayName":"笔记","description":"记录和查找笔记。"}}, "application":{"entries":{"host":{"implementation":{"kind":"native","implementation":"example.notes"},"configuration":{"type":"object"}}}}});
         let package = Package::new(BTreeMap::from([(

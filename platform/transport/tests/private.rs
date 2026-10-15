@@ -90,7 +90,13 @@ impl Fixture {
                 .find(|p| p.manifest().id == "local.business")
                 .unwrap();
             let old_ref = old.application_ref();
-            let mut declaration = old.manifest().application.clone().unwrap();
+            let mut declaration = old
+                .manifest()
+                .application
+                .as_ref()
+                .unwrap()
+                .declaration()
+                .clone();
             declaration
                 .entries
                 .get_mut(&maka_plugin_core::package::EntryTarget::Host)

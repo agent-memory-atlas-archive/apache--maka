@@ -119,7 +119,13 @@ fn terminal_fixture() -> (Input, Vec<Package>, maka_plugin_core::contract::Contr
     let (mut input, mut packages, contract) = support::continuation_fixture();
     input.environment.presentation = Some(PresentationTarget::Tui);
     for original in &mut packages {
-        let mut declaration = original.manifest().application.clone().unwrap();
+        let mut declaration = original
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         let mut entry = declaration.entries.remove(&EntryTarget::Desktop).unwrap();
         if entry.scene.is_some() {
             entry.scene = Some(scene::language());

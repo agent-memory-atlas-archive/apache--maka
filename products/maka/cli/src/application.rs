@@ -241,7 +241,7 @@ impl Check {
                 .application
                 .as_ref()
                 .ok_or("package has no application declaration")?;
-            packages.insert(package.application_ref(), declaration.clone())?;
+            packages.insert_checked(package.application_ref(), declaration.clone())?;
         }
         let mut remote = RemoteExports::new();
         for observation in observations {

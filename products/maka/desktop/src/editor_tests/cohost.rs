@@ -116,7 +116,13 @@ fn actual_quit_drains_cohost_native_sql_write_before_shared_store_close(cx: &mut
             host_packages.push(old);
             continue;
         }
-        let mut declaration = old.manifest().application.clone().unwrap();
+        let mut declaration = old
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         declaration
             .entries
             .get_mut(&EntryTarget::Host)
@@ -139,7 +145,13 @@ fn actual_quit_drains_cohost_native_sql_write_before_shared_store_close(cx: &mut
         .position(|package| package.manifest().id == "dynamic.app")
         .unwrap();
     let old = packages.remove(index);
-    let mut declaration = old.manifest().application.clone().unwrap();
+    let mut declaration = old
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     declaration
         .entries
         .get_mut(&EntryTarget::Desktop)

@@ -30,7 +30,7 @@ pub(super) fn editor_fixture() -> (tokio::runtime::Runtime, Input, Vec<Package>)
     let (mut input, packages) = support::resource_fixture();
     input.environment.presentation = Some(PresentationTarget::Tui);
     let packages = packages.into_iter().map(|original| {
-        let mut declaration = original.manifest().application.clone().unwrap();
+        let mut declaration = original.manifest().application.as_ref().unwrap().declaration().clone();
         let mut entry = declaration.entries.remove(&EntryTarget::Desktop).unwrap();
         let mut files = BTreeMap::new();
         match &mut entry.implementation {
@@ -1317,7 +1317,13 @@ fn committed_addition_preserves_native_draft_selection_focus_and_undo() {
         .iter()
         .find(|p| p.manifest().id == "dynamic.app")
         .unwrap();
-    let mut declaration = original.manifest().application.clone().unwrap();
+    let mut declaration = original
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     if let Implementation::JavaScript { realm, .. } = &mut declaration
         .entries
         .get_mut(&EntryTarget::Tui)
@@ -1504,7 +1510,7 @@ fn paste_then_enter_is_immediate_and_ordered_while_the_original_js_job_is_slow()
     let packages = packages.into_iter().map(|original| {
         if !matches!(original.manifest().id.as_str(), "dynamic.app" | "dynamic.composer") { return original; }
         let id = original.manifest().id.clone();
-        let declaration = original.manifest().application.clone().unwrap();
+        let declaration = original.manifest().application.as_ref().unwrap().declaration().clone();
         let Implementation::JavaScript { module, .. } = &declaration.entries[&EntryTarget::Tui].implementation else { unreachable!() };
         let mut source = std::str::from_utf8(original.file(module).unwrap()).unwrap()
             .replace("on:{changed:'changed',submitted:'submitted'}", "on:{changed:'changed',submitted:'submitted',checkpoint:'checkpoint'}");
@@ -1609,7 +1615,7 @@ fn consecutive_native_command_receipts_keep_original_values_through_candidate_re
     let (runtime, mut input, packages) = editor_fixture();
     let packages = packages.into_iter().map(|original| {
         if original.manifest().id != "dynamic.app" { return original; }
-        let declaration = original.manifest().application.clone().unwrap();
+        let declaration = original.manifest().application.as_ref().unwrap().declaration().clone();
         let Implementation::JavaScript { module, .. } = &declaration.entries[&EntryTarget::Tui].implementation else { unreachable!() };
         let source = std::str::from_utf8(original.file(module).unwrap()).unwrap().replace(
             "next.observation=event.event;", "next.observation=event.event;if(event.event.receipt)next.receipts=[...(state.receipts??[]),event.event.receipt];",

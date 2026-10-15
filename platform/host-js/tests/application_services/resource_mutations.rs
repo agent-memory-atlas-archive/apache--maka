@@ -45,7 +45,13 @@ async fn application_contract(
 ) -> Application {
     let (provider, consumer) = mutation_packages();
     let rewrite = |old: Package| {
-        let mut declaration = old.manifest().application.clone().unwrap();
+        let mut declaration = old
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         let entry = declaration.entries.get_mut(&EntryTarget::Host).unwrap();
         for value in entry.exports.values_mut() {
             value.contract = declared.clone();
