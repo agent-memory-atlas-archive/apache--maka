@@ -1280,7 +1280,7 @@ impl Presenter {
                 )?;
             }
         }
-        self.sync_native()?;
+        self.progress_native()?;
         // Discard native hit references before
         // acknowledging retired children; root additionally requires Guard.
         let retired = self.application.retiring_mounts();
@@ -1350,7 +1350,7 @@ impl Presenter {
             if let Err(error) = advancement {
                 self.report(&error);
             }
-            self.sync_native()?;
+            self.progress_native()?;
         }
         self.finish_jobs()?;
         failure.map_or(Ok(()), Err)

@@ -149,16 +149,16 @@ impl Resources {
     pub fn prepare(
         &mut self,
         app: &Application<dyn Widget>,
-        root: &Mount,
+        mounts: &[Mount],
     ) -> maka_ui_runtime::Result<bool> {
-        for mount in app.mounted_subtree(root)? {
-            if app.is_retiring(&mount) {
+        for mount in mounts {
+            if app.is_retiring(mount) {
                 continue;
             }
             if let Some(reason) = self.failed.get(&mount.id()) {
                 return Err(Error::Invalid(reason.clone()));
             }
-            let frame = app.frame(&mount)?;
+            let frame = app.frame(mount)?;
             let recipe = frame.view.view.clone();
             let kind = recipe.as_ref().type_id();
             if self
@@ -176,7 +176,7 @@ impl Resources {
                     app.wake_callback(),
                 ));
                 let context = NativeContext {
-                    checkpoint: app.checkpoint_scope(&mount)?,
+                    checkpoint: app.checkpoint_scope(mount)?,
                     resources: resources.clone(),
                     budget: self.budget.clone(),
                 };
@@ -210,7 +210,7 @@ impl Resources {
             if catch_unwind(AssertUnwindSafe(|| {
                 owner.recipe.prepare_focus(
                     owner.state.as_mut(),
-                    app.mount_visible(&mount),
+                    app.mount_visible(mount),
                     frame.revision,
                 )
             }))
@@ -277,28 +277,33 @@ impl Resources {
     fn collect_observations(
         &mut self,
         app: &Application<dyn Widget>,
-        root: &Mount,
+        mounts: &[Mount],
     ) -> maka_ui_runtime::Result<()> {
-        if app.is_retiring(root) || app.frame(root).is_err() {
-            return Ok(());
-        }
-        for mount in app.mounted_subtree(root)? {
-            if !app.is_retiring(&mount) {
+        for mount in mounts {
+            if !app.is_retiring(mount) {
                 self.poll_observation(mount.id())?;
             }
         }
         Ok(())
     }
+    #[cfg(test)]
     pub fn commit(
         &mut self,
         app: &Application<dyn Widget>,
         root: &Mount,
     ) -> maka_ui_runtime::Result<()> {
-        for mount in app.mounted_subtree(root)? {
-            if app.is_retiring(&mount) {
+        self.commit_mounts(app, &app.mounted_subtree(root)?)
+    }
+    fn commit_mounts(
+        &mut self,
+        app: &Application<dyn Widget>,
+        mounts: &[Mount],
+    ) -> maka_ui_runtime::Result<()> {
+        for mount in mounts {
+            if app.is_retiring(mount) {
                 continue;
             }
-            let frame = app.frame(&mount)?;
+            let frame = app.frame(mount)?;
             let owner = self
                 .owners
                 .get_mut(&mount.id())
@@ -697,17 +702,32 @@ impl Resources {
 }
 impl Presenter {
     pub(super) fn sync_native(&mut self) -> maka_ui_runtime::Result<()> {
+        self.sync_native_inner(true)
+    }
+    pub(super) fn progress_native(&mut self) -> maka_ui_runtime::Result<()> {
+        self.sync_native_inner(false)
+    }
+    fn sync_native_inner(&mut self, prepare: bool) -> maka_ui_runtime::Result<()> {
         self.resources.deactivate(&self.application);
+        let mut mounts = if self.application.is_retiring(&self.root)
+            || self.application.frame(&self.root).is_err()
+        {
+            Vec::new()
+        } else {
+            self.application.mounted_subtree(&self.root)?
+        };
         // Transfer completed original work before preflight reserves the next
         // command's capacity. A newer command cannot replace an uncaptured result.
         self.resources
-            .collect_observations(&self.application, &self.root)?;
+            .collect_observations(&self.application, &mounts)?;
         let resources = &mut self.resources;
         let mut reservations = Vec::new();
-        if self.application.commit_ui(&self.root, |app, candidate| {
+        let committed = self.application.commit_ui(&self.root, |app, candidate| {
             reservations = resources.prepare_candidate(app, candidate)?;
             Ok(())
-        })? {
+        })?;
+        if committed {
+            mounts = self.application.mounted_subtree(&self.root)?;
             for (mount, capacity) in reservations {
                 if let Some(owner) = self.resources.owners.get_mut(&mount) {
                     owner.pending.adopt(capacity);
@@ -718,7 +738,10 @@ impl Presenter {
         if !self.surface.is_live() || self.application.is_retiring(&self.root) {
             return Ok(());
         }
-        if !self.resources.prepare(&self.application, &self.root)? {
+        // The first pump boundary also covers local native focus changes. Later
+        // boundaries need preparation only when a UI batch actually committed.
+        let prepare = prepare || committed;
+        if prepare && !self.resources.prepare(&self.application, &mounts)? {
             self.clear_hover()?;
             self.scene.clear();
             self.focus = None;
@@ -728,10 +751,8 @@ impl Presenter {
         let resources = &mut self.resources;
         self.application
             .capture_actions(&self.root, |target| resources.capture(target))?;
-        self.resources.commit(&self.application, &self.root)?;
-        let queues: Vec<_> = self
-            .application
-            .mounted_subtree(&self.root)?
+        self.resources.commit_mounts(&self.application, &mounts)?;
+        let queues: Vec<_> = mounts
             .into_iter()
             .filter(|mount| !self.application.is_retiring(mount))
             .filter_map(|mount| {
@@ -742,14 +763,20 @@ impl Presenter {
             })
             .collect();
         for (mount, queue) in queues {
+            if prepare {
+                // Retain reserved capacity too, even when no observation is queued.
+                queue.retain(|key| {
+                    self.application
+                        .frame(&mount)
+                        .is_ok_and(|frame| frame.view.declares_input(key))
+                });
+            }
+            if !queue.pending() {
+                continue;
+            }
             let revision = self.application.frame(&mount)?.revision;
             let root = self.application.mount_root(&mount)?;
             let basis = (self.application.frame(&root)?.revision, revision);
-            queue.retain(|key| {
-                self.application
-                    .frame(&mount)
-                    .is_ok_and(|frame| frame.view.declares_input(key))
-            });
             let application = &mut self.application;
             let resources = &mut self.resources;
             let errors = queue.advance(
