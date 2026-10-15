@@ -115,10 +115,13 @@ pub(super) struct Owner {
     // The source input remains the only composition authority; the plan is derived.
     _input: Input,
     // This lease belongs to accepted work, including sticky cleanup failures.
-    persisted: Option<(DeploymentRef, Arc<maka_event_log::EventLog>)>,
+    persisted: Option<(
+        maka_event_log::applications::SourceSnapshot,
+        Arc<maka_event_log::EventLog>,
+    )>,
     loading_adoption: Option<DeploymentRef>,
     effective: Option<DeploymentRef>,
-    origins: BTreeMap<InstanceId, DeploymentRef>,
+    origins: BTreeMap<InstanceId, maka_event_log::applications::SourceSnapshot>,
     pending: Vec<Instance>,
     activations: BTreeMap<InstanceId, Activation>,
     owned: BTreeMap<InstanceId, Owned>,
@@ -156,7 +159,10 @@ impl Owner {
         scripts: Option<Arc<dyn backend::Factory>>,
         updates: watch::Sender<Snapshot>,
         dispatch: Weak<Dispatch>,
-        persisted: Option<(DeploymentRef, Arc<maka_event_log::EventLog>)>,
+        persisted: Option<(
+            maka_event_log::applications::SourceSnapshot,
+            Arc<maka_event_log::EventLog>,
+        )>,
     ) -> Self {
         Self {
             dispatch,
@@ -208,7 +214,7 @@ impl Owner {
         let mut changes = match self
             .persisted
             .as_ref()
-            .map(|(source, store)| store.subscribe_application(source.clone()))
+            .map(|(source, store)| store.subscribe_application(source.reference().clone()))
             .transpose()
         {
             Ok(changes) => changes.map(next_change),
@@ -295,6 +301,7 @@ impl Owner {
             .persisted
             .as_ref()
             .ok_or("persisted deployment required")?;
+        let current = current.reference();
         if source.state_domain != current.state_domain || source.deployment != current.deployment {
             return Err("foreign deployment source".into());
         }
@@ -309,7 +316,7 @@ impl Owner {
         if self
             .persisted
             .as_ref()
-            .is_some_and(|(current, _)| source.revision <= current.revision)
+            .is_some_and(|(current, _)| source.revision <= current.reference().revision)
         {
             return;
         }
@@ -345,8 +352,9 @@ impl Owner {
             .persisted
             .as_ref()
             .ok_or("persisted deployment required")?;
-        let (deployment, packages, plan, _) = loaded.into_parts();
+        let (deployment, packages, plan, snapshot) = loaded.into_parts();
         let source = deployment.reference;
+        let current = current.reference();
         if source.revision < current.revision {
             return Err("stale deployment source".into());
         }
@@ -375,7 +383,7 @@ impl Owner {
                 })
             })
             .collect();
-        self.persisted.as_mut().expect("persisted deployment").0 = source;
+        self.persisted.as_mut().expect("persisted deployment").0 = snapshot;
         self._input = input;
         self.sources = sources;
         self.startup_error = None;
@@ -537,7 +545,10 @@ impl Owner {
                 })
             {
                 self.starting = false;
-                self.effective = self.persisted.as_ref().map(|(source, _)| source.clone());
+                self.effective = self
+                    .persisted
+                    .as_ref()
+                    .map(|(source, _)| source.reference().clone());
             } else if self.pending.is_empty()
                 && !self.owned.values().any(|owned| owned.initializing)
                 && !self.initialization_failures.is_empty()
@@ -687,7 +698,7 @@ impl Owner {
                         .persisted
                         .as_ref()
                         .map(|(source, store)| NativePersistence {
-                            source: source.clone(),
+                            source: source.reference().clone(),
                             store: store.clone(),
                         }),
                 };
@@ -1077,25 +1088,26 @@ impl Owner {
                                 .origins
                                 .get(binding.0.consumer().instance())
                                 .ok_or("durable mutation requires original deployment source")?;
-                            Ok::<OperationRequest, String>(OperationRequest {
-                                source: source.clone(),
-                                namespace: binding.provider().instance().clone(),
-                                consumer: binding.0.consumer().instance().clone(),
-                                export: binding.0.export().into(),
-                                method: method.clone(),
-                                contract: service.contract.clone(),
-                                operation,
-                                input: input.clone(),
-                                capture,
-                                origin: scope.identity.clone(),
-                            })
+                            service.methods[&method]
+                                .operation
+                                .as_ref()
+                                .expect("mutation template")
+                                .prepare(OperationRequest {
+                                    source: source.reference().clone(),
+                                    namespace: binding.provider().instance().clone(),
+                                    consumer: binding.0.consumer().instance().clone(),
+                                    export: binding.0.export().into(),
+                                    method: method.clone(),
+                                    contract: (),
+                                    operation,
+                                    input: input.clone(),
+                                    capture,
+                                    origin: scope.identity.clone(),
+                                })
+                                .map_err(|e| e.to_string())
                         })
                         .transpose()?;
-                    let reference = request
-                        .as_ref()
-                        .map(OperationRequest::reference)
-                        .transpose()
-                        .map_err(|e| e.to_string())?;
+                    let reference = request.as_ref().map(|request| request.reference().clone());
                     if let Some(reference) = &reference {
                         check_reference(reference)?;
                         if kind
@@ -1172,23 +1184,7 @@ impl Owner {
                     ) {
                         return Ok((None, None, request, reference, authenticated_caller, None));
                     }
-                    // Reserve bounded progress custody before admitting execution
-                    // or dispatching an effect. It is not a second operation.
-                    let progress = service.methods[&method]
-                        .progress
-                        .clone()
-                        .map(|validator| {
-                            let buffer = self
-                                .dispatch
-                                .upgrade()
-                                .ok_or("Host deployment is closed")?
-                                .stream_buffers
-                                .clone()
-                                .try_acquire_owned()
-                                .map_err(|_| "Host subscription buffer capacity exhausted")?;
-                            Ok::<_, String>((validator, buffer))
-                        })
-                        .transpose()?;
+                    let progress = service.methods[&method].progress.clone();
                     let child = scope.child().map_err(|e| e.to_string())?;
                     let execution = self.runtime.admit(&binding.0).map_err(|e| e.to_string())?;
                     Ok((
@@ -1239,6 +1235,9 @@ impl Owner {
                             }
                         ) {
                             let request = request.expect("checked original mutation");
+                            // Capture the original activation's checked source before any
+                            // adoption can replace the desired deployment snapshot.
+                            let source = self.origins[request.consumer()].clone();
                             let store = self
                                 .persisted
                                 .as_ref()
@@ -1264,9 +1263,9 @@ impl Owner {
                             // call to this owner for final admission after the SQL task ends.
                             self.jobs.push(Box::pin(async move {
                                 let recorded = store
-                                    .record_application_intent(
-                                        request.source,
-                                        request.consumer,
+                                    .record_application_intent_from(
+                                        &source,
+                                        request.consumer().clone(),
                                         reference.expect("checked original reference"),
                                         serde_json::Value::Null,
                                     )
@@ -1312,7 +1311,7 @@ impl Owner {
                             let mut receipt = None;
                             let dispatched = if let Some(request) = request {
                                 let store = store.as_ref().expect("persisted mutation");
-                                match store.dispatch_operation(request).await.map_err(|e| e.to_string()) {
+                                match store.dispatch_prepared_operation(request).await.map_err(|e| e.to_string()) {
                                     Ok(OperationDispatch::New(new)) => { claim = Some(new); Ok(()) },
                                     Ok(OperationDispatch::Existing(observation)) => { historical = Some(Box::new(observation)); Ok(()) },
                                     Err(error) => {
@@ -1655,7 +1654,10 @@ impl Owner {
     fn snapshot(&self) -> Snapshot {
         Snapshot {
             loading: self.loading_adoption.clone(),
-            desired: self.persisted.as_ref().map(|(source, _)| source.clone()),
+            desired: self
+                .persisted
+                .as_ref()
+                .map(|(source, _)| source.reference().clone()),
             effective: self.effective.clone(),
             starting: self.starting,
             startup_error: self.startup_error.clone(),

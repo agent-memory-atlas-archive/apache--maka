@@ -103,14 +103,6 @@ impl Context {
     ) -> Result<BoxFuture<'static, Result<Subscription>>> {
         let scope = self.scope.child().map_err(|error| error.to_string())?;
         let guard = scope.cancellation.clone().drop_guard();
-        let buffer = self
-            .dispatch
-            .upgrade()
-            .ok_or("Host deployment is closed")?
-            .stream_buffers
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| "Host subscription buffer capacity exhausted".to_string())?;
         let (reply, result) = oneshot::channel();
         self.enqueue(
             import,
@@ -119,7 +111,7 @@ impl Context {
             input,
             attachments.into(),
             scope,
-            CallKind::Subscription { reply, buffer },
+            CallKind::Subscription { reply },
         )?;
         Ok(Box::pin(async move {
             let subscription = result

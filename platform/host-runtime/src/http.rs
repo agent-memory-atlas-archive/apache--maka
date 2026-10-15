@@ -63,14 +63,12 @@ pub type Worker =
 pub struct Http {
     authority: Arc<dyn Authority>,
     client: tokio::sync::Mutex<Option<(maka_network::Policy, reqwest::Client)>>,
-    capacity: Arc<tokio::sync::Semaphore>,
 }
 impl Http {
     pub fn new(authority: Arc<dyn Authority>) -> Self {
         Self {
             authority,
             client: Default::default(),
-            capacity: Arc::new(tokio::sync::Semaphore::new(32)),
         }
     }
 }
@@ -81,9 +79,6 @@ impl Client for Http {
             if call.cancellation.is_cancelled() {
                 return Err(Error::Denied);
             }
-            let permit = self.capacity.clone().try_acquire_owned().map_err(|_| {
-                Error::Failed("close unused HTTP responses before starting more".into())
-            })?;
             let url = reqwest::Url::parse(&input.url).map_err(invalid)?;
             if !matches!(url.scheme(), "http" | "https")
                 || url.host_str().is_none()
@@ -176,7 +171,6 @@ impl Client for Http {
                 stop: stop.clone(),
                 output: tokio::sync::Mutex::new(output),
                 ended: finished,
-                _capacity: permit,
             });
             let authority = self.authority.clone();
             self.authority.spawn(Box::new(move |retiring| Box::pin(async move {
@@ -222,7 +216,6 @@ struct ResponseBody {
     stop: CancellationToken,
     output: tokio::sync::Mutex<mpsc::Receiver<Vec<u8>>>,
     ended: watch::Receiver<Option<Result<(), String>>>,
-    _capacity: tokio::sync::OwnedSemaphorePermit,
 }
 impl Drop for ResponseBody {
     fn drop(&mut self) {

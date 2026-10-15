@@ -55,7 +55,7 @@ async fn selected_skill_tools_use_actual_agent_context_and_original_grants_over_
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let setup = service_tools::Setup::skills(root.clone());
             let setup = if granted { setup } else { setup.without_grant() };
-            let f = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None, Some(setup)).await;
+            let f = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()), None, None, Some(setup)).await;
             let original = f.owner.settings.tools.clone();
             for (change, expected) in [
                 ("json", "agent_skill_tool_projection_required"),
@@ -144,7 +144,7 @@ async fn selected_skill_tools_use_actual_agent_context_and_original_grants_over_
             f.app.shutdown().await.unwrap();
             f.config.shutdown().await.unwrap();
         }
-        let f = Fixture::with_services("http://127.0.0.1:9/v1", 1, None, None, Some(service_tools::Setup::forms())).await;
+        let f = Fixture::with_services("http://127.0.0.1:9/v1", None, None, Some(service_tools::Setup::forms())).await;
         let mut invalid = f.owner.settings.tools.clone();
         invalid[0].input = contract::ToolInput::Skill;
         assert_eq!(crate::tools::catalog(f.services.clone(), f.store.clone(), &invalid, vec![], Default::default()).err().as_deref(), Some("agent_skill_tool_contract_invalid"));
@@ -159,7 +159,7 @@ async fn bundled_authoring_resources_reach_the_actual_model_without_added_author
         let dir = tempfile::tempdir().unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let setup = service_tools::Setup::skills(dir.path().to_owned()).with_bundled_skills();
-        let f = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None, Some(setup)).await;
+        let f = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()), None, None, Some(setup)).await;
         let session = f.create("Built-in authoring").await;
         f.send(&session).await.unwrap();
         let (mut socket, _) = listener.accept().await.unwrap();
@@ -198,7 +198,7 @@ async fn standard_skills_follow_each_actual_session_for_preparation_and_model_re
         write(&home.path().join(".maka/skills"),"review","home instructions");
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
         let setup=service_tools::Setup::skill_preparation(home.path().to_owned(),true).with_standard_sources();
-        let f=Fixture::with_services(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None,None,Some(setup)).await;
+        let f=Fixture::with_services(&format!("http://{}/v1",listener.local_addr().unwrap()),None,None,Some(setup)).await;
         let roots=f.query("directories",json!({"kind":"roots"})).await.unwrap();
         let mut references=Vec::new();
         for (index,instructions) in [(0,"project A instructions"),(1,"project B instructions")] {

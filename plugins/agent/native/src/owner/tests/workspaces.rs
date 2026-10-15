@@ -59,7 +59,7 @@ pub(super) async fn publish_with_policy(
 
 #[tokio::test]
 async fn published_directories_are_readonly_bounded_and_create_only_observed_workspaces() {
-    let fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    let fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
     for index in 0..36 {
         std::fs::create_dir(fixture.workspace.join(format!("dir-{index:02}"))).unwrap();
     }
@@ -140,7 +140,7 @@ async fn published_directories_are_readonly_bounded_and_create_only_observed_wor
 
 #[tokio::test]
 async fn malformed_existing_marker_is_a_recorded_refusal_without_repair() {
-    let fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    let fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
     let input = fixture.create_input("Malformed workspace").await;
     let marker = fixture.workspace.join(MARKER_FILE);
     std::fs::write(&marker, b"{broken").unwrap();
@@ -187,7 +187,7 @@ async fn original_uppercase_marker_and_two_workspaces_reach_exact_execution_conf
                 response(&mut socket).await;
             }
         });
-        let fixture = Fixture::new(&base, 1, None).await;
+        let fixture = Fixture::new(&base, None).await;
         let uppercase = "A1234567-B89A-4CDE-8F01-23456789ABCD";
         let marker = fixture.workspace.join(MARKER_FILE);
         let bytes = serde_json::to_vec(&json!({"schemaVersion":1,"workspaceId":uppercase})).unwrap();
@@ -242,7 +242,7 @@ async fn metadata_cas_replay_and_noop_preserve_active_run_workspace_and_activity
             finish.acquire().await.unwrap().forget();
             response(&mut socket).await;
         });
-        let fixture = Fixture::new(&base, 1, None).await;
+        let fixture = Fixture::new(&base, None).await;
         let id = fixture.create("Original title").await;
         let started = fixture.send(&id).await.unwrap();
         entered.acquire().await.unwrap().forget();
@@ -282,7 +282,7 @@ async fn metadata_cas_replay_and_noop_preserve_active_run_workspace_and_activity
 
 #[tokio::test]
 async fn full_session_projection_budget_preserves_forward_and_reverse_catalog_boundaries() {
-    let fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    let fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
     for index in 0..14 {
         let mut input = fixture.create_input(&format!("Session {index}")).await;
         input["labels"] = json!(vec!["\"".repeat(128); 32]);
@@ -372,7 +372,7 @@ async fn full_session_projection_budget_preserves_forward_and_reverse_catalog_bo
 #[cfg(unix)]
 #[tokio::test]
 async fn original_directory_moved_into_managed_worktrees_cannot_be_reborrowed_by_symlink() {
-    let mut fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    let mut fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
     let root = fixture._dir.path().canonicalize().unwrap();
     publish(
         &mut fixture,
@@ -433,7 +433,7 @@ async fn original_directory_moved_into_managed_worktrees_cannot_be_reborrowed_by
 
 #[tokio::test]
 async fn replaced_directory_marker_and_removed_publication_refuse_before_message_admission() {
-    let mut fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    let mut fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
     let input = fixture.create_input("Observed directory").await;
     let old = fixture.workspace.with_file_name("original-workspace");
     std::fs::rename(&fixture.workspace, &old).unwrap();
@@ -504,7 +504,7 @@ async fn replaced_directory_marker_and_removed_publication_refuse_before_message
 #[tokio::test]
 async fn removing_all_published_directories_keeps_the_service_available_without_workspace_authority()
  {
-    let mut fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    let mut fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
     let original = fixture
         .query("directories", json!({"kind":"roots"}))
         .await

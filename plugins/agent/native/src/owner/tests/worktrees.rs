@@ -86,7 +86,7 @@ async fn read_patch(f: &Fixture, execution: &Value) -> String {
 async fn isolated_native_files_and_immutable_patch_survive_successor_and_restart() {
     tokio::time::timeout(Duration::from_secs(60), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut f = Fixture::configured(&format!("http://{}/v1",listener.local_addr().unwrap()), 1, None, None,
+        let mut f = Fixture::configured(&format!("http://{}/v1",listener.local_addr().unwrap()), None, None,
             Some(service_tools::Setup::files("write")), |settings| settings.isolated_workspaces = true).await;
         let (session, path, input, operation) = isolated(&f).await;
         std::fs::write(f.workspace.join("unsaved.txt"), "source draft").unwrap();
@@ -141,7 +141,7 @@ async fn isolated_native_files_and_immutable_patch_survive_successor_and_restart
 async fn isolated_native_shell_preserves_host_protections_and_requires_external_write_approval() {
     tokio::time::timeout(Duration::from_secs(45),async {
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let f=Fixture::configured(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None,None,
+        let f=Fixture::configured(&format!("http://{}/v1",listener.local_addr().unwrap()),None,None,
             Some(service_tools::Setup::isolated_processes()), |settings| settings.isolated_workspaces=true).await;
         let (session,path,_,_)=isolated(&f).await;
         std::fs::write(f.root.join("private-secret"),"host-secret").unwrap();

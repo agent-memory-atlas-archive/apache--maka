@@ -62,7 +62,7 @@ async fn capture_result(module: &Module) -> Result<Captured, Error> {
 }
 
 #[tokio::test]
-async fn unclaimed_worker_registration_payload_releases_globals_and_capacity() {
+async fn unclaimed_worker_registration_payload_releases_globals() {
     tokio::time::timeout(Duration::from_secs(10), async {
         let vm = Vm::pure(Limits::default()).unwrap();
         let module = vm
@@ -79,20 +79,10 @@ async fn unclaimed_worker_registration_payload_releases_globals_and_capacity() {
         drop(future);
         assert_eq!(vm.statistics(false).await.unwrap().captured_callbacks, 0);
         let mut handles = Vec::new();
-        for _ in 0..1024 {
+        for _ in 0..1025 {
             handles.push(capture_result(&module).await.unwrap());
         }
-        assert!(
-            capture_result(&module)
-                .await
-                .err()
-                .unwrap()
-                .to_string()
-                .contains("registration limit")
-        );
-        handles.pop();
-        handles.push(capture_result(&module).await.unwrap());
-        assert_eq!(vm.statistics(false).await.unwrap().captured_callbacks, 1024);
+        assert_eq!(vm.statistics(false).await.unwrap().captured_callbacks, 1025);
         drop(handles);
         assert_eq!(vm.statistics(false).await.unwrap().captured_callbacks, 0);
         module.close().await.unwrap();

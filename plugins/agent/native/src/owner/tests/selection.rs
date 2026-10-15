@@ -92,7 +92,7 @@ async fn explicit_models_switch_in_one_session_and_stale_selection_has_no_admiss
                 response(&mut socket).await;
             }
         });
-        let fixture = Fixture::new(&base, 1, None).await;
+        let fixture = Fixture::new(&base, None).await;
         let session = fixture.create("Per-message model choice").await;
         let stale = fixture.selection().await;
         edit(&fixture, |changes| {
@@ -153,7 +153,7 @@ async fn explicit_models_switch_in_one_session_and_stale_selection_has_no_admiss
 #[tokio::test]
 async fn captured_execution_ignores_catalog_labels_and_other_models_but_rejects_execution_changes()
 {
-    let fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    let fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
     let session = fixture.create("Original execution basis").await;
     let (mut source, _) = crate::model::Source::select(
         fixture.config.clone(),
@@ -277,8 +277,8 @@ async fn captured_execution_ignores_catalog_labels_and_other_models_but_rejects_
 
 #[tokio::test]
 async fn ordinary_settings_pages_keep_root_revision_and_exact_default_cas_without_secrets() {
-    let first = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
-    let second = Fixture::new("http://127.0.0.1:2/v1", 1, None).await;
+    let first = Fixture::new("http://127.0.0.1:1/v1", None).await;
+    let second = Fixture::new("http://127.0.0.1:2/v1", None).await;
     edit(&first, |changes| {
         changes.enabled_model_ids = Some((0..20).map(|at| format!("model-{at:02}")).collect())
     })
@@ -430,7 +430,7 @@ async fn ordinary_settings_pages_keep_root_revision_and_exact_default_cas_withou
 
 #[tokio::test]
 async fn model_search_continues_its_query_across_bounded_scan_windows_and_catalog_fences() {
-    let fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    let fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
     edit(&fixture, |changes| {
         changes.name = Some("Research Account".into());
         changes.enabled_model_ids = Some((0..300).map(|at| format!("model-{at:03}")).collect());
@@ -506,7 +506,7 @@ async fn queued_model_route_change_settles_original_message_without_retargeting(
     tokio::time::timeout(Duration::from_secs(30), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
-        let fixture = Fixture::new(&base, 1, None).await;
+        let fixture = Fixture::new(&base, None).await;
         let session = fixture.create("Queued original model").await;
         fixture.send(&session).await.unwrap();
         let (mut socket, _) = listener.accept().await.unwrap();
@@ -530,7 +530,7 @@ async fn queue_promotion_rejects_a_different_accepted_model_execution() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
-        let fixture = Fixture::new(&base, 1, None).await;
+        let fixture = Fixture::new(&base, None).await;
         let session = fixture.create("Different queued model").await;
         let started = fixture.send(&session).await.unwrap();
         let (mut socket, _) = listener.accept().await.unwrap();
@@ -573,7 +573,7 @@ async fn thinking_choices_reach_requests_and_queued_policy_cannot_steer_another_
     tokio::time::timeout(Duration::from_secs(30), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
-        let fixture = Fixture::new(&base, 1, None).await;
+        let fixture = Fixture::new(&base, None).await;
         thinking(&fixture, vec![Off, Low, High], High).await;
         let page = models(&fixture, json!({"kind":"start"})).await.unwrap();
         assert_eq!(page["choices"][0]["thinkingLevels"], json!(["off", "low", "high"]));
@@ -615,7 +615,7 @@ async fn thinking_choices_reach_requests_and_queued_policy_cannot_steer_another_
 async fn restored_thinking_preserves_explicit_choice_and_refuses_changed_default_or_support() {
     use maka_agent_facts::execution::ThinkingLevel::High;
     use maka_agent_facts::execution::ThinkingLevel::Low;
-    let fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    let fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
     thinking(&fixture, vec![Low, High], High).await;
     let session = fixture.create("Restored thinking policy").await;
     let mut sources = Vec::new();
@@ -655,7 +655,7 @@ async fn restored_thinking_preserves_explicit_choice_and_refuses_changed_default
 async fn invalid_thinking_default_remains_unavailable_without_poisoning_other_models() {
     use maka_agent_facts::execution::ThinkingLevel::High;
     use maka_agent_facts::execution::ThinkingLevel::Low;
-    let fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    let fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
     thinking(&fixture, vec![Low], High).await;
     edit(&fixture, |changes| {
         changes
@@ -711,7 +711,7 @@ async fn invalid_thinking_default_remains_unavailable_without_poisoning_other_mo
 
 #[tokio::test]
 async fn accepted_code_mode_survives_settings_changes_and_legacy_messages_remain_direct() {
-    let fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    let fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
     let session = fixture.create("Frozen tool policy").await;
     edit(&fixture, |changes| {
         changes.model_overrides = Patch::Set(BTreeMap::from([(

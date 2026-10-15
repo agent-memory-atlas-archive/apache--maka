@@ -33,16 +33,6 @@ use maka_capabilities::call::ReadResource;
 use maka_capabilities::call::ResourceEncoding;
 use maka_host_runtime::application::Context;
 
-/// The database job retains the copy capacity even if its observer goes away.
-struct Payload {
-    bytes: Vec<u8>,
-    _permit: OwnedSemaphorePermit,
-}
-impl AsRef<[u8]> for Payload {
-    fn as_ref(&self) -> &[u8] {
-        &self.bytes
-    }
-}
 impl Owner {
     pub async fn upload_attachment(
         self: &Arc<Self>,
@@ -56,11 +46,6 @@ impl Owner {
             .get("file")
             .ok_or("agent_attachment_required")?
             .clone();
-        let Ok(permit) = self.upload_capacity.clone().try_acquire_owned() else {
-            return Ok(AttachmentUploadResult::Rejected {
-                reason: AttachmentRejection::Busy,
-            });
-        };
         let mut ticket = context
             .scope()
             .resources
@@ -69,7 +54,7 @@ impl Owner {
         ticket.start();
         let owner = self.clone();
         // This original Scope owns the entire worker through the SQL commit. Losing
-        // the caller never releases capacity or reports physical cleanup early.
+        // the caller never reports physical cleanup before that worker finishes.
         tokio::spawn(async move {
             let result = async {
                 let runs = owner.runs.lock().await;
@@ -105,13 +90,7 @@ impl Owner {
                         source: ArtifactSource::UserUpload,
                         summary: Some(input.digest),
                     };
-                    Ok::<_, String>((
-                        record,
-                        Payload {
-                            bytes,
-                            _permit: permit,
-                        },
-                    ))
+                    Ok::<_, String>((record, bytes))
                 })
                 .await
                 .map_err(|_| "agent_attachment_worker_failed")?;

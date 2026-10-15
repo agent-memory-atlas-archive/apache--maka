@@ -48,8 +48,8 @@ pub fn identity(suffix: &str) -> Invocation {
 pub fn engine(log: Arc<EventLog>) -> Engine {
     Engine::new(
         log,
-        ModelExecutor::new(1, Duration::from_secs(30)).unwrap(),
-        CodeExecutor::new(1, CellLimits::default()).unwrap(),
+        ModelExecutor::new(Duration::from_secs(30)).unwrap(),
+        CodeExecutor::new(CellLimits::default()).unwrap(),
     )
 }
 

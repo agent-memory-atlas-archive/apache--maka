@@ -122,15 +122,30 @@ async fn discovery_defers_direct_admission_but_only_defers_descriptions_in_code_
                         call("use", "echo", json!({"n":2}))
                     } else { call("use", "exec", json!({"code":"text(await tools.echo({n:2}));"})) };
                     respond_tools(&mut socket, vec![call], 200).await;
-                    for _ in 0..if compact { 1 } else { 2 } {
+                    let mut summaries = 0;
+                    let mut main = None;
+                    while summaries < if compact { 1 } else { 2 } || main.is_none() {
                         let (mut socket, _) = listener.accept().await.unwrap();
-                        let summary = fixture::read_request(&mut socket).await;
-                        assert_eq!(summary["max_tokens"], 8000);
-                        assert!(summary.get("tools").is_none());
-                        fixture::respond(&mut socket, if compact { fixture::SUMMARY } else { "invalid summary" }, "stop").await;
+                        let request = fixture::read_request(&mut socket).await;
+                        if request["messages"].to_string().contains("Now write the structured summary") {
+                            summaries += 1;
+                            assert_eq!(request["max_tokens"], 8000);
+                            assert!(request.get("tools").is_none());
+                            fixture::respond(&mut socket, if compact { fixture::SUMMARY } else { "invalid summary" }, "stop").await;
+                        } else {
+                            assert!(main.is_none());
+                            main = Some((socket, request));
+                        }
                     }
-                    let (mut socket, _) = listener.accept().await.unwrap();
-                    let final_request = fixture::read_request(&mut socket).await;
+                    let (mut socket, mut final_request) = main.unwrap();
+                    if compact {
+                        // A threshold only starts background work. Provider
+                        // overflow makes adoption mandatory before another send.
+                        let body = json!({"error":{"message":"request exceeds context","type":"invalid_request_error","code":"context_length_exceeded"}}).to_string();
+                        socket.write_all(format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+                        (socket, _) = listener.accept().await.unwrap();
+                        final_request = fixture::read_request(&mut socket).await;
+                    }
                     let definitions = visible(&final_request, mode);
                     assert_eq!(definitions.iter().any(|name| name == "echo"), !compact && mode == ToolMode::Direct);
                     assert_eq!(definitions.iter().any(|name| name == "tool_search"), mode == ToolMode::Direct);
@@ -147,7 +162,7 @@ async fn discovery_defers_direct_admission_but_only_defers_descriptions_in_code_
                 // Exercise measured-usage compaction, without making the
                 // discovery prompt itself exceed the provider input capacity.
                 input.context = Some(ModelRequestContext { provider_id:"openai".into(), context_window:Some(64_000), declared_window:Some(210), model_context_window:None });
-                input.work = RunWork::Message { allow_prior_unknown:false, source_messages:Vec::new(), message:"Use echo".into(), tools:catalog, max_steps:3 };
+                input.work = RunWork::Message { allow_prior_unknown:false, source_messages:Vec::new(), message:"Use echo".into(), tools:catalog, max_steps:4 };
                 let engine = fixture::engine(log.clone());
                 engine.run(input, CancellationToken::new()).await.unwrap();
                 engine.drain().await;

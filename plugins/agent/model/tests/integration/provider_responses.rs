@@ -151,7 +151,7 @@ async fn responses_http_preserves_reasoning_and_raw_tool_identity_across_steps()
             }
             requests
         });
-        let executor = ModelExecutor::new(1, Duration::from_secs(15)).unwrap();
+        let executor = ModelExecutor::new(Duration::from_secs(15)).unwrap();
         let mut prompt = vec![json!({"role":"user","content":[{"type":"text","text":"Echo 你好😀"}]})];
         let schema = json!({"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false});
         for index in 0..2 {
@@ -298,7 +298,7 @@ async fn plaintext_responses_replays_only_its_declared_carrier_after_a_tool_step
             });
             let mut prompt = vec![maka_model::prompt::Message::user("Use the tool")];
             for index in 0..2 {
-                let executor = ModelExecutor::new(1, Duration::from_secs(5)).unwrap();
+                let executor = ModelExecutor::new(Duration::from_secs(5)).unwrap();
                 let request = ModelRequest {
                     provider: ProviderConfig { adapter: None, capabilities: Default::default(), network: Default::default(), kind: ProviderKind::OpenResponses(contract),
                         model: "plain".into(), base_url: base_url.clone(), auth: maka_model::ProviderAuth::ApiKey("local-test-key".into()),
@@ -362,7 +362,7 @@ async fn plaintext_responses_does_not_turn_transport_eof_into_success() {
             let body = frames(&text_events("incomplete"));
             socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
         });
-        let executor = ModelExecutor::new(1, Duration::from_secs(3)).unwrap();
+        let executor = ModelExecutor::new(Duration::from_secs(3)).unwrap();
         let mut stream = executor.stream(ModelRequest {
             provider: ProviderConfig { adapter: None, capabilities: Default::default(), network: Default::default(),
                 kind: ProviderKind::OpenResponses(PlaintextResponses { reasoning_replay: PlaintextReasoningReplay::PlaintextSummary, compatibility: None }),

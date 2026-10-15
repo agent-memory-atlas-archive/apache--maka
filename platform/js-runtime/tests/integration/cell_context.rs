@@ -40,7 +40,7 @@ struct Echo {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn model_modules_match_globals_timers_explicit_output_and_import_boundaries() {
-    let engine = CodeExecutor::new(1, CellLimits::default()).unwrap();
+    let engine = CodeExecutor::new(CellLimits::default()).unwrap();
     let tools = Arc::new(Echo::default());
     let context = CellContext::new(CellStore::default(), 4096, vec![]);
     let result = engine
@@ -113,7 +113,7 @@ impl ToolExecutor for Echo {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn output_survives_errors_and_json_store_does_not_retain_heap() {
-    let engine = CodeExecutor::new(1, CellLimits::default()).unwrap();
+    let engine = CodeExecutor::new(CellLimits::default()).unwrap();
     let store = CellStore::default();
     let context = CellContext::new(
         store.clone(),
@@ -147,30 +147,51 @@ async fn output_survives_errors_and_json_store_does_not_retain_heap() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn fanout_queues_instead_of_failing_at_the_concurrency_limit() {
-    let engine = CodeExecutor::new(
-        1,
-        CellLimits {
-            max_in_flight_tools: 1,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let tools = Arc::new(Echo::default());
-    let result = engine
-        .execute(
+async fn independent_tool_fanout_has_no_concurrency_gate() {
+    struct GatedEcho {
+        echo: Echo,
+        gate: Arc<tokio::sync::Barrier>,
+    }
+    impl ToolExecutor for GatedEcho {
+        fn names(&self) -> Vec<String> {
+            self.echo.names()
+        }
+        fn invoke(
+            &self,
+            name: String,
+            value: Value,
+            cancellation: CancellationToken,
+        ) -> ToolFuture {
+            let call = self.echo.invoke(name, value, cancellation);
+            let gate = self.gate.clone();
+            Box::pin(async move {
+                gate.wait().await;
+                call.await
+            })
+        }
+    }
+    let engine = CodeExecutor::new(CellLimits::default()).unwrap();
+    let tools = Arc::new(GatedEcho {
+        echo: Echo::default(),
+        gate: Arc::new(tokio::sync::Barrier::new(16)),
+    });
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        engine.execute(
             "return await Promise.all(Array.from({length:16}, (_,i) => tools.echo(i)));".into(),
             tools.clone(),
             CancellationToken::new(),
-        )
-        .await
-        .unwrap();
+        ),
+    )
+    .await
+    .expect("all independent tools start before any completes")
+    .unwrap();
     assert_eq!(
         serde_json::to_value(result).unwrap()["value"],
         json!((0..16).collect::<Vec<_>>())
     );
-    assert_eq!(tools.count.load(Ordering::SeqCst), 16);
-    assert_eq!(tools.peak.load(Ordering::SeqCst), 1);
+    assert_eq!(tools.echo.count.load(Ordering::SeqCst), 16);
+    assert_eq!(tools.echo.peak.load(Ordering::SeqCst), 16);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -208,7 +229,7 @@ async fn fatal_failure_is_observable_before_other_accepted_work_finishes_cleanup
     }
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         let tools = Arc::new(Faults { entered: Arc::new(Notify::new()), release: Arc::new(Notify::new()), later: AtomicUsize::new(0) });
-        let engine = CodeExecutor::new(1, CellLimits::default()).unwrap();
+        let engine = CodeExecutor::new(CellLimits::default()).unwrap();
         let context = CellContext::new(CellStore::default(), 4096, vec![]);
         let worker_context = context.clone();
         let worker_tools = tools.clone();

@@ -33,7 +33,7 @@ use tokio_util::sync::CancellationToken;
 async fn shared_sdk_requests_progress_through_backpressure_and_cancellation() {
     tokio::time::timeout(Duration::from_secs(20), async {
         let runtime = TrustedRuntime::default();
-        let models = ModelExecutor::with_runtime(runtime.clone(), 4, Duration::from_secs(15)).unwrap();
+        let models = ModelExecutor::with_runtime(runtime.clone(), Duration::from_secs(15)).unwrap();
 
         let waiting = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let waiting_base = format!("http://{}/v1", waiting.local_addr().unwrap());
@@ -135,4 +135,57 @@ async fn assert_http_closed(socket: &mut TcpStream) {
             ) => {}
         result => panic!("cancelled HTTP connection did not close: {result:?}"),
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shared_sdk_admits_more_than_128_independent_models_and_cleans_them_up() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        const CALLS: usize = 256;
+        let models = ModelExecutor::new(Duration::from_secs(25)).unwrap();
+        let server = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", server.local_addr().unwrap());
+        let (received, ready) = oneshot::channel();
+        let http = tokio::spawn(async move {
+            let mut connections = tokio::task::JoinSet::new();
+            for _ in 0..CALLS {
+                let (mut socket, _) = server.accept().await.unwrap();
+                connections.spawn(async move {
+                    read_request(&mut socket).await;
+                    assert_http_closed(&mut socket).await;
+                });
+            }
+            received.send(()).unwrap();
+            while let Some(result) = connections.join_next().await {
+                result.unwrap();
+            }
+        });
+        let mut streams = Vec::new();
+        for _ in 0..CALLS {
+            streams.push(
+                models
+                    .stream(
+                        request(ProviderKind::OpenaiChat, base.clone()),
+                        CancellationToken::new(),
+                    )
+                    .await
+                    .unwrap(),
+            );
+        }
+        ready.await.unwrap();
+        let mut cleanup = tokio::task::JoinSet::new();
+        for stream in streams {
+            cleanup.spawn(async move {
+                stream
+                    .cancel_and_wait()
+                    .await
+                    .expect("actual stream cleanup");
+            });
+        }
+        while let Some(result) = cleanup.join_next().await {
+            result.unwrap();
+        }
+        http.await.unwrap();
+    })
+    .await
+    .expect("all model requests reach transport before any is released");
 }

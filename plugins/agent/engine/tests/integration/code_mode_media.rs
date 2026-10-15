@@ -230,7 +230,7 @@ async fn notifications_trigger_followup_without_wait_and_audio_survives_copy_and
                 handler:ToolHandler::Immediate(handler.clone()), nesting:ToolNesting::Nestable, semantics:ToolSemantics::Parallel,
             })).unwrap(); *max_steps = 4;
         }
-        let engine = Engine::with_pricing(log.clone(), ModelExecutor::new(1, Duration::from_secs(5)).unwrap(), CodeExecutor::new(1, CellLimits::default()).unwrap(), Arc::new(GatePricing { log:log.clone(), gates, before_commit, calls:std::sync::atomic::AtomicUsize::new(0) }));
+        let engine = Engine::with_pricing(log.clone(), ModelExecutor::new(Duration::from_secs(5)).unwrap(), CodeExecutor::new(CellLimits::default()).unwrap(), Arc::new(GatePricing { log:log.clone(), gates, before_commit, calls:std::sync::atomic::AtomicUsize::new(0) }));
         engine.run(input.clone(), CancellationToken::new()).await.unwrap();
         server.await.unwrap(); engine.drain().await; drop(engine);
         let revision = log.get_session::<Value>("session").await.unwrap().unwrap().revision;
@@ -247,7 +247,7 @@ async fn notifications_trigger_followup_without_wait_and_audio_survives_copy_and
             assert!(request["input"].as_array().unwrap().iter().any(|item| item["output"].as_array().is_some_and(|parts| parts.iter().any(|part| part["type"] == "input_audio" && part["audio_url"] == audio_url))));
             reply(&mut socket, text("replayed", 4), 4).await;
         });
-        let engine = Engine::new(log.clone(), ModelExecutor::new(1, Duration::from_secs(5)).unwrap(), CodeExecutor::new(1, CellLimits::default()).unwrap());
+        let engine = Engine::new(log.clone(), ModelExecutor::new(Duration::from_secs(5)).unwrap(), CodeExecutor::new(CellLimits::default()).unwrap());
         engine.run(input, CancellationToken::new()).await.unwrap(); replay.await.unwrap(); engine.drain().await; drop(engine);
         Arc::try_unwrap(log).ok().unwrap().close().await.unwrap();
       }

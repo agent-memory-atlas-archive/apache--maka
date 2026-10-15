@@ -77,7 +77,7 @@ async fn child_output_limit_after_t2_preserves_raw_and_remains_catchable() {
         semantics: ToolSemantics::Parallel,
     }])
     .unwrap();
-    let cells = CodeExecutor::new(1, CellLimits::default()).unwrap();
+    let cells = CodeExecutor::new(CellLimits::default()).unwrap();
     let mut children = Vec::new();
     for (id, code, caught) in [
         ("uncaught", "text(await tools.read({}));", false),

@@ -343,8 +343,8 @@ async fn unknown_dispatch_stays_unknown_and_blocks_next_admission_after_reopen()
     assert_eq!(state.uncertain_operations, vec!["step:call"]);
     let engine = Engine::new(
         log.clone(),
-        ModelExecutor::new(1, Duration::from_secs(1)).unwrap(),
-        CodeExecutor::new(2, CellLimits::default()).unwrap(),
+        ModelExecutor::new(Duration::from_secs(1)).unwrap(),
+        CodeExecutor::new(CellLimits::default()).unwrap(),
     );
     let result = engine
         .run(
@@ -445,7 +445,7 @@ async fn explicit_new_message_after_unknown_dispatch_informs_model_without_repla
             socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata: {chunk}\n\ndata: [DONE]\n\n").as_bytes()).await.unwrap();
             request
         });
-        let engine = Engine::new(log.clone(), ModelExecutor::new(1, Duration::from_secs(5)).unwrap(), CodeExecutor::new(2, CellLimits::default()).unwrap());
+        let engine = Engine::new(log.clone(), ModelExecutor::new(Duration::from_secs(5)).unwrap(), CodeExecutor::new(CellLimits::default()).unwrap());
         let run = RunInput {
             model_source: None,
             model_revision: None,

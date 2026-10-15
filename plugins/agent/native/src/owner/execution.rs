@@ -190,9 +190,6 @@ impl Owner {
         {
             return Ok(parked(Reason::Busy));
         }
-        let Ok(permit) = self.permits.clone().try_acquire_owned() else {
-            return Ok(parked(Reason::Capacity));
-        };
         let Some((boundary, high_water)) = self
             .store
             .invocation_boundary(&input.session_id, &input.source_invocation_id)
@@ -357,7 +354,7 @@ impl Owner {
             }
             Err(error) => {
                 if error.is_cleanup_unconfirmed() {
-                    runs.quarantined.push(permit);
+                    runs.quarantined.insert(input.session_id.clone());
                     runs.closing = true;
                     self.stop.cancel();
                 }
@@ -380,7 +377,7 @@ impl Owner {
             }
             Err(error) => {
                 if error.is_cleanup_unconfirmed() {
-                    runs.quarantined.push(permit);
+                    runs.quarantined.insert(input.session_id.clone());
                 }
                 runs.closing = true;
                 self.stop.cancel();
@@ -396,7 +393,7 @@ impl Owner {
                 failure: None,
             },
         );
-        self.workers.spawn(self.clone().drive(running, permit));
+        self.workers.spawn(self.clone().drive(running));
         let boundary = self
             .store
             .invocation_boundary(&invocation.session_id, &invocation.invocation_id)

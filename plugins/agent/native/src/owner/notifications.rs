@@ -204,7 +204,7 @@ impl Owner {
                 .await
                 .map_err(|_| "agent_admission_unknown")?;
         }
-        // Capacity pressure retains the accepted message in the original queue.
+        // The durable queue preserves ordering with any original Session worker.
         self.schedule_locked(&mut runs)
             .await
             .map_err(public_error)?;

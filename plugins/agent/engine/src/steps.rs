@@ -187,7 +187,7 @@ pub(super) async fn run(
                 && (needs_compaction || auto_context::due(input, &source))
             {
                 compaction = CompactionBudget::Failed;
-                if let Some((candidate, background)) = auto_context::start(
+                if let Some(candidate) = auto_context::start(
                     inner,
                     input,
                     &source,
@@ -197,7 +197,7 @@ pub(super) async fn run(
                 )
                 .await?
                 {
-                    if background && !needs_compaction {
+                    if !needs_compaction {
                         pending = Some(candidate);
                     } else if candidate.adopt(inner, cancellation).await? {
                         compaction = CompactionBudget::Reshaped;
@@ -289,16 +289,17 @@ pub(super) async fn run(
                 {
                     let candidate = match pending.take() {
                         Some(candidate) => Some(candidate),
-                        None => auto_context::start(
-                            inner,
-                            input,
-                            &source,
-                            main_progress,
-                            cancellation,
-                            continuation_base,
-                        )
-                        .await?
-                        .map(|(candidate, _)| candidate),
+                        None => {
+                            auto_context::start(
+                                inner,
+                                input,
+                                &source,
+                                main_progress,
+                                cancellation,
+                                continuation_base,
+                            )
+                            .await?
+                        }
                     };
                     if let Some(candidate) = candidate
                         && candidate.adopt(inner, cancellation).await?

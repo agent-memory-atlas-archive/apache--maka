@@ -57,7 +57,7 @@ async fn preview(fixture: &Fixture, source: &Value, entry: &Value) -> Value {
 }
 #[tokio::test]
 async fn imports_original_codex_history_requires_preview_and_keeps_receipt_across_reactivation() {
-    let mut fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    let mut fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
     let path = fixture.workspace.join("sessions/2026/rollout-source.jsonl");
     write_lines(&path, &codex_rows());
     let source = saved_source(&fixture, "codex", 0).await;
@@ -197,7 +197,7 @@ async fn imports_original_codex_history_requires_preview_and_keeps_receipt_acros
 }
 #[tokio::test]
 async fn imports_claude_and_live_opencode_snapshot_share_original_conversion_without_execution() {
-    let fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    let fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
     write_lines(
         &fixture.workspace.join("projects/project/abcdef.jsonl"),
         &[
@@ -261,7 +261,7 @@ async fn imports_claude_and_live_opencode_snapshot_share_original_conversion_wit
 }
 #[tokio::test]
 async fn imports_reject_stale_sources_foreign_entries_and_replaced_physical_directories() {
-    let fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    let fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
     write_lines(&fixture.workspace.join("sessions/a.jsonl"), &codex_rows());
     std::fs::write(fixture.workspace.join(MARKER_FILE), "Not a Maka workspace").unwrap();
     let source = saved_source(&fixture, "codex", 0).await;

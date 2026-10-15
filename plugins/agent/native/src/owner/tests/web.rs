@@ -175,7 +175,7 @@ async fn native_web_redirects_require_each_destination_and_cancel_withdraws_pend
         let first = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let second = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/first", first.local_addr().unwrap());
-        let f = Fixture::with_services(&format!("http://{}/v1", model.local_addr().unwrap()), 1, None, None, Some(service_tools::Setup::web())).await;
+        let f = Fixture::with_services(&format!("http://{}/v1", model.local_addr().unwrap()), None, None, Some(service_tools::Setup::web())).await;
         let session = f.create("Native Web").await;
         assert_eq!(snapshot(&f).await["settings"]["enabled"], false);
         let saved = save(&f, Value::Null, true).await;
@@ -234,7 +234,7 @@ async fn native_web_request_binding_tracks_settings_provider_capabilities_and_pr
  {
     tokio::time::timeout(Duration::from_secs(30), async {
         let model = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let f = Fixture::with_services(&format!("http://{}/v1", model.local_addr().unwrap()), 1, None, None, Some(service_tools::Setup::web())).await;
+        let f = Fixture::with_services(&format!("http://{}/v1", model.local_addr().unwrap()), None, None, Some(service_tools::Setup::web())).await;
         let session = f.create("Web binding").await;
         f.send(&session).await.unwrap();
         let (mut socket, _) = model.accept().await.unwrap();
@@ -298,7 +298,7 @@ async fn native_web_selected_model_search_crosses_the_actual_responses_request()
     tokio::time::timeout(Duration::from_secs(30), async {
         let server = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", server.local_addr().unwrap());
-        let f = Fixture::with_services(&base, 1, None, None, Some(service_tools::Setup::web())).await;
+        let f = Fixture::with_services(&base, None, None, Some(service_tools::Setup::web())).await;
         let provider = json!({"packageId":maka_providers::api::ID,"entryId":maka_providers::api::ID,"scope":"profile","name":"openai-responses-compatible"});
         let catalog = f.config.catalog().await.unwrap();
         let CatalogMutationResult::Committed { connection: Some(basis), .. } = f.config.create_connection(serde_json::from_value(json!({

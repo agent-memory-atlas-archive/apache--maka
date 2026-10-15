@@ -91,7 +91,7 @@ async fn imported(f: &Fixture, title: &str, prefix: &str) -> String {
 #[tokio::test]
 async fn recall_native_queries_keep_unicode_dates_titles_namespace_and_exact_history_anchor() {
     tokio::time::timeout(Duration::from_secs(45), async {
-        let f = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+        let f = Fixture::new("http://127.0.0.1:1/v1", None).await;
         let session = imported(&f, "A café conversation", &f.owner.prefix).await;
         let foreign = imported(&f, "Foreign conversation", "other_").await;
         let found = f.query("recall", json!({"terms":["CAFÉ"],"since":1000,"until":2000})).await.unwrap();
@@ -124,7 +124,7 @@ pub(super) async fn tool(socket: &mut TcpStream, name: &str, input: Value) {
 async fn recall_native_model_tools_expand_exclude_active_turn_and_retain_material_copy() {
     tokio::time::timeout(Duration::from_secs(60), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let f = Fixture::configured(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None,None,None,|settings| settings.recall=true).await;
+        let f = Fixture::configured(&format!("http://{}/v1",listener.local_addr().unwrap()),None,None,None,|settings| settings.recall=true).await;
         images::enable_vision(&f).await;
         let source = imported(&f, "Earlier conversation", &f.owner.prefix).await;
         let found = f.query("recall",json!({"terms":["café"],"session_id":source})).await.unwrap();
@@ -176,7 +176,6 @@ async fn recall_native_privacy_revokes_offered_tools_and_pending_queries() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let f = Fixture::configured(
             &format!("http://{}/v1", listener.local_addr().unwrap()),
-            1,
             None,
             None,
             None,
@@ -205,22 +204,6 @@ async fn recall_native_privacy_revokes_offered_tools_and_pending_queries() {
                     .any(|tool| tool["function"]["name"] == name)
             );
         }
-        // Hold the real search capacity while an admitted UI query waits.
-        let held = f
-            .owner
-            .recall
-            .capacity
-            .clone()
-            .acquire_many_owned(2)
-            .await
-            .unwrap();
-        let pending = f.query("recall", query.clone());
-        tokio::pin!(pending);
-        assert!(
-            tokio::time::timeout(Duration::from_millis(100), &mut pending)
-                .await
-                .is_err()
-        );
         let before = f.config.runtime_policy().await.unwrap();
         assert!(matches!(
             f.config
@@ -234,8 +217,6 @@ async fn recall_native_privacy_revokes_offered_tools_and_pending_queries() {
                 .unwrap(),
             maka_agent_facts::configuration::policy::RuntimePolicyMutationResult::Committed { .. }
         ));
-        drop(held);
-        assert!(pending.await.unwrap_err().contains("privacy mode"));
         assert!(
             f.query("recall", query.clone())
                 .await

@@ -224,7 +224,7 @@ async fn turn_reuses_socket_and_drops_it_after_sdk_cleanup() {
             );
             assert!(listener.accept().now_or_never().is_none());
         });
-        let executor = ModelExecutor::new(2, Duration::from_secs(10)).unwrap();
+        let executor = ModelExecutor::new(Duration::from_secs(10)).unwrap();
         let lane = Conversation::default();
         generate(&executor, &lane, proxied_request(proxy_port, "first")).await;
         generate(&executor, &lane, proxied_request(proxy_port, "second")).await;

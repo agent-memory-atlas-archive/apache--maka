@@ -51,7 +51,7 @@ async fn skill_input_freezes_original_admission_and_queue_edits_before_actual_ht
     tokio::time::timeout(Duration::from_secs(60), async {
         let dir = tempfile::tempdir().unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let f = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None,
+        let f = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()), None, None,
             Some(service_tools::Setup::skill_preparation(dir.path().into(), true).with_standard_sources())).await;
         let session = f.create("Skill preparation").await;
         let workspace = f.owner.session(&session).await.unwrap().configuration.workspace;
@@ -129,7 +129,6 @@ async fn skill_input_has_no_implicit_tools_grant_or_model_fallback_for_rejection
             };
             let f = Fixture::with_services(
                 &format!("http://{}/v1", listener.local_addr().unwrap()),
-                1,
                 None,
                 None,
                 setup,
@@ -161,7 +160,6 @@ async fn skill_input_has_no_implicit_tools_grant_or_model_fallback_for_rejection
                 assert_eq!(value["kind"], "rejected", "{value}");
                 assert_eq!(value["reason"], "skills_unavailable");
                 assert!(service_tools::facts(&f, &session).await.is_empty());
-                assert_eq!(f.owner.permits.available_permits(), 1);
             }
             f.app.shutdown().await.unwrap();
             f.config.shutdown().await.unwrap();
@@ -177,7 +175,7 @@ async fn skill_preparation_survives_host_restart_without_preparing_again() {
         let dir = tempfile::tempdir().unwrap();
         document(dir.path(), "FROZEN METADATA", "FROZEN INSTRUCTIONS");
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let f = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()), 1,
+        let f = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()),
             None, None, Some(service_tools::Setup::skill_preparation(dir.path().into(), false))).await;
         let session = f.create("Prepared restart").await;
         let deployment = f.app.client().snapshot().effective.unwrap().deployment;

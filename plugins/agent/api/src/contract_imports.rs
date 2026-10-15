@@ -202,7 +202,6 @@ pub enum ImportsPage {
     Changed,
     Unavailable,
     Invalid,
-    Busy,
     Limit,
 }
 #[derive(Deserialize, JsonSchema)]
@@ -249,6 +248,5 @@ pub enum ImportResult {
     Changed,
     Unavailable,
     Invalid,
-    Busy,
     Limit,
 }

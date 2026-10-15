@@ -57,7 +57,7 @@ async fn resume_input(fixture: &Fixture, source: &Value) -> Value {
 async fn exact_receipt_resumes_original_input_and_deduplicates_after_prerequisites_disappear() {
     tokio::time::timeout(Duration::from_secs(45), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let fixture = Fixture::new(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None).await;
+        let fixture = Fixture::new(&format!("http://{}/v1", listener.local_addr().unwrap()), None).await;
         let session = fixture.create("Resume original").await;
         let source = cancelled(&fixture, &listener, &session).await;
         let boundary = fixture.store.invocation_boundary(&session,source["invocationId"].as_str().unwrap()).await.unwrap().unwrap().0;
@@ -126,7 +126,6 @@ async fn resume_rejects_stale_foreign_busy_and_completed_sources_without_new_wor
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let fixture = Fixture::new(
             &format!("http://{}/v1", listener.local_addr().unwrap()),
-            1,
             None,
         )
         .await;
@@ -202,7 +201,6 @@ async fn resume_rejects_stale_foreign_busy_and_completed_sources_without_new_wor
                 .await
                 .is_err()
         );
-        assert_eq!(fixture.owner.permits.available_permits(), 1);
         fixture.app.shutdown().await.unwrap();
         fixture.config.shutdown().await.unwrap();
     })
@@ -216,7 +214,6 @@ async fn application_reactivation_resumes_sealed_source_through_original_engine(
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let mut fixture = Fixture::new(
             &format!("http://{}/v1", listener.local_addr().unwrap()),
-            1,
             None,
         )
         .await;
@@ -314,7 +311,6 @@ async fn resume_refuses_unsettled_effect_outside_its_selected_lineage() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let fixture = Fixture::new(
             &format!("http://{}/v1", listener.local_addr().unwrap()),
-            1,
             None,
         )
         .await;
@@ -386,7 +382,6 @@ async fn resume_refuses_unsettled_effect_outside_its_selected_lineage() {
                 .count(),
             2
         );
-        assert_eq!(fixture.owner.permits.available_permits(), 1);
         fixture.app.shutdown().await.unwrap();
         fixture.config.shutdown().await.unwrap();
     })
@@ -400,7 +395,6 @@ async fn resume_uses_live_workspace_permissions_instead_of_original_grants() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let fixture = Fixture::with_services(
             &format!("http://{}/v1", listener.local_addr().unwrap()),
-            1,
             None,
             None,
             Some(service_tools::Setup::files("write")),
@@ -455,7 +449,7 @@ async fn resume_uses_live_workspace_permissions_instead_of_original_grants() {
 async fn work_answer_pages_preserve_exact_unicode_nul_and_owner_after_later_work() {
     tokio::time::timeout(Duration::from_secs(45), async {
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+        let fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),None).await;
         let session=fixture.create("Original work answer").await;
         let original=fixture.send(&session).await.unwrap();
         let target=json!({"kind":"invocation","invocationId":original["invocationId"]});

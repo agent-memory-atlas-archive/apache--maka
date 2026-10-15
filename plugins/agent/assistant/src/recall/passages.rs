@@ -27,7 +27,6 @@ use maka_agent_facts::tools::ToolError;
 use maka_agent_ports::session::history::Chunk;
 use maka_capabilities::call::Scope;
 use std::sync::Arc;
-use tokio::sync::OwnedSemaphorePermit;
 use unicode_normalization::UnicodeNormalization;
 
 pub(super) async fn build(
@@ -37,7 +36,6 @@ pub(super) async fn build(
     hits: &[Hit],
     terms: &[String],
     span: (usize, usize),
-    permit: Arc<OwnedSemaphorePermit>,
 ) -> Result<Vec<Passage>, ToolError> {
     let mut passages: Vec<_> = hits
         .iter()
@@ -94,9 +92,7 @@ pub(super) async fn build(
             if targets.is_empty() {
                 continue;
             }
-            let worker = permit.clone();
             let excerpts = tokio::task::spawn_blocking(move || {
-                let _worker = worker;
                 let text: String = message.text.nfc().collect();
                 targets
                     .into_iter()

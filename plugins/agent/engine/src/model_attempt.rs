@@ -27,7 +27,7 @@ use maka_agent_facts::event::ModelInterruption;
 use maka_agent_facts::model::ModelStep;
 use maka_event_log::context::ModelContextSource;
 use maka_model::prompt::Message;
-use maka_model::{ModelRequest, StepBuilder, ToolDefinition};
+use maka_model::{ModelError, ModelEvent, ModelRequest, StepBuilder, ToolDefinition};
 use serde_json::json;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -44,7 +44,6 @@ pub(super) enum Attempt<'a> {
     },
     Summary {
         adapter: maka_agent_ports::model::Binding,
-        reservation: Option<&'a mut maka_model::ModelReservation>,
     },
 }
 
@@ -327,7 +326,7 @@ async fn execute_once(
     cancellation: &CancellationToken,
     progressed: &mut bool,
 ) -> Result<(String, ModelStep), RunError> {
-    let (purpose, lane, surface, summary_adapter, reservation, tools) = match attempt {
+    let (purpose, lane, surface, summary_adapter, tools) = match attempt {
         Attempt::Main {
             lane,
             surface,
@@ -338,20 +337,9 @@ async fn execute_once(
             Some(lane),
             Some(surface),
             None,
-            None,
             Some(tools),
         ),
-        Attempt::Summary {
-            adapter,
-            reservation,
-        } => (
-            ModelPurpose::Summary,
-            None,
-            None,
-            Some(adapter),
-            reservation,
-            None,
-        ),
+        Attempt::Summary { adapter } => (ModelPurpose::Summary, None, None, Some(adapter), None),
     };
     if cancellation.is_cancelled() {
         return Err(RunError::Cancelled);
@@ -425,19 +413,10 @@ async fn execute_once(
     use maka_agent_facts::event::EventSink;
     inner.log.clone().commit(write).await?;
     let result: Result<_, RunError> = async {
-        let stream = match reservation {
-            Some(reservation) => {
-                reservation
-                    .stream_with_adapter(prepared.request, cancellation.clone(), binding)
-                    .await?
-            }
-            None => {
-                inner
-                    .model
-                    .stream_with_adapter(prepared.request, cancellation.clone(), lane, binding)
-                    .await?
-            }
-        };
+        let stream = inner
+            .model
+            .stream_with_adapter(prepared.request, cancellation.clone(), lane, binding)
+            .await?;
         receive(
             inner,
             input,
@@ -555,14 +534,10 @@ async fn receive(
     cancellation: &CancellationToken,
 ) -> Result<ModelStep, RunError> {
     use futures_util::{FutureExt, StreamExt, stream::FuturesUnordered};
-    use maka_agent_facts::model::ModelEvent;
     use maka_agent_facts::tools::ToolError;
     let mut builder = StepBuilder::for_step(step_id)?;
     let tool_cancellation = cancellation.child_token();
     let mut running = FuturesUnordered::new();
-    // Bound effects without stopping stream ingestion while a tool awaits user
-    // input or slow I/O. Native item counts bound the pending call collection.
-    let permits = Arc::new(tokio::sync::Semaphore::new(8));
     let result: Result<_, RunError> = async {
         loop {
             tokio::select! {
@@ -570,25 +545,37 @@ async fn receive(
                 result = running.next(), if !running.is_empty() => { tool_result(result.unwrap())?; }
                 event = stream.next() => {
                     let Some(event) = event else { break; };
-                    let event = event?;
-                    builder.push(event.clone())?;
-                    append(inner, &input.invocation, Fact::ModelObserved {
-                        step_id: step_id.to_owned(), event: event.clone(),
-                    }).await?;
-                    if tools.is_some() && builder.accepted_item().is_some() {
+                    let observations = ready_observations(&mut builder, event, || {
+                        stream.next().now_or_never().flatten()
+                    });
+                    use maka_agent_facts::event::{EventWrite, RuntimeEvent};
+                    let writes = observations.events.iter().map(|event| {
+                        EventWrite::plain(RuntimeEvent::new(input.invocation.clone(), Fact::ModelObserved {
+                                step_id: step_id.to_owned(), event: event.clone(),
+                        }))
+                    }).collect::<Result<Vec<_>, _>>()?;
+                    if !writes.is_empty() {
+                        inner.log.append_batch(&writes).await?;
+                    }
+                    if tools.is_some() && observations.accepted_item {
                         *progressed = true;
                     }
-                    if let ModelEvent::ToolCall(call) = event
-                        && !call.provider_executed
-                        && let Some(tools) = tools.as_mut()
-                    {
-                        let future = tools.dispatch(call, tool_cancellation.clone());
-                        let permits = permits.clone();
-                        running.push(async move {
-                            let _permit = permits.acquire_owned().await.expect("tool execution gate remains open");
-                            std::panic::AssertUnwindSafe(future).catch_unwind().await
-                                .unwrap_or_else(|_| Err(ToolError::CleanupUnconfirmed("tool panicked".into())))
-                        });
+                    // Every call's acceptance is durable before dispatch, even
+                    // when a later ready event failed validation or cancelled.
+                    for event in observations.events {
+                        if let ModelEvent::ToolCall(call) = event
+                            && !call.provider_executed
+                            && let Some(tools) = tools.as_mut()
+                        {
+                            let future = tools.dispatch(call, tool_cancellation.clone());
+                            running.push(async move {
+                                std::panic::AssertUnwindSafe(future).catch_unwind().await
+                                    .unwrap_or_else(|_| Err(ToolError::CleanupUnconfirmed("tool panicked".into())))
+                            });
+                        }
+                    }
+                    if let Some(error) = observations.error {
+                        return Err(error.into());
                     }
                 }
             }
@@ -623,6 +610,66 @@ async fn receive(
         return Err(maka_model::ModelError::Adapter("summary contains tool content".into()).into());
     }
     Ok(output)
+}
+
+struct ReadyObservations {
+    events: Vec<ModelEvent>,
+    accepted_item: bool,
+    error: Option<ModelError>,
+}
+
+/// Take only the currently available prefix. A failed tail must not roll back
+/// earlier valid observations or cause us to consume events beyond the failure.
+fn ready_observations(
+    builder: &mut StepBuilder,
+    first: Result<ModelEvent, ModelError>,
+    mut next_ready: impl FnMut() -> Option<Result<ModelEvent, ModelError>>,
+) -> ReadyObservations {
+    let mut observations = ReadyObservations {
+        events: Vec::new(),
+        accepted_item: false,
+        error: None,
+    };
+    let mut next = Some(first);
+    while let Some(event) = next {
+        match event.and_then(|event| {
+            builder.push(event.clone())?;
+            Ok(event)
+        }) {
+            Ok(event) => {
+                observations.accepted_item |= builder.accepted_item().is_some();
+                // Provider chunk boundaries have no durable identity. Retain the
+                // existing 8 KiB text-observation budget after validating every
+                // original event, and never merge across metadata or other events.
+                if let (
+                    Some(ModelEvent::PartDelta {
+                        id,
+                        text,
+                        provider_options,
+                    }),
+                    ModelEvent::PartDelta {
+                        id: next_id,
+                        text: next_text,
+                        provider_options: next_options,
+                    },
+                ) = (observations.events.last_mut(), &event)
+                    && id.as_str() == next_id.as_str()
+                    && provider_options.as_ref() == next_options.as_ref()
+                    && text.len().saturating_add(next_text.len()) <= 8 * 1024
+                {
+                    text.push_str(next_text);
+                } else {
+                    observations.events.push(event);
+                }
+            }
+            Err(error) => {
+                observations.error = Some(error);
+                break;
+            }
+        }
+        next = next_ready();
+    }
+    observations
 }
 
 fn tool_result(
@@ -719,4 +766,241 @@ async fn finish(
         return Err(RunError::Cancelled);
     }
     Ok((step_id, output))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ready_observations;
+    use maka_agent_facts::model::{ModelFinishReason, ModelPart, ModelStep, TextKind};
+    use maka_model::{ModelError, ModelEvent, StepBuilder};
+    use serde_json::{Value, json};
+
+    fn started(id: &str) -> ModelEvent {
+        ModelEvent::PartStarted {
+            id: id.into(),
+            text_kind: TextKind::Text,
+            provider_options: None,
+        }
+    }
+
+    fn delta(id: &str, text: &str, provider_options: Option<Value>) -> ModelEvent {
+        ModelEvent::PartDelta {
+            id: id.into(),
+            text: text.into(),
+            provider_options,
+        }
+    }
+
+    fn closed(id: &str) -> ModelEvent {
+        ModelEvent::PartFinished {
+            id: id.into(),
+            provider_options: None,
+        }
+    }
+
+    fn replay(events: &[ModelEvent]) -> ModelStep {
+        let mut builder = StepBuilder::default();
+        for event in events {
+            builder.push(event.clone()).unwrap();
+        }
+        builder
+            .push(ModelEvent::Finished {
+                reason: ModelFinishReason::Stop,
+                usage: Default::default(),
+                provider_options: None,
+            })
+            .unwrap();
+        builder.finish().unwrap()
+    }
+
+    fn batch(events: &[ModelEvent]) -> super::ReadyObservations {
+        let mut ready = events.iter().cloned().map(Ok);
+        ready_observations(&mut StepBuilder::default(), ready.next().unwrap(), || {
+            ready.next()
+        })
+    }
+
+    #[test]
+    fn ready_deltas_preserve_metadata_changes_and_other_event_boundaries() {
+        let original = vec![
+            started("text"),
+            delta(
+                "text",
+                "one",
+                Some(json!({"provider":{"signature":"same"}})),
+            ),
+            delta(
+                "text",
+                " two",
+                Some(json!({"provider":{"signature":"same"}})),
+            ),
+            delta(
+                "text",
+                " three",
+                Some(json!({"provider":{"signature":"changed"}})),
+            ),
+            ModelEvent::ResponseMetadata {
+                id: Some("response".into()),
+                model: None,
+                timestamp: None,
+            },
+            delta(
+                "text",
+                " four",
+                Some(json!({"provider":{"signature":"changed"}})),
+            ),
+            closed("text"),
+        ];
+        let merged = batch(&original);
+        assert!(merged.error.is_none());
+        assert_eq!(
+            merged.events,
+            vec![
+                started("text"),
+                delta(
+                    "text",
+                    "one two",
+                    Some(json!({"provider":{"signature":"same"}}))
+                ),
+                original[3].clone(),
+                original[4].clone(),
+                original[5].clone(),
+                closed("text"),
+            ]
+        );
+        let output = replay(&merged.events);
+        assert_eq!(output, replay(&original));
+        assert_eq!(
+            output.parts,
+            vec![ModelPart::Text {
+                text_kind: TextKind::Text,
+                text: "one two three four".into(),
+                provider_options: Some(json!({"provider":{"signature":"changed"}})),
+            }]
+        );
+    }
+
+    #[test]
+    fn ready_deltas_preserve_interleaved_parts() {
+        let original = vec![
+            started("a"),
+            started("b"),
+            delta("a", "first", None),
+            delta("b", "second", None),
+            delta("a", " third", None),
+            delta("a", " fourth", None),
+            closed("a"),
+            closed("b"),
+        ];
+        let merged = batch(&original);
+        assert!(merged.error.is_none());
+        assert_eq!(
+            merged.events,
+            vec![
+                started("a"),
+                started("b"),
+                delta("a", "first", None),
+                delta("b", "second", None),
+                delta("a", " third fourth", None),
+                closed("a"),
+                closed("b"),
+            ]
+        );
+        assert_eq!(replay(&merged.events), replay(&original));
+    }
+
+    #[test]
+    fn ready_deltas_keep_utf8_and_the_existing_text_byte_budget() {
+        for (first, expected_lengths) in [
+            ("x".repeat(8188), vec![8192, 2]),
+            ("x".repeat(8189), vec![8189, 6]),
+        ] {
+            let original = vec![
+                started("text"),
+                delta("text", &first, None),
+                delta("text", "😀", None),
+                delta("text", "é", None),
+                closed("text"),
+            ];
+            let merged = batch(&original);
+            assert!(merged.error.is_none());
+            let lengths: Vec<_> = merged
+                .events
+                .iter()
+                .filter_map(|event| match event {
+                    ModelEvent::PartDelta { text, .. } => Some(text.len()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(lengths, expected_lengths);
+            assert_eq!(replay(&merged.events), replay(&original));
+        }
+    }
+
+    #[test]
+    fn ready_observations_keep_valid_prefix_before_invalid_tail() {
+        let valid = [
+            started("text"),
+            ModelEvent::PartDelta {
+                id: "text".into(),
+                text: "saved".into(),
+                provider_options: None,
+            },
+            delta("text", " prefix", None),
+            closed("text"),
+        ];
+        let mut ready = valid[1..].iter().cloned().map(Ok).chain([
+            Ok(ModelEvent::PartFinished {
+                id: "unknown".into(),
+                provider_options: None,
+            }),
+            Ok(started("must-not-be-read")),
+        ]);
+        let batch = ready_observations(&mut StepBuilder::default(), Ok(valid[0].clone()), || {
+            ready.next()
+        });
+        assert_eq!(
+            batch.events,
+            [
+                started("text"),
+                delta("text", "saved prefix", None),
+                closed("text")
+            ]
+        );
+        assert_eq!(replay(&batch.events), replay(&valid));
+        assert!(batch.accepted_item);
+        assert!(batch.error.is_some());
+        assert_eq!(ready.next().unwrap().unwrap(), started("must-not-be-read"));
+    }
+
+    #[test]
+    fn ready_observations_keep_prefix_on_cancellation_and_provider_failure() {
+        for error in [
+            ModelError::Cancelled,
+            ModelError::Adapter("provider failed".into()),
+        ] {
+            let event = started("saved");
+            let mut next = Some(Err(error));
+            let batch = ready_observations(&mut StepBuilder::default(), Ok(event.clone()), || {
+                next.take()
+            });
+            assert_eq!(batch.events, [event]);
+            assert!(batch.error.is_some());
+            assert!(!batch.accepted_item);
+        }
+    }
+
+    #[test]
+    fn ready_observations_flush_when_no_more_events_are_ready() {
+        let mut builder = StepBuilder::default();
+        let event = ModelEvent::Finished {
+            reason: ModelFinishReason::Stop,
+            usage: Default::default(),
+            provider_options: None,
+        };
+        let batch = ready_observations(&mut builder, Ok(event.clone()), || None);
+        assert_eq!(batch.events, [event]);
+        assert!(batch.error.is_none());
+        builder.finish().unwrap();
+    }
 }

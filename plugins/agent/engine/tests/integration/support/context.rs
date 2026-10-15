@@ -35,8 +35,8 @@ pub const SUMMARY: &str = "## Goal\nContinue the durable task.\n## Progress\n###
 pub fn engine(log: Arc<EventLog>) -> Engine {
     Engine::new(
         log,
-        ModelExecutor::new(1, Duration::from_secs(10)).unwrap(),
-        CodeExecutor::new(1, CellLimits::default()).unwrap(),
+        ModelExecutor::new(Duration::from_secs(10)).unwrap(),
+        CodeExecutor::new(CellLimits::default()).unwrap(),
     )
 }
 pub fn input(base: &str, id: &str, compact: bool) -> RunInput {

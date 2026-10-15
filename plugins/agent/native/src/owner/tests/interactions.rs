@@ -53,7 +53,7 @@ async fn pending(fixture: &Fixture, session: &str) -> InteractionRecord {
 async fn native_question_roundtrip_is_bound_owned_and_first_wins() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let fixture = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None, Some(service_tools::Setup::questions())).await;
+        let fixture = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()), None, None, Some(service_tools::Setup::questions())).await;
         let session = fixture.create("Question roundtrip").await;
         fixture.send(&session).await.unwrap();
         let (mut socket, _) = listener.accept().await.unwrap();
@@ -105,12 +105,11 @@ async fn native_question_roundtrip_is_bound_owned_and_first_wins() {
     }).await.unwrap();
 }
 #[tokio::test]
-async fn stopping_question_closes_original_request_and_releases_run_capacity() {
+async fn stopping_question_closes_original_request_and_releases_run_owner() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let fixture = Fixture::with_services(
             &format!("http://{}/v1", listener.local_addr().unwrap()),
-            1,
             None,
             None,
             Some(service_tools::Setup::questions()),
@@ -142,7 +141,6 @@ async fn stopping_question_closes_original_request_and_releases_run_capacity() {
                 .outcome,
             Some(InteractionOutcome::Closure { .. })
         ));
-        assert_eq!(fixture.owner.permits.available_permits(), 1);
         assert!(fixture.owner.runs.lock().await.controls.is_empty());
         fixture.app.shutdown().await.unwrap();
         fixture.config.shutdown().await.unwrap();
@@ -171,7 +169,7 @@ pub(super) async fn form_response(socket: &mut TcpStream) {
 async fn native_form_validates_original_fields_and_commits_before_resuming() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let fixture = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None, Some(service_tools::Setup::forms())).await;
+        let fixture = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()), None, None, Some(service_tools::Setup::forms())).await;
         let session = fixture.create("Form roundtrip").await;
         fixture.send(&session).await.unwrap();
         let (mut socket, _) = listener.accept().await.unwrap();
@@ -213,7 +211,7 @@ async fn native_form_decline_cancel_and_stop_settle_original_wait() {
     tokio::time::timeout(Duration::from_secs(30), async {
         for action in ["decline", "cancel", "stop"] {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let fixture = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None, Some(service_tools::Setup::forms())).await;
+            let fixture = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()), None, None, Some(service_tools::Setup::forms())).await;
             let session = fixture.create("Form closure").await;
             let started = fixture.send(&session).await.unwrap();
             let (mut socket, _) = listener.accept().await.unwrap(); request(&mut socket).await; form_response(&mut socket).await;
@@ -232,7 +230,6 @@ async fn native_form_decline_cancel_and_stop_settle_original_wait() {
             let stored = fixture.store.interaction(&record.request_id).await.unwrap().unwrap();
             if action == "stop" { assert!(matches!(stored.outcome,Some(InteractionOutcome::Closure{..}))); }
             assert!(fixture.store.pending_interactions(&session).await.unwrap().is_empty());
-            assert_eq!(fixture.owner.permits.available_permits(),1);
             fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
         }
     }).await.unwrap();

@@ -465,7 +465,15 @@ async fn retained_old_head_after_new_explicit_adoption_does_not_poison_readiness
         None,
         updates,
         Weak::new(),
-        Some((first, store.clone())),
+        Some((
+            store
+                .load_application_at(&first)
+                .await
+                .unwrap()
+                .unwrap()
+                .snapshot(),
+            store.clone(),
+        )),
     );
     owner
         .adopt(store.load_application_at(&third).await.unwrap().unwrap())

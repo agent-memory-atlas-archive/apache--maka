@@ -11321,17 +11321,6 @@ export const contracts = {
                 properties: {
                   kind: {
                     type: 'string',
-                    const: 'busy',
-                  },
-                },
-                required: ['kind'],
-                additionalProperties: false,
-              },
-              {
-                type: 'object',
-                properties: {
-                  kind: {
-                    type: 'string',
                     const: 'limit',
                   },
                 },
@@ -12137,17 +12126,6 @@ export const contracts = {
                   kind: {
                     type: 'string',
                     const: 'invalid',
-                  },
-                },
-                required: ['kind'],
-                additionalProperties: false,
-              },
-              {
-                type: 'object',
-                properties: {
-                  kind: {
-                    type: 'string',
-                    const: 'busy',
                   },
                 },
                 required: ['kind'],
@@ -18838,7 +18816,6 @@ export const contracts = {
                   'closed',
                   'archived',
                   'busy',
-                  'capacity',
                   'source_missing',
                   'source_changed',
                   'source_not_resumable',
@@ -22200,7 +22177,7 @@ export const contracts = {
               },
               AgentAttachmentRejection: {
                 type: 'string',
-                enum: ['invalid_file', 'busy', 'closed', 'archived'],
+                enum: ['invalid_file', 'closed', 'archived'],
               },
             },
           },
@@ -24957,7 +24934,6 @@ export const contracts = {
                   'closed',
                   'archived',
                   'busy',
-                  'capacity',
                   'source_missing',
                   'source_changed',
                   'source_not_resumable',

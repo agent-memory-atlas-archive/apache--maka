@@ -71,7 +71,7 @@ async fn graph_tool(socket: &mut TcpStream, name: &str, input: Value) {
 #[tokio::test]
 async fn graph_modes_are_per_conversation_and_keep_pinned_epochs_across_restart() {
     tokio::time::timeout(Duration::from_secs(60), async {
-        let mut fixture = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+        let mut fixture = Fixture::new("http://127.0.0.1:9/v1", None).await;
         activate_workers(&mut fixture, true, true, true).await;
         let ready = resolve(&fixture, selection(&fixture).await, Uuid::new_v4()).await;
         let first = ready["session"]["id"].as_str().unwrap();
@@ -106,7 +106,7 @@ async fn graph_modes_are_per_conversation_and_keep_pinned_epochs_across_restart(
 async fn graph_real_model_dispatches_original_work_wakes_and_selects_actual_result() {
     tokio::time::timeout(Duration::from_secs(90), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut fixture = Fixture::new(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None).await;
+        let mut fixture = Fixture::new(&format!("http://{}/v1", listener.local_addr().unwrap()), None).await;
         activate_workers(&mut fixture, true, true, true).await;
         let ready = resolve(&fixture, selection(&fixture).await, Uuid::new_v4()).await;
         let session = ready["session"]["id"].as_str().unwrap();
@@ -183,7 +183,7 @@ async fn graph_real_model_dispatches_original_work_wakes_and_selects_actual_resu
 async fn graph_stop_cancels_original_worker_and_other_coordinator_cannot_read_its_task() {
     tokio::time::timeout(Duration::from_secs(90), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut fixture = Fixture::new(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None).await;
+        let mut fixture = Fixture::new(&format!("http://{}/v1", listener.local_addr().unwrap()), None).await;
         activate_workers(&mut fixture, true, true, true).await;
         let ready = resolve(&fixture, selection(&fixture).await, Uuid::new_v4()).await;
         let session = ready["session"]["id"].as_str().unwrap();
@@ -334,7 +334,7 @@ async fn finish_graph(fixture: &Fixture, listener: &TcpListener, session: &str, 
 async fn graph_operator_and_selected_history_preserve_large_original_results_without_redispatch() {
     tokio::time::timeout(Duration::from_secs(120), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut fixture = Fixture::new(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None).await;
+        let mut fixture = Fixture::new(&format!("http://{}/v1", listener.local_addr().unwrap()), None).await;
         activate_workers(&mut fixture, true, true, true).await;
         let ready = resolve(&fixture, selection(&fixture).await, Uuid::new_v4()).await;
         let session = ready["session"]["id"].as_str().unwrap();

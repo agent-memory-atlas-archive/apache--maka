@@ -78,7 +78,6 @@ struct Inner {
     realm: Realm,
     commands: mpsc::UnboundedSender<Command>,
     health: Arc<Health>,
-    calls: Arc<Semaphore>,
     bytes: Arc<Semaphore>,
     sequence: AtomicU64,
 }
@@ -129,7 +128,6 @@ enum Command {
         args: Vec<Value>,
         context: Option<Arc<request::Owner>>,
         reply: oneshot::Sender<Result<Value>>,
-        slot: OwnedSemaphorePermit,
         bytes: OwnedSemaphorePermit,
     },
     Capture {
@@ -137,7 +135,6 @@ enum Command {
         namespace: Vec<String>,
         methods: Vec<String>,
         reply: oneshot::Sender<Result<Captured>>,
-        slot: OwnedSemaphorePermit,
         bytes: OwnedSemaphorePermit,
     },
     ReleaseCaptured {
@@ -148,7 +145,6 @@ enum Command {
     Statistics {
         collect: bool,
         reply: oneshot::Sender<Statistics>,
-        slot: OwnedSemaphorePermit,
     },
 }
 
@@ -248,7 +244,6 @@ impl Vm {
             realm,
             commands,
             health,
-            calls: Arc::new(Semaphore::new(128)),
             bytes: Arc::new(Semaphore::new(32 * 1024 * 1024)),
             sequence: AtomicU64::new(1),
         })))
@@ -308,20 +303,10 @@ impl Vm {
         self.0.health.closed.cancelled().await;
     }
     pub async fn statistics(&self, collect: bool) -> Result<Statistics> {
-        let slot = self
-            .0
-            .calls
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| failed("VM call capacity exhausted"))?;
         let (reply, receive) = oneshot::channel();
         self.0
             .commands
-            .send(Command::Statistics {
-                collect,
-                reply,
-                slot,
-            })
+            .send(Command::Statistics { collect, reply })
             .map_err(|_| self.0.health.error())?;
         receive.await.map_err(|_| self.0.health.error())
     }
@@ -377,14 +362,6 @@ impl Module {
         if size > 32 * 1024 * 1024 {
             return Err(failed("call arguments exceed 32 MiB"));
         }
-        let slot = self
-            .0
-            .vm
-            .0
-            .calls
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| failed("VM call capacity exhausted"))?;
         let bytes = self
             .0
             .vm
@@ -404,7 +381,6 @@ impl Module {
                 args,
                 context: None,
                 reply,
-                slot,
                 bytes,
             })
             .map_err(|_| self.0.vm.0.health.error())?;

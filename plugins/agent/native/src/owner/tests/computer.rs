@@ -92,7 +92,7 @@ fn tool_text(sent: &Value) -> String {
 async fn computer_product_tools_preserve_approval_repl_media_and_revocation() {
     tokio::time::timeout(Duration::from_secs(90), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let f = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()), 2, None, None, Some(service_tools::Setup::computer())).await;
+        let f = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()), None, None, Some(service_tools::Setup::computer())).await;
         images::enable_vision(&f).await;
         let session = f.create("Computer").await;
         let other = f.create("Other Computer").await;

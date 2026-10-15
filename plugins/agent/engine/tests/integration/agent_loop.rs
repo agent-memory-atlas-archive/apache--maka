@@ -68,8 +68,8 @@ async fn loop_commits_before_effects_replays_history_after_reopen_and_rejects_du
             let log = Arc::new(EventLog::open(&path).await.unwrap());
             let engine = Engine::new(
                 log.clone(),
-                ModelExecutor::new(2, Duration::from_secs(10)).unwrap(),
-                CodeExecutor::new(2, CellLimits::default()).unwrap(),
+                ModelExecutor::new(Duration::from_secs(10)).unwrap(),
+                CodeExecutor::new(CellLimits::default()).unwrap(),
             );
             let effect = Arc::new(Effect {
                 log: log.clone(),
@@ -175,8 +175,8 @@ async fn loop_commits_before_effects_replays_history_after_reopen_and_rejects_du
             let log = Arc::new(EventLog::open(&path).await.unwrap());
             let engine = Engine::new(
                 log.clone(),
-                ModelExecutor::new(1, Duration::from_secs(10)).unwrap(),
-                CodeExecutor::new(2, CellLimits::default()).unwrap(),
+                ModelExecutor::new(Duration::from_secs(10)).unwrap(),
+                CodeExecutor::new(CellLimits::default()).unwrap(),
             );
             let effect = Arc::new(Effect {
                 log: log.clone(),

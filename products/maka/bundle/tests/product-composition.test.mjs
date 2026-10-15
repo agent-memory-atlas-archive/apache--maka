@@ -207,7 +207,6 @@ test('WorkHub product authors two independent Agent graphs with explicit native 
   try {
     const agent = {
       workspaceRoots: [{ label: 'Project', path: '/private/product-workspace' }],
-      maxActiveRuns: 1,
       permissions: { access: 'workspace_write', requestPermissions: true },
       maxSteps: 2,
       tools: [],

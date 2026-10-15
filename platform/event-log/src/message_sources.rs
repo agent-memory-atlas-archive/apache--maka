@@ -113,7 +113,7 @@ impl EventLog {
         self.validate_root()?;
         crate::sessions::validate_id(session_id)?;
         let session = session_id.to_owned();
-        self.connection.run(move |connection| Box::pin(async move {
+        self.connection.read(move |connection| Box::pin(async move {
             let row: Option<(i64, Option<String>)> = sqlx::query_as(
                 "SELECT e.sequence, CASE WHEN length(CAST(e.event_json AS BLOB)) <= 1048576 THEN e.event_json END
                  FROM runtime_events e WHERE e.kind='invocation_opened'

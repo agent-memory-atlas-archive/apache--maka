@@ -20,10 +20,9 @@
 use super::*;
 use maka_agent_facts::event::{Fact, InvocationOutcome, ToolOutcome};
 
-async fn fixture(base: &str, capacity: usize) -> Fixture {
+async fn fixture(base: &str) -> Fixture {
     Fixture::configured(
         base,
-        capacity,
         None,
         None,
         Some(service_tools::Setup::files("write")),
@@ -113,7 +112,7 @@ async fn plan_real_direct_and_code_mode_require_review_then_native_effect_and_ca
     tokio::time::timeout(Duration::from_secs(90), async {
         for code in [false,true] {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let mut f = fixture(&format!("http://{}/v1",listener.local_addr().unwrap()),2).await;
+            let mut f = fixture(&format!("http://{}/v1",listener.local_addr().unwrap())).await;
             selection::edit(&f,|changes| changes.model_overrides = Patch::Set(BTreeMap::from([("fixture-model".into(),ModelOverride { code_mode:Some(code), ..Default::default() })]))).await;
             let mut create = f.create_input("Plan review").await;
             create["automaticTitle"] = json!(true);
@@ -183,7 +182,7 @@ async fn plan_real_direct_and_code_mode_require_review_then_native_effect_and_ca
 async fn plan_interruption_resume_and_cancellation_keep_original_execution_and_sibling_cleanup() {
     tokio::time::timeout(Duration::from_secs(60),async {
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let f=fixture(&format!("http://{}/v1",listener.local_addr().unwrap()),2).await;
+        let f=fixture(&format!("http://{}/v1",listener.local_addr().unwrap())).await;
         let session=f.create("Interrupted Plan").await;
         propose(&f,&session,&listener).await;
         assert_eq!(approve(&f,&session).await.0["kind"],"committed");
@@ -227,7 +226,7 @@ async fn plan_interruption_resume_and_cancellation_keep_original_execution_and_s
 async fn plan_user_decisions_and_current_boundaries_precede_execution_and_model_cancel_is_owned() {
     tokio::time::timeout(Duration::from_secs(60), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let f = fixture(&format!("http://{}/v1", listener.local_addr().unwrap()),2).await;
+        let f = fixture(&format!("http://{}/v1", listener.local_addr().unwrap())).await;
         let session = f.create("Reviewed revisions").await;
         propose(&f,&session,&listener).await;
         let first = current(&f,&session).await;
@@ -270,28 +269,23 @@ async fn plan_user_decisions_and_current_boundaries_precede_execution_and_model_
 }
 
 #[tokio::test]
-async fn plan_cancel_after_queue_acceptance_rejects_original_input_before_any_model_request() {
+async fn plan_cancel_after_approval_rejects_original_input_before_any_model_request() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let f=fixture(&format!("http://{}/v1",listener.local_addr().unwrap()),2).await;
+        let f=fixture(&format!("http://{}/v1",listener.local_addr().unwrap())).await;
         let session=f.create("Cancel queued Plan").await;
         propose(&f,&session,&listener).await;
-        let capacity=f.owner.permits.clone().acquire_many_owned(2).await.unwrap();
+        let producer=f.owner.producer_gate.lock().await;
         assert_eq!(approve(&f,&session).await.0["kind"],"committed");
-        loop {
-            if !f.store.message_queue(&session).await.unwrap().entries.is_empty() { break; }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
         let pending=current(&f,&session).await;
         assert_eq!(pending["execution"]["phase"],"awaiting_admission");
         assert_eq!(f.mutation(2,"changePlan",json!({"sessionId":session,"revision":pending["revision"],"action":{"kind":"cancel","executionId":pending["execution"]["id"],"reason":"Cancel queued original"}}),Uuid::new_v4()).await.unwrap()["kind"],"committed");
-        drop(capacity);
+        drop(producer);
         phase(&f,&session,"cancelled").await;
         assert!(f.store.message_queue(&session).await.unwrap().entries.is_empty());
         assert!(tokio::time::timeout(Duration::from_millis(100),listener.accept()).await.is_err());
         let facts = service_tools::facts(&f,&session).await;
-        assert_eq!(facts.iter().filter(|fact|matches!(fact,Fact::InvocationOpened{..})).count(),2, "one planning Turn and one original rejected admission");
-        assert!(matches!(facts.iter().rev().find(|fact|matches!(fact,Fact::InvocationEnded{..})), Some(Fact::InvocationEnded { outcome: InvocationOutcome::Failed { .. } | InvocationOutcome::Cancelled { .. } })));
+        assert_eq!(facts.iter().filter(|fact|matches!(fact,Fact::InvocationOpened{..})).count(),1, "only the planning Turn was admitted");
         f.app.shutdown().await.unwrap();
     }).await.unwrap();
 }
@@ -300,28 +294,24 @@ async fn plan_cancel_after_queue_acceptance_rejects_original_input_before_any_mo
 async fn plan_unknown_original_approval_and_accepted_outbox_recover_after_restart_without_replay() {
     tokio::time::timeout(Duration::from_secs(60), async {
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut f=fixture(&format!("http://{}/v1",listener.local_addr().unwrap()),2).await;
+        let mut f=fixture(&format!("http://{}/v1",listener.local_addr().unwrap())).await;
         let session=f.create("Recover original Plan").await;
         propose(&f,&session,&listener).await;
-        let current=current(&f,&session).await;
-        let input=json!({"sessionId":session,"revision":current["revision"],"action":{"kind":"approve","proposalId":current["proposal"]["id"],"proposalRevision":current["proposal"]["revision"],"approval":approval(&f,&session).await}});
+        let snapshot=current(&f,&session).await;
+        let input=json!({"sessionId":session,"revision":snapshot["revision"],"action":{"kind":"approve","proposalId":snapshot["proposal"]["id"],"proposalRevision":snapshot["proposal"]["revision"],"approval":approval(&f,&session).await}});
         let prepared=f.app.client().prepare_mutation(f.binding(2).await,"changePlan".into(),input.clone(),scope(&f.issuer,true),Uuid::new_v4(),Attachments::new().into()).await.unwrap();
         let reference=prepared.reference().clone();
         f.store.record_application_intent(reference.source.clone(),prepared.consumer().instance().clone(),reference.clone(),Value::Null).await.unwrap();
-        let capacity=f.owner.permits.clone().acquire_many_owned(2).await.unwrap();
+        let producer=f.owner.producer_gate.lock().await;
         // The original business commit succeeds while its Host reply is lost.
         let committed=f.owner.plan_change(serde_json::from_value(input).unwrap(),reference.clone(),&scope(&f.issuer,true)).await.unwrap();
         let committed=serde_json::to_value(committed).unwrap();
         assert_eq!(committed["kind"],"committed");
-        loop {
-            if !f.store.message_queue(&session).await.unwrap().entries.is_empty() { break; }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        let original=f.store.message_queue(&session).await.unwrap();
-        assert_eq!(original.entries.len(),1);
+        assert_eq!(current(&f,&session).await["execution"]["phase"],"awaiting_admission");
         assert!(tokio::time::timeout(Duration::from_millis(100),listener.accept()).await.is_err());
+        f.owner.stop.cancel();
+        drop(producer);
         todo_tests::reopen(&mut f).await;
-        drop(capacity);
         assert_eq!(f.query("planReceipt",json!({"reference":reference})).await.unwrap(),committed);
         let (mut socket,_) = listener.accept().await.unwrap();
         assert!(request(&mut socket).await.to_string().contains("Reviewed native implementation 中😀"));
@@ -345,7 +335,7 @@ async fn planning_filters_actual_service_methods_before_discovery_and_code_mode_
     tokio::time::timeout(Duration::from_secs(60),async {
         for name in ["Read", "Recall"] {
             let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let f=Fixture::configured(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None,None,
+            let f=Fixture::configured(&format!("http://{}/v1",listener.local_addr().unwrap()),None,None,
                 Some(service_tools::Setup::files("write").named(name)),|settings| {
                     settings.plans=true;
                     settings.tool_discovery=true;
@@ -374,7 +364,7 @@ async fn planning_filters_actual_service_methods_before_discovery_and_code_mode_
         }
         // A renamed legitimate reader remains available under the same bound method.
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let f=Fixture::configured(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None,None,
+        let f=Fixture::configured(&format!("http://{}/v1",listener.local_addr().unwrap()),None,None,
             Some(service_tools::Setup::files("readText").named("InspectDocument")),|settings| {
                 settings.plans=true; settings.max_steps=3;
             }).await;

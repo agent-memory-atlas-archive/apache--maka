@@ -61,7 +61,7 @@ fn bundled_product_launch_initializes_and_reopens_original_roots_without_node() 
             "hostRoot": host,
             "agent": {
                 "workspaceRoots": [{"label": "Workspace", "path": workspace}],
-                "maxActiveRuns": 1, "maxSteps": 4, "tools": [],
+                 "maxSteps": 4, "tools": [],
                 "permissions": {"access": "read_only", "requestPermissions": true}
             },
             "skills": {"bundled": true, "sources": []}
@@ -187,7 +187,7 @@ fn bundled_product_launch_recovers_partial_commits_without_reauthoring() {
         serde_json::to_vec(&json!({
             "locale":"en", "scheme":"dark", "hostRoot":host,
             "agent":{"workspaceRoots":[{"label":"Workspace","path":directory.path()}],
-                "maxActiveRuns":1,"maxSteps":4,"tools":[],
+                "maxSteps":4,"tools":[],
                 "permissions":{"access":"read_only","requestPermissions":true}}
         }))
         .unwrap(),
@@ -359,7 +359,7 @@ fn bundled_ui_authoring_installs_and_reloads_original_source_without_replaying()
     let configuration = directory.path().join("configuration.json");
     std::fs::write(&configuration,serde_json::to_vec(&json!({
         "presentation":"tui","locale":"en","scheme":"dark","hostRoot":host,
-        "agent":{"workspaceRoots":[{"label":"Workspace","path":workspace}],"maxActiveRuns":1,"maxSteps":4,"tools":[],"permissions":{"access":"read_only","requestPermissions":true}}
+        "agent":{"workspaceRoots":[{"label":"Workspace","path":workspace}],"maxSteps":4,"tools":[],"permissions":{"access":"read_only","requestPermissions":true}}
     })).unwrap()).unwrap();
     let mut first = Pty::spawn(&[
         "application",
@@ -632,7 +632,7 @@ fn bundled_connections_search_scroll_click_and_chatgpt_credentials() {
     let ui = directory.path().join("ui");
     std::fs::write(&configuration, serde_json::to_vec(&json!({
         "presentation":"tui", "locale":"en", "scheme":"dark", "hostRoot":directory.path().join("host"),
-        "agent":{"workspaceRoots":[{"label":"Workspace","path":workspace}], "maxActiveRuns":1,"maxSteps":4,"tools":[],"permissions":{"access":"read_only","requestPermissions":true}}
+        "agent":{"workspaceRoots":[{"label":"Workspace","path":workspace}], "maxSteps":4,"tools":[],"permissions":{"access":"read_only","requestPermissions":true}}
     })).unwrap()).unwrap();
     let mut tui = Pty::spawn(&[
         "application",
@@ -735,7 +735,7 @@ fn bundled_language_switch_updates_and_remains_responsive() {
     let ui = directory.path().join("ui");
     std::fs::write(&configuration, serde_json::to_vec(&json!({
         "presentation":"tui", "locale":"en", "scheme":"dark", "hostRoot":directory.path().join("host"),
-        "agent":{"workspaceRoots":[{"label":"Workspace","path":workspace}], "maxActiveRuns":1,"maxSteps":4,"tools":[],"permissions":{"access":"read_only","requestPermissions":true}}
+        "agent":{"workspaceRoots":[{"label":"Workspace","path":workspace}], "maxSteps":4,"tools":[],"permissions":{"access":"read_only","requestPermissions":true}}
     })).unwrap()).unwrap();
     let mut tui = Pty::spawn(&[
         "application",

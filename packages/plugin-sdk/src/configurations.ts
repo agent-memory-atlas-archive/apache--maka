@@ -240,12 +240,6 @@ export const configurations = {
         },
         default: [],
       },
-      maxActiveRuns: {
-        type: 'integer',
-        format: 'uint',
-        minimum: 1,
-        maximum: 16,
-      },
       maxSteps: {
         type: 'integer',
         format: 'uint',
@@ -262,7 +256,7 @@ export const configurations = {
       },
     },
     additionalProperties: false,
-    required: ['permissions', 'workspaceRoots', 'maxActiveRuns', 'maxSteps', 'tools'],
+    required: ['permissions', 'workspaceRoots', 'maxSteps', 'tools'],
     $defs: {
       AgentAssistantConfiguration: {
         type: 'object',
@@ -741,12 +735,6 @@ export const configurations = {
             description: 'Explicit read-only roots for user-selected conversation sources.',
             default: [],
           },
-          maxActiveRuns: {
-            type: 'integer',
-            format: 'uint',
-            minimum: 1,
-            maximum: 16,
-          },
           maxSteps: {
             type: 'integer',
             format: 'uint',
@@ -762,7 +750,7 @@ export const configurations = {
               'Explicitly selected, frozen application service tools, alongside configured native tools.',
           },
         },
-        required: ['permissions', 'workspaceRoots', 'maxActiveRuns', 'maxSteps', 'tools'],
+        required: ['permissions', 'workspaceRoots', 'maxSteps', 'tools'],
       },
       AgentAssistantConfiguration: {
         type: 'object',

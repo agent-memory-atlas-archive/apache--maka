@@ -88,8 +88,6 @@ struct Shared {
     stop: CancellationToken,
     pending: Arc<Semaphore>,
     output: Arc<jsonschema::Validator>,
-    // Buffer custody outlives execution when the reader retains unread items.
-    _buffer: OwnedSemaphorePermit,
 }
 #[derive(Clone)]
 pub(super) struct Emitter(Arc<Shared>);
@@ -152,9 +150,8 @@ pub(super) fn channel(
     accepted: Accepted,
     output: Arc<jsonschema::Validator>,
     stop: CancellationToken,
-    buffer: OwnedSemaphorePermit,
 ) -> (Subscription, Emitter) {
-    let (items, emitter) = items(output, stop, buffer);
+    let (items, emitter) = items(output, stop);
     (Subscription { accepted, items }, emitter)
 }
 
@@ -163,7 +160,6 @@ pub(super) fn channel(
 pub(super) fn items(
     output: Arc<jsonschema::Validator>,
     stop: CancellationToken,
-    buffer: OwnedSemaphorePermit,
 ) -> (Items, Emitter) {
     let (sender, receiver) = mpsc::channel(ITEMS);
     let guard = stop.clone().drop_guard();
@@ -173,7 +169,6 @@ pub(super) fn items(
         stop,
         pending: Arc::new(Semaphore::new(ITEMS)),
         output,
-        _buffer: buffer,
     });
     (
         Items {

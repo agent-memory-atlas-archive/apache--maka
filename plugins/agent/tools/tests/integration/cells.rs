@@ -132,7 +132,7 @@ async fn yielding_cells_keep_ancestry_deliver_deltas_share_json_and_drain_on_run
             handler:ToolHandler::Immediate(Arc::new(Block(release.clone()))),nesting:ToolNesting::Nestable,semantics:ToolSemantics::Parallel,
         }]).unwrap();
         let loaded = maka_tools::availability::LoadedTools::default();
-        let run = RunTools::new(log.clone(), invocation.clone(), catalog, ToolMode::CodeMode, CodeExecutor::new(2, CellLimits::default()).unwrap(), loaded.clone());
+        let run = RunTools::new(log.clone(), invocation.clone(), catalog, ToolMode::CodeMode, CodeExecutor::new(CellLimits::default()).unwrap(), loaded.clone());
         let first = invoke(&log, &run, &invocation, "first", "exec", json!("// @exec: {\"yield_time_ms\":1000,\"max_output_tokens\":1000}\ntext('early'); await yield_control(); await tools.block({}); text('late'); store('n',42);")).await;
         assert_eq!(first["state"], "running");
         assert_eq!(first["content"], json!([{"kind":"text","text":"early"}]));

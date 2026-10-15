@@ -27,7 +27,6 @@ async fn fixture() -> (TcpListener, Fixture, String) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let f = Fixture::with_services(
         &format!("http://{}/v1", listener.local_addr().unwrap()),
-        2,
         None,
         None,
         Some(service_tools::Setup::protocol()),
@@ -417,7 +416,6 @@ async fn protocol_native_requests_require_explicit_grants_and_own_cleanup() {
             };
             let f = Fixture::with_services(
                 &format!("http://{}/v1", listener.local_addr().unwrap()),
-                1,
                 None,
                 None,
                 Some(setup),

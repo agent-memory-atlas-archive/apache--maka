@@ -45,13 +45,9 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::sync::Semaphore;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use uuid::Uuid;
 use websocket::WebSocketListener;
-
-const SESSIONS: usize = 8;
-const CONNECTIONS: usize = 144;
 
 #[derive(Clone)]
 pub struct Options {
@@ -87,7 +83,6 @@ pub struct Host {
     sessions: Mutex<BTreeMap<Uuid, Arc<Session>>>,
     stop: CancellationToken,
     residency: Mutex<lifecycle::Residency>,
-    capacity: Arc<Semaphore>,
 }
 struct Session {
     principal: Principal,
@@ -183,7 +178,6 @@ impl Host {
             sessions: Mutex::default(),
             stop: CancellationToken::new(),
             residency: Mutex::new(lifecycle::Residency::default()),
-            capacity: Arc::new(Semaphore::new(CONNECTIONS)),
         }))
     }
     pub fn root_id(&self) -> &str {
@@ -275,14 +269,9 @@ impl Host {
                 if residency.paused || self.stop.is_cancelled() {
                     continue;
                 }
-                let Ok(permit) = self.capacity.clone().try_acquire_owned() else {
-                    continue;
-                };
+                residency.connections += 1;
                 residency.last_activity = tokio::time::Instant::now();
-                lifecycle::Connection {
-                    host: self.clone(),
-                    permit: Some(permit),
-                }
+                lifecycle::Connection { host: self.clone() }
             };
             let host = self.clone();
             let origins = websocket
@@ -385,8 +374,8 @@ impl Host {
                 let id = Uuid::new_v4();
                 let session = {
                     let mut sessions = self.sessions.lock().unwrap();
-                    if self.stop.is_cancelled() || sessions.len() >= SESSIONS {
-                        return Err("Host session capacity exhausted or Host is closing".into());
+                    if self.stop.is_cancelled() {
+                        return Err("Host is closing".into());
                     }
                     let session = Arc::new(Session {
                         principal,

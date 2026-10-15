@@ -44,7 +44,7 @@ fn js_provider(label: &str) -> Package {
 async fn live_adoption_preserves_original_mutation_preparation_and_unchanged_activations() {
     tokio::time::timeout(Duration::from_secs(20), async {
         for automatic in [false, true] {
-            let (_dir, _namespaces, store) = store().await;
+            let (dir, _namespaces, store) = store().await;
             let issuer = Issuer::default();
             let calls = Arc::new(AtomicUsize::new(0));
             let (app, deployment) = launch(
@@ -128,19 +128,38 @@ async fn live_adoption_preserves_original_mutation_preparation_and_unchanged_act
                     ..
                 }
             ));
-            let second = mutate(
-                &client,
-                &store,
-                binding,
-                "echo".into(),
-                json!("new call"),
-                scope(&issuer, true),
-                Uuid::new_v4(),
+            // Running activations retain checked origin evidence. Corrupting package
+            // payloads prevents any fresh full source load, without changing that evidence.
+            let connection = rusqlite::Connection::open(
+                dir.path()
+                    .join("root")
+                    .join(maka_event_log::root::ROOT_DATABASE),
             )
-            .await
-            .unwrap()
-            .result()
-            .await;
+            .unwrap();
+            connection
+                .execute("UPDATE application_package_files SET payload = X'00'", [])
+                .unwrap();
+            drop(connection);
+            assert!(store.load_application_at(&original).await.is_err());
+            let prepared = client
+                .prepare_mutation(
+                    binding,
+                    "echo".into(),
+                    json!("new call"),
+                    scope(&issuer, true),
+                    Uuid::new_v4(),
+                    Attachments::new().into(),
+                )
+                .await
+                .unwrap();
+            let second = client.mutate_owned(prepared).await.unwrap().result().await;
+            assert!(matches!(
+                second.receipt,
+                Receipt::Recorded {
+                    outcome: OperationOutcome::Returned { .. },
+                    ..
+                }
+            ));
             assert_eq!(second.reference.source, original);
             assert_eq!(calls.load(Ordering::SeqCst), 2);
             assert!(app.adopt_committed(original).await.is_err());

@@ -84,8 +84,8 @@ async fn handoff_waits_for_settlement_rollback_keeps_run_and_seal_survives_reope
             requests
         });
         let log = Arc::new(EventLog::open(&path).await.unwrap());
-        let engine = Engine::new(log.clone(), ModelExecutor::new(1, Duration::from_secs(5)).unwrap(),
-            CodeExecutor::new(1, CellLimits::default()).unwrap());
+        let engine = Engine::new(log.clone(), ModelExecutor::new(Duration::from_secs(5)).unwrap(),
+            CodeExecutor::new(CellLimits::default()).unwrap());
         let count = Arc::new(AtomicUsize::new(0));
         let effect = Arc::new(Effect { log: log.clone(), count: count.clone() });
         let mut run = input(&base, "first", effect);
@@ -175,8 +175,8 @@ async fn handoff_waits_for_settlement_rollback_keeps_run_and_seal_survives_reope
             high_water: prefix.high_water,
             digest: prefix.digest,
         };
-        let resumed_engine = Engine::new(reopened.clone(), ModelExecutor::new(1, Duration::from_secs(5)).unwrap(),
-            CodeExecutor::new(1, CellLimits::default()).unwrap());
+        let resumed_engine = Engine::new(reopened.clone(), ModelExecutor::new(Duration::from_secs(5)).unwrap(),
+            CodeExecutor::new(CellLimits::default()).unwrap());
         let successor = || {
             let effect = Arc::new(Effect { log: reopened.clone(), count: count.clone() });
             let mut run = input(&base, "successor", effect);

@@ -38,7 +38,7 @@ fn default_product_input_continues_while_the_original_stdout_owner_is_blocked() 
     runtime.block_on(seed_connection(&host, &namespaces, &base, json!({})));
     std::fs::write(&configuration, serde_json::to_vec(&json!({
         "presentation":"tui", "locale":"en", "scheme":"dark", "hostRoot":host,
-        "agent":{"workspaceRoots":[{"label":"Workspace","path":workspace}],"maxActiveRuns":1,"maxSteps":4,"tools":[],"permissions":{"access":"read_only","requestPermissions":true}}
+        "agent":{"workspaceRoots":[{"label":"Workspace","path":workspace}],"maxSteps":4,"tools":[],"permissions":{"access":"read_only","requestPermissions":true}}
     })).unwrap()).unwrap();
     let mut tui = Pty::spawn(&[
         "application",

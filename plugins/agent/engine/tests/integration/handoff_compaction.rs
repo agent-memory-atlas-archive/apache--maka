@@ -63,9 +63,23 @@ async fn handoff_preserves_conversation_replay_and_compacts_before_its_physical_
             seen.send(()).unwrap();
             released.await.unwrap();
             respond(&mut socket, true).await;
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let summary = read_request(&mut socket).await;
-            fixture::respond(&mut socket, fixture::SUMMARY, "stop").await;
+            let mut summary = None;
+            let mut main = None;
+            for _ in 0..2 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let request = read_request(&mut socket).await;
+                if request["messages"].to_string().contains("Now write the structured summary") {
+                    fixture::respond(&mut socket, fixture::SUMMARY, "stop").await;
+                    summary = Some(request);
+                } else {
+                    main = Some(socket);
+                }
+            }
+            // Measured usage starts a background summary. An actual provider
+            // overflow requires its adoption before continuing this successor.
+            let body = serde_json::json!({"error":{"message":"request exceeds context","type":"invalid_request_error","code":"context_length_exceeded"}}).to_string();
+            main.as_mut().unwrap().write_all(format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+            let summary = summary.unwrap();
             let (mut socket, _) = listener.accept().await.unwrap();
             let main = read_request(&mut socket).await;
             let failure = r#"{"error":{"message":"retry this request","type":"rate_limit_error"}}"#;

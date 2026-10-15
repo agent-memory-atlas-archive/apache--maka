@@ -77,13 +77,12 @@ pub struct TrustedRuntime(Arc<Inner>);
 
 struct Inner {
     service: OnceLock<Result<Service>>,
-    slots: Arc<Semaphore>,
     input: Arc<Semaphore>,
     sequence: AtomicU32,
 }
 
 struct Service {
-    // The queue is bounded by 128 live requests: one start and one cancel each.
+    // Request payloads retain their input byte reservations through cleanup.
     commands: mpsc::UnboundedSender<Command>,
     health: Arc<Health>,
 }
@@ -95,7 +94,6 @@ pub(super) enum Command {
         sender: mpsc::Sender<Result<ProviderEvent>>,
         cancellation: CancellationToken,
         network: Arc<dyn maka_agent_ports::model::Transport>,
-        permit: OwnedSemaphorePermit,
         input: OwnedSemaphorePermit,
         reply: Reply,
     },
@@ -106,7 +104,6 @@ impl Default for TrustedRuntime {
     fn default() -> Self {
         Self(Arc::new(Inner {
             service: OnceLock::new(),
-            slots: Arc::new(Semaphore::new(128)),
             input: Arc::new(Semaphore::new(INPUT_WINDOW as usize)),
             sequence: AtomicU32::new(1),
         }))
@@ -163,11 +160,6 @@ impl TrustedRuntime {
     ) -> Result<()> {
         let bytes =
             maka_agent_facts::model::budget::reservation(&request, INPUT_WINDOW).map_err(failed)?;
-        let permit = tokio::select! {
-            biased;
-            _ = cancellation.cancelled() => return Err(TrustedError::Cancelled),
-            permit = self.0.slots.clone().acquire_owned() => permit.map_err(failed)?,
-        };
         // Large image/context requests queue before V8 conversion. Oversized
         // requests take the whole window rather than failing a fixed body cap.
         // The reservation lasts through request cleanup.
@@ -187,7 +179,6 @@ impl TrustedRuntime {
                 sender,
                 cancellation: cancellation.clone(),
                 network,
-                permit,
                 input,
                 reply,
             })

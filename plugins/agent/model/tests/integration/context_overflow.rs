@@ -57,7 +57,7 @@ async fn failure_with_headers(
         socket.write_all(body.as_bytes()).await.unwrap();
         listener
     });
-    let executor = ModelExecutor::new(1, Duration::from_secs(10)).unwrap();
+    let executor = ModelExecutor::new(Duration::from_secs(10)).unwrap();
     let mut stream = executor
         .stream(request(kind, base), CancellationToken::new())
         .await

@@ -65,20 +65,21 @@ async fn resolved_threshold_and_matching_latest_main_route_are_required_for_pret
             fixture::read_request(&mut socket).await;
             fixture::respond(&mut socket, "old-answer", "stop").await;
             let mut requests = Vec::new();
-            for summary in if expected {
-                vec![true, false]
-            } else {
-                vec![false]
-            } {
+            let mut main = None;
+            for _ in 0..if expected { 2 } else { 1 } {
                 let (mut socket, _) = listener.accept().await.unwrap();
-                requests.push(fixture::read_request(&mut socket).await);
-                fixture::respond(
-                    &mut socket,
-                    if summary { fixture::SUMMARY } else { "done" },
-                    "stop",
-                )
-                .await;
+                let request = fixture::read_request(&mut socket).await;
+                if request["messages"]
+                    .to_string()
+                    .contains("Now write the structured summary")
+                {
+                    fixture::respond(&mut socket, fixture::SUMMARY, "stop").await;
+                } else {
+                    main = Some(socket);
+                }
+                requests.push(request);
             }
+            fixture::respond(main.as_mut().unwrap(), "done", "stop").await;
             requests
         });
         let worker = fixture::engine(log.clone());
@@ -94,38 +95,45 @@ async fn resolved_threshold_and_matching_latest_main_route_are_required_for_pret
         worker.run(next, CancellationToken::new()).await.unwrap();
         worker.drain().await;
         let requests = server.await.unwrap();
-        let output = requests.last().unwrap()["max_tokens"].as_u64().unwrap();
-        if !expected && matching {
-            // Actual retained usage still applies only to the matching route.
+        let (summaries, mains): (Vec<_>, Vec<_>) = requests.iter().partition(|request| {
+            request["messages"]
+                .to_string()
+                .contains("Now write the structured summary")
+        });
+        assert_eq!(summaries.len(), usize::from(expected));
+        assert_eq!(mains.len(), 1);
+        let output = mains[0]["max_tokens"].as_u64().unwrap();
+        if matching {
+            // Proactive work runs alongside the main request. Until adoption,
+            // the matching route still uses its retained provider usage.
             assert_eq!(output, 191_930);
         } else {
-            // A fresh request reserves its own prompt inside the 200K model window.
             assert!((199_000..200_000).contains(&output));
         }
         let prefix = log.prefix(100, 128 * 1024).await.unwrap();
-        let checkpoints: Vec<_> = prefix
-            .events
-            .iter()
-            .filter_map(|event| match &event.event.fact {
-                Fact::ContextCheckpointRecorded { checkpoint } => Some(checkpoint),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(checkpoints.len(), usize::from(expected));
+        assert_eq!(
+            prefix
+                .events
+                .iter()
+                .filter(|event| matches!(
+                    event.event.fact,
+                    Fact::ModelRequested {
+                        purpose: ModelPurpose::Summary,
+                        ..
+                    }
+                ))
+                .count(),
+            usize::from(expected)
+        );
         if expected {
-            assert_eq!(checkpoints[0].mode, CheckpointMode::PreTurn);
             assert!(
-                !requests[0]["messages"]
+                !summaries[0]["messages"]
                     .to_string()
                     .contains("question-next"),
                 "preturn source excludes current anchor"
             );
-            assert!(
-                requests[1]["messages"]
-                    .to_string()
-                    .contains("question-next")
-            );
-            assert!(!requests[1]["messages"].to_string().contains("old-answer"));
+            assert!(mains[0]["messages"].to_string().contains("question-next"));
+            assert!(mains[0]["messages"].to_string().contains("old-answer"));
         }
     }
 }
@@ -189,6 +197,14 @@ async fn midturn_waits_for_all_code_mode_results_and_replays_exact_image_anchor_
     });
     let mut input = code_mode::input(&base, "first", effects.clone());
     input.context = context(Some(7));
+    // This test needs adoption before the next main request. Real prompt
+    // pressure requires that boundary; a usage threshold alone runs in the background.
+    input.context.as_mut().unwrap().context_window = Some(4096);
+    input.configuration.system_prompt = Some(maka_agent_facts::execution::SystemPrompt {
+        sources: Vec::new(),
+        text: "main prompt pressure ".repeat(600),
+        policy_revision: 1,
+    });
     input.supports_vision = true;
     input.configuration.model = fixture::input(&base, "unused", false).configuration.model;
     if let RunWork::Message { message, .. } = &mut input.work {

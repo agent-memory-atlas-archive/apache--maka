@@ -499,7 +499,7 @@ async fn work(fixture: &Fixture, session: &str, accepted: &Value) -> Value {
 #[tokio::test]
 async fn executor_service_selects_the_exact_authorized_import_member() {
     tokio::time::timeout(Duration::from_secs(40), async {
-        let mut f = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+        let mut f = Fixture::new("http://127.0.0.1:9/v1", None).await;
         activate(&mut f, true, None, true).await;
         let loaded = f
             .store
@@ -608,7 +608,7 @@ async fn executor_service_selects_the_exact_authorized_import_member() {
 #[tokio::test]
 async fn executor_service_javascript_uses_original_engine_and_read_only_restart() {
     tokio::time::timeout(Duration::from_secs(40), async {
-        let mut fixture = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+        let mut fixture = Fixture::new("http://127.0.0.1:9/v1", None).await;
         activate(&mut fixture, true, None, true).await;
         let session = fixture.create("External").await;
         let input = input_for(&session, "original 外部 text");
@@ -720,7 +720,7 @@ async fn executor_service_javascript_uses_original_engine_and_read_only_restart(
 async fn executor_service_queue_freezes_original_backend_and_requires_current_grant() {
     for granted in [false, true] {
         tokio::time::timeout(Duration::from_secs(40),async {
-            let mut fixture=Fixture::new("http://127.0.0.1:9/v1",1,None).await;
+            let mut fixture=Fixture::new("http://127.0.0.1:9/v1",None).await;
             let probe=Probe::new(Behavior::Held);activate(&mut fixture,true,Some(probe.clone()),granted).await;
             let session=fixture.create("Queue").await;
             let first=fixture.mutation(2,"execute",input_for(&session,"first"),Uuid::new_v4()).await.unwrap();
@@ -744,7 +744,7 @@ async fn executor_service_queue_freezes_original_backend_and_requires_current_gr
 #[tokio::test]
 async fn executor_service_unknown_is_not_resent_or_resumed_as_a_model() {
     tokio::time::timeout(Duration::from_secs(40),async {
-        let mut fixture=Fixture::new("http://127.0.0.1:9/v1",1,None).await;
+        let mut fixture=Fixture::new("http://127.0.0.1:9/v1",None).await;
         let probe=Probe::new(Behavior::Lost);activate(&mut fixture,true,Some(probe.clone()),true).await;
         let session=fixture.create("Unknown").await;let input=input_for(&session,"once");let operation=Uuid::new_v4();
         let accepted=fixture.mutation(2,"execute",input.clone(),operation).await.unwrap();fixture.drained().await;
@@ -765,7 +765,7 @@ async fn executor_service_unknown_is_not_resent_or_resumed_as_a_model() {
 #[tokio::test]
 async fn executor_service_pending_message_never_adopts_reactivated_backend() {
     tokio::time::timeout(Duration::from_secs(40),async {
-        let mut fixture=Fixture::new("http://127.0.0.1:9/v1",1,None).await;
+        let mut fixture=Fixture::new("http://127.0.0.1:9/v1",None).await;
         let probe=Probe::new(Behavior::Held);activate(&mut fixture,true,Some(probe.clone()),true).await;
         let session=fixture.create("Frozen queue").await;
         fixture.mutation(2,"execute",input_for(&session,"first"),Uuid::new_v4()).await.unwrap();
@@ -782,9 +782,9 @@ async fn executor_service_pending_message_never_adopts_reactivated_backend() {
 }
 
 #[tokio::test]
-async fn executor_service_cancelled_unsettled_callback_keeps_actual_capacity() {
+async fn executor_service_cancelled_unsettled_callback_keeps_actual_owner() {
     tokio::time::timeout(Duration::from_secs(40), async {
-        let mut fixture = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+        let mut fixture = Fixture::new("http://127.0.0.1:9/v1", None).await;
         let probe = Probe::new(Behavior::Unsettled);
         activate(&mut fixture, true, Some(probe.clone()), true).await;
         let session = fixture.create("Unsettled").await;
@@ -805,7 +805,6 @@ async fn executor_service_cancelled_unsettled_callback_keeps_actual_capacity() {
         assert_eq!(stopped["requested"], true);
         probe.cancelled.acquire().await.unwrap().forget();
         fixture.drained().await;
-        assert_eq!(fixture.owner.permits.available_permits(), 0);
         assert_eq!(
             fixture.owner.runs.lock().await.controls[&session].failure,
             Some("agent_cleanup_unconfirmed")
@@ -840,7 +839,7 @@ async fn executor_service_cancelled_unsettled_callback_keeps_actual_capacity() {
 #[tokio::test]
 async fn executor_service_progress_is_canonical_before_original_backend_finishes() {
     tokio::time::timeout(Duration::from_secs(40), async {
-        let mut fixture = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+        let mut fixture = Fixture::new("http://127.0.0.1:9/v1", None).await;
         let probe = Probe::new(Behavior::Streaming);
         activate(&mut fixture, true, Some(probe.clone()), true).await;
         let session = fixture.create("Live output").await;
@@ -965,7 +964,7 @@ async fn executor_service_progress_is_canonical_before_original_backend_finishes
 #[tokio::test]
 async fn executor_service_invalid_progress_stops_original_request_without_false_completion() {
     tokio::time::timeout(Duration::from_secs(40), async {
-        let mut fixture = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+        let mut fixture = Fixture::new("http://127.0.0.1:9/v1", None).await;
         let probe = Probe::new(Behavior::InvalidProgress);
         activate(&mut fixture, true, Some(probe.clone()), true).await;
         let session = fixture.create("Invalid output").await;
@@ -1000,11 +999,6 @@ async fn executor_service_invalid_progress_stops_original_request_without_false_
                 | maka_agent_facts::event::Fact::ExecutorObserved { .. }
         )));
         assert_eq!(probe.calls.load(Ordering::SeqCst), 1);
-        assert_eq!(
-            fixture.owner.permits.available_permits(),
-            1,
-            "actual cleanup releases the original execution capacity"
-        );
         fixture.app.shutdown().await.unwrap();
         fixture.config.shutdown().await.unwrap();
     })
@@ -1019,7 +1013,7 @@ mod acp;
 #[tokio::test]
 async fn executor_attachments_use_only_owned_immutable_uploads_and_original_receipts() {
     tokio::time::timeout(Duration::from_secs(45), async {
-        let mut f = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+        let mut f = Fixture::new("http://127.0.0.1:9/v1", None).await;
         let probe = Probe::new(Behavior::Attachments);
         activate(&mut f, true, Some(probe.clone()), true).await;
         let session = f.create("Attachments").await;

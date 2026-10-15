@@ -37,7 +37,7 @@ async fn provider_preflight_rejects_before_t1_and_exclusivity_follows_call_order
     let path = directory.path().join("events.sqlite");
     let log = Arc::new(EventLog::open(&path).await.unwrap());
     let effect = Arc::new(Effect::default());
-    let cells = CodeExecutor::new(1, CellLimits::default()).unwrap();
+    let cells = CodeExecutor::new(CellLimits::default()).unwrap();
     let cases = [
         (
             "finish",
@@ -246,7 +246,7 @@ async fn nested_preflight_is_effect_free_and_diagnostics_are_successful_parent_v
             .unwrap(),
     );
     let effect = Arc::new(Effect::default());
-    let cells = CodeExecutor::new(1, CellLimits::default()).unwrap();
+    let cells = CodeExecutor::new(CellLimits::default()).unwrap();
     for (id, code, kind, calls) in [
         (
             "direct-only",

@@ -88,14 +88,6 @@ impl Captured {
         let module = &self.0.module;
         module.ready().await?;
         let size = json::encoded_size(&args, 1024 * 1024).map_err(failed)?;
-        let slot = module
-            .0
-            .vm
-            .0
-            .calls
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| failed("VM call capacity exhausted"))?;
         let bytes = module
             .0
             .vm
@@ -119,7 +111,6 @@ impl Captured {
                 args,
                 context,
                 reply,
-                slot,
                 bytes,
             })
             .map_err(|_| module.0.vm.0.health.error())?;
@@ -142,14 +133,6 @@ impl Module {
             return Err(failed("invalid worker callback registration"));
         }
         let size = json::encoded_size(&(&namespace, &methods), 1024 * 1024).map_err(failed)?;
-        let slot = self
-            .0
-            .vm
-            .0
-            .calls
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| failed("VM call capacity exhausted"))?;
         let bytes = self
             .0
             .vm
@@ -168,7 +151,6 @@ impl Module {
                 namespace,
                 methods,
                 reply,
-                slot,
                 bytes,
             })
             .map_err(|_| self.0.vm.0.health.error())?;

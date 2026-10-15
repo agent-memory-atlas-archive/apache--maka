@@ -155,9 +155,7 @@ export function notice(kind: string): keyof Copy {
       ? 'importsInvalid'
       : kind === 'limit'
         ? 'importsLimit'
-        : kind === 'busy'
-          ? 'importsBusy'
-          : 'importsUnavailable';
+        : 'importsUnavailable';
 }
 
 export function settle(state: State, reply: OperationReply, actions: Action[], events: Emission[]) {

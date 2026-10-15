@@ -44,7 +44,7 @@ enum Response {
 async fn ingress_limits_close_only_offending_http_and_preserve_bounded_sse_records() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let runtime = TrustedRuntime::default();
-        let models = ModelExecutor::with_runtime(runtime, 1, Duration::from_secs(20)).unwrap();
+        let models = ModelExecutor::with_runtime(runtime, Duration::from_secs(20)).unwrap();
         let exact_record = format!(":{}\n\n", "x".repeat(LIMIT - 3));
         let cr_records = format!(":{}\r\r", "x".repeat(LIMIT / 2)).repeat(3);
         let multiline = "data: {}\r\n".repeat(LIMIT / 10 + 1);

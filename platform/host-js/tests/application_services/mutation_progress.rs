@@ -354,7 +354,7 @@ async fn dropping_mutation_progress_closes_demand_without_cancelling_or_settling
 }
 
 #[tokio::test]
-async fn unread_mutation_progress_reserves_original_buffer_capacity_before_next_effect() {
+async fn unread_mutation_progress_does_not_limit_other_effects() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let (_dir, _ns, store) = store().await;
         let issuer = Issuer::default();
@@ -374,7 +374,7 @@ async fn unread_mutation_progress_reserves_original_buffer_capacity_before_next_
         let (app, client, binding) =
             launch_progress(store.clone(), &issuer, Some(handler), Realm::Shared).await;
         let mut unread = Vec::new();
-        for _ in 0..16 {
+        for _ in 0..32 {
             unread.push(
                 mutate(
                     &client,
@@ -390,36 +390,19 @@ async fn unread_mutation_progress_reserves_original_buffer_capacity_before_next_
             );
             permit(&entered).await;
         }
-        let operation = Uuid::new_v4();
-        let refused = mutate(
-            &client,
-            &store,
-            binding.clone(),
-            "echo".into(),
-            json!("capacity"),
-            scope(&issuer, true),
-            operation,
-        )
-        .await;
-        assert!(refused.err().unwrap().contains("buffer capacity exhausted"));
-        assert_eq!(counter.load(Ordering::SeqCst), 16);
-        assert_eq!(
-            returned(unread.pop().unwrap().result().await),
-            json!("buffered")
-        );
         let admitted = mutate(
             &client,
             &store,
             binding,
             "echo".into(),
-            json!("capacity"),
+            json!("additional"),
             scope(&issuer, true),
-            operation,
+            Uuid::new_v4(),
         )
         .await
         .unwrap();
-        assert_eq!(returned(admitted.result().await), json!("capacity"));
-        assert_eq!(counter.load(Ordering::SeqCst), 17);
+        assert_eq!(returned(admitted.result().await), json!("additional"));
+        assert_eq!(counter.load(Ordering::SeqCst), 33);
         for mutation in unread {
             assert_eq!(returned(mutation.result().await), json!("buffered"));
         }

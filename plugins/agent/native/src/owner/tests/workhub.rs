@@ -454,7 +454,7 @@ pub(super) async fn selection(fixture: &Fixture) -> Value {
 #[tokio::test]
 async fn workhub_concurrent_resolution_reactivation_and_old_agent_namespace() {
     tokio::time::timeout(Duration::from_secs(45), async {
-        let mut fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+        let mut fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
         let old = fixture.create("ordinary Agent").await;
         activate(&mut fixture, true).await;
         assert_eq!(coordinator(&fixture).await, json!({"kind":"missing"}));
@@ -495,7 +495,7 @@ async fn workhub_concurrent_resolution_reactivation_and_old_agent_namespace() {
 #[tokio::test]
 async fn workhub_invalid_directory_does_not_freeze_an_intent() {
     tokio::time::timeout(Duration::from_secs(45), async {
-        let mut fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+        let mut fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
         activate(&mut fixture, true).await;
         let selected = selection(&fixture).await;
         let mut invalid = selected.clone();
@@ -519,7 +519,7 @@ async fn workhub_invalid_directory_does_not_freeze_an_intent() {
 #[tokio::test]
 async fn workhub_persisted_intent_recovers_original_identity_before_session_creation() {
     tokio::time::timeout(Duration::from_secs(45), async {
-        let mut fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+        let mut fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
         activate(&mut fixture, true).await;
         let selected = selection(&fixture).await;
         let prepared = prepare(&fixture, selected.clone(), Uuid::new_v4()).await;
@@ -577,7 +577,6 @@ async fn workhub_uses_original_agent_engine_and_freezes_coordinator_prompt() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let mut fixture = Fixture::new(
             &format!("http://{}/v1", listener.local_addr().unwrap()),
-            1,
             None,
         )
         .await;
@@ -642,7 +641,7 @@ async fn workhub_uses_original_agent_engine_and_freezes_coordinator_prompt() {
 async fn workhub_queued_message_keeps_original_behavior_across_activation() {
     tokio::time::timeout(Duration::from_secs(45), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut fixture = Fixture::new(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None).await;
+        let mut fixture = Fixture::new(&format!("http://{}/v1", listener.local_addr().unwrap()), None).await;
         activate(&mut fixture, true).await;
         let ready = resolve(&fixture, selection(&fixture).await, Uuid::new_v4()).await;
         let session = ready["session"]["id"].as_str().unwrap().to_owned();
@@ -775,7 +774,7 @@ async fn idle(fixture: &Fixture, import: &str, session: &str) {
 async fn workhub_real_model_routes_original_input_and_recovers_child_receipt_without_redispatch() {
     tokio::time::timeout(Duration::from_secs(60), async {
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),None).await;
         activate_workers(&mut fixture,true,true,true).await;
         let worker=worker_session(&fixture).await;
         let ready=resolve(&fixture,selection(&fixture).await,Uuid::new_v4()).await;
@@ -870,7 +869,7 @@ async fn workhub_real_model_routes_original_input_and_recovers_child_receipt_wit
 async fn workhub_routing_to_busy_worker_follows_exact_queued_message_after_later_work() {
     tokio::time::timeout(Duration::from_secs(60), async {
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),None).await;
         activate_workers(&mut fixture,true,true,true).await;
         let worker=worker_session(&fixture).await;
         let busy=worker_mutation(&fixture,"send",json!({"sessionId":worker,"message":"Unrelated running work","model":fixture.selection().await})).await;
@@ -913,7 +912,7 @@ async fn workhub_routing_to_busy_worker_follows_exact_queued_message_after_later
 async fn workhub_selected_worker_requires_independent_native_dispatch_grant() {
     tokio::time::timeout(Duration::from_secs(60), async {
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),None).await;
         activate_workers(&mut fixture,true,true,false).await;
         let worker=worker_session(&fixture).await;
         let ready=resolve(&fixture,selection(&fixture).await,Uuid::new_v4()).await;
@@ -1035,7 +1034,7 @@ async fn workhub_unknown_worker_admission_keeps_original_receipt_across_source_u
 {
     tokio::time::timeout(Duration::from_secs(60), async {
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),None).await;
         activate_worker_mode(&mut fixture,true,true,true,WorkerBehavior::Lost("send")).await;
         let worker=worker_session(&fixture).await;
         let ready=resolve(&fixture,selection(&fixture).await,Uuid::new_v4()).await;
@@ -1081,7 +1080,7 @@ async fn workhub_cancelled_worker_queries_and_mutations_reach_cleanup_budget() {
     for method in ["list", "send", "uploadAttachment"] {
         tokio::time::timeout(Duration::from_secs(30), async {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let mut fixture = Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+            let mut fixture = Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),None).await;
             let blocked = Arc::new(Blocked { method, entered: tokio::sync::Semaphore::new(0), cancelled: tokio::sync::Semaphore::new(0), release: tokio::sync::Semaphore::new(0) });
             activate_worker_mode(&mut fixture,true,true,true,WorkerBehavior::Blocked(blocked.clone())).await;
             let worker = worker_session(&fixture).await;
@@ -1114,7 +1113,7 @@ async fn workhub_cancelled_worker_queries_and_mutations_reach_cleanup_budget() {
 async fn workhub_queued_input_cannot_adopt_reactivated_worker_bindings() {
     tokio::time::timeout(Duration::from_secs(45), async {
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),None).await;
         activate_workers(&mut fixture,true,true,true).await;
         let ready=resolve(&fixture,selection(&fixture).await,Uuid::new_v4()).await;
         let session=ready["session"]["id"].as_str().unwrap().to_owned();
@@ -1227,7 +1226,7 @@ async fn workhub_control_preserves_stop_resume_and_unknown_originals_without_ret
     for lost in [false, true] {
         tokio::time::timeout(Duration::from_secs(60), async {
             let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+            let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),None).await;
             activate_worker_mode(&mut fixture,true,true,true,if lost {WorkerBehavior::Lost("resume")} else {WorkerBehavior::Returned}).await;
             let worker=worker_session(&fixture).await;
             let (coordinator,task_id,running)=active_task(&fixture,&listener,&worker).await;
@@ -1286,7 +1285,7 @@ async fn workhub_control_preserves_stop_resume_and_unknown_originals_without_ret
 async fn workhub_stop_retracts_only_its_pending_message_and_preserves_unrelated_running_work() {
     tokio::time::timeout(Duration::from_secs(60), async {
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),None).await;
         activate_workers(&mut fixture,true,true,true).await;
         let worker=worker_session(&fixture).await;
         let busy=worker_mutation(&fixture,"send",json!({"sessionId":worker,"message":"Unrelated current work","model":fixture.selection().await})).await;
@@ -1324,7 +1323,7 @@ async fn workhub_stop_retracts_only_its_pending_message_and_preserves_unrelated_
 async fn workhub_shared_delivery_never_authorizes_stop_of_the_original_worker_run() {
     tokio::time::timeout(Duration::from_secs(60), async {
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),None).await;
         activate_workers(&mut fixture,true,true,true).await;
         let worker=worker_session(&fixture).await;
         let busy=worker_mutation(&fixture,"send",json!({"sessionId":worker,"message":"Original worker owner","model":fixture.selection().await})).await;
@@ -1356,7 +1355,6 @@ async fn workhub_session_tool_browses_live_catalog_across_coordinator_turns() {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let mut fixture = Fixture::new(
                 &format!("http://{}/v1", listener.local_addr().unwrap()),
-                1,
                 None,
             )
             .await;
@@ -1405,7 +1403,7 @@ async fn workhub_wait_returns_worker_answer_in_the_routing_turn_and_cancels_only
     tokio::time::timeout(Duration::from_secs(60), async {
         for cancel in [false, true] {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let mut fixture = Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+            let mut fixture = Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),None).await;
             let entered = Arc::new(tokio::sync::Semaphore::new(0));
             activate_worker_mode(&mut fixture,true,true,true,WorkerBehavior::Watched(entered.clone())).await;
             let worker = worker_session(&fixture).await;
@@ -1460,7 +1458,7 @@ async fn workhub_wait_returns_worker_answer_in_the_routing_turn_and_cancels_only
 async fn workhub_creates_selected_worker_and_transfers_original_attachment_bytes_before_send() {
     tokio::time::timeout(Duration::from_secs(60), async {
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),None).await;
         activate_workers(&mut fixture,true,true,true).await;
         let ready=resolve(&fixture,selection(&fixture).await,Uuid::new_v4()).await;
         let coordinator=ready["session"]["id"].as_str().unwrap().to_owned();
@@ -1520,7 +1518,7 @@ async fn workhub_unknown_preparation_never_recreates_or_reuploads_on_advance() {
     for method in ["create", "uploadAttachment"] {
         tokio::time::timeout(Duration::from_secs(60), async {
             let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+            let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),None).await;
             activate_worker_mode(&mut fixture,true,true,true,WorkerBehavior::Lost(method)).await;
             let ready=resolve(&fixture,selection(&fixture).await,Uuid::new_v4()).await;
             let coordinator=ready["session"]["id"].as_str().unwrap().to_owned();
@@ -1558,7 +1556,7 @@ async fn workhub_unknown_preparation_never_recreates_or_reuploads_on_advance() {
 async fn workhub_directory_pages_preserve_choices_and_stale_choice_cannot_create() {
     tokio::time::timeout(Duration::from_secs(90), async {
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),None).await;
         let names=(0..9).map(|n|format!("project-{n}-{}","长目录".repeat(15))).collect::<Vec<_>>();
         for name in &names { std::fs::create_dir(fixture.workspace.join(name)).unwrap(); }
         activate_workers(&mut fixture,true,true,true).await;
@@ -1589,7 +1587,7 @@ async fn workhub_directory_pages_preserve_choices_and_stale_choice_cannot_create
 async fn workhub_unrecorded_upload_requires_original_capture_after_sql_recovery() {
     tokio::time::timeout(Duration::from_secs(60), async {
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),None).await;
         activate_workers(&mut fixture,true,true,true).await;
         let worker=worker_session(&fixture).await;
         let ready=resolve(&fixture,selection(&fixture).await,Uuid::new_v4()).await;
@@ -1620,7 +1618,7 @@ async fn workhub_unrecorded_upload_requires_original_capture_after_sql_recovery(
 async fn workhub_routes_external_executor_through_original_worker_and_recovers_answer() {
     tokio::time::timeout(Duration::from_secs(60),async {
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None).await;
+        let mut fixture=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),None).await;
         activate_worker_mode(&mut fixture,true,true,true,WorkerBehavior::External).await;
         let worker=worker_session(&fixture).await;
         let ready=resolve(&fixture,selection(&fixture).await,Uuid::new_v4()).await;
@@ -1657,7 +1655,7 @@ async fn workhub_routes_external_executor_through_original_worker_and_recovers_a
 async fn workhub_presets_freeze_selected_worker_tools_and_recover_after_restart() {
     tokio::time::timeout(Duration::from_secs(60), async {
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut fixture=Fixture::configured(&format!("http://{}/v1",listener.local_addr().unwrap()),1,None,None,None,|settings| settings.isolated_workspaces=true).await;
+        let mut fixture=Fixture::configured(&format!("http://{}/v1",listener.local_addr().unwrap()),None,None,None,|settings| settings.isolated_workspaces=true).await;
         worktrees::git(&fixture.workspace,&["init","--quiet"]);
         worktrees::git(&fixture.workspace,&["config","user.email","test@example.invalid"]);
         worktrees::git(&fixture.workspace,&["config","user.name","Fixture"]);
@@ -1716,7 +1714,6 @@ async fn workhub_dependencies_wait_cancel_and_dispatch_once_with_complete_origin
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let mut fixture = Fixture::new(
             &format!("http://{}/v1", listener.local_addr().unwrap()),
-            1,
             None,
         )
         .await;

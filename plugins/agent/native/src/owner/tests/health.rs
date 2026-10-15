@@ -120,7 +120,6 @@ mod acceptance {
         let model = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let f = Fixture::with_services(
             &format!("http://{}/v1", model.local_addr().unwrap()),
-            1,
             None,
             None,
             Some(service_tools::Setup::health()),
@@ -138,9 +137,12 @@ mod acceptance {
         assert_eq!(process["kind"], "completed", "{process}");
         let reference = process["value"]["ref"].clone();
         assert!(reference.is_string(), "{process}");
-        let mut commits = f.store.subscribe_commits();
+        // Shell state commits do not append model events. Subscribe before
+        // reading so a process that settles after the model cannot strand us.
+        let mut changes = f.store.subscribe_catalog_changes();
         let id = maka_host_runtime::shell::request::parse_ref(reference.as_str().unwrap()).unwrap();
         loop {
+            changes.borrow_and_update();
             if !f
                 .store
                 .read_shell_run(&session, id)
@@ -152,7 +154,7 @@ mod acceptance {
             {
                 break;
             }
-            commits.changed().await.unwrap();
+            changes.changed().await.unwrap();
         }
         (model, f, session, reference)
     }

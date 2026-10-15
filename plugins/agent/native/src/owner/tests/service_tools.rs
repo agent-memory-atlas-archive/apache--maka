@@ -907,7 +907,7 @@ async fn service_confirmation_reviews_exact_large_arguments_and_never_replaces_g
             let mut setup = Setup::native(counter.clone(), granted).titled(maka_agent_facts::display::Text::localized("Review counter", "审核计数器", "審核計數器"));
             setup.query = query;
             setup.confirmation = contract::ToolConfirmation::Required;
-            let fixture = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None, Some(setup)).await;
+            let fixture = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()), None, None, Some(setup)).await;
             let session = fixture.create("Review exact service call").await;
             fixture.send(&session).await.unwrap();
             let (mut socket, _) = listener.accept().await.unwrap();
@@ -977,7 +977,6 @@ async fn stop_closes_original_service_confirmation_without_an_effect_or_replay()
         setup.confirmation = contract::ToolConfirmation::Required;
         let fixture = Fixture::with_services(
             &format!("http://{}/v1", listener.local_addr().unwrap()),
-            1,
             None,
             None,
             Some(setup),
@@ -1020,7 +1019,6 @@ async fn stop_closes_original_service_confirmation_without_an_effect_or_replay()
                 .unwrap()
                 .is_empty()
         );
-        assert_eq!(fixture.owner.permits.available_permits(), 1);
         fixture.app.shutdown().await.unwrap();
         fixture.config.shutdown().await.unwrap();
     })
@@ -1059,7 +1057,7 @@ async fn installed_javascript_service_is_a_real_model_tool_with_business_project
             assert!(!next.to_string().contains("stateDomain"));
             response(&mut socket).await;
         });
-        let fixture = Fixture::with_services(&base, 1, None, None, Some(Setup::javascript())).await;
+        let fixture = Fixture::with_services(&base, None, None, Some(Setup::javascript())).await;
         let session = fixture.create("Actual service tool").await;
         fixture.send(&session).await.unwrap();
         fixture.drained().await;
@@ -1262,7 +1260,6 @@ async fn unknown_service_outcome_has_typed_original_evidence_and_never_enters_mo
         let counter = Counter::new(Behavior::Unknown);
         let fixture = Fixture::with_services(
             &base,
-            1,
             None,
             None,
             Some(Setup::native(counter.clone(), true)),
@@ -1317,7 +1314,6 @@ async fn unknown_service_outcome_has_typed_original_evidence_and_never_enters_mo
             recovered.outcome,
             OperationOutcome::Unknown { .. }
         ));
-        assert_eq!(fixture.owner.permits.available_permits(), 1);
         fixture.app.shutdown().await.unwrap();
         fixture.config.shutdown().await.unwrap();
     })
@@ -1340,7 +1336,6 @@ async fn unlisted_native_tool_edge_never_executes_the_selected_provider() {
         let counter = Counter::new(Behavior::Returned);
         let fixture = Fixture::with_services(
             &base,
-            1,
             None,
             None,
             Some(Setup::native(counter.clone(), false)),
@@ -1380,7 +1375,7 @@ async fn unlisted_native_tool_edge_never_executes_the_selected_provider() {
     .unwrap();
 }
 #[tokio::test]
-async fn stopping_real_agent_run_cancels_tool_but_retains_capacity_until_physical_cleanup() {
+async fn stopping_real_agent_run_cancels_tool_but_retains_owner_until_physical_cleanup() {
     for code in [false, true] {
         tokio::time::timeout(Duration::from_secs(30), async {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1397,7 +1392,6 @@ async fn stopping_real_agent_run_cancels_tool_but_retains_capacity_until_physica
             let counter = Counter::new(Behavior::Blocked);
             let fixture = Fixture::with_services(
                 &base,
-                1,
                 None,
                 None,
                 Some({
@@ -1430,21 +1424,22 @@ async fn stopping_real_agent_run_cancels_tool_but_retains_capacity_until_physica
                 .await
                 .unwrap();
             counter.cancelled.acquire().await.unwrap().forget();
-            assert_eq!(fixture.owner.permits.available_permits(), 0);
             assert_eq!(fixture.owner.workers.len(), 1);
-            let other = fixture.create("Not available yet").await;
-            assert!(
-                fixture
-                    .send(&other)
-                    .await
-                    .unwrap_err()
-                    .contains("agent_capacity_exhausted")
-            );
+            let other = fixture.create("Other session remains available").await;
+            let admitted = fixture.send(&other).await.unwrap();
+            fixture
+                .mutation(
+                    2,
+                    "stop",
+                    json!({"sessionId":other,"invocationId":admitted["invocationId"]}),
+                    Uuid::new_v4(),
+                )
+                .await
+                .unwrap();
             counter.release.add_permits(1);
             fixture.drained().await;
             server.await.unwrap();
             assert_eq!(counter.effects.load(Ordering::SeqCst), 1);
-            assert_eq!(fixture.owner.permits.available_permits(), 1);
             fixture.app.shutdown().await.unwrap();
             fixture.config.shutdown().await.unwrap();
         })
@@ -1453,8 +1448,7 @@ async fn stopping_real_agent_run_cancels_tool_but_retains_capacity_until_physica
     }
 }
 #[tokio::test]
-async fn returned_effect_with_failed_cleanup_preserves_receipt_without_settling_or_reusing_capacity()
- {
+async fn returned_effect_with_failed_cleanup_preserves_receipt_without_settling_execution() {
     tokio::time::timeout(Duration::from_secs(30), async {
         for behavior in [Behavior::CleanupFailed, Behavior::LargeCleanupFailed] {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1467,7 +1461,6 @@ async fn returned_effect_with_failed_cleanup_preserves_receipt_without_settling_
             let counter = Counter::new(behavior);
             let fixture = Fixture::with_services(
                 &base,
-                1,
                 None,
                 None,
                 Some(Setup::native(counter.clone(), true)),
@@ -1505,7 +1498,6 @@ async fn returned_effect_with_failed_cleanup_preserves_receipt_without_settling_
                     cleanup: maka_plugin_core::operation::OperationCleanup::Failed { .. }
                 }
             ));
-            assert_eq!(fixture.owner.permits.available_permits(), 0);
             assert_eq!(fixture.owner.runs.lock().await.quarantined.len(), 1);
             assert!(fixture.app.shutdown().await.is_err());
             assert!(!fixture.app.client().snapshot().closed);
@@ -1547,7 +1539,7 @@ async fn query_tool_uses_original_query_gate_and_projects_plain_business_json() 
         let counter = Counter::new(Behavior::Returned);
         let mut setup = Setup::native(counter.clone(), true);
         setup.query = true;
-        let fixture = Fixture::with_services(&base, 1, None, None, Some(setup)).await;
+        let fixture = Fixture::with_services(&base, None, None, Some(setup)).await;
         let session = fixture.create("Actual query tool").await;
         fixture.send(&session).await.unwrap();
         fixture.drained().await;
@@ -1605,7 +1597,6 @@ async fn unresponsive_native_tool_reaches_original_cleanup_budget_and_keeps_host
         let counter = Counter::new(Behavior::Blocked);
         let fixture = Fixture::with_services(
             &base,
-            1,
             None,
             None,
             Some(Setup::native(counter.clone(), true)),
@@ -1629,7 +1620,6 @@ async fn unresponsive_native_tool_reaches_original_cleanup_budget_and_keeps_host
         tokio::time::timeout(Duration::from_secs(8), fixture.drained())
             .await
             .unwrap();
-        assert_eq!(fixture.owner.permits.available_permits(), 0);
         assert_eq!(fixture.owner.runs.lock().await.quarantined.len(), 1);
         let snapshot = fixture.app.client().snapshot();
         assert!(
@@ -1663,7 +1653,6 @@ async fn unresponsive_native_tool_reaches_original_cleanup_budget_and_keeps_host
 async fn admitted_message_keeps_original_model_workspace_and_dispatcher_when_opening_fails() {
     let fixture = Fixture::with_services(
         "http://127.0.0.1:1/v1",
-        1,
         None,
         None,
         Some(Setup::javascript()),
@@ -1726,7 +1715,7 @@ async fn queue_promotion_steers_original_run_at_the_next_step_without_a_successo
     tokio::time::timeout(Duration::from_secs(30), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
-        let fixture = Fixture::with_services(&base, 1, None, None, Some(Setup::javascript())).await;
+        let fixture = Fixture::with_services(&base, None, None, Some(Setup::javascript())).await;
         let session = fixture.create("Steer original run").await;
         let started = fixture.send(&session).await.unwrap();
         let (mut first, _) = listener.accept().await.unwrap();
@@ -1809,8 +1798,7 @@ async fn skill_preparation_parent_scope_owns_work_after_observer_loss_and_cleanu
             });
             let mut setup = Setup::skill_preparation(dir.path().into(), false);
             setup.preparation = Some(probe.clone());
-            let f =
-                Fixture::with_services("http://127.0.0.1:9/v1", 1, None, None, Some(setup)).await;
+            let f = Fixture::with_services("http://127.0.0.1:9/v1", None, None, Some(setup)).await;
             let parent = scope(&f.issuer, true);
             let owner = f.owner.clone();
             let request = parent.clone();
@@ -1830,7 +1818,6 @@ async fn skill_preparation_parent_scope_owns_work_after_observer_loss_and_cleanu
             );
             probe.release.add_permits(1);
             assert_eq!(cleanup.await.unwrap().is_err(), failed);
-            assert_eq!(f.owner.permits.available_permits(), 1);
             // The same physical cleanup failure also remains visible to the Host owner.
             assert_eq!(f.app.shutdown().await.is_err(), failed);
             f.config.shutdown().await.unwrap();
@@ -1847,7 +1834,7 @@ async fn resume_replays_original_settlements_without_redispatching_effects() {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let counter = Counter::new(behavior);
             let fixture = Fixture::with_services(
-                &format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None,
+                &format!("http://{}/v1", listener.local_addr().unwrap()), None, None,
                 Some(Setup::native(counter.clone(), true)),
             ).await;
             selection::edit(&fixture, |changes| {
@@ -1903,7 +1890,6 @@ async fn resume_replays_original_settlements_without_redispatching_effects() {
                 assert!(matches!(receipt.outcome, OperationOutcome::Unknown { .. }));
             }
             assert_eq!(counter.effects.load(Ordering::SeqCst), 1, "replay never redispatches original service mutation");
-            assert_eq!(fixture.owner.permits.available_permits(), 1);
             fixture.app.shutdown().await.unwrap();
             fixture.config.shutdown().await.unwrap();
         }
@@ -1916,7 +1902,7 @@ async fn session_tool_selection_is_an_execution_ceiling_and_is_inherited() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let counter = Counter::new(Behavior::Returned);
         let fixture = Fixture::with_services(
-            &format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None,
+            &format!("http://{}/v1", listener.local_addr().unwrap()), None, None,
             Some(Setup::native(counter.clone(), true)),
         ).await;
         assert_eq!(fixture.query("tools", json!({})).await.unwrap()["names"], json!(["Counter"]));
@@ -1953,7 +1939,7 @@ async fn code_mode_calls_selected_native_services_with_original_grants_and_recei
             let counter = Counter::new(Behavior::Returned);
             let mut setup = Setup::native(counter.clone(), granted);
             setup.nestable = nestable;
-            let fixture = Fixture::with_services(&base, 1, None, None, Some(setup)).await;
+            let fixture = Fixture::with_services(&base, None, None, Some(setup)).await;
             selection::edit(&fixture, |changes| {
                 changes.model_overrides = Patch::Set(BTreeMap::from([("fixture-model".into(), ModelOverride {
                     code_mode: Some(true), ..Default::default()
@@ -2029,7 +2015,7 @@ async fn code_mode_native_file_writes_obey_the_live_session_permission_boundary(
             let base = format!("http://{}/v1", listener.local_addr().unwrap());
             let mut setup = Setup::files("write");
             setup.nestable = true;
-            let fixture = Fixture::with_services(&base, 1, None, None, Some(setup)).await;
+            let fixture = Fixture::with_services(&base, None, None, Some(setup)).await;
             selection::edit(&fixture, |changes| {
                 changes.model_overrides = Patch::Set(BTreeMap::from([("fixture-model".into(), ModelOverride {
                     code_mode: Some(true), ..Default::default()
@@ -2068,7 +2054,7 @@ async fn discovery_retains_loaded_tools_between_turns_without_crossing_session_c
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let counter = Counter::new(Behavior::Returned);
         let fixture = Fixture::configured(
-            &format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None,
+            &format!("http://{}/v1", listener.local_addr().unwrap()), None, None,
             Some(Setup::native(counter.clone(), true)),
             |settings| settings.tool_discovery = true,
         ).await;
@@ -2144,7 +2130,7 @@ async fn code_mode_discovery_preserves_session_store_and_nested_callability_betw
         let mut setup = Setup::native(counter.clone(), true);
         setup.nestable = true;
         let fixture = Fixture::configured(
-            &format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None,
+            &format!("http://{}/v1", listener.local_addr().unwrap()), None, None,
             Some(setup), |settings| settings.tool_discovery = true,
         ).await;
         selection::edit(&fixture, |changes| {
@@ -2216,7 +2202,7 @@ async fn model_editing_policy_selects_bound_file_methods_independently_of_code_m
             let expected_code = code.unwrap_or(model == "gpt-fixture");
             let expected_patch = patch.unwrap_or(model == "gpt-fixture");
             let fixture = Fixture::configured(
-                &format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None,
+                &format!("http://{}/v1", listener.local_addr().unwrap()), None, None,
                 Some(file_editors(true)), |settings| settings.tool_discovery = expected_code,
             ).await;
             selection::edit(&fixture, |changes| {
@@ -2269,7 +2255,7 @@ async fn queued_file_editing_policy_is_frozen_and_new_messages_adopt_changed_ove
     tokio::time::timeout(Duration::from_secs(60), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let fixture = Fixture::with_services(
-            &format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None,
+            &format!("http://{}/v1", listener.local_addr().unwrap()), None, None,
             Some(file_editors(true)),
         ).await;
         let session = fixture.create("Queued editing policy").await;
@@ -2319,7 +2305,7 @@ async fn code_mode_wait_observes_original_native_process_and_its_workspace_effec
         let mut setup = Setup::processes();
         setup.nestable = true;
         let fixture = Fixture::configured(
-            &format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None,
+            &format!("http://{}/v1", listener.local_addr().unwrap()), None, None,
             Some(setup), |settings| { settings.tool_discovery = true; settings.max_steps = 3; },
         ).await;
         selection::edit(&fixture, |changes| {
@@ -2358,7 +2344,6 @@ async fn code_mode_wait_observes_original_native_process_and_its_workspace_effec
         fixture.drained().await;
         let observed = facts(&fixture, &session).await;
         assert_eq!(observed.iter().filter(|fact| matches!(fact, Fact::ToolDispatched {name, ..} if name == "Execute")).count(), 1);
-        assert_eq!(fixture.owner.permits.available_permits(), 1);
         fixture.app.shutdown().await.unwrap();
         fixture.config.shutdown().await.unwrap();
     }).await.unwrap();
@@ -2372,7 +2357,6 @@ async fn code_mode_native_image_bytes_reach_the_vision_model() {
         setup.nestable = true;
         let fixture = Fixture::configured(
             &format!("http://{}/v1", listener.local_addr().unwrap()),
-            1,
             None,
             None,
             Some(setup),
@@ -2407,7 +2391,6 @@ async fn code_mode_native_image_bytes_reach_the_vision_model() {
         assert_eq!(images::model_images(&prompt), vec![bytes]);
         response(&mut socket).await;
         fixture.drained().await;
-        assert_eq!(fixture.owner.permits.available_permits(), 1);
         fixture.app.shutdown().await.unwrap();
         fixture.config.shutdown().await.unwrap();
     })
@@ -2422,7 +2405,7 @@ async fn editing_policy_and_code_mode_survive_actual_host_restart_with_original_
         let setup = file_editors(true);
         let policy = setup.policy();
         let fixture = Fixture::with_services(
-            &format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None, Some(setup),
+            &format!("http://{}/v1", listener.local_addr().unwrap()), None, None, Some(setup),
         ).await;
         selection::edit(&fixture, |changes| {
             changes.model_overrides = Patch::Set(BTreeMap::from([("fixture-model".into(), ModelOverride {
@@ -2490,7 +2473,7 @@ async fn queued_messages_resume_with_equivalent_native_service_targets_after_res
             let policy = setup.policy();
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let fixture = Fixture::with_services(
-                &format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None, Some(setup),
+                &format!("http://{}/v1", listener.local_addr().unwrap()), None, None, Some(setup),
             ).await;
             let session = fixture.create(&format!("Restore {name}")).await;
             let deployment = fixture.app.client().snapshot().effective.unwrap().deployment;

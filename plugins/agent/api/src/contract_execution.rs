@@ -197,7 +197,6 @@ pub enum ResumeParkReason {
     Closed,
     Archived,
     Busy,
-    Capacity,
     SourceMissing,
     SourceChanged,
     SourceNotResumable,

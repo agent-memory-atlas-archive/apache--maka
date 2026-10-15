@@ -158,7 +158,7 @@ async fn subscription_profile_survives_proxy_ws_continuation_and_http_fallback()
                 assert!(socket.next().await.is_none_or(|frame| frame.is_err() || matches!(frame, Ok(Message::Close(_)))));
             }
         });
-        let executor = ModelExecutor::new(1, Duration::from_secs(10)).unwrap();
+        let executor = ModelExecutor::new(Duration::from_secs(10)).unwrap();
         for (index, profile) in profiles.into_iter().enumerate() {
             let lane = Conversation::default();
             let token = profile["token"].as_str().unwrap();

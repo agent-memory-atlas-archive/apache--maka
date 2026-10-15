@@ -111,8 +111,8 @@ async fn respond(socket: &mut TcpStream, partial: bool) {
 fn engine(log: Arc<EventLog>) -> Engine {
     Engine::new(
         log,
-        ModelExecutor::new(1, Duration::from_secs(20)).unwrap(),
-        CodeExecutor::new(2, CellLimits::default()).unwrap(),
+        ModelExecutor::new(Duration::from_secs(20)).unwrap(),
+        CodeExecutor::new(CellLimits::default()).unwrap(),
     )
 }
 
@@ -323,8 +323,8 @@ async fn model_timeout_cause_survives_reopening_the_log() {
             let log = Arc::new(EventLog::open(&path).await.unwrap());
             let engine = Engine::new(
                 log.clone(),
-                ModelExecutor::new(1, Duration::from_millis(250)).unwrap(),
-                CodeExecutor::new(2, CellLimits::default()).unwrap(),
+                ModelExecutor::new(Duration::from_millis(250)).unwrap(),
+                CodeExecutor::new(CellLimits::default()).unwrap(),
             );
             assert!(matches!(
                 engine

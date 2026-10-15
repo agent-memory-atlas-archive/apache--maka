@@ -52,7 +52,7 @@ impl Health {
 }
 
 /// Dropping the caller must abort pending HTTP, not merely unblock op_emit.
-/// Sending Cancel does not acknowledge cleanup or release the actor's permit.
+/// Sending Cancel does not acknowledge cleanup or release the actor's input byte reservation.
 pub(super) struct ModelCancellation {
     id: Option<u32>,
     commands: mpsc::UnboundedSender<Command>,

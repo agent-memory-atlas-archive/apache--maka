@@ -67,7 +67,7 @@ fn provider() -> ProviderConfig {
 async fn live_luna_subscription_streams_and_confirms_canonical_ws_continuation() {
     let provider = provider();
     tokio::time::timeout(Duration::from_secs(140), async {
-        let executor = ModelExecutor::new(1, Duration::from_secs(60)).unwrap();
+        let executor = ModelExecutor::new(Duration::from_secs(60)).unwrap();
         let lane = Conversation::default();
         let mut prompt = vec![maka_model::prompt::Message::System {
             content: "Follow the user request concisely.".into(),
@@ -155,7 +155,7 @@ fn append_probe_images(prompt: &mut [maka_model::prompt::Message]) {
 #[ignore = "requires MAKA_CODEX_AUTH_FILE and authorized gpt-6-luna subscription access"]
 async fn live_luna_subscription_http_decodes_the_stream_without_a_content_type_header() {
     tokio::time::timeout(Duration::from_secs(100), async {
-        let models = ModelExecutor::new(1, Duration::from_secs(60)).unwrap();
+        let models = ModelExecutor::new(Duration::from_secs(60)).unwrap();
         let mut prompt = vec![maka_model::prompt::Message::user(
             "Ignore any blank images. Reply only with HTTP-OK.",
         )];

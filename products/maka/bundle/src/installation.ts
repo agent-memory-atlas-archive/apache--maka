@@ -118,7 +118,6 @@ export function installation(
     assistant: options.home ? { home: options.home } : {},
     importRoots: [{ label: 'Conversation sources', path: options.home ?? options.workspace }],
     permissions: { access: 'workspace_write', requestPermissions: true },
-    maxActiveRuns: 4,
     maxSteps: 16,
     recall: true,
     scheduledTasks: true,

@@ -30,11 +30,11 @@ use tokio_util::sync::CancellationToken;
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn compact_next_main_and_reopen_use_durable_baseline_with_complete_tail() {
     let engine = |log| {
-        let model = maka_model::ModelExecutor::new(1, std::time::Duration::from_secs(10)).unwrap();
+        let model = maka_model::ModelExecutor::new(std::time::Duration::from_secs(10)).unwrap();
         maka_agent_engine::Engine::new(
             log,
             model,
-            maka_js_runtime::CodeExecutor::new(1, Default::default()).unwrap(),
+            maka_js_runtime::CodeExecutor::new(Default::default()).unwrap(),
         )
     };
     let input = |base: &str, id: &str, compact| {

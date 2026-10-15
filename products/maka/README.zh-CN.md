@@ -34,3 +34,5 @@
 在仓库根目录运行 `just run`。它先构建 TypeScript 产品，再启动 Cargo。开发二进制从磁盘读取 bundle，因此仅修改 TypeScript 不会触发 Rust 重编译；发布二进制嵌入相同 bundle。
 
 内置包是安装输入。重新打开已有安装时，使用的是已提交的配置和包内容；重建仓库不会覆盖用户的组合。
+
+在 macOS 或 Linux 上测量 Agent 并发性能时，先运行 `cargo test --release -p maka-agent-native --lib --no-run`，再将输出的测试程序路径传给 `python3 scripts/agent-scale.py --binary PATH`。默认对 10、100、1000 个 Agent 各测五轮，经过实际 Host、原生 owner 和共享模型 SDK。本地 HTTP 服务等待所有请求同时活跃后才开始输出；测试校验持久化结果、取消、连接关闭及恢复。JSON 报告保留所有样本、前台查询延迟、CPU 和峰值内存。测量时应停止竞争编译任务；结果不包含 TUI 渲染及外部模型延迟。

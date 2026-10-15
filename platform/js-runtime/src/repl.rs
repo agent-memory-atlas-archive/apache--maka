@@ -35,7 +35,7 @@ use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use tokio::{
     runtime::Handle,
-    sync::{Semaphore, mpsc, oneshot},
+    sync::{mpsc, oneshot},
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
@@ -188,7 +188,6 @@ async fn serve(
             host: host.clone(),
             limits: limits.clone(),
             admission: Mutex::new(Admission::default()),
-            concurrency: Arc::new(Semaphore::new(1)),
         });
         runtime.op_state().borrow_mut().put(scope.clone());
         runtime.op_state().borrow_mut().put(request.context.clone());

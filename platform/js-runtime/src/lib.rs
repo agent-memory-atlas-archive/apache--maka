@@ -38,7 +38,6 @@ use result::{bounded, diagnostic_fits};
 use std::sync::{Arc, Mutex, Once};
 use std::time::Duration;
 use tokio::runtime::Handle;
-use tokio::sync::Semaphore;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 #[derive(Clone, Debug)]
@@ -50,7 +49,6 @@ pub struct CellLimits {
     /// Also bounds individual tool inputs and outputs.
     pub max_value_bytes: usize,
     pub max_tool_calls: usize,
-    pub max_in_flight_tools: usize,
     /// V8 heap limit only; not an OS memory limit or a process sandbox.
     pub heap_bytes: usize,
 }
@@ -62,37 +60,30 @@ impl Default for CellLimits {
             max_source_bytes: 64 * 1024,
             max_value_bytes: 1024 * 1024,
             max_tool_calls: 32,
-            max_in_flight_tools: 8,
             heap_bytes: 64 * 1024 * 1024,
         }
     }
 }
 
-/// A bounded number of fresh isolates, off the host's async worker threads.
-/// Permits remain held until admitted Rust tools have finished cleanup.
+/// Fresh isolates off the host's async worker threads, each retaining ownership
+/// of admitted Rust tools until they have finished cleanup.
 #[derive(Clone)]
 pub struct CodeExecutor {
-    permits: Arc<Semaphore>,
     limits: CellLimits,
 }
 
 impl CodeExecutor {
-    pub fn new(max_cells: usize, limits: CellLimits) -> Result<Self, CellAbort> {
-        if max_cells == 0
-            || limits.timeout.is_zero()
+    pub fn new(limits: CellLimits) -> Result<Self, CellAbort> {
+        if limits.timeout.is_zero()
             || limits.max_source_bytes == 0
             || !diagnostic_fits(&[], limits.max_value_bytes)
             || limits.max_tool_calls == 0
-            || limits.max_in_flight_tools == 0
             || limits.heap_bytes < 8 * 1024 * 1024
         {
             return Err(CellAbort::Internal("invalid cell limits".into()));
         }
         initialize_platform();
-        Ok(Self {
-            permits: Arc::new(Semaphore::new(max_cells)),
-            limits,
-        })
+        Ok(Self { limits })
     }
 
     pub async fn execute(
@@ -161,36 +152,41 @@ impl CodeExecutor {
         }
         let cancellation = cancellation.child_token();
         // Dropping the caller's future cancels the worker; it does not detach
-        // an unbounded execution or prematurely release the worker's permit.
+        // execution without cleanup.
         let _cancel_on_drop = cancellation.clone().drop_guard();
-        let permit = tokio::select! {
-            biased;
-            _ = cancellation.cancelled() => return Err(CellAbort::Cancelled),
-            permit = self.permits.clone().acquire_owned() =>
-                permit.map_err(|error| CellAbort::Internal(error.to_string()))?,
-        };
         let handle = Handle::current();
         let limits = self.limits.clone();
-        tokio::task::spawn_blocking(move || {
-            let _permit = permit;
-            // deno_core's unsynchronized op scheduler requires a current-thread
-            // Tokio runtime. Host effects and watchdogs stay on the host runtime.
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|error| CellAbort::Internal(error.to_string()))?
-                .block_on(run_cell(
-                    source,
-                    tools,
-                    cancellation,
-                    limits,
-                    handle,
-                    context,
-                    module,
-                ))
-        })
-        .await
-        .map_err(|error| CellAbort::Internal(error.to_string()))?
+        let (reply, result) = tokio::sync::oneshot::channel();
+        // A cell can await another cell through a Host tool. Holding a shared
+        // blocking-pool worker across that wait can starve its own child, so
+        // each independent isolate owns its thread through physical cleanup.
+        std::thread::Builder::new()
+            .name("maka-code-js".into())
+            .spawn(move || {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    // deno_core's unsynchronized op scheduler requires a
+                    // current-thread runtime. Host effects stay on the host.
+                    tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|error| CellAbort::Internal(error.to_string()))?
+                        .block_on(run_cell(
+                            source,
+                            tools,
+                            cancellation,
+                            limits,
+                            handle,
+                            context,
+                            module,
+                        ))
+                }))
+                .unwrap_or_else(|_| Err(CellAbort::Internal("cell worker panicked".into())));
+                let _ = reply.send(result);
+            })
+            .map_err(|error| CellAbort::Internal(format!("cannot start cell worker: {error}")))?;
+        result
+            .await
+            .map_err(|_| CellAbort::Internal("cell worker ended without a reply".into()))?
     }
 }
 
@@ -216,7 +212,6 @@ async fn run_cell(
         host: host.clone(),
         limits: limits.clone(),
         admission: Mutex::new(Admission::default()),
-        concurrency: Arc::new(Semaphore::new(limits.max_in_flight_tools)),
     });
     let mut runtime = JsRuntime::try_new(RuntimeOptions {
         extensions: vec![maka_code::init()],

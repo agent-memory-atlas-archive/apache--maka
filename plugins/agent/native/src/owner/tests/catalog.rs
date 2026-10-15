@@ -31,7 +31,7 @@ async fn next(stream: &mut Subscription) -> Value {
 
 #[tokio::test]
 async fn catalog_observes_metadata_pending_and_removal_at_its_original_location() {
-    let fixture = Fixture::new("http://127.0.0.1:1/v1", 2, None).await;
+    let fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
     let mut bootstrap = fixture
         .app
         .client()
@@ -209,7 +209,7 @@ async fn explicit_read_marker_keeps_original_tail_authority_and_receipt() {
                 response_with_text(&mut socket, text).await;
             }
         });
-        let fixture = Fixture::new(&base, 1, None).await;
+        let fixture = Fixture::new(&base, None).await;
         let session = fixture.create("Read marker").await;
         let read = |message: &str| json!({"sessionId":session,"messageId":message});
         assert_eq!(
@@ -351,7 +351,7 @@ async fn explicit_read_marker_keeps_original_tail_authority_and_receipt() {
 #[tokio::test]
 async fn session_lifecycle_is_revision_checked_reversible_and_scoped() {
     tokio::time::timeout(Duration::from_secs(30), async {
-        let f = Fixture::new("http://127.0.0.1:1/v1", 2, None).await;
+        let f = Fixture::new("http://127.0.0.1:1/v1", None).await;
         let session = f.create("Remove this conversation").await;
         let other = f.create("Keep this conversation").await;
         let file = f.workspace.join("keep.txt");

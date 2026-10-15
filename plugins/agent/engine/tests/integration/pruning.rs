@@ -103,32 +103,84 @@ async fn settled_results_are_pruned_before_context_limits_and_survive_failed_sum
             let first = fixture::read_request(&mut socket).await;
             assert_eq!(first["max_tokens"], 4000);
             tool(&mut socket, call_count).await;
-            if spent {
-                for _ in 0..if interrupted { 1 } else { 2 } {
-                    let (mut socket, _) = listener.accept().await.unwrap();
-                    let request = fixture::read_request(&mut socket).await;
-                    assert_eq!(
-                        request["max_tokens"], 4000,
-                        "Summary also respects the selected output budget"
-                    );
-                    assert!(
-                        request["messages"]
-                            .to_string()
-                            .contains("visible-original-marker")
-                    );
-                    if interrupted {
-                        let delta = json!({"id":"summary","object":"chat.completion.chunk","created":1,"model":"test",
-                            "choices":[{"index":0,"delta":{"content":"partial-summary-must-not-replay"},"finish_reason":null}]});
-                        let failure = json!({"error":{"message":"summary stream failed","type":"server_error"}});
-                        let body = format!("data: {delta}\n\ndata: {failure}\n\n");
-                        socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
-                    } else {
-                        fixture::respond(&mut socket, "malformed summary", "stop").await;
-                    }
+            let mut main = None;
+            let mut summaries = 0;
+            let expected_summaries = if !spent {
+                0
+            } else if interrupted {
+                1
+            } else {
+                2
+            };
+            while summaries < expected_summaries || main.is_none() {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let request = fixture::read_request(&mut socket).await;
+                if !request["messages"]
+                    .to_string()
+                    .contains("Now write the structured summary")
+                {
+                    assert!(main.is_none());
+                    main = Some((socket, request));
+                    continue;
+                }
+                summaries += 1;
+                assert!(summaries <= expected_summaries);
+                assert_eq!(
+                    request["max_tokens"], 4000,
+                    "Summary also respects the selected output budget"
+                );
+                assert!(
+                    request["messages"]
+                        .to_string()
+                        .contains("visible-original-marker")
+                );
+                if interrupted {
+                    let delta = json!({"id":"summary","object":"chat.completion.chunk","created":1,"model":"test",
+                        "choices":[{"index":0,"delta":{"content":"partial-summary-must-not-replay"},"finish_reason":null}]});
+                    let failure =
+                        json!({"error":{"message":"summary stream failed","type":"server_error"}});
+                    let body = format!("data: {delta}\n\ndata: {failure}\n\n");
+                    socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+                } else {
+                    fixture::respond(&mut socket, "malformed summary", "stop").await;
                 }
             }
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let request = fixture::read_request(&mut socket).await;
+            let (mut socket, request) = main.unwrap();
+            // Do not cancel the last summary merely because Main has finished:
+            // this case verifies a genuinely failed summary, not terminal abort.
+            let mut commits = observed.subscribe_commits();
+            loop {
+                let prefix = observed.prefix(200, 16 * 1024 * 1024).await.unwrap();
+                let summary_steps: Vec<_> = prefix
+                    .events
+                    .iter()
+                    .filter_map(|stored| match &stored.event.fact {
+                        Fact::ModelRequested {
+                            step_id,
+                            purpose: maka_agent_facts::context::ModelPurpose::Summary,
+                            ..
+                        } if stored.event.invocation.invocation_id == "invocation-first" => {
+                            Some(step_id)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                let settled = prefix
+                    .events
+                    .iter()
+                    .filter(|stored| match &stored.event.fact {
+                        Fact::ModelCompleted { step_id, .. }
+                        | Fact::ModelInterrupted { step_id, .. } => {
+                            summary_steps.contains(&step_id)
+                        }
+                        _ => false,
+                    })
+                    .count();
+                if settled == expected_summaries {
+                    break;
+                }
+                commits.changed().await.unwrap();
+            }
             let messages = request["messages"].to_string();
             assert_eq!(
                 request["max_tokens"], 4000,

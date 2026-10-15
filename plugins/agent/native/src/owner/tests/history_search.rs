@@ -28,7 +28,7 @@ use maka_plugin_core::scope::Scope as StorageScope;
 #[tokio::test]
 async fn history_search_preserves_empty_batches_and_exact_cursors_with_original_authority() {
     tokio::time::timeout(Duration::from_secs(45), async {
-        let fixture = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+        let fixture = Fixture::new("http://127.0.0.1:9/v1", None).await;
         let seed = fixture.create("Search").await;
         let configuration = fixture.owner.session(&seed).await.unwrap().configuration;
         let session = format!("{}{}", fixture.owner.prefix, Uuid::new_v4().simple());
@@ -111,7 +111,7 @@ async fn history_search_preserves_empty_batches_and_exact_cursors_with_original_
 #[tokio::test]
 async fn search_hits_read_the_exact_field_when_history_body_is_absent_or_different() {
     tokio::time::timeout(Duration::from_secs(45), async {
-        let fixture = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+        let fixture = Fixture::new("http://127.0.0.1:9/v1", None).await;
         let seed = fixture.create("Fields").await;
         let configuration = fixture.owner.session(&seed).await.unwrap().configuration;
         let session = format!("{}{}", fixture.owner.prefix, Uuid::new_v4().simple());
@@ -269,7 +269,7 @@ async fn search_hits_read_the_exact_field_when_history_body_is_absent_or_differe
 
 #[tokio::test]
 async fn reading_prompt_is_indexed_fenced_and_keeps_original_session_authority() {
-    let fixture = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+    let fixture = Fixture::new("http://127.0.0.1:9/v1", None).await;
     let seed = fixture.create("Reading context").await;
     let configuration = fixture.owner.session(&seed).await.unwrap().configuration;
     let session = format!("{}{}", fixture.owner.prefix, Uuid::new_v4().simple());

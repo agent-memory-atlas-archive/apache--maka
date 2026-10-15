@@ -20,11 +20,11 @@
 use super::*;
 
 #[tokio::test]
-async fn queued_followup_uses_original_worker_capacity_and_a_new_invocation() {
+async fn queued_followup_uses_original_worker_and_a_new_invocation() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
-        let fixture = Fixture::new(&base, 1, None).await;
+        let fixture = Fixture::new(&base, None).await;
         let session = fixture.create("Queued followup").await;
         let first = fixture.send(&session).await.unwrap();
         assert_eq!(first["kind"], "started");
@@ -37,8 +37,6 @@ async fn queued_followup_uses_original_worker_capacity_and_a_new_invocation() {
         let other = fixture.create("Other message owner").await;
         assert_eq!(fixture.query("work",json!({"sessionId":other,"target":{"kind":"message","messageId":next["messageId"]}})).await.unwrap(),json!({"kind":"missing"}));
         assert!(fixture.query("work",json!({"sessionId":"foreign_session","target":{"kind":"message","messageId":next["messageId"]}})).await.is_err());
-
-        assert_eq!(fixture.owner.permits.available_permits(), 0);
         assert_eq!(fixture.owner.runs.lock().await.controls.len(), 1);
         let pending = fixture.store.pending_messages(&session).await.unwrap();
         assert_eq!(pending.len(), 1);
@@ -74,7 +72,6 @@ async fn queued_followup_uses_original_worker_capacity_and_a_new_invocation() {
         response(&mut third_socket).await;
         fixture.drained().await;
         assert!(fixture.owner.runs.lock().await.controls.is_empty());
-        assert_eq!(fixture.owner.permits.available_permits(), 1);
         fixture.app.shutdown().await.unwrap();
         fixture.config.shutdown().await.unwrap();
     }).await.unwrap();
@@ -85,7 +82,7 @@ async fn stopping_original_run_retracts_queue_and_fences_tail_admission() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
-        let fixture = Fixture::new(&base, 1, None).await;
+        let fixture = Fixture::new(&base, None).await;
         let session = fixture.create("Stop queue").await;
         let first = fixture.send(&session).await.unwrap();
         let (mut socket, _) = listener.accept().await.unwrap();
@@ -179,7 +176,6 @@ async fn stopping_original_run_retracts_queue_and_fences_tail_admission() {
                 .unwrap(),
             json!({"kind":"cancelled"})
         );
-        assert_eq!(fixture.owner.permits.available_permits(), 1);
         fixture.app.shutdown().await.unwrap();
         fixture.config.shutdown().await.unwrap();
     })
@@ -188,11 +184,11 @@ async fn stopping_original_run_retracts_queue_and_fences_tail_admission() {
 }
 
 #[tokio::test]
-async fn activation_recovers_more_pending_sessions_than_capacity_without_new_sends() {
+async fn activation_recovers_all_pending_sessions_without_new_sends() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
-        let fixture = Fixture::new(&base, 1, None).await;
+        let fixture = Fixture::new(&base, None).await;
         use maka_agent_facts::execution::ThinkingLevel::Off;
 use maka_agent_facts::execution::ThinkingLevel::Low;
 use maka_agent_facts::execution::ThinkingLevel::High;
@@ -238,7 +234,7 @@ async fn queue_controls_are_bounded_revisioned_and_observed_without_transcript_p
     tokio::time::timeout(Duration::from_secs(60), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
-        let fixture = Fixture::new(&base, 1, None).await;
+        let fixture = Fixture::new(&base, None).await;
         let session = fixture.create("Queue controls").await;
         let started = fixture.send(&session).await.unwrap();
         let (mut socket, _) = listener.accept().await.unwrap();

@@ -60,8 +60,12 @@ use maka_model::ModelExecutor;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
-use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+    time::Duration,
+};
+use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use uuid::Uuid;
 
@@ -137,8 +141,8 @@ struct Control {
 struct Runs {
     closing: bool,
     controls: BTreeMap<String, Control>,
-    /// Unconfirmed work retains actual capacity, never a reusable slot.
-    quarantined: Vec<OwnedSemaphorePermit>,
+    /// Sessions whose original execution has not confirmed physical cleanup.
+    quarantined: BTreeSet<String>,
 }
 pub(crate) struct Owner {
     graphs: Option<Arc<crate::workhub::tasks::graph::Graphs>>,
@@ -160,7 +164,6 @@ pub(crate) struct Owner {
     pub workspace_roots: Vec<workspace::Root>,
     instruction_home: Option<Arc<cap_std::fs::Dir>>,
     pub import_roots: Vec<workspace::Root>,
-    import_capacity: Arc<Semaphore>,
     internal_tools: Vec<maka_agent_facts::tools::ToolDefinition>,
     internal_bindings: BTreeMap<String, Option<String>>,
     managed_worktrees: std::path::PathBuf,
@@ -172,8 +175,6 @@ pub(crate) struct Owner {
     skills: Option<skills::Library>,
     executors: crate::executor::Executors,
     runs: Arc<Mutex<Runs>>,
-    permits: Arc<Semaphore>,
-    upload_capacity: Arc<Semaphore>,
     workers: TaskTracker,
     producers: TaskTracker,
     producer_gate: Arc<Mutex<()>>,
@@ -238,7 +239,7 @@ impl Owner {
         } else {
             workspace::open(settings.import_roots.clone(), root.canonical_path())?
         };
-        let cells = maka_js_runtime::CodeExecutor::new(1, maka_js_runtime::CellLimits::default())
+        let cells = maka_js_runtime::CodeExecutor::new(maka_js_runtime::CellLimits::default())
             .map_err(|_| "agent_executor_unavailable")?;
         let workers = TaskTracker::new();
         let stop = CancellationToken::new();
@@ -250,7 +251,7 @@ impl Owner {
             activation: context.activation().epoch().to_string(),
             revision: context.package().revision.clone(),
         };
-        let models = ModelExecutor::for_source(1, Duration::from_secs(60), revision.clone())
+        let models = ModelExecutor::for_source(Duration::from_secs(60), revision.clone())
             .map_err(|_| "agent_executor_unavailable")?;
         let auxiliary = auxiliary::Auxiliary::new(revision.clone())?;
         let behavior = prompt.map(|text| {
@@ -279,7 +280,6 @@ impl Owner {
             stop: stop.clone(),
             workers: workers.clone(),
             services: context.services(),
-            capacity: Arc::new(Semaphore::new(2)),
         });
         if settings.recall {
             additional.extend(recall.tools());
@@ -416,15 +416,12 @@ impl Owner {
             data_source,
             workspace_roots,
             import_roots,
-            import_capacity: Arc::new(Semaphore::new(2)),
             managed_worktrees,
             revision,
             behavior,
             instruction_home,
             internal_tools,
             internal_bindings,
-            permits: Arc::new(Semaphore::new(settings.max_active_runs)),
-            upload_capacity: Arc::new(Semaphore::new(1)),
             settings,
             configuration,
             credentials,
@@ -852,23 +849,14 @@ impl Owner {
         if runs.closing {
             return Err("agent_closed".into());
         }
+        if runs.quarantined.contains(&id) {
+            return Err("agent_cleanup_unconfirmed".into());
+        }
         let current = runs.controls.get(&id);
         if let Some(reason) = current.and_then(|control| control.failure) {
             return Err(reason.into());
         }
         let queued = current.map(|control| control.invocation.clone());
-        // An existing worker already holds this Session's capacity through
-        // physical cleanup and the final queue read. Queueing needs no new slot.
-        let permit = if queued.is_none() {
-            Some(
-                self.permits
-                    .clone()
-                    .try_acquire_owned()
-                    .map_err(|_| "agent_capacity_exhausted")?,
-            )
-        } else {
-            None
-        };
         let session = self.session(&id).await?;
         if session.archived {
             return Err("agent_session_configuration_changed".into());
@@ -1039,7 +1027,6 @@ impl Owner {
                 }
             }
         }
-        let permit = permit.expect("new worker owns capacity");
         let input = self
             .input(invocation.clone(), backend, basis.clone(), delivered)
             .await?;
@@ -1052,7 +1039,7 @@ impl Owner {
             Ok(running) => running,
             Err(error) => {
                 if error.is_cleanup_unconfirmed() {
-                    runs.quarantined.push(permit);
+                    runs.quarantined.insert(id.clone());
                 }
                 return Err(public_error(error));
             }
@@ -1060,7 +1047,7 @@ impl Owner {
         self.publish(&mut runs, &running, basis);
         let owner = self.clone();
         self.workers
-            .spawn(async move { owner.drive(running, permit).await });
+            .spawn(async move { owner.drive(running).await });
         Ok(crate::contract::SendResult::Started {
             session_id: invocation.session_id.clone(),
             invocation_id: invocation.invocation_id,

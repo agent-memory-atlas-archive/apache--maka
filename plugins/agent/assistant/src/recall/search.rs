@@ -32,7 +32,6 @@ use maka_agent_ports::session::history::Page;
 use maka_agent_ports::session::history::Read;
 use maka_capabilities::call::Scope;
 use std::sync::Arc;
-use tokio::sync::OwnedSemaphorePermit;
 
 /// The search algorithm only needs these catalog facts, not execution settings.
 pub struct Session {
@@ -55,23 +54,14 @@ pub async fn search(
     history: Arc<dyn History>,
     call: &Scope,
     query: &Query,
-    permit: Arc<OwnedSemaphorePermit>,
 ) -> Result<ResultSet, ToolError> {
-    let scan = rank::search(history.clone(), call, query, permit.clone()).await?;
+    let scan = rank::search(history.clone(), call, query).await?;
     let mut hits = scan.hits;
     for hit in &mut hits {
         hit.offset = hit.offset.saturating_sub(512);
     }
-    let passages = passages::build(
-        history,
-        call,
-        &scan.sources,
-        &hits,
-        &query.terms,
-        (4, 4),
-        permit,
-    )
-    .await?;
+    let passages =
+        passages::build(history, call, &scan.sources, &hits, &query.terms, (4, 4)).await?;
     Ok(ResultSet {
         passages,
         searched_every_session: scan.complete,
@@ -83,7 +73,6 @@ pub async fn more(
     history: Arc<dyn History>,
     call: &Scope,
     more: &More,
-    permit: Arc<OwnedSemaphorePermit>,
 ) -> Result<ResultSet, ToolError> {
     let (catalog, _) = reader::sessions(history.as_ref(), call, Some(&more.session_id)).await?;
     let summary = catalog
@@ -128,7 +117,6 @@ pub async fn more(
         &[hit],
         &[],
         (more.before.unwrap_or(8), more.after.unwrap_or(8)),
-        permit,
     )
     .await?;
     Ok(ResultSet {

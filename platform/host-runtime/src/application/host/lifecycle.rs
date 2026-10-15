@@ -20,9 +20,10 @@
 //! Process residency observes physical connections; only Application decides work is idle.
 use super::{Host, LifecycleMode, Result};
 use std::{sync::Arc, time::Duration};
-use tokio::{sync::OwnedSemaphorePermit, time::Instant};
+use tokio::time::Instant;
 
 pub(super) struct Residency {
+    pub connections: usize,
     pub paused: bool,
     pub admitted: bool,
     pub last_activity: Instant,
@@ -30,23 +31,23 @@ pub(super) struct Residency {
 impl Default for Residency {
     fn default() -> Self {
         Self {
+            connections: 0,
             paused: false,
             admitted: false,
             last_activity: Instant::now(),
         }
     }
 }
-/// The actual physical channel permit is released under the expiry decision's
-/// lock. Even a complete probe between two observations restarts its idle grace.
+/// Physical channels are counted under the expiry decision's lock. Even a
+/// complete probe between two observations restarts its idle grace.
 pub(super) struct Connection {
     pub host: Arc<Host>,
-    pub permit: Option<OwnedSemaphorePermit>,
 }
 impl Drop for Connection {
     fn drop(&mut self) {
         let mut residency = self.host.residency.lock().unwrap();
         residency.last_activity = Instant::now();
-        drop(self.permit.take());
+        residency.connections -= 1;
     }
 }
 impl Host {
@@ -94,7 +95,7 @@ impl Host {
             let _gate = self.access_gate.lock().await;
             {
                 let mut residency = self.residency.lock().unwrap();
-                if self.capacity.available_permits() != super::CONNECTIONS
+                if residency.connections != 0
                     || Instant::now().duration_since(residency.last_activity) < idle_grace
                     || (!residency.admitted && Instant::now() < initial)
                 {

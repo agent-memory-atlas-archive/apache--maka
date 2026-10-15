@@ -53,7 +53,7 @@ async fn custom_result_and_notifications_all_survive_confirmed_websocket_delta()
             ]));
             finish(&mut socket, "resp_2").await;
         });
-        let executor = ModelExecutor::new(1, Duration::from_secs(5)).unwrap();
+        let executor = ModelExecutor::new(Duration::from_secs(5)).unwrap();
         let lane = Conversation::default();
         let mut input = request(&base, "first");
         input.tools = vec![maka_model::ToolDefinition { name:"exec".into(), description:"JavaScript".into(), input_schema:json!({"type":"object"}), provider:None, output_schema:None,
@@ -77,7 +77,7 @@ async fn custom_result_and_notifications_all_survive_confirmed_websocket_delta()
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn idle_close_reconnect_and_upgrade_fallback_restore_the_raw_baseline() {
     tokio::time::timeout(Duration::from_secs(25), async {
-        let executor = ModelExecutor::new(1, Duration::from_secs(10)).unwrap();
+        let executor = ModelExecutor::new(Duration::from_secs(10)).unwrap();
         for fallback in [false, true] {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let base = format!("http://{}/v1", listener.local_addr().unwrap());
@@ -251,7 +251,7 @@ async fn canonical_tool_confirmation_and_changed_properties_restore_full_input()
                 let _ = socket.next().await;
             }
         });
-        let executor = ModelExecutor::new(1, Duration::from_secs(10)).unwrap();
+        let executor = ModelExecutor::new(Duration::from_secs(10)).unwrap();
         for mode in CONFIRMATION_CASES {
             let lane = Conversation::default();
             let step = generate_step(&executor, &lane, request(&base, "first")).await;

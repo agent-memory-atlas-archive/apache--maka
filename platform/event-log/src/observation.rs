@@ -82,7 +82,7 @@ impl EventLog {
         }
         let invocation = invocation.clone();
         let event_id = event_id.to_owned();
-        self.connection.run(move |connection| Box::pin(async move {
+        self.connection.read(move |connection| Box::pin(async move {
             let row: Option<(i64, String)> = sqlx::query_as(
                 "SELECT sequence, event_json FROM runtime_events WHERE event_id = ?1 AND sequence <= ?2
                  AND json_extract(event_json, '$.invocation.session_id') = ?3
@@ -107,7 +107,7 @@ impl EventLog {
             crate::sessions::validate_id(id)?;
         }
         let sessions = serde_json::to_string(sessions)?;
-        self.connection.run(move |connection| Box::pin(async move {
+        self.connection.read(move |connection| Box::pin(async move {
             let rows: Vec<(String, i64, i64, i64)> = sqlx::query_as(
                 "SELECT session.id, session.revision,
                     COALESCE((SELECT revision FROM message_queue_state WHERE session_id = session.id), 0),
@@ -133,7 +133,7 @@ impl EventLog {
         sessions::validate_id(session_id)?;
         let session_id = session_id.to_owned();
         self.connection
-            .run(move |connection| {
+            .read(move |connection| {
                 Box::pin(async move {
                     let mut transaction = connection.begin().await?;
                     let result = read_projection(&mut transaction, &session_id).await?;
@@ -152,7 +152,7 @@ impl EventLog {
         sessions::validate_id(session_id)?;
         let session_id = session_id.to_owned();
         self.connection
-            .run(move |connection| {
+            .read(move |connection| {
                 Box::pin(async move {
                     let mut transaction = connection.begin().await?;
                     let Some(SessionProjection {
@@ -201,7 +201,7 @@ impl EventLog {
             i64::try_from(through).map_err(|_| invalid("invalid observation fence"))?;
         let session_id = session_id.to_owned();
         self.connection
-            .run(move |connection| {
+            .read(move |connection| {
                 Box::pin(async move {
                     let mut transaction = connection.begin().await?;
                     if through > high_water(&mut transaction).await? {

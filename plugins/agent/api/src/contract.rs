@@ -114,8 +114,6 @@ pub struct Configuration {
     #[serde(default)]
     pub import_roots: Vec<maka_host_runtime::DirectoryRootSpec>,
     #[schemars(range(min = 1, max = 16))]
-    pub max_active_runs: usize,
-    #[schemars(range(min = 1, max = 16))]
     pub max_steps: usize,
     /// Explicitly selected, frozen application service tools, alongside configured native tools.
     pub tools: Vec<ServiceTool>,
@@ -531,7 +529,6 @@ pub enum AttachmentUploadResult {
 #[schemars(rename = "AgentAttachmentRejection")]
 pub enum AttachmentRejection {
     InvalidFile,
-    Busy,
     Closed,
     Archived,
 }

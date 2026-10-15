@@ -35,7 +35,7 @@ async fn change(fixture: &Fixture, value: Value) -> Value {
 
 #[tokio::test]
 async fn projects_register_create_rename_archive_restore_and_relocate_original_sessions() {
-    let fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    let fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
     let roots = fixture
         .query("directories", json!({"kind":"roots"}))
         .await
@@ -136,7 +136,7 @@ async fn projects_register_create_rename_archive_restore_and_relocate_original_s
 
 #[tokio::test]
 async fn projects_are_owner_scoped_and_stale_pages_and_directory_replacements_are_rejected() {
-    let fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    let fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
     let hidden = fixture
         .store
         .register_project(
@@ -241,7 +241,7 @@ async fn projects_relocation_rejects_running_and_queued_work_then_merges_without
     tokio::time::timeout(Duration::from_secs(40), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
-        let fixture = Fixture::new(&base, 1, None).await;
+        let fixture = Fixture::new(&base, None).await;
         let source_session = fixture.create("Source").await;
         let roots = fixture.query("directories", json!({"kind":"roots"})).await.unwrap();
         let destination = roots["roots"][1]["selection"].clone();
@@ -286,7 +286,7 @@ async fn projects_relocation_rejects_running_and_queued_work_then_merges_without
 
 #[tokio::test]
 async fn projects_original_receipt_survives_reactivation_without_repeating_the_change() {
-    let mut fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    let mut fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
     let session = fixture.create("Original project").await;
     let selected = projects(&fixture).await["projects"][0]["reference"].clone();
     let operation = Uuid::new_v4();

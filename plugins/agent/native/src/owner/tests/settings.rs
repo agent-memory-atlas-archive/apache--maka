@@ -125,7 +125,7 @@ async fn mutate_reply(
 
 #[tokio::test]
 async fn settings_confirmed_validation_rejections_do_not_downgrade_sql_uncertainty() {
-    let fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    let fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
     let original = fixture.config.catalog().await.unwrap();
     let row = &original.connections[0];
     let basis = json!({"connectionId":row.connection_id,"revision":row.revision});
@@ -222,7 +222,7 @@ async fn settings_confirmed_validation_rejections_do_not_downgrade_sql_uncertain
 #[tokio::test]
 async fn root_settings_create_partial_edit_save_capture_and_stale_vault_basis_use_original_journals()
  {
-    let fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    let fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
     let page = query(&fixture, "connections", json!({"kind":"start"})).await;
     assert_eq!(page["connections"].as_array().unwrap().len(), 1);
     let original = page["connections"][0]["basis"].clone();
@@ -436,8 +436,7 @@ async fn assistant_preferences_and_capability_guidance_freeze_at_message_accepta
     tokio::time::timeout(Duration::from_secs(60), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let fixture = Fixture::configured(
-            &format!("http://{}/v1", listener.local_addr().unwrap()),
-            1, None, None, None,
+            &format!("http://{}/v1", listener.local_addr().unwrap()), None, None, None,
             |settings| settings.assistant = Some(AssistantConfiguration {
                 home: Some(settings.workspace_roots[0].path.parent().unwrap().to_str().unwrap().into()),
             }),
@@ -522,7 +521,7 @@ async fn assistant_preferences_and_capability_guidance_freeze_at_message_accepta
 async fn native_usage_keeps_request_quotes_and_settlement_fences_across_price_changes() {
     tokio::time::timeout(Duration::from_secs(60), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let fixture = Fixture::new(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None).await;
+        let fixture = Fixture::new(&format!("http://{}/v1", listener.local_addr().unwrap()), None).await;
         let page = query(&fixture, "prices", json!({"kind":"start"})).await;
         let price = |revision: Value, input: f64| json!({
             "expectedRevision": revision,
@@ -574,7 +573,7 @@ async fn native_usage_keeps_request_quotes_and_settlement_fences_across_price_ch
 async fn host_proxy_settings_route_model_requests_and_keep_atomic_credential_receipts() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let proxy = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let fixture = Fixture::new("http://proxy-target.invalid/v1", 1, None).await;
+        let fixture = Fixture::new("http://proxy-target.invalid/v1", None).await;
         let original = query(&fixture, "network", json!({})).await;
         assert_eq!(original["rootPath"], fixture.root.canonicalize().unwrap().to_str().unwrap());
         assert_eq!(original["rootId"], fixture.store.owned_root().unwrap().root_id());
@@ -633,7 +632,7 @@ async fn host_proxy_settings_route_model_requests_and_keep_atomic_credential_rec
 async fn saved_model_survives_restart_and_resolves_locally_at_the_current_revision() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut f = Fixture::new(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None).await;
+        let mut f = Fixture::new(&format!("http://{}/v1", listener.local_addr().unwrap()), None).await;
         let session = f.create("Remember my model").await;
         let model = f.selection().await;
         let backend = json!({"kind":"model","connectionId":model.connection_id,"modelId":model.model_id,"thinkingLevel":null});

@@ -26,7 +26,6 @@ async fn fixture(method: &'static str) -> (TcpListener, Fixture, String) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let fixture = Fixture::with_services(
         &format!("http://{}/v1", listener.local_addr().unwrap()),
-        1,
         None,
         None,
         Some(service_tools::Setup::files(method)),
@@ -353,7 +352,6 @@ async fn revocation_and_stop_close_waiting_file_requests_without_effects() {
             assert!(matches!(f.store.interaction(&record.request_id).await.unwrap().unwrap().outcome, Some(InteractionOutcome::Closure { .. })));
             assert!(!f.workspace.join("blocked.txt").exists());
             assert!(f.store.pending_interactions(&session).await.unwrap().is_empty());
-            assert_eq!(f.owner.permits.available_permits(), 1);
             close(&f).await;
         }
     }).await.unwrap();

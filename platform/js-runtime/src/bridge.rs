@@ -30,10 +30,7 @@ use std::{
     rc::Rc,
     sync::{Arc, Mutex},
 };
-use tokio::{
-    runtime::Handle,
-    sync::{Semaphore, oneshot},
-};
+use tokio::{runtime::Handle, sync::oneshot};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 #[derive(Default)]
@@ -50,7 +47,6 @@ pub(crate) struct ToolScope {
     pub(crate) host: Handle,
     pub(crate) limits: CellLimits,
     pub(crate) admission: Mutex<Admission>,
-    pub(crate) concurrency: Arc<Semaphore>,
 }
 
 impl ToolScope {
@@ -106,11 +102,11 @@ impl ToolScope {
             async move {
                 use deno_core::futures::FutureExt;
                 let result = std::panic::AssertUnwindSafe(async {
-                    let _permit = tokio::select! {
-                        biased;
-                        _ = scope.cancellation.cancelled() => return Err(ToolError::Failed("cell cancelled before tool dispatch".into())),
-                        permit = scope.concurrency.acquire() => permit.expect("cell semaphore stays open"),
-                    };
+                    if scope.cancellation.is_cancelled() {
+                        return Err(ToolError::Failed(
+                            "cell cancelled before tool dispatch".into(),
+                        ));
+                    }
                     scope
                         .executor
                         .invoke(name, input, scope.cancellation.clone())

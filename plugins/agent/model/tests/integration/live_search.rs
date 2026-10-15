@@ -37,7 +37,7 @@ async fn sglang_protocols_preserve_reasoning_tools_and_replay() {
     use maka_agent_facts::model::TextKind;
     use maka_model::prompt::{AssistantPart, Message, ToolOutput};
     let base_url = std::env::var("MAKA_SGLANG_TEST_URL").expect("explicit endpoint required");
-    let executor = ModelExecutor::new(1, Duration::from_secs(120)).unwrap();
+    let executor = ModelExecutor::new(Duration::from_secs(120)).unwrap();
     let tools = vec![ToolDefinition {
         freeform: None,
         output_schema: None,
@@ -217,7 +217,7 @@ async fn codex_search_preserves_real_provider_calls_and_citations() {
         network = maka_network::Policy::from_settings(&proxy, None).unwrap();
     }
     tokio::time::timeout(Duration::from_secs(120), async {
-        let executor = ModelExecutor::new(1, Duration::from_secs(60)).unwrap();
+        let executor = ModelExecutor::new(Duration::from_secs(60)).unwrap();
         let lane = Conversation::default();
         let request = ModelRequest {
             provider: ProviderConfig {

@@ -216,7 +216,7 @@ impl EventLog {
         validate_id(id)?;
         let id = id.to_owned();
         self.connection
-            .run(move |connection| {
+            .read(move |connection| {
                 Box::pin(async move {
                     let mut tx = connection.begin().await?;
                     if removal::read(&mut tx, &id)

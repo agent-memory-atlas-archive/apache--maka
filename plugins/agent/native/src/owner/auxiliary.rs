@@ -17,7 +17,7 @@
  * under the License.
  */
 
-//! Bounded auxiliary requests retain their physical worker and original usage journal.
+//! Auxiliary requests retain their physical worker and original usage journal.
 use super::*;
 use maka_agent_facts::{
     model::{ModelEvent, ModelFinishReason, ModelGeneration, ModelPart, TextKind},
@@ -42,8 +42,7 @@ pub(super) struct Auxiliary {
 impl Auxiliary {
     pub fn new(revision: SourceRevision) -> Result<Self, String> {
         Ok(Self {
-            // Auxiliary work has one separate slot, so it cannot queue ahead of a main model step.
-            models: ModelExecutor::for_source(1, Duration::from_secs(30), revision)
+            models: ModelExecutor::for_source(Duration::from_secs(30), revision)
                 .map_err(|_| "agent_auxiliary_unavailable")?,
             resources: Arc::default(),
         })

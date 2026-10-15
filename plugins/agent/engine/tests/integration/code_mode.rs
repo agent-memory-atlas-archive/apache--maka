@@ -85,8 +85,8 @@ async fn scratch_store_survives_turns_and_is_released_with_the_session() {
         );
         let engine = Engine::new(
             log.clone(),
-            ModelExecutor::new(1, Duration::from_secs(5)).unwrap(),
-            CodeExecutor::new(1, CellLimits::default()).unwrap(),
+            ModelExecutor::new(Duration::from_secs(5)).unwrap(),
+            CodeExecutor::new(CellLimits::default()).unwrap(),
         );
         for index in 0..3 {
             if index == 2 {
@@ -143,8 +143,8 @@ async fn streamed_exec_journals_parallel_children_and_reopens_without_reexecutio
             let log = Arc::new(EventLog::open(&path).await.unwrap());
             let engine = Engine::new(
                 log.clone(),
-                ModelExecutor::new(1, Duration::from_secs(10)).unwrap(),
-                CodeExecutor::new(1, CellLimits::default()).unwrap(),
+                ModelExecutor::new(Duration::from_secs(10)).unwrap(),
+                CodeExecutor::new(CellLimits::default()).unwrap(),
             );
             let input = fixture::input(
                 &base,
@@ -316,8 +316,8 @@ async fn streamed_exec_journals_parallel_children_and_reopens_without_reexecutio
             );
             let engine = Engine::new(
                 log.clone(),
-                ModelExecutor::new(1, Duration::from_secs(10)).unwrap(),
-                CodeExecutor::new(1, CellLimits::default()).unwrap(),
+                ModelExecutor::new(Duration::from_secs(10)).unwrap(),
+                CodeExecutor::new(CellLimits::default()).unwrap(),
             );
             engine
                 .run(

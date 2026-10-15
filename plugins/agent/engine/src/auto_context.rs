@@ -138,7 +138,7 @@ pub(super) async fn start(
     mid_turn: bool,
     cancellation: &CancellationToken,
     continuation_base: Option<u64>,
-) -> Result<Option<(Pending, bool)>, RunError> {
+) -> Result<Option<Pending>, RunError> {
     let opening = source
         .anchor
         .iter()
@@ -180,24 +180,16 @@ pub(super) async fn start(
         }
         Err(error) => return Err(error),
     };
-    let reservation = inner.model.try_reserve_background();
-    let background = reservation.is_some();
     let cancellation = cancellation.child_token();
     let worker_cancel = cancellation.clone();
     let inner = inner.clone();
     let cleanup = crate::cleanup::current();
-    let worker = tokio::spawn(async move {
-        cleanup
-            .scope(job.execute(&inner, &worker_cancel, reservation))
-            .await
-    });
-    Ok(Some((
-        Pending {
-            cancellation,
-            worker: Some(worker),
-        },
-        background,
-    )))
+    let worker =
+        tokio::spawn(async move { cleanup.scope(job.execute(&inner, &worker_cancel)).await });
+    Ok(Some(Pending {
+        cancellation,
+        worker: Some(worker),
+    }))
 }
 
 pub(super) struct Pending {

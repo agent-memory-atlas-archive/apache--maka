@@ -51,7 +51,7 @@ pub(super) async fn upload(
 async fn attachment_upload_send_queue_and_resource_read_keep_session_and_receipt_authority() {
     tokio::time::timeout(Duration::from_secs(45), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let f = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None, Some(service_tools::Setup::files("readText"))).await;
+        let f = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()), None, None, Some(service_tools::Setup::files("readText"))).await;
         let session = f.create("Attachments").await;
         let other = f.create("Other conversation").await;
         let text = "uploaded text\n".repeat(1500);
@@ -156,7 +156,7 @@ async fn attachment_upload_send_queue_and_resource_read_keep_session_and_receipt
 async fn attachment_payload_validation_and_image_read_use_actual_bytes() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let f = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None, Some(service_tools::Setup::files("readImage"))).await;
+        let f = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()), None, None, Some(service_tools::Setup::files("readImage"))).await;
         images::enable_vision(&f).await;
         let session = f.create("Image upload").await;
         let bytes = images::gif(50 * 1024);
@@ -173,7 +173,6 @@ async fn attachment_payload_validation_and_image_read_use_actual_bytes() {
             assert_eq!(result, json!({"kind":"rejected","reason":"invalid_file"}));
         }
         assert!(f.store.list_artifacts(&session, 0, 10).await.unwrap().records.is_empty());
-        assert_eq!(f.owner.upload_capacity.available_permits(), 1);
         let uploaded = upload(&f, &session, "misleading.txt", &bytes, Uuid::new_v4()).await.unwrap();
         let attachment = &uploaded["attachment"];
         assert_eq!(attachment["mimeType"], "image/gif", "signature takes precedence over the filename");
@@ -210,7 +209,7 @@ async fn attachment_payload_validation_and_image_read_use_actual_bytes() {
 }
 
 #[tokio::test]
-async fn cancelled_attachment_upload_retains_physical_capacity_until_worker_finishes() {
+async fn cancelled_attachment_upload_retains_resource_custody_until_worker_finishes() {
     struct Held {
         entered: Arc<Semaphore>,
         release: Arc<(StdMutex<bool>, std::sync::Condvar)>,
@@ -242,7 +241,7 @@ async fn cancelled_attachment_upload_retains_physical_capacity_until_worker_fini
         }
     }
     tokio::time::timeout(Duration::from_secs(30), async {
-        let f = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+        let f = Fixture::new("http://127.0.0.1:9/v1", None).await;
         let session = f.create("Upload lifetime").await;
         let release = Release(Arc::new((StdMutex::new(false), std::sync::Condvar::new())));
         let entered = Arc::new(Semaphore::new(0));
@@ -258,13 +257,10 @@ async fn cancelled_attachment_upload_retains_physical_capacity_until_worker_fini
         let mutation = client.mutate(prepared, recorded).await.unwrap();
         entered.acquire().await.unwrap().forget();
         cancellation.cancel();
-        assert_eq!(f.owner.upload_capacity.available_permits(), 0);
         assert!(!resources.seal().unwrap());
-        assert_eq!(upload(&f, &session, "other.txt", b"other", Uuid::new_v4()).await.unwrap(), json!({"kind":"rejected","reason":"busy"}));
         drop(release);
         assert!(mutation.completion().await.cleanup.is_ok());
         resources.finish().await.unwrap();
-        assert_eq!(f.owner.upload_capacity.available_permits(), 1);
         assert!(f.store.list_artifacts(&session, 0, 10).await.unwrap().records.is_empty());
         assert_eq!(upload(&f, &session, "after.txt", b"after", Uuid::new_v4()).await.unwrap()["kind"], "uploaded");
         f.app.shutdown().await.unwrap();

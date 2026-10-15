@@ -30,7 +30,6 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
 };
-use tokio::sync::OwnedSemaphorePermit;
 
 pub(super) struct Source {
     pub summary: Session,
@@ -60,7 +59,6 @@ pub(super) async fn search(
     history: Arc<dyn History>,
     call: &Scope,
     query: &Query,
-    permit: Arc<OwnedSemaphorePermit>,
 ) -> Result<Scan, ToolError> {
     let (catalog, complete) = sessions(history.as_ref(), call, query.session_id.as_deref()).await?;
     let mut scan = Scan {
@@ -117,13 +115,10 @@ pub(super) async fn search(
                 continue;
             }
             let terms = terms.clone();
-            let worker = permit.clone();
-            let hit = tokio::task::spawn_blocking(move || {
-                let _worker = worker;
-                inspect(session, ordinal, message, &terms)
-            })
-            .await
-            .map_err(failed)?;
+            let hit =
+                tokio::task::spawn_blocking(move || inspect(session, ordinal, message, &terms))
+                    .await
+                    .map_err(failed)?;
             if let Some(hit) = hit {
                 if scan.hits.len() >= 200_000 {
                     return Err(failed(

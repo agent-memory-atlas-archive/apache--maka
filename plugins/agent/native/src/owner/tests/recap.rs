@@ -21,7 +21,7 @@ use super::*;
 use maka_event_log::usage::{AuxiliarySource, Origin, Outcome, Query};
 
 async fn fixture(base: &str) -> Fixture {
-    Fixture::configured(base, 1, None, None, None, |settings| settings.recaps = true).await
+    Fixture::configured(base, None, None, None, |settings| settings.recaps = true).await
 }
 async fn opening(f: &Fixture, listener: &TcpListener) -> String {
     let session = f.create("Recap source").await;

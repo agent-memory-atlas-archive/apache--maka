@@ -591,3 +591,103 @@ async fn auxiliary_model_requires_exact_pending_application_operation_and_cannot
         "completed operations cannot start auxiliary work"
     );
 }
+
+fn dynamic_request(request: &OperationRequest) -> OperationRequest<()> {
+    OperationRequest {
+        source: request.source.clone(),
+        namespace: request.namespace.clone(),
+        consumer: request.consumer.clone(),
+        export: request.export.clone(),
+        method: request.method.clone(),
+        contract: (),
+        operation: request.operation,
+        input: request.input.clone(),
+        capture: request.capture,
+        origin: request.origin.clone(),
+    }
+}
+
+#[tokio::test]
+async fn compiled_operation_preserves_reference_capture_budget_and_original_dispatch() {
+    let (_dir, store) = store().await;
+    let mut original = request(&store).await;
+    for required in [false, true] {
+        if required {
+            let Interface::Service { methods } = &mut original.contract.interface else {
+                unreachable!()
+            };
+            methods.get_mut("change").unwrap().resources.insert(
+                "secret".into(),
+                maka_plugin_core::contract::ResourceType {
+                    name: "example.Secret".into(),
+                    version: 1,
+                }
+                .required(),
+            );
+        }
+        let templates = OperationTemplate::for_contract(&original.contract).unwrap();
+        let template = &templates["change"];
+        for capture in [None, Some(Uuid::nil()), Some(Uuid::new_v4())] {
+            original.capture = capture;
+            let old = original.reference();
+            let compiled = template.prepare(dynamic_request(&original));
+            assert_eq!(old.is_ok(), compiled.is_ok());
+            if let (Ok(reference), Ok(prepared)) = (old, compiled) {
+                assert_eq!(&reference, prepared.reference());
+            }
+        }
+        let mut wrong_method = dynamic_request(&original);
+        wrong_method.method = "missing".into();
+        assert!(template.prepare(wrong_method).is_err());
+    }
+    original.capture = Some(Uuid::new_v4());
+    let Interface::Service { methods } = &mut original.contract.interface else {
+        unreachable!()
+    };
+    methods.get_mut("change").unwrap().input =
+        serde_json::json!({"description": "x".repeat(100_000)});
+    let templates = OperationTemplate::for_contract(&original.contract).unwrap();
+    let template = &templates["change"];
+    // Compact journal alone fits, but original full contract plus input exceeds its budget.
+    original.input = serde_json::json!("x".repeat(MAX_REQUEST - 50_000));
+    assert!(original.reference().is_err());
+    assert!(template.prepare(dynamic_request(&original)).is_err());
+    original.input = serde_json::json!("");
+    let overhead = encode(&original, MAX_REQUEST).unwrap().len();
+    original.input = serde_json::json!("x".repeat(MAX_REQUEST - overhead));
+    assert_eq!(encode(&original, MAX_REQUEST).unwrap().len(), MAX_REQUEST);
+    assert_eq!(
+        template
+            .prepare(dynamic_request(&original))
+            .unwrap()
+            .reference(),
+        &original.reference().unwrap()
+    );
+    original.input = serde_json::json!("x".repeat(MAX_REQUEST - overhead + 1));
+    assert!(original.reference().is_err());
+    assert!(template.prepare(dynamic_request(&original)).is_err());
+    original.input = serde_json::json!({"original": true});
+    let mut invalid_consumer = dynamic_request(&original);
+    invalid_consumer.consumer = InstanceId(vec![Uuid::nil()]);
+    assert!(template.prepare(invalid_consumer).is_err());
+    let prepared = template.prepare(dynamic_request(&original)).unwrap();
+    assert_eq!(prepared.reference(), &original.reference().unwrap());
+    let Dispatch::New(claim) = store.dispatch_prepared_operation(prepared).await.unwrap() else {
+        panic!("first claim")
+    };
+    let Dispatch::Existing(observation) = store.dispatch_operation(original.clone()).await.unwrap()
+    else {
+        panic!("original identity must deduplicate")
+    };
+    assert_eq!(observation.reference, *claim.reference());
+    assert_eq!(observation.outcome, OperationOutcome::Unresolved);
+    original.input = serde_json::json!({"replacement": true});
+    assert!(matches!(
+        store
+            .dispatch_prepared_operation(template.prepare(dynamic_request(&original)).unwrap())
+            .await,
+        Err(StoreError::EventConflict)
+    ));
+    drop(claim);
+    store.close().await.unwrap();
+}

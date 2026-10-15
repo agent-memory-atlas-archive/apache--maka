@@ -162,7 +162,7 @@ async fn native_jev_evaluates_with_endpoint_credentials_and_revokes_inflight_acc
         let server = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/decision", server.local_addr().unwrap());
         let other_url = format!("http://{}/other", server.local_addr().unwrap());
-        let f = Fixture::with_services("http://127.0.0.1:1/v1", 1, None, None, Some(service_tools::Setup::jev())).await;
+        let f = Fixture::with_services("http://127.0.0.1:1/v1", None, None, Some(service_tools::Setup::jev())).await;
         assert_eq!(snapshot(&f).await["settings"]["enabled"], false);
         configure(&f, &url, true).await;
         assert_eq!(credential(&f, &url, json!({"kind":"api_key"}), Some("jev-private-key")).await["kind"], "updated");

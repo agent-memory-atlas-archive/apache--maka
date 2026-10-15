@@ -279,7 +279,7 @@ fn bundled_chat_sends_follows_renders_markdown_and_scrolls_original_history() {
     runtime.block_on(seed_connection(&host, &namespaces, &base, json!({})));
     std::fs::write(&configuration, serde_json::to_vec(&json!({
         "presentation":"tui", "locale":"en", "scheme":"dark", "hostRoot":host,
-        "agent":{"workspaceRoots":[{"label":"Workspace","path":workspace}],"maxActiveRuns":1,"maxSteps":4,"tools":[],"permissions":{"access":"read_only","requestPermissions":true}}
+        "agent":{"workspaceRoots":[{"label":"Workspace","path":workspace}],"maxSteps":4,"tools":[],"permissions":{"access":"read_only","requestPermissions":true}}
     })).unwrap()).unwrap();
     let mut tui = Pty::spawn(&[
         "application",
@@ -339,10 +339,23 @@ fn bundled_chat_sends_follows_renders_markdown_and_scrolls_original_history() {
     });
     evidence(&tui, "history-tail");
     // Wheel targets the transcript independently of composer keyboard focus.
-    for _ in 0..16 {
+    // Message heights and history paging determine how many rows reach the start.
+    let history_deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let previous = tui.screen.snapshot().unwrap().screen;
+        if previous.contains("Original prompt 00") {
+            break;
+        }
+        assert!(
+            Instant::now() < history_deadline,
+            "original history start was not reached:\n{previous}"
+        );
         tui.send(b"\x1b[<64;70;10M");
+        tui.wait_until_with_timeout(
+            |screen| screen != previous,
+            history_deadline.saturating_duration_since(Instant::now()),
+        );
     }
-    tui.wait_for("Original prompt 00");
     evidence(&tui, "history-start");
     click(&mut tui, "Message…");
     paste(&mut tui, "Continue from history");
@@ -367,10 +380,10 @@ fn bundled_chat_sends_follows_renders_markdown_and_scrolls_original_history() {
     tui.wait_for("Paragraph 79");
     for _ in 0..6 {
         let previous = tui.screen.snapshot().unwrap().screen;
-        let paragraph = first_paragraph(&previous).unwrap().1;
+        let paragraph = first_paragraph(&previous).unwrap();
         tui.send(b"\x1b[<64;70;10M");
         tui.wait_until(|screen| {
-            first_paragraph(screen).is_some_and(|(_, current)| current != paragraph)
+            first_paragraph(screen).is_some_and(|current| current != paragraph)
         });
     }
     tui.wait_until(|s| !s.contains("Paragraph 79"));

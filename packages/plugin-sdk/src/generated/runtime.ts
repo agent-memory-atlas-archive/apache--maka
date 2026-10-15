@@ -2089,7 +2089,6 @@ export type AgentResumeParkReason =
   | 'closed'
   | 'archived'
   | 'busy'
-  | 'capacity'
   | 'source_missing'
   | 'source_changed'
   | 'source_not_resumable'
@@ -3707,9 +3706,6 @@ export type AgentImportsPage =
       kind: 'invalid';
     }
   | {
-      kind: 'busy';
-    }
-  | {
       kind: 'limit';
     };
 export type AgentImportLocation =
@@ -3764,9 +3760,6 @@ export type AgentImportResult =
     }
   | {
       kind: 'invalid';
-    }
-  | {
-      kind: 'busy';
     }
   | {
       kind: 'limit';
@@ -4066,7 +4059,7 @@ export type AgentAttachmentUploadResult =
       reason: AgentAttachmentRejection;
       kind: 'rejected';
     };
-export type AgentAttachmentRejection = 'invalid_file' | 'busy' | 'closed' | 'archived';
+export type AgentAttachmentRejection = 'invalid_file' | 'closed' | 'archived';
 export type AgentMarkReadResult =
   | {
       session: AgentSession;
@@ -6811,7 +6804,6 @@ export interface AgentConfiguration {
    * Explicit read-only roots for user-selected conversation sources.
    */
   importRoots?: DirectoryRootSpec[];
-  maxActiveRuns: number;
   maxSteps: number;
   /**
    * Explicitly selected, frozen application service tools, alongside configured native tools.

@@ -32,7 +32,6 @@ use maka_capabilities::call::Scope;
 use maka_event_log::sessions::{CatalogFilter, CatalogScope, SessionPosition};
 use serde_json::Value;
 use std::sync::Arc;
-use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
@@ -45,7 +44,6 @@ pub(crate) struct Recall {
     pub(super) services: maka_host_runtime::application::NativeServices,
     pub(super) stop: CancellationToken,
     pub(super) workers: tokio_util::task::TaskTracker,
-    pub(super) capacity: Arc<Semaphore>,
 }
 impl Recall {
     async fn private(&self) -> Result<bool, ToolError> {
@@ -101,16 +99,6 @@ impl Recall {
         }
         Ok(())
     }
-    async fn permit(
-        &self,
-        call: &Scope,
-    ) -> Result<Arc<tokio::sync::OwnedSemaphorePermit>, ToolError> {
-        tokio::select! {
-            biased;
-            _ = call.cancellation.cancelled() => Err(failed("Recall cancelled")),
-            permit = self.capacity.clone().acquire_owned() => permit.map(Arc::new).map_err(failed),
-        }
-    }
     pub async fn query(
         self: &Arc<Self>,
         mut query: search::Query,
@@ -121,7 +109,6 @@ impl Recall {
         if let Some(id) = &query.session_id {
             self.session(id).await?;
         }
-        let permit = self.permit(call).await.map_err(|e| e.to_string())?;
         let (titles, catalog_complete) = search::titles(self.as_ref(), call, &query)
             .await
             .map_err(|e| e.to_string())?;
@@ -132,7 +119,7 @@ impl Recall {
                 self.session(&title.id).await?,
             ));
         }
-        let found = search::search(self.clone(), call, &query, permit)
+        let found = search::search(self.clone(), call, &query)
             .await
             .map_err(|e| e.to_string())?;
         let mut passages = Vec::new();
@@ -362,14 +349,11 @@ impl ToolPreparer for Recall {
                         if let Input::Material(material) = input {
                             return recall.material(call.clone(), material).await;
                         }
-                        let permit = recall.permit(call).await?;
                         let mut found = match input {
                             Input::Search(query) => {
-                                search::search(recall.clone(), call, &query, permit).await?
+                                search::search(recall.clone(), call, &query).await?
                             }
-                            Input::More(more) => {
-                                search::more(recall.clone(), call, &more, permit).await?
-                            }
+                            Input::More(more) => search::more(recall.clone(), call, &more).await?,
                             Input::Material(_) => unreachable!(),
                         };
                         recall.check(call).await?;

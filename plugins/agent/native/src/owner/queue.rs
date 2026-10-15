@@ -51,8 +51,7 @@ impl Owner {
         self.workers.spawn(async move { owner.schedule().await });
     }
 
-    // SQL is the only backlog. Every released capacity slot revisits the bounded
-    // owner-scoped scan, including Sessions not reached during activation.
+    // Recover the owner-scoped durable backlog without limiting active Sessions.
     async fn schedule(self: &Arc<Self>) {
         let mut runs = self.runs.lock().await;
         if runs.closing {
@@ -66,7 +65,7 @@ impl Owner {
     pub(super) async fn schedule_locked(self: &Arc<Self>, runs: &mut Runs) -> Result<(), RunError> {
         let mut after = None;
         loop {
-            if self.permits.available_permits() == 0 || self.stop.is_cancelled() {
+            if self.stop.is_cancelled() {
                 return Ok(());
             }
             let sessions = self
@@ -80,21 +79,18 @@ impl Owner {
                 if !self.owns(session) {
                     return Err(RunError::InvalidInput("agent_queue_owner_invalid".into()));
                 }
-                if runs.controls.contains_key(session) {
+                if runs.controls.contains_key(session) || runs.quarantined.contains(session) {
                     continue;
                 }
-                let Ok(permit) = self.permits.clone().try_acquire_owned() else {
-                    return Ok(());
-                };
                 match self.next(session).await {
                     Ok(Some((running, basis))) => {
                         self.publish(runs, &running, basis);
-                        self.workers.spawn(self.clone().drive(running, permit));
+                        self.workers.spawn(self.clone().drive(running));
                     }
-                    Ok(None) => drop(permit),
+                    Ok(None) => {}
                     Err(error) => {
                         if error.is_cleanup_unconfirmed() {
-                            runs.quarantined.push(permit);
+                            runs.quarantined.insert(session.clone());
                         }
                         return Err(error);
                     }
@@ -124,13 +120,7 @@ impl Owner {
             },
         );
     }
-    // A boxed task breaks the type recursion between scheduling and a completed
-    // worker's capacity handoff; all work remains in the original TaskTracker.
-    pub(super) fn drive(
-        self: Arc<Self>,
-        mut running: RunningInvocation,
-        permit: OwnedSemaphorePermit,
-    ) -> BoxFuture<'static, ()> {
+    pub(super) fn drive(self: Arc<Self>, mut running: RunningInvocation) -> BoxFuture<'static, ()> {
         Box::pin(async move {
             let session = running.invocation().session_id.clone();
             loop {
@@ -143,7 +133,7 @@ impl Owner {
                         .get_mut(&session)
                         .expect("original worker control")
                         .failure = Some("agent_cleanup_unconfirmed");
-                    runs.quarantined.push(permit);
+                    runs.quarantined.insert(session.clone());
                     return;
                 }
                 let next = if runs.closing {
@@ -160,9 +150,6 @@ impl Owner {
                         runs.controls.remove(&session);
                         self.goals.execution_changed();
                         self.plans.execution_changed();
-                        drop(permit);
-                        drop(runs);
-                        self.schedule().await;
                         return;
                     }
                     Err(error) => {
@@ -171,7 +158,7 @@ impl Owner {
                             .expect("original worker control")
                             .failure = Some("agent_execution_unavailable");
                         if error.is_cleanup_unconfirmed() {
-                            runs.quarantined.push(permit);
+                            runs.quarantined.insert(session.clone());
                         }
                         runs.closing = true;
                         self.stop.cancel();

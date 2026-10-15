@@ -65,7 +65,7 @@ async fn hosted_tools_cross_the_real_sdks_on_http_and_websocket_without_becoming
 }
 
 async fn scenario() {
-    let executor = ModelExecutor::new(1, Duration::from_secs(10)).unwrap();
+    let executor = ModelExecutor::new(Duration::from_secs(10)).unwrap();
     for (kind, websocket, incomplete) in [
         (ProviderKind::OpenaiResponses, false, false),
         (ProviderKind::OpenaiResponses, true, false),

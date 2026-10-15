@@ -59,6 +59,102 @@ pub struct OperationRequest<C = Contract> {
     pub capture: Option<Uuid>,
     pub origin: Identity,
 }
+/// Immutable checked method facts retained by an executor's service instance.
+/// This template is not an execution grant; dispatch still requires Host admission.
+pub struct OperationTemplate {
+    method: String,
+    contract: RecoveryContract,
+    contract_json: Arc<str>,
+    resources: bool,
+    required_resources: bool,
+}
+impl OperationTemplate {
+    pub fn for_contract(
+        contract: &Contract,
+    ) -> Result<std::collections::BTreeMap<String, Self>, StoreError> {
+        contract.validate().map_err(|e| invalid(e.to_string()))?;
+        let Interface::Service { methods } = &contract.interface else {
+            return Err(invalid("operation requires a service contract"));
+        };
+        if !methods
+            .values()
+            .any(|method| method.mode == maka_plugin_core::contract::MethodMode::Mutation)
+        {
+            return Ok(Default::default());
+        }
+        let contract_json: Arc<str> = encode(contract, MAX_REQUEST)?.into();
+        methods
+            .iter()
+            .filter(|(_, method)| method.mode == maka_plugin_core::contract::MethodMode::Mutation)
+            .map(|(name, declared)| {
+                Ok((
+                    name.clone(),
+                    Self {
+                        method: name.clone(),
+                        contract: RecoveryContract::for_method(contract, name)
+                            .map_err(|e| invalid(e.to_string()))?,
+                        contract_json: contract_json.clone(),
+                        resources: !declared.resources.is_empty(),
+                        required_resources: declared.resources.values().any(|slot| !slot.optional),
+                    },
+                ))
+            })
+            .collect()
+    }
+    pub fn prepare(&self, request: OperationRequest<()>) -> Result<PreparedOperation, StoreError> {
+        // The unit contract serializes as null. Replacing those four bytes with
+        // the cached contract preserves the original entire-record byte budget.
+        let request_bytes = encode(&request, MAX_REQUEST)?.len();
+        if request_bytes - 4 + self.contract_json.len() > MAX_REQUEST {
+            return Err(invalid("operation request exceeds limit"));
+        }
+        if request.method != self.method {
+            return Err(invalid("operation template method mismatch"));
+        }
+        if request.capture.is_some_and(|id| id.is_nil())
+            || (request.capture.is_some() && !self.resources)
+            || (request.capture.is_none() && self.required_resources)
+        {
+            return Err(invalid(
+                "operation capture does not match declared resources",
+            ));
+        }
+        let journal = OperationRequest {
+            source: request.source,
+            namespace: request.namespace,
+            consumer: request.consumer,
+            export: request.export,
+            method: request.method,
+            contract: self.contract.clone(),
+            operation: request.operation,
+            input: request.input,
+            capture: request.capture,
+            origin: request.origin,
+        };
+        let reference = journal.stored_reference()?;
+        Ok(PreparedOperation {
+            journal,
+            reference,
+            contract_json: self.contract_json.clone(),
+        })
+    }
+}
+
+/// Checked original operation facts; callers cannot edit the prepared journal.
+pub struct PreparedOperation {
+    journal: OperationRequest<RecoveryContract>,
+    reference: RecoveryRef,
+    contract_json: Arc<str>,
+}
+impl PreparedOperation {
+    pub fn reference(&self) -> &RecoveryRef {
+        &self.reference
+    }
+    pub fn consumer(&self) -> &InstanceId {
+        &self.journal.consumer
+    }
+}
+
 fn required_capture<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<Uuid>, D::Error> {
@@ -245,6 +341,23 @@ impl EventLog {
         let contract_json = encode(&request.contract, MAX_REQUEST)?;
         let request = request.journal()?;
         let reference = request.stored_reference()?;
+        self.dispatch_prepared_operation(PreparedOperation {
+            journal: request,
+            reference,
+            contract_json: contract_json.into(),
+        })
+        .await
+    }
+
+    pub async fn dispatch_prepared_operation(
+        &self,
+        prepared: PreparedOperation,
+    ) -> Result<Dispatch, StoreError> {
+        let PreparedOperation {
+            journal: request,
+            reference,
+            contract_json,
+        } = prepared;
         self.operation_domain(&reference)?;
         let owner = self.root_owner.as_ref().expect("owned Root").clone();
         let request_json = encode(&request, MAX_REQUEST)?;
@@ -266,7 +379,7 @@ impl EventLog {
                     }
                     sqlx::query("INSERT INTO application_operation_contracts (digest, contract_json) VALUES (?, ?) ON CONFLICT(digest) DO NOTHING")
                         .bind(&reference.contract.digest)
-                        .bind(contract_json)
+                        .bind(contract_json.as_ref())
                         .execute(&mut *tx)
                         .await?;
                     sqlx::query("INSERT INTO application_operations (deployment, namespace, operation, source_revision, request_json, outcome_json, cleanup_json, contract_digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")

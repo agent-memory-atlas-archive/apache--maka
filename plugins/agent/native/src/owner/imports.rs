@@ -156,12 +156,8 @@ impl Owner {
         input: ImportsRead,
         scope: &Scope,
     ) -> Result<ImportsPage, String> {
-        let Ok(permit) = self.import_capacity.clone().try_acquire_owned() else {
-            return Ok(ImportsPage::Busy);
-        };
         self.resource_work(scope, move |owner, scope| {
             Box::pin(async move {
-                let _permit = permit;
                 Ok(owner
                     .import_page(input, &scope)
                     .await
@@ -294,12 +290,8 @@ impl Owner {
         operation: maka_plugin_core::operation::RecoveryRef,
         scope: &Scope,
     ) -> Result<ImportResult, String> {
-        let Ok(permit) = self.import_capacity.clone().try_acquire_owned() else {
-            return Ok(ImportResult::Busy);
-        };
         self.resource_work(scope, move |owner, scope| {
             Box::pin(async move {
-                let _permit = permit;
                 match owner.import_change(input, operation, &scope).await {
                     Ok(result) => Ok(result),
                     Err(failure) => failure.result(),

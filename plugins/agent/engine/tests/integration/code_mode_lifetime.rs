@@ -123,10 +123,10 @@ async fn dropping_caller_keeps_child_session_and_cell_owned_until_drain() {
         let committed;
         {
             let log = Arc::new(EventLog::open(&path).await.unwrap());
-            let cells = CodeExecutor::new(1, CellLimits::default()).unwrap();
+            let cells = CodeExecutor::new(CellLimits::default()).unwrap();
             let engine = Engine::new(
                 log.clone(),
-                ModelExecutor::new(1, Duration::from_secs(10)).unwrap(),
+                ModelExecutor::new(Duration::from_secs(10)).unwrap(),
                 cells.clone(),
             );
             let owner = engine.clone();
@@ -225,8 +225,8 @@ async fn dropping_caller_keeps_child_session_and_cell_owned_until_drain() {
             );
             let engine = Engine::new(
                 log.clone(),
-                ModelExecutor::new(1, Duration::from_secs(10)).unwrap(),
-                CodeExecutor::new(1, CellLimits::default()).unwrap(),
+                ModelExecutor::new(Duration::from_secs(10)).unwrap(),
+                CodeExecutor::new(CellLimits::default()).unwrap(),
             );
             engine
                 .run(
@@ -327,8 +327,8 @@ async fn verify_yielded(continuation: bool) {
     });
     let engine = Engine::new(
         log.clone(),
-        ModelExecutor::new(1, Duration::from_secs(5)).unwrap(),
-        CodeExecutor::new(1, CellLimits::default()).unwrap(),
+        ModelExecutor::new(Duration::from_secs(5)).unwrap(),
+        CodeExecutor::new(CellLimits::default()).unwrap(),
     );
     let mut request = input(&base, "yielded", effect.clone());
     if let maka_agent_engine::RunWork::Message { max_steps, .. } = &mut request.work {

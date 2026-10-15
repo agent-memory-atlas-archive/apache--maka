@@ -35,7 +35,7 @@ use maka_agent_facts::tool_output::ToolSuccess;
 
 #[tokio::test]
 async fn canonical_images_use_original_agent_grants_and_bounded_base64() {
-    let fixture = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+    let fixture = Fixture::new("http://127.0.0.1:9/v1", None).await;
     let session = fixture.create("Images").await;
     let invocation = Invocation {
         session_id: session.clone(),
@@ -348,7 +348,6 @@ async fn selected_workspace_image_stream_reaches_model_and_immutable_canonical_r
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let f = Fixture::with_services(
             &format!("http://{}/v1", listener.local_addr().unwrap()),
-            1,
             None,
             None,
             Some(service_tools::Setup::files("readImage")),
@@ -384,7 +383,6 @@ async fn selected_workspace_image_stream_reaches_model_and_immutable_canonical_r
         let mut read = canonical_image(&f, &session, &bytes).await;
         read["sessionId"] = json!(f.create("Other image owner").await);
         assert!(f.query("toolImage", read).await.is_err());
-        assert_eq!(f.owner.permits.available_permits(), 1);
         f.app.shutdown().await.unwrap();
         f.config.shutdown().await.unwrap();
     })
@@ -562,7 +560,6 @@ async fn finish_image(listener: &TcpListener, f: &Fixture) -> Value {
 async fn image_fixture(listener: &TcpListener, setup: service_tools::Setup) -> Fixture {
     let f = Fixture::with_services(
         &format!("http://{}/v1", listener.local_addr().unwrap()),
-        1,
         None,
         None,
         Some(setup),
@@ -671,7 +668,6 @@ async fn javascript_image_stream_requires_complete_valid_bytes_and_independent_s
                     }
                 );
             }
-            assert_eq!(f.owner.permits.available_permits(), 1);
             f.app.shutdown().await.unwrap();
             f.config.shutdown().await.unwrap();
         }
@@ -681,7 +677,7 @@ async fn javascript_image_stream_requires_complete_valid_bytes_and_independent_s
 }
 
 #[tokio::test]
-async fn stop_after_image_bytes_retains_capacity_until_original_producer_cleanup() {
+async fn stop_after_image_bytes_retains_original_producer_until_cleanup() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let producer = Producer::new(Behavior::HoldAfterBytes);
@@ -702,15 +698,17 @@ async fn stop_after_image_bytes_retains_capacity_until_original_producer_cleanup
         .await
         .unwrap();
         producer.cancelled.acquire().await.unwrap().forget();
-        assert_eq!(f.owner.permits.available_permits(), 0);
         assert_eq!(f.owner.workers.len(), 1);
-        let other = f.create("Capacity remains held").await;
-        assert!(
-            f.send(&other)
-                .await
-                .unwrap_err()
-                .contains("agent_capacity_exhausted")
-        );
+        let other = f.create("Other session remains available").await;
+        let admitted = f.send(&other).await.unwrap();
+        f.mutation(
+            2,
+            "stop",
+            json!({"sessionId":other,"invocationId":admitted["invocationId"]}),
+            Uuid::new_v4(),
+        )
+        .await
+        .unwrap();
         producer.release.add_permits(1);
         f.drained().await;
         let facts = service_tools::facts(&f, &session).await;
@@ -721,7 +719,6 @@ async fn stop_after_image_bytes_retains_capacity_until_original_producer_cleanup
                 ..
             }
         )));
-        assert_eq!(f.owner.permits.available_permits(), 1);
         f.app.shutdown().await.unwrap();
         f.config.shutdown().await.unwrap();
     })
@@ -730,7 +727,7 @@ async fn stop_after_image_bytes_retains_capacity_until_original_producer_cleanup
 }
 
 #[tokio::test]
-async fn complete_image_with_failed_cleanup_never_settles_or_releases_capacity() {
+async fn complete_image_with_failed_cleanup_never_settles_or_releases_owner() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let producer = Producer::new(Behavior::CleanupFailed);
@@ -748,7 +745,6 @@ async fn complete_image_with_failed_cleanup_never_settles_or_releases_capacity()
                 .iter()
                 .any(|fact| matches!(fact, Fact::ToolSettled { .. }))
         );
-        assert_eq!(f.owner.permits.available_permits(), 0);
         assert_eq!(f.owner.runs.lock().await.quarantined.len(), 1);
         assert!(f.app.shutdown().await.is_err());
         assert!(!f.app.client().snapshot().closed);
@@ -762,12 +758,12 @@ async fn complete_image_with_failed_cleanup_never_settles_or_releases_capacity()
 #[tokio::test]
 async fn workspace_images_require_native_grant_and_original_filesystem_boundary() {
     tokio::time::timeout(Duration::from_secs(60), async {
-        for path in [
-            "ungranted.gif",
-            ".git/private.gif",
-            ".maka/private.gif",
-            "../root/private.gif",
-            "../escaped.gif",
+        for (path, readable) in [
+            ("ungranted.gif", false),
+            (".git/private.gif", true),
+            (".maka/private.gif", true),
+            ("../root/private.gif", false),
+            ("../escaped.gif", true),
         ] {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let setup = service_tools::Setup::files("readImage");
@@ -796,8 +792,8 @@ async fn workspace_images_require_native_grant_and_original_filesystem_boundary(
             files::change(&f, &session, "read_only", false, false).await;
             start_image(&listener, &f, &session, json!({"path":path})).await;
             let sent = finish_image(&listener, &f).await;
-            // The existing workspace metadata ceiling is read-only, not hidden.
-            let readable = path.starts_with(".git/") || path.starts_with(".maka/");
+            // Read-only allows external reads and workspace metadata; native grants
+            // and Host-private state remain independent access boundaries.
             assert_eq!(
                 model_images(&sent).len(),
                 usize::from(readable),
@@ -815,7 +811,6 @@ async fn workspace_images_require_native_grant_and_original_filesystem_boundary(
                 }),
                 "{sent}"
             );
-            assert_eq!(f.owner.permits.available_permits(), 1);
             f.app.shutdown().await.unwrap();
             f.config.shutdown().await.unwrap();
         }

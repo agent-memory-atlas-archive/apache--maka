@@ -47,13 +47,10 @@ fn echo() -> Arc<dyn ToolExecutor> {
 }
 
 fn executor() -> CodeExecutor {
-    CodeExecutor::new(
-        2,
-        CellLimits {
-            timeout: Duration::from_secs(5),
-            ..Default::default()
-        },
-    )
+    CodeExecutor::new(CellLimits {
+        timeout: Duration::from_secs(5),
+        ..Default::default()
+    })
     .unwrap()
 }
 
@@ -119,13 +116,10 @@ async fn host_waits_do_not_spend_execution_budget_even_for_unawaited_effects() {
             }))
         };
         let mut task = tokio::spawn(async move {
-            CodeExecutor::new(
-                1,
-                CellLimits {
-                    timeout: Duration::from_millis(200),
-                    ..Default::default()
-                },
-            )
+            CodeExecutor::new(CellLimits {
+                timeout: Duration::from_millis(200),
+                ..Default::default()
+            })
             .unwrap()
             .execute(source.into(), tools, CancellationToken::new())
             .await
@@ -221,25 +215,29 @@ async fn javascript_failure_cancels_and_drains_dispatched_tools() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn dropping_caller_cancels_tools_but_holds_capacity_until_cleanup() {
-    let engine = CodeExecutor::new(1, CellLimits::default()).unwrap();
+async fn dropping_caller_cancels_tools_without_blocking_independent_cells() {
+    let engine = CodeExecutor::new(CellLimits::default()).unwrap();
     let started = Arc::new(Notify::new());
     let cancelled = Arc::new(Notify::new());
     let released = Arc::new(Notify::new());
+    let settled = Arc::new(Notify::new());
     let tools = {
         let started = started.clone();
         let cancelled = cancelled.clone();
         let released = released.clone();
+        let settled = settled.clone();
         Arc::new(Tools(
             move |_name, _value, cancel: CancellationToken| -> ToolFuture {
                 let started = started.clone();
                 let cancelled = cancelled.clone();
                 let released = released.clone();
+                let settled = settled.clone();
                 Box::pin(async move {
                     started.notify_one();
                     cancel.cancelled().await;
                     cancelled.notify_one();
                     released.notified().await;
+                    settled.notify_one();
                     Ok(Value::Null)
                 })
             },
@@ -264,17 +262,11 @@ async fn dropping_caller_cancels_tools_but_holds_capacity_until_cleanup() {
     tokio::time::timeout(Duration::from_secs(5), cancelled.notified())
         .await
         .unwrap();
-    let mut next = tokio::spawn(async move {
+    let next = tokio::spawn(async move {
         engine
             .execute("return 2;".into(), echo(), CancellationToken::new())
             .await
     });
-    assert!(
-        tokio::time::timeout(Duration::from_millis(50), &mut next)
-            .await
-            .is_err()
-    );
-    released.notify_one();
     assert_eq!(
         tokio::time::timeout(Duration::from_secs(5), next)
             .await
@@ -284,6 +276,10 @@ async fn dropping_caller_cancels_tools_but_holds_capacity_until_cleanup() {
             .success_value(),
         json!(2)
     );
+    released.notify_one();
+    tokio::time::timeout(Duration::from_secs(5), settled.notified())
+        .await
+        .expect("cancelled tool remains owned through cleanup");
 }
 
 trait SuccessResult {
@@ -303,4 +299,49 @@ impl SuccessResult for CellResult {
             _ => panic!("{self:?}"),
         }
     }
+}
+
+#[test]
+fn parent_cell_can_await_child_cell_with_one_host_blocking_worker() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .max_blocking_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let engine = executor();
+        let child_engine = engine.clone();
+        let tools = Arc::new(Tools(move |_name, _input, cancellation| -> ToolFuture {
+            let child_engine = child_engine.clone();
+            Box::pin(async move {
+                let result = child_engine
+                    .execute("return 42;".into(), echo(), cancellation)
+                    .await
+                    .map_err(|error| {
+                        maka_agent_facts::tools::ToolError::Failed(error.to_string())
+                    })?;
+                Ok(result.success_value())
+            })
+        }));
+        let cancellation = CancellationToken::new();
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            engine.execute(
+                "return await tools.wait(null);".into(),
+                tools,
+                cancellation.clone(),
+            ),
+        )
+        .await;
+        cancellation.cancel();
+        assert_eq!(
+            result
+                .expect("parent must not occupy the worker needed by its child")
+                .unwrap()
+                .success_value(),
+            json!(42)
+        );
+    });
+    runtime.shutdown_timeout(Duration::from_secs(5));
 }

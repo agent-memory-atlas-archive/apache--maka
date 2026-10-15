@@ -25,14 +25,11 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn enforces_tool_call_and_serialized_value_limits() {
-    let engine = CodeExecutor::new(
-        1,
-        CellLimits {
-            max_tool_calls: 1,
-            max_value_bytes: 160,
-            ..Default::default()
-        },
-    )
+    let engine = CodeExecutor::new(CellLimits {
+        max_tool_calls: 1,
+        max_value_bytes: 160,
+        ..Default::default()
+    })
     .unwrap();
     let result = engine
         .execute(
@@ -78,13 +75,10 @@ async fn enforces_tool_call_and_serialized_value_limits() {
 struct Echo;
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn execution_budget_interrupts_loops_and_accumulates_across_tool_waits() {
-    let engine = CodeExecutor::new(
-        1,
-        CellLimits {
-            timeout: std::time::Duration::from_millis(150),
-            ..Default::default()
-        },
-    )
+    let engine = CodeExecutor::new(CellLimits {
+        timeout: std::time::Duration::from_millis(150),
+        ..Default::default()
+    })
     .unwrap();
     for (index, source) in [
         "while (true) {}",
@@ -132,7 +126,7 @@ impl maka_agent_facts::tools::ToolExecutor for Failure {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ordinary_errors_are_catchable_but_fatal_errors_prevent_later_effects() {
     use maka_agent_facts::tools::ToolError;
-    let engine = CodeExecutor::new(1, CellLimits::default()).unwrap();
+    let engine = CodeExecutor::new(CellLimits::default()).unwrap();
     for error in [
         ToolError::Failed("parse_error".into()),
         ToolError::Persistence("T1 failed".into()),
@@ -181,13 +175,10 @@ async fn ordinary_errors_are_catchable_but_fatal_errors_prevent_later_effects() 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancellation_precedes_source_limit() {
-    let engine = CodeExecutor::new(
-        1,
-        CellLimits {
-            max_source_bytes: 1,
-            ..Default::default()
-        },
-    )
+    let engine = CodeExecutor::new(CellLimits {
+        max_source_bytes: 1,
+        ..Default::default()
+    })
     .unwrap();
     let cancel = CancellationToken::new();
     cancel.cancel();
@@ -213,7 +204,7 @@ impl maka_agent_facts::tools::ToolExecutor for Echo {
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn exact_envelopes_and_structured_diagnostics() {
-    let engine = CodeExecutor::new(1, CellLimits::default()).unwrap();
+    let engine = CodeExecutor::new(CellLimits::default()).unwrap();
     for source in ["", "return null;"] {
         let value = engine
             .execute(source.into(), Arc::new(Echo), CancellationToken::new())
@@ -247,25 +238,19 @@ async fn exact_envelopes_and_structured_diagnostics() {
 #[test]
 fn rejects_budget_too_small_for_a_diagnostic() {
     assert!(matches!(
-        CodeExecutor::new(
-            1,
-            CellLimits {
-                max_value_bytes: 32,
-                ..Default::default()
-            }
-        ),
+        CodeExecutor::new(CellLimits {
+            max_value_bytes: 32,
+            ..Default::default()
+        }),
         Err(CellAbort::Internal(_))
     ));
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn summary_and_large_error_fit_the_whole_envelope() {
-    let engine = CodeExecutor::new(
-        1,
-        CellLimits {
-            max_value_bytes: 120,
-            ..Default::default()
-        },
-    )
+    let engine = CodeExecutor::new(CellLimits {
+        max_value_bytes: 120,
+        ..Default::default()
+    })
     .unwrap();
     for source in [
         "await tools.echo({}); throw Error('x'.repeat(1000));",

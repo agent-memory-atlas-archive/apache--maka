@@ -39,15 +39,12 @@ impl Recall {
             .session_id
             .clone();
         self.session(&input.session_id).await.map_err(failed)?;
-        let permit = self.permit(&call).await?;
         let mut ticket = call.resources.reserve()?;
         ticket.start();
         let recall = self.clone();
         self.workers
             .spawn(async move {
-                // The actual worker retains both the call ticket and capacity until
-                // SQLite settles; losing its observer cannot allow another copy.
-                let _permit = permit;
+                // The actual worker retains its call ticket until SQLite settles.
                 let result = async {
                     recall.check(&call).await?;
                     let record = recall

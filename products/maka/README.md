@@ -34,3 +34,5 @@ This directory turns reusable plugins and platform owners into the Maka applicat
 Run `just run` from the repository root. It builds the TypeScript product first, then starts Cargo. Development binaries read the bundle from disk, so a TypeScript-only edit does not invalidate Rust compilation. Release binaries embed the same bundle.
 
 Bundled packages are installation inputs. Reopening an existing installation uses its committed source and package bytes; rebuilding the checkout does not overwrite a user's composition.
+
+On macOS or Linux, measure concurrent agents with `cargo test --release -p maka-agent-native --lib --no-run`, then pass the printed test executable to `python3 scripts/agent-scale.py --binary PATH`. The default runs five trials each at 10, 100 and 1000 agents through the actual Host, native owner and shared model SDK. A local HTTP fixture holds every request open before streaming; the benchmark verifies durable output, cancellation, socket cleanup and recovery. The JSON report retains all samples, foreground query latency, CPU and peak memory. Run without competing builds; these measurements exclude TUI rendering and external model latency.

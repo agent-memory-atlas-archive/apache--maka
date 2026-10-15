@@ -30,7 +30,6 @@ use std::{collections::HashMap, future::poll_fn, sync::Arc, task::Poll};
 use tokio::sync::{OwnedSemaphorePermit, mpsc};
 
 struct Model {
-    _permit: OwnedSemaphorePermit,
     _input: OwnedSemaphorePermit,
     reply: Reply,
 }
@@ -40,9 +39,9 @@ pub(super) async fn run(
     mut commands: mpsc::UnboundedReceiver<Command>,
     health: Arc<Health>,
 ) -> Result<()> {
-    // Completion/permits stay outside the isolate's scope. On a fatal failure,
+    // Completion/input byte reservations stay outside the isolate's scope. On a fatal failure,
     // first drop all promise globals and the runtime (including HTTP resources),
-    // only then acknowledge cleanup and release capacity.
+    // only then acknowledge cleanup and release the byte budget.
     let mut models = HashMap::new();
     let result = async {
         let mut runtime = engine::create(&health)?;
@@ -107,7 +106,6 @@ async fn drive(
                     sender,
                     cancellation,
                     network,
-                    permit,
                     input,
                     reply,
                 } => {
@@ -135,7 +133,6 @@ async fn drive(
                     models.insert(
                         id,
                         Model {
-                            _permit: permit,
                             _input: input,
                             reply,
                         },

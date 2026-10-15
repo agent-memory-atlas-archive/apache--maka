@@ -129,7 +129,6 @@ async fn shared_worker_bounds_private_ops_and_releases_contexts_on_actual_comple
         let started = Arc::new(tokio::sync::Semaphore::new(0));
         let release = Arc::new(tokio::sync::Semaphore::new(0));
         for (count, input, expected_error) in [
-            (128, Value::Null, "capacity"),
             (32, json!("x".repeat(1024*1024-1024)), "input budget"),
         ] {
             let held = Arc::new(Held { label:"first".into(),started:started.clone(),release:release.clone() });

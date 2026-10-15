@@ -39,7 +39,6 @@ struct Loaded {
 struct Request {
     module: Module,
     reply: oneshot::Sender<Result<serde_json::Value>>,
-    _slot: OwnedSemaphorePermit,
     _bytes: OwnedSemaphorePermit,
     context: Option<Arc<super::request::Owner>>,
 }
@@ -117,7 +116,6 @@ pub(super) async fn run(
                             args,
                             context,
                             reply,
-                            slot,
                             bytes,
                         } => {
                             let Some(loaded) =
@@ -151,7 +149,6 @@ pub(super) async fn run(
                                         Request {
                                             module,
                                             reply,
-                                            _slot: slot,
                                             _bytes: bytes,
                                             context,
                                         },
@@ -165,13 +162,9 @@ pub(super) async fn run(
                             }
                         }
                         Command::Capture {
-                            module, namespace, methods, reply, slot: _slot, bytes: _bytes,
+                            module, namespace, methods, reply, bytes: _bytes,
                         } => {
                             if reply.is_closed() {
-                                continue;
-                            }
-                            if modules.values().map(|m| m.callbacks.len()).sum::<usize>() >= 1024 {
-                                let _ = reply.send(Err(failed("worker callback registration limit")));
                                 continue;
                             }
                             let Some(loaded) = modules
@@ -216,7 +209,6 @@ pub(super) async fn run(
                         Command::Statistics {
                             collect,
                             reply,
-                            slot: _slot,
                         } => {
                             if collect {
                                 runtime.v8_isolate().low_memory_notification();

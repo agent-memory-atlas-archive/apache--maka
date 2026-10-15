@@ -20,7 +20,7 @@
 use super::*;
 
 async fn fixture(base: &str) -> Fixture {
-    Fixture::configured(base, 1, None, None, None, |settings| {
+    Fixture::configured(base, None, None, None, |settings| {
         settings.scheduled_tasks = true
     })
     .await

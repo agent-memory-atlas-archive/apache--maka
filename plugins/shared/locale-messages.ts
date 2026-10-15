@@ -749,11 +749,6 @@ export const msg_importsUnknown: Message = [
   '结果尚未确认，请读取原操作回执后再继续。',
   '結果尚未確認，請讀取原操作回執後再繼續。',
 ];
-export const msg_importsBusy: Message = [
-  'Another import is using the available capacity. Try again when it finishes.',
-  '其它导入正在占用处理容量，请在其结束后重试。',
-  '其他匯入正在佔用處理容量，請在其結束後重試。',
-];
 export const msg_importsSaved: Message = ['Source saved.', '来源已保存。', '來源已儲存。'];
 export const msg_importsRemoved: Message = ['Source removed.', '来源已移除。', '來源已移除。'];
 export const msg_importsDone: Message = ['Conversation imported.', '对话已导入。', '對話已匯入。'];

@@ -104,13 +104,13 @@ async fn fallback_waits_for_retry_budget_and_gets_one_bounded_budget_of_its_own(
             );
             let worker = Engine::new(
                 log.clone(),
-                ModelExecutor::new(1, Duration::from_secs(5))
+                ModelExecutor::new(Duration::from_secs(5))
                     .unwrap()
                     .with_adapters(std::collections::BTreeMap::from([(
                         "chat-completions".into(),
                         binding,
                     )])),
-                CodeExecutor::new(1, CellLimits::default()).unwrap(),
+                CodeExecutor::new(CellLimits::default()).unwrap(),
             );
             let result = worker
                 .run(

@@ -54,7 +54,7 @@ async fn screenshot_requests_can_exceed_the_response_frame_limit() {
             }],
             provider_options: None,
         }];
-        let executor = ModelExecutor::new(1, Duration::from_secs(10)).unwrap();
+        let executor = ModelExecutor::new(Duration::from_secs(10)).unwrap();
         generate(&executor, &Conversation::default(), input).await;
         server.await.unwrap();
     })
@@ -132,7 +132,7 @@ async fn cancellation_and_bad_frames_do_not_replay_or_poison_other_lanes() {
             );
             assert!(listener.accept().now_or_never().is_none());
         });
-        let executor = ModelExecutor::new(4, Duration::from_secs(10)).unwrap();
+        let executor = ModelExecutor::new(Duration::from_secs(10)).unwrap();
         let connecting_cancel = CancellationToken::new();
         let connecting = executor
             .stream_in_conversation(
@@ -253,7 +253,7 @@ async fn rejected_upgrade_falls_back_before_dispatch_and_stays_http() {
                     "retry {index} must wait its exponential interval");
             }
         });
-        let executor = ModelExecutor::new(1, Duration::from_secs(10)).unwrap();
+        let executor = ModelExecutor::new(Duration::from_secs(10)).unwrap();
         let lane = Conversation::default();
         generate(&executor, &lane, proxied_request(proxy_port, "first")).await;
         generate(&executor, &lane, proxied_request(proxy_port, "second")).await;
@@ -352,7 +352,7 @@ async fn interrupted_reads_preserve_diagnostics_and_decoder_replay_safety() {
                     assert!(listener.accept().now_or_never().is_none(), "transport itself never replays");
                 }
             });
-            let executor = ModelExecutor::new(1, Duration::from_secs(5)).unwrap();
+            let executor = ModelExecutor::new(Duration::from_secs(5)).unwrap();
             let lane = Conversation::default();
             assert!(!lane.try_switch_fallback_transport());
             let input = || {

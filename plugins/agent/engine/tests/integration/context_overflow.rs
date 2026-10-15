@@ -162,20 +162,25 @@ async fn proactive_failure_spends_the_same_budget_as_overflow_recovery() {
         let (mut old, _) = listener.accept().await.unwrap();
         fixture::read_request(&mut old).await;
         fixture::respond(&mut old, "old-answer", "stop").await;
-        for _ in 0..2 {
-            let (mut summary, _) = listener.accept().await.unwrap();
-            let request = fixture::read_request(&mut summary).await;
-            assert!(
-                request["messages"]
-                    .to_string()
-                    .contains("Now write the structured summary")
-            );
-            fixture::respond(&mut summary, "malformed", "stop").await;
+        let mut main = None;
+        let mut summaries = 0;
+        while summaries < 2 || main.is_none() {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let request = fixture::read_request(&mut socket).await;
+            if request["messages"]
+                .to_string()
+                .contains("Now write the structured summary")
+            {
+                summaries += 1;
+                fixture::respond(&mut socket, "malformed", "stop").await;
+            } else {
+                assert!(main.is_none(), "only one main request before overflow");
+                assert!(request["messages"].to_string().contains("old-answer"));
+                assert!(!request["messages"].to_string().contains("malformed"));
+                main = Some(socket);
+            }
         }
-        let (mut main, _) = listener.accept().await.unwrap();
-        let request = fixture::read_request(&mut main).await;
-        assert!(request["messages"].to_string().contains("old-answer"));
-        assert!(!request["messages"].to_string().contains("malformed"));
+        let mut main = main.unwrap();
         overflow(&mut main, false).await;
     });
     let worker = fixture::engine(log.clone());

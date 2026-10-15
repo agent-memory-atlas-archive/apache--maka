@@ -163,8 +163,8 @@ async fn aborted_caller_cancels_worker_but_retains_admission_until_effect_is_dur
             let log = Arc::new(EventLog::open(&path).await.unwrap());
             let engine = Engine::new(
                 log.clone(),
-                ModelExecutor::new(1, Duration::from_secs(10)).unwrap(),
-                CodeExecutor::new(2, CellLimits::default()).unwrap(),
+                ModelExecutor::new(Duration::from_secs(10)).unwrap(),
+                CodeExecutor::new(CellLimits::default()).unwrap(),
             );
             let caller_token = CancellationToken::new();
             let running_engine = engine.clone();
@@ -280,8 +280,8 @@ async fn aborted_caller_cancels_worker_but_retains_admission_until_effect_is_dur
             let log = Arc::new(EventLog::open(&path).await.unwrap());
             let engine = Engine::new(
                 log.clone(),
-                ModelExecutor::new(1, Duration::from_secs(10)).unwrap(),
-                CodeExecutor::new(2, CellLimits::default()).unwrap(),
+                ModelExecutor::new(Duration::from_secs(10)).unwrap(),
+                CodeExecutor::new(CellLimits::default()).unwrap(),
             );
             engine
                 .run(input(&base, "reopened", effect.clone()), CancellationToken::new())

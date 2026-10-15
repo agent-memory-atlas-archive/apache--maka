@@ -92,7 +92,7 @@ async fn captured_adapter_survives_executor_replacement_and_bounds_idle_work() {
     let release = CancellationToken::new();
     let retained = Arc::default();
     let original = binding(release.clone(), Arc::clone(&retained), "1");
-    let executor = ModelExecutor::new(2, Duration::from_millis(100))
+    let executor = ModelExecutor::new(Duration::from_millis(100))
         .unwrap()
         .with_adapters(std::collections::BTreeMap::from([(
             "chat-completions".into(),

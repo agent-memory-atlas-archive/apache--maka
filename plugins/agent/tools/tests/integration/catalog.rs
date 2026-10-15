@@ -218,7 +218,7 @@ async fn discovery_loads_complete_schemas_without_running_effects() {
             invocation.clone(),
             catalog.clone(),
             ToolMode::Direct,
-            CodeExecutor::new(1, CellLimits::default()).unwrap(),
+            CodeExecutor::new(CellLimits::default()).unwrap(),
             loaded.clone(),
         );
         let request = run
@@ -255,7 +255,7 @@ async fn discovery_loads_complete_schemas_without_running_effects() {
             invocation.clone(),
             catalog.clone(),
             ToolMode::Direct,
-            CodeExecutor::new(1, CellLimits::default()).unwrap(),
+            CodeExecutor::new(CellLimits::default()).unwrap(),
             restored_loaded.clone(),
         );
         restored.restore(&checkpoint).unwrap();
@@ -292,7 +292,7 @@ async fn discovery_loads_complete_schemas_without_running_effects() {
             invocation.clone(),
             ToolCatalog::default(),
             ToolMode::Direct,
-            CodeExecutor::new(1, CellLimits::default()).unwrap(),
+            CodeExecutor::new(CellLimits::default()).unwrap(),
             Default::default(),
         );
         assert!(changed.restore(&checkpoint).is_err());
@@ -302,7 +302,7 @@ async fn discovery_loads_complete_schemas_without_running_effects() {
             invocation.clone(),
             catalog.clone(),
             ToolMode::CodeMode,
-            CodeExecutor::new(1, CellLimits::default()).unwrap(),
+            CodeExecutor::new(CellLimits::default()).unwrap(),
             loaded.clone(),
         );
         let captured_code = coded.capture(".", CancellationToken::new()).await.unwrap();

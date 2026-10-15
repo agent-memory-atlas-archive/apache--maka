@@ -49,7 +49,7 @@ pub(super) async fn run(
     continuation_base: Option<u64>,
 ) -> Result<Candidate, RunError> {
     match capture(inner, input, mode, cancellation, continuation_base).await {
-        Ok(Some(job)) => job.execute(inner, cancellation, None).await,
+        Ok(Some(job)) => job.execute(inner, cancellation).await,
         Ok(None) => Ok((
             CompactOutcome::Unchanged {
                 reason: "no_new_history".into(),
@@ -122,7 +122,6 @@ impl Job {
         self,
         inner: &Arc<Inner>,
         cancellation: &CancellationToken,
-        mut reservation: Option<maka_model::ModelReservation>,
     ) -> Result<Candidate, RunError> {
         let Self {
             input,
@@ -149,7 +148,6 @@ impl Job {
                 Vec::new(),
                 model_attempt::Attempt::Summary {
                     adapter: adapter.clone(),
-                    reservation: reservation.as_mut(),
                 },
                 cancellation,
             )

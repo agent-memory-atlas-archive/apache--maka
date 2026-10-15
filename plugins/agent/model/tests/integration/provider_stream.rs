@@ -145,7 +145,7 @@ async fn large_sdk_requests_reserve_the_queue_without_a_body_size_cap() {
                 ).as_bytes()).await.unwrap();
             }
         });
-        let models = ModelExecutor::new(1, Duration::from_secs(20)).unwrap();
+        let models = ModelExecutor::new(Duration::from_secs(20)).unwrap();
         for large in [true, false] {
             let mut input = request(ProviderKind::OpenaiChat, base.clone());
             if large {
@@ -164,7 +164,7 @@ async fn large_sdk_requests_reserve_the_queue_without_a_body_size_cap() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sdk_text_and_tool_streams_cross_real_http_before_response_finishes() {
     tokio::time::timeout(Duration::from_secs(30), async {
-        let executor = ModelExecutor::new(1, Duration::from_secs(15)).unwrap();
+        let executor = ModelExecutor::new(Duration::from_secs(15)).unwrap();
         for kind in [ProviderKind::OpenaiChat, ProviderKind::Anthropic] {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let base = format!("http://{}/v1", listener.local_addr().unwrap());
@@ -257,7 +257,7 @@ async fn chat_tool_media_follow_the_complete_parallel_result_group_on_the_wire()
     use maka_model::prompt::{AssistantPart, ContentPart, FileData, Message, ToolOutput};
 
     tokio::time::timeout(Duration::from_secs(30), async {
-        let executor = ModelExecutor::new(1, Duration::from_secs(10)).unwrap();
+        let executor = ModelExecutor::new(Duration::from_secs(10)).unwrap();
         for (kind, mime) in [ProviderKind::OpenaiChat, ProviderKind::OpenaiCompatible { name: "fixture".into() }].into_iter().flat_map(|kind| ["image/png", "audio/wav"].map(|mime| (kind.clone(), mime))) {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let base = format!("http://{}/v1", listener.local_addr().unwrap());
@@ -317,7 +317,7 @@ async fn chat_tool_media_follow_the_complete_parallel_result_group_on_the_wire()
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn chat_tool_deltas_keep_arguments_separate_when_gateways_omit_or_reuse_ids() {
     tokio::time::timeout(Duration::from_secs(30), async {
-        let executor = ModelExecutor::new(1, Duration::from_secs(10)).unwrap();
+        let executor = ModelExecutor::new(Duration::from_secs(10)).unwrap();
         let cases = [
             vec![
                 json!({"type":"function","function":{"name":"echo","arguments":"{\"value\":"}}),
@@ -377,7 +377,7 @@ async fn chat_tool_deltas_keep_arguments_separate_when_gateways_omit_or_reuse_id
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn malformed_provider_tool_identity_cannot_complete_a_model_step() {
     tokio::time::timeout(Duration::from_secs(30), async {
-        let executor = ModelExecutor::new(1, Duration::from_secs(15)).unwrap();
+        let executor = ModelExecutor::new(Duration::from_secs(15)).unwrap();
         for (id, name) in [("x".repeat(4092), "echo".into()), ("tool-1".into(), "é".repeat(129))] {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let base = format!("http://{}/v1", listener.local_addr().unwrap());
@@ -415,7 +415,7 @@ async fn malformed_provider_tool_identity_cannot_complete_a_model_step() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn active_stream_outlives_idle_budget_but_silence_closes_the_socket() {
     tokio::time::timeout(Duration::from_secs(20), async {
-        let executor = ModelExecutor::new(1, Duration::from_secs(3)).unwrap();
+        let executor = ModelExecutor::new(Duration::from_secs(3)).unwrap();
         for silent in [false, true] {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let base = format!("http://{}/v1", listener.local_addr().unwrap());
@@ -473,7 +473,7 @@ async fn active_stream_outlives_idle_budget_but_silence_closes_the_socket() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn native_connect_failure_is_retryable_but_invalid_http_is_not() {
     tokio::time::timeout(Duration::from_secs(10), async {
-        let executor = ModelExecutor::new(1, Duration::from_secs(5)).unwrap();
+        let executor = ModelExecutor::new(Duration::from_secs(5)).unwrap();
         for connect_failure in [true, false] {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let base = format!("http://{}/v1", listener.local_addr().unwrap());
@@ -526,7 +526,7 @@ async fn cancellation_closes_pending_fetch_and_releases_model_capacity() {
                 );
             }
         });
-        let executor = ModelExecutor::new(1, Duration::from_secs(30)).unwrap();
+        let executor = ModelExecutor::new(Duration::from_secs(30)).unwrap();
         for _ in 0..2 {
             let mut customized = request(ProviderKind::OpenaiChat, base.clone());
             customized.provider.body_overlay = Some(serde_json::Map::from_iter([(
@@ -557,7 +557,7 @@ async fn customization_cannot_replace_generated_headers_or_body_fields() {
     tokio::time::timeout(Duration::from_secs(15), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
-        let executor = ModelExecutor::new(1, Duration::from_secs(10)).unwrap();
+        let executor = ModelExecutor::new(Duration::from_secs(10)).unwrap();
         for (kind, header) in [
             (ProviderKind::Anthropic, Some("Anthropic-Version")),
             (ProviderKind::Anthropic, Some("Anthropic-Beta")),

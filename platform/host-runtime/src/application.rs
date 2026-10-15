@@ -193,6 +193,7 @@ impl NativeRegistry {
 }
 
 pub(super) struct Method {
+    operation: Option<maka_event_log::applications::operations::OperationTemplate>,
     input: jsonschema::Validator,
     output: Arc<jsonschema::Validator>,
     progress: Option<Arc<jsonschema::Validator>>,
@@ -207,6 +208,9 @@ impl Service {
         let Interface::Service { methods } = &contract.interface else {
             return Err("Host export must declare a service".into());
         };
+        let mut operations =
+            maka_event_log::applications::operations::OperationTemplate::for_contract(&contract)
+                .map_err(|e| e.to_string())?;
         let compiled = methods
             .iter()
             .map(|(name, method)| {
@@ -216,6 +220,7 @@ impl Service {
                 Ok((
                     name.clone(),
                     Method {
+                        operation: operations.remove(name),
                         progress: method
                             .progress
                             .as_ref()
@@ -454,7 +459,6 @@ struct Dispatch {
     commands: mpsc::UnboundedSender<Command>,
     bytes: Arc<Semaphore>,
     resources: Arc<Semaphore>,
-    stream_buffers: Arc<Semaphore>,
 }
 
 pub(super) enum Command {
@@ -501,7 +505,6 @@ pub(super) enum CallKind {
     Query(oneshot::Sender<Result<Accepted>>),
     Subscription {
         reply: oneshot::Sender<Result<Subscription>>,
-        buffer: OwnedSemaphorePermit,
     },
     Mutation {
         operation: Uuid,
@@ -585,7 +588,7 @@ impl CallKind {
         id: Uuid,
         reference: Option<RecoveryRef>,
         validator: Arc<jsonschema::Validator>,
-        progress: Option<(Arc<jsonschema::Validator>, OwnedSemaphorePermit)>,
+        progress: Option<Arc<jsonschema::Validator>>,
         stop: CancellationToken,
     ) -> (Reply, Option<subscriptions::Emitter>) {
         match self {
@@ -595,10 +598,10 @@ impl CallKind {
                 let _ = reply.send(Ok(Accepted { id, result }));
                 (Reply::Query(output), None)
             }
-            Self::Subscription { reply, buffer } => {
+            Self::Subscription { reply } => {
                 let (output, result) = oneshot::channel();
                 let (subscriber, emitter) =
-                    subscriptions::channel(Accepted { id, result }, validator, stop, buffer);
+                    subscriptions::channel(Accepted { id, result }, validator, stop);
                 let _ = reply.send(Ok(subscriber));
                 (Reply::Query(output), Some(emitter))
             }
@@ -606,9 +609,8 @@ impl CallKind {
                 let reference = reference.expect("admitted mutation reference");
                 let (output, result) = oneshot::channel();
                 let (progress, emitter) = match progress {
-                    Some((validator, buffer)) => {
-                        let (items, emitter) =
-                            subscriptions::items(validator, stop.child_token(), buffer);
+                    Some(validator) => {
+                        let (items, emitter) = subscriptions::items(validator, stop.child_token());
                         (Some(items), Some(emitter))
                     }
                     None => (None, None),
@@ -716,7 +718,7 @@ impl Application {
         }
         operations::provide(&mut native)?;
         management::provide(&mut native)?;
-        let (source, packages, plan, _) = loaded.into_parts();
+        let (source, packages, plan, snapshot) = loaded.into_parts();
         Self::start_owned(
             source.input,
             packages,
@@ -724,7 +726,7 @@ impl Application {
             issuer,
             policy,
             scripts,
-            Some((source.reference, store)),
+            Some((snapshot, store)),
             Some(plan),
         )
     }
@@ -754,7 +756,10 @@ impl Application {
         issuer: Issuer,
         policy: Arc<dyn Policy>,
         scripts: Option<Arc<dyn backend::Factory>>,
-        persisted: Option<(DeploymentRef, Arc<maka_event_log::EventLog>)>,
+        persisted: Option<(
+            maka_event_log::applications::SourceSnapshot,
+            Arc<maka_event_log::EventLog>,
+        )>,
         plan: Option<Plan>,
     ) -> Result<Self> {
         let (plan, sources) = match plan {
@@ -774,14 +779,15 @@ impl Application {
             commands,
             bytes: Arc::new(Semaphore::new(32 * 1024 * 1024)),
             resources: Arc::new(Semaphore::new(64 * 1024 * 1024)),
-            stream_buffers: Arc::new(Semaphore::new(16)),
         });
         let client = Client {
             dispatch: dispatch.clone(),
             control,
             updates: observations,
         };
-        let source = persisted.as_ref().map(|(source, _)| source.clone());
+        let source = persisted
+            .as_ref()
+            .map(|(source, _)| source.reference().clone());
         scheduler.spawn(
             owner::Owner::new(
                 plan,
@@ -980,12 +986,6 @@ impl Client {
         attachments.check_scope(&scope)?;
         let scope = scope.child().map_err(|e| e.to_string())?;
         let guard = scope.cancellation.clone().drop_guard();
-        let buffer = self
-            .dispatch
-            .stream_buffers
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| "Host subscription buffer capacity exhausted".to_string())?;
         let (reply, result) = oneshot::channel();
         self.dispatch.enqueue(
             binding,
@@ -994,7 +994,7 @@ impl Client {
             scope,
             attachments,
             None,
-            CallKind::Subscription { reply, buffer },
+            CallKind::Subscription { reply },
         )?;
         let subscriber = result
             .await

@@ -196,7 +196,7 @@ pub(super) async fn run(args: Args) -> Result<(), maka_host_runtime::HostError> 
         },
     ))?)
     .await?;
-    let engine = CodeExecutor::new(1, limits)?;
+    let engine = CodeExecutor::new(limits)?;
     let tools = Arc::new(JournaledTools::new(
         log.clone(),
         invocation.clone(),

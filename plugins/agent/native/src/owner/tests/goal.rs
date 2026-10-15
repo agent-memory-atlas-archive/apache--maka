@@ -21,7 +21,7 @@ use super::*;
 use maka_agent_facts::event::{Fact, InvocationOutcome, ToolOutcome};
 
 async fn fixture(base: &str) -> Fixture {
-    Fixture::configured(base, 2, None, None, None, |settings| {
+    Fixture::configured(base, None, None, None, |settings| {
         settings.goals = true;
         settings.tool_discovery = true;
         settings.max_steps = 4;
@@ -349,34 +349,18 @@ async fn goal_prepared_report_cannot_override_a_newer_user_pause() {
 }
 
 #[tokio::test]
-async fn goal_cancelled_after_queue_acceptance_never_calls_the_model_when_capacity_returns() {
+async fn goal_cancelled_before_dispatch_never_calls_the_model() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let f = fixture(&format!("http://{}/v1", listener.local_addr().unwrap())).await;
         let session = f.create("Cancel accepted Goal queue").await;
-        let capacity = f.owner.permits.clone().acquire_many_owned(2).await.unwrap();
+        let producer = f.owner.producer_gate.lock().await;
         assert_eq!(
             create(&f, &session, true, 2, None).await["kind"],
             "committed"
         );
-        loop {
-            if !f
-                .store
-                .message_queue(&session)
-                .await
-                .unwrap()
-                .entries
-                .is_empty()
-            {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        let original = f.store.message_queue(&session).await.unwrap();
-        assert_eq!(original.entries.len(), 1);
         assert_eq!(control(&f, &session, "cancel").await["kind"], "committed");
-        assert_eq!(current(&f, &session).await["pending"], true);
-        drop(capacity);
+        drop(producer);
         wait_status(&f, &session, "cancelled").await;
         assert!(
             f.store
@@ -397,7 +381,7 @@ async fn goal_cancelled_after_queue_acceptance_never_calls_the_model_when_capaci
                 .iter()
                 .filter(|fact| matches!(fact, Fact::InvocationOpened { .. }))
                 .count(),
-            1
+            0
         );
         assert!(!facts.iter().any(|fact| matches!(
             fact,

@@ -376,68 +376,55 @@ async fn backpressure_completion_and_drop_cancel_only_their_subscription() {
 }
 
 #[tokio::test]
-async fn completed_unread_streams_keep_host_buffer_capacity_until_reader_drop() {
-    tokio::time::timeout(Duration::from_secs(15), async {
-        let completed = Arc::new(Semaphore::new(0));
-        let signals = completed.clone();
-        let (app, client, binding, issuer) = native_stream(move |_, context| {
+async fn many_subscriptions_keep_independent_drain_and_cancellation() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let entered = Arc::new(Semaphore::new(0));
+        let release = Arc::new(Semaphore::new(0));
+        let draining = release.clone();
+        let signals = entered.clone();
+        let (app, client, binding, issuer) = native_stream(move |input, context| {
             let signals = signals.clone();
+            let draining = draining.clone();
             Box::pin(async move {
                 context.emit(json!("unread")).await?;
                 signals.add_permits(1);
+                if input == json!("cancel") {
+                    context.scope().cancellation.cancelled().await;
+                } else {
+                    permit(&draining).await;
+                }
                 Ok(json!("done"))
             })
         })
         .await;
         let mut readers = Vec::new();
-        for _ in 0..16 {
+        for index in 0..1024 {
             readers.push(
                 client
                     .subscribe(
                         binding.clone(),
                         "echo".into(),
-                        json!("x"),
+                        json!(if index % 2 == 0 { "drain" } else { "cancel" }),
                         scope(&issuer, true),
                         Attachments::new().into(),
                     )
                     .await
                     .unwrap(),
             );
-            permit(&completed).await;
+            permit(&entered).await;
         }
-        assert!(
-            client
-                .subscribe(
-                    binding.clone(),
-                    "echo".into(),
-                    json!("x"),
-                    scope(&issuer, true),
-                    Attachments::new().into()
-                )
-                .await
-                .err()
-                .unwrap()
-                .contains("buffer capacity")
-        );
-        // Drain proves producer close; EOF retains custody until reader is dropped.
-        let mut first = readers.pop().unwrap();
-        assert_eq!(first.recv().await, Some(json!("unread")));
-        assert_eq!(first.recv().await, None);
-        drop(first);
-        let replacement = client
-            .subscribe(
-                binding,
-                "echo".into(),
-                json!("x"),
-                scope(&issuer, true),
-                Attachments::new().into(),
-            )
-            .await
-            .unwrap();
-        permit(&completed).await;
-        replacement.completion().await.cleanup.unwrap();
-        for reader in readers {
-            reader.completion().await.cleanup.unwrap();
+        release.add_permits(512);
+        for (index, mut reader) in readers.into_iter().enumerate() {
+            if index % 2 == 0 {
+                assert_eq!(reader.recv().await, Some(json!("unread")));
+                assert_eq!(reader.recv().await, None);
+                let completion = reader.completion().await;
+                assert_eq!(completion.result.unwrap(), json!("done"));
+                completion.cleanup.unwrap();
+            } else {
+                reader.cancel();
+                reader.completion().await.cleanup.unwrap();
+            }
         }
         app.shutdown().await.unwrap();
     })

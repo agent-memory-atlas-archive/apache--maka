@@ -29,7 +29,7 @@ async fn setup(
     std::path::PathBuf,
     maka_agent_api::acp::Configuration,
 ) {
-    let fixture = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+    let fixture = Fixture::new("http://127.0.0.1:9/v1", None).await;
     let control = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let node = tokio::process::Command::new("node")
         .args(["-p", "process.execPath"])
@@ -103,7 +103,7 @@ async fn native_acp_continues_after_only_its_caller_is_reactivated() {
             .unwrap()
             .configuration
             .values
-            .insert("maxActiveRuns".into(), json!(2));
+            .insert("maxSteps".into(), json!(2));
         let source = f
             .store
             .commit_application(

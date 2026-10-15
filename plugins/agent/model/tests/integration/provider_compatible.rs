@@ -170,7 +170,7 @@ async fn ordered_raw_reasoning_preserves_empty_fields_and_reopened_parts() {
             .await;
             wire
         });
-        let executor = ModelExecutor::new(1, Duration::from_secs(10)).unwrap();
+        let executor = ModelExecutor::new(Duration::from_secs(10)).unwrap();
         let step = collect(&executor, &url).await.unwrap();
         let expected = [
             (TextKind::Thinking, "", Some("reasoning_content")),
@@ -232,13 +232,13 @@ async fn usage_retreat_is_exact_once_and_shared_only_with_executor_clones() {
                 response(&mut socket, status, text).await;
             }
         });
-        let executor = ModelExecutor::new(1, Duration::from_secs(10)).unwrap();
+        let executor = ModelExecutor::new(Duration::from_secs(10)).unwrap();
         assert!(collect(&executor, &url).await.is_err());
         assert!(collect(&executor.clone(), &url).await.is_ok());
         let other = format!("{url}/other");
         assert!(collect(&executor, &other).await.is_err());
         assert!(collect(&executor, &other).await.is_err());
-        let fresh = ModelExecutor::new(1, Duration::from_secs(10)).unwrap();
+        let fresh = ModelExecutor::new(Duration::from_secs(10)).unwrap();
         assert!(collect(&fresh, &url).await.is_ok());
         server.await.unwrap();
     })
@@ -269,7 +269,7 @@ async fn cancellation_drains_failure_body_and_retry_without_poisoning_capacity()
             assert!(body(&mut socket).await.get("stream_options").is_none());
             response(&mut socket, 200, &completion(&[json!({"content":"ok"})])).await;
         });
-        let executor = ModelExecutor::new(1, Duration::from_secs(10)).unwrap();
+        let executor = ModelExecutor::new(Duration::from_secs(10)).unwrap();
         for limit in [0, 9_007_199_254_740_992, u64::MAX] {
             let mut invalid = request(&url);
             invalid.max_output_tokens = Some(limit);

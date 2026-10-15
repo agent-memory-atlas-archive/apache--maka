@@ -69,7 +69,6 @@ unsafe impl deno_core::GarbageCollected for Handle {
 
 pub(super) struct Factory(pub v8::Global<v8::Function>);
 struct Budget {
-    calls: Arc<Semaphore>,
     bytes: Arc<Semaphore>,
 }
 struct Input(Value);
@@ -95,21 +94,14 @@ async fn op_maka_request(
         .ok_or_else(|| JsErrorBox::generic("request context expired"))?;
     let size = super::json::encoded_size(&input.0, 1024 * 1024)
         .map_err(|e| JsErrorBox::generic(e.to_string()))?;
-    let (_call, _bytes) = {
+    let _bytes = {
         let state = state.borrow();
-        let budget = state.borrow::<Budget>();
-        (
-            budget
-                .calls
-                .clone()
-                .try_acquire_owned()
-                .map_err(|_| JsErrorBox::generic("request operation capacity exhausted"))?,
-            budget
-                .bytes
-                .clone()
-                .try_acquire_many_owned(size.max(1) as u32)
-                .map_err(|_| JsErrorBox::generic("request operation input budget exhausted"))?,
-        )
+        state
+            .borrow::<Budget>()
+            .bytes
+            .clone()
+            .try_acquire_many_owned(size.max(1) as u32)
+            .map_err(|_| JsErrorBox::generic("request operation input budget exhausted"))?
     };
     // The observer owns no ContextState. A saved Promise or native cppgc root
     // cannot prolong the original bridge/snapshot after callback completion.
@@ -150,7 +142,6 @@ pub(super) fn initialize(runtime: &mut JsRuntime) -> Result<()> {
     let mut state = state.borrow_mut();
     state.put(Factory(factory));
     state.put(Budget {
-        calls: Arc::new(Semaphore::new(128)),
         bytes: Arc::new(Semaphore::new(32 * 1024 * 1024)),
     });
     Ok(())

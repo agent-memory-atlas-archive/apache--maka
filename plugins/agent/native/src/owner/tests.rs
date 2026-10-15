@@ -76,6 +76,10 @@ mod executor;
 #[path = "tests/workhub.rs"]
 mod workhub;
 
+#[path = "tests/scale.rs"]
+#[cfg(unix)]
+mod scale;
+
 #[path = "tests/queue.rs"]
 mod queue;
 
@@ -133,6 +137,7 @@ use serde_json::json;
 use std::sync::Mutex as StdMutex;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Semaphore;
 
 struct CallerGrant(maka_host_runtime::application::Caller);
 struct Grant(Issuer, Option<Arc<maka_transport::transport::PeerPolicy>>);
@@ -439,29 +444,29 @@ struct Fixture {
     owner: Arc<Owner>,
 }
 impl Fixture {
-    async fn new(base: &str, cap: usize, model: Option<ModelExecutor>) -> Self {
-        Self::with_peer(base, cap, model, None).await
+    async fn new(base: &str, model: Option<ModelExecutor>) -> Self {
+        Self::with_peer(base, model, None).await
     }
     async fn with_peer(
         base: &str,
-        cap: usize,
+
         model: Option<ModelExecutor>,
         peer: Option<Arc<maka_transport::transport::PeerPolicy>>,
     ) -> Self {
-        Self::with_services(base, cap, model, peer, None).await
+        Self::with_services(base, model, peer, None).await
     }
     async fn with_services(
         base: &str,
-        cap: usize,
+
         model: Option<ModelExecutor>,
         peer: Option<Arc<maka_transport::transport::PeerPolicy>>,
         tooling: Option<service_tools::Setup>,
     ) -> Self {
-        Self::configured(base, cap, model, peer, tooling, |_| {}).await
+        Self::configured(base, model, peer, tooling, |_| {}).await
     }
     async fn configured(
         base: &str,
-        cap: usize,
+
         model: Option<ModelExecutor>,
         peer: Option<Arc<maka_transport::transport::PeerPolicy>>,
         tooling: Option<service_tools::Setup>,
@@ -560,7 +565,6 @@ impl Fixture {
                     path: other_workspace,
                 },
             ],
-            max_active_runs: cap,
             max_steps: 1,
             tools: vec![],
         };
@@ -616,7 +620,7 @@ impl Fixture {
                             Arc::get_mut(&mut owner).unwrap().engine = Engine::new(
                                 store,
                                 model,
-                                maka_js_runtime::CodeExecutor::new(1, Default::default()).unwrap(),
+                                maka_js_runtime::CodeExecutor::new(Default::default()).unwrap(),
                             );
                         }
                         *capture.lock().unwrap() = Some((owner.clone(), services));
@@ -709,17 +713,10 @@ impl Fixture {
                 attachments.into(),
             )
             .await?;
-        let recorded = self
-            .store
-            .record_application_intent(
-                prepared.reference().source.clone(),
-                prepared.consumer().instance().clone(),
-                prepared.reference().clone(),
-                serde_json::Value::Null,
-            )
-            .await
-            .map_err(|error| error.to_string())?;
-        let reply = client.mutate(prepared, recorded).await?.result().await;
+        // Exercise the actual trusted Host gateway, including its durable caller
+        // intent and original activation evidence, rather than reloading the
+        // complete deployment in the test driver for every mutation.
+        let reply = client.mutate_owned(prepared).await?.result().await;
         match reply.receipt {
             Receipt::Recorded {
                 outcome: OperationOutcome::Returned { value },
@@ -853,7 +850,7 @@ async fn canonical_history_is_bounded_utf8_and_keeps_its_original_fence() {
                 socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
             }
         });
-        let fixture = Fixture::new(&base, 1, None).await;
+        let fixture = Fixture::new(&base, None).await;
         let session = fixture.create("History").await;
         let message = format!("{}中文", "\u{0}".repeat(9000));
         fixture.mutation(2, "send", json!({"sessionId":session,"message":message,"model":fixture.selection().await}), Uuid::new_v4()).await.unwrap();
@@ -966,20 +963,29 @@ async fn canonical_history_is_bounded_utf8_and_keeps_its_original_fence() {
     }).await.unwrap();
 }
 #[tokio::test]
-async fn actual_http_runs_are_bounded_and_observer_loss_does_not_release_capacity() {
+async fn actual_http_runs_overlap_and_observer_loss_does_not_cancel_execution() {
     tokio::time::timeout(Duration::from_secs(30),async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1",listener.local_addr().unwrap());
         let entered = Arc::new(Semaphore::new(0)); let release = Arc::new(Semaphore::new(0));
         let worker_entered = entered.clone(); let worker_release = release.clone();
         let server = tokio::spawn(async move {
-            for _ in 0..2 {
+            let mut requests = tokio::task::JoinSet::new();
+            for _ in 0..3 {
                 let (mut socket,_) = listener.accept().await.unwrap();
-                let body = request(&mut socket).await; assert_eq!(body["model"],"fixture-model");
-                worker_entered.add_permits(1); worker_release.acquire().await.unwrap().forget(); response(&mut socket).await;
+                let entered = worker_entered.clone();
+                let release = worker_release.clone();
+                requests.spawn(async move {
+                    let body = request(&mut socket).await;
+                    assert_eq!(body["model"],"fixture-model");
+                    entered.add_permits(1);
+                    release.acquire().await.unwrap().forget();
+                    response(&mut socket).await;
+                });
             }
+            while let Some(result) = requests.join_next().await { result.unwrap(); }
         });
-        let fixture = Fixture::new(&base,2,None).await;
+        let fixture = Fixture::new(&base,None).await;
         let first = fixture.create("First").await; let second = fixture.create("Second").await; let third = fixture.create("Third").await;
         let started = fixture.send(&first).await.unwrap(); entered.acquire().await.unwrap().forget();
         assert!(!fixture.app.shutdown_if_idle().await.unwrap(), "completed send RPC still owns a live model run");
@@ -999,11 +1005,11 @@ async fn actual_http_runs_are_bounded_and_observer_loss_does_not_release_capacit
         let page = watch.recv().await.unwrap(); assert!(!page.to_string().contains("private-fixture-key"));
         drop(watch);
         fixture.send(&second).await.unwrap();
-        assert!(fixture.send(&third).await.unwrap_err().contains("agent_capacity_exhausted"));
-        let unopened = fixture.store.session_projection::<Value>(&third).await.unwrap().unwrap(); assert!(unopened.root_turn.is_none());
-        assert_eq!(fixture.owner.runs.lock().await.controls.len(),2);
-        release.add_permits(2); server.await.unwrap(); fixture.drained().await;
-        assert!(fixture.owner.runs.lock().await.controls.is_empty()); assert_eq!(fixture.owner.permits.available_permits(),2);
+        fixture.send(&third).await.unwrap();
+        entered.acquire_many(2).await.unwrap().forget();
+        assert_eq!(fixture.owner.runs.lock().await.controls.len(),3);
+        release.add_permits(3); server.await.unwrap(); fixture.drained().await;
+        assert!(fixture.owner.runs.lock().await.controls.is_empty());
         let completed = fixture.query("observe", json!({"sessionId":first})).await.unwrap();
         let metrics = &completed["metrics"];
         assert_eq!(metrics["modelId"], "fixture-model");
@@ -1033,7 +1039,7 @@ async fn actual_http_runs_are_bounded_and_observer_loss_does_not_release_capacit
 #[tokio::test]
 async fn original_operation_conflicts_and_private_namespace_never_cross_sessions() {
     tokio::time::timeout(Duration::from_secs(20), async {
-        let fixture = Fixture::new("http://127.0.0.1:1/v1", 2, None).await;
+        let fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
         let operation = Uuid::new_v4();
         let first = fixture
             .mutation(2, "create", fixture.create_input("A").await, operation)
@@ -1117,7 +1123,7 @@ async fn exact_stop_cannot_cancel_a_successor_and_close_waits_for_original_worke
                 response(&mut socket).await;
             }
         });
-        let fixture = Fixture::new(&base, 2, None).await;
+        let fixture = Fixture::new(&base, None).await;
         let session = fixture.create("Conversation").await;
         let first = fixture.send(&session).await.unwrap();
         entered.acquire().await.unwrap().forget();
@@ -1211,7 +1217,7 @@ fn controlled_model(panic: bool) -> (ModelExecutor, Fault) {
         },
     );
     (
-        ModelExecutor::new(1, Duration::from_secs(30))
+        ModelExecutor::new(Duration::from_secs(30))
             .unwrap()
             .with_adapters(BTreeMap::from([("chat-completions".into(), binding)])),
         fault,
@@ -1220,7 +1226,7 @@ fn controlled_model(panic: bool) -> (ModelExecutor, Fault) {
 
 async fn cleanup_case(panic: bool) {
     let (model, fault) = controlled_model(panic);
-    let fixture = Fixture::new("http://127.0.0.1:1/v1", 1, Some(model)).await;
+    let fixture = Fixture::new("http://127.0.0.1:1/v1", Some(model)).await;
     *fault.store.lock().unwrap() = Some(fixture.store.clone());
     let session = fixture.create("Physical lifetime").await;
     fixture.send(&session).await.unwrap();
@@ -1287,10 +1293,6 @@ async fn cleanup_case(panic: bool) {
         fixture.owner.runs.lock().await.quarantined.len(),
         usize::from(panic)
     );
-    assert_eq!(
-        fixture.owner.permits.available_permits(),
-        usize::from(!panic)
-    );
     let close = fixture.app.shutdown().await;
     assert_eq!(close.is_err(), panic);
     fixture.config.shutdown().await.unwrap();
@@ -1324,7 +1326,7 @@ async fn cleanup_case(panic: bool) {
     }
 }
 #[tokio::test]
-async fn model_panic_and_terminal_sql_failure_quarantine_capacity_and_keep_root() {
+async fn model_panic_and_terminal_sql_failure_quarantine_execution_and_keep_root() {
     tokio::time::timeout(Duration::from_secs(20), cleanup_case(true))
         .await
         .unwrap();
@@ -1339,7 +1341,7 @@ async fn ordinary_model_and_terminal_sql_failures_preserve_confirmed_physical_cl
 #[tokio::test]
 async fn public_availability_resumes_stable_sessions_and_separates_deployments() {
     tokio::time::timeout(Duration::from_secs(20), async {
-        let fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+        let fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
         let session = fixture.create("Stable conversation").await;
         let deployment = fixture.app.source().unwrap().deployment;
         fixture.app.shutdown().await.unwrap();
@@ -1446,7 +1448,7 @@ async fn public_availability_resumes_stable_sessions_and_separates_deployments()
 }
 
 async fn disabled_connection() {
-    let fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    let fixture = Fixture::new("http://127.0.0.1:1/v1", None).await;
     let session = fixture.create("Bound model").await;
     let catalog = fixture.config.catalog().await.unwrap();
     let row = &catalog.connections[0];
@@ -1545,7 +1547,6 @@ async fn disabled_connection() {
         .unwrap()
         .unwrap();
     assert!(observation.root_turn.is_none());
-    assert_eq!(fixture.owner.permits.available_permits(), 1);
     fixture.app.shutdown().await.unwrap();
     fixture.config.shutdown().await.unwrap();
 }
@@ -1564,7 +1565,7 @@ async fn tool_source_uses_original_agent_grant_and_frozen_canonical_fields() {
     use maka_capabilities::storage::Namespace;
     use maka_event_log::sessions::PluginSession;
     use maka_plugin_core::scope::Scope as StorageScope;
-    let fixture = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+    let fixture = Fixture::new("http://127.0.0.1:9/v1", None).await;
     let seed = fixture.create("Tool source").await;
     let configuration = fixture.owner.session(&seed).await.unwrap().configuration;
     let session = format!("{}{}", fixture.owner.prefix, Uuid::new_v4().simple());

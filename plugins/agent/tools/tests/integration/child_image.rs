@@ -145,7 +145,7 @@ async fn nested_image_is_committed_before_js_and_explicit_output_projects_it() {
         invocation.clone(),
         catalog,
         ToolMode::CodeMode,
-        CodeExecutor::new(1, CellLimits::default()).unwrap(),
+        CodeExecutor::new(CellLimits::default()).unwrap(),
         Default::default(),
     );
     let result = run
