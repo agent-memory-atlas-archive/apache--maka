@@ -18,10 +18,10 @@
  */
 
 use super::super::Result;
-use super::super::transport::Catalogue;
+use super::super::transport::{Catalogue, HostEndpoint};
 use maka_plugin_core::{composition::InstanceId, deployment::DeploymentRef};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
 pub const VERSION: u32 = 1;
@@ -38,6 +38,12 @@ pub struct Opening {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
     Connect,
+    /// Trusted current-account launcher approval; remote principals cannot use it.
+    ConnectPeer {
+        source: DeploymentRef,
+        consumers: BTreeSet<InstanceId>,
+        endpoints: BTreeMap<String, HostEndpoint>,
+    },
     Call {
         session: Uuid,
     },
@@ -66,6 +72,12 @@ pub enum Request {
 pub enum Response {
     Connected(Connected),
     Accepted,
+    Epochs(Result<BTreeMap<String, Option<Uuid>>>),
+    Captured(Result<Catalogue>),
+    Approved {
+        source: DeploymentRef,
+        result: Result<()>,
+    },
     Status(Status),
     Retired(Result<bool>),
     Closed,
@@ -77,6 +89,14 @@ pub enum Response {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SessionControl {
     Close,
+    Epochs,
+    Capture,
+    Approve {
+        source: DeploymentRef,
+        consumers: BTreeSet<InstanceId>,
+        retain: BTreeSet<u64>,
+        captured: Option<Catalogue>,
+    },
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

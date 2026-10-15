@@ -204,6 +204,9 @@ async fn remote_pairing_binds_client_source_and_session_and_revokes_original_cha
         // Even an authenticated remote owner cannot use native lifecycle or credential controls.
         rejected(socket(&address, &first, None).await.unwrap(), opening(host.epoch(), "client-one", json!({"kind":"retire"}))).await;
         rejected(socket(&address, &first, None).await.unwrap(), opening(host.epoch(), "client-one", json!({"kind":"prepare_access","principal":"intruder"}))).await;
+        rejected(socket(&address, &first, None).await.unwrap(), opening(host.epoch(), "client-one", json!({
+            "kind":"connect_peer", "source":host.source(), "consumers":[support::identity(13)], "endpoints":selections,
+        }))).await;
         let second = Client::prepare_access(&local, host.epoch(), "second".into()).await.unwrap();
         finalized(&address, &second, host.epoch(), "client-two").await;
         let (mut second_anchor, second_session) = connected(&address, &second, host.epoch(), "client-two").await;

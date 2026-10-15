@@ -25,21 +25,34 @@ use super::{
 use crate::{
     application::{
         Result,
-        transport::{Call, Catalogue, Source, wire},
+        transport::{Call, Catalogue, HostEndpoint, Peer, Source, wire},
     },
     ipc::{self, LocalStream},
 };
 use maka_capabilities::call::Attachments;
+use maka_plugin_core::{composition::InstanceId, deployment::DeploymentRef};
 use serde_json::Value;
-use std::path::{Path, PathBuf};
-use tokio::io::{BufReader, ReadHalf, WriteHalf};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::{Path, PathBuf},
+};
+use tokio::io::{AsyncWriteExt, BufReader, ReadHalf, WriteHalf};
 use uuid::Uuid;
 
-pub type LocalCall = Call<BufReader<ReadHalf<LocalStream>>, WriteHalf<LocalStream>>;
+pub type LocalCall = Call<ReadHalf<BufReader<LocalStream>>, WriteHalf<BufReader<LocalStream>>>;
+#[derive(PartialEq)]
+enum Phase {
+    Ready,
+    Lost,
+    Closing,
+    Closed,
+}
 pub struct Client {
     address: PathBuf,
     connected: Connected,
     anchor: wire::Reader<LocalStream>,
+    phase: Phase,
+    peer: Option<DeploymentRef>,
 }
 impl Client {
     pub async fn connect(address: &Path, epoch: Option<Uuid>) -> Result<Self> {
@@ -51,16 +64,52 @@ impl Client {
     pub async fn connect_stream(
         address: &Path,
         epoch: Option<Uuid>,
-        mut anchor: LocalStream,
+        anchor: LocalStream,
     ) -> Result<Self> {
-        wire::write(
+        Self::open(address, epoch, anchor, Request::Connect).await
+    }
+    /// Only a trusted current-account launcher may approve an external UI source.
+    pub async fn connect_peer(
+        address: &Path,
+        epoch: Option<Uuid>,
+        source: DeploymentRef,
+        consumers: BTreeSet<InstanceId>,
+        endpoints: BTreeMap<String, HostEndpoint>,
+    ) -> Result<Self> {
+        let request = Request::ConnectPeer {
+            source,
+            consumers,
+            endpoints,
+        };
+        let anchor = ipc::connect(address)
+            .await
+            .map_err(|error| error.to_string())?;
+        Self::open(address, epoch, anchor, request).await
+    }
+    async fn open(
+        address: &Path,
+        epoch: Option<Uuid>,
+        mut anchor: LocalStream,
+        request: Request,
+    ) -> Result<Self> {
+        let peer = match &request {
+            Request::ConnectPeer {
+                source, consumers, ..
+            } => {
+                Peer::new(source.clone(), consumers.clone())?;
+                Some(source.clone())
+            }
+            _ => None,
+        };
+        wire::write_bounded(
             &mut anchor,
             &Opening {
                 client_instance: None,
                 version: VERSION,
                 epoch,
-                request: Request::Connect,
+                request,
             },
+            512 * 1024,
         )
         .await?;
         let mut anchor = wire::Reader::new(anchor);
@@ -83,6 +132,8 @@ impl Client {
             address: address.into(),
             connected,
             anchor,
+            phase: Phase::Ready,
+            peer,
         })
     }
     pub fn catalogue(&self) -> &Catalogue {
@@ -100,6 +151,9 @@ impl Client {
         input: Value,
         resources: Attachments,
     ) -> Result<LocalCall> {
+        if self.peer.is_some() {
+            return Err("UI peer calls require the original checked caller and journal".into());
+        }
         let selection = self.connected.catalogue.select(endpoint)?;
         let consumer = self
             .connected
@@ -107,28 +161,9 @@ impl Client {
             .get(endpoint)
             .ok_or("Host endpoint missing")?
             .clone();
-        let stream = ipc::connect(&self.address)
-            .await
-            .map_err(|error| error.to_string())?;
-        let (input_stream, mut output) = tokio::io::split(stream);
-        wire::write(
-            &mut output,
-            &Opening {
-                client_instance: None,
-                version: VERSION,
-                epoch: Some(self.connected.epoch),
-                request: Request::Call {
-                    session: self.connected.session,
-                },
-            },
-        )
-        .await?;
-        let mut reader = wire::Reader::new(input_stream);
-        if !matches!(reader.read::<Response>().await?, Response::Accepted) {
-            return Err("Host did not accept application channel".into());
-        }
+        let (reader, output) = tokio::io::split(self.open_call_channel().await?);
         Ok(Call::new(
-            reader.inner,
+            reader,
             output,
             selection,
             Source {
@@ -142,11 +177,183 @@ impl Client {
             resources,
         ))
     }
+    /// Establish only the authenticated session channel. The native adapter retains
+    /// its original checked Source, Call and caller-side RecordedIntent.
+    pub async fn open_call_channel(&self) -> Result<BufReader<LocalStream>> {
+        if self.phase != Phase::Ready {
+            return Err("Host session control is not ready".into());
+        }
+        let mut stream = ipc::connect(&self.address)
+            .await
+            .map_err(|error| error.to_string())?;
+        wire::write(
+            &mut stream,
+            &Opening {
+                client_instance: None,
+                version: VERSION,
+                epoch: Some(self.connected.epoch),
+                request: Request::Call {
+                    session: self.connected.session,
+                },
+            },
+        )
+        .await?;
+        let mut reader = wire::Reader::new(stream);
+        if !matches!(reader.read::<Response>().await?, Response::Accepted) {
+            return Err("Host did not accept application channel".into());
+        }
+        Ok(reader.inner)
+    }
+    fn ready_peer(&self) -> Result<&DeploymentRef> {
+        if self.phase != Phase::Ready {
+            return Err("Host session control is not ready".into());
+        }
+        self.peer
+            .as_ref()
+            .ok_or("Host-owned session cannot approve peer sources".into())
+    }
+    async fn control(&mut self, command: SessionControl) -> Result<Response> {
+        if self.phase != Phase::Ready {
+            return Err("Host session control is not ready".into());
+        }
+        wire::encode_bounded(&command, wire::FRAME_LIMIT)?;
+        // Cancellation or a partial frame permanently fences further commands.
+        self.phase = Phase::Lost;
+        wire::write(&mut self.anchor.inner, &command).await?;
+        self.anchor.read().await
+    }
+    pub async fn epochs(&mut self) -> Result<BTreeMap<String, Option<Uuid>>> {
+        self.ready_peer()?;
+        match self.control(SessionControl::Epochs).await? {
+            Response::Epochs(result) => {
+                self.phase = Phase::Ready;
+                result
+            }
+            _ => Err("Host endpoint observation response mismatch".into()),
+        }
+    }
+    pub async fn capture(&mut self) -> Result<Catalogue> {
+        self.ready_peer()?;
+        match self.control(SessionControl::Capture).await? {
+            Response::Captured(result) => match result {
+                Ok(catalogue) => {
+                    catalogue.validate()?;
+                    catalogue.check_names(self.connected.consumers.keys())?;
+                    self.phase = Phase::Ready;
+                    Ok(catalogue)
+                }
+                Err(error) => {
+                    self.phase = Phase::Ready;
+                    Err(error)
+                }
+            },
+            _ => Err("Host capture response mismatch".into()),
+        }
+    }
+    pub fn check_approval(
+        &self,
+        source: &DeploymentRef,
+        consumers: &BTreeSet<InstanceId>,
+        retain: &BTreeSet<u64>,
+        captured: &Option<Catalogue>,
+    ) -> Result<()> {
+        let peer = self.ready_peer()?;
+        source.validate()?;
+        if source.state_domain != peer.state_domain || source.deployment != peer.deployment {
+            return Err("foreign approval deployment".into());
+        }
+        if !consumers.is_empty() {
+            Peer::new(source.clone(), consumers.clone())?;
+        }
+        if consumers.is_empty() != captured.is_none() {
+            return Err("approval requires its captured endpoints".into());
+        }
+        if retain.len() > 256 {
+            return Err("maximum 256 retained source approvals".into());
+        }
+        if let Some(catalogue) = captured {
+            catalogue.validate()?;
+            catalogue.check_names(self.connected.consumers.keys())?;
+        }
+        wire::encode_bounded(
+            &SessionControl::Approve {
+                source: source.clone(),
+                consumers: consumers.clone(),
+                retain: retain.clone(),
+                captured: captured.clone(),
+            },
+            wire::FRAME_LIMIT,
+        )?;
+        Ok(())
+    }
+    pub async fn approve(
+        &mut self,
+        source: DeploymentRef,
+        consumers: BTreeSet<InstanceId>,
+        retain: BTreeSet<u64>,
+        captured: Option<Catalogue>,
+    ) -> Result<()> {
+        self.check_approval(&source, &consumers, &retain, &captured)?;
+        match self
+            .control(SessionControl::Approve {
+                source: source.clone(),
+                consumers,
+                retain,
+                captured: captured.clone(),
+            })
+            .await?
+        {
+            Response::Approved {
+                source: actual,
+                result,
+            } if actual == source => {
+                if result.is_ok()
+                    && let Some(catalogue) = captured
+                {
+                    self.connected.catalogue = catalogue;
+                }
+                self.phase = Phase::Ready;
+                result
+            }
+            _ => Err("Host approval response mismatch".into()),
+        }
+    }
+    /// After a lost control observation, shut down this anchor without appending
+    /// a frame. Unix can still read its original cleanup acknowledgement; Windows
+    /// closes the whole pipe and returns an error unless that acknowledgement was
+    /// already buffered. EOF alone never confirms cleanup.
     pub async fn close(&mut self) -> Result<()> {
-        wire::write(&mut self.anchor.inner, &SessionControl::Close).await?;
-        match self.anchor.read::<Response>().await? {
-            Response::Closed => Ok(()),
-            _ => Err("Host session cleanup remains unconfirmed".into()),
+        if self.phase == Phase::Closed {
+            return Ok(());
+        }
+        if self.phase == Phase::Ready {
+            self.phase = Phase::Lost;
+            if wire::write(&mut self.anchor.inner, &SessionControl::Close)
+                .await
+                .is_ok()
+            {
+                self.phase = Phase::Closing;
+            }
+        }
+        if self.phase == Phase::Lost {
+            self.anchor
+                .inner
+                .shutdown()
+                .await
+                .map_err(|error| error.to_string())?;
+            self.phase = Phase::Closing;
+        }
+        loop {
+            match self.anchor.read::<Response>().await? {
+                Response::Closed => {
+                    self.phase = Phase::Closed;
+                    return Ok(());
+                }
+                // A cancelled control observer may have left its acknowledgement
+                // buffered. None substitutes for the final session cleanup.
+                Response::Epochs(_) | Response::Captured(_) | Response::Approved { .. } => {}
+                _ => return Err("Host session cleanup remains unconfirmed".into()),
+            }
         }
     }
     pub async fn prepare_access(
