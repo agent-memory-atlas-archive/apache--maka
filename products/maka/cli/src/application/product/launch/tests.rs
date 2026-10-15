@@ -70,12 +70,36 @@ async fn pending(store: &EventLog, host: &EventLog) -> (Uuid, Uuid, Uuid) {
 
 #[tokio::test]
 async fn partial_initialization_resumes_original_inputs_and_preserves_new_heads() {
+    check_partial_initialization(false).await;
+}
+
+#[tokio::test]
+async fn checked_launch_finishes_partial_initialization_and_preserves_new_heads() {
+    check_partial_initialization(true).await;
+}
+
+async fn check_partial_initialization(checked: bool) {
     let directory = tempfile::tempdir().unwrap();
     let ui_path = directory.path().join("ui");
     let host_path = directory.path().join("host");
     let store = open(ui_path.clone(), true, None).await.unwrap();
     let host = Arc::new(open(host_path.clone(), true, None).await.unwrap());
     let (ui, host_id, management) = pending(&store, &host).await;
+    // The small fixture supplies the same checked value that authoring retains
+    // on a first launch; the other case reconstructs it through disk recovery.
+    let prepared = if checked {
+        let record = store.application_launch().await.unwrap().unwrap();
+        let preparation: Preparation =
+            serde_json::from_slice(record.pending.as_ref().unwrap()).unwrap();
+        Some(PreparedLaunch {
+            deployment: record.deployment,
+            configuration: record.configuration,
+            applications: super::super::prepare_sources(&preparation.sources, &[]).unwrap(),
+            preparation,
+        })
+    } else {
+        None
+    };
     ensure(&host, host_id, &input(), &[], &[]).await.unwrap();
     let mut edited = input();
     edited.environment = Environment {
@@ -88,12 +112,28 @@ async fn partial_initialization_resumes_original_inputs_and_preserves_new_heads(
     ensure(&store, management, &input(), &[], &[])
         .await
         .unwrap();
+    ensure(&store, ui, &input(), &[], &[]).await.unwrap();
+    let mut newer_ui = input();
+    newer_ui.environment = Environment {
+        location: ExecutionLocation::Ui,
+        presentation: Some(PresentationTarget::Tui),
+    };
+    store
+        .commit_application(ui, 1, newer_ui.clone(), vec![], vec![])
+        .await
+        .unwrap();
     let serving = PublishedHost::start(host.clone(), host_id).await;
     store.drain().await;
     drop(store);
     let store = open(ui_path.clone(), false, None).await.unwrap();
-    let (selected, _, clients) = prepare(&store, None, Product::Studio).await.unwrap();
-    assert_eq!(selected, ui);
+    let (selected, _, clients) = match prepared {
+        Some(prepared) => finish(&store, prepared).await.unwrap(),
+        None => prepare(&store, None, Product::Studio).await.unwrap(),
+    };
+    selected.check_store(&store).unwrap();
+    assert_eq!(selected.source().reference.deployment, ui);
+    assert_eq!(selected.source().reference.revision, 2);
+    assert_eq!(selected.source().input, newer_ui);
     assert!(
         store
             .application_launch()
@@ -112,7 +152,7 @@ async fn partial_initialization_resumes_original_inputs_and_preserves_new_heads(
             .source()
             .reference
             .revision,
-        1
+        2
     );
     assert_eq!(
         store
@@ -137,7 +177,7 @@ async fn partial_initialization_resumes_original_inputs_and_preserves_new_heads(
     );
     drop(clients);
     store
-        .commit_application(ui, 1, input(), vec![], vec![])
+        .commit_application(ui, 2, input(), vec![], vec![])
         .await
         .unwrap();
     assert!(
@@ -149,7 +189,8 @@ async fn partial_initialization_resumes_original_inputs_and_preserves_new_heads(
         .await
         .is_err()
     );
-    prepare(&store, None, Product::Agent).await.unwrap();
+    let (current, _, _) = prepare(&store, None, Product::Agent).await.unwrap();
+    assert_eq!(current.source().reference.revision, 3);
     assert_eq!(
         store
             .load_application(ui)
@@ -159,7 +200,7 @@ async fn partial_initialization_resumes_original_inputs_and_preserves_new_heads(
             .source()
             .reference
             .revision,
-        2
+        3
     );
     serving.stop().await;
     drop(host);
@@ -247,7 +288,8 @@ async fn invalid_presentation_is_rejected_before_host_initialization() {
             Product::Agent,
         )
         .await
-        .unwrap_err();
+        .err()
+        .unwrap();
         assert!(error.to_string().contains("requires tui"));
         assert!(!host.exists());
         assert!(store.application_launch().await.unwrap().is_none());

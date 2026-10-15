@@ -552,3 +552,197 @@ async fn checked_deployment_cannot_cross_root_owners() {
     );
     other.drain().await;
 }
+
+#[tokio::test]
+async fn prepared_commit_preserves_exact_source_and_cas() {
+    let (_directory, store) = store().await;
+    let selected_package = package("export const value = 'selected';");
+    let extra_package = package("export const value = 'unused';");
+    let original = selected(&selected_package);
+    let prepared = prepare_applications(
+        &[(&original, &[])],
+        &[selected_package.clone(), extra_package],
+    )
+    .unwrap()
+    .pop()
+    .unwrap();
+    assert_eq!(prepared.packages().len(), 1);
+    assert_eq!(prepared.packages()[0].files(), selected_package.files());
+    let id = Uuid::new_v4();
+    let committed = store
+        .commit_prepared_application(id, 0, prepared)
+        .await
+        .unwrap();
+    committed.check_store(&store).unwrap();
+    assert_eq!(committed.source().reference.revision, 1);
+    assert_eq!(
+        serde_json::to_value(&committed.source().input).unwrap(),
+        serde_json::to_value(&original).unwrap()
+    );
+    let persisted = store.load_application(id).await.unwrap().unwrap();
+    assert_eq!(persisted.source().reference, committed.source().reference);
+    assert_eq!(
+        persisted.packages()[0].files(),
+        committed.packages()[0].files()
+    );
+    assert_eq!(
+        persisted.plan().instances().len(),
+        committed.plan().instances().len()
+    );
+    let stale = PreparedApplication::new(original, vec![], vec![selected_package]).unwrap();
+    assert!(matches!(
+        store.commit_prepared_application(id, 0, stale).await,
+        Err(StoreError::RevisionConflict { .. })
+    ));
+    assert_eq!(
+        store
+            .read_application_metadata(id)
+            .await
+            .unwrap()
+            .unwrap()
+            .source
+            .reference
+            .revision,
+        1
+    );
+    store.drain().await;
+}
+
+#[tokio::test]
+async fn prepared_commit_snapshot_cannot_cross_reopened_root_lease() {
+    let (directory, original) = store().await;
+    let id = Uuid::new_v4();
+    let prepared = PreparedApplication::new(input(), vec![], vec![]).unwrap();
+    let loaded = original
+        .commit_prepared_application(id, 0, prepared)
+        .await
+        .unwrap();
+    loaded.check_store(&original).unwrap();
+    original.drain().await;
+    drop(original);
+    let namespaces = RootNamespaces {
+        ownership: directory.path().join("owners"),
+        control: directory.path().join("control"),
+    };
+    let reopened = EventLog::for_root(Arc::new(
+        RootOwner::open(&directory.path().join("root"), &namespaces).unwrap(),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        reopened.owned_root().unwrap().root_id(),
+        loaded.source().reference.state_domain
+    );
+    assert!(loaded.check_store(&reopened).is_err());
+    reopened
+        .load_application(id)
+        .await
+        .unwrap()
+        .unwrap()
+        .check_store(&reopened)
+        .unwrap();
+    reopened.drain().await;
+}
+
+#[tokio::test]
+async fn batch_budget_counts_each_sources_selected_packages() {
+    let (_directory, store) = store().await;
+    let first = package("export default 'first';");
+    let second = package("export default 'second';");
+    let mut source = selected(&first);
+    source
+        .instances
+        .get_mut("view")
+        .unwrap()
+        .configuration
+        .values
+        .insert("padding".into(), serde_json::json!(""));
+    let selected_refs = vec![first.application_ref()];
+    let overhead = serde_json::to_vec(&DeploymentDocument {
+        input: source.clone(),
+        remote_exports: vec![],
+        packages: selected_refs.clone(),
+    })
+    .unwrap()
+    .len();
+    source
+        .instances
+        .get_mut("view")
+        .unwrap()
+        .configuration
+        .values
+        .insert(
+            "padding".into(),
+            serde_json::json!("x".repeat(MAX_JSON - overhead)),
+        );
+    assert_eq!(
+        serde_json::to_vec(&DeploymentDocument {
+            input: source.clone(),
+            remote_exports: vec![],
+            packages: selected_refs,
+        })
+        .unwrap()
+        .len(),
+        MAX_JSON
+    );
+    validate_application(&source, &[], std::slice::from_ref(&first)).unwrap();
+    let pool = vec![first.clone(), second.clone()];
+    // An ordinary commit still counts every explicitly supplied package.
+    assert!(PreparedApplication::new(source.clone(), vec![], pool.clone()).is_err());
+    let other = selected(&second);
+    let mut prepared = prepare_applications(&[(&source, &[]), (&other, &[])], &pool).unwrap();
+    assert_eq!(prepared[0].packages().len(), 1);
+    assert_eq!(
+        prepared[0].packages()[0].application_ref(),
+        first.application_ref()
+    );
+    assert_eq!(
+        prepared[1].packages()[0].application_ref(),
+        second.application_ref()
+    );
+    let id = Uuid::new_v4();
+    let committed = store
+        .commit_prepared_application(id, 0, prepared.remove(0))
+        .await
+        .unwrap();
+    let loaded = store.load_application(id).await.unwrap().unwrap();
+    assert_eq!(loaded.source().reference, committed.source().reference);
+    assert_eq!(loaded.source().input, source);
+    assert_eq!(loaded.packages().len(), 1);
+    // Recovery decodes all immutable bytes again, then applies the same budget
+    // to each selected source instead of the union written in the pending record.
+    let recovered_pool: Vec<_> = pool
+        .iter()
+        .map(|package| Package::from_bundle(&package.to_bundle()).unwrap())
+        .collect();
+    let recovered =
+        prepare_applications(&[(&source, &[]), (&other, &[])], &recovered_pool).unwrap();
+    assert_eq!(
+        recovered[0].packages()[0].files(),
+        loaded.packages()[0].files()
+    );
+    let mut oversized = source;
+    let padding = oversized
+        .instances
+        .get_mut("view")
+        .unwrap()
+        .configuration
+        .values
+        .get_mut("padding")
+        .unwrap();
+    *padding = serde_json::json!(format!("{}x", padding.as_str().unwrap()));
+    assert!(validate_application(&oversized, &[], std::slice::from_ref(&first)).is_err());
+    assert!(prepare_applications(&[(&oversized, &[])], &pool).is_err());
+    assert_eq!(
+        store
+            .read_application_metadata(id)
+            .await
+            .unwrap()
+            .unwrap()
+            .source
+            .reference
+            .revision,
+        1
+    );
+    store.drain().await;
+}

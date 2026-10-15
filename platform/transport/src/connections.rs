@@ -192,15 +192,44 @@ impl Connections {
         configuration: Configuration,
         namespaces: RootNamespaces,
         helper: PathBuf,
-        mut cohost_native: maka_host_runtime::application::NativeRegistry,
+        cohost_native: maka_host_runtime::application::NativeRegistry,
         cohost_scripts: Option<Arc<dyn maka_host_runtime::application::backend::Factory>>,
     ) -> Result<Self> {
-        configuration.validate()?;
         let loaded = store
             .load_application(deployment)
             .await
             .map_err(|e| e.to_string())?
             .ok_or("UI deployment not found")?;
+        Self::prepare_loaded(
+            store,
+            loaded,
+            target,
+            configuration,
+            namespaces,
+            helper,
+            cohost_native,
+            cohost_scripts,
+        )
+        .await
+    }
+
+    /// Adopt one checked UI snapshot from the same live original Root owner.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn prepare_loaded(
+        store: Arc<EventLog>,
+        loaded: maka_event_log::applications::LoadedDeployment,
+        target: PresentationTarget,
+        configuration: Configuration,
+        namespaces: RootNamespaces,
+        helper: PathBuf,
+        mut cohost_native: maka_host_runtime::application::NativeRegistry,
+        cohost_scripts: Option<Arc<dyn maka_host_runtime::application::backend::Factory>>,
+    ) -> Result<Self> {
+        loaded
+            .check_store(&store)
+            .map_err(|error| error.to_string())?;
+        configuration.validate()?;
+        let deployment = loaded.source().reference.deployment;
         if loaded.source().input.environment.location != ExecutionLocation::Ui
             || loaded.source().input.environment.presentation != Some(target)
         {

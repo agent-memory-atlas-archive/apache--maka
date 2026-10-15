@@ -123,8 +123,12 @@ impl PublishedHost {
         super::headless::save_product(
             &store,
             deployment,
-            &original.source().input,
-            original.packages(),
+            maka_event_log::applications::PreparedApplication::new(
+                original.source().input.clone(),
+                original.source().remote_exports.clone(),
+                original.packages().to_vec(),
+            )
+            .unwrap(),
             endpoints.clone(),
             native.clone(),
         )

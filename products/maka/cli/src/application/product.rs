@@ -19,8 +19,8 @@
 //! Product authoring loads checked packages from development output or release assets.
 use super::{HostError, Input, Package, RemoteObservation, read_json};
 use clap::{Args, ValueEnum};
+use maka_event_log::applications::PreparedApplication;
 use maka_js_runtime::plugin::Vm;
-use maka_plugin_core::plan::Plan;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeMap, io::Write, path::PathBuf};
@@ -233,7 +233,7 @@ async fn author(
     product: Product,
     configuration: Value,
     packages: &BTreeMap<String, Package>,
-) -> Result<(Sources, Value, Plan), HostError> {
+) -> Result<(Sources, Value, [PreparedApplication; 3]), HostError> {
     let source = authoring()?;
     verified_fingerprint(&source, packages, &bundle_fingerprint()?)?;
     author_with_source(product, configuration, packages, &source).await
@@ -243,7 +243,7 @@ async fn author_with_source(
     mut configuration: Value,
     packages: &BTreeMap<String, Package>,
     source: &str,
-) -> Result<(Sources, Value, Plan), HostError> {
+) -> Result<(Sources, Value, [PreparedApplication; 3]), HostError> {
     let values = configuration
         .as_object_mut()
         .ok_or("installation configuration must be an object")?;
@@ -302,22 +302,12 @@ async fn author_with_source(
     vm.shutdown().await;
     let sources: Sources = serde_json::from_value(result?)?;
     let checked: Vec<_> = packages.values().cloned().collect();
-    let host_plan = maka_event_log::applications::validate_applications(
-        &[
-            (&sources.host, &[][..]),
-            (&sources.management_host, &[][..]),
-            (&sources.ui, sources.remote_exports.as_slice()),
-        ],
-        &checked,
-    )?
-    .into_iter()
-    .next()
-    .expect("validated Host plan");
+    let prepared = prepare_sources(&sources, &checked)?;
     let connections: maka_transport::Configuration =
         serde_json::from_value(sources.connections.clone())?;
     connections.validate().map_err(HostError::from)?;
     values.remove("packages");
-    Ok((sources, configuration, host_plan))
+    Ok((sources, configuration, prepared))
 }
 
 fn export(
@@ -419,4 +409,22 @@ fn selected(
         .filter(|package| required.contains(&package.application_ref()))
         .cloned()
         .collect())
+}
+
+fn prepare_sources(
+    sources: &Sources,
+    packages: &[Package],
+) -> Result<[PreparedApplication; 3], HostError> {
+    let prepared = maka_event_log::applications::prepare_applications(
+        &[
+            (&sources.host, &[][..]),
+            (&sources.management_host, &[][..]),
+            (&sources.ui, sources.remote_exports.as_slice()),
+        ],
+        packages,
+    )?;
+    let prepared: [PreparedApplication; 3] = prepared
+        .try_into()
+        .unwrap_or_else(|_| unreachable!("three prepared product sources"));
+    Ok(prepared)
 }

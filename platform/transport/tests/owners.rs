@@ -387,3 +387,97 @@ Some(maka_host_js::factory(Default::default())),).await.unwrap();
         drop(RootOwner::open(&root, &namespaces).unwrap());
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn loaded_ui_requires_its_live_original_root_owner() {
+    use maka_plugin_core::composition::PresentationTarget;
+    use maka_transport::Connections;
+    let directory = tempfile::tempdir().unwrap();
+    let namespaces = RootNamespaces {
+        ownership: directory.path().join("owners"),
+        control: directory.path().join("control"),
+    };
+    let path = directory.path().join("ui");
+    let original = Arc::new(
+        EventLog::for_root(Arc::new(RootOwner::create(&path, &namespaces).unwrap()))
+            .await
+            .unwrap(),
+    );
+    let other = Arc::new(
+        EventLog::for_root(Arc::new(
+            RootOwner::create(&directory.path().join("other"), &namespaces).unwrap(),
+        ))
+        .await
+        .unwrap(),
+    );
+    let input = serde_json::from_value(json!({
+        "environment":{"location":"ui","presentation":"tui"},"instances":{}
+    }))
+    .unwrap();
+    let id = uuid::Uuid::new_v4();
+    let reference = original
+        .commit_application(id, 0, input, vec![], vec![])
+        .await
+        .unwrap();
+    let foreign = original.load_application(id).await.unwrap().unwrap();
+    let error = Connections::prepare_loaded(
+        other.clone(),
+        foreign,
+        PresentationTarget::Tui,
+        Configuration::default(),
+        namespaces.clone(),
+        "unused-startup-helper".into(),
+        NativeRegistry::default(),
+        None,
+    )
+    .await
+    .err()
+    .unwrap();
+    assert!(error.contains("foreign original source Root"), "{error}");
+    let expired = original.load_application(id).await.unwrap().unwrap();
+    original.drain().await;
+    drop(original);
+    let reopened = Arc::new(
+        EventLog::for_root(Arc::new(RootOwner::open(&path, &namespaces).unwrap()))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        reopened.owned_root().unwrap().root_id(),
+        reference.state_domain
+    );
+    let error = Connections::prepare_loaded(
+        reopened.clone(),
+        expired,
+        PresentationTarget::Tui,
+        Configuration::default(),
+        namespaces.clone(),
+        "unused-startup-helper".into(),
+        NativeRegistry::default(),
+        None,
+    )
+    .await
+    .err()
+    .unwrap();
+    assert!(error.contains("original source Root has closed"), "{error}");
+    let current = reopened.load_application(id).await.unwrap().unwrap();
+    let mut connections = Connections::prepare_loaded(
+        reopened.clone(),
+        current,
+        PresentationTarget::Tui,
+        Configuration::default(),
+        namespaces,
+        "unused-startup-helper".into(),
+        NativeRegistry::default(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        connections.take_initial().unwrap().source().reference,
+        reference
+    );
+    connections.drain().await;
+    reopened.drain().await;
+    other.drain().await;
+}

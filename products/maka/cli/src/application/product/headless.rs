@@ -19,7 +19,11 @@
 //! A public Host opens the same persisted product source across process restarts.
 use super::{HostError, Input, Product, author, installation, launch, packages};
 use base64::{Engine, engine::general_purpose::STANDARD};
-use maka_event_log::{EventLog, applications::launch::Launch, root::RootOwner};
+use maka_event_log::{
+    EventLog,
+    applications::{LoadedDeployment, PreparedApplication, launch::Launch},
+    root::RootOwner,
+};
 use maka_host_runtime::{
     DirectoryRootSpec,
     application::{
@@ -61,22 +65,28 @@ struct Preparation {
 pub(super) async fn save_product(
     store: &EventLog,
     deployment: Uuid,
-    input: &Input,
-    packages: &[super::Package],
+    prepared: PreparedApplication,
     endpoints: BTreeMap<String, HostEndpoint>,
     native: Vec<NativeGrant>,
 ) -> Result<(), HostError> {
+    if !prepared.remote_exports().is_empty() {
+        return Err("public Host cannot use remote observations".into());
+    }
     let selection = serde_json::to_value(Selection::PublicHost { endpoints, native })?;
     match store.application_launch().await? {
         Some(record) => {
             if record.deployment != deployment || record.configuration != selection {
                 return Err("original public Host selection changed".into());
             }
+            // Existing pending bytes remain authoritative and must recover first.
+            prepare(store, Roots::Saved).await?;
+            launch::ensure_prepared(store, deployment, prepared).await?;
         }
         None => {
             let preparation = Preparation {
-                input: input.clone(),
-                packages: packages
+                input: prepared.input().clone(),
+                packages: prepared
+                    .packages()
                     .iter()
                     .map(|package| {
                         package
@@ -94,10 +104,12 @@ pub(super) async fn save_product(
                     pending: Some(serde_json::to_vec(&preparation)?),
                 })
                 .await?;
+            // The pending record is durable; keep the exact already checked bytes.
+            launch::ensure_prepared(store, deployment, prepared).await?;
+            store.complete_application_launch(deployment).await?;
         }
     }
-    prepare(store, Roots::Saved).await?;
-    launch::ensure(store, deployment, input, &[], packages).await
+    Ok(())
 }
 
 /// Bind an explicitly committed generic Host without reauthoring its source.
@@ -143,11 +155,10 @@ pub(crate) async fn open_host(
 ) -> Result<Arc<Host>, HostError> {
     let store = Arc::new(maka_transport::open_store(Arc::new(owner)).await?);
     let result = async {
-        let (deployment, Selection::PublicHost { endpoints, native }) =
-            prepare(&store, roots).await?;
-        Ok(Host::open_with_options(
+        let (loaded, Selection::PublicHost { endpoints, native }) = prepare(&store, roots).await?;
+        Ok(Host::open_loaded_with_options(
             store.clone(),
-            deployment,
+            loaded,
             crate::application::serve::native()?,
             Some(maka_host_js::factory(Default::default())),
             endpoints,
@@ -162,13 +173,21 @@ pub(crate) async fn open_host(
     }
     result
 }
-async fn prepare(store: &EventLog, roots: Roots) -> Result<(Uuid, Selection), HostError> {
+async fn prepare(
+    store: &EventLog,
+    roots: Roots,
+) -> Result<(LoadedDeployment, Selection), HostError> {
     if store.application_launch().await?.is_none() {
         let initial = match &roots {
             Roots::Saved => None,
             Roots::Configured(roots) => roots.clone(),
         };
-        begin(store, initial).await?;
+        let (deployment, selection, prepared) = begin(store, initial).await?;
+        let loaded = store
+            .commit_prepared_application(deployment, 0, prepared)
+            .await?;
+        store.complete_application_launch(deployment).await?;
+        return Ok((loaded, selection));
     }
     let record = store
         .application_launch()
@@ -185,9 +204,16 @@ async fn prepare(store: &EventLog, roots: Roots) -> Result<(Uuid, Selection), Ho
     if let Roots::Configured(roots) = roots {
         apply_directories(store, record.deployment, directories(roots)?).await?;
     }
-    Ok((record.deployment, selection))
+    let loaded = store
+        .load_application(record.deployment)
+        .await?
+        .ok_or("public Host source missing")?;
+    Ok((loaded, selection))
 }
-async fn begin(store: &EventLog, roots: Option<Vec<DirectoryRootSpec>>) -> Result<(), HostError> {
+async fn begin(
+    store: &EventLog,
+    roots: Option<Vec<DirectoryRootSpec>>,
+) -> Result<(Uuid, Selection, PreparedApplication), HostError> {
     let home = crate::serve::home_directory()?;
     let roots = directories(roots)?;
     let root = store.owned_root()?;
@@ -206,29 +232,21 @@ async fn begin(store: &EventLog, roots: Option<Vec<DirectoryRootSpec>>) -> Resul
             .collect(),
     );
     let packages = tokio::task::spawn_blocking(packages).await??;
-    let (sources, _, host_plan) = author(Product::Agent, configuration, &packages).await?;
+    let (sources, _, [prepared, _, _]) = author(Product::Agent, configuration, &packages).await?;
     let connections: maka_transport::Configuration = serde_json::from_value(sources.connections)?;
     let connection = connections
         .hosts
         .into_iter()
         .find(|host| host.name == "local")
         .ok_or("product public Host missing")?;
-    let required: std::collections::BTreeSet<_> = host_plan
-        .instances()
-        .values()
-        .map(|instance| &instance.package)
-        .collect();
-    let packages: Vec<_> = packages
-        .into_values()
-        .filter(|package| required.contains(&package.application_ref()))
-        .collect();
     let selection = Selection::PublicHost {
         endpoints: connection.endpoints,
         native: connection.native,
     };
     let preparation = Preparation {
-        input: sources.host,
-        packages: packages
+        input: prepared.input().clone(),
+        packages: prepared
+            .packages()
             .iter()
             .map(|package| {
                 package
@@ -242,11 +260,11 @@ async fn begin(store: &EventLog, roots: Option<Vec<DirectoryRootSpec>>) -> Resul
     store
         .begin_application_launch(Launch {
             deployment: connection.deployment,
-            configuration: serde_json::to_value(selection)?,
+            configuration: serde_json::to_value(&selection)?,
             pending: Some(serde_json::to_vec(&preparation)?),
         })
         .await?;
-    Ok(())
+    Ok((connection.deployment, selection, prepared))
 }
 
 async fn apply_directories(
@@ -357,6 +375,87 @@ fn configuration_values<'a>(
 mod tests {
     use super::*;
     #[tokio::test]
+    async fn saved_product_checks_original_source_before_accepting_prepared_input() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = launch::open(directory.path().join("host"), true, None)
+            .await
+            .unwrap();
+        let deployment = Uuid::new_v4();
+        let source: Input = serde_json::from_value(json!({
+            "environment":{"location":"host"},"instances":{}
+        }))
+        .unwrap();
+        let pending = Preparation {
+            input: source.clone(),
+            packages: vec![],
+        };
+        let configuration = serde_json::to_value(Selection::PublicHost {
+            endpoints: BTreeMap::new(),
+            native: vec![],
+        })
+        .unwrap();
+        store
+            .begin_application_launch(Launch {
+                deployment,
+                configuration: configuration.clone(),
+                pending: Some(serde_json::to_vec(&pending).unwrap()),
+            })
+            .await
+            .unwrap();
+        let mut changed = source.clone();
+        changed.environment.location = maka_plugin_core::composition::ExecutionLocation::Ui;
+        changed.environment.presentation =
+            Some(maka_plugin_core::composition::PresentationTarget::Tui);
+        let error = save_product(
+            &store,
+            deployment,
+            PreparedApplication::new(changed, vec![], vec![]).unwrap(),
+            BTreeMap::new(),
+            vec![],
+        )
+        .await
+        .err()
+        .unwrap();
+        assert!(error.to_string().contains("conflicts"), "{error}");
+        let stored = store.load_application(deployment).await.unwrap().unwrap();
+        assert_eq!(stored.source().reference.revision, 1);
+        assert_eq!(
+            serde_json::to_value(&stored.source().input).unwrap(),
+            serde_json::to_value(&source).unwrap()
+        );
+        assert_eq!(
+            store
+                .application_launch()
+                .await
+                .unwrap()
+                .unwrap()
+                .configuration,
+            configuration
+        );
+        save_product(
+            &store,
+            deployment,
+            PreparedApplication::new(source, vec![], vec![]).unwrap(),
+            BTreeMap::new(),
+            vec![],
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            store
+                .read_application_metadata(deployment)
+                .await
+                .unwrap()
+                .unwrap()
+                .source
+                .reference
+                .revision,
+            1
+        );
+        store.drain().await;
+    }
+
+    #[tokio::test]
     async fn public_host_resumes_original_source_and_starts_with_read_only_permissions() {
         let directory = tempfile::tempdir().unwrap();
         let namespaces = maka_event_log::root::RootNamespaces {
@@ -377,8 +476,9 @@ mod tests {
         let record = store.application_launch().await.unwrap().unwrap();
         assert!(record.pending.is_some());
         let selected_id = record.deployment;
-        let (deployment, Selection::PublicHost { endpoints, .. }) =
+        let (loaded, Selection::PublicHost { endpoints, .. }) =
             prepare(&store, Roots::Saved).await.unwrap();
+        let deployment = loaded.source().reference.deployment;
         assert_eq!(deployment, selected_id);
         assert!(endpoints.contains_key("agent"));
         assert!(
@@ -412,6 +512,7 @@ mod tests {
         }));
         let revision = original.source().reference.revision;
         let (reopened, _) = prepare(&store, Roots::Saved).await.unwrap();
+        let reopened = reopened.source().reference.deployment;
         assert_eq!(reopened, deployment);
         assert_eq!(
             store

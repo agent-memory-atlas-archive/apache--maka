@@ -125,6 +125,25 @@ impl Host {
         grants: Vec<NativeGrant>,
         options: Options,
     ) -> Result<Arc<Self>> {
+        let loaded = store
+            .load_application(deployment)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or("deployment not found")?;
+        Self::open_loaded_with_options(store, loaded, native, scripts, selections, grants, options)
+            .await
+    }
+
+    /// Open a checked committed source without rereading its immutable packages.
+    pub async fn open_loaded_with_options(
+        store: Arc<EventLog>,
+        loaded: maka_event_log::applications::LoadedDeployment,
+        native: NativeRegistry,
+        scripts: Option<Arc<dyn super::backend::Factory>>,
+        selections: BTreeMap<String, HostEndpoint>,
+        grants: Vec<NativeGrant>,
+        options: Options,
+    ) -> Result<Arc<Self>> {
         if options.handshake_timeout.is_zero()
             || options.handshake_timeout > Duration::from_secs(300)
             || options
@@ -136,15 +155,14 @@ impl Host {
         }
         let root = store.owned_root().map_err(|error| error.to_string())?;
         let policy = Arc::new(PeerPolicy::with_native_grants(grants)?);
-        let application = Application::start_from_store(
+        let application = Application::start_loaded(
             store.clone(),
-            deployment,
+            loaded,
             with_gateway(native)?,
             policy.issuer(),
             policy.clone(),
             scripts,
-        )
-        .await?;
+        )?;
         if let Err(error) = Endpoints::start(&application.client(), &selections).await {
             application.shutdown().await?;
             return Err(error);

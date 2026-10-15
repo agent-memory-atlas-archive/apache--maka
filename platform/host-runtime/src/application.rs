@@ -698,7 +698,7 @@ impl Application {
     pub async fn start_from_store(
         store: Arc<maka_event_log::EventLog>,
         deployment: Uuid,
-        mut native: NativeRegistry,
+        native: NativeRegistry,
         issuer: Issuer,
         policy: Arc<dyn Policy>,
         scripts: Option<Arc<dyn backend::Factory>>,
@@ -708,6 +708,21 @@ impl Application {
             .await
             .map_err(|e| e.to_string())?
             .ok_or("deployment not found")?;
+        Self::start_loaded(store, loaded, native, issuer, policy, scripts)
+    }
+
+    /// Start a committed snapshot belonging to the same live original Root.
+    pub fn start_loaded(
+        store: Arc<maka_event_log::EventLog>,
+        loaded: maka_event_log::applications::LoadedDeployment,
+        mut native: NativeRegistry,
+        issuer: Issuer,
+        policy: Arc<dyn Policy>,
+        scripts: Option<Arc<dyn backend::Factory>>,
+    ) -> Result<Self> {
+        loaded
+            .check_store(&store)
+            .map_err(|error| error.to_string())?;
         // Persisted remote declarations are compatibility observations. This
         // executor has no trusted remote transport and cannot turn them into grants.
         if !loaded.source().remote_exports.is_empty() {

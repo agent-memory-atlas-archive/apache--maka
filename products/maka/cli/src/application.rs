@@ -210,7 +210,18 @@ impl Command {
                     .transpose()?
                     .unwrap_or_default();
                 let store = Arc::new(open_store(args.root).await?);
-                run_tui(store, args.deployment, configuration, None, Vec::new()).await?;
+                let loaded = match store.load_application(args.deployment).await {
+                    Ok(Some(loaded)) => loaded,
+                    Ok(None) => {
+                        store.drain().await;
+                        return Err("UI deployment not found".into());
+                    }
+                    Err(error) => {
+                        store.drain().await;
+                        return Err(error.into());
+                    }
+                };
+                run_tui(store, loaded, configuration, None, Vec::new()).await?;
             }
         }
         Ok(())
@@ -288,7 +299,7 @@ async fn open_store(root: PathBuf) -> Result<maka_event_log::EventLog, HostError
 
 async fn run_tui(
     store: Arc<maka_event_log::EventLog>,
-    deployment: uuid::Uuid,
+    loaded: maka_event_log::applications::LoadedDeployment,
     configuration: maka_transport::Configuration,
     startup: Option<maka_render_terminal::startup::Startup>,
     anchors: Vec<maka_host_runtime::application::host::Client>,
@@ -309,9 +320,9 @@ async fn run_tui(
             return Err(error);
         }
     };
-    let mut connections = match maka_transport::Connections::prepare(
+    let mut connections = match maka_transport::Connections::prepare_loaded(
         store.clone(),
-        deployment,
+        loaded,
         PresentationTarget::Tui,
         configuration,
         namespaces,
