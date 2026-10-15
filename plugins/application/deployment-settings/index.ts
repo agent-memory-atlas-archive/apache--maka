@@ -31,7 +31,7 @@ import {
   retryBookmark,
   type Bookmark,
 } from '../../shared/bookmark.js';
-import { copy } from '../../shared/locale.js';
+import { copy } from './locale.js';
 import { pageHeader, withPageShell, type PageState } from '../../shared/page-shell.js';
 import { fill, output, type Presentation, type Node } from '../../shared/view.js';
 

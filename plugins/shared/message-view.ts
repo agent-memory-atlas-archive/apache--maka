@@ -19,7 +19,7 @@
 
 import type { HistorySource } from '../../packages/plugin-sdk/src/index.js';
 import type { Theme } from './contracts.js';
-import { copy } from './locale.js';
+import { copy } from './locale-catalogs/message-view.js';
 import { toolPresentation } from '../agent/tool-details/index.js';
 import { fill, compactLabel, type Node, type Presentation } from './view.js';
 

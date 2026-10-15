@@ -18,11 +18,10 @@
  */
 
 import type { Theme } from '../../shared/contracts.js';
-import { copy } from '../../shared/locale.js';
+import { copy, tuiText } from './locale.js';
 import { panelHeader } from '../../shared/page-shell.js';
 import { toolLabel } from '../../shared/message-view.js';
 import { toolCards } from '../../shared/tool-cards.js';
-import { tuiText } from '../../shared/tui-locale.js';
 import { compactLabel, type Node, type Presentation } from '../../shared/view.js';
 import { toolPresentation } from '../tool-details/index.js';
 import { messages } from './messages.js';
@@ -133,7 +132,7 @@ export function outputsView<N extends Node>(
                                 'output-item-' + message.id,
                                 ui.text(
                                   'output-reply-' + message.id,
-                                  compactLabel(message.text.replace(/\s+/gu, ' '), 180),
+                                  compactLabel(message.text, 180),
                                   13,
                                   theme.text,
                                 ),

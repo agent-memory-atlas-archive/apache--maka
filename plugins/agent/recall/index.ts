@@ -34,7 +34,7 @@ import type {
 } from '../../../packages/plugin-sdk/src/index.js';
 import { recallContract, type RecallProps } from '../../shared/contracts.js';
 import { pageHeader, withPageShell, type PageState } from '../../shared/page-shell.js';
-import { copy, type Copy } from '../../shared/locale.js';
+import { copy, type Copy } from './locale.js';
 import { sameValue } from '../../shared/value.js';
 import { compactLabel, fill, output, type Node, type Presentation } from '../../shared/view.js';
 

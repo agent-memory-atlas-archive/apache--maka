@@ -33,7 +33,7 @@ import type {
   Target,
 } from '../../../packages/plugin-sdk/src/index.js';
 import type { InstallIntent, PackageSource } from '../../shared/deployment-import.js';
-import { type Copy } from '../../shared/locale.js';
+import { type Copy } from './locale.js';
 import { type PageState } from '../../shared/page-shell.js';
 
 export type Mutation =

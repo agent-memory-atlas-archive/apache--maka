@@ -24,7 +24,7 @@ import type {
   EditorObservation,
 } from '../../packages/plugin-sdk/src/index.js';
 import type { ConnectionsProps } from './contracts.js';
-import { copy } from './locale.js';
+import { copy } from './locale-catalogs/deployment-document.js';
 import { sameValue } from './value.js';
 import { fill, pixels, type Presentation, type Node } from './view.js';
 

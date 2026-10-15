@@ -19,7 +19,7 @@
 
 import type { Component, Emission } from '../../packages/plugin-sdk/src/index.js';
 import type { PageChrome, PageShellProps, Theme } from './contracts.js';
-import { copy } from './locale.js';
+import { copy } from './locale-catalogs/page-shell.js';
 import { sameValue } from './value.js';
 import { fill, type Node, type Presentation } from './view.js';
 

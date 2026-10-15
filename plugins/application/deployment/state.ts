@@ -34,7 +34,7 @@ import { type Bookmark } from '../../shared/bookmark.js';
 import { type DocumentEditor } from '../../shared/deployment-document.js';
 import { type InstallIntent, type PackageImport } from '../../shared/deployment-import.js';
 import { type InstanceSettings } from '../../shared/instance-settings.js';
-import { type Copy } from '../../shared/locale.js';
+import { type Copy } from './locale.js';
 import { type PageState } from '../../shared/page-shell.js';
 
 export type Request =

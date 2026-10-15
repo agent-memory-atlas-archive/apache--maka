@@ -29,7 +29,7 @@ import type {
   TextChunk,
 } from '../../packages/plugin-sdk/src/index.js';
 import type { ConnectionsProps } from './contracts.js';
-import { copy, type Copy } from './locale.js';
+import { copy, type Copy } from './locale-catalogs/instance-settings.js';
 import { sameValue } from './value.js';
 import { compactLabel, fill, pixels, type Node, type Presentation } from './view.js';
 

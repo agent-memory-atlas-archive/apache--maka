@@ -18,7 +18,7 @@
  */
 
 import { scrollBoundary } from './scroll.js';
-import { tuiText } from './tui-locale.js';
+import { tuiText, copy } from './locale-catalogs/components.js';
 import type {
   Component,
   Emission,
@@ -50,7 +50,6 @@ import {
   messageCopyObservation,
   type MessageCopy,
 } from './message-copy.js';
-import { copy } from './locale.js';
 import { toolCards } from './tool-cards.js';
 import { filePresentation, toolPresentation } from '../agent/tool-details/index.js';
 import { toolLabel, messageView, sourceFieldLabel } from './message-view.js';

@@ -36,7 +36,8 @@ import type {
 } from '../../../packages/plugin-sdk/src/index.js';
 import { workhubRootContract, type Theme, type AgentScreenProps } from '../../shared/contracts.js';
 import { scrollBoundary } from '../../shared/scroll.js';
-import { copy, resolveLocale, type Copy } from '../../shared/locale.js';
+import { resolveLocale } from '../../shared/locale.js';
+import { copy, type Copy } from './locale.js';
 import { sameValue } from '../../shared/value.js';
 import {
   compactLabel,

@@ -19,8 +19,7 @@
 
 import type { Action, RowsProps } from '../../../packages/plugin-sdk/src/index.js';
 import type { Theme, TimelineProps } from '../../shared/contracts.js';
-import { copy } from '../../shared/locale.js';
-import { tuiText } from '../../shared/tui-locale.js';
+import { copy, tuiText } from './locale.js';
 import { sameValue } from '../../shared/value.js';
 import { fill, pixels, type Node, type Presentation } from '../../shared/view.js';
 

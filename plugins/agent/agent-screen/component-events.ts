@@ -43,7 +43,7 @@ import type {
   SelectedModel,
   TimelineFileContext,
 } from '../../shared/contracts.js';
-import { copy } from '../../shared/locale.js';
+import { copy } from './locale.js';
 import { sameValue } from '../../shared/value.js';
 import { type Node, type Presentation } from '../../shared/view.js';
 

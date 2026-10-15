@@ -19,14 +19,13 @@
 
 import type { Component, Emission, Permissions } from '../../../packages/plugin-sdk/src/index.js';
 import { permissionApprovalContract, type ServiceApprovalProps } from '../../shared/contracts.js';
-import { copy } from '../../shared/locale.js';
+import { copy } from './locale.js';
 import { sameValue } from '../../shared/value.js';
 import { fill, pixels, output, type Node, type Presentation } from '../../shared/view.js';
 
 type State = {
   revision: number;
   identity: Pick<ServiceApprovalProps['record'], 'sessionId' | 'requestId' | 'request'>;
-  decision: 'deny' | 'allow';
   scope: 'once' | 'turn' | 'session';
 };
 function identity(props: ServiceApprovalProps): State['identity'] {
@@ -39,7 +38,6 @@ export function permissionApproval<N extends Node>(
   function frame(state: State, props: ServiceApprovalProps, events: Emission[] = []) {
     if (!sameValue(state.identity, identity(props))) {
       state.identity = identity(props);
-      state.decision = 'deny';
       state.scope = 'once';
     }
     const ui = presentation.paint(props.theme),
@@ -53,7 +51,6 @@ export function permissionApproval<N extends Node>(
         : ui.button(key, label, !available, selected);
     const outcome = props.record.outcome;
     const settled = outcome?.kind === 'permissions_decision' ? outcome.decision : null;
-    const decision = settled?.decision ?? state.decision;
     const scope = settled?.decision === 'allow' ? settled.scope : state.scope;
     const scopeLabel =
       scope === 'once'
@@ -117,20 +114,6 @@ export function permissionApproval<N extends Node>(
               ]
             : []),
           ui.box(
-            'permission-choice',
-            [
-              choose('deny', text.approvalDeny, decision === 'deny'),
-              choose('allow', text.approvalAllow, decision === 'allow'),
-            ],
-            {
-              row: true,
-              gap: 1,
-              focusGroup: true,
-              terminal: { wrap: true },
-              style: { wrap: true },
-            },
-          ),
-          ui.box(
             'permission-scope',
             [
               choose('once', text.permissionOnce, scope === 'once'),
@@ -145,7 +128,20 @@ export function permissionApproval<N extends Node>(
               style: { wrap: true },
             },
           ),
-          ui.button('submit', text.approvalSubmit, !available),
+          ui.box(
+            'permission-choice',
+            [
+              ui.button('allow', text.permissionAllow + ' · ' + scopeLabel, !available),
+              ui.button('deny', text.approvalDeny, !available),
+            ],
+            {
+              row: true,
+              gap: 1,
+              focusGroup: true,
+              terminal: { wrap: true },
+              style: { wrap: true },
+            },
+          ),
           ...(request.kind === 'permissions'
             ? [
                 presentation.reading(
@@ -206,10 +202,7 @@ export function permissionApproval<N extends Node>(
   }
   return {
     mount(props) {
-      return frame(
-        { revision: 0, identity: identity(props), decision: 'deny', scope: 'once' },
-        props,
-      );
+      return frame({ revision: 0, identity: identity(props), scope: 'once' }, props);
     },
     update(state, props) {
       state.revision++;
@@ -228,15 +221,14 @@ export function permissionApproval<N extends Node>(
           !props.record.outcome &&
           props.record.request.kind === 'permissions'
         ) {
-          if (input.key === 'deny' || input.key === 'allow') state.decision = input.key;
-          else if (input.key === 'once' || input.key === 'turn' || input.key === 'session')
+          if (input.key === 'once' || input.key === 'turn' || input.key === 'session')
             state.scope = input.key;
-          else if (input.key === 'submit')
+          else if (input.key === 'allow' || input.key === 'deny')
             events.push({
               name: 'submit',
               value: {
                 requestId: props.record.requestId,
-                decision: state.decision,
+                decision: input.key,
                 scope: state.scope,
               },
             });

@@ -34,7 +34,7 @@ import type {
   SourcePosition,
 } from '../../packages/plugin-sdk/src/index.js';
 import type { TimelineProps } from './contracts.js';
-import { copy } from './locale.js';
+import { copy } from './locale-catalogs/conversation-search.js';
 import { toolCards } from './tool-cards.js';
 import { toolPresentation } from '../agent/tool-details/index.js';
 import { messageView, sourceFieldLabel } from './message-view.js';

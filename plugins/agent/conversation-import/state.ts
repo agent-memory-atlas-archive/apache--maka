@@ -31,7 +31,7 @@ import type {
   ReadingCommand,
   RecoveryRef,
 } from '../../../packages/plugin-sdk/src/index.js';
-import { type Copy } from '../../shared/locale.js';
+import { type Copy } from './locale.js';
 import { type PageState } from '../../shared/page-shell.js';
 
 export type FieldName = 'name' | 'database' | 'search' | 'title';

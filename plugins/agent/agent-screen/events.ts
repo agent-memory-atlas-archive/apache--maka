@@ -35,6 +35,7 @@ import { observeBookmark, retryBookmark } from '../../shared/bookmark.js';
 import type { AgentScreenProps, Theme } from '../../shared/contracts.js';
 import { settingsCategory } from '../../shared/settings.js';
 import { resolveLocale } from '../../shared/locale.js';
+
 import { type Node, type Presentation } from '../../shared/view.js';
 
 import { goalUpdate } from './goal.js';

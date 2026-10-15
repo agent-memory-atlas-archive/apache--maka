@@ -28,7 +28,8 @@ import type {
 } from '../../packages/plugin-sdk/src/index.js';
 import type { Message, TimelineProps, MessageCopyObservation } from './contracts.js';
 import { sameValue } from './value.js';
-import { copy as localized } from './locale.js';
+import { copy as localized } from './locale-catalogs/message-copy.js';
+
 import { toolLabel } from './message-view.js';
 function utf8Bytes(text: string) {
   let bytes = 0;

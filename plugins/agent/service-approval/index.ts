@@ -31,7 +31,7 @@ import {
   type ServiceApprovalProps,
   type TimelineProps,
 } from '../../shared/contracts.js';
-import { copy } from '../../shared/locale.js';
+import { copy } from './locale.js';
 import { sameValue } from '../../shared/value.js';
 import { fill, pixels, output, type Node, type Presentation } from '../../shared/view.js';
 
@@ -39,7 +39,6 @@ type State = {
   revision: number;
   serial: number;
   identity: Pick<ServiceApprovalProps['record'], 'sessionId' | 'requestId' | 'request'>;
-  decision: 'deny' | 'allow';
   page: HistorySource | null;
   pending: { key: string; position: SourcePosition } | null;
   position: SourcePosition;
@@ -125,7 +124,6 @@ export function serviceApproval<N extends Node>(
       state.pending = null;
       state.position = { kind: 'start' };
       state.failed = false;
-      state.decision = 'deny';
     }
     if (props.open && !state.page && !state.pending && !state.failed)
       read(state, actions, state.position);
@@ -176,19 +174,6 @@ export function serviceApproval<N extends Node>(
       live: false,
       search: null,
       landing: { sequence: 0, edge: 'start' },
-    };
-    const choose = (decision: 'deny' | 'allow', label: string) => {
-      const disabled =
-        !available ||
-        (decision === 'allow' && !computer && (!page || state.failed || !!state.pending));
-      return ui.item
-        ? ui.item(
-            decision,
-            ui.text(decision + '-label', label),
-            state.decision === decision,
-            disabled,
-          )
-        : ui.button(decision, label, disabled, state.decision === decision);
     };
     const out = output(
       state,
@@ -264,15 +249,15 @@ export function serviceApproval<N extends Node>(
           ui.box(
             'approval-choice',
             [
-              choose('deny', computer ? text.computerApprovalDeny : text.approvalDeny),
-              choose('allow', computer ? text.computerApprovalAllow : text.approvalAllow),
               ui.button(
-                'submit',
-                text.approvalSubmit,
-                !available ||
-                  (state.decision === 'allow' &&
-                    !computer &&
-                    (!page || state.failed || !!state.pending)),
+                'allow',
+                computer ? text.computerApprovalAllow : text.approvalAllow,
+                !available || (!computer && (!page || state.failed || !!state.pending)),
+              ),
+              ui.button(
+                'deny',
+                computer ? text.computerApprovalDeny : text.approvalDeny,
+                !available,
               ),
             ],
             {
@@ -315,7 +300,6 @@ export function serviceApproval<N extends Node>(
           revision: 0,
           serial: 0,
           identity: identity(props),
-          decision: 'deny',
           page: null,
           pending: null,
           position: { kind: 'start' },
@@ -361,11 +345,9 @@ export function serviceApproval<N extends Node>(
             props.record.request.kind === 'client_capability' ||
             (!!state.page && !state.failed && !state.pending);
           if (input.key === 'deny' || (input.key === 'allow' && reviewable))
-            state.decision = input.key;
-          else if (input.key === 'submit' && (state.decision === 'deny' || reviewable))
             events.push({
               name: 'submit',
-              value: { requestId: props.record.requestId, decision: state.decision },
+              value: { requestId: props.record.requestId, decision: input.key },
             });
         }
       } else if (props.open && input.kind === 'component' && input.child === 'arguments') {

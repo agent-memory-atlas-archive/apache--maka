@@ -37,8 +37,8 @@ import type {
   ServiceApprovalProps,
   Theme,
 } from '../../shared/contracts.js';
-import { copy, resolveLocale } from '../../shared/locale.js';
-import { tuiText } from '../../shared/tui-locale.js';
+import { resolveLocale } from '../../shared/locale.js';
+import { copy, tuiText } from './locale.js';
 import { sameValue } from '../../shared/value.js';
 import {
   compactLabel,
@@ -439,9 +439,7 @@ export function frame<N extends Node>(
           key: 'f',
           modifiers: ['primary'],
           input: 'search-open',
-          enabled: rootCommands(state, locale, target).some(
-            (command) => command.kind === 'search-open' && !command.disabled,
-          ),
+          enabled: commands.some((command) => command.kind === 'search-open' && !command.disabled),
         },
         { key: 'f1', modifiers: [], input: 'help-open', enabled: true },
         {
@@ -454,7 +452,7 @@ export function frame<N extends Node>(
           key: 'g',
           modifiers: ['primary'],
           input: 'interaction-open',
-          enabled: rootCommands(state, locale, target).some(
+          enabled: commands.some(
             (command) => command.kind === 'interaction-open' && !command.disabled,
           ),
         },
@@ -643,9 +641,7 @@ export function frame<N extends Node>(
               busy: false,
               selectionDisabled:
                 !!state.embedding.fixed || mutationPending(state) || catalogPending(state),
-              commands: rootCommands(state, locale, target).map(
-                ({ kind: _kind, ...command }) => command,
-              ),
+              commands: commands.map(({ kind: _kind, ...command }) => command),
             },
             { invoked: 'invoked', selected: 'selected', closed: 'closed' },
           ),

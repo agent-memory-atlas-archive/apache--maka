@@ -29,7 +29,7 @@ import type {
 import { type AppsProps } from '../../shared/contracts.js';
 import { canInstall, packageSourceView } from '../../shared/deployment-import.js';
 import { settingOptions } from '../../shared/instance-settings.js';
-import { copy, type Copy } from '../../shared/locale.js';
+import { copy, type Copy } from './locale.js';
 import { pluginDescription } from '../../shared/plugin-description.js';
 import { pageHeader } from '../../shared/page-shell.js';
 import { sameValue } from '../../shared/value.js';

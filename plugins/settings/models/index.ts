@@ -36,7 +36,7 @@ import type {
 } from '../../../packages/plugin-sdk/src/index.js';
 import type { ModelsProps, SelectedModel, ModelSetup } from '../../shared/contracts.js';
 import { modelsContract } from '../../shared/contracts.js';
-import { copy, type Copy } from '../../shared/locale.js';
+import { copy, type Copy } from './locale.js';
 import { fill, output, pixels, type Presentation, type Node } from '../../shared/view.js';
 type Request =
   | { kind: 'page'; key: string; query: string; first: boolean }

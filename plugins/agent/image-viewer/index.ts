@@ -28,7 +28,7 @@ import type {
   ImageProps,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { imageViewerContract, type ImageViewerProps } from '../../shared/contracts.js';
-import { copy } from '../../shared/locale.js';
+import { copy } from './locale.js';
 import { sameValue } from '../../shared/value.js';
 import { output, fill, type Presentation, type Node } from '../../shared/view.js';
 

@@ -18,7 +18,7 @@
  */
 
 import type { Theme } from '../../shared/contracts.js';
-import { copy } from '../../shared/locale.js';
+import { copy } from './locale.js';
 import { fill, type Node, type Presentation } from '../../shared/view.js';
 import type { State } from './state.js';
 

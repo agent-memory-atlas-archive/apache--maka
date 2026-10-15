@@ -28,7 +28,7 @@ import type {
   TextareaProps,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { type SchedulerProps } from '../../shared/contracts.js';
-import { copy, type Copy } from '../../shared/locale.js';
+import { copy, type Copy } from './locale.js';
 import { pageHeader } from '../../shared/page-shell.js';
 import { compactLabel, fill, output, type Node, type Presentation } from '../../shared/view.js';
 import { anchor, date, detail, locked, timing } from './operations.js';

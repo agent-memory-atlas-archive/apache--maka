@@ -47,8 +47,7 @@ import {
   type DraftRecord,
   type DraftStep,
 } from '../../shared/drafts.js';
-import { tuiText } from '../../shared/tui-locale.js';
-import { copy } from '../../shared/locale.js';
+import { tuiText, copy } from './locale.js';
 import { output, fill, pixels, type Presentation, type Node } from '../../shared/view.js';
 import { sameValue } from '../../shared/value.js';
 

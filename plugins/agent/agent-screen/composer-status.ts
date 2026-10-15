@@ -18,8 +18,7 @@
  */
 
 import type { Theme } from '../../shared/contracts.js';
-import { copy } from '../../shared/locale.js';
-import { tuiText } from '../../shared/tui-locale.js';
+import { copy, goalStatuses, tuiText } from './locale.js';
 import { compactLabel, fill, type Node, type Presentation } from '../../shared/view.js';
 import { mutationPending, reviewTarget, rootCommands } from './actions.js';
 import { goalTerminal } from './goal.js';
@@ -60,7 +59,7 @@ export function composerStatus<N extends Node>(
     controls.push(
       ui.button(
         'goal-open',
-        `${text.goalTitle} · ${text[`goalStatus_${goal.status}`]}`,
+        `${text.goalTitle} · ${text[goalStatuses[goal.status]]}`,
         !!state.dialog,
         false,
         { background: 0 },

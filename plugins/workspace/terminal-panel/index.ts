@@ -43,7 +43,7 @@ import type {
 } from '../../../packages/plugin-sdk/src/index.js';
 import { terminalPanelContract, type TerminalPanelProps } from '../../shared/contracts.js';
 import { scrollBoundary, scrollRows, visibleRows, resetScroll } from '../../shared/scroll.js';
-import { copy, type Copy } from '../../shared/locale.js';
+import { copy, type Copy } from './locale.js';
 import { panelHeader } from '../../shared/page-shell.js';
 import { sameValue } from '../../shared/value.js';
 import {

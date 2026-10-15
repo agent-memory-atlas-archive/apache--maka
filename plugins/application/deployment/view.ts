@@ -23,7 +23,7 @@ import { type DeploymentProps } from '../../shared/contracts.js';
 import { documentView } from '../../shared/deployment-document.js';
 import { importView } from '../../shared/deployment-import.js';
 import { instanceSettingsView } from '../../shared/instance-settings.js';
-import { copy } from '../../shared/locale.js';
+import { copy } from './locale.js';
 import { pluginDescription } from '../../shared/plugin-description.js';
 import { pageHeader } from '../../shared/page-shell.js';
 import { visibleRows } from '../../shared/scroll.js';

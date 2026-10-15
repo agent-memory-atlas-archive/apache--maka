@@ -24,7 +24,7 @@ import type {
 } from '../../../packages/plugin-sdk/src/index.js';
 import type { Theme } from '../../shared/contracts.js';
 import { composerFooterContract } from '../../shared/contracts.js';
-import { tuiText } from '../../shared/tui-locale.js';
+import { tuiText } from './locale.js';
 import { output, type Node, type Presentation } from '../../shared/view.js';
 
 interface Props {

@@ -29,7 +29,7 @@ import type {
 } from '../../../packages/plugin-sdk/src/index.js';
 import type { State } from './state.js';
 import type { Theme } from '../../shared/contracts.js';
-import { copy } from '../../shared/locale.js';
+import { copy, planProposals, planExecutions, planSteps, planActions } from './locale.js';
 import { fill, type Node, type Presentation } from '../../shared/view.js';
 import { intent, mutationPending } from './actions.js';
 
@@ -370,19 +370,12 @@ export function planView<N extends Node>(
         ? [ui.text('plan-revision', `${text.planRevision} ${snapshot.revision}`, 12, theme.muted)]
         : []),
       ...(showProposal
-        ? [
-            ui.text(
-              'plan-proposal-state',
-              text[`planProposal_${proposal!.status}`],
-              13,
-              theme.muted,
-            ),
-          ]
+        ? [ui.text('plan-proposal-state', text[planProposals[proposal!.status]], 13, theme.muted)]
         : execution
           ? [
               ui.text(
                 'plan-execution-state',
-                text[`planExecution_${execution.phase}`],
+                text[planExecutions[execution.phase]],
                 13,
                 theme.muted,
               ),
@@ -404,7 +397,7 @@ export function planView<N extends Node>(
                 [
                   ui.text(
                     `plan-step-title-${step.id}`,
-                    `${index + 1}. ${step.title}${!showProposal && execution ? ' · ' + text[`planStep_${execution.steps.find((progress) => progress.id === step.id)?.status ?? 'pending'}`] : ''}`,
+                    `${index + 1}. ${step.title}${!showProposal && execution ? ' · ' + text[planSteps[execution.steps.find((progress) => progress.id === step.id)?.status ?? 'pending']] : ''}`,
                     14,
                     theme.text,
                     550,
@@ -449,7 +442,7 @@ export function planView<N extends Node>(
           : []),
       ...(confirmation && action
         ? [
-            ui.text('plan-confirm-title', text[`planAction_${action.kind}`], 15, theme.text, 550),
+            ui.text('plan-confirm-title', text[planActions[action.kind]], 15, theme.text, 550),
             ...(grant
               ? [
                   ui.text('plan-approval', text.planApproval),

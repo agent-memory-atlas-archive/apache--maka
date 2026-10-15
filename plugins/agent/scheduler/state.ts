@@ -30,7 +30,7 @@ import type {
   RecoveryRef,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { type SelectedModel } from '../../shared/contracts.js';
-import { type Copy } from '../../shared/locale.js';
+import { type Copy } from './locale.js';
 import { type PageState } from '../../shared/page-shell.js';
 
 export type FieldName =

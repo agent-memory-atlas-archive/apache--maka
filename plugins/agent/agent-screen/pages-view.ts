@@ -21,7 +21,7 @@ import { settingsView } from '../../shared/settings.js';
 import type { ComponentValues } from '../../../packages/plugin-sdk/src/index.js';
 import type { Theme } from '../../shared/contracts.js';
 import { bookmarkReady } from '../../shared/bookmark.js';
-import { copy } from '../../shared/locale.js';
+import { copy } from './locale.js';
 import { fill, type Presentation, type Node } from '../../shared/view.js';
 
 import { type Page, navigationBookmark, navigationKey, type State } from './state.js';

@@ -17,7 +17,7 @@
  * under the License.
  */
 
-import { tuiText } from '../../shared/tui-locale.js';
+import { tuiText, copy, type Copy } from './locale.js';
 import type {
   Action,
   ActionOutcome,
@@ -44,7 +44,6 @@ import type {
 import { credentialContract, type CredentialProps } from '../../shared/contracts.js';
 import { pageHeader, withPageShell, type PageState } from '../../shared/page-shell.js';
 import { scrollBoundary, scrollRows, visibleRows, resetScroll } from '../../shared/scroll.js';
-import { copy, type Copy } from '../../shared/locale.js';
 import { sameValue } from '../../shared/value.js';
 import {
   compactLabel,

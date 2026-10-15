@@ -39,8 +39,9 @@ import {
   type ThemeName,
   type CustomTheme,
 } from './terminal-theme.js';
-import { tuiText } from './tui-locale.js';
+import { tuiText } from './locale-catalogs/appearance-editor.js';
 import { resolveLocale } from './locale.js';
+
 import { sameValue } from './value.js';
 import type { Node, Presentation } from './view.js';
 

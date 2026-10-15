@@ -27,7 +27,7 @@ import type {
   OperationReply,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { type ImportsProps } from '../../shared/contracts.js';
-import { type Copy } from '../../shared/locale.js';
+import { type Copy } from './locale.js';
 import { resetScroll } from '../../shared/scroll.js';
 import { sameValue } from '../../shared/value.js';
 import { type Node, type Presentation } from '../../shared/view.js';

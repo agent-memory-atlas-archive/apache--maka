@@ -39,7 +39,7 @@ import type {
 } from '../../../packages/plugin-sdk/src/index.js';
 import { modelDefaultContract, type ModelDefaultProps } from '../../shared/contracts.js';
 import { scrollRows, visibleRows, resetScroll } from '../../shared/scroll.js';
-import { copy, type Copy } from '../../shared/locale.js';
+import { copy, type Copy } from './locale.js';
 import { sameValue } from '../../shared/value.js';
 import {
   compactLabel,

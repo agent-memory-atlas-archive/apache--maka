@@ -20,7 +20,7 @@
 import type { ComponentInput } from '../../packages/plugin-sdk/src/index.js';
 import type { Theme, InsightsProps } from './contracts.js';
 import { saveAppearanceSetting, type AppearanceEditor } from './appearance-editor.js';
-import { tuiText } from './tui-locale.js';
+import { tuiText } from './locale-catalogs/settings.js';
 import type { ThemeName } from './terminal-theme.js';
 import type { Node, Presentation } from './view.js';
 

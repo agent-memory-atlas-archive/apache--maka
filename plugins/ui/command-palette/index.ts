@@ -33,7 +33,7 @@ import type {
 } from '../../../packages/plugin-sdk/src/index.js';
 import { paletteContract, type PaletteCommand, type PaletteProps } from '../../shared/contracts.js';
 import { scrollBoundary } from '../../shared/scroll.js';
-import { copy } from '../../shared/locale.js';
+import { copy } from './locale.js';
 import {
   compactLabel,
   fill,

@@ -29,7 +29,7 @@ import type {
   SettingsProvider,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { type Search } from '../search.js';
-import { type Copy } from '../../shared/locale.js';
+import { type Copy } from './locale.js';
 import { type PageState } from '../../shared/page-shell.js';
 
 export type Detail = Extract<SettingsConnectionDetail, { kind: 'ready' }>;

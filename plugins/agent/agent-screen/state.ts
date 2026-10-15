@@ -59,7 +59,7 @@ import type {
   MessageCopyObservation,
 } from '../../shared/contracts.js';
 import { type Bookmark } from '../../shared/bookmark.js';
-import { type Copy } from '../../shared/locale.js';
+import { type Copy } from './locale.js';
 
 import { type AttachmentDrafts } from '../../shared/attachments.js';
 

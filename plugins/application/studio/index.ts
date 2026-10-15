@@ -23,7 +23,8 @@ import type {
   SettingsModelChoice,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { studioContract, type Theme } from '../../shared/contracts.js';
-import { copy, resolveLocale } from '../../shared/locale.js';
+import { resolveLocale } from '../../shared/locale.js';
+import { copy } from './locale.js';
 import { fill, output, pixels, type Presentation, type Node } from '../../shared/view.js';
 
 type Route = 'overview' | 'connections' | 'models' | 'deployment';

@@ -25,9 +25,8 @@ import type {
 } from '../../../packages/plugin-sdk/src/index.js';
 import { bookmarkView } from '../../shared/bookmark.js';
 import { type InsightsProps } from '../../shared/contracts.js';
-import { copy } from '../../shared/locale.js';
+import { copy, tuiText } from './locale.js';
 import { pageHeader } from '../../shared/page-shell.js';
-import { tuiText } from '../../shared/tui-locale.js';
 import { sameValue } from '../../shared/value.js';
 import { compactLabel, fill, output, type Node, type Presentation } from '../../shared/view.js';
 import { refresh } from './operations.js';

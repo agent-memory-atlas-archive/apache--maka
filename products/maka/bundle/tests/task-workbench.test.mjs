@@ -135,6 +135,39 @@ function client() {
   return c;
 }
 
+test('message browsing follows the displayed page and live content, including empty bodies', () => {
+  const live = {
+    sequence: 5,
+    messageId: 'live-answer',
+    invocationId: 'run-a',
+    stepId: 'step-a',
+    text: 'Live answer',
+    closedAt: null,
+    field: 'body',
+  };
+  for (const [chunks, latest, fragments, displayed, enabled] of [
+    [[], true, [], [], false],
+    [[chunk(1, '')], true, [], [''], true],
+    [[chunk(1, 'Older answer')], false, [live], ['Older answer'], true],
+    [[], true, [live], ['Live answer'], true],
+    [[], false, [live], [], false],
+  ]) {
+    const c = client().observe(4).history(page(4, []));
+    c.state.window = { page: page(4, chunks), latest };
+    c.state.live = fragments;
+    c.raw('palette-open');
+    const command = c.find('command-palette').props.commands.find(({ id }) => id === 'browse');
+    assert.equal(command.disabled, !enabled);
+    assert.deepEqual(
+      c.find(c.reader()).props.messages.map(({ text }) => text),
+      displayed,
+    );
+    c.child('command-palette', 'invoked', { id: 'browse' });
+    assert.equal(c.state.dialog, enabled ? null : 'palette');
+    assert.equal(c.state.browse === null, !enabled);
+  }
+});
+
 test('an active turn retains compact history across pages without a tool or message count cap', async () => {
   const { activate } = await import('../dist/packages/timeline/tui.js');
   const schema = activate().Timeline.contract.interface.props;

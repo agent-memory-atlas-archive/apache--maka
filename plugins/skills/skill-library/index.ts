@@ -51,7 +51,7 @@ import {
 } from '../../shared/skill-import.js';
 import { scrollBoundary } from '../../shared/scroll.js';
 import { sameValue } from '../../shared/value.js';
-import { copy, type Copy } from '../../shared/locale.js';
+import { copy, type Copy } from './locale.js';
 import {
   compactLabel,
   fill,
@@ -601,7 +601,7 @@ function frame<N extends Node>(
           busy,
           !!state.current,
           !!state.current?.reference,
-          state.notice,
+          state.notice ? text[state.notice] : null,
           state.cleanupUnconfirmed,
         ),
       ],

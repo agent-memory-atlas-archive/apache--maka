@@ -35,8 +35,7 @@ import { connectionsContract, type ConnectionsProps } from '../../shared/contrac
 import { searchState, searchEvent, matches, type Search } from '../search.js';
 import { compactLabel, pixels } from '../../shared/view.js';
 import { pageHeader, withPageShell, type PageState } from '../../shared/page-shell.js';
-import { copy } from '../../shared/locale.js';
-import { tuiText } from '../../shared/tui-locale.js';
+import { copy, tuiText } from './locale.js';
 import { fill, output, type Presentation, type Node } from '../../shared/view.js';
 interface State extends PageState {
   revision: number;

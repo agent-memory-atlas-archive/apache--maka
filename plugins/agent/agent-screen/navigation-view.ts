@@ -17,9 +17,8 @@
  * under the License.
  */
 
-import { tuiText } from '../../shared/tui-locale.js';
+import { tuiText, copy } from './locale.js';
 import type { Theme } from '../../shared/contracts.js';
-import { copy } from '../../shared/locale.js';
 import { fill, pixels, type Presentation, type Node } from '../../shared/view.js';
 
 import { type State } from './state.js';

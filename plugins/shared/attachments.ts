@@ -28,8 +28,7 @@ import type {
 } from '../../packages/plugin-sdk/src/index.js';
 import { sameValue } from './value.js';
 import type { Theme } from './contracts.js';
-import { copy } from './locale.js';
-import { tuiText } from './tui-locale.js';
+import { copy, tuiText } from './locale-catalogs/attachments.js';
 import { fill, type Node, type Presentation } from './view.js';
 export type DraftFilePaste = FilePasteObservation & { dataSource: AgentDataSource };
 

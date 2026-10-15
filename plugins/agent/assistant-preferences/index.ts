@@ -37,8 +37,7 @@ import type {
 import { assistantPreferencesContract, type ProjectsProps } from '../../shared/contracts.js';
 import { withPageShell, pageHeader, type PageState } from '../../shared/page-shell.js';
 import { sameValue } from '../../shared/value.js';
-import { copy } from '../../shared/locale.js';
-import { tuiText } from '../../shared/tui-locale.js';
+import { copy, tuiText } from './locale.js';
 import { fill, output, type Node, type Presentation } from '../../shared/view.js';
 
 type Name = 'name' | 'tone';

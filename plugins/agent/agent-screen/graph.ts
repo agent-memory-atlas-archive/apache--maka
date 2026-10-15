@@ -27,10 +27,12 @@ import type {
   WorkHubGraphHistory,
   WorkHubGraphResult,
   GraphWorkDefinition,
+  GraphStatus,
+  GraphWorkState,
 } from '../../../packages/plugin-sdk/src/index.js';
 import type { State } from './state.js';
 import type { Theme } from '../../shared/contracts.js';
-import { copy } from '../../shared/locale.js';
+import { copy, graphStatuses } from './locale.js';
 import { fill, type Node, type Presentation } from '../../shared/view.js';
 import { intent, mutationPending } from './actions.js';
 
@@ -265,8 +267,7 @@ export function graphView<N extends Node>(
     state.selected?.activity === 'idle' &&
     !state.executor &&
     state.selected.collaborationMode !== 'plan';
-  const label = (status: string) =>
-    (text as unknown as Record<string, string>)[`graphStatus_${status}`] ?? status;
+  const label = (status: GraphStatus | GraphWorkState) => text[graphStatuses[status]];
   return ui.box(
     'graph-panel',
     [

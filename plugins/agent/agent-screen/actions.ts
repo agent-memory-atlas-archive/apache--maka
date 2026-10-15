@@ -17,7 +17,7 @@
  * under the License.
  */
 
-import { tuiText } from '../../shared/tui-locale.js';
+import { tuiText, copy } from './locale.js';
 import type {
   Action,
   InteractionAnswer,
@@ -35,7 +35,6 @@ import type {
   QuestionDraft,
 } from '../../shared/contracts.js';
 import { sameValue } from '../../shared/value.js';
-import { copy } from '../../shared/locale.js';
 import { compactLabel } from '../../shared/view.js';
 
 import {
@@ -736,7 +735,7 @@ export function rootCommands(
               state.loading ||
               !!state.source ||
               !!state.image ||
-              !messages(state).length,
+              !(state.window?.page.chunks.length || (state.window?.latest && state.live.length)),
           },
           {
             kind: 'search-open' as const,

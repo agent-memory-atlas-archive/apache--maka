@@ -33,7 +33,7 @@ import type {
 } from '../../../packages/plugin-sdk/src/index.js';
 import { directoryPickerContract, type DirectoryPickerProps } from '../../shared/contracts.js';
 import { scrollRows, visibleRows, resetScroll, showRow } from '../../shared/scroll.js';
-import { copy } from '../../shared/locale.js';
+import { copy } from './locale.js';
 import {
   compactLabel,
   fill,

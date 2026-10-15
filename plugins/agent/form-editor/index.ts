@@ -29,7 +29,7 @@ import type {
   TextareaProps,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { formEditorContract, type QuestionEditorProps } from '../../shared/contracts.js';
-import { copy } from '../../shared/locale.js';
+import { copy } from './locale.js';
 import { sameValue } from '../../shared/value.js';
 import { fill, pixels, output, type Node, type Presentation } from '../../shared/view.js';
 

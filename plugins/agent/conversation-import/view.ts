@@ -25,7 +25,7 @@ import type {
 } from '../../../packages/plugin-sdk/src/index.js';
 import { type ImportsProps } from '../../shared/contracts.js';
 import { visibleRows } from '../../shared/scroll.js';
-import { copy } from '../../shared/locale.js';
+import { copy } from './locale.js';
 import { pageHeader } from '../../shared/page-shell.js';
 import { compactLabel, fill, output, type Node, type Presentation } from '../../shared/view.js';
 import { locked } from './operations.js';

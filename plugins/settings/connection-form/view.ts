@@ -25,7 +25,7 @@ import type {
 } from '../../../packages/plugin-sdk/src/index.js';
 import { type ConnectionFormProps } from '../../shared/contracts.js';
 import { scrollRows, visibleRows, resetScroll } from '../../shared/scroll.js';
-import { copy, type Copy } from '../../shared/locale.js';
+import { copy, type Copy, tuiText } from './locale.js';
 import { pageHeader } from '../../shared/page-shell.js';
 import {
   compactLabel,
@@ -36,7 +36,6 @@ import {
   type Presentation,
 } from '../../shared/view.js';
 import { matchesProvider, providerGroup } from '../search.js';
-import { tuiText } from '../../shared/tui-locale.js';
 import { busy, canRemove, canSave, fresh, sameConnection } from './operations.js';
 import { advancedFields, names, type FieldName, type State } from './state.js';
 

@@ -32,7 +32,7 @@ import type {
   GoalControl,
 } from '../../../packages/plugin-sdk/src/index.js';
 import type { Theme } from '../../shared/contracts.js';
-import { copy } from '../../shared/locale.js';
+import { copy, goalActions, goalStatuses } from './locale.js';
 import { sameValue } from '../../shared/value.js';
 import { fill, type Node, type Presentation } from '../../shared/view.js';
 import { intent, mutationPending } from './actions.js';
@@ -423,7 +423,7 @@ export function goalView<N extends Node>(
   const confirmation = goal.confirmation;
   const title =
     confirmation?.kind === 'control'
-      ? text[`goalAction_${confirmation.action}`]
+      ? text[goalActions[confirmation.action]]
       : confirmation?.start
         ? text.goalStart
         : text.goalSave;
@@ -457,7 +457,7 @@ export function goalView<N extends Node>(
             ui.text('goal-objective', current.objective),
             ui.text(
               'goal-state',
-              `${text[`goalStatus_${current.status}`]} · ${current.iterations}/${current.maxIterations}`,
+              `${text[goalStatuses[current.status]]} · ${current.iterations}/${current.maxIterations}`,
               13,
               theme.muted,
             ),

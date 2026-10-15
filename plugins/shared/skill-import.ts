@@ -23,7 +23,7 @@ import type {
   FileObservation,
 } from '../../packages/plugin-sdk/src/index.js';
 import type { SkillLibraryProps } from './contracts.js';
-import { copy, type Copy } from './locale.js';
+import { copy } from './locale-catalogs/skill-import.js';
 import { sameValue } from './value.js';
 import { fill, type Node, type Presentation } from './view.js';
 
@@ -63,7 +63,7 @@ export function importView<N extends Node>(
   busy: boolean,
   current: boolean,
   recoverable: boolean,
-  notice: keyof Copy | null,
+  notice: string | null,
   cleanup: boolean,
 ): N {
   const ui = presentation.paint(props.theme),
@@ -111,7 +111,7 @@ export function importView<N extends Node>(
       ...(value.file?.phase === 'failed' || (value.file?.file?.bytes ?? 0) > 1024 * 1024
         ? [ui.text('skills-import-file-error', text.skillsImportInvalid, 12, props.theme.error)]
         : []),
-      ...(notice ? [ui.text('skills-import-notice', text[notice], 12, props.theme.muted)] : []),
+      ...(notice ? [ui.text('skills-import-notice', notice, 12, props.theme.muted)] : []),
       ...(cleanup
         ? [ui.text('skills-import-cleanup', text.skillsCleanupUnknown, 12, props.theme.muted)]
         : []),
