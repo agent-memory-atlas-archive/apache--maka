@@ -77,7 +77,11 @@ fn default_product_input_continues_while_the_original_stdout_owner_is_blocked() 
     assert!(tui.child.try_wait().unwrap().is_none());
     paste(&mut tui, "Accepted while stdout is blocked 🙂");
     tui.send(b"\r");
-    let (sent, mut socket) = received
+    let ModelRequest {
+        value: sent,
+        mut socket,
+        ..
+    } = received
         .recv_timeout(Duration::from_secs(30))
         .expect("original input must reach the model before TCOON");
     assert!(
@@ -336,17 +340,42 @@ fn default_product_sends_over_large_imported_history() {
         let started = Instant::now();
         eprintln!("send profiling turn {turn} PID {}", tui.child.id());
         tui.send(b"\r");
-        let (sent, mut socket) = next_request(&mut tui, &received);
+        let transcript = format!("❯ {prompt}");
+        let mut request = None;
+        let mut visible_at = None;
+        while request.is_none() || visible_at.is_none() {
+            tui.read();
+            if request.is_none() {
+                request = received.try_recv().ok();
+            }
+            if visible_at.is_none()
+                && tui.frames.ready()
+                && tui.screen.snapshot().unwrap().screen.contains(&transcript)
+            {
+                visible_at = Some(Instant::now());
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(30),
+                "send did not reach model and transcript"
+            );
+            assert!(
+                tui.child.try_wait().unwrap().is_none(),
+                "UI exited during send"
+            );
+        }
+        let ModelRequest {
+            value: sent,
+            mut socket,
+            received_at,
+        } = request.unwrap();
         assert!(sent.to_string().contains(&prompt));
         eprintln!(
             "large history Enter to model request: {:?}",
-            started.elapsed()
+            received_at.duration_since(started)
         );
-        let transcript = format!("❯ {prompt}");
-        tui.wait_for(&transcript);
         eprintln!(
             "large history Enter to visible message: {:?}",
-            started.elapsed()
+            visible_at.unwrap().duration_since(started)
         );
         let observed = Instant::now();
         while turn < 2 && observed.elapsed() < Duration::from_secs(6) {
@@ -402,14 +431,16 @@ fn default_product_sends_over_large_imported_history() {
             use sqlx::{Connection, Row};
             let mut db = sqlx::SqliteConnection::connect_with(&sqlx::sqlite::SqliteConnectOptions::new()
                 .filename(ui.join(maka_event_log::root::ROOT_DATABASE)).read_only(true)).await.unwrap();
-            let rows = sqlx::query("SELECT key, format, metadata_json, content FROM application_ui_checkpoints WHERE key='operations/agent-screen' OR format='maka.ui.editor@1/maka.agent.draft@1'").fetch_all(&mut db).await.unwrap();
-            let progress = rows.iter().find(|row| row.get::<String, _>("key") == "operations/agent-screen").expect("persisted recovery progress");
-            let progress: Value = serde_json::from_slice(&progress.get::<Vec<u8>, _>("content")).unwrap();
-            assert!(progress["through"].as_u64().unwrap() >= rounds as u64);
-            let saved = rows.iter().find(|row| row.get::<String, _>("format") == "maka.ui.editor@1/maka.agent.draft@1").expect("persisted native draft");
+            let saved = sqlx::query("SELECT metadata_json, content FROM application_ui_checkpoints WHERE format='maka.ui.editor@1/maka.agent.draft@2' AND length(content)>0").fetch_all(&mut db).await.unwrap();
+            assert_eq!(saved.len(), 1, "exactly one unsent draft remains");
+            let saved = &saved[0];
             let metadata: Value = serde_json::from_str(&saved.get::<String, _>("metadata_json")).unwrap();
-            assert_eq!(metadata["metadata"]["historyAfter"], progress["through"]);
-            assert_eq!(metadata["metadata"]["historyScope"], progress["scope"]);
+            let scope: Value = serde_json::from_str(metadata["metadata"]["historyScope"].as_str().unwrap_or_else(|| panic!("saved draft has no checked caller scope: {metadata}"))).unwrap();
+            let (count, through): (i64, i64) = sqlx::query_as("SELECT COUNT(*), MAX(cursor) FROM application_intents WHERE deployment=? AND consumer=? AND json_extract(recovery_json, '$.format')='maka.agent.draft-send@2'")
+                .bind(scope[1].as_str().unwrap()).bind(serde_json::to_string(&scope[2]).unwrap())
+                .fetch_one(&mut db).await.unwrap();
+            assert_eq!(count, rounds as i64);
+            assert_eq!(metadata["metadata"]["historyAfter"], through);
             assert_eq!(saved.get::<Vec<u8>, _>("content"), draft.as_bytes());
             db.close().await.unwrap();
         });

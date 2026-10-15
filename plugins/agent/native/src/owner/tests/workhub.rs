@@ -1156,6 +1156,19 @@ fn tool_value(input: &Value) -> Value {
     serde_json::from_str(message["content"].as_str().unwrap())
         .unwrap_or_else(|error| panic!("{error}: {}", message["content"]))
 }
+fn is_worker_notice(input: &Value) -> bool {
+    input["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|message| message["role"] == "user")
+        .is_some_and(|message| {
+            message["content"]
+                .to_string()
+                .contains("Original worker observation:")
+        })
+}
 // A completion can arrive between explicit coordinator turns. Consume that
 // independent real model request before scripting the next user-triggered tool.
 async fn coordinator_request(listener: &TcpListener) -> (TcpStream, Value) {
@@ -1163,18 +1176,7 @@ async fn coordinator_request(listener: &TcpListener) -> (TcpStream, Value) {
         let (mut socket, _) = listener.accept().await.unwrap();
         let input = request(&mut socket).await;
         assert!(is_coordinator(&input), "unexpected model request: {input}");
-        let notice = input["messages"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .rev()
-            .find(|message| message["role"] == "user")
-            .is_some_and(|message| {
-                message["content"]
-                    .to_string()
-                    .contains("Original worker observation:")
-            });
-        if notice {
+        if is_worker_notice(&input) {
             response(&mut socket).await;
         } else {
             return (socket, input);
@@ -1429,6 +1431,11 @@ async fn workhub_wait_returns_worker_answer_in_the_routing_turn_and_cancels_only
             if cancel {
                 fixture.mutation(2,"stop",json!({"sessionId":coordinator,"invocationId":accepted["invocationId"]}),Uuid::new_v4()).await.unwrap();
                 idle(&fixture,EXPORT,coordinator).await;
+                // Logical run completion precedes the Host's independent watch
+                // cleanup acknowledgement. Wait for that observable owner too.
+                while fixture.app.client().snapshot().instances.iter().any(|instance| instance.activation.instance() == &id(21) && instance.calls != 0) {
+                    tokio::task::yield_now().await;
+                }
                 assert!(fixture.app.client().snapshot().instances.iter().filter(|instance| instance.activation.instance() == &id(21)).all(|instance| instance.calls == 0),"watch cleaned before independent worker completion");
                 assert_eq!(query_import(&fixture,"worker","observe",json!({"sessionId":worker})).await["run"]["state"],"running");
             }
@@ -1493,7 +1500,12 @@ async fn workhub_creates_selected_worker_and_transfers_original_attachment_bytes
         let replay=control_turn(&fixture,&listener,&coordinator,json!({"operation":"advance","taskId":task["taskId"]})).await;
         assert_eq!(replay["status"]["invocationId"],task["status"]["invocationId"]);
         assert_eq!(fixture.store.list_artifacts(worker,0,10).await.unwrap().records.len(),1);
-        assert!(tokio::time::timeout(Duration::from_millis(30),listener.accept()).await.is_err());
+        while let Ok(accepted)=tokio::time::timeout(Duration::from_millis(30),listener.accept()).await {
+            let (mut socket,_)=accepted.unwrap();let input=request(&mut socket).await;
+            assert!(is_coordinator(&input)&&is_worker_notice(&input),"advance redispatched work instead of receiving the original completion notice: {input}");
+            response(&mut socket).await;
+            idle(&fixture,EXPORT,&coordinator).await;
+        }
         activate_workers(&mut fixture,false,true,true).await;
         let restored=query_import(&fixture,hub::EXPORT,"task",json!({"taskId":task["taskId"]})).await;
         assert_eq!(restored["status"]["sessionId"],worker);assert_eq!(restored["status"]["invocationId"],task["status"]["invocationId"]);

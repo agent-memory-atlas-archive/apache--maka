@@ -57,7 +57,6 @@ export function agentScreen<N extends Node>(
         restoreThrough: 0,
         recoveryDirty: false,
         settledOperations: [],
-        draftHistorySafe: true,
         bookmark: bookmark({ pages: [], category: 'appearance' }),
         revision: 0,
         attachments: { files: [], selection: null, paste: null },
@@ -135,8 +134,6 @@ export function agentScreen<N extends Node>(
         uncertain: null,
         restoring: true,
         restoreAfter: 0,
-        command: null,
-        commandSequence: 0,
         notice: null,
       };
       const actions: Action[] = [];

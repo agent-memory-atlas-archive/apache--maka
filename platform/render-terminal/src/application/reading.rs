@@ -249,10 +249,9 @@ impl Widget for Reading {
     fn scene(&self) -> Option<&Node> {
         Some(&self.node)
     }
-    fn prepare_focus(&self, state: &mut dyn Any, visible: bool) {
+    fn prepare_focus(&self, state: &mut dyn Any, visible: bool, revision: u64) {
         let state = state_mut(state);
-        state.prepare_dialogs(&self.node, visible);
-        state.prepare_focus_scopes(&self.node, visible);
+        state.prepare_focus(&self.node, visible, revision);
         let reading = state.reading.as_mut().unwrap();
         reading.focus_visible = visible && self.node.visible();
         if !reading.focus_visible

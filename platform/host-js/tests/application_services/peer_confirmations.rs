@@ -434,12 +434,7 @@ async fn peer_observations_cannot_substitute_caller_identity_reference_or_shape(
                 "deep-consumer" => intent.consumer.0 = vec![Uuid::new_v4(); 65],
                 "nil-consumer" => intent.consumer = id(0),
                 "oversized-reference" => {
-                    let Interface::Service { methods } = &mut intent.reference.contract.interface
-                    else {
-                        unreachable!()
-                    };
-                    methods.get_mut("echo").unwrap().input =
-                        json!({"type":"string","description":"x".repeat(512 * 1024)});
+                    intent.reference.contract.digest = format!("sha256-{}", "x".repeat(512 * 1024));
                 }
                 "request" => {}
                 _ => unreachable!(),

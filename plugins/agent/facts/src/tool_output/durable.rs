@@ -119,15 +119,7 @@ fn validate_raw_depth(output: &ToolOutput) -> Result<(), &'static str> {
             else {
                 return Err("successful operation output requires a confirmed returned receipt");
             };
-            let maka_plugin_core::contract::Interface::Service { methods } =
-                &reply.reference.contract.interface
-            else {
-                return Err("operation output requires a service contract");
-            };
             within_limit(value, 0)
-                && methods
-                    .values()
-                    .all(|method| within_limit(&method.input, 0) && within_limit(&method.output, 0))
         }
         ToolOutput::Mcp(result) => {
             result

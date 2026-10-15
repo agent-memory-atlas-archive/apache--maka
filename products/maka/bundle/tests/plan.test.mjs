@@ -111,7 +111,7 @@ async function client(target) {
   return c;
 }
 
-test('tui checkpoints confirmed live operations without blocking new submissions', async () => {
+test('tui checkpoints confirmed live operations without blocking new mutations', async () => {
   const c = await client('tui');
   c.event({
     kind: 'component',
@@ -145,7 +145,7 @@ test('tui checkpoints confirmed live operations without blocking new submissions
     consumer: ['consumer'],
     reference,
   };
-  c.state.pending.newSend = { kind: 'send' };
+  c.state.pending.newMutation = { kind: 'selectBackend' };
   c.reply([original]);
   assert.equal(
     c.state.uncertain,
@@ -153,7 +153,7 @@ test('tui checkpoints confirmed live operations without blocking new submissions
     'a concurrent submission is not an unknown recovered operation',
   );
   assert.deepEqual(c.out.actions, []);
-  delete c.state.pending.newSend;
+  delete c.state.pending.newMutation;
   c.raw('unused');
   c.reply([original]);
   assert.equal(
@@ -265,99 +265,17 @@ for (const target of ['tui', 'desktop']) {
       }
     }
   });
-  test(`${target} draft restoration resumes its own checkpoint and ignores older sent text`, async () => {
-    for (const metadata of [
-      {},
-      { historyAfter: 17, historyScope: 'caller-history' },
-      { historyAfter: 17, historyScope: 'another-caller' },
-    ]) {
-      for (const retainedAttachment of [false, true]) {
-        const c = await client(target);
-        const file = {
-          sessionId: 'session',
-          id: 'file',
-          name: 'original.txt',
-          mimeType: 'text/plain',
-          bytes: 4,
-        };
-        c.state.restoreThrough = 100;
-        c.state.historyScope = 'caller-history';
-        c.event({
-          kind: 'component',
-          child: 'composer',
-          name: 'checkpoint',
-          key: 'checkpoint',
-          event: {
-            context: 'session',
-            dataSource: c.state.selected.dataSource,
-            owners: ['new-editor'],
-            observation: {
-              owner: 'new-editor',
-              state: {
-                kind: 'restore',
-                version: 1,
-                snapshot: { text: { owner: 'old-editor', revision: 10 } },
-                metadata: {
-                  ...metadata,
-                  attachments: retainedAttachment ? [file] : [],
-                },
-              },
-            },
-          },
-        });
-        assert.deepEqual(
-          c.out.actions[0].input,
-          { after: metadata.historyScope === 'caller-history' ? 17 : 0, limit: 1 },
-          'the global checkpoint must not skip checks needed by an older saved draft',
-        );
-        const original = {
-          cursor: 18,
-          reference: {
-            method: 'send',
-            source: c.state.selected.dataSource,
-            namespace: c.state.selected.dataSource.namespace,
-          },
-          recovery: {
-            format: 'maka.agent.draft-send@1',
-            sessionId: 'session',
-            editor: { owner: 'old-editor', revision: 9 },
-            attachments: ['file'],
-          },
-        };
-        c.reply([original]);
-        if (retainedAttachment) {
-          assert.equal(
-            c.out.actions[0].method,
-            'read',
-            'consumed attachments still need their original receipt',
-          );
-          c.reply({
-            reference: original.reference,
-            receipt: { kind: 'unavailable', diagnostic: 'unknown' },
-          });
-          assert.equal(c.state.drafts[0].work.status, 'unknown');
-          assert.equal(c.state.drafts[0].work.restore, null);
-        } else {
-          assert.deepEqual(c.out.actions[0].input, { after: 18, limit: 1 });
-          c.reply([]);
-          assert.equal(c.state.drafts[0].work.restore.clearText, false);
-        }
-      }
-    }
-  });
-  test(`${target} composer keeps submission independent of a background execution refresh`, async () => {
+  test(`${target} conversation reacts to composer readiness and admission without owning sends`, async () => {
     const c = await client(target);
     c.state.dialog = null;
     c.state.pending.refresh = { kind: 'observe', epoch: c.state.epoch };
-    c.state.drafts = [
-      {
-        context: 'session',
-        dataSource: c.state.selected.dataSource,
-        observation: { owner: 'editor', state: { kind: 'ready', initialized: true } },
-        work: null,
-      },
-    ];
-    c.raw('plan-refresh');
+    c.event({
+      kind: 'component',
+      child: 'composer',
+      name: 'readiness',
+      key: 'readiness',
+      event: [{ context: 'session', dataSource: c.state.selected.dataSource, ready: true }],
+    });
     function composer(node) {
       if (!node || typeof node !== 'object') return null;
       if (node.binding === 'composer') return node;
@@ -366,150 +284,37 @@ for (const target of ['tui', 'desktop']) {
         .map(composer)
         .find(Boolean);
     }
-    assert.equal(composer(c.out.frame.view).props.busy, target !== 'tui');
-    const submitted = {
+    assert.equal(composer(c.out.frame.view).props.busy, false);
+    assert.equal(composer(c.out.frame.view).props.enabled, true);
+    const file = {
+      sessionId: 'session',
+      id: 'attachment',
+      name: 'one.txt',
+      mimeType: 'text/plain',
+      bytes: 3,
+      dataSource: c.state.selected.dataSource,
+    };
+    const restored = {
       kind: 'component',
       child: 'composer',
-      name: 'send',
-      key: 'send',
-      event: {
-        revision: 4,
-        snapshot: { marked: null, text: { owner: 'editor', revision: 4, bytes: 5 } },
-      },
+      name: 'restored',
+      key: 'restored',
+      event: { files: [file] },
     };
-    c.event(submitted);
-    assert.equal(
-      c.out.actions.some((action) => action.binding === 'reader'),
-      target === 'tui',
-    );
-    if (target === 'tui') {
-      assert.deepEqual(c.out.actions[0].input, { start: 0, end: 5 });
-      c.event(submitted);
-      assert.deepEqual(
-        c.out.actions,
-        [],
-        'the outstanding submission still prevents duplicate sends',
-      );
-    }
-    c.state.pending = {};
-    c.state.restoreThrough = 99;
-    c.state.command = { owner: 'editor', sequence: 1 };
+    c.event(restored);
+    c.event(restored);
+    assert.deepEqual(c.state.attachments.files, [file]);
     c.event({
       kind: 'component',
       child: 'composer',
-      name: 'changed',
-      key: 'draft',
-      event: {
-        ...submitted.event,
-        receipt: {
-          owner: 'editor',
-          sequence: 1,
-          outcome: { status: 'conflict', reason: 'revision' },
-        },
-      },
+      name: 'sent',
+      key: 'sent',
+      event: { context: 'session', dataSource: file.dataSource, attachments: ['attachment'] },
     });
-    c.state.notice = null;
-    c.raw('unused');
+    assert.deepEqual(c.state.attachments.files, []);
     assert.equal(
-      composer(c.out.frame.view).props.historyAfter,
-      0,
-      'a rejected native clear must retain the sent text recovery evidence',
-    );
-  });
-  test(`${target} restart settles original operations before restoring a newer draft`, async () => {
-    const c = await client(target);
-    const reference = {
-      source: {
-        stateDomain: c.state.selected.dataSource.stateDomain,
-        deployment: c.state.selected.dataSource.deployment,
-        revision: 1,
-      },
-      namespace: c.state.selected.dataSource.namespace,
-      export: 'agent',
-      method: 'send',
-      operation: '00000000-0000-0000-0000-000000000004',
-      fingerprint: 'b'.repeat(64),
-      contract: contracts.agent,
-      recovery: 'journal_v1',
-    };
-    const original = {
-      cursor: 3,
-      reference,
-      recovery: {
-        format: 'maka.agent.draft-send@1',
-        sessionId: 'session',
-        editor: { owner: 'original-editor', revision: 1 },
-        attachments: [],
-      },
-    };
-    c.state.restoring = true;
-    c.state.pending.restore = { kind: 'restoreReceipt', reference, cursor: 1 };
-    c.state.recoveryCheckpoint.restored = true;
-    c.state.recoveryDirty = true;
-    c.state.drafts = [
-      {
-        context: 'session',
-        dataSource: c.state.selected.dataSource,
-        observation: {
-          owner: 'restored-editor',
-          state: {
-            kind: 'restore',
-            version: 1,
-            snapshot: { text: { owner: 'original-editor', revision: 2 } },
-          },
-        },
-        work: {
-          after: 3,
-          done: false,
-          queue: [original],
-          clearText: false,
-          attachments: [],
-          valid: true,
-          status: 'checking',
-          restore: null,
-        },
-      },
-    ];
-    c.raw('plan-refresh');
-    assert.equal(
-      c.out.actions.length,
-      0,
-      'receipt restoration must not retain another draft receipt in parallel',
-    );
-    assert.ok(Buffer.byteLength(JSON.stringify(c.out)) < 1024 * 1024);
-    c.reply(
-      {
-        reference,
-        receipt: {
-          kind: 'recorded',
-          outcome: { kind: 'returned', value: {} },
-          cleanup: { kind: 'confirmed' },
-        },
-      },
-      'restore',
-    );
-    assert.equal(c.out.actions[0].method, 'page');
-    c.reply([]);
-    assert.equal(c.out.actions[0].method, 'read');
-    assert.deepEqual(c.out.actions[0].input, reference, 'preserve the complete original receipt');
-    assert.ok(Buffer.byteLength(JSON.stringify(c.out)) < 1024 * 1024);
-    c.reply({
-      reference,
-      receipt: {
-        kind: 'recorded',
-        outcome: {
-          kind: 'returned',
-          value: { kind: 'started', sessionId: 'session', invocationId: 'original-invocation' },
-        },
-        cleanup: { kind: 'confirmed' },
-      },
-    });
-    assert.equal(c.out.actions[0].method, 'page');
-    c.reply([]);
-    assert.equal(
-      c.state.drafts[0].work.restore.clearText,
+      c.out.actions.some((action) => ['send', 'execute', 'read'].includes(action.method)),
       false,
-      'the later independent draft survives',
     );
   });
   test(`${target} Plan approval freezes reviewed version, model and permission boundary`, async () => {

@@ -181,7 +181,7 @@ export function worker<N extends Node>(
       if (stage.startsWith('recover-')) {
         stage = stage.slice(8);
         if (outcome.status === 'succeeded')
-          outcome = { status: 'operation', reply: outcome.value as OperationReply };
+          outcome = { status: 'operation', reply: outcome.value as OperationReply, caller: null };
       }
       const result = value(outcome);
       if (stage === 'history') {

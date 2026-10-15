@@ -57,6 +57,106 @@ async fn request(store: &EventLog) -> OperationRequest {
         },
     }
 }
+
+#[tokio::test]
+async fn compact_receipts_preserve_original_identity_and_reject_inline_contracts() {
+    let (_dir, store) = store().await;
+    let mut request = request(&store).await;
+    let Interface::Service { methods } = &mut request.contract.interface else {
+        unreachable!()
+    };
+    methods.get_mut("change").unwrap().input =
+        serde_json::json!({"description": "x".repeat(250_000)});
+    let compact = request.reference().unwrap();
+    assert!(serde_json::to_vec(&compact).unwrap().len() < 1024);
+    let mut inline = serde_json::to_value(&compact).unwrap();
+    inline["contract"] = serde_json::to_value(&request.contract).unwrap();
+    assert!(serde_json::from_value::<RecoveryRef>(inline).is_err());
+    let Dispatch::New(claim) = store.dispatch_operation(request.clone()).await.unwrap() else {
+        panic!("first claim")
+    };
+    let outcome = OperationOutcome::Returned {
+        value: serde_json::json!({"original": true}),
+    };
+    store
+        .finish_operation(&claim, outcome.clone(), OperationCleanup::Confirmed)
+        .await
+        .unwrap();
+    let receipt = store
+        .operation_observation(&compact)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt.reference, compact);
+    assert_eq!(receipt.outcome, outcome);
+    let mut second = request.clone();
+    second.operation = Uuid::new_v4();
+    store.dispatch_operation(second).await.unwrap();
+    let (contracts, stored_contract, max_request): (i64, String, i64) = store
+        .connection
+        .run(|connection| {
+            Box::pin(async move {
+                let contracts =
+                    sqlx::query_scalar("SELECT count(*) FROM application_operation_contracts")
+                        .fetch_one(&mut *connection)
+                        .await?;
+                let contract =
+                    sqlx::query_scalar("SELECT contract_json FROM application_operation_contracts")
+                        .fetch_one(&mut *connection)
+                        .await?;
+                let size = sqlx::query_scalar(
+                    "SELECT max(length(CAST(request_json AS BLOB))) FROM application_operations",
+                )
+                .fetch_one(connection)
+                .await?;
+                Ok((contracts, contract, size))
+            })
+        })
+        .await
+        .unwrap();
+    assert_eq!(contracts, 1, "shared original schemas are stored once");
+    assert_eq!(
+        serde_json::from_str::<Contract>(&stored_contract).unwrap(),
+        request.contract
+    );
+    assert!(
+        max_request < 1024,
+        "individual operations contain only contract identity"
+    );
+    let mut forged = compact.clone();
+    forged.contract.digest = format!("sha256-{}", "a".repeat(64));
+    assert!(matches!(
+        store.operation_observation(&forged).await,
+        Err(StoreError::EventConflict)
+    ));
+    assert!(
+        compact
+            .contract
+            .matches(&request.contract, "change")
+            .unwrap()
+    );
+    let Interface::Service { methods } = &mut request.contract.interface else {
+        unreachable!()
+    };
+    methods.insert("another".into(), methods["change"].clone());
+    assert!(
+        !compact
+            .contract
+            .matches(&request.contract, "change")
+            .unwrap()
+    );
+    let Interface::Service { methods } = &mut request.contract.interface else {
+        unreachable!()
+    };
+    methods.get_mut("change").unwrap().output = serde_json::json!({"type": "string"});
+    assert!(
+        !compact
+            .contract
+            .matches(&request.contract, "change")
+            .unwrap()
+    );
+    store.close().await.unwrap();
+}
 #[tokio::test]
 async fn concurrent_dispatch_has_one_claim_and_duplicate_preserves_original_cleanup() {
     let (_dir, store) = store().await;

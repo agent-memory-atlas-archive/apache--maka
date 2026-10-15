@@ -1,0 +1,734 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+import type {
+  Action,
+  ActionOutcome,
+  AgentDataSource,
+  AgentSendResult,
+  CallerConfirmation,
+  CallerIntent,
+  Component,
+  EditorCheckpointObservation,
+  EditorCommand,
+  EditorObservation,
+  Emission,
+  FilePasteObservation,
+  OperationReply,
+  RecoveryRef,
+  TextChunk,
+  TextareaProps,
+} from '../../../packages/plugin-sdk/src/index.js';
+import type { ComposerBackend, ComposerProps } from '../../shared/contracts.js';
+import {
+  observeDraft,
+  nextDraftStep,
+  draftPage,
+  draftReceipt,
+  draftFailed,
+  retryDraft,
+  type ComposerReadiness,
+  type DraftRecord,
+  type DraftStep,
+} from '../../shared/drafts.js';
+import { tuiText } from '../../shared/tui-locale.js';
+import { copy } from '../../shared/locale.js';
+import { output, fill, pixels, type Presentation, type Node } from '../../shared/view.js';
+import { sameValue } from '../../shared/value.js';
+
+interface Submission {
+  context: string;
+  dataSource: AgentDataSource;
+  backend: ComposerBackend;
+  draft: EditorObservation;
+  attachments: string[];
+}
+type Delivery =
+  | { kind: 'read' | 'send'; key: string; submission: Submission }
+  | {
+      kind: 'unknown';
+      submission: Submission;
+      reference: RecoveryRef;
+      caller: CallerConfirmation | null;
+      checking: string | null;
+    }
+  | { kind: 'clear'; command: EditorCommand; caller: CallerConfirmation | null };
+interface DraftEntry {
+  dataSource: AgentDataSource;
+  checkpoint: EditorCheckpointObservation | null;
+  retry: number;
+  context: string;
+  key: string;
+  observation: EditorObservation | null;
+  files: FilePasteObservation | null;
+  history: { after: number; scope: string | null };
+  delivery: Delivery | null;
+  notice: 'draftKept' | 'empty' | 'skillInputUnavailable' | null;
+}
+interface Draft {
+  revision: number;
+  active: string | null;
+  serial: number;
+  entries: DraftEntry[];
+  records: DraftRecord[];
+  recovery: { key: string; step: DraftStep } | null;
+  reported: ComposerReadiness[];
+}
+function action(key: string, binding: string, method: string, input: unknown): Action {
+  return { key, binding, member: 0, method, input, resources: {}, continuations: [] };
+}
+function advance(entry: DraftEntry, caller: CallerConfirmation | null) {
+  if (caller)
+    entry.history = {
+      after: caller.cursor,
+      scope: JSON.stringify([caller.caller.stateDomain, caller.caller.deployment, caller.consumer]),
+    };
+}
+function admitted(
+  state: Draft,
+  entry: DraftEntry,
+  submission: Submission,
+  reply: OperationReply,
+  caller: CallerConfirmation | null,
+  events: Emission[],
+) {
+  if (reply.receipt.kind === 'recorded' && reply.receipt.outcome.kind === 'returned') {
+    const result = reply.receipt.outcome.value as AgentSendResult;
+    if (result.sessionId === submission.context) {
+      if (result.kind === 'rejected') {
+        entry.delivery = null;
+        entry.notice = 'skillInputUnavailable';
+      } else {
+        entry.notice = null;
+        entry.delivery = {
+          kind: 'clear',
+          caller,
+          command: {
+            owner: submission.draft.snapshot.text.owner,
+            sequence: ++state.serial,
+            basedOn: submission.draft.revision,
+            edit: { kind: 'reset', text: '' },
+          },
+        };
+        events.push({
+          name: 'sent',
+          value: {
+            context: submission.context,
+            dataSource: submission.dataSource,
+            attachments: submission.attachments,
+          },
+        });
+      }
+      return;
+    }
+  }
+  entry.delivery = {
+    kind: 'unknown',
+    submission,
+    reference: reply.reference,
+    caller,
+    checking: null,
+  };
+}
+export function composer<N extends Node>(
+  presentation: Presentation<N>,
+): Component<Draft, ComposerProps, N> {
+  const target = presentation.target;
+  const composerFrame = (
+    state: Draft,
+    props: ComposerProps,
+    events: Emission[] = [],
+    actions: Action[] = [],
+  ) => {
+    const ui = presentation.paint(props.theme),
+      text = copy(props.locale);
+    // Each session retains its original native mount, including selection and
+    // undo. Only observed empty, idle editors can make room at the original limit.
+    if (
+      props.context &&
+      props.dataSource &&
+      !state.entries.some(
+        (entry) => entry.context === props.context && sameValue(entry.dataSource, props.dataSource),
+      )
+    ) {
+      if (state.entries.length === 32 && !props.busy) {
+        const empty = state.entries.findIndex(
+          (entry) =>
+            !entry.delivery &&
+            entry.checkpoint?.state.kind === 'ready' &&
+            entry.checkpoint.state.saved &&
+            entry.observation?.snapshot.text.bytes === 0 &&
+            !entry.observation.snapshot.marked &&
+            (!entry.files || entry.files.selection.phase === 'empty'),
+        );
+        if (empty >= 0) state.entries.splice(empty, 1);
+      }
+      if (state.entries.length < 32)
+        state.entries.push({
+          context: props.context,
+          dataSource: props.dataSource,
+          checkpoint: null,
+          retry: 0,
+          key: state.serial++ === 0 ? 'draft' : `draft-${state.serial}`,
+          observation: null,
+          files: null,
+          history: { after: 0, scope: null },
+          delivery: null,
+          notice: null,
+        });
+    }
+    const current = state.entries.find(
+      (entry) => entry.context === props.context && sameValue(entry.dataSource, props.dataSource),
+    );
+    const observation = current?.observation;
+    if (state.active !== (current?.key ?? null)) {
+      state.active = current?.key ?? null;
+      if (current?.checkpoint?.state.kind === 'restore') current.retry++;
+    }
+    const pending = !!current?.delivery;
+    const attached = props.attachments.filter(
+      (file) => file.sessionId === props.context && sameValue(file.dataSource, props.dataSource),
+    );
+    const retained = { files: [...props.attachments], selection: null, paste: null };
+    if (!state.recovery) {
+      const step = nextDraftStep(state.records, retained);
+      if (step) {
+        const key = `restore-${++state.serial}`;
+        state.recovery = { key, step };
+        actions.push(
+          action(
+            key,
+            step.kind === 'draftPage' ? 'history' : 'receipts',
+            step.kind === 'draftPage' ? 'page' : 'read',
+            step.kind === 'draftPage' ? { after: step.after, limit: 1 } : step.original.reference,
+          ),
+        );
+      }
+    }
+    const restored = retained.files.slice(props.attachments.length);
+    if (restored.length) events.push({ name: 'restored', value: { files: restored } });
+    const readiness = state.entries.map((entry) => ({
+      context: entry.context,
+      dataSource: entry.dataSource,
+      ready:
+        entry.checkpoint?.state.kind === 'ready' &&
+        entry.checkpoint.state.initialized &&
+        !state.records.some(
+          (record) => record.observation.owner === entry.checkpoint?.owner && record.work,
+        ) &&
+        entry.delivery?.kind !== 'unknown',
+    }));
+    if (!sameValue(state.reported, readiness)) {
+      state.reported = readiness;
+      events.push({ name: 'readiness', value: readiness });
+    }
+    const available =
+      current?.checkpoint?.state.kind === 'ready' &&
+      current.checkpoint.state.initialized &&
+      props.enabled &&
+      !props.busy &&
+      (target === 'tui' || !props.running) &&
+      !pending &&
+      !!observation &&
+      !observation.snapshot.marked &&
+      (!!observation.snapshot.text.bytes || attached.length > 0);
+    const textarea: TextareaProps = {
+      appearance:
+        target === 'tui' ? { ...props.theme.textarea, borderWidth: 0 } : props.theme.textarea,
+      menu: {
+        appearance: props.theme.menu,
+        labels: {
+          title: text.edit,
+          undo: text.undo,
+          redo: text.redo,
+          cut: text.cut,
+          copy: text.copy,
+          paste: text.paste,
+          selectAll: text.selectAll,
+        },
+      },
+      accessibilityLabel: text.draft,
+      readOnly: false,
+      disabled: false,
+      softWrap: true,
+      terminalRows: { min: 1, max: 8, maxViewportFraction: 1 / 3 },
+      submit:
+        target === 'tui'
+          ? 'enter'
+          : props.enabled && !props.busy && !props.running && !pending
+            ? 'primary_enter'
+            : null,
+      tabIndex: 1,
+      autoFocus: props.autoFocus,
+      initialText: '',
+      placeholder:
+        target === 'tui' ? tuiText(props.locale, 'composer-placeholder') : text.placeholder,
+      command: null,
+      filePaste: null,
+      fileCommand: null,
+      persistence: null,
+    };
+    const editor = ui.box(
+      'editor-area',
+      state.entries.map((entry) =>
+        ui.box(
+          `retained-${entry.key}`,
+          [
+            presentation.slot(
+              entry.key,
+              'editor',
+              {
+                ...textarea,
+                persistence: {
+                  key: entry.context,
+                  format: 'maka.agent.draft@2',
+                  dataSource: entry.dataSource,
+                  metadata: {
+                    historyAfter: entry.history.after,
+                    historyScope: entry.history.scope,
+                    attachments: props.attachments
+                      .filter(
+                        (file) =>
+                          file.sessionId === entry.context &&
+                          sameValue(file.dataSource, entry.dataSource),
+                      )
+                      .map(({ dataSource: _, ...file }) => file),
+                  },
+                  restore:
+                    state.records.find(
+                      (record) => record.observation.owner === entry.checkpoint?.owner,
+                    )?.work?.restore ?? null,
+                  retry: entry.retry,
+                },
+                autoFocus: entry === current && props.autoFocus,
+                command: entry.delivery?.kind === 'clear' ? entry.delivery.command : null,
+                filePaste:
+                  entry === current
+                    ? (props.filePaste ?? null)
+                    : target === 'tui'
+                      ? { context: entry.context, maxFiles: 0 }
+                      : null,
+                fileCommand:
+                  props.fileCommand?.selection.owner === entry.files?.selection.owner
+                    ? props.fileCommand
+                    : null,
+              },
+              {
+                changed: 'changed',
+                submitted: 'submitted',
+                files: 'files',
+                checkpoint: 'checkpoint',
+              },
+            ),
+          ],
+          {
+            visible: entry === current,
+            style: { width: fill, height: fill },
+            terminal: { grow: 1, shrink: true },
+          },
+        ),
+      ),
+      {
+        style: { width: fill, height: pixels(112), shrink: 0 },
+        terminal: { basis: 0, grow: 1, shrink: true },
+      },
+    );
+    const controls = ui.box(
+      'composer-controls',
+      [
+        ...(target === 'desktop' ? [ui.text('hint', text.enterHint, 12, props.theme.muted)] : []),
+        ...(props.running
+          ? [
+              ui.button(
+                'stop',
+                text.stop,
+                props.busy,
+                false,
+                target === 'tui' ? { background: 0 } : {},
+                undefined,
+                text.stop,
+              ),
+              ...(target === 'tui'
+                ? [
+                    ui.button(
+                      'send',
+                      props.sendLabel ?? text.send,
+                      !available,
+                      true,
+                      target === 'tui' ? { background: 0 } : {},
+                      undefined,
+                      text.send,
+                    ),
+                  ]
+                : []),
+            ]
+          : [
+              ui.button(
+                'send',
+                props.sendLabel ?? text.send,
+                !available,
+                true,
+                target === 'tui' ? { background: 0 } : {},
+                undefined,
+                text.send,
+              ),
+            ]),
+      ],
+      {
+        row: true,
+        gap: target === 'tui' ? 0 : undefined,
+        terminal: { shrink: false },
+        style: { justify: 'between', align: 'center', width: fill },
+      },
+    );
+    const recovering = state.records.find(
+      (record) => record.observation.owner === current?.checkpoint?.owner,
+    )?.work;
+    const failed = current?.checkpoint?.state.kind === 'failed' || recovering?.status === 'failed';
+    const unknown = recovering?.status === 'unknown' || current?.delivery?.kind === 'unknown';
+    const loading =
+      !!current &&
+      (!current.checkpoint ||
+        current.checkpoint.state.kind === 'loading' ||
+        current.checkpoint.state.kind === 'restore' ||
+        (current.checkpoint.state.kind === 'ready' && !current.checkpoint.state.initialized));
+    const status = failed
+      ? text.draftPersistenceFailed
+      : unknown
+        ? text.draftUncertain
+        : loading
+          ? text.draftRestoring
+          : current?.notice
+            ? text[current.notice]
+            : null;
+    const body = ui.box(
+      'composer-main',
+      [
+        ...(props.context && !current
+          ? [ui.text('draft-capacity', text.draftCapacity, 13, props.theme.muted)]
+          : []),
+        ...(target === 'tui'
+          ? [
+              ui.box(
+                'composer-add-cell',
+                [
+                  ui.button(
+                    'attach',
+                    '+',
+                    props.busy || !props.context || loading || failed || unknown,
+                    false,
+                    { background: 0 },
+                    undefined,
+                    text.attachmentTitle,
+                  ),
+                ],
+                { terminal: { basis: 4 } },
+              ),
+            ]
+          : []),
+        editor,
+        controls,
+      ],
+      {
+        row: target === 'tui',
+        border: target === 'tui',
+        busy: props.running,
+        gap: target === 'tui' ? 0 : 12,
+        terminal: { shrink: true },
+        style: { width: fill },
+      },
+    );
+    const out = output(
+      state,
+      ui.box(
+        'composer',
+        [
+          ...(status
+            ? [
+                ui.box(
+                  'draft-status-row',
+                  [
+                    ui.text('draft-status', status, 13, props.theme.muted),
+                    ...(failed || unknown
+                      ? [
+                          ui.button(
+                            'draft-retry',
+                            text.sourceRetry,
+                            current?.delivery?.kind === 'unknown' &&
+                              current.delivery.checking !== null,
+                          ),
+                        ]
+                      : []),
+                  ],
+                  { row: true, terminal: { wrap: true }, style: { width: fill, wrap: true } },
+                ),
+              ]
+            : []),
+          body,
+        ],
+        { style: { width: fill }, terminal: { shrink: true } },
+      ),
+      events,
+    );
+    out.actions = actions;
+    return out;
+  };
+  return {
+    mount: (props) =>
+      composerFrame(
+        {
+          revision: 0,
+          serial: 0,
+          active: null,
+          entries: [],
+          records: [],
+          recovery: null,
+          reported: [],
+        },
+        props,
+      ),
+    update(state, props) {
+      state.revision++;
+      return composerFrame(state, props);
+    },
+    event(state, input, props) {
+      state.revision++;
+      const events: Emission[] = [],
+        actions: Action[] = [];
+      if (input.kind === 'action') {
+        const outcome = input.event as ActionOutcome;
+        if (state.recovery?.key === input.key) {
+          const step = state.recovery.step;
+          state.recovery = null;
+          if (outcome.status === 'succeeded') {
+            if (step.kind === 'draftPage')
+              draftPage(state.records, step, outcome.value as CallerIntent[]);
+            else draftReceipt(state.records, step, outcome.value as OperationReply);
+          } else draftFailed(state.records, step);
+        } else {
+          const entry = state.entries.find((entry) => {
+            const delivery = entry.delivery;
+            return (
+              delivery &&
+              (delivery.kind === 'unknown'
+                ? delivery.checking === input.key
+                : delivery.kind !== 'clear' && delivery.key === input.key)
+            );
+          });
+          const delivery = entry?.delivery;
+          if (entry && delivery?.kind === 'read') {
+            entry.delivery = null;
+            if (outcome.status === 'succeeded') {
+              const chunk = outcome.value as TextChunk;
+              const submission = delivery.submission;
+              if (
+                sameValue(chunk.metadata, submission.draft.snapshot.text) &&
+                new TextEncoder().encode(chunk.text).length === submission.draft.snapshot.text.bytes
+              ) {
+                if (!chunk.text.trim() && !submission.attachments.length) entry.notice = 'empty';
+                else {
+                  const key = `send-${++state.serial}`,
+                    backend = submission.backend;
+                  entry.delivery = { kind: 'send', key, submission };
+                  actions.push({
+                    ...action(key, 'agent', backend.kind === 'executor' ? 'execute' : 'send', {
+                      sessionId: submission.context,
+                      message: chunk.text,
+                      attachments: submission.attachments,
+                      ...(backend.kind === 'executor'
+                        ? { executor: backend.selection }
+                        : { model: backend.model, thinkingLevel: backend.thinkingLevel }),
+                    }),
+                    recovery: {
+                      format: 'maka.agent.draft-send@2',
+                      sessionId: submission.context,
+                      editor: {
+                        owner: submission.draft.snapshot.text.owner,
+                        revision: submission.draft.revision,
+                      },
+                      attachments: submission.attachments,
+                    },
+                  });
+                }
+              } else entry.notice = 'draftKept';
+            } else entry.notice = 'draftKept';
+          } else if (entry && delivery?.kind === 'send') {
+            if (outcome.status === 'operation')
+              admitted(state, entry, delivery.submission, outcome.reply, outcome.caller, events);
+            else {
+              entry.delivery = null;
+              entry.notice = 'draftKept';
+            }
+          } else if (entry && delivery?.kind === 'unknown') {
+            delivery.checking = null;
+            if (
+              outcome.status === 'succeeded' &&
+              sameValue((outcome.value as OperationReply).reference, delivery.reference)
+            )
+              admitted(
+                state,
+                entry,
+                delivery.submission,
+                outcome.value as OperationReply,
+                delivery.caller,
+                events,
+              );
+          }
+        }
+        return composerFrame(state, props, events, actions);
+      }
+      const source =
+        input.kind === 'component'
+          ? state.entries.find((entry) => entry.key === input.child)
+          : null;
+      if (input.kind === 'component' && !source) return composerFrame(state, props);
+      if (input.kind === 'component' && source && input.name === 'checkpoint') {
+        const observation = input.event as EditorCheckpointObservation;
+        const recovered = state.records.find(
+          (record) => record.observation.owner === observation.owner,
+        )?.work;
+        if (observation.state.kind === 'ready' && recovered?.status === 'applying')
+          source.history = { after: recovered.after, scope: recovered.scope };
+        source.checkpoint =
+          observation.state.kind === 'restore'
+            ? { ...observation, state: { ...observation.state, metadata: null } }
+            : observation;
+        state.records = observeDraft(state.records, {
+          context: source.context,
+          dataSource: source.dataSource,
+          observation,
+          owners: state.entries.flatMap((entry) =>
+            entry.checkpoint ? [entry.checkpoint.owner] : [],
+          ),
+        });
+        return composerFrame(state, props);
+      }
+      if (input.kind === 'component' && source && input.name === 'files') {
+        source.files = input.event as FilePasteObservation;
+        return composerFrame(state, props, [
+          { name: 'files', value: { ...source.files, dataSource: source.dataSource } },
+        ]);
+      }
+      if (
+        input.kind === 'component' &&
+        source &&
+        (input.name === 'changed' || input.name === 'submitted')
+      ) {
+        source.observation = input.event as EditorObservation;
+        const delivery = source.delivery,
+          receipt = source.observation.receipt;
+        if (
+          delivery?.kind === 'clear' &&
+          receipt?.owner === delivery.command.owner &&
+          receipt.sequence === delivery.command.sequence
+        ) {
+          if (receipt.outcome.status === 'applied') advance(source, delivery.caller);
+          else source.notice = 'draftKept';
+          source.delivery = null;
+        }
+        if (input.name === 'changed') return composerFrame(state, props);
+      }
+      const current = state.entries.find(
+        (entry) => entry.context === props.context && sameValue(entry.dataSource, props.dataSource),
+      );
+      const observation = current?.observation;
+      if (input.kind === 'raw' && input.key === 'draft-retry' && current?.checkpoint) {
+        if (current.delivery?.kind === 'unknown') {
+          if (!current.delivery.checking) {
+            const key = `receipt-${++state.serial}`;
+            current.delivery.checking = key;
+            actions.push(action(key, 'receipts', 'read', current.delivery.reference));
+          }
+        } else if (current.checkpoint.state.kind === 'failed') current.retry++;
+        else retryDraft(state.records, current.checkpoint.owner);
+        return composerFrame(state, props, [], actions);
+      }
+      if (
+        ((input.kind === 'raw' && input.key === 'send') ||
+          (input.kind === 'component' && source === current && input.name === 'submitted')) &&
+        current?.checkpoint?.state.kind === 'ready' &&
+        current.checkpoint.state.initialized &&
+        props.enabled &&
+        !props.busy &&
+        !current.delivery &&
+        (target === 'tui' || !props.running) &&
+        observation &&
+        !observation.snapshot.marked
+      ) {
+        const attachments = props.attachments
+          .filter(
+            (file) =>
+              file.sessionId === current.context && sameValue(file.dataSource, current.dataSource),
+          )
+          .map((file) => file.id);
+        if (!observation.snapshot.text.bytes && !attachments.length)
+          return composerFrame(state, props);
+        if (!props.backend)
+          return composerFrame(state, props, [
+            { name: 'setup', value: { context: current.context } },
+          ]);
+        const key = `read-${++state.serial}`;
+        current.notice = null;
+        current.delivery = {
+          kind: 'read',
+          key,
+          submission: {
+            context: current.context,
+            dataSource: current.dataSource,
+            backend: props.backend,
+            draft: observation,
+            attachments,
+          },
+        };
+        actions.push({
+          ...action(key, 'reader', 'read', { start: 0, end: observation.snapshot.text.bytes }),
+          resources: {
+            text: {
+              child: current.key,
+              method: 'snapshot',
+              input: {
+                kind: 'at_revision',
+                owner: observation.snapshot.text.owner,
+                revision: observation.snapshot.text.revision,
+              },
+            },
+          },
+        });
+        return composerFrame(state, props, [], actions);
+      }
+      if (input.kind === 'raw' && input.key === 'attach' && props.context && !props.busy)
+        return composerFrame(state, props, [{ name: 'attachments', value: {} }]);
+      if (input.kind === 'raw' && input.key === 'stop' && props.running && !props.busy)
+        return composerFrame(state, props, [{ name: 'stop', value: {} }]);
+      return composerFrame(state, props);
+    },
+    capture(state, props, method, input) {
+      const owner = (input as { owner?: string }).owner;
+      const entry = state.entries.find((entry) =>
+        method === 'file'
+          ? entry.files?.selection.owner === owner
+          : owner
+            ? entry.observation?.snapshot.text.owner === owner
+            : entry.context === props.context,
+      );
+      if (!entry) throw new Error('Original draft is unavailable');
+      return { kind: 'forward', source: { child: entry.key, method, input } };
+    },
+  };
+}

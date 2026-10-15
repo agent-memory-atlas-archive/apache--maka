@@ -22,7 +22,6 @@ import { type SettingsCategory } from '../../shared/settings.js';
 import type {
   ModelSelection,
   AgentExecutorSelection,
-  ThinkingLevel,
   AgentQueue,
   AgentPendingInteractions,
   InteractionRecord,
@@ -64,7 +63,7 @@ import { type Copy } from '../../shared/locale.js';
 
 import { type AttachmentDrafts } from '../../shared/attachments.js';
 
-import { type DraftRecord, type DraftStep } from '../../shared/drafts.js';
+import { type ComposerReadiness } from '../../shared/drafts.js';
 
 import type { GoalState, GoalRequest } from './goal.js';
 import type { PlanState, PlanRequest } from './plan.js';
@@ -74,16 +73,11 @@ type BackendPreference = import('../../../packages/plugin-sdk/src/index.js').Age
 
 type Notice = keyof Copy | null;
 
-export type Backend =
-  | { kind: 'model'; model: ModelSelection; thinkingLevel: ThinkingLevel | null }
-  | { kind: 'executor'; selection: AgentExecutorSelection };
-
 export type Request =
   | { kind: 'sandboxChange'; epoch: number; sessionId: string }
   | GoalRequest
   | PlanRequest
   | GraphRequest
-  | DraftStep
   | { kind: 'activity'; epoch: number; through: number; turnId: string; position: HistoryPosition }
   | {
       kind: 'readingPrompt';
@@ -104,14 +98,6 @@ export type Request =
       position: HistoryPosition;
     }
   | {
-      kind: 'read';
-      dataSource: AgentDataSource;
-      attachments: string[];
-      draft: EditorObservation;
-      sessionId: string;
-      backend: Backend;
-    }
-  | {
       kind: 'source';
       epoch: number;
       navigation: number;
@@ -128,14 +114,6 @@ export type Request =
   | { kind: 'selectBackend'; sessionId: string; backend: BackendPreference }
   | { kind: 'create' }
   | { kind: 'createDirectory'; title: string }
-  | {
-      kind: 'send';
-      dataSource: AgentDataSource;
-      attachments: string[];
-      draft: EditorObservation;
-      sessionId: string;
-      backend: Backend;
-    }
   | {
       kind: 'uploadAttachment';
       sessionId: string;
@@ -161,7 +139,6 @@ export type Mutation =
           | 'selectBackend'
           | 'sandboxChange'
           | 'create'
-          | 'send'
           | 'stop'
           | 'queue'
           | 'respond'
@@ -260,11 +237,10 @@ export interface State {
   restoreThrough: number;
   recoveryDirty: boolean;
   settledOperations: string[];
-  draftHistorySafe: boolean;
   embedding: AgentScreenProps;
   externalSelection: AgentScreenProps['session'] | null;
   preferences: AppearanceEditor;
-  drafts: DraftRecord[];
+  drafts: ComposerReadiness[];
   attachments: AttachmentDrafts;
   revision: number;
   serial: number;
@@ -418,8 +394,6 @@ export interface State {
   uncertain: Uncertain | null;
   restoring: boolean;
   restoreAfter: number;
-  command: EditorCommand | null;
-  commandSequence: number;
   notice: Notice;
 }
 

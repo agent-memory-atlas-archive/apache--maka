@@ -171,7 +171,7 @@ fn fixture() -> (Input, Vec<Package>) {
     packages.push(history);
     (input, packages)
 }
-fn reference(padding: usize) -> RecoveryRef {
+fn reference() -> RecoveryRef {
     RecoveryRef {
         source: DeploymentRef {
             state_domain: "a".repeat(64),
@@ -184,23 +184,27 @@ fn reference(padding: usize) -> RecoveryRef {
         operation: Uuid::new_v4(),
         fingerprint: format!("sha256-{}", "b".repeat(64)),
         recovery: RecoveryProtocol::JournalV1,
-        contract: Contract {
-            name: "test.Change".into(),
-            version: 1,
-            transport: Transport::Remote,
-            interface: Interface::Service {
-                methods: BTreeMap::from([(
-                    "change".into(),
-                    Method {
-                        progress: None,
-                        mode: MethodMode::Mutation,
-                        input: json!({"description":"\"\\\n".repeat(padding)}),
-                        output: json!({}),
-                        resources: BTreeMap::new(),
-                    },
-                )]),
+        contract: maka_plugin_core::operation::RecoveryContract::for_method(
+            &Contract {
+                name: "test.Change".into(),
+                version: 1,
+                transport: Transport::Remote,
+                interface: Interface::Service {
+                    methods: BTreeMap::from([(
+                        "change".into(),
+                        Method {
+                            progress: None,
+                            mode: MethodMode::Mutation,
+                            input: json!({}),
+                            output: json!({}),
+                            resources: BTreeMap::new(),
+                        },
+                    )]),
+                },
             },
-        },
+            "change",
+        )
+        .unwrap(),
     }
 }
 fn namespaces(dir: &std::path::Path) -> RootNamespaces {
@@ -315,7 +319,7 @@ fn explicit_deployment_history_reads_original_consumers_but_never_another_deploy
         .block_on(store.record_application_intent(
             original.clone(),
             identity(2),
-            reference(0),
+            reference(),
             serde_json::Value::Null,
         ))
         .unwrap()
@@ -325,7 +329,7 @@ fn explicit_deployment_history_reads_original_consumers_but_never_another_deploy
         .block_on(store.record_application_intent(
             other_deployment,
             identity(2),
-            reference(0),
+            reference(),
             serde_json::Value::Null,
         ))
         .unwrap();
@@ -333,7 +337,7 @@ fn explicit_deployment_history_reads_original_consumers_but_never_another_deploy
         .block_on(store.record_application_intent(
             original,
             identity(4),
-            reference(0),
+            reference(),
             serde_json::Value::Null,
         ))
         .unwrap()
@@ -384,7 +388,7 @@ fn both_variants_read_original_caller_history_after_root_reopen_and_source_repla
                 packages.clone(),
             ))
             .unwrap();
-        let original = reference(0);
+        let original = reference();
         let mine = timer
             .block_on(store1.record_application_intent(
                 first.clone(),
@@ -399,7 +403,7 @@ fn both_variants_read_original_caller_history_after_root_reopen_and_source_repla
             .block_on(store1.record_application_intent(
                 first.clone(),
                 identity(4),
-                reference(0),
+                reference(),
                 serde_json::Value::Null,
             ))
             .unwrap()
@@ -521,7 +525,7 @@ fn accepted_history_waiting_behind_real_sql_writer_retains_root_after_surface_ex
         .block_on(store.record_application_intent(
             source.clone(),
             identity(2),
-            reference(0),
+            reference(),
             serde_json::Value::Null,
         ))
         .unwrap()
@@ -633,7 +637,7 @@ fn live_adoption_keeps_queued_history_source_and_retained_history_serves_new_con
             .block_on(store.record_application_intent(
                 first.clone(),
                 identity(2),
-                reference(0),
+                reference(),
                 serde_json::Value::Null,
             ))
             .unwrap()

@@ -59,10 +59,52 @@ pub struct Resources {
     files: BTreeMap<String, Resource>,
     incomplete: bool,
 }
+
+/// Build assets are immutable and carry no filesystem authority. Parse and hash
+/// them once, then apply each discovery's remaining shared budget independently.
+#[derive(Debug, Clone)]
+pub(crate) struct Embedded {
+    files: &'static [(&'static str, &'static [u8])],
+    prepared: Resources,
+}
+impl Embedded {
+    pub fn new(files: &'static [(&'static str, &'static [u8])]) -> Result<Self, ScanError> {
+        Ok(Self {
+            files,
+            prepared: Resources::embedded(files, &mut Budget::default())?,
+        })
+    }
+    pub fn capture(&self, budget: &mut Budget) -> Result<Resources, ScanError> {
+        Resources::capture_embedded(self.files, budget, |path, _| {
+            // A call never has more than the original default budget. Every
+            // resource it can reach therefore exists in this prepared prefix.
+            self.prepared
+                .files
+                .get(path)
+                .cloned()
+                .ok_or(ScanError::Unavailable)
+        })
+    }
+}
 impl Resources {
     pub(crate) fn embedded(
         files: &[(&str, &[u8])],
         budget: &mut Budget,
+    ) -> Result<Self, ScanError> {
+        Self::capture_embedded(files, budget, |_, bytes| {
+            Ok(match std::str::from_utf8(bytes) {
+                Ok(content) => Resource::Text {
+                    content: content.into(),
+                    hash: maka_agent_facts::artifact::content_digest(bytes),
+                },
+                Err(_) => Resource::Unavailable(DiscoveryFailure::ReadFailed),
+            })
+        })
+    }
+    fn capture_embedded(
+        files: &[(&str, &[u8])],
+        budget: &mut Budget,
+        mut resource: impl FnMut(&str, &[u8]) -> Result<Resource, ScanError>,
     ) -> Result<Self, ScanError> {
         let mut result = Self::default();
         for (index, (path, bytes)) in files.iter().enumerate() {
@@ -79,13 +121,7 @@ impl Resources {
             let resource = if bytes.len() > limit {
                 Resource::Unavailable(DiscoveryFailure::SourceTooLarge)
             } else {
-                match std::str::from_utf8(bytes) {
-                    Ok(content) => Resource::Text {
-                        content: content.into(),
-                        hash: maka_agent_facts::artifact::content_digest(bytes),
-                    },
-                    Err(_) => Resource::Unavailable(DiscoveryFailure::ReadFailed),
-                }
+                resource(path, bytes)?
             };
             if result.files.insert((*path).into(), resource).is_some() {
                 return Err(ScanError::Unavailable);
@@ -318,6 +354,42 @@ fn valid_path(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prepared_embedded_resources_keep_request_budgets_independent() {
+        static FILES: &[(&str, &[u8])] = &[("one", b"abc"), ("two", b"de"), ("binary", &[255])];
+        let prepared = Embedded::new(FILES).unwrap();
+        for bytes in 0..=8 {
+            for entries in 0..=4 {
+                let mut direct_budget = Budget { bytes, entries };
+                let direct = Resources::embedded(FILES, &mut direct_budget).unwrap();
+                let mut cached_budget = Budget { bytes, entries };
+                let cached = prepared.capture(&mut cached_budget).unwrap();
+                assert_eq!(cached.fingerprint(), direct.fingerprint());
+                assert_eq!(
+                    (cached_budget.bytes, cached_budget.entries),
+                    (direct_budget.bytes, direct_budget.entries)
+                );
+            }
+        }
+        let first = prepared.capture(&mut Budget::default()).unwrap();
+        let second = prepared.capture(&mut Budget::default()).unwrap();
+        let Resource::Text { content: a, .. } = &first.files["one"] else {
+            panic!("text")
+        };
+        let Resource::Text { content: b, .. } = &second.files["one"] else {
+            panic!("text")
+        };
+        assert!(
+            Arc::ptr_eq(a, b),
+            "immutable bytes are shared across requests"
+        );
+        assert_eq!(a.as_ref(), "abc");
+        assert!(matches!(
+            second.files["binary"],
+            Resource::Unavailable(DiscoveryFailure::ReadFailed)
+        ));
+    }
     #[test]
     fn embedded_resources_enforce_paths_and_shared_capture_limits() {
         for path in [

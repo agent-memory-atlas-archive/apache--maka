@@ -105,10 +105,9 @@ impl super::Widget for Node {
     fn scene(&self) -> Option<&Node> {
         Some(self)
     }
-    fn prepare_focus(&self, state: &mut dyn std::any::Any, visible: bool) {
+    fn prepare_focus(&self, state: &mut dyn std::any::Any, visible: bool, revision: u64) {
         let state = state.downcast_mut::<super::scroll::SceneState>().unwrap();
-        state.prepare_dialogs(self, visible);
-        state.prepare_focus_scopes(self, visible);
+        state.prepare_focus(self, visible, revision);
     }
     fn deactivate(&self, state: &mut dyn std::any::Any) {
         let state = state.downcast_mut::<super::scroll::SceneState>().unwrap();

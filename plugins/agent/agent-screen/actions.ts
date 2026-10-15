@@ -28,7 +28,12 @@ import type {
   AgentList,
   TerminalPaneCommand,
 } from '../../../packages/plugin-sdk/src/index.js';
-import type { PaletteCommand, QuestionDraft } from '../../shared/contracts.js';
+import type {
+  ComposerBackend,
+  ComposerSent,
+  PaletteCommand,
+  QuestionDraft,
+} from '../../shared/contracts.js';
 import { sameValue } from '../../shared/value.js';
 import { copy } from '../../shared/locale.js';
 import { compactLabel } from '../../shared/view.js';
@@ -42,7 +47,7 @@ import {
 
 import { draftReady } from '../../shared/drafts.js';
 
-import { type Backend, type Request, type State, type RootCommand } from './state.js';
+import { type Request, type State, type RootCommand } from './state.js';
 import { toolCards } from '../../shared/tool-cards.js';
 import { readingKey } from './state.js';
 import { newGoalState, watchGoal } from './goal.js';
@@ -70,16 +75,6 @@ export function intent(
     input,
     resources,
     continuations,
-    ...(request.kind === 'send'
-      ? {
-          recovery: {
-            format: 'maka.agent.draft-send@1',
-            sessionId: request.sessionId,
-            editor: { owner: request.draft.snapshot.text.owner, revision: request.draft.revision },
-            attachments: request.attachments,
-          },
-        }
-      : {}),
   });
 }
 
@@ -131,7 +126,7 @@ export function canExecute(state: State) {
   return !!state.executor || (!!state.model && !state.modelRefreshing);
 }
 
-export function selectedBackend(state: State): Backend {
+export function selectedBackend(state: State): ComposerBackend {
   return state.executor
     ? {
         kind: 'executor',
@@ -550,7 +545,6 @@ export function mutationPending(state: State) {
     state.uncertain !== null ||
     Object.values(state.pending).some((request) =>
       [
-        'read',
         'queueRead',
         'questionRead',
         'respond',
@@ -561,7 +555,6 @@ export function mutationPending(state: State) {
         'sandboxChange',
         'create',
         'createDirectory',
-        'send',
         'stop',
         'queue',
         'receipt',
@@ -1402,4 +1395,31 @@ export function closeDialog(state: State) {
   if (state.dialog === 'queue') state.queueEdit = null;
   if (state.dialog === 'question') state.questionSubmission = null;
   state.dialog = null;
+}
+
+// Presentation reacts only after the Composer's original mutation is admitted.
+export function sentDraft(state: State, actions: Action[], sent: ComposerSent) {
+  state.attachments.files = state.attachments.files.filter(
+    (file) =>
+      file.sessionId !== sent.context ||
+      !sameValue(file.dataSource, sent.dataSource) ||
+      !sent.attachments.includes(file.id),
+  );
+  if (state.selected?.id !== sent.context || !sameValue(state.selected.dataSource, sent.dataSource))
+    return;
+  state.searchOpen = false;
+  state.browse = null;
+  if (
+    state.window?.latest &&
+    state.window.page.after === null &&
+    state.window.page.through === state.latestKnown
+  ) {
+    const visit = state.visits.find((entry) => entry.id === sent.context);
+    if (visit) visit.following = true;
+    state.navigation++;
+    state.landing = { sequence: state.landing.sequence + 1, edge: 'end' };
+    state.tailReceipt = null;
+    state.followAttempt = null;
+  } else history(state, actions, { kind: 'tail' }, state.latestKnown, true);
+  observe(state, actions);
 }

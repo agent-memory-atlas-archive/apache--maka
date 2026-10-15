@@ -21,10 +21,7 @@
 use super::*;
 use cap_fs_ext::DirExt;
 use maka_event_log::root::RootOwner;
-use maka_plugin_core::{
-    contract::Interface,
-    operation::{OperationReply, Receipt, RecoveryRef},
-};
+use maka_plugin_core::operation::{OperationReply, Receipt, RecoveryRef};
 
 use maka_skills_api::outcomes::{EXPORT, contract};
 pub(super) fn provide(registry: &mut NativeRegistry) -> Result<(), String> {
@@ -100,25 +97,15 @@ impl Handler for Reader {
                 .validate()
                 .map_err(|_| "skills_recovery_invalid")?;
             let current = super::contract();
-            let compatible = match (&reference.contract.interface, &current.interface) {
-                (
-                    Interface::Service { methods: original },
-                    Interface::Service { methods: current },
-                ) => {
-                    original.get(&reference.method).is_some()
-                        && original.get(&reference.method) == current.get(&reference.method)
-                }
-                _ => false,
-            };
             if reference.export != super::EXPORT
                 || !matches!(
                     reference.method.as_str(),
                     "apply" | "importSource" | "deleteSource"
                 )
-                || reference.contract.name != current.name
-                || reference.contract.version != current.version
-                || reference.contract.transport != current.transport
-                || !compatible
+                || !reference
+                    .contract
+                    .matches(&current, &reference.method)
+                    .unwrap_or(false)
             {
                 return Err("skills_recovery_contract_unsupported".into());
             }

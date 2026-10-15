@@ -376,7 +376,7 @@ async fn native_process_network_stays_denied_until_approval_and_once_grants_expi
         let server = tokio::spawn(async move {
             let (mut socket, _) = network.accept().await.unwrap();
             let mut buffer = [0; 4096];
-            socket.read(&mut buffer).await.unwrap();
+            assert!(socket.read(&mut buffer).await.unwrap() > 0);
             socket
                 .write_all(
                     b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\nnetwork",
@@ -441,7 +441,7 @@ async fn sandbox_off_removes_process_filesystem_and_network_isolation() {
         let server = tokio::spawn(async move {
             let (mut socket, _) = network.accept().await.unwrap();
             let mut buffer = [0; 4096];
-            socket.read(&mut buffer).await.unwrap();
+            assert!(socket.read(&mut buffer).await.unwrap() > 0);
             socket
                 .write_all(
                     b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\nnetwork",

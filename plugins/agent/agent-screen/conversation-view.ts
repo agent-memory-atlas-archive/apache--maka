@@ -26,10 +26,11 @@ import { fill, pixels, type Node, type Presentation } from '../../shared/view.js
 
 import { attachmentFiles, attachmentSummary, pasteView } from '../../shared/attachments.js';
 
-import { draftReady, draftStatuses } from '../../shared/drafts.js';
+import { draftReady } from '../../shared/drafts.js';
 
 import {
   canExecute,
+  selectedBackend,
   catalogPending,
   conversationRoute,
   executionPending,
@@ -257,19 +258,13 @@ export function conversationView<N extends Node>(
     'composer',
     'composer',
     {
+      backend: canExecute(state) ? selectedBackend(state) : null,
       context: state.selected?.id ?? null,
       dataSource: state.selected?.dataSource ?? null,
       attachments: state.attachments.files,
-      drafts: draftStatuses(state.drafts),
-      historyAfter: state.draftHistorySafe && !state.command ? state.restoreThrough : 0,
-      historyScope: state.historyScope,
       theme,
       locale,
-      busy:
-        busy ||
-        !!state.attachments.paste ||
-        (target !== 'tui' && executionPending(state)) ||
-        (target === 'tui' && !!state.run && !state.queue),
+      busy: !!state.attachments.paste,
       filePaste:
         target === 'tui' &&
         state.selected &&
@@ -297,19 +292,23 @@ export function conversationView<N extends Node>(
         : state.modelSetup === 'connect'
           ? text.configureModels
           : text.chooseModel,
-      enabled: !!state.selected && !state.selected.archived && state.notice !== 'unavailable',
-      command: state.command,
+      enabled:
+        !!state.selected &&
+        !state.selected.archived &&
+        conversationRoute(state) &&
+        !state.dialog &&
+        !state.source &&
+        !state.image,
       autoFocus: !state.searchOpen && state.browse === null,
-      hasAttachments: attached.length > 0,
     },
     {
-      send: 'send',
+      sent: 'sent',
+      setup: 'setup',
+      readiness: 'readiness',
+      restored: 'restored',
       stop: 'stop',
       attachments: 'attachments',
-      changed: 'draft',
       files: 'files',
-      checkpoint: 'checkpoint',
-      draftCheck: 'draft-check',
     },
   );
   const queueProps: RowsProps = {

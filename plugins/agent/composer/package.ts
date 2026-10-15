@@ -24,7 +24,13 @@ import { one, uiEntries } from '../../shared/package.js';
 const entries = uiEntries({
   contract: own.composerContract,
   export: 'Composer',
-  imports: { editor: one(sdk.contracts.textarea) },
+  imports: {
+    editor: one(sdk.contracts.textarea),
+    reader: one(sdk.contracts.textReader),
+    agent: one(sdk.contracts.agent),
+    history: one(sdk.contracts.callerHistory),
+    receipts: one(sdk.contracts.receiptReader),
+  },
 });
 export default {
   schemaVersion: 2,

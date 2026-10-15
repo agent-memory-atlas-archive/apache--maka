@@ -24,13 +24,14 @@ use maka_capabilities::filesystem::ReadDirectory;
 use std::collections::BTreeSet;
 use tokio_util::sync::CancellationToken;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BundledSource {
     pub id: &'static str,
     pub content: &'static str,
     pub document: SkillDocument,
     pub content_sha256: String,
     pub files: &'static [(&'static str, &'static [u8])],
+    pub(crate) resources: crate::resources::Embedded,
 }
 #[derive(Debug)]
 pub struct SourceCatalog {
@@ -90,20 +91,30 @@ struct Bundled {
 include!(concat!(env!("OUT_DIR"), "/bundled.rs"));
 
 pub(super) fn bundled() -> Result<Vec<BundledSource>, SourceCatalogError> {
-    BUNDLED
-        .iter()
-        .map(|source| {
-            let Bundled { id, content, files } = source;
-            Ok(BundledSource {
-                id,
-                content,
-                document: crate::parse(content)
-                    .map_err(|_| SourceCatalogError::InvalidBundledMetadata)?,
-                content_sha256: maka_agent_facts::artifact::content_digest(content.as_bytes()),
-                files,
-            })
+    static PREPARED: std::sync::OnceLock<Result<Vec<BundledSource>, SourceCatalogError>> =
+        std::sync::OnceLock::new();
+    PREPARED
+        .get_or_init(|| {
+            BUNDLED
+                .iter()
+                .map(|source| {
+                    let Bundled { id, content, files } = source;
+                    Ok(BundledSource {
+                        id,
+                        content,
+                        document: crate::parse(content)
+                            .map_err(|_| SourceCatalogError::InvalidBundledMetadata)?,
+                        content_sha256: maka_agent_facts::artifact::content_digest(
+                            content.as_bytes(),
+                        ),
+                        files,
+                        resources: crate::resources::Embedded::new(files)
+                            .map_err(SourceCatalogError::Scan)?,
+                    })
+                })
+                .collect::<Result<Vec<_>, SourceCatalogError>>()
         })
-        .collect::<Result<Vec<_>, SourceCatalogError>>()
+        .clone()
 }
 
 pub async fn source_catalog(

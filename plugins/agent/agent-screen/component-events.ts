@@ -35,6 +35,7 @@ import type {
   SourcePosition,
 } from '../../../packages/plugin-sdk/src/index.js';
 import type {
+  ComposerSent,
   MessageCopyObservation,
   ModelSetup,
   PageChrome,
@@ -53,10 +54,10 @@ import {
   type DraftFilePaste,
 } from '../../shared/attachments.js';
 
-import { draftReady, observeDraft, retryDraft, type DraftCheckpoint } from '../../shared/drafts.js';
+import type { ComposerReadiness } from '../../shared/drafts.js';
 
 import {
-  canExecute,
+  sentDraft,
   openModelSetup,
   catalog,
   catalogPending,
@@ -81,7 +82,6 @@ import {
   rootCommand,
   rootCommands,
   select,
-  selectedBackend,
   changeSession,
   saveBackend,
   submitQuestion,
@@ -110,12 +110,23 @@ export function handleComponent<N extends Node>(
     return frame(presentation, configuredLocale, state, values, actions);
   }
 
-  if (input.child === 'composer' && input.name === 'checkpoint') {
-    state.drafts = observeDraft(state.drafts, input.event as DraftCheckpoint, state.selected);
+  if (input.child === 'composer' && input.name === 'readiness') {
+    state.drafts = input.event as ComposerReadiness[];
     return frame(presentation, configuredLocale, state, values, actions);
   }
-  if (input.child === 'composer' && input.name === 'draftCheck') {
-    retryDraft(state.drafts, (input.event as { owner: string }).owner);
+  if (input.child === 'composer' && input.name === 'restored') {
+    const files = (input.event as { files: State['attachments']['files'] }).files;
+    for (const file of files) {
+      if (
+        !state.attachments.files.some(
+          (current) =>
+            current.id === file.id &&
+            current.sessionId === file.sessionId &&
+            sameValue(current.dataSource, file.dataSource),
+        )
+      )
+        state.attachments.files.push(file);
+    }
     return frame(presentation, configuredLocale, state, values, actions);
   }
   if (input.child === 'composer' && input.name === 'files' && target === 'tui') {
@@ -525,72 +536,10 @@ export function handleComponent<N extends Node>(
     state.catalogEpoch++;
     state.modelSetup = 'loading';
     state.modelRefreshing = !!state.model;
-  } else if (input.child === 'composer' && input.name === 'changed') {
-    const observation = input.event as EditorObservation;
-    if (
-      state.command &&
-      observation.receipt?.owner === state.command.owner &&
-      observation.receipt.sequence === state.command.sequence
-    ) {
-      if (observation.receipt.outcome.status === 'conflict') {
-        state.notice = 'draftKept';
-        // A rejected clear can leave already-sent text in a native draft. Keep
-        // its full recovery history until the next native restoration.
-        state.draftHistorySafe = false;
-      }
-      state.command = null;
-    }
-  } else if (
-    input.child === 'composer' &&
-    input.name === 'send' &&
-    draftReady(state.drafts, state.selected) &&
-    !state.attachments.paste &&
-    conversationRoute(state) &&
-    !state.dialog &&
-    !state.image &&
-    !state.source &&
-    (target === 'tui' || !executionPending(state)) &&
-    state.notice !== 'unavailable' &&
-    !mutationPending(state) &&
-    state.selected &&
-    !state.selected.archived &&
-    (!state.run || (target === 'tui' && state.queue !== null)) &&
-    !state.command
-  ) {
-    const draft = input.event as EditorObservation;
-    if (!canExecute(state)) openModelSetup(state);
-    else if (draft.snapshot.marked) state.notice = 'draftKept';
-    else
-      intent(
-        state,
-        actions,
-        {
-          kind: 'read',
-          dataSource: state.selected.dataSource,
-          attachments: attachmentFiles(
-            state.attachments,
-            state.selected.id,
-            state.selected.dataSource,
-          ).map((file) => file.id),
-          draft,
-          sessionId: state.selected.id,
-          backend: selectedBackend(state),
-        },
-        'reader',
-        'read',
-        { start: 0, end: draft.snapshot.text.bytes },
-        {
-          text: {
-            child: 'composer',
-            method: 'snapshot',
-            input: {
-              kind: 'at_revision',
-              owner: draft.snapshot.text.owner,
-              revision: draft.revision,
-            },
-          },
-        },
-      );
+  } else if (input.child === 'composer' && input.name === 'sent') {
+    sentDraft(state, actions, input.event as ComposerSent);
+  } else if (input.child === 'composer' && input.name === 'setup') {
+    if ((input.event as { context: string }).context === state.selected?.id) openModelSetup(state);
   } else if (input.child === 'composer' && input.name === 'stop') {
     rootCommand(state, actions, locale, 'stop', target);
   } else if (input.child === 'models' && input.name === 'backends') {

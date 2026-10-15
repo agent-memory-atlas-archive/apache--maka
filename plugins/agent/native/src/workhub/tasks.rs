@@ -874,7 +874,10 @@ impl Hub {
             || original.source.deployment != self.tasks.source.deployment
             || binding.provider().instance() != &original.namespace
             || binding.export() != original.export
-            || binding.contract() != &original.contract
+            || !original
+                .contract
+                .matches(binding.contract(), &original.method)
+                .unwrap_or(false)
             || original.method != assignment.delivery.method()
             || original.operation != assignment.operation
         {

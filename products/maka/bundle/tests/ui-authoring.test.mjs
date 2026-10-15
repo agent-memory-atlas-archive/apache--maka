@@ -48,7 +48,7 @@ async function client(target) {
       return this.reply({ status: 'succeeded', value });
     },
     operation(value) {
-      return this.reply({ status: 'operation', reply: recorded(value) });
+      return this.reply({ status: 'operation', reply: recorded(value), caller: null });
     },
     watch() {
       return this.reply({ status: 'updated', value: { pending: 1 } }, 'authoring-watch');
@@ -107,7 +107,7 @@ for (const target of ['tui', 'desktop']) {
     const reply = recorded({ kind: 'committed', value: { source: { revision: 2 } } });
     c.value(reply);
     assert.equal(c.out.actions[0].method, 'complete');
-    assert.deepEqual(c.out.actions[0].input.outcome, { status: 'operation', reply });
+    assert.deepEqual(c.out.actions[0].input.outcome, { status: 'operation', reply, caller: null });
     c.operation(true).operation({ request: null });
     assert.deepEqual(c.out.actions, []);
   });

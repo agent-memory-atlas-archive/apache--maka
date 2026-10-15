@@ -1285,7 +1285,7 @@ async fn javascript_receipts_preserve_child_reference_unknown_and_oversized_reco
 }
 
 #[tokio::test]
-async fn undeliverable_reference_is_rejected_before_mutation_acceptance_or_effect() {
+async fn original_contract_metadata_stays_native_while_compact_receipts_are_deliverable() {
     let (_dir, _ns, store) = store().await;
     let issuer = Issuer::default();
     let calls = Arc::new(AtomicUsize::new(0));
@@ -1355,22 +1355,29 @@ async fn undeliverable_reference_is_rejected_before_mutation_acceptance_or_effec
         .unwrap()
         .remove(0);
     let operation = Uuid::new_v4();
-    assert!(
-        mutate(
-            &client,
-            &store,
-            binding.clone(),
-            "echo".into(),
-            json!("effect"),
-            scope(&issuer, true),
-            operation
-        )
-        .await
-        .err()
-        .unwrap()
-        .contains("cannot be represented exactly")
-    );
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let mutation = mutate(
+        &client,
+        &store,
+        binding.clone(),
+        "echo".into(),
+        json!("effect"),
+        scope(&issuer, true),
+        operation,
+    )
+    .await
+    .unwrap();
+    let reference = mutation.reference.clone();
+    maka_plugin_core::json::check_delivery(&serde_json::to_value(&reference).unwrap(), 1024)
+        .unwrap();
+    let reply = mutation.result().await;
+    assert!(matches!(
+        reply.receipt,
+        Receipt::Recorded {
+            outcome: OperationOutcome::Returned { .. },
+            cleanup: OperationCleanup::Confirmed,
+        }
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
     app.shutdown().await.unwrap();
     drop(binding);
     drop(app);

@@ -18,7 +18,7 @@
  */
 
 import { presentations } from '../../shared/view.js';
-import { composer } from '../../shared/components.js';
+import { composer } from './component.js';
 import { composerContract } from '../../shared/contracts.js';
 export const component = composer(presentations.desktop);
 export function activate() {

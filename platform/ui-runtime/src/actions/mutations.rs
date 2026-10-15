@@ -25,6 +25,7 @@ use std::{panic::AssertUnwindSafe, sync::OnceLock};
 pub(super) struct Session {
     owner: Arc<dyn NativeMutation>,
     reference: Arc<OnceLock<RecoveryRef>>,
+    caller: Option<Box<CallerConfirmation>>,
     pub(super) progress: subscriptions::Flow,
     cancelled: bool,
 }
@@ -60,7 +61,7 @@ impl Session {
     }
     fn failure(&self, reason: String) -> ActionOutcome {
         match self.reference.get() {
-            Some(reference) => unavailable(reference.clone(), reason),
+            Some(reference) => unavailable(reference.clone(), self.caller.clone(), reason),
             None => ActionOutcome::NotAccepted {
                 reason: bounded_reason(reason),
             },
@@ -168,6 +169,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 session: Some(Session {
                     owner: owner.clone(),
                     reference: reference.clone(),
+                    caller: None,
                     progress: subscriptions::Flow::new(),
                     cancelled: false,
                 }),
@@ -296,7 +298,8 @@ impl<V: ?Sized + 'static> Application<V> {
             Err(error) => return self.close_preparation(id, error.to_string(), Some(recorded)),
         };
         let preparing = self.actions.preparing.remove(&id).expect("preparing");
-        let session = preparing.session.expect("constructed owner");
+        let mut session = preparing.session.expect("constructed owner");
+        session.caller = Some(Box::new(recorded.intent().confirmation()));
         let owner = session.owner.clone();
         self.actions.running.insert(
             id,
@@ -329,7 +332,10 @@ impl<V: ?Sized + 'static> Application<V> {
         recorded: Option<RecordedIntent>,
     ) -> Result<Option<ActionTask>> {
         let preparing = self.actions.preparing.get_mut(&id).expect("preparing");
-        let session = preparing.session.as_ref().expect("constructed owner");
+        let session = preparing.session.as_mut().expect("constructed owner");
+        session.caller = recorded
+            .as_ref()
+            .map(|recorded| Box::new(recorded.intent().confirmation()));
         preparing.outcome = Some(session.failure(reason));
         preparing.recorded = recorded;
         preparing.phase = Phase::Closing;
@@ -492,10 +498,11 @@ impl<V: ?Sized + 'static> Application<V> {
             )
         } else {
             let candidate = ActionOutcome::Operation {
+                caller: session.caller.clone(),
                 reply: Box::new(completion.reply),
             };
             let valid: Result<()> = (|| {
-                let ActionOutcome::Operation { reply } = &candidate else {
+                let ActionOutcome::Operation { reply, .. } = &candidate else {
                     unreachable!()
                 };
                 if let Receipt::Recorded {

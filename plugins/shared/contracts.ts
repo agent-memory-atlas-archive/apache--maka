@@ -21,6 +21,7 @@ import {
   contracts as native,
   type Contract,
   type AgentSession,
+  type ModelSelection,
   type AgentExecutorSelection,
   type AgentWorkspace,
   type AgentDataSource,
@@ -46,7 +47,7 @@ import {
   type SourceFormat,
 } from '../../packages/plugin-sdk/src/index.js';
 import type { AttachmentDrafts } from './attachments.js';
-import type { DraftStatus } from './drafts.js';
+
 export type Schema = Record<string, unknown>;
 export const object = (properties: Schema, required = Object.keys(properties)): Schema => ({
   type: 'object',
@@ -310,29 +311,35 @@ export interface QueueEditorProps {
   status: string;
   command: EditorCommand | null;
 }
+export type ComposerBackend =
+  | { kind: 'model'; model: ModelSelection; thinkingLevel: ThinkingLevel | null }
+  | { kind: 'executor'; selection: AgentExecutorSelection };
+export interface ComposerSent {
+  context: string;
+  dataSource: AgentDataSource;
+  attachments: string[];
+}
 export interface ComposerProps {
-  historyAfter?: number;
-  historyScope?: string | null;
+  backend: ComposerBackend | null;
   sendLabel?: string;
   dataSource: AgentDataSource | null;
   attachments: AttachmentDrafts['files'];
-  drafts: DraftStatus[];
   context: string | null;
   filePaste: FilePastePolicy | null;
   fileCommand: FilePasteCommand | null;
-  hasAttachments: boolean;
   autoFocus: boolean;
   theme: Theme;
   locale: string;
   busy: boolean;
   running: boolean;
   enabled: boolean;
-  command: EditorCommand | null;
 }
 // Reuse the exact native schemas; this package defines only its own interfaces.
 const editor = native.textarea.interface;
 const session = native.agent.interface.methods.list.output;
 const defs = {
+  ...native.agent.interface.methods.send.input.$defs,
+  ...native.agent.interface.methods.execute.input.$defs,
   ...native.agent.interface.methods.respond.input.$defs,
   ...native.agent.interface.methods.directories.output.$defs,
   ...native.agent.interface.methods.projects.output.$defs,
@@ -1122,12 +1129,25 @@ export const composerFooterContract = component(
     locale,
   }),
 );
+const composerBackend = {
+  anyOf: [
+    object({
+      kind: { const: 'model' },
+      model: native.agent.interface.methods.send.input.properties.model,
+      thinkingLevel: native.agent.interface.methods.send.input.properties.thinkingLevel,
+    }),
+    object({
+      kind: { const: 'executor' },
+      selection: native.agent.interface.methods.execute.input.properties.executor,
+    }),
+    { type: 'null' },
+  ],
+};
 export const composerContract = component(
   'maka.agent.Composer',
   object(
     {
-      historyAfter: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
-      historyScope: { anyOf: [{ type: 'string', maxLength: 4096 }, { type: 'null' }] },
+      backend: composerBackend,
       sendLabel: string,
       context: { anyOf: [{ type: 'string', minLength: 1, maxLength: 512 }, { type: 'null' }] },
       dataSource: { anyOf: [{ $ref: '#/$defs/AgentDataSource' }, { type: 'null' }] },
@@ -1140,61 +1160,67 @@ export const composerContract = component(
           dataSource: { $ref: '#/$defs/AgentDataSource' },
         }),
       },
-      drafts: {
-        type: 'array',
-        maxItems: 32,
-        items: object({
-          owner: string,
-          status: { enum: ['checking', 'unknown', 'failed', 'applying'] },
-          restore: { anyOf: [{ $ref: '#/$defs/EditorRestoration' }, { type: 'null' }] },
-        }),
-      },
       filePaste: editor.props.properties.filePaste,
       fileCommand: editor.props.properties.fileCommand,
       autoFocus: { type: 'boolean' },
-      hasAttachments: { type: 'boolean' },
       theme: { $ref: '#/$defs/Theme' },
       locale,
       busy: { type: 'boolean' },
       running: { type: 'boolean' },
       enabled: { type: 'boolean' },
-      command: editor.props.properties.command,
     },
     [
+      'backend',
       'context',
       'dataSource',
       'attachments',
-      'drafts',
       'filePaste',
       'fileCommand',
       'autoFocus',
-      'hasAttachments',
       'theme',
       'locale',
       'busy',
       'running',
       'enabled',
-      'command',
     ],
   ),
   {
-    send: editor.events.changed,
-    changed: editor.events.changed,
+    sent: withDefs(
+      object({
+        context: string,
+        dataSource: { $ref: '#/$defs/AgentDataSource' },
+        attachments: { type: 'array', maxItems: 8, items: string },
+      }),
+    ),
+    setup: object({ context: string }),
+    readiness: withDefs({
+      type: 'array',
+      maxItems: 32,
+      items: object({
+        context: string,
+        dataSource: { $ref: '#/$defs/AgentDataSource' },
+        ready: { type: 'boolean' },
+      }),
+    }),
+    restored: withDefs(
+      object({
+        files: {
+          type: 'array',
+          maxItems: 64,
+          items: object({
+            ...native.agent.interface.methods.uploadAttachment.output.$defs.AgentAttachment
+              .properties,
+            dataSource: { $ref: '#/$defs/AgentDataSource' },
+          }),
+        },
+      }),
+    ),
     files: withDefs(
       object({
         ...editor.events.files.properties,
         dataSource: { $ref: '#/$defs/AgentDataSource' },
       }),
     ),
-    checkpoint: withDefs(
-      object({
-        context: string,
-        dataSource: { $ref: '#/$defs/AgentDataSource' },
-        observation: editor.events.checkpoint,
-        owners: { type: 'array', maxItems: 32, items: string },
-      }),
-    ),
-    draftCheck: object({ owner: string }),
     stop: object({}),
     attachments: object({}),
   },

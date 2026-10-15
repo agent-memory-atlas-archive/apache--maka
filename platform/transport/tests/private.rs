@@ -688,14 +688,17 @@ async fn native_adapter_runs_checked_ui_actions_actual_caller_sql_and_original_r
         ui_action(&mut ui, &root, "recover").await["value"],
         result["reply"]
     );
+    let intents = f
+        .caller
+        .application_intents(f.source.deployment, support::identity(2), 0, 10)
+        .await
+        .unwrap();
+    assert_eq!(intents.len(), 1);
     assert_eq!(
-        f.caller
-            .application_intents(f.source.deployment, support::identity(2), 0, 10)
-            .await
-            .unwrap()
-            .len(),
-        1
+        result["caller"],
+        serde_json::to_value(intents[0].confirmation()).unwrap()
     );
+    assert_eq!(result["caller"]["reference"], result["reply"]["reference"]);
     stop_ui(ui, &root).await;
     connection.close().await.unwrap();
     drop(connection);

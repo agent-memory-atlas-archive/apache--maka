@@ -26,7 +26,8 @@ use maka_plugin_core::{
     contract::{Contract, Interface},
     deployment::DeploymentRef,
     operation::{
-        OperationCleanup, OperationObservation, OperationOutcome, RecoveryProtocol, RecoveryRef,
+        OperationCleanup, OperationObservation, OperationOutcome, RecoveryContract,
+        RecoveryProtocol, RecoveryRef,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -44,13 +45,13 @@ const MAX_DIAGNOSTIC: usize = 64 * 1024;
 /// This data is not an execution grant and contains no serialized evidence.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct OperationRequest {
+pub struct OperationRequest<C = Contract> {
     pub source: DeploymentRef,
     pub namespace: InstanceId,
     pub consumer: InstanceId,
     pub export: String,
     pub method: String,
-    pub contract: Contract,
+    pub contract: C,
     pub operation: Uuid,
     pub input: Value,
     /// Identity of the original private resource bundle; never a lookup grant.
@@ -65,20 +66,24 @@ fn required_capture<'de, D: serde::Deserializer<'de>>(
 }
 impl OperationRequest {
     pub fn reference(&self) -> Result<RecoveryRef, StoreError> {
+        self.journal()?.stored_reference()
+    }
+
+    fn journal(&self) -> Result<OperationRequest<RecoveryContract>, StoreError> {
         // Bound the entire record before building a canonical representation.
         encode(self, MAX_REQUEST)?;
-        if self.consumer.0.is_empty()
-            || self.consumer.0.len() > 64
-            || self.consumer.0.iter().any(Uuid::is_nil)
-        {
-            return Err(invalid("invalid operation consumer"));
-        }
         let Interface::Service { methods } = &self.contract.interface else {
             return Err(invalid("operation requires a service contract"));
         };
         let method = methods
             .get(&self.method)
             .ok_or_else(|| invalid("undeclared operation method"))?;
+        self.contract
+            .validate()
+            .map_err(|e| invalid(e.to_string()))?;
+        if method.mode != maka_plugin_core::contract::MethodMode::Mutation {
+            return Err(invalid("operation requires a declared mutation method"));
+        }
         if self.capture.is_some_and(|id| id.is_nil())
             || (self.capture.is_some() && method.resources.is_empty())
             || (self.capture.is_none() && method.resources.values().any(|slot| !slot.optional))
@@ -86,6 +91,32 @@ impl OperationRequest {
             return Err(invalid(
                 "operation capture does not match declared resources",
             ));
+        }
+        Ok(OperationRequest {
+            source: self.source.clone(),
+            namespace: self.namespace.clone(),
+            consumer: self.consumer.clone(),
+            export: self.export.clone(),
+            method: self.method.clone(),
+            contract: RecoveryContract::for_method(&self.contract, &self.method)
+                .map_err(|e| invalid(e.to_string()))?,
+            operation: self.operation,
+            input: self.input.clone(),
+            capture: self.capture,
+            origin: self.origin.clone(),
+        })
+    }
+}
+
+impl OperationRequest<RecoveryContract> {
+    fn stored_reference(&self) -> Result<RecoveryRef, StoreError> {
+        encode(self, MAX_REQUEST)?;
+        if self.consumer.0.is_empty()
+            || self.consumer.0.len() > 64
+            || self.consumer.0.iter().any(Uuid::is_nil)
+            || self.capture.is_some_and(|id| id.is_nil())
+        {
+            return Err(invalid("invalid operation consumer or capture"));
         }
         let mut canonical = serde_json::to_value(self)?;
         canonical
@@ -130,7 +161,7 @@ pub enum Dispatch {
 }
 
 struct Record {
-    request: OperationRequest,
+    request: OperationRequest<RecoveryContract>,
     observation: OperationObservation,
 }
 fn validate_settlement(
@@ -158,14 +189,14 @@ async fn read(
     reference: &RecoveryRef,
 ) -> Result<Option<Record>, StoreError> {
     let namespace = encode(&reference.namespace, 4096)?;
-    let Some(row) = sqlx::query("SELECT source_revision,
+    let Some(row) = sqlx::query("SELECT source_revision, contract_digest,
         CASE WHEN length(CAST(request_json AS BLOB)) <= 2097152 THEN request_json END AS request_json,
         CASE WHEN length(CAST(outcome_json AS BLOB)) <= 1048704 THEN outcome_json END AS outcome_json,
         CASE WHEN length(CAST(cleanup_json AS BLOB)) <= 65664 THEN cleanup_json END AS cleanup_json
         FROM application_operations WHERE deployment=? AND namespace=? AND operation=?")
         .bind(reference.source.deployment.to_string()).bind(namespace).bind(reference.operation.to_string())
         .fetch_optional(connection).await? else { return Ok(None); };
-    let request: OperationRequest = serde_json::from_str(
+    let request: OperationRequest<RecoveryContract> = serde_json::from_str(
         &row.try_get::<Option<String>, _>("request_json")?
             .ok_or_else(|| invalid("stored operation request exceeds limit"))?,
     )?;
@@ -177,7 +208,9 @@ async fn read(
         &row.try_get::<Option<String>, _>("cleanup_json")?
             .ok_or_else(|| invalid("stored operation cleanup exceeds limit"))?,
     )?;
-    if request.reference()? != *reference
+    let expected = request.stored_reference()?;
+    if expected != *reference
+        || row.try_get::<String, _>("contract_digest")? != reference.contract.digest
         || row.try_get::<i64, _>("source_revision")? != reference.source.revision as i64
     {
         return Err(StoreError::EventConflict);
@@ -209,7 +242,9 @@ impl EventLog {
         &self,
         request: OperationRequest,
     ) -> Result<Dispatch, StoreError> {
-        let reference = request.reference()?;
+        let contract_json = encode(&request.contract, MAX_REQUEST)?;
+        let request = request.journal()?;
+        let reference = request.stored_reference()?;
         self.operation_domain(&reference)?;
         let owner = self.root_owner.as_ref().expect("owned Root").clone();
         let request_json = encode(&request, MAX_REQUEST)?;
@@ -229,7 +264,12 @@ impl EventLog {
                         tx.commit().await.map_err(StoreError::CommitUnknown)?;
                         return Ok(Dispatch::Existing(record.observation));
                     }
-                    sqlx::query("INSERT INTO application_operations VALUES (?, ?, ?, ?, ?, ?, ?)")
+                    sqlx::query("INSERT INTO application_operation_contracts (digest, contract_json) VALUES (?, ?) ON CONFLICT(digest) DO NOTHING")
+                        .bind(&reference.contract.digest)
+                        .bind(contract_json)
+                        .execute(&mut *tx)
+                        .await?;
+                    sqlx::query("INSERT INTO application_operations (deployment, namespace, operation, source_revision, request_json, outcome_json, cleanup_json, contract_digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
                         .bind(reference.source.deployment.to_string())
                         .bind(encode(&reference.namespace, 4096)?)
                         .bind(reference.operation.to_string())
@@ -240,6 +280,7 @@ impl EventLog {
                             &OperationCleanup::Unconfirmed,
                             MAX_DIAGNOSTIC + 128,
                         )?)
+                        .bind(&reference.contract.digest)
                         .execute(&mut *tx)
                         .await?;
                     tx.commit().await.map_err(StoreError::CommitUnknown)?;

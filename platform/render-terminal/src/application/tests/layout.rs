@@ -1234,8 +1234,8 @@ impl Widget for ConditionalSlots {
     fn commit(&self, state: &mut dyn Any) -> maka_ui_runtime::Result<Option<NativeInput>> {
         self.scene.commit(state)
     }
-    fn prepare_focus(&self, state: &mut dyn Any, visible: bool) {
-        self.scene.prepare_focus(state, visible);
+    fn prepare_focus(&self, state: &mut dyn Any, visible: bool, revision: u64) {
+        self.scene.prepare_focus(state, visible, revision);
     }
     fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui_runtime::Result<(u16, u32)> {
         self.scene.measure(slots, width)

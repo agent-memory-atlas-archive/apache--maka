@@ -242,7 +242,7 @@ impl Widget for Recipe {
             .focus
             .presented()
     }
-    fn prepare_focus(&self, state: &mut dyn Any, visible: bool) {
+    fn prepare_focus(&self, state: &mut dyn Any, visible: bool, _: u64) {
         state
             .downcast_mut::<Owner>()
             .expect("terminal editor owner")

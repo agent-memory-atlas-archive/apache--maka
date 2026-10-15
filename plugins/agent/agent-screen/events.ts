@@ -266,7 +266,6 @@ export function handleEvent<N extends Node>(
             request.kind === 'selectBackend' ||
             request.kind === 'sandboxChange' ||
             request.kind === 'create' ||
-            request.kind === 'send' ||
             request.kind === 'stop' ||
             request.kind === 'queue' ||
             request.kind === 'respond' ||

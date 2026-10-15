@@ -121,9 +121,15 @@ fn is_title(value: &serde_json::Value) -> bool {
                 .is_some_and(|text| text.starts_with("Generate a short session title"))
     })
 }
+struct ModelRequest {
+    value: serde_json::Value,
+    socket: TcpStream,
+    received_at: Instant,
+}
+
 fn model_server(
     listener: TcpListener,
-    requests: mpsc::Sender<(serde_json::Value, TcpStream)>,
+    requests: mpsc::Sender<ModelRequest>,
     main_requests: usize,
     title_requests: usize,
 ) -> std::thread::JoinHandle<()> {
@@ -140,13 +146,22 @@ fn model_server(
                             std::time::Instant::now() < deadline,
                             "Expected remaining model requests"
                         );
-                        std::thread::sleep(Duration::from_millis(10));
+                        let mut poll = libc::pollfd {
+                            fd: listener.as_raw_fd(),
+                            events: libc::POLLIN,
+                            revents: 0,
+                        };
+                        let remaining = deadline.saturating_duration_since(Instant::now());
+                        assert!(
+                            unsafe { libc::poll(&mut poll, 1, remaining.as_millis() as i32) } >= 0
+                        );
                     }
                     Err(error) => panic!("Model connection: {error}"),
                 }
             };
             socket.set_nonblocking(false).unwrap();
             let value = request(&mut socket);
+            let received_at = Instant::now();
             socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n").unwrap();
             socket.flush().unwrap();
             if is_title(&value) {
@@ -155,7 +170,13 @@ fn model_server(
                 delta(&mut socket, "Workspace conversation");
                 complete(&mut socket);
             } else {
-                requests.send((value, socket)).unwrap();
+                requests
+                    .send(ModelRequest {
+                        value,
+                        socket,
+                        received_at,
+                    })
+                    .unwrap();
             }
         }
         assert_eq!(titles, title_requests);
@@ -187,7 +208,7 @@ fn paste(tui: &mut Pty, text: &str) {
 }
 fn next_request(
     tui: &mut Pty,
-    received: &mpsc::Receiver<(serde_json::Value, TcpStream)>,
+    received: &mpsc::Receiver<ModelRequest>,
 ) -> (serde_json::Value, TcpStream) {
     let mut next = None;
     // Keep consuming the PTY while the model request is admitted. A real
@@ -200,7 +221,8 @@ fn next_request(
         },
         Duration::from_secs(30),
     );
-    next.unwrap()
+    let request = next.unwrap();
+    (request.value, request.socket)
 }
 fn evidence(tui: &Pty, name: &str) {
     if let Ok(path) = std::env::var("MAKA_CHAT_UX_EVIDENCE") {
@@ -231,9 +253,17 @@ fn bundled_chat_sends_follows_renders_markdown_and_scrolls_original_history() {
         for _ in 0..9 {
             let (mut socket, _) = listener.accept().unwrap();
             let value = request(&mut socket);
+            let received_at = Instant::now();
             socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n").unwrap();
             socket.flush().unwrap();
-            if requests.send((value, socket)).is_err() {
+            if requests
+                .send(ModelRequest {
+                    value,
+                    socket,
+                    received_at,
+                })
+                .is_err()
+            {
                 break;
             }
         }

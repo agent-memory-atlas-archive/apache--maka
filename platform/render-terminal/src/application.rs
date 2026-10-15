@@ -108,7 +108,7 @@ pub trait Widget: std::any::Any {
     }
     /// Reconcile focus eligibility from the committed structural route. This
     /// cannot publish geometry, take focus, or consume a presentation offer.
-    fn prepare_focus(&self, _: &mut dyn std::any::Any, _: bool) {}
+    fn prepare_focus(&self, _: &mut dyn std::any::Any, _: bool, _: u64) {}
     /// Consume this exact eligible target after a successful flush and current
     /// original frame/owner admission. Geometry alone cannot consume an offer.
     /// Compact selectors may return to the original outer typing target.

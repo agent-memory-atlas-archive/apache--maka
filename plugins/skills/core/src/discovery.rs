@@ -209,6 +209,14 @@ pub async fn scan_with_bundled(
     scan_impl(sources, cancellation, None, true).await
 }
 
+/// Prepare immutable build assets during service activation, before requests
+/// need their catalog. No user files or filesystem capabilities are retained.
+pub fn prepare_bundled() -> Result<(), ScanError> {
+    sources::bundled()
+        .map(|_| ())
+        .map_err(|_| ScanError::Unavailable)
+}
+
 async fn scan_impl(
     sources: &[Source],
     cancellation: &CancellationToken,
@@ -261,7 +269,7 @@ async fn scan_impl(
                 document: source.document,
                 content_sha256: source.content_sha256,
                 shadowed_by: None,
-                resources: crate::Resources::embedded(source.files, &mut state.resource_budget)?,
+                resources: source.resources.capture(&mut state.resource_budget)?,
             });
         }
     }

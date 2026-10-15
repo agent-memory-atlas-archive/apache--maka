@@ -42,23 +42,27 @@ fn reference() -> RecoveryRef {
         method: "change".into(),
         operation: Uuid::new_v4(),
         fingerprint: format!("sha256-{}", "b".repeat(64)),
-        contract: Contract {
-            name: "test.Change".into(),
-            version: 1,
-            transport: Transport::Remote,
-            interface: Interface::Service {
-                methods: BTreeMap::from([(
-                    "change".into(),
-                    Method {
-                        progress: None,
-                        mode: MethodMode::Mutation,
-                        input: json!({}),
-                        output: json!({}),
-                        resources: BTreeMap::new(),
-                    },
-                )]),
+        contract: maka_plugin_core::operation::RecoveryContract::for_method(
+            &Contract {
+                name: "test.Change".into(),
+                version: 1,
+                transport: Transport::Remote,
+                interface: Interface::Service {
+                    methods: BTreeMap::from([(
+                        "change".into(),
+                        Method {
+                            progress: None,
+                            mode: MethodMode::Mutation,
+                            input: json!({}),
+                            output: json!({}),
+                            resources: BTreeMap::new(),
+                        },
+                    )]),
+                },
             },
-        },
+            "change",
+        )
+        .unwrap(),
         recovery: RecoveryProtocol::JournalV1,
     }
 }
@@ -405,12 +409,8 @@ async fn history_pages_bound_the_complete_encoded_array_without_skipping_the_nex
     let deployment = Uuid::new_v4();
     let caller = source(&store, deployment, 0).await;
     let mut expected = Vec::new();
-    for _ in 0..5 {
-        let mut original = reference();
-        let Interface::Service { methods } = &mut original.contract.interface else {
-            unreachable!()
-        };
-        methods.get_mut("change").unwrap().input = json!({"description": "\"\\\n".repeat(70_000)});
+    for _ in 0..70 {
+        let original = reference();
         let token = store
             .record_application_intent(
                 caller.clone(),
@@ -422,7 +422,7 @@ async fn history_pages_bound_the_complete_encoded_array_without_skipping_the_nex
             .unwrap();
         expected.push(token.intent().clone());
     }
-    assert!(serde_json::to_vec(&expected[..3]).unwrap().len() > MAX_PAGE);
+    assert!(serde_json::to_vec(&expected[..35]).unwrap().len() > MAX_PAGE);
     let mut all = Vec::new();
     let mut after = 0;
     let mut lengths = Vec::new();
@@ -440,7 +440,8 @@ async fn history_pages_bound_the_complete_encoded_array_without_skipping_the_nex
         lengths.push(page.len());
         all.extend(page);
     }
-    assert_eq!(lengths, [2, 2, 1]);
+    assert_eq!(lengths.len(), 3);
+    assert!(lengths.iter().all(|length| *length < 35));
     assert_eq!(all, expected);
 }
 

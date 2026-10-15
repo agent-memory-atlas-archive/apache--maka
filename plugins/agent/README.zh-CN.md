@@ -31,3 +31,5 @@
 - [acp-executor](acp-executor/native/README.zh-CN.md)通过显式进程与回调服务连接外部 ACP Agent。
 
 `agent-screen`、`composer`、`timeline` 等 UI 包消费这些契约。产品组装位于 [products/maka](../../products/maka/README.zh-CN.md)。
+
+[Composer](composer/component.ts) 管理原生草稿捕获、发送、回执恢复和草稿检查点，在提交时固定发送目标，接受发送后才通知会话页面。每份草稿独立保存调用方游标，只在原生清空成功或恢复过程核实剩余前缀后推进。

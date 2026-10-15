@@ -26,6 +26,7 @@ use std::collections::BTreeMap;
 #[derive(Default)]
 pub(super) struct SceneState {
     pub generation: u64,
+    pub(super) focus_basis: Option<(u64, bool, Vec<String>)>,
     pub choices: BTreeMap<String, super::choice::State>,
     pub panes: BTreeMap<String, super::adaptive::State>,
     pub dialogs: BTreeMap<String, std::rc::Rc<super::dialog::Opening>>,
@@ -79,6 +80,26 @@ impl Viewport {
     }
 }
 impl SceneState {
+    /// Focus structure changes with the committed recipe, visibility, or a
+    /// locally opened/closed menu. Worker polls and unrelated editor receipts
+    /// do not require traversing the conversation again.
+    pub fn prepare_focus(&mut self, node: &Node, visible: bool, revision: u64) {
+        if self
+            .focus_basis
+            .as_ref()
+            .is_some_and(|(previous, shown, openings)| {
+                *previous == revision
+                    && *shown == visible
+                    && openings.iter().eq(self.dialogs.keys())
+            })
+        {
+            return;
+        }
+        self.prepare_dialogs(node, visible);
+        self.prepare_focus_scopes(node, visible);
+        self.focus_basis = Some((revision, visible, self.dialogs.keys().cloned().collect()));
+    }
+
     pub fn prepare_focus_scopes(&mut self, node: &Node, visible: bool) {
         fn visit(node: &Node, visible: bool, state: &mut SceneState, keys: &mut Vec<String>) {
             match node {

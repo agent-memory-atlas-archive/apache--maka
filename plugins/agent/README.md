@@ -31,3 +31,5 @@ This family owns Agent behavior and its user interface. Leaf `package.ts` files 
 - [acp-executor](acp-executor/native/README.md) connects external ACP agents through explicit process and callback services.
 
 UI packages such as `agent-screen`, `composer` and `timeline` consume these contracts. Product assembly belongs to [products/maka](../../products/maka/README.md).
+
+[Composer](composer/component.ts) owns native draft capture, submission, receipt recovery and draft checkpoints. It fixes the destination at submission and reports admitted sends to the conversation. Each draft saves its own caller cursor only after its native clear applies or restoration checks the complete remaining prefix.

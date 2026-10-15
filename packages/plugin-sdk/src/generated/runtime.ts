@@ -1124,6 +1124,11 @@ export type ActionOutcome =
     }
   | {
       reply: OperationReply;
+      /**
+       * Position of the original confirmed caller commit, independent of the
+       * business outcome. A missing commit never authorizes advancing recovery.
+       */
+      caller: CallerConfirmation | null;
       status: 'operation';
     };
 export type RecoveryProtocol = 'journal_v1';
@@ -6000,8 +6005,28 @@ export interface RecoveryRef {
   method: string;
   operation: string;
   fingerprint: string;
-  contract: Contract;
+  contract: RecoveryContract;
   recovery: RecoveryProtocol;
+}
+/**
+ * Contract identity for a journal lookup. The original request retains the
+ * complete contract; a receipt carries only its digest.
+ */
+export interface RecoveryContract {
+  name: string;
+  version: number;
+  transport: Transport;
+  digest: string;
+}
+/**
+ * Peer attestation excludes caller-local recovery data. The receiving Host
+ * still requires its private admission evidence; this is not a commit token.
+ */
+export interface CallerConfirmation {
+  cursor: number;
+  caller: DeploymentRef;
+  consumer: InstanceId;
+  reference: RecoveryRef;
 }
 export interface CallerHistoryPage {
   after: number;

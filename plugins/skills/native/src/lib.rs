@@ -121,6 +121,9 @@ impl Library {
         managed: PathBuf,
         preferences: preferences::Store,
     ) -> Result<Self, String> {
+        if configuration.bundled {
+            maka_skills::prepare_bundled().map_err(|_| "skills_bundled_unavailable")?;
+        }
         let mut ids = BTreeSet::new();
         let policy = Arc::new(
             Policy {

@@ -56,8 +56,6 @@ import { graphView } from './graph.js';
 import { recapView } from './recap-view.js';
 import { attachmentView } from '../../shared/attachments.js';
 
-import { nextDraftStep, retainSelectedDraft } from '../../shared/drafts.js';
-
 import {
   catalogPending,
   closeDialog,
@@ -120,8 +118,6 @@ export function frame<N extends Node>(
     state.recoveryCheckpoint.restored &&
     state.recoveryDirty &&
     !mutationPending(state) &&
-    !state.command &&
-    !state.drafts.some((record) => record.work) &&
     !recovering
   ) {
     state.recoveryDirty = false;
@@ -129,26 +125,6 @@ export function frame<N extends Node>(
       after: state.restoreThrough,
       limit: 1,
     });
-  }
-  retainSelectedDraft(state.drafts, state.selected);
-  if (
-    !state.restoring &&
-    !state.uncertain &&
-    !recovering &&
-    !Object.values(state.pending).some(
-      (request) => request.kind === 'draftPage' || request.kind === 'draftReceipt',
-    )
-  ) {
-    const step = nextDraftStep(state.drafts, state.attachments, state.historyScope);
-    if (step)
-      intent(
-        state,
-        actions,
-        step,
-        step.kind === 'draftPage' ? 'history' : 'receipts',
-        step.kind === 'draftPage' ? 'page' : 'read',
-        step.kind === 'draftPage' ? { after: step.after, limit: 1 } : step.original.reference,
-      );
   }
   uploadPastedFile(state, actions);
   if (!conversationRoute(state) || state.source || state.image || !state.selected) {

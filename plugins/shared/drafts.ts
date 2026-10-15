@@ -29,30 +29,32 @@ import type {
 import type { AttachmentDrafts } from './attachments.js';
 import { sameValue } from './value.js';
 
+export interface ComposerReadiness {
+  context: string;
+  dataSource: AgentDataSource;
+  ready: boolean;
+}
 export interface DraftCheckpoint {
   context: string;
   dataSource: AgentDataSource;
   observation: EditorCheckpointObservation;
   owners: string[];
 }
-export interface DraftStatus {
-  owner: string;
-  status: 'checking' | 'unknown' | 'failed' | 'applying';
-  restore: EditorRestoration | null;
-}
+type DraftStatus = 'checking' | 'unknown' | 'failed' | 'applying';
 export interface DraftRecord {
   context: string;
   dataSource: AgentDataSource;
   observation: EditorCheckpointObservation;
   work: {
     after: number;
+    scope: string | null;
     checkpoint?: { after: number; scope: string };
     done: boolean;
     queue: CallerIntent[];
     clearText: boolean;
     attachments: AgentAttachment[];
     valid: boolean;
-    status: DraftStatus['status'];
+    status: DraftStatus;
     restore: EditorRestoration | null;
   } | null;
 }
@@ -71,10 +73,10 @@ function attachments(value: unknown, session: string): AgentAttachment[] | null 
     Object.keys(value).some(
       (key) => !['attachments', 'historyAfter', 'historyScope'].includes(key),
     ) ||
-    (value.historyScope != null &&
+    (value.historyScope !== null &&
       (typeof value.historyScope !== 'string' || value.historyScope.length > 4096)) ||
-    (value.historyAfter !== undefined &&
-      (!Number.isSafeInteger(value.historyAfter) || (value.historyAfter as number) < 0)) ||
+    !Number.isSafeInteger(value.historyAfter) ||
+    (value.historyAfter as number) < 0 ||
     !Array.isArray(value.attachments) ||
     value.attachments.length > 8
   )
@@ -112,7 +114,7 @@ function correlation(original: CallerIntent, draft: DraftRecord) {
   const value = original.recovery;
   if (
     !object(value) ||
-    value.format !== 'maka.agent.draft-send@1' ||
+    value.format !== 'maka.agent.draft-send@2' ||
     value.sessionId !== draft.context
   )
     return null;
@@ -133,17 +135,7 @@ function correlation(original: CallerIntent, draft: DraftRecord) {
     attachments: value.attachments as string[],
   };
 }
-export function retainSelectedDraft(records: DraftRecord[], session: AgentSession | null) {
-  for (const record of records) {
-    if (record.context !== session?.id || !sameValue(record.dataSource, session?.dataSource))
-      record.work = null;
-  }
-}
-export function observeDraft(
-  records: DraftRecord[],
-  event: DraftCheckpoint,
-  session: AgentSession | null,
-): DraftRecord[] {
+export function observeDraft(records: DraftRecord[], event: DraftCheckpoint): DraftRecord[] {
   const retained = records.filter((record) => event.owners.includes(record.observation.owner));
   let record = retained.find((record) => record.observation.owner === event.observation.owner);
   if (
@@ -172,21 +164,17 @@ export function observeDraft(
       ? { ...event.observation, state: { ...event.observation.state, metadata: null } }
       : event.observation;
   if (event.observation.state.kind === 'ready') record.work = null;
-  if (
-    event.observation.state.kind === 'restore' &&
-    !record.work &&
-    record.context === session?.id &&
-    sameValue(record.dataSource, session.dataSource)
-  ) {
+  if (event.observation.state.kind === 'restore' && !record.work) {
     const files = attachments(event.observation.state.metadata, event.context);
     record.work = {
       after: 0,
+      scope: null,
       ...(files &&
       object(event.observation.state.metadata) &&
       typeof event.observation.state.metadata.historyScope === 'string'
         ? {
             checkpoint: {
-              after: (event.observation.state.metadata.historyAfter as number | undefined) ?? 0,
+              after: event.observation.state.metadata.historyAfter as number,
               scope: event.observation.state.metadata.historyScope,
             },
           }
@@ -203,46 +191,27 @@ export function observeDraft(
   return retained;
 }
 export function draftReady(
-  records: DraftRecord[],
+  records: ComposerReadiness[],
   session: Pick<AgentSession, 'id' | 'dataSource'> | null,
 ) {
-  if (!session) return true;
-  const record = records.find(
-    (record) => record.context === session.id && sameValue(record.dataSource, session.dataSource),
-  );
   return (
-    !!record &&
-    record.observation.state.kind === 'ready' &&
-    record.observation.state.initialized &&
-    !record.work
-  );
-}
-export function draftStatuses(records: DraftRecord[]): DraftStatus[] {
-  return records.flatMap((record) =>
-    record.work
-      ? [
-          {
-            owner: record.observation.owner,
-            status: record.work.status,
-            restore: record.work.restore,
-          },
-        ]
-      : [],
+    !session ||
+    records.some(
+      (record) =>
+        record.ready &&
+        record.context === session.id &&
+        sameValue(record.dataSource, session.dataSource),
+    )
   );
 }
 export function nextDraftStep(
   records: DraftRecord[],
   retained: AttachmentDrafts,
-  historyScope: string | null = null,
 ): DraftStep | null {
   for (const record of records) {
     const work = record.work;
     if (!work || work.status !== 'checking' || record.observation.state.kind !== 'restore')
       continue;
-    if (work.checkpoint) {
-      if (work.checkpoint.scope === historyScope) work.after = work.checkpoint.after;
-      delete work.checkpoint;
-    }
     if (work.queue.length)
       return { kind: 'draftReceipt', owner: record.observation.owner, original: work.queue[0] };
     if (!work.done)
@@ -285,6 +254,20 @@ export function draftPage(
   const work = record.work;
   try {
     if (page.length > 1) throw new Error('Draft history page exceeds its requested bound');
+    if (page[0]) {
+      const first = page[0];
+      work.scope = JSON.stringify([
+        first.caller.stateDomain,
+        first.caller.deployment,
+        first.consumer,
+      ]);
+      const checkpoint = work.checkpoint;
+      delete work.checkpoint;
+      if (checkpoint?.scope === work.scope && checkpoint.after >= first.cursor) {
+        work.after = checkpoint.after;
+        return;
+      }
+    }
     for (const entry of page) {
       if (!Number.isSafeInteger(entry.cursor) || entry.cursor <= work.after)
         throw new Error('Invalid caller history cursor');
@@ -375,6 +358,7 @@ export function retryDraft(records: DraftRecord[], owner: string) {
     if (record.work.valid)
       record.work = {
         after: 0,
+        scope: null,
         done: false,
         queue: [],
         clearText: record.work.clearText,

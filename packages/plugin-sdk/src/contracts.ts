@@ -10291,7 +10291,7 @@ export const contracts = {
                     type: 'string',
                   },
                   contract: {
-                    $ref: '#/$defs/Contract',
+                    $ref: '#/$defs/RecoveryContract',
                   },
                   recovery: {
                     $ref: '#/$defs/RecoveryProtocol',
@@ -10337,9 +10337,9 @@ export const contracts = {
                   format: 'uuid',
                 },
               },
-              Contract: {
+              RecoveryContract: {
                 description:
-                  'Public contract definitions are package data, not live registration records.',
+                  'Contract identity for a journal lookup. The original request retains the\ncomplete contract; a receipt carries only its digest.',
                 type: 'object',
                 properties: {
                   name: {
@@ -10353,186 +10353,16 @@ export const contracts = {
                   transport: {
                     $ref: '#/$defs/Transport',
                   },
-                  interface: {
-                    $ref: '#/$defs/Interface',
+                  digest: {
+                    type: 'string',
                   },
                 },
                 additionalProperties: false,
-                required: ['name', 'version', 'transport', 'interface'],
+                required: ['name', 'version', 'transport', 'digest'],
               },
               Transport: {
                 type: 'string',
                 enum: ['local', 'remote'],
-              },
-              Interface: {
-                oneOf: [
-                  {
-                    type: 'object',
-                    properties: {
-                      methods: {
-                        type: 'object',
-                        additionalProperties: {
-                          $ref: '#/$defs/Method',
-                        },
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'service',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'methods'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      props: true,
-                      events: {
-                        type: 'object',
-                        additionalProperties: true,
-                      },
-                      captures: {
-                        type: 'object',
-                        additionalProperties: {
-                          $ref: '#/$defs/Capture',
-                        },
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'component',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'props', 'events', 'captures'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      schema: true,
-                      kind: {
-                        type: 'string',
-                        const: 'value',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'schema'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      resource: {
-                        type: 'string',
-                      },
-                      schema: true,
-                      kind: {
-                        type: 'string',
-                        const: 'resource',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'resource', 'schema'],
-                  },
-                ],
-              },
-              Method: {
-                type: 'object',
-                properties: {
-                  mode: {
-                    $ref: '#/$defs/MethodMode',
-                  },
-                  input: true,
-                  output: true,
-                  progress: {
-                    description:
-                      'Bounded transient observations from this mutation, separate from its\noriginal final receipt. Only mutation methods may declare progress.',
-                  },
-                  resources: {
-                    type: 'object',
-                    additionalProperties: {
-                      $ref: '#/$defs/ResourceSlot',
-                    },
-                  },
-                },
-                additionalProperties: false,
-                required: ['mode', 'input', 'output', 'resources'],
-              },
-              MethodMode: {
-                type: 'string',
-                enum: ['query', 'mutation', 'subscription'],
-              },
-              ResourceSlot: {
-                description:
-                  'One declared input slot: its nominal type and whether the caller may omit it.',
-                type: 'object',
-                properties: {
-                  type: {
-                    $ref: '#/$defs/ResourceType',
-                  },
-                  optional: {
-                    type: 'boolean',
-                  },
-                },
-                additionalProperties: false,
-                required: ['type', 'optional'],
-              },
-              ResourceType: {
-                description:
-                  'Nominal read-only resource shape, not a resource id or authorization token.',
-                type: 'object',
-                properties: {
-                  name: {
-                    type: 'string',
-                  },
-                  version: {
-                    type: 'integer',
-                    format: 'uint32',
-                    minimum: 0,
-                  },
-                },
-                additionalProperties: false,
-                required: ['name', 'version'],
-              },
-              Capture: {
-                type: 'object',
-                properties: {
-                  input: true,
-                  output: {
-                    $ref: '#/$defs/CaptureOutput',
-                  },
-                },
-                additionalProperties: false,
-                required: ['input', 'output'],
-              },
-              CaptureOutput: {
-                description:
-                  'Resource captures enter checked service slots; continuations remain in the\noriginal presentation owner and only decide admission of query feedback.',
-                oneOf: [
-                  {
-                    type: 'object',
-                    properties: {
-                      resource: {
-                        $ref: '#/$defs/ResourceType',
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'resource',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'resource'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      kind: {
-                        type: 'string',
-                        const: 'continuation',
-                      },
-                    },
-                    required: ['kind'],
-                    additionalProperties: false,
-                  },
-                ],
               },
               RecoveryProtocol: {
                 type: 'string',
@@ -16164,7 +15994,7 @@ export const contracts = {
                     type: 'string',
                   },
                   contract: {
-                    $ref: '#/$defs/Contract',
+                    $ref: '#/$defs/RecoveryContract',
                   },
                   recovery: {
                     $ref: '#/$defs/RecoveryProtocol',
@@ -16210,9 +16040,9 @@ export const contracts = {
                   format: 'uuid',
                 },
               },
-              Contract: {
+              RecoveryContract: {
                 description:
-                  'Public contract definitions are package data, not live registration records.',
+                  'Contract identity for a journal lookup. The original request retains the\ncomplete contract; a receipt carries only its digest.',
                 type: 'object',
                 properties: {
                   name: {
@@ -16226,186 +16056,16 @@ export const contracts = {
                   transport: {
                     $ref: '#/$defs/Transport',
                   },
-                  interface: {
-                    $ref: '#/$defs/Interface',
+                  digest: {
+                    type: 'string',
                   },
                 },
                 additionalProperties: false,
-                required: ['name', 'version', 'transport', 'interface'],
+                required: ['name', 'version', 'transport', 'digest'],
               },
               Transport: {
                 type: 'string',
                 enum: ['local', 'remote'],
-              },
-              Interface: {
-                oneOf: [
-                  {
-                    type: 'object',
-                    properties: {
-                      methods: {
-                        type: 'object',
-                        additionalProperties: {
-                          $ref: '#/$defs/Method',
-                        },
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'service',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'methods'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      props: true,
-                      events: {
-                        type: 'object',
-                        additionalProperties: true,
-                      },
-                      captures: {
-                        type: 'object',
-                        additionalProperties: {
-                          $ref: '#/$defs/Capture',
-                        },
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'component',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'props', 'events', 'captures'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      schema: true,
-                      kind: {
-                        type: 'string',
-                        const: 'value',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'schema'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      resource: {
-                        type: 'string',
-                      },
-                      schema: true,
-                      kind: {
-                        type: 'string',
-                        const: 'resource',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'resource', 'schema'],
-                  },
-                ],
-              },
-              Method: {
-                type: 'object',
-                properties: {
-                  mode: {
-                    $ref: '#/$defs/MethodMode',
-                  },
-                  input: true,
-                  output: true,
-                  progress: {
-                    description:
-                      'Bounded transient observations from this mutation, separate from its\noriginal final receipt. Only mutation methods may declare progress.',
-                  },
-                  resources: {
-                    type: 'object',
-                    additionalProperties: {
-                      $ref: '#/$defs/ResourceSlot',
-                    },
-                  },
-                },
-                additionalProperties: false,
-                required: ['mode', 'input', 'output', 'resources'],
-              },
-              MethodMode: {
-                type: 'string',
-                enum: ['query', 'mutation', 'subscription'],
-              },
-              ResourceSlot: {
-                description:
-                  'One declared input slot: its nominal type and whether the caller may omit it.',
-                type: 'object',
-                properties: {
-                  type: {
-                    $ref: '#/$defs/ResourceType',
-                  },
-                  optional: {
-                    type: 'boolean',
-                  },
-                },
-                additionalProperties: false,
-                required: ['type', 'optional'],
-              },
-              ResourceType: {
-                description:
-                  'Nominal read-only resource shape, not a resource id or authorization token.',
-                type: 'object',
-                properties: {
-                  name: {
-                    type: 'string',
-                  },
-                  version: {
-                    type: 'integer',
-                    format: 'uint32',
-                    minimum: 0,
-                  },
-                },
-                additionalProperties: false,
-                required: ['name', 'version'],
-              },
-              Capture: {
-                type: 'object',
-                properties: {
-                  input: true,
-                  output: {
-                    $ref: '#/$defs/CaptureOutput',
-                  },
-                },
-                additionalProperties: false,
-                required: ['input', 'output'],
-              },
-              CaptureOutput: {
-                description:
-                  'Resource captures enter checked service slots; continuations remain in the\noriginal presentation owner and only decide admission of query feedback.',
-                oneOf: [
-                  {
-                    type: 'object',
-                    properties: {
-                      resource: {
-                        $ref: '#/$defs/ResourceType',
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'resource',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'resource'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      kind: {
-                        type: 'string',
-                        const: 'continuation',
-                      },
-                    },
-                    required: ['kind'],
-                    additionalProperties: false,
-                  },
-                ],
               },
               RecoveryProtocol: {
                 type: 'string',
@@ -19923,7 +19583,7 @@ export const contracts = {
                     type: 'string',
                   },
                   contract: {
-                    $ref: '#/$defs/Contract',
+                    $ref: '#/$defs/RecoveryContract',
                   },
                   recovery: {
                     $ref: '#/$defs/RecoveryProtocol',
@@ -19969,9 +19629,9 @@ export const contracts = {
                   format: 'uuid',
                 },
               },
-              Contract: {
+              RecoveryContract: {
                 description:
-                  'Public contract definitions are package data, not live registration records.',
+                  'Contract identity for a journal lookup. The original request retains the\ncomplete contract; a receipt carries only its digest.',
                 type: 'object',
                 properties: {
                   name: {
@@ -19985,186 +19645,16 @@ export const contracts = {
                   transport: {
                     $ref: '#/$defs/Transport',
                   },
-                  interface: {
-                    $ref: '#/$defs/Interface',
+                  digest: {
+                    type: 'string',
                   },
                 },
                 additionalProperties: false,
-                required: ['name', 'version', 'transport', 'interface'],
+                required: ['name', 'version', 'transport', 'digest'],
               },
               Transport: {
                 type: 'string',
                 enum: ['local', 'remote'],
-              },
-              Interface: {
-                oneOf: [
-                  {
-                    type: 'object',
-                    properties: {
-                      methods: {
-                        type: 'object',
-                        additionalProperties: {
-                          $ref: '#/$defs/Method',
-                        },
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'service',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'methods'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      props: true,
-                      events: {
-                        type: 'object',
-                        additionalProperties: true,
-                      },
-                      captures: {
-                        type: 'object',
-                        additionalProperties: {
-                          $ref: '#/$defs/Capture',
-                        },
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'component',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'props', 'events', 'captures'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      schema: true,
-                      kind: {
-                        type: 'string',
-                        const: 'value',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'schema'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      resource: {
-                        type: 'string',
-                      },
-                      schema: true,
-                      kind: {
-                        type: 'string',
-                        const: 'resource',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'resource', 'schema'],
-                  },
-                ],
-              },
-              Method: {
-                type: 'object',
-                properties: {
-                  mode: {
-                    $ref: '#/$defs/MethodMode',
-                  },
-                  input: true,
-                  output: true,
-                  progress: {
-                    description:
-                      'Bounded transient observations from this mutation, separate from its\noriginal final receipt. Only mutation methods may declare progress.',
-                  },
-                  resources: {
-                    type: 'object',
-                    additionalProperties: {
-                      $ref: '#/$defs/ResourceSlot',
-                    },
-                  },
-                },
-                additionalProperties: false,
-                required: ['mode', 'input', 'output', 'resources'],
-              },
-              MethodMode: {
-                type: 'string',
-                enum: ['query', 'mutation', 'subscription'],
-              },
-              ResourceSlot: {
-                description:
-                  'One declared input slot: its nominal type and whether the caller may omit it.',
-                type: 'object',
-                properties: {
-                  type: {
-                    $ref: '#/$defs/ResourceType',
-                  },
-                  optional: {
-                    type: 'boolean',
-                  },
-                },
-                additionalProperties: false,
-                required: ['type', 'optional'],
-              },
-              ResourceType: {
-                description:
-                  'Nominal read-only resource shape, not a resource id or authorization token.',
-                type: 'object',
-                properties: {
-                  name: {
-                    type: 'string',
-                  },
-                  version: {
-                    type: 'integer',
-                    format: 'uint32',
-                    minimum: 0,
-                  },
-                },
-                additionalProperties: false,
-                required: ['name', 'version'],
-              },
-              Capture: {
-                type: 'object',
-                properties: {
-                  input: true,
-                  output: {
-                    $ref: '#/$defs/CaptureOutput',
-                  },
-                },
-                additionalProperties: false,
-                required: ['input', 'output'],
-              },
-              CaptureOutput: {
-                description:
-                  'Resource captures enter checked service slots; continuations remain in the\noriginal presentation owner and only decide admission of query feedback.',
-                oneOf: [
-                  {
-                    type: 'object',
-                    properties: {
-                      resource: {
-                        $ref: '#/$defs/ResourceType',
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'resource',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'resource'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      kind: {
-                        type: 'string',
-                        const: 'continuation',
-                      },
-                    },
-                    required: ['kind'],
-                    additionalProperties: false,
-                  },
-                ],
               },
               RecoveryProtocol: {
                 type: 'string',
@@ -23650,7 +23140,7 @@ export const contracts = {
                     type: 'string',
                   },
                   contract: {
-                    $ref: '#/$defs/Contract',
+                    $ref: '#/$defs/RecoveryContract',
                   },
                   recovery: {
                     $ref: '#/$defs/RecoveryProtocol',
@@ -23696,9 +23186,9 @@ export const contracts = {
                   format: 'uuid',
                 },
               },
-              Contract: {
+              RecoveryContract: {
                 description:
-                  'Public contract definitions are package data, not live registration records.',
+                  'Contract identity for a journal lookup. The original request retains the\ncomplete contract; a receipt carries only its digest.',
                 type: 'object',
                 properties: {
                   name: {
@@ -23712,186 +23202,16 @@ export const contracts = {
                   transport: {
                     $ref: '#/$defs/Transport',
                   },
-                  interface: {
-                    $ref: '#/$defs/Interface',
+                  digest: {
+                    type: 'string',
                   },
                 },
                 additionalProperties: false,
-                required: ['name', 'version', 'transport', 'interface'],
+                required: ['name', 'version', 'transport', 'digest'],
               },
               Transport: {
                 type: 'string',
                 enum: ['local', 'remote'],
-              },
-              Interface: {
-                oneOf: [
-                  {
-                    type: 'object',
-                    properties: {
-                      methods: {
-                        type: 'object',
-                        additionalProperties: {
-                          $ref: '#/$defs/Method',
-                        },
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'service',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'methods'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      props: true,
-                      events: {
-                        type: 'object',
-                        additionalProperties: true,
-                      },
-                      captures: {
-                        type: 'object',
-                        additionalProperties: {
-                          $ref: '#/$defs/Capture',
-                        },
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'component',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'props', 'events', 'captures'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      schema: true,
-                      kind: {
-                        type: 'string',
-                        const: 'value',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'schema'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      resource: {
-                        type: 'string',
-                      },
-                      schema: true,
-                      kind: {
-                        type: 'string',
-                        const: 'resource',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'resource', 'schema'],
-                  },
-                ],
-              },
-              Method: {
-                type: 'object',
-                properties: {
-                  mode: {
-                    $ref: '#/$defs/MethodMode',
-                  },
-                  input: true,
-                  output: true,
-                  progress: {
-                    description:
-                      'Bounded transient observations from this mutation, separate from its\noriginal final receipt. Only mutation methods may declare progress.',
-                  },
-                  resources: {
-                    type: 'object',
-                    additionalProperties: {
-                      $ref: '#/$defs/ResourceSlot',
-                    },
-                  },
-                },
-                additionalProperties: false,
-                required: ['mode', 'input', 'output', 'resources'],
-              },
-              MethodMode: {
-                type: 'string',
-                enum: ['query', 'mutation', 'subscription'],
-              },
-              ResourceSlot: {
-                description:
-                  'One declared input slot: its nominal type and whether the caller may omit it.',
-                type: 'object',
-                properties: {
-                  type: {
-                    $ref: '#/$defs/ResourceType',
-                  },
-                  optional: {
-                    type: 'boolean',
-                  },
-                },
-                additionalProperties: false,
-                required: ['type', 'optional'],
-              },
-              ResourceType: {
-                description:
-                  'Nominal read-only resource shape, not a resource id or authorization token.',
-                type: 'object',
-                properties: {
-                  name: {
-                    type: 'string',
-                  },
-                  version: {
-                    type: 'integer',
-                    format: 'uint32',
-                    minimum: 0,
-                  },
-                },
-                additionalProperties: false,
-                required: ['name', 'version'],
-              },
-              Capture: {
-                type: 'object',
-                properties: {
-                  input: true,
-                  output: {
-                    $ref: '#/$defs/CaptureOutput',
-                  },
-                },
-                additionalProperties: false,
-                required: ['input', 'output'],
-              },
-              CaptureOutput: {
-                description:
-                  'Resource captures enter checked service slots; continuations remain in the\noriginal presentation owner and only decide admission of query feedback.',
-                oneOf: [
-                  {
-                    type: 'object',
-                    properties: {
-                      resource: {
-                        $ref: '#/$defs/ResourceType',
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'resource',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'resource'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      kind: {
-                        type: 'string',
-                        const: 'continuation',
-                      },
-                    },
-                    required: ['kind'],
-                    additionalProperties: false,
-                  },
-                ],
               },
               RecoveryProtocol: {
                 type: 'string',
@@ -26612,7 +25932,7 @@ export const contracts = {
                     type: 'string',
                   },
                   contract: {
-                    $ref: '#/$defs/Contract',
+                    $ref: '#/$defs/RecoveryContract',
                   },
                   recovery: {
                     $ref: '#/$defs/RecoveryProtocol',
@@ -26657,7 +25977,7 @@ export const contracts = {
                 description:
                   'Hierarchical, stable source keys. Display aliases never become data identities.',
               },
-              Contract: {
+              RecoveryContract: {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
@@ -26672,187 +25992,17 @@ export const contracts = {
                   transport: {
                     $ref: '#/$defs/Transport',
                   },
-                  interface: {
-                    $ref: '#/$defs/Interface',
+                  digest: {
+                    type: 'string',
                   },
                 },
-                required: ['name', 'version', 'transport', 'interface'],
+                required: ['name', 'version', 'transport', 'digest'],
                 description:
-                  'Public contract definitions are package data, not live registration records.',
+                  'Contract identity for a journal lookup. The original request retains the\ncomplete contract; a receipt carries only its digest.',
               },
               Transport: {
                 type: 'string',
                 enum: ['local', 'remote'],
-              },
-              Interface: {
-                oneOf: [
-                  {
-                    type: 'object',
-                    additionalProperties: false,
-                    properties: {
-                      methods: {
-                        type: 'object',
-                        additionalProperties: {
-                          $ref: '#/$defs/Method',
-                        },
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'service',
-                      },
-                    },
-                    required: ['kind', 'methods'],
-                  },
-                  {
-                    type: 'object',
-                    additionalProperties: false,
-                    properties: {
-                      props: true,
-                      events: {
-                        type: 'object',
-                        additionalProperties: true,
-                      },
-                      captures: {
-                        type: 'object',
-                        additionalProperties: {
-                          $ref: '#/$defs/Capture',
-                        },
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'component',
-                      },
-                    },
-                    required: ['kind', 'props', 'events', 'captures'],
-                  },
-                  {
-                    type: 'object',
-                    additionalProperties: false,
-                    properties: {
-                      schema: true,
-                      kind: {
-                        type: 'string',
-                        const: 'value',
-                      },
-                    },
-                    required: ['kind', 'schema'],
-                  },
-                  {
-                    type: 'object',
-                    additionalProperties: false,
-                    properties: {
-                      resource: {
-                        type: 'string',
-                      },
-                      schema: true,
-                      kind: {
-                        type: 'string',
-                        const: 'resource',
-                      },
-                    },
-                    required: ['kind', 'resource', 'schema'],
-                  },
-                ],
-              },
-              Method: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                  mode: {
-                    $ref: '#/$defs/MethodMode',
-                  },
-                  input: true,
-                  output: true,
-                  progress: {
-                    description:
-                      'Bounded transient observations from this mutation, separate from its\noriginal final receipt. Only mutation methods may declare progress.',
-                  },
-                  resources: {
-                    type: 'object',
-                    additionalProperties: {
-                      $ref: '#/$defs/ResourceSlot',
-                    },
-                  },
-                },
-                required: ['mode', 'input', 'output', 'resources'],
-              },
-              MethodMode: {
-                type: 'string',
-                enum: ['query', 'mutation', 'subscription'],
-              },
-              ResourceSlot: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                  type: {
-                    $ref: '#/$defs/ResourceType',
-                  },
-                  optional: {
-                    type: 'boolean',
-                  },
-                },
-                required: ['type', 'optional'],
-                description:
-                  'One declared input slot: its nominal type and whether the caller may omit it.',
-              },
-              ResourceType: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                  name: {
-                    type: 'string',
-                  },
-                  version: {
-                    type: 'integer',
-                    format: 'uint32',
-                    minimum: 0,
-                  },
-                },
-                required: ['name', 'version'],
-                description:
-                  'Nominal read-only resource shape, not a resource id or authorization token.',
-              },
-              Capture: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                  input: true,
-                  output: {
-                    $ref: '#/$defs/CaptureOutput',
-                  },
-                },
-                required: ['input', 'output'],
-              },
-              CaptureOutput: {
-                oneOf: [
-                  {
-                    type: 'object',
-                    additionalProperties: false,
-                    properties: {
-                      resource: {
-                        $ref: '#/$defs/ResourceType',
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'resource',
-                      },
-                    },
-                    required: ['kind', 'resource'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      kind: {
-                        type: 'string',
-                        const: 'continuation',
-                      },
-                    },
-                    required: ['kind'],
-                    additionalProperties: false,
-                  },
-                ],
-                description:
-                  'Resource captures enter checked service slots; continuations remain in the\noriginal presentation owner and only decide admission of query feedback.',
               },
               RecoveryProtocol: {
                 type: 'string',
@@ -32617,7 +31767,7 @@ export const contracts = {
                 type: 'string',
               },
               contract: {
-                $ref: '#/$defs/Contract',
+                $ref: '#/$defs/RecoveryContract',
               },
               recovery: {
                 $ref: '#/$defs/RecoveryProtocol',
@@ -32664,7 +31814,7 @@ export const contracts = {
                 description:
                   'Hierarchical, stable source keys. Display aliases never become data identities.',
               },
-              Contract: {
+              RecoveryContract: {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
@@ -32679,187 +31829,17 @@ export const contracts = {
                   transport: {
                     $ref: '#/$defs/Transport',
                   },
-                  interface: {
-                    $ref: '#/$defs/Interface',
+                  digest: {
+                    type: 'string',
                   },
                 },
-                required: ['name', 'version', 'transport', 'interface'],
+                required: ['name', 'version', 'transport', 'digest'],
                 description:
-                  'Public contract definitions are package data, not live registration records.',
+                  'Contract identity for a journal lookup. The original request retains the\ncomplete contract; a receipt carries only its digest.',
               },
               Transport: {
                 type: 'string',
                 enum: ['local', 'remote'],
-              },
-              Interface: {
-                oneOf: [
-                  {
-                    type: 'object',
-                    additionalProperties: false,
-                    properties: {
-                      methods: {
-                        type: 'object',
-                        additionalProperties: {
-                          $ref: '#/$defs/Method',
-                        },
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'service',
-                      },
-                    },
-                    required: ['kind', 'methods'],
-                  },
-                  {
-                    type: 'object',
-                    additionalProperties: false,
-                    properties: {
-                      props: true,
-                      events: {
-                        type: 'object',
-                        additionalProperties: true,
-                      },
-                      captures: {
-                        type: 'object',
-                        additionalProperties: {
-                          $ref: '#/$defs/Capture',
-                        },
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'component',
-                      },
-                    },
-                    required: ['kind', 'props', 'events', 'captures'],
-                  },
-                  {
-                    type: 'object',
-                    additionalProperties: false,
-                    properties: {
-                      schema: true,
-                      kind: {
-                        type: 'string',
-                        const: 'value',
-                      },
-                    },
-                    required: ['kind', 'schema'],
-                  },
-                  {
-                    type: 'object',
-                    additionalProperties: false,
-                    properties: {
-                      resource: {
-                        type: 'string',
-                      },
-                      schema: true,
-                      kind: {
-                        type: 'string',
-                        const: 'resource',
-                      },
-                    },
-                    required: ['kind', 'resource', 'schema'],
-                  },
-                ],
-              },
-              Method: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                  mode: {
-                    $ref: '#/$defs/MethodMode',
-                  },
-                  input: true,
-                  output: true,
-                  progress: {
-                    description:
-                      'Bounded transient observations from this mutation, separate from its\noriginal final receipt. Only mutation methods may declare progress.',
-                  },
-                  resources: {
-                    type: 'object',
-                    additionalProperties: {
-                      $ref: '#/$defs/ResourceSlot',
-                    },
-                  },
-                },
-                required: ['mode', 'input', 'output', 'resources'],
-              },
-              MethodMode: {
-                type: 'string',
-                enum: ['query', 'mutation', 'subscription'],
-              },
-              ResourceSlot: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                  type: {
-                    $ref: '#/$defs/ResourceType',
-                  },
-                  optional: {
-                    type: 'boolean',
-                  },
-                },
-                required: ['type', 'optional'],
-                description:
-                  'One declared input slot: its nominal type and whether the caller may omit it.',
-              },
-              ResourceType: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                  name: {
-                    type: 'string',
-                  },
-                  version: {
-                    type: 'integer',
-                    format: 'uint32',
-                    minimum: 0,
-                  },
-                },
-                required: ['name', 'version'],
-                description:
-                  'Nominal read-only resource shape, not a resource id or authorization token.',
-              },
-              Capture: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                  input: true,
-                  output: {
-                    $ref: '#/$defs/CaptureOutput',
-                  },
-                },
-                required: ['input', 'output'],
-              },
-              CaptureOutput: {
-                oneOf: [
-                  {
-                    type: 'object',
-                    additionalProperties: false,
-                    properties: {
-                      resource: {
-                        $ref: '#/$defs/ResourceType',
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'resource',
-                      },
-                    },
-                    required: ['kind', 'resource'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      kind: {
-                        type: 'string',
-                        const: 'continuation',
-                      },
-                    },
-                    required: ['kind'],
-                    additionalProperties: false,
-                  },
-                ],
-                description:
-                  'Resource captures enter checked service slots; continuations remain in the\noriginal presentation owner and only decide admission of query feedback.',
               },
               RecoveryProtocol: {
                 type: 'string',
@@ -32928,7 +31908,7 @@ export const contracts = {
                     type: 'string',
                   },
                   contract: {
-                    $ref: '#/$defs/Contract',
+                    $ref: '#/$defs/RecoveryContract',
                   },
                   recovery: {
                     $ref: '#/$defs/RecoveryProtocol',
@@ -32973,7 +31953,7 @@ export const contracts = {
                 description:
                   'Hierarchical, stable source keys. Display aliases never become data identities.',
               },
-              Contract: {
+              RecoveryContract: {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
@@ -32988,187 +31968,17 @@ export const contracts = {
                   transport: {
                     $ref: '#/$defs/Transport',
                   },
-                  interface: {
-                    $ref: '#/$defs/Interface',
+                  digest: {
+                    type: 'string',
                   },
                 },
-                required: ['name', 'version', 'transport', 'interface'],
+                required: ['name', 'version', 'transport', 'digest'],
                 description:
-                  'Public contract definitions are package data, not live registration records.',
+                  'Contract identity for a journal lookup. The original request retains the\ncomplete contract; a receipt carries only its digest.',
               },
               Transport: {
                 type: 'string',
                 enum: ['local', 'remote'],
-              },
-              Interface: {
-                oneOf: [
-                  {
-                    type: 'object',
-                    additionalProperties: false,
-                    properties: {
-                      methods: {
-                        type: 'object',
-                        additionalProperties: {
-                          $ref: '#/$defs/Method',
-                        },
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'service',
-                      },
-                    },
-                    required: ['kind', 'methods'],
-                  },
-                  {
-                    type: 'object',
-                    additionalProperties: false,
-                    properties: {
-                      props: true,
-                      events: {
-                        type: 'object',
-                        additionalProperties: true,
-                      },
-                      captures: {
-                        type: 'object',
-                        additionalProperties: {
-                          $ref: '#/$defs/Capture',
-                        },
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'component',
-                      },
-                    },
-                    required: ['kind', 'props', 'events', 'captures'],
-                  },
-                  {
-                    type: 'object',
-                    additionalProperties: false,
-                    properties: {
-                      schema: true,
-                      kind: {
-                        type: 'string',
-                        const: 'value',
-                      },
-                    },
-                    required: ['kind', 'schema'],
-                  },
-                  {
-                    type: 'object',
-                    additionalProperties: false,
-                    properties: {
-                      resource: {
-                        type: 'string',
-                      },
-                      schema: true,
-                      kind: {
-                        type: 'string',
-                        const: 'resource',
-                      },
-                    },
-                    required: ['kind', 'resource', 'schema'],
-                  },
-                ],
-              },
-              Method: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                  mode: {
-                    $ref: '#/$defs/MethodMode',
-                  },
-                  input: true,
-                  output: true,
-                  progress: {
-                    description:
-                      'Bounded transient observations from this mutation, separate from its\noriginal final receipt. Only mutation methods may declare progress.',
-                  },
-                  resources: {
-                    type: 'object',
-                    additionalProperties: {
-                      $ref: '#/$defs/ResourceSlot',
-                    },
-                  },
-                },
-                required: ['mode', 'input', 'output', 'resources'],
-              },
-              MethodMode: {
-                type: 'string',
-                enum: ['query', 'mutation', 'subscription'],
-              },
-              ResourceSlot: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                  type: {
-                    $ref: '#/$defs/ResourceType',
-                  },
-                  optional: {
-                    type: 'boolean',
-                  },
-                },
-                required: ['type', 'optional'],
-                description:
-                  'One declared input slot: its nominal type and whether the caller may omit it.',
-              },
-              ResourceType: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                  name: {
-                    type: 'string',
-                  },
-                  version: {
-                    type: 'integer',
-                    format: 'uint32',
-                    minimum: 0,
-                  },
-                },
-                required: ['name', 'version'],
-                description:
-                  'Nominal read-only resource shape, not a resource id or authorization token.',
-              },
-              Capture: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                  input: true,
-                  output: {
-                    $ref: '#/$defs/CaptureOutput',
-                  },
-                },
-                required: ['input', 'output'],
-              },
-              CaptureOutput: {
-                oneOf: [
-                  {
-                    type: 'object',
-                    additionalProperties: false,
-                    properties: {
-                      resource: {
-                        $ref: '#/$defs/ResourceType',
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'resource',
-                      },
-                    },
-                    required: ['kind', 'resource'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      kind: {
-                        type: 'string',
-                        const: 'continuation',
-                      },
-                    },
-                    required: ['kind'],
-                    additionalProperties: false,
-                  },
-                ],
-                description:
-                  'Resource captures enter checked service slots; continuations remain in the\noriginal presentation owner and only decide admission of query feedback.',
               },
               RecoveryProtocol: {
                 type: 'string',
@@ -43729,7 +42539,7 @@ export const contracts = {
                     type: 'string',
                   },
                   contract: {
-                    $ref: '#/$defs/Contract',
+                    $ref: '#/$defs/RecoveryContract',
                   },
                   recovery: {
                     $ref: '#/$defs/RecoveryProtocol',
@@ -43747,9 +42557,9 @@ export const contracts = {
                   'recovery',
                 ],
               },
-              Contract: {
+              RecoveryContract: {
                 description:
-                  'Public contract definitions are package data, not live registration records.',
+                  'Contract identity for a journal lookup. The original request retains the\ncomplete contract; a receipt carries only its digest.',
                 type: 'object',
                 properties: {
                   name: {
@@ -43763,186 +42573,16 @@ export const contracts = {
                   transport: {
                     $ref: '#/$defs/Transport',
                   },
-                  interface: {
-                    $ref: '#/$defs/Interface',
+                  digest: {
+                    type: 'string',
                   },
                 },
                 additionalProperties: false,
-                required: ['name', 'version', 'transport', 'interface'],
+                required: ['name', 'version', 'transport', 'digest'],
               },
               Transport: {
                 type: 'string',
                 enum: ['local', 'remote'],
-              },
-              Interface: {
-                oneOf: [
-                  {
-                    type: 'object',
-                    properties: {
-                      methods: {
-                        type: 'object',
-                        additionalProperties: {
-                          $ref: '#/$defs/Method',
-                        },
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'service',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'methods'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      props: true,
-                      events: {
-                        type: 'object',
-                        additionalProperties: true,
-                      },
-                      captures: {
-                        type: 'object',
-                        additionalProperties: {
-                          $ref: '#/$defs/Capture',
-                        },
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'component',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'props', 'events', 'captures'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      schema: true,
-                      kind: {
-                        type: 'string',
-                        const: 'value',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'schema'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      resource: {
-                        type: 'string',
-                      },
-                      schema: true,
-                      kind: {
-                        type: 'string',
-                        const: 'resource',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'resource', 'schema'],
-                  },
-                ],
-              },
-              Method: {
-                type: 'object',
-                properties: {
-                  mode: {
-                    $ref: '#/$defs/MethodMode',
-                  },
-                  input: true,
-                  output: true,
-                  progress: {
-                    description:
-                      'Bounded transient observations from this mutation, separate from its\noriginal final receipt. Only mutation methods may declare progress.',
-                  },
-                  resources: {
-                    type: 'object',
-                    additionalProperties: {
-                      $ref: '#/$defs/ResourceSlot',
-                    },
-                  },
-                },
-                additionalProperties: false,
-                required: ['mode', 'input', 'output', 'resources'],
-              },
-              MethodMode: {
-                type: 'string',
-                enum: ['query', 'mutation', 'subscription'],
-              },
-              ResourceSlot: {
-                description:
-                  'One declared input slot: its nominal type and whether the caller may omit it.',
-                type: 'object',
-                properties: {
-                  type: {
-                    $ref: '#/$defs/ResourceType',
-                  },
-                  optional: {
-                    type: 'boolean',
-                  },
-                },
-                additionalProperties: false,
-                required: ['type', 'optional'],
-              },
-              ResourceType: {
-                description:
-                  'Nominal read-only resource shape, not a resource id or authorization token.',
-                type: 'object',
-                properties: {
-                  name: {
-                    type: 'string',
-                  },
-                  version: {
-                    type: 'integer',
-                    format: 'uint32',
-                    minimum: 0,
-                  },
-                },
-                additionalProperties: false,
-                required: ['name', 'version'],
-              },
-              Capture: {
-                type: 'object',
-                properties: {
-                  input: true,
-                  output: {
-                    $ref: '#/$defs/CaptureOutput',
-                  },
-                },
-                additionalProperties: false,
-                required: ['input', 'output'],
-              },
-              CaptureOutput: {
-                description:
-                  'Resource captures enter checked service slots; continuations remain in the\noriginal presentation owner and only decide admission of query feedback.',
-                oneOf: [
-                  {
-                    type: 'object',
-                    properties: {
-                      resource: {
-                        $ref: '#/$defs/ResourceType',
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'resource',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'resource'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      kind: {
-                        type: 'string',
-                        const: 'continuation',
-                      },
-                    },
-                    required: ['kind'],
-                    additionalProperties: false,
-                  },
-                ],
               },
               RecoveryProtocol: {
                 type: 'string',
@@ -47963,7 +46603,7 @@ export const contracts = {
                 type: 'string',
               },
               contract: {
-                $ref: '#/$defs/Contract',
+                $ref: '#/$defs/RecoveryContract',
               },
               recovery: {
                 $ref: '#/$defs/RecoveryProtocol',
@@ -48009,9 +46649,9 @@ export const contracts = {
                   format: 'uuid',
                 },
               },
-              Contract: {
+              RecoveryContract: {
                 description:
-                  'Public contract definitions are package data, not live registration records.',
+                  'Contract identity for a journal lookup. The original request retains the\ncomplete contract; a receipt carries only its digest.',
                 type: 'object',
                 properties: {
                   name: {
@@ -48025,186 +46665,16 @@ export const contracts = {
                   transport: {
                     $ref: '#/$defs/Transport',
                   },
-                  interface: {
-                    $ref: '#/$defs/Interface',
+                  digest: {
+                    type: 'string',
                   },
                 },
                 additionalProperties: false,
-                required: ['name', 'version', 'transport', 'interface'],
+                required: ['name', 'version', 'transport', 'digest'],
               },
               Transport: {
                 type: 'string',
                 enum: ['local', 'remote'],
-              },
-              Interface: {
-                oneOf: [
-                  {
-                    type: 'object',
-                    properties: {
-                      methods: {
-                        type: 'object',
-                        additionalProperties: {
-                          $ref: '#/$defs/Method',
-                        },
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'service',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'methods'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      props: true,
-                      events: {
-                        type: 'object',
-                        additionalProperties: true,
-                      },
-                      captures: {
-                        type: 'object',
-                        additionalProperties: {
-                          $ref: '#/$defs/Capture',
-                        },
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'component',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'props', 'events', 'captures'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      schema: true,
-                      kind: {
-                        type: 'string',
-                        const: 'value',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'schema'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      resource: {
-                        type: 'string',
-                      },
-                      schema: true,
-                      kind: {
-                        type: 'string',
-                        const: 'resource',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'resource', 'schema'],
-                  },
-                ],
-              },
-              Method: {
-                type: 'object',
-                properties: {
-                  mode: {
-                    $ref: '#/$defs/MethodMode',
-                  },
-                  input: true,
-                  output: true,
-                  progress: {
-                    description:
-                      'Bounded transient observations from this mutation, separate from its\noriginal final receipt. Only mutation methods may declare progress.',
-                  },
-                  resources: {
-                    type: 'object',
-                    additionalProperties: {
-                      $ref: '#/$defs/ResourceSlot',
-                    },
-                  },
-                },
-                additionalProperties: false,
-                required: ['mode', 'input', 'output', 'resources'],
-              },
-              MethodMode: {
-                type: 'string',
-                enum: ['query', 'mutation', 'subscription'],
-              },
-              ResourceSlot: {
-                description:
-                  'One declared input slot: its nominal type and whether the caller may omit it.',
-                type: 'object',
-                properties: {
-                  type: {
-                    $ref: '#/$defs/ResourceType',
-                  },
-                  optional: {
-                    type: 'boolean',
-                  },
-                },
-                additionalProperties: false,
-                required: ['type', 'optional'],
-              },
-              ResourceType: {
-                description:
-                  'Nominal read-only resource shape, not a resource id or authorization token.',
-                type: 'object',
-                properties: {
-                  name: {
-                    type: 'string',
-                  },
-                  version: {
-                    type: 'integer',
-                    format: 'uint32',
-                    minimum: 0,
-                  },
-                },
-                additionalProperties: false,
-                required: ['name', 'version'],
-              },
-              Capture: {
-                type: 'object',
-                properties: {
-                  input: true,
-                  output: {
-                    $ref: '#/$defs/CaptureOutput',
-                  },
-                },
-                additionalProperties: false,
-                required: ['input', 'output'],
-              },
-              CaptureOutput: {
-                description:
-                  'Resource captures enter checked service slots; continuations remain in the\noriginal presentation owner and only decide admission of query feedback.',
-                oneOf: [
-                  {
-                    type: 'object',
-                    properties: {
-                      resource: {
-                        $ref: '#/$defs/ResourceType',
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'resource',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'resource'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      kind: {
-                        type: 'string',
-                        const: 'continuation',
-                      },
-                    },
-                    required: ['kind'],
-                    additionalProperties: false,
-                  },
-                ],
               },
               RecoveryProtocol: {
                 type: 'string',
@@ -48250,7 +46720,7 @@ export const contracts = {
                     type: 'string',
                   },
                   contract: {
-                    $ref: '#/$defs/Contract',
+                    $ref: '#/$defs/RecoveryContract',
                   },
                   recovery: {
                     $ref: '#/$defs/RecoveryProtocol',
@@ -48296,9 +46766,9 @@ export const contracts = {
                   format: 'uuid',
                 },
               },
-              Contract: {
+              RecoveryContract: {
                 description:
-                  'Public contract definitions are package data, not live registration records.',
+                  'Contract identity for a journal lookup. The original request retains the\ncomplete contract; a receipt carries only its digest.',
                 type: 'object',
                 properties: {
                   name: {
@@ -48312,186 +46782,16 @@ export const contracts = {
                   transport: {
                     $ref: '#/$defs/Transport',
                   },
-                  interface: {
-                    $ref: '#/$defs/Interface',
+                  digest: {
+                    type: 'string',
                   },
                 },
                 additionalProperties: false,
-                required: ['name', 'version', 'transport', 'interface'],
+                required: ['name', 'version', 'transport', 'digest'],
               },
               Transport: {
                 type: 'string',
                 enum: ['local', 'remote'],
-              },
-              Interface: {
-                oneOf: [
-                  {
-                    type: 'object',
-                    properties: {
-                      methods: {
-                        type: 'object',
-                        additionalProperties: {
-                          $ref: '#/$defs/Method',
-                        },
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'service',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'methods'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      props: true,
-                      events: {
-                        type: 'object',
-                        additionalProperties: true,
-                      },
-                      captures: {
-                        type: 'object',
-                        additionalProperties: {
-                          $ref: '#/$defs/Capture',
-                        },
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'component',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'props', 'events', 'captures'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      schema: true,
-                      kind: {
-                        type: 'string',
-                        const: 'value',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'schema'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      resource: {
-                        type: 'string',
-                      },
-                      schema: true,
-                      kind: {
-                        type: 'string',
-                        const: 'resource',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'resource', 'schema'],
-                  },
-                ],
-              },
-              Method: {
-                type: 'object',
-                properties: {
-                  mode: {
-                    $ref: '#/$defs/MethodMode',
-                  },
-                  input: true,
-                  output: true,
-                  progress: {
-                    description:
-                      'Bounded transient observations from this mutation, separate from its\noriginal final receipt. Only mutation methods may declare progress.',
-                  },
-                  resources: {
-                    type: 'object',
-                    additionalProperties: {
-                      $ref: '#/$defs/ResourceSlot',
-                    },
-                  },
-                },
-                additionalProperties: false,
-                required: ['mode', 'input', 'output', 'resources'],
-              },
-              MethodMode: {
-                type: 'string',
-                enum: ['query', 'mutation', 'subscription'],
-              },
-              ResourceSlot: {
-                description:
-                  'One declared input slot: its nominal type and whether the caller may omit it.',
-                type: 'object',
-                properties: {
-                  type: {
-                    $ref: '#/$defs/ResourceType',
-                  },
-                  optional: {
-                    type: 'boolean',
-                  },
-                },
-                additionalProperties: false,
-                required: ['type', 'optional'],
-              },
-              ResourceType: {
-                description:
-                  'Nominal read-only resource shape, not a resource id or authorization token.',
-                type: 'object',
-                properties: {
-                  name: {
-                    type: 'string',
-                  },
-                  version: {
-                    type: 'integer',
-                    format: 'uint32',
-                    minimum: 0,
-                  },
-                },
-                additionalProperties: false,
-                required: ['name', 'version'],
-              },
-              Capture: {
-                type: 'object',
-                properties: {
-                  input: true,
-                  output: {
-                    $ref: '#/$defs/CaptureOutput',
-                  },
-                },
-                additionalProperties: false,
-                required: ['input', 'output'],
-              },
-              CaptureOutput: {
-                description:
-                  'Resource captures enter checked service slots; continuations remain in the\noriginal presentation owner and only decide admission of query feedback.',
-                oneOf: [
-                  {
-                    type: 'object',
-                    properties: {
-                      resource: {
-                        $ref: '#/$defs/ResourceType',
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'resource',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'resource'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      kind: {
-                        type: 'string',
-                        const: 'continuation',
-                      },
-                    },
-                    required: ['kind'],
-                    additionalProperties: false,
-                  },
-                ],
               },
               RecoveryProtocol: {
                 type: 'string',

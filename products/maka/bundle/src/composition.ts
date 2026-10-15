@@ -1131,7 +1131,17 @@ function agentComposition(configuration: CompositionConfiguration): ApplicationS
         reading: [local('reading-area', 'ReadingArea')],
       },
     ),
-    composer: node('composer', {}, { editor: [local('editor', 'Textarea')] }),
+    composer: node(
+      'composer',
+      {},
+      {
+        editor: [local('editor', 'Textarea')],
+        reader: [local('reader', 'Reader')],
+        agent: [remote('agent', 'agent')],
+        history: [local('history', 'History')],
+        receipts: [remote('receipts', 'Receipts')],
+      },
+    ),
     'composer-footer': node('composer-footer'),
     'ui-authoring-worker': node(
       'ui-authoring',

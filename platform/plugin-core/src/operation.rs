@@ -34,6 +34,53 @@ pub enum RecoveryProtocol {
     JournalV1,
 }
 
+/// Contract identity for a journal lookup. The original request retains the
+/// complete contract; a receipt carries only its digest.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RecoveryContract {
+    pub name: String,
+    pub version: u32,
+    pub transport: Transport,
+    pub digest: String,
+}
+
+impl RecoveryContract {
+    /// Called after validating the original service contract at admission.
+    pub fn for_method(contract: &Contract, method: &str) -> Result<Self, crate::Error> {
+        use sha2::{Digest, Sha256};
+        let Interface::Service { methods } = &contract.interface else {
+            return Err(crate::Error::Contract(
+                "operation requires a service contract".into(),
+            ));
+        };
+        methods
+            .get(method)
+            .filter(|m| m.mode == MethodMode::Mutation)
+            .ok_or_else(|| {
+                crate::Error::Contract("operation requires a declared mutation method".into())
+            })?;
+        fn digest(value: &impl Serialize) -> Result<String, crate::Error> {
+            let mut value =
+                serde_json::to_value(value).map_err(|e| crate::Error::Contract(e.to_string()))?;
+            value.sort_all_objects();
+            let bytes =
+                serde_json::to_vec(&value).map_err(|e| crate::Error::Contract(e.to_string()))?;
+            Ok(format!("sha256-{:x}", Sha256::digest(bytes)))
+        }
+        Ok(Self {
+            name: contract.name.clone(),
+            version: contract.version,
+            transport: contract.transport,
+            digest: digest(contract)?,
+        })
+    }
+
+    pub fn matches(&self, current: &Contract, method: &str) -> Result<bool, crate::Error> {
+        Ok(self == &Self::for_method(current, method)?)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RecoveryRef {
@@ -43,7 +90,7 @@ pub struct RecoveryRef {
     pub method: String,
     pub operation: Uuid,
     pub fingerprint: String,
-    pub contract: Contract,
+    pub contract: RecoveryContract,
     pub recovery: RecoveryProtocol,
 }
 impl RecoveryRef {
@@ -65,18 +112,10 @@ impl RecoveryRef {
                 "invalid operation fingerprint".into(),
             ));
         }
-        self.contract.validate()?;
-        let Interface::Service { methods } = &self.contract.interface else {
+        crate::name(&self.contract.name)?;
+        if self.contract.version == 0 || !crate::content_hash(&self.contract.digest) {
             return Err(crate::Error::Contract(
-                "operation requires a service contract".into(),
-            ));
-        };
-        if methods
-            .get(&self.method)
-            .is_none_or(|method| method.mode != MethodMode::Mutation)
-        {
-            return Err(crate::Error::Contract(
-                "operation requires a declared mutation method".into(),
+                "invalid operation contract digest".into(),
             ));
         }
         Ok(())

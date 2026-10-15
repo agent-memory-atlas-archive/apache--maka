@@ -208,9 +208,11 @@ impl Resources {
             self.redraw |= owner.revision != Some(frame.revision);
             owner.recipe = recipe;
             if catch_unwind(AssertUnwindSafe(|| {
-                owner
-                    .recipe
-                    .prepare_focus(owner.state.as_mut(), app.mount_visible(&mount))
+                owner.recipe.prepare_focus(
+                    owner.state.as_mut(),
+                    app.mount_visible(&mount),
+                    frame.revision,
+                )
             }))
             .is_err()
             {

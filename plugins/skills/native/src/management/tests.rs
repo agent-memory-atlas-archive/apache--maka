@@ -122,7 +122,8 @@ async fn managed_changes_preserve_resources_refuse_stale_reviews_and_replay_orig
         fingerprint: operation(&install)
             .fingerprint
             .replacen("sha256:", "sha256-", 1),
-        contract: contract(),
+        contract: maka_plugin_core::operation::RecoveryContract::for_method(&contract(), "apply")
+            .unwrap(),
         recovery: maka_plugin_core::operation::RecoveryProtocol::JournalV1,
     };
     install_operation.validate().unwrap();

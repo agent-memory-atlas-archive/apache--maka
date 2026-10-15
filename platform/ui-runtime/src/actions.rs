@@ -23,7 +23,7 @@ pub(super) mod subscriptions;
 use super::*;
 use maka_capabilities::call::Attachments;
 use maka_capabilities::call::ReadResource;
-use maka_event_log::applications::intents::RecordedIntent;
+use maka_event_log::applications::intents::{CallerConfirmation, RecordedIntent};
 use maka_plugin_core::{
     contract::{CaptureOutput, MethodMode},
     operation::{OperationReply, Receipt, RecoveryRef},
@@ -189,7 +189,15 @@ pub enum ActionOutcome {
     Stale,
     Operation {
         reply: Box<OperationReply>,
+        /// Position of the original confirmed caller commit, independent of the
+        /// business outcome. A missing commit never authorizes advancing recovery.
+        #[serde(deserialize_with = "Option::deserialize")]
+        #[schemars(schema_with = "caller_confirmation_schema")]
+        caller: Option<Box<CallerConfirmation>>,
     },
+}
+fn caller_confirmation_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    generator.subschema_for::<Option<CallerConfirmation>>()
 }
 /// A presenter can resolve only this exact already-checked native leaf.
 /// Construction is private: plugin JSON cannot supply a Mount or resource grant.
@@ -392,8 +400,13 @@ impl<V: ?Sized> Actions<V> {
                 .sum::<usize>()
     }
 }
-fn unavailable(reference: RecoveryRef, diagnostic: String) -> ActionOutcome {
+fn unavailable(
+    reference: RecoveryRef,
+    caller: Option<Box<CallerConfirmation>>,
+    diagnostic: String,
+) -> ActionOutcome {
     ActionOutcome::Operation {
+        caller,
         reply: Box::new(OperationReply {
             reference,
             receipt: Receipt::Unavailable {
@@ -452,8 +465,9 @@ impl<V: ?Sized + 'static> Application<V> {
         match valid {
             Ok(()) => outcome,
             Err(error) => match outcome {
-                ActionOutcome::Operation { reply } => unavailable(
+                ActionOutcome::Operation { reply, caller } => unavailable(
                     reply.reference,
+                    caller,
                     format!("operation result delivery failed: {error}; read original receipt"),
                 ),
                 _ => ActionOutcome::Failed {

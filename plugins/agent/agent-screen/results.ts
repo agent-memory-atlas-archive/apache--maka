@@ -31,7 +31,6 @@ import type {
   AgentCreated,
   AgentMarkReadResult,
   AgentDirectoryPage,
-  AgentSendResult,
   AgentAttachmentUploadResult,
   AgentQueueMutationResult,
   CallerIntent,
@@ -50,8 +49,6 @@ import type {
 import { sameValue } from '../../shared/value.js';
 
 import { sameFile } from '../../shared/attachments.js';
-
-import { draftPage, draftReceipt, draftFailed } from '../../shared/drafts.js';
 
 import { type Request, type Mutation, type DisplayPart, type State } from './state.js';
 import { readingKey } from './state.js';
@@ -245,34 +242,6 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
       }
       state.notice = null;
     } else state.notice = 'attachmentFailed';
-  } else if (request.kind === 'send') {
-    const started = value as AgentSendResult;
-    if (started.sessionId !== request.sessionId) {
-      state.notice = 'unknown';
-      return;
-    }
-    if (started.kind === 'rejected') {
-      state.notice = 'skillInputUnavailable';
-      return;
-    }
-    state.attachments.files = state.attachments.files.filter(
-      (file) =>
-        file.sessionId !== request.sessionId ||
-        !sameValue(file.dataSource, request.dataSource) ||
-        !request.attachments.includes(file.id),
-    );
-    // Clear only the exact captured draft after a durable returned admission.
-    // The native editor rejects this command if a newer draft or IME composition exists.
-    state.command = {
-      owner: request.draft.snapshot.text.owner,
-      sequence: ++state.commandSequence,
-      basedOn: request.draft.revision,
-      edit: { kind: 'reset', text: '' },
-    };
-    state.notice = null;
-    if (state.selected?.id === started.sessionId) {
-      observe(state, actions);
-    }
   } else {
     state.notice = 'stopping';
     if (state.selected?.id === request.sessionId) observe(state, actions);
@@ -284,10 +253,9 @@ export function receipt(state: State, actions: Action[], request: Mutation, repl
     const value = reply.receipt.outcome.value;
     const returned = value as AgentAttachmentUploadResult;
     if (
-      (request.kind === 'send' && (value as AgentSendResult).sessionId !== request.sessionId) ||
-      (request.kind === 'uploadAttachment' &&
-        returned.kind === 'uploaded' &&
-        returned.attachment.sessionId !== request.sessionId)
+      request.kind === 'uploadAttachment' &&
+      returned.kind === 'uploaded' &&
+      returned.attachment.sessionId !== request.sessionId
     ) {
       state.uncertain = { reference: reply.reference, request };
       state.notice = 'unknown';
@@ -390,10 +358,6 @@ export function queryFailed(state: State, request: Request) {
     }
     return;
   }
-  if (request.kind === 'draftPage' || request.kind === 'draftReceipt') {
-    draftFailed(state.drafts, request);
-    return;
-  }
   if (
     request.kind === 'interaction' ||
     request.kind === 'questionRead' ||
@@ -455,13 +419,7 @@ export function queryFailed(state: State, request: Request) {
       state.uncertain = { reference: request.reference, request: { kind: 'restored' } };
       state.restoring = false;
       state.notice = 'unknown';
-    } else
-      state.notice =
-        request.kind === 'read'
-          ? 'draftKept'
-          : request.kind === 'uploadAttachment'
-            ? 'attachmentFailed'
-            : 'unavailable';
+    } else state.notice = request.kind === 'uploadAttachment' ? 'attachmentFailed' : 'unavailable';
   }
 }
 
@@ -910,83 +868,6 @@ export function querySucceeded(state: State, actions: Action[], request: Request
           edit: { kind: 'update', messageId: edit.target.messageId, message: chunk.text },
         },
       );
-      break;
-    }
-    case 'read': {
-      if (state.selected?.id === request.sessionId && state.selected.archived) {
-        state.notice = 'draftKept';
-        break;
-      }
-      const chunk = value as TextChunk;
-      const metadata = chunk.metadata as { owner?: string; revision?: number; bytes?: number };
-      const captured = request.draft.snapshot.text;
-      if (
-        !metadata ||
-        metadata.owner !== captured.owner ||
-        metadata.revision !== captured.revision ||
-        metadata.bytes !== captured.bytes
-      ) {
-        state.notice = 'draftKept';
-        break;
-      }
-      if (!chunk.text.trim() && request.attachments.length === 0) {
-        state.notice = 'empty';
-        break;
-      }
-      // Sending explicitly continues this conversation at its latest messages.
-      // Do this with the original send intent, before its asynchronous receipt.
-      if (state.selected?.id === request.sessionId) {
-        state.searchOpen = false;
-        state.browse = null;
-        if (
-          state.window?.latest &&
-          state.window.page.after === null &&
-          state.window.page.through === state.latestKnown
-        ) {
-          const visit = state.visits.find((entry) => entry.id === state.selected?.id);
-          if (visit) visit.following = true;
-          state.navigation++;
-          state.landing = { sequence: state.landing.sequence + 1, edge: 'end' };
-          state.tailReceipt = null;
-          state.followAttempt = null;
-        } else history(state, actions, { kind: 'tail' }, state.latestKnown, true);
-      }
-      intent(
-        state,
-        actions,
-        {
-          kind: 'send',
-          dataSource: request.dataSource,
-          attachments: request.attachments,
-          draft: request.draft,
-          sessionId: request.sessionId,
-          backend: request.backend,
-        },
-        'agent',
-        request.backend.kind === 'executor' ? 'execute' : 'send',
-        request.backend.kind === 'executor'
-          ? {
-              sessionId: request.sessionId,
-              message: chunk.text,
-              executor: request.backend.selection,
-              attachments: request.attachments,
-            }
-          : {
-              sessionId: request.sessionId,
-              message: chunk.text,
-              attachments: request.attachments,
-              model: request.backend.model,
-              thinkingLevel: request.backend.thinkingLevel,
-            },
-      );
-      break;
-    }
-    case 'draftPage': {
-      draftPage(state.drafts, request, value as CallerIntent[]);
-      break;
-    }
-    case 'draftReceipt': {
-      draftReceipt(state.drafts, request, value as OperationReply);
       break;
     }
     case 'restorePage': {

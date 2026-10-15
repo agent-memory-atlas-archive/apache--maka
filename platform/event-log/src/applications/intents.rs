@@ -48,7 +48,7 @@ pub struct CallerIntent {
 }
 /// Peer attestation excludes caller-local recovery data. The receiving Host
 /// still requires its private admission evidence; this is not a commit token.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CallerConfirmation {
     pub cursor: u64,
